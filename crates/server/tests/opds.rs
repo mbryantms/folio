@@ -705,6 +705,68 @@ async fn search_description_doc_shape() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metadata_enrichment_present() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "metadata@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Metadata Series").await;
+    let file = tmp.path().join("meta.cbz");
+    let issue_id = seed_issue_with_file(&db, lib_id, series_id, &file, b"meta-bytes").await;
+
+    // Backfill the metadata fields seed_issue_with_file leaves as None.
+    let row = entity::issue::Entity::find_by_id(&issue_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.language_code = Set(Some("en".into()));
+    am.publisher = Set(Some("Marvel".into()));
+    am.year = Set(Some(2020));
+    am.month = Set(Some(5));
+    am.day = Set(Some(4));
+    am.writer = Set(Some("Stan Lee, Steve Ditko".into()));
+    am.genre = Set(Some("Superhero, Adventure".into()));
+    am.tags = Set(Some("classic".into()));
+    am.update(&db).await.unwrap();
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/series/{series_id}"),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+
+    assert!(
+        body.contains(r#"xmlns:dc="http://purl.org/dc/terms/""#),
+        "feed declares the dc namespace"
+    );
+    assert!(body.contains(&format!(
+        "<dc:identifier>urn:folio:issue:{issue_id}</dc:identifier>"
+    )));
+    assert!(body.contains("<dc:language>en</dc:language>"));
+    assert!(body.contains("<dc:publisher>Marvel</dc:publisher>"));
+    assert!(body.contains("<dc:issued>2020-05-04</dc:issued>"));
+    assert!(
+        body.contains("<author><name>Stan Lee</name></author>"),
+        "writer CSV is split and the first field becomes the author"
+    );
+    assert!(body.contains(r#"term="Superhero""#));
+    assert!(body.contains(r#"term="Adventure""#));
+    assert!(body.contains(r#"term="classic""#));
+    // Distinct image rels: thumbnail (webp) AND full-size (jpeg).
+    assert!(body.contains(r#"rel="http://opds-spec.org/image/thumbnail""#));
+    assert!(body.contains(r#"rel="http://opds-spec.org/image" href="/issues/"#));
+    // Deep-link back into the JSON API.
+    assert!(body.contains(r#"rel="related" href="/series/"#));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn download_writes_audit_log() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "audit@example.com").await;

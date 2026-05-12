@@ -23,6 +23,16 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY web ./web
 
 RUN cd web && pnpm install --frozen-lockfile
+
+# `API_PROXY_URL` is captured by next.config.ts's `rewrites()` and baked
+# into `.next/routes-manifest.json` at build time. The compose-internal
+# default targets the `app` service on the compose bridge network; pass
+# `--build-arg API_PROXY_URL=…` to override for a different deployment
+# topology (e.g. a sidecar / host-network setup). NOT a `NEXT_PUBLIC_*`
+# var — this hostname is server-only and must not be inlined into the
+# client bundle.
+ARG API_PROXY_URL=http://app:8080
+ENV API_PROXY_URL=${API_PROXY_URL}
 RUN cd web && pnpm build
 
 # ───── Stage 2: distroless Node runtime ─────

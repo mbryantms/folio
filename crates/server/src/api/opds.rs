@@ -30,8 +30,8 @@ use axum::{
 };
 use entity::{issue, library_user_access, series};
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
-use std::collections::HashMap;
 use serde::Deserialize;
+use std::collections::HashMap;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
@@ -652,19 +652,14 @@ fn entry_metadata(i: &issue::Model) -> String {
     if let Some(name) = first_csv_field(i.writer.as_deref()) {
         let _ = std::fmt::Write::write_fmt(
             &mut out,
-            format_args!(
-                "    <author><name>{}</name></author>\n",
-                xml_escape(&name),
-            ),
+            format_args!("    <author><name>{}</name></author>\n", xml_escape(&name)),
         );
     }
     for category in csv_fields(i.genre.as_deref()).chain(csv_fields(i.tags.as_deref())) {
         let escaped = xml_escape(&category);
         let _ = std::fmt::Write::write_fmt(
             &mut out,
-            format_args!(
-                "    <category term=\"{escaped}\" label=\"{escaped}\"/>\n",
-            ),
+            format_args!("    <category term=\"{escaped}\" label=\"{escaped}\"/>\n"),
         );
     }
     out

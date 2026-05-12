@@ -6,8 +6,13 @@
 #   redis     — apalis job queue + rate-limit counters.  Internal-only.
 #
 # TLS termination + path routing is the operator's responsibility (Caddy /
-# nginx / Traefik). The two app services bind to loopback so they're not
-# directly reachable from the network; only the reverse proxy is.
+# nginx / Traefik). By default the two app services bind to loopback so
+# they're not directly reachable from the network; only the reverse proxy
+# (or a tunnel daemon running inside the same host, e.g. cloudflared) is.
+# To expose the ports directly on the host's LAN interface — for a homelab
+# without a proxy, or alongside a tunnel — set `COMIC_APP_BIND=0.0.0.0`
+# and/or `COMIC_WEB_BIND=0.0.0.0` in `.env`. Do **not** set these on a
+# public-internet host; the API and Next process have no TLS of their own.
 #
 # Reverse-proxy templates live under `docs/install/`:
 #   - caddy.md   (default; auto Let's Encrypt)
@@ -22,6 +27,8 @@
 #   COMIC_PUBLIC_URL          — public HTTPS URL (e.g. https://comics.example.com)
 # Optional:
 #   TAG                       — image tag to pull (default: latest)
+#   COMIC_APP_BIND            — host interface for the API port (default: 127.0.0.1)
+#   COMIC_WEB_BIND            — host interface for the web port (default: 127.0.0.1)
 
 services:
   # One-shot: makes sure the `comic_data` volume is writable by the
@@ -63,7 +70,7 @@ services:
       - ${COMIC_LIBRARY_HOST_PATH:?required}:/library:ro
       - comic_data:/data
     ports:
-      - "127.0.0.1:8080:8080"
+      - "${COMIC_APP_BIND:-127.0.0.1}:8080:8080"
     healthcheck:
       test: ["CMD", "/app/server", "--healthcheck"]
       interval: 30s
@@ -78,14 +85,20 @@ services:
       app:
         condition: service_healthy
     environment:
-      # `NEXT_PUBLIC_API_URL` is the value the Next dev/build picks up for
-      # the API rewrite in `web/next.config.ts`. In compose the app is on
-      # the internal network as `app:8080`. The user's browser talks only
-      # to the reverse proxy — never directly to this URL.
-      NEXT_PUBLIC_API_URL: http://app:8080
+      # The API target for Next's `/api/*` rewrite is baked into the web
+      # image at *build time* via the Dockerfile's `API_PROXY_URL` ARG
+      # (default: `http://app:8080` — this service over the compose
+      # bridge). Setting it here at runtime has no effect; rebuild with
+      # `--build-arg API_PROXY_URL=…` if you need a different target.
+      #
+      # `COMIC_API_BASE` IS runtime — it's what RSC pages (`web/lib/api/
+      # fetch.ts`) use to call the Rust server during SSR. Must point at
+      # the compose-internal service name; the user's browser never sees
+      # this URL.
+      COMIC_API_BASE: http://app:8080
       NODE_ENV: production
     ports:
-      - "127.0.0.1:3000:3000"
+      - "${COMIC_WEB_BIND:-127.0.0.1}:3000:3000"
     healthcheck:
       # distroless-nodejs has /nodejs/bin/node on PATH. A tiny inline GET to
       # `/` proves the Next process is serving HTML.

@@ -53,7 +53,9 @@ services:
       app:
         condition: service_healthy
     environment:
-      NEXT_PUBLIC_API_URL: http://app:8080
+      # `API_PROXY_URL` is baked at build time (see web/Dockerfile);
+      # `COMIC_API_BASE` is read at runtime for RSC SSR.
+      COMIC_API_BASE: http://app:8080
       NODE_ENV: production
     healthcheck:
       test:

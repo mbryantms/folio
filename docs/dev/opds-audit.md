@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-12
 **Scope:** `/opds/*` surface in `crates/server/src/api/opds.rs` and its dependencies
-**Verdict:** Partial — M1 + M2 closed (HTTP Basic + per-extension MIME + pagination link rels + Range/206 + OpenSearch description + paginated per-series feed + audit-log downloads + `opds` rate-limit bucket + 15 integration tests); M3+ still pending.
+**Verdict:** OPDS 1.x complete — M1 + M2 + M3 closed (HTTP Basic + per-extension MIME + pagination link rels + Range/206 + OpenSearch description + paginated per-series feed + audit-log downloads + `opds` rate-limit bucket + per-entry Dublin Core / author / category / image / related rels + 16 integration tests). M4+ (personal feeds, PSE, OPDS 2.0, progress sync) are separate releases.
 
 ## 1. Executive summary
 
@@ -144,5 +144,5 @@ A minimal "ship OPDS 1.x" pass closes the P0 items and at least #5–#7 from P1:
 - [x] **P1-7** OpenSearch description document at `/opds/v1/search.xml` — landed M2; root nav `rel="search"` now points at it
 - [x] **P1-8** register `opds` rate-limit bucket — landed M2; 60/min/IP, burst 60 ([middleware/rate_limit.rs](../../crates/server/src/middleware/rate_limit.rs))
 - [x] **P1-9** audit-log downloads via `crate::audit::record` — landed M2; action name `opds.download`
-- [ ] **P1-10** enrich entry metadata (authors, publisher, dc:identifier, language, published, full-size image rel) — pending M3
+- [x] **P1-10** enrich entry metadata — landed M3; per-entry `<dc:identifier>` (`urn:folio:issue:…`), `<dc:language>`, `<dc:publisher>`, `<dc:issued>` (ISO 8601 partial dates), `<author><name>` (first CSV field of `writer`), `<category term=… label=…>` (genre + tags, de-duped), full-size `…/image` rel distinct from thumbnail, plus `rel="related"` deep-link to `/series/{slug}`. Feed root carries `xmlns:dc`.
 - [x] Reconcile doc drift in [docs/architecture/threat-model.md](../architecture/threat-model.md) (M1) and [docs/architecture/rate-limits.md](../architecture/rate-limits.md) (M1+M2)

@@ -27,7 +27,15 @@ const config: NextConfig = {
   // Headers (CSP, COOP, COEP, etc.) are set by the Rust security_headers middleware
   // on every response, including HTML proxied through from Next.
   async rewrites() {
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+    // `API_PROXY_URL` is read at *build* time — Next freezes the rewrites
+    // array into `.next/routes-manifest.json` and the runtime server never
+    // re-evaluates it. The prod Dockerfile bakes the compose-internal
+    // value `http://app:8080` via an ARG; dev (`pnpm dev`) falls through
+    // to localhost. Setting it via runtime env on a published image has no
+    // effect — rebuild the image to change it. Intentionally NOT prefixed
+    // with `NEXT_PUBLIC_`: this hostname is server-only and must not be
+    // inlined into the client bundle.
+    const apiBase = process.env.API_PROXY_URL || "http://localhost:8080";
     return [
       // Proxy API calls during dev to the Rust server. In prod, the Rust binary
       // proxies HTML requests to Next instead, so this rewrite is dev-only.
