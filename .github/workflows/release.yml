@@ -1,4 +1,7 @@
-# Publish multi-arch images to GHCR for both Folio components.
+# Publish amd64 images to GHCR for both Folio components. arm64 was dropped
+# from the matrix to keep wall-clock under 30 min — re-add `linux/arm64` to
+# the `platforms:` lines below if you need it, but build on `ubuntu-24.04-arm`
+# rather than under QEMU emulation.
 #
 # Triggered by:
 #   - `git tag v*.*.*`  → immutable + floating tags + GitHub release
@@ -48,7 +51,6 @@ jobs:
         with:
           fetch-depth: 0  # full history so `git describe` works for tags
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -85,7 +87,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -131,7 +133,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           # Surface the published image URIs in the release body for copy-paste.
           body: |
-            Container images (multi-arch, signed with cosign, SBOM attached):
+            Container images (linux/amd64, signed with cosign, SBOM attached):
             ```
             ghcr.io/${{ github.repository_owner }}/folio:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/folio-web:${{ github.ref_name }}

@@ -115,7 +115,7 @@ jobs:
               (echo "::error::Breaking API changes — add 'breaking-change' label and update CHANGELOG.md" && exit 1))
 
   docker-build:
-    name: Docker — multi-arch build
+    name: Docker — amd64 build
     runs-on: ubuntu-24.04
     needs: [rust-check, web-check]
     strategy:
@@ -128,14 +128,13 @@ jobs:
             dockerfile: web/Dockerfile
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Build (no push)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: false
           tags: ${{ matrix.image }}:ci
           cache-from: type=gha,scope=${{ matrix.image }}
