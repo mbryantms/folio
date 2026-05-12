@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-12
 **Scope:** `/opds/*` surface in `crates/server/src/api/opds.rs` and its dependencies
-**Verdict:** Partial — not release-ready as advertised in the settings UI.
+**Verdict:** Partial — M1 + M2 closed (HTTP Basic + per-extension MIME + pagination link rels + Range/206 + OpenSearch description + paginated per-series feed + audit-log downloads + `opds` rate-limit bucket + 15 integration tests); M3+ still pending.
 
 ## 1. Executive summary
 
@@ -135,14 +135,14 @@ UI advertises Chunky, KyBook, Panels, Kavita-mobile ([AppPasswordsCard.tsx:148](
 
 A minimal "ship OPDS 1.x" pass closes the P0 items and at least #5–#7 from P1:
 
-- [ ] **P0-1** HTTP Basic decoder in `extract_token` ([extractor.rs:179-192](../../crates/server/src/auth/extractor.rs#L179-L192))
-- [ ] **P0-2** MIME-per-extension in `download` ([opds.rs:329,364](../../crates/server/src/api/opds.rs#L329))
-- [ ] **P0-3** `crates/server/tests/opds.rs` covering ACL, search, download MIME, Basic + Bearer
-- [ ] **P1-4** paginate `/opds/v1/series/{id}` ([opds.rs:182-190](../../crates/server/src/api/opds.rs#L182-L190))
-- [ ] **P1-5** emit `previous` / `first` / `last` link rels ([opds.rs:155](../../crates/server/src/api/opds.rs#L155))
-- [ ] **P1-6** range support OR drop `Accept-Ranges` ([opds.rs:327-335](../../crates/server/src/api/opds.rs#L327-L335))
-- [ ] **P1-7** OpenSearch description document at `/opds/v1/search.xml`
-- [ ] **P1-8** register `opds` rate-limit bucket ([middleware/rate_limit.rs](../../crates/server/src/middleware/rate_limit.rs))
-- [ ] **P1-9** audit-log downloads via `crate::audit::record`
-- [ ] **P1-10** enrich entry metadata (authors, publisher, dc:identifier, language, published, full-size image rel)
-- [ ] Reconcile doc drift in [docs/architecture/threat-model.md:73-77](../architecture/threat-model.md#L73-L77) and [docs/architecture/rate-limits.md:24,36](../architecture/rate-limits.md#L24)
+- [x] **P0-1** HTTP Basic decoder in `extract_token` — landed M1; rejects non-`app_…` Basic tokens (footgun guard) ([extractor.rs](../../crates/server/src/auth/extractor.rs))
+- [x] **P0-2** MIME-per-extension in `download` + acquisition `type` attribute ([opds.rs](../../crates/server/src/api/opds.rs))
+- [x] **P0-3** `crates/server/tests/opds.rs` — 15 integration tests; M2 added pagination link rels, paginated series detail, Range/206 + 416, OpenSearch description, audit-log row
+- [x] **P1-4** paginate `/opds/v1/series/{id}` — landed M2; `PAGE_SIZE=50` with first/prev/next/last rels
+- [x] **P1-5** emit `previous` / `first` / `last` link rels — landed M2 via `paginate_links` helper
+- [x] **P1-6** range support — landed M2; `bytes=N-M` and `bytes=N-` produce 206 + Content-Range, malformed → 416
+- [x] **P1-7** OpenSearch description document at `/opds/v1/search.xml` — landed M2; root nav `rel="search"` now points at it
+- [x] **P1-8** register `opds` rate-limit bucket — landed M2; 60/min/IP, burst 60 ([middleware/rate_limit.rs](../../crates/server/src/middleware/rate_limit.rs))
+- [x] **P1-9** audit-log downloads via `crate::audit::record` — landed M2; action name `opds.download`
+- [ ] **P1-10** enrich entry metadata (authors, publisher, dc:identifier, language, published, full-size image rel) — pending M3
+- [x] Reconcile doc drift in [docs/architecture/threat-model.md](../architecture/threat-model.md) (M1) and [docs/architecture/rate-limits.md](../architecture/rate-limits.md) (M1+M2)

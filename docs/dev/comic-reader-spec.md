@@ -371,7 +371,7 @@ audit_log
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
-Logged actions (initial set; expandable): `review.delete`, `user.invite`, `user.disable`, `user.role_change`, `library.create`, `library.update`, `library.scan_trigger`, `app_password.create`, `app_password.revoke`, `suggestion.accept`, `suggestion.reject`, `suggestion.modify`, `oidc.config_update`, `library_user_access.grant`, `library_user_access.revoke`, `share_link.create`, `share_link.revoke`, `data_export.request`, `account.delete`.
+Logged actions (initial set; expandable): `review.delete`, `user.invite`, `user.disable`, `user.role_change`, `library.create`, `library.update`, `library.scan_trigger`, `app_password.create`, `app_password.revoke`, `suggestion.accept`, `suggestion.reject`, `suggestion.modify`, `oidc.config_update`, `library_user_access.grant`, `library_user_access.revoke`, `share_link.create`, `share_link.revoke`, `data_export.request`, `account.delete`, `opds.download`.
 
 Retention: forever (volume is small). Reads via `GET /admin/audit?actor=&action=&target=&since=&cursor=&limit=` — admin only. The endpoint never returns secrets in `payload`.
 

@@ -21,7 +21,7 @@ Without `COMIC_TRUSTED_PROXIES` set, every request appears to come from the reve
 | `GET /search/autocomplete` | 30 req/s | 60 req/s | 60 / 120 |
 | `POST /libraries/{id}/scan` | 1 / 5 min | 1 / 5 min | — |
 | `POST /auth/oidc/callback`, `POST /auth/local/login` | 5 / min | — | 10 |
-| OPDS `*` (Basic Auth) | 30 req/s | 60 req/s | 60 / 120 |
+| `GET /opds/*` | 60 / min | — | 60 |
 | Failed-auth (any) | 10 / min / IP | — | — |
 | `POST /csp-report` | 100 / min | — | — |
 | `POST /ws/ticket` | 30 / s | — | — |

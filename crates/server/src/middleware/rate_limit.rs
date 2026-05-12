@@ -136,6 +136,15 @@ pub const CSP_REPORT: Bucket = Bucket {
     burst: 200,
 };
 
+/// `GET /opds/*` — 60/min/IP + burst 60. OPDS clients poll lightly; the
+/// bucket exists to bound indexers and unattended catalog crawlers without
+/// throttling normal browsing.
+pub const OPDS: Bucket = Bucket {
+    name: "opds",
+    period: Duration::from_secs(1),
+    burst: 60,
+};
+
 // ───────── error handler ─────────
 
 fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<Body> {

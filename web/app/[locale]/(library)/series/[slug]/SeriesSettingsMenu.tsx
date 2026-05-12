@@ -1,14 +1,12 @@
 "use client";
 
 import {
+  BookmarkPlus,
   CheckCircle2,
   Circle,
-  Download,
   Folder,
-  Heart,
   Image as ImageIcon,
   Images,
-  ListPlus,
   Loader2,
   Pencil,
   RefreshCw,
@@ -16,7 +14,13 @@ import {
   Settings2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { toast } from "sonner";
 
+import {
+  AddToCollectionDialog,
+  type AddToCollectionTarget,
+} from "@/components/collections/AddToCollectionDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -32,12 +36,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  useAddCollectionEntry,
   useGenerateSeriesPageMap,
   useRegenerateSeriesCover,
+  useRemoveCollectionEntry,
   useTriggerSeriesScan,
   useUpsertSeriesProgress,
 } from "@/lib/api/mutations";
-import { useMe } from "@/lib/api/queries";
+import { useCollections, useMe } from "@/lib/api/queries";
+
+const WANT_TO_READ_KEY = "want_to_read";
 
 /**
  * Companion to `IssueSettingsMenu` for the series page. Same trigger /
@@ -46,13 +54,17 @@ import { useMe } from "@/lib/api/queries";
  * series is one round trip, not 200.
  */
 export function SeriesSettingsMenu({
+  seriesId,
   seriesSlug,
+  seriesName,
   libraryId,
   firstIssueId,
   onEdit,
   onForceRecreatePageMap,
 }: {
+  seriesId: string;
   seriesSlug: string;
+  seriesName: string;
   libraryId: string;
   /** Lowest-sorted active issue id for the "Read from beginning" item. */
   firstIssueId: string | null;
@@ -72,6 +84,48 @@ export function SeriesSettingsMenu({
   const regenerateCover = useRegenerateSeriesCover(seriesSlug, libraryId);
   const generatePageMap = useGenerateSeriesPageMap(seriesSlug, libraryId);
 
+  // Want to Read is the per-user auto-seeded collection (system_key='want_to_read').
+  // The sidebar fetch of /me/collections seeds it on first load; by the time the
+  // user opens the actions menu the row is almost always already present.
+  const collections = useCollections();
+  const wantToRead = collections.data?.find(
+    (c) => c.system_key === WANT_TO_READ_KEY,
+  );
+  const wtrId = wantToRead?.id ?? "";
+  const addToWtr = useAddCollectionEntry(wtrId);
+  const removeFromWtr = useRemoveCollectionEntry(wtrId);
+  const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
+
+  const addToReadingList = () => {
+    if (!wtrId) {
+      toast.error("Want to Read isn't ready yet — try again in a moment.");
+      return;
+    }
+    addToWtr.mutate(
+      { entry_kind: "series", ref_id: seriesId },
+      {
+        onSuccess: (entry) => {
+          if (!entry) {
+            toast.success(`Added "${seriesName}" to Want to Read`);
+            return;
+          }
+          toast.success(`Added "${seriesName}" to Want to Read`, {
+            action: {
+              label: "Undo",
+              onClick: () => removeFromWtr.mutate({ entryId: entry.id }, {}),
+            },
+          });
+        },
+      },
+    );
+  };
+
+  const collectionTarget: AddToCollectionTarget = {
+    entry_kind: "series",
+    ref_id: seriesId,
+    label: seriesName,
+  };
+
   const markAllRead = () =>
     progress.mutate({ finished: true }, { onSuccess: () => router.refresh() });
   const markAllUnread = () =>
@@ -89,9 +143,11 @@ export function SeriesSettingsMenu({
     progress.isPending ||
     scan.isPending ||
     regenerateCover.isPending ||
-    generatePageMap.isPending;
+    generatePageMap.isPending ||
+    addToWtr.isPending;
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" disabled={busy}>
@@ -125,25 +181,16 @@ export function SeriesSettingsMenu({
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Library</DropdownMenuLabel>
         <DropdownMenuGroup>
-          <DropdownMenuItem disabled>
-            <ListPlus className="mr-2 h-4 w-4" />
-            Add to reading list
-            <SoonBadge />
+          <DropdownMenuItem
+            onSelect={addToReadingList}
+            disabled={!wtrId || addToWtr.isPending}
+          >
+            <BookmarkPlus className="mr-2 h-4 w-4" />
+            Add to Want to Read
           </DropdownMenuItem>
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem onSelect={() => setCollectionDialogOpen(true)}>
             <Folder className="mr-2 h-4 w-4" />
-            Add to collection
-            <SoonBadge />
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled>
-            <Heart className="mr-2 h-4 w-4" />
-            Favorite series
-            <SoonBadge />
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled>
-            <Download className="mr-2 h-4 w-4" />
-            Download series
-            <SoonBadge />
+            Add to collection…
           </DropdownMenuItem>
         </DropdownMenuGroup>
 
@@ -203,13 +250,11 @@ export function SeriesSettingsMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-function SoonBadge() {
-  return (
-    <span className="border-border text-muted-foreground ml-auto rounded-sm border px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase">
-      Soon
-    </span>
+    <AddToCollectionDialog
+      open={collectionDialogOpen}
+      onOpenChange={setCollectionDialogOpen}
+      target={collectionTarget}
+    />
+    </>
   );
 }

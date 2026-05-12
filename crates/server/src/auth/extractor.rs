@@ -177,16 +177,35 @@ where
 }
 
 fn extract_token(parts: &Parts) -> Option<String> {
-    // Authorization: Bearer <jwt>
     if let Some(v) = parts
         .headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        && let Some(rest) = v.strip_prefix("Bearer ")
     {
-        return Some(rest.trim().to_owned());
+        // Authorization: Bearer <jwt|app_…>
+        if let Some(rest) = v.strip_prefix("Bearer ") {
+            return Some(rest.trim().to_owned());
+        }
+        // Authorization: Basic <b64(user:password)> — OPDS-client default.
+        // Only app-password tokens are accepted here; a raw JWT carried via
+        // Basic would be a session-token-in-URL-style footgun (clients log
+        // / surface the Authorization header in places they shouldn't).
+        if let Some(rest) = v.strip_prefix("Basic ") {
+            return extract_basic_app_password(rest.trim());
+        }
     }
     // Cookie: __Host-comic_session=<jwt>
     let jar = CookieJar::from_headers(&parts.headers);
     jar.get(SESSION_COOKIE).map(|c| c.value().to_owned())
+}
+
+fn extract_basic_app_password(b64: &str) -> Option<String> {
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    let s = std::str::from_utf8(&decoded).ok()?;
+    let (_user, password) = s.split_once(':')?;
+    if !super::app_password::looks_like_app_password(password) {
+        return None;
+    }
+    Some(password.to_owned())
 }

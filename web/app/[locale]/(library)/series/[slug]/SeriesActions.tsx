@@ -48,7 +48,9 @@ export function SeriesActions({
   return (
     <>
       <SeriesSettingsMenu
+        seriesId={series.id}
         seriesSlug={series.slug}
+        seriesName={series.name}
         libraryId={libraryId}
         firstIssueId={firstIssueId}
         onEdit={() => setEditOpen(true)}

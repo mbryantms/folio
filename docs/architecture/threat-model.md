@@ -72,6 +72,8 @@ Each line is a trust boundary. Anything inside the dotted box is the same trust 
 
 ### OPDS (external readers)
 
+Accepted auth carriers on `/opds/*`: cookie session (web preview), `Authorization: Bearer <jwt|app_…>`, and `Authorization: Basic <b64(user:app_…)>`. Basic is restricted to `app_…` tokens — a raw JWT carried via Basic is rejected by the extractor (clients log/leak the `Authorization` header in places they shouldn't).
+
 | Threat | Mitigation |
 |---|---|
 | Brute-force on Basic Auth | argon2id + pepper; failed-auth bucket (§17.7); 15 min OPDS-only IP lockout. |

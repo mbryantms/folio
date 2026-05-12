@@ -2,15 +2,14 @@
 
 import {
   Bookmark,
+  BookmarkPlus,
   CheckCircle2,
   Circle,
   Download,
   EyeOff,
   Folder,
-  Heart,
   Image as ImageIcon,
   Images,
-  ListPlus,
   Loader2,
   Pencil,
   RefreshCw,
@@ -18,7 +17,13 @@ import {
   Settings2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { toast } from "sonner";
 
+import {
+  AddToCollectionDialog,
+  type AddToCollectionTarget,
+} from "@/components/collections/AddToCollectionDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -34,15 +39,25 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  useAddCollectionEntry,
+  useCreateMarker,
+  useDeleteMarker,
   useGenerateIssuePageMap,
   useRegenerateIssueCover,
+  useRemoveCollectionEntry,
   useScanIssue,
   useUpsertIssueProgress,
 } from "@/lib/api/mutations";
-import { useMe } from "@/lib/api/queries";
+import {
+  useCollections,
+  useIssueMarkers,
+  useMe,
+} from "@/lib/api/queries";
 import { readerUrl } from "@/lib/urls";
 import type { IssueDetailView } from "@/lib/api/types";
 import type { ReadState } from "@/lib/reading-state";
+
+const WANT_TO_READ_KEY = "want_to_read";
 
 /**
  * Consolidated actions menu for the issue page. Groups read-state +
@@ -86,6 +101,74 @@ export function IssueSettingsMenu({
     issue.slug,
     issue.library_id,
   );
+
+  // Bookmark = page-0 marker with kind='bookmark'. If one already exists,
+  // the menu item toggles it off; otherwise it creates one.
+  const issueMarkers = useIssueMarkers(issue.id);
+  const existingBookmark = issueMarkers.data?.items.find(
+    (m) => m.kind === "bookmark" && m.page_index === 0,
+  );
+  const createMarker = useCreateMarker();
+  const deleteMarker = useDeleteMarker(
+    existingBookmark?.id ?? "",
+    issue.id,
+  );
+  const toggleBookmark = () => {
+    if (existingBookmark) {
+      deleteMarker.mutate(undefined, {
+        onSuccess: () => toast.success("Bookmark removed"),
+      });
+    } else {
+      createMarker.mutate(
+        { issue_id: issue.id, page_index: 0, kind: "bookmark" },
+        {
+          onSuccess: () => toast.success("Bookmarked"),
+        },
+      );
+    }
+  };
+
+  // Want to Read is the per-user auto-seeded collection.
+  const collections = useCollections();
+  const wantToRead = collections.data?.find(
+    (c) => c.system_key === WANT_TO_READ_KEY,
+  );
+  const wtrId = wantToRead?.id ?? "";
+  const addToWtr = useAddCollectionEntry(wtrId);
+  const removeFromWtr = useRemoveCollectionEntry(wtrId);
+  const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
+
+  const issueLabel = issue.title ?? `Issue ${issue.number ?? ""}`.trim();
+
+  const addToReadingList = () => {
+    if (!wtrId) {
+      toast.error("Want to Read isn't ready yet — try again in a moment.");
+      return;
+    }
+    addToWtr.mutate(
+      { entry_kind: "issue", ref_id: issue.id },
+      {
+        onSuccess: (entry) => {
+          if (!entry) {
+            toast.success(`Added "${issueLabel}" to Want to Read`);
+            return;
+          }
+          toast.success(`Added "${issueLabel}" to Want to Read`, {
+            action: {
+              label: "Undo",
+              onClick: () => removeFromWtr.mutate({ entryId: entry.id }, {}),
+            },
+          });
+        },
+      },
+    );
+  };
+
+  const collectionTarget: AddToCollectionTarget = {
+    entry_kind: "issue",
+    ref_id: issue.id,
+    label: issueLabel,
+  };
 
   const finishedPage = Math.max(0, (issue.page_count ?? 1) - 1);
   // "Read from beginning" only makes sense when the issue is readable.
@@ -132,9 +215,13 @@ export function IssueSettingsMenu({
     progress.isPending ||
     scan.isPending ||
     regenerateCover.isPending ||
-    generatePageMap.isPending;
+    generatePageMap.isPending ||
+    createMarker.isPending ||
+    deleteMarker.isPending ||
+    addToWtr.isPending;
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" disabled={busy}>
@@ -169,36 +256,37 @@ export function IssueSettingsMenu({
             <Circle className="mr-2 h-4 w-4" />
             Mark as unread
           </DropdownMenuItem>
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem
+            onSelect={toggleBookmark}
+            disabled={createMarker.isPending || deleteMarker.isPending}
+          >
             <Bookmark className="mr-2 h-4 w-4" />
-            Bookmark
-            <SoonBadge />
+            {existingBookmark ? "Remove bookmark" : "Bookmark"}
           </DropdownMenuItem>
         </DropdownMenuGroup>
 
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Library</DropdownMenuLabel>
         <DropdownMenuGroup>
-          <DropdownMenuItem disabled>
-            <ListPlus className="mr-2 h-4 w-4" />
-            Add to reading list
-            <SoonBadge />
+          <DropdownMenuItem
+            onSelect={addToReadingList}
+            disabled={!wtrId || addToWtr.isPending}
+          >
+            <BookmarkPlus className="mr-2 h-4 w-4" />
+            Add to Want to Read
           </DropdownMenuItem>
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem onSelect={() => setCollectionDialogOpen(true)}>
             <Folder className="mr-2 h-4 w-4" />
-            Add to collection
-            <SoonBadge />
+            Add to collection…
           </DropdownMenuItem>
-          <DropdownMenuItem disabled>
-            <Heart className="mr-2 h-4 w-4" />
-            Favorite
-            <SoonBadge />
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled>
-            <Download className="mr-2 h-4 w-4" />
-            Download
-            <SoonBadge />
-          </DropdownMenuItem>
+          {canRead && (
+            <DropdownMenuItem asChild>
+              <a href={`/api/opds/v1/issues/${issue.id}/file`} download>
+                <Download className="mr-2 h-4 w-4" />
+                Download
+              </a>
+            </DropdownMenuItem>
+          )}
         </DropdownMenuGroup>
 
         {isAdmin && (
@@ -257,13 +345,11 @@ export function IssueSettingsMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-function SoonBadge() {
-  return (
-    <span className="border-border text-muted-foreground ml-auto rounded-sm border px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase">
-      Soon
-    </span>
+    <AddToCollectionDialog
+      open={collectionDialogOpen}
+      onOpenChange={setCollectionDialogOpen}
+      target={collectionTarget}
+    />
+    </>
   );
 }
