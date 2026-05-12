@@ -1,0 +1,92 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev: services up",
+      "type": "shell",
+      "command": "just dev-services-up",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "dev: services down",
+      "type": "shell",
+      "command": "just dev-services-down",
+      "problemMatcher": []
+    },
+    {
+      "label": "dev: full stack",
+      "type": "shell",
+      "command": "just dev",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "rust: check",
+      "type": "shell",
+      "command": "cargo check --workspace --all-targets",
+      "group": "build",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "rust: clippy",
+      "type": "shell",
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "group": "build",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "rust: fmt",
+      "type": "shell",
+      "command": "cargo fmt --all",
+      "problemMatcher": []
+    },
+    {
+      "label": "rust: test",
+      "type": "shell",
+      "command": "cargo test --workspace",
+      "group": "test",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "web: typecheck",
+      "type": "shell",
+      "command": "pnpm --filter web run typecheck",
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "web: lint",
+      "type": "shell",
+      "command": "pnpm --filter web run lint",
+      "problemMatcher": ["$eslint-stylish"]
+    },
+    {
+      "label": "web: test",
+      "type": "shell",
+      "command": "pnpm --filter web run test",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "web: format",
+      "type": "shell",
+      "command": "pnpm --filter web run format",
+      "problemMatcher": []
+    },
+    {
+      "label": "openapi: regenerate",
+      "type": "shell",
+      "command": "just openapi",
+      "problemMatcher": []
+    },
+    {
+      "label": "check all",
+      "dependsOrder": "parallel",
+      "dependsOn": ["rust: check", "rust: clippy", "rust: test", "web: typecheck", "web: lint", "web: test"],
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug server (cargo run -p server)",
+      "cargo": {
+        "args": ["build", "--bin=server", "--package=server"],
+        "filter": { "name": "server", "kind": "bin" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "info,server=debug,tower_http=debug",
+        "RUST_BACKTRACE": "1"
+      },
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests (server)",
+      "cargo": {
+        "args": ["test", "--no-run", "--lib", "--package=server"],
+        "filter": { "name": "server", "kind": "lib" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": { "RUST_BACKTRACE": "1" },
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug integration test (current file)",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--package=server",
+          "--test=${fileBasenameNoExtension}"
+        ],
+        "filter": { "kind": "test" }
+      },
+      "args": ["--nocapture"],
+      "cwd": "${workspaceFolder}",
+      "env": { "RUST_BACKTRACE": "1" },
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug Next.js dev server",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "web", "dev"],
+      "cwd": "${workspaceFolder}",
+      "skipFiles": ["<node_internals>/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug vitest (current file)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "web", "exec", "vitest", "run", "${relativeFile}"],
+      "cwd": "${workspaceFolder}",
+      "skipFiles": ["<node_internals>/**"],
+      "console": "integratedTerminal"
+    }
+  ]
+}

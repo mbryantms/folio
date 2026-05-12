@@ -1,0 +1,176 @@
+{
+  // ───── Rust ─────
+  "rust-analyzer.cargo.features": "all",
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": ["--workspace", "--all-targets"],
+  "rust-analyzer.checkOnSave": true,
+  "rust-analyzer.imports.granularity.group": "crate",
+  "rust-analyzer.imports.prefix": "crate",
+  "rust-analyzer.inlayHints.parameterHints.enable": true,
+  "rust-analyzer.inlayHints.typeHints.enable": true,
+  "rust-analyzer.inlayHints.chainingHints.enable": true,
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "rust-analyzer.procMacro.enable": true,
+
+  // ───── Editor ─────
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": false,
+  "editor.tabSize": 2,
+  "editor.detectIndentation": false,
+  "editor.rulers": [100],
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": "active",
+  "editor.inlineSuggest.enabled": true,
+  "editor.stickyScroll.enabled": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit",
+    "source.organizeImports": "never"
+  },
+
+  // ───── Per-language formatters ─────
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.tabSize": 4
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[javascriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[css]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[markdown]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.wordWrap": "on"
+  },
+  "[toml]": {
+    "editor.defaultFormatter": "tamasfe.even-better-toml"
+  },
+
+  // ───── Tailwind ─────
+  "tailwindCSS.experimental.classRegex": [
+    ["cn\\(([^)]*)\\)", "[\"'`]([^\"'`]*)[\"'`]"]
+  ],
+  "tailwindCSS.includeLanguages": {
+    "typescript": "javascript",
+    "typescriptreact": "javascript"
+  },
+
+  // ───── ESLint flat config ─────
+  "eslint.useFlatConfig": true,
+  "eslint.workingDirectories": [{ "pattern": "web" }],
+  "eslint.validate": [
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact"
+  ],
+
+  // ───── Prettier ─────
+  "prettier.requireConfig": true,
+  "prettier.configPath": "web/.prettierrc.json",
+
+  // ───── TypeScript ─────
+  "typescript.tsdk": "web/node_modules/typescript/lib",
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "typescript.suggest.autoImports": true,
+  "javascript.preferences.importModuleSpecifier": "non-relative",
+
+  // ───── Files ─────
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "files.trimFinalNewlines": true,
+  "files.exclude": {
+    "**/target": true,
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.dev-data": true,
+    "**/.turbo": true,
+    "**/.playwright-mcp": true
+  },
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/.dev-data/**": true
+  },
+  "search.exclude": {
+    "**/target": true,
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.dev-data": true,
+    "**/pnpm-lock.yaml": true,
+    "**/lib/api/openapi.json": true,
+    "**/lib/api/types.ts": true
+  },
+  "search.useIgnoreFiles": true,
+
+  // ───── Git ─────
+  "git.autofetch": true,
+  "git.confirmSync": false,
+  "git.enableSmartCommit": false,
+  "git.suggestSmartCommit": false,
+
+  // ───── Spell check (cspell) ─────
+  "cSpell.words": [
+    "apalis",
+    "axum",
+    "blake3",
+    "comicinfo",
+    "comicvine",
+    "cronstrue",
+    "csrf",
+    "dotenvy",
+    "figment",
+    "globset",
+    "hkdf",
+    "lru",
+    "mtbry",
+    "natord",
+    "nextjs",
+    "oidc",
+    "openapi",
+    "openidconnect",
+    "opentelemetry",
+    "pnpm",
+    "rustls",
+    "seaorm",
+    "shadcn",
+    "tanstack",
+    "thiserror",
+    "tokio",
+    "tracing",
+    "tsbuildinfo",
+    "turbopack",
+    "utoipa",
+    "vitest",
+    "walkdir",
+    "zustand"
+  ],
+
+  // ───── Even Better TOML ─────
+  "evenBetterToml.formatter.alignEntries": false,
+  "evenBetterToml.formatter.reorderKeys": false,
+
+  // ───── Vitest ─────
+  "vitest.workspaceConfig": "web/vitest.config.ts",
+
+  // ───── Terminal ─────
+  "terminal.integrated.scrollback": 10000
+}

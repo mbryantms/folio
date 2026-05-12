@@ -1,0 +1,33 @@
+{
+  "recommendations": [
+    // Rust
+    "rust-lang.rust-analyzer",
+    "tamasfe.even-better-toml",
+    "vadimcn.vscode-lldb",
+    "fill-labs.dependi",
+
+    // Web (Next.js / React / Tailwind)
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "bradlc.vscode-tailwindcss",
+    "yoavbls.pretty-ts-errors",
+    "vitest.explorer",
+    "stylelint.vscode-stylelint",
+
+    // Editor / DX
+    "editorconfig.editorconfig",
+    "usernamehw.errorlens",
+    "streetsidesoftware.code-spell-checker",
+    "gruntfuggly.todo-tree",
+    "eamodio.gitlens",
+    "github.vscode-pull-request-github",
+    "skellock.just",
+
+    // Containers / infra
+    "ms-azuretools.vscode-docker",
+
+    // Claude Code
+    "anthropic.claude-code"
+  ],
+  "unwantedRecommendations": []
+}

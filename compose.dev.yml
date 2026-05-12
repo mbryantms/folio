@@ -1,0 +1,58 @@
+# Dev services only — the app itself runs natively (cargo watch / pnpm dev).
+# See §13.3.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: comic
+      POSTGRES_PASSWORD: comic
+      POSTGRES_DB: comic_reader
+    # pg_stat_statements is loaded at startup so the postgres MCP / psql can
+    # inspect query latency during a live scan (see docs/dev/scanner-perf.md).
+    # `track=all` covers nested statements (sea-orm sometimes wraps).
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ./.dev-data/postgres:/var/lib/postgresql/data
+      - ./.dev-data/pg-init/:/docker-entrypoint-initdb.d/:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U comic -d comic_reader"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Published on host port 6380 so it doesn't collide with a system valkey/redis
+  # daemon already on 6379 (common on Arch / Debian where the package ships an
+  # auto-enabled systemd unit). The container itself still listens internally
+  # on 6379 — the mapping is host:container.
+  # `.env` sets COMIC_REDIS_URL=redis://localhost:6380 to match.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Mock OIDC issuer so devs don't need Authentik locally.
+  # Dex: tiny, single-binary, supports OIDC out of the box.
+  dex:
+    image: ghcr.io/dexidp/dex:v2.41.1
+    restart: unless-stopped
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "127.0.0.1:5556:5556"
+    volumes:
+      - ./.dev-data/dex-config.yaml:/etc/dex/config.yaml:ro

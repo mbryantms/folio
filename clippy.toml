@@ -1,0 +1,3 @@
+msrv = "1.91"
+avoid-breaking-exported-api = false
+disallowed-methods = []

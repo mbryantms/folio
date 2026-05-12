@@ -1,0 +1,132 @@
+# Production compose for Folio. Brings up four services:
+#
+#   app       — Rust axum server (image: folio).         Bound to 127.0.0.1:8080.
+#   web       — Next.js frontend  (image: folio-web).    Bound to 127.0.0.1:3000.
+#   postgres  — schema + user data + auth.               Internal-only.
+#   redis     — apalis job queue + rate-limit counters.  Internal-only.
+#
+# TLS termination + path routing is the operator's responsibility (Caddy /
+# nginx / Traefik). The two app services bind to loopback so they're not
+# directly reachable from the network; only the reverse proxy is.
+#
+# Reverse-proxy templates live under `docs/install/`:
+#   - caddy.md   (default; auto Let's Encrypt)
+#   - nginx.md
+#   - traefik.md
+#   - lan-https-mkcert.md   (homelab without a public domain)
+#
+# Required env (typically via .env file alongside this compose):
+#   REPO_OWNER                — GitHub user/org that owns the GHCR image
+#   POSTGRES_PASSWORD         — Postgres password for the `comic` user
+#   COMIC_LIBRARY_HOST_PATH   — absolute path on the host containing your library
+#   COMIC_PUBLIC_URL          — public HTTPS URL (e.g. https://comics.example.com)
+# Optional:
+#   TAG                       — image tag to pull (default: latest)
+
+services:
+  # One-shot: makes sure the `comic_data` volume is writable by the
+  # distroless nonroot user (UID 65532). On a fresh deploy the named
+  # volume is created root-owned, which prevents the server from
+  # creating its `secrets/` subdirectory on first boot. Runs to
+  # completion in <1s and exits 0; `app.depends_on` ties the boot order.
+  app-init:
+    image: alpine:3
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - "mkdir -p /data && chown -R 65532:65532 /data && chmod 0700 /data"
+    volumes:
+      - comic_data:/data
+
+  app:
+    image: ghcr.io/${REPO_OWNER:?REPO_OWNER is required (see .env.example)}/folio:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      app-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Internal service names — postgres/redis are on the same compose network.
+      COMIC_DATABASE_URL: postgres://comic:${POSTGRES_PASSWORD:?required}@postgres:5432/comic_reader
+      COMIC_REDIS_URL: redis://redis:6379
+      # `COMIC_TRUSTED_PROXIES` lets the rate limiter trust X-Forwarded-For
+      # from a reverse proxy on the docker bridge. Without this, every
+      # request would appear to come from the gateway IP and the limiter
+      # would fail open.
+      COMIC_TRUSTED_PROXIES: ${COMIC_TRUSTED_PROXIES:-172.16.0.0/12}
+    volumes:
+      - ${COMIC_LIBRARY_HOST_PATH:?required}:/library:ro
+      - comic_data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "/app/server", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  web:
+    image: ghcr.io/${REPO_OWNER:?REPO_OWNER is required (see .env.example)}/folio-web:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      # `NEXT_PUBLIC_API_URL` is the value the Next dev/build picks up for
+      # the API rewrite in `web/next.config.ts`. In compose the app is on
+      # the internal network as `app:8080`. The user's browser talks only
+      # to the reverse proxy — never directly to this URL.
+      NEXT_PUBLIC_API_URL: http://app:8080
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      # distroless-nodejs has /nodejs/bin/node on PATH. A tiny inline GET to
+      # `/` proves the Next process is serving HTML.
+      test:
+        - "CMD"
+        - "/nodejs/bin/node"
+        - "-e"
+        - "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: comic
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: comic_reader
+    volumes:
+      - comic_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U comic -d comic_reader"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1000", "--appendonly", "yes"]
+    volumes:
+      - comic_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  comic_data:
+  comic_postgres:
+  comic_redis:

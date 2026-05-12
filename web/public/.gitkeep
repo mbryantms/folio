@@ -1,0 +1,4 @@
+# Next.js serves any files placed here at the site root (e.g. /favicon.ico,
+# /robots.txt, /manifest.webmanifest). Keeping this directory present so the
+# Docker build's COPY step succeeds even when no static assets are checked
+# in. Operators can drop their own files here without changes elsewhere.

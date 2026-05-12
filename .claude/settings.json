@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(cargo check *)",
+      "Bash(cargo build *)",
+      "Bash(cargo test *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo run *)",
+      "Bash(cargo doc *)",
+      "Bash(cargo tree *)",
+
+      "Bash(pnpm --version)",
+      "Bash(pnpm install)",
+      "Bash(pnpm --filter web run typecheck)",
+      "Bash(pnpm --filter web run lint)",
+      "Bash(pnpm --filter web run lint:fix)",
+      "Bash(pnpm --filter web run format)",
+      "Bash(pnpm --filter web run format:check)",
+      "Bash(pnpm --filter web run test)",
+      "Bash(pnpm --filter web run build)",
+      "Bash(pnpm --recursive run *)",
+      "Bash(pnpm exec *)",
+
+      "Bash(just --list)",
+      "Bash(just --version)",
+      "Bash(just dev-services-up *)",
+      "Bash(just dev-services-down)",
+      "Bash(just dev-services-logs)",
+      "Bash(just dev-status *)",
+      "Bash(just dev-stop *)",
+      "Bash(just openapi *)",
+      "Bash(just migrate *)",
+      "Bash(just test *)",
+
+      "Bash(docker --version)",
+      "Bash(docker compose -f compose.dev.yml *)",
+
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git fetch*)",
+      "Bash(git stash list)",
+      "Bash(git ls-files*)",
+
+      "Bash(curl -sS http://localhost:3000/*)",
+      "Bash(curl -sS http://localhost:8080/*)",
+      "Bash(curl -sS -i http://127.0.0.1:8080/)",
+      "Bash(curl -s -o /dev/null -w * http://localhost:*)",
+
+      "WebSearch",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:doc.rust-lang.org)",
+      "WebFetch(domain:nextjs.org)",
+      "WebFetch(domain:react.dev)",
+      "WebFetch(domain:tailwindcss.com)",
+      "WebFetch(domain:tanstack.com)",
+      "WebFetch(domain:context7.com)",
+      "WebFetch(domain:github.com)",
+
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_type",
+      "mcp__playwright__browser_fill_form",
+      "mcp__playwright__browser_console_messages",
+      "mcp__playwright__browser_network_requests",
+      "mcp__playwright__browser_network_request",
+      "mcp__playwright__browser_evaluate",
+      "mcp__postgres__list_schemas",
+      "mcp__postgres__list_objects",
+      "mcp__postgres__get_object_details",
+      "mcp__postgres__execute_sql",
+      "mcp__postgres__explain_query",
+      "mcp__postgres__analyze_query_indexes",
+      "mcp__postgres__analyze_workload_indexes",
+      "mcp__postgres__analyze_db_health",
+      "mcp__postgres__get_top_queries"
+    ],
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean -fd*)",
+      "Bash(rm -rf /*)",
+      "Bash(cargo publish *)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git commit *)",
+      "Bash(docker compose down -v *)",
+      "Bash(just dev-services-reset *)",
+      "Bash(just dev-fresh *)"
+    ]
+  },
+  "env": {
+    "RUST_BACKTRACE": "1"
+  }
+}

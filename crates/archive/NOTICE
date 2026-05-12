@@ -1,0 +1,14 @@
+This crate vendors `unrar` (Rust bindings) for CBR (RAR) support.
+
+Per the upstream license terms, the underlying `unrar` C source from
+RARLAB is distributed under terms that permit decompression in third-party
+software. The Rust crate (`unrar` 0.5) is dual-licensed MIT/Apache.
+
+Attribution required by the upstream project:
+  - "RAR" and "WinRAR" are registered trademarks of Alexander Roshal
+  - The unrar source is © 1993-2024 Alexander Roshal
+  - Original distribution: https://www.rarlab.com/rar_add.htm
+
+This NOTICE file satisfies the redistribution requirement of the unrar
+license. No attempt is made to use the source for compression — read-only
+decompression only, per the license's permitted use clause.

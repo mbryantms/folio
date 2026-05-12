@@ -1,0 +1,113 @@
+# Self-contained smoke test for the production images.
+#
+# Invocation:
+#   docker compose -f compose.test.yml up --abort-on-container-exit --exit-code-from smoke
+#
+# This is the verification matrix that `just docker-test` runs against
+# locally-built images (`folio:dev` + `folio-web:dev` from `just docker-build`).
+# It mirrors `compose.prod.yml` topology but with empty volumes + a smoke
+# service so the run doesn't depend on the operator's real library / .env.
+
+services:
+  # See `compose.prod.yml` for rationale — distroless nonroot can't write
+  # a freshly-created named volume without this fixup.
+  app-init:
+    image: alpine:3
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - "mkdir -p /data && chown -R 65532:65532 /data && chmod 0700 /data"
+    volumes:
+      - smoke_data:/data
+
+  app:
+    image: folio:dev
+    depends_on:
+      app-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      COMIC_DATABASE_URL: postgres://comic:smoke@postgres:5432/comic_reader
+      COMIC_REDIS_URL: redis://redis:6379
+      COMIC_PUBLIC_URL: http://localhost:8080
+      COMIC_AUTH_MODE: local
+      COMIC_AUTO_MIGRATE: "true"
+      COMIC_TRUSTED_PROXIES: "172.16.0.0/12"
+    volumes:
+      - smoke_library:/library:ro
+      - smoke_data:/data
+    healthcheck:
+      test: ["CMD", "/app/server", "--healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  web:
+    image: folio-web:dev
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_URL: http://app:8080
+      NODE_ENV: production
+    healthcheck:
+      test:
+        - "CMD"
+        - "/nodejs/bin/node"
+        - "-e"
+        - "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: comic
+      POSTGRES_PASSWORD: smoke
+      POSTGRES_DB: comic_reader
+    tmpfs: ["/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U comic -d comic_reader"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    tmpfs: ["/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  smoke:
+    image: curlimages/curl:latest
+    depends_on:
+      app:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -euc
+      - |
+        echo "==> /healthz"
+        curl -fsS http://app:8080/healthz | grep -q '"status":"ok"'
+        echo "==> /readyz"
+        curl -fsS http://app:8080/readyz  | grep -q '"status":"ready"'
+        echo "==> web /sign-in renders HTML"
+        curl -fsS -H 'Accept: text/html' http://web:3000/sign-in | grep -q '<form'
+        echo "==> smoke OK"
+    restart: "no"
+
+volumes:
+  smoke_library:
+  smoke_data:

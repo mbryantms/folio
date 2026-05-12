@@ -1,0 +1,16 @@
+[package]
+name = "entity"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sea-orm = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+shared = { path = "../shared" }
+
+[lints]
+workspace = true

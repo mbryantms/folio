@@ -1,0 +1,27 @@
+[package]
+name = "archive"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+shared = { path = "../shared" }
+zip = { workspace = true }
+infer = { workspace = true }
+natord = { workspace = true }
+
+# Multi-format comic-archive readers (Library Scanner v1, Milestone 12).
+# unrar 0.5 is the pure-Rust bindings crate; license requires NOTICE attribution.
+unrar = { workspace = true }
+sevenz-rust = { workspace = true }
+tar = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+tar = { workspace = true }
+
+[lints]
+workspace = true

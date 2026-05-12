@@ -1,0 +1,11 @@
+{
+  "app": {
+    "name": "Comic Reader",
+    "tagline": "Self-hostable. Multi-platform. Yours."
+  },
+  "home": {
+    "hello": "Hello, world.",
+    "phase": "Phase 0 — Foundation",
+    "signIn": "Sign in"
+  }
+}

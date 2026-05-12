@@ -1,0 +1,139 @@
+[package]
+name = "server"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[dependencies]
+# Web stack
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tower_governor = { workspace = true }
+governor = { workspace = true }
+hyper = { workspace = true }
+
+# Async / concurrency
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# DB
+sea-orm = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Used by the FormOrJson extractor (progressive-enhancement auth forms).
+serde_urlencoded = "0.7"
+
+# IDs / hashing / crypto
+uuid = { workspace = true }
+blake3 = { workspace = true }
+argon2 = { workspace = true }
+rand = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+jsonwebtoken = { workspace = true }
+oauth2 = { workspace = true }
+openidconnect = { workspace = true }
+ed25519-dalek = { workspace = true }
+base64 = { workspace = true }
+data-encoding = { workspace = true }
+constant_time_eq = { workspace = true }
+# Used to urlencode error code + message into 303 redirect targets on the
+# progressive-enhancement form-fallback path of the auth handlers.
+urlencoding = "2"
+zeroize = { workspace = true }
+time = { workspace = true }
+lettre = { workspace = true }
+walkdir = { workspace = true }
+infer = { workspace = true }
+image = { workspace = true }
+webp = { workspace = true }
+fast_image_resize = { workspace = true }
+rayon = { workspace = true }
+lru = { workspace = true }
+globset = { workspace = true }
+
+# Background jobs
+apalis = { workspace = true }
+apalis-redis = { workspace = true }
+redis = { workspace = true }
+tokio-cron-scheduler = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
+
+# Workspace crates (additional)
+parsers = { path = "../parsers" }
+archive = { path = "../archive" }
+
+# Time
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+
+# Errors / config
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+figment = { workspace = true }
+dotenvy = { workspace = true }
+
+# Tracing / metrics
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-stdout = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+
+# OpenAPI
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+
+# Misc
+once_cell = { workspace = true }
+url = { workspace = true }
+slug = { workspace = true }
+reqwest = { workspace = true }
+ipnet = { workspace = true }
+
+# Used solely for posix_fadvise on Unix (perf hint to kernel readahead before
+# BLAKE3-hashing a CBZ). Already a transitive dep via tokio/sqlx; pulling it
+# direct keeps the call site clean.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Workspace crates
+entity = { path = "../entity" }
+migration = { path = "../migration" }
+shared = { path = "../shared" }
+
+[dev-dependencies]
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
+reqwest = { workspace = true }
+insta = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = "3"
+tower = { workspace = true }
+serde_json = { workspace = true }
+zip = { workspace = true }
+filetime = "0.2"
+# OIDC integration test harness (M6) — mock OP via wiremock, RSA keys for
+# id_token signing. Kept dev-only so production builds don't pull rsa.
+wiremock = "0.6"
+rsa = { version = "0.9", features = ["sha2", "pem"] }
+rand = { workspace = true }
+
+[lints]
+workspace = true

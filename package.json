@@ -1,0 +1,24 @@
+{
+  "name": "comic-reader",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Self-hostable comic reader (workspace root)",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "lint": "pnpm --recursive run lint",
+    "lint:fix": "pnpm --recursive run lint:fix",
+    "format": "pnpm --recursive run format",
+    "format:check": "pnpm --recursive run format:check",
+    "typecheck": "pnpm --recursive run typecheck",
+    "test": "pnpm --recursive run test",
+    "openapi:gen": "pnpm --filter web run openapi:gen"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}

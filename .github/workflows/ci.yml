@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-check:
+    name: Rust — fmt / clippy / test
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: comic
+          POSTGRES_PASSWORD: comic
+          POSTGRES_DB: comic_reader_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.1
+        with:
+          components: rustfmt,clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-features
+        env:
+          COMIC_DATABASE_URL: postgres://comic:comic@localhost:5432/comic_reader_test
+          COMIC_REDIS_URL: redis://localhost:6379
+
+  rust-audit:
+    name: Rust — cargo deny / audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.1
+      - uses: Swatinem/rust-cache@v2
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked || true
+          cargo audit
+
+  web-check:
+    name: Web — lint / typecheck / test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter web run lint
+      - run: pnpm --filter web run typecheck
+      - run: pnpm --filter web run test
+      - name: Reader bundle budget
+        run: pnpm --filter web run check-bundle-size
+      - name: Install Playwright browsers
+        run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: a11y (axe-core)
+        run: pnpm --filter web run test:e2e
+      - name: pnpm audit
+        run: pnpm audit --audit-level=high || true
+
+  openapi-drift:
+    name: OpenAPI — snapshot + breaking-change check
+    runs-on: ubuntu-24.04
+    needs: [rust-check]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.91.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Generate spec from PR
+        run: cargo run --release --bin server -- --emit-openapi > /tmp/pr-openapi.json
+      - name: Snapshot match
+        run: |
+          if [ -f web/lib/api/openapi.json ]; then
+            diff -q /tmp/pr-openapi.json web/lib/api/openapi.json || \
+              (echo "::error::OpenAPI spec drifted from web/lib/api/openapi.json. Run 'just openapi'." && exit 1)
+          fi
+      - name: oasdiff vs main
+        if: github.event_name == 'pull_request'
+        run: |
+          BASE_REF="${{ github.base_ref }}"
+          git fetch origin "$BASE_REF"
+          git checkout "origin/$BASE_REF" -- web/lib/api/openapi.json 2>/dev/null || \
+            (echo "no baseline spec on $BASE_REF; skipping oasdiff" && exit 0)
+          curl -fsSL https://raw.githubusercontent.com/Tufin/oasdiff/main/install.sh | sh
+          ./oasdiff breaking web/lib/api/openapi.json /tmp/pr-openapi.json || \
+            ([[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}" == "true" ]] && \
+              echo "::warning::Breaking changes detected (acknowledged via label)" || \
+              (echo "::error::Breaking API changes — add 'breaking-change' label and update CHANGELOG.md" && exit 1))
+
+  docker-build:
+    name: Docker — multi-arch build
+    runs-on: ubuntu-24.04
+    needs: [rust-check, web-check]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: folio
+            dockerfile: Dockerfile
+          - image: folio-web
+            dockerfile: web/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: ${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

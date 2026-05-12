@@ -1,0 +1,202 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/server",
+    "crates/entity",
+    "crates/migration",
+    "crates/parsers",
+    "crates/archive",
+    "crates/shared",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.91"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/example/comic-reader"
+
+# Lints applied to every workspace member. Member crates opt in with
+# `[lints] workspace = true`. Levels chosen to enforce hygiene without
+# breaking on existing code; tighten over time.
+[workspace.lints.rust]
+# `warn` rather than `deny` because edition 2024 made `std::env::set_var`
+# unsafe; we have one well-justified call in migration/src/main.rs. Tighten
+# to `deny` once that's addressed.
+unsafe_code = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+# Sea-orm's MigrationTrait is defined with elided lifetimes via async-trait;
+# making them explicit at the impl site triggers E0195 (early- vs late-bound
+# mismatch). Allow the underlying lint workspace-wide.
+elided_lifetimes_in_paths = "allow"
+unreachable_pub = "warn"
+# `missing_debug_implementations` is library-author-grade strictness; for an
+# application crate it's mostly noise on internal state types. Re-enable if/when
+# we extract reusable libraries.
+
+[workspace.lints.clippy]
+# Categories
+all = { level = "warn", priority = -1 }
+# Targeted hygiene rules
+dbg_macro = "warn"
+todo = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+unimplemented = "warn"
+# Allow patterns that show up legitimately in tests / sea-orm code
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.41", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP / web
+axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
+axum-extra = { version = "0.10", features = ["cookie", "cookie-private", "cookie-signed", "typed-header"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip", "compression-zstd", "cors", "set-header", "request-id", "timeout"] }
+hyper = { version = "1.5", features = ["full"] }
+
+# OpenAPI
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.2"
+
+# DB
+sea-orm = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-uuid", "with-chrono", "with-json"] }
+sea-orm-migration = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "uuid", "chrono", "json"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_with = "3"
+
+# IDs & hashing
+uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
+blake3 = "1.5"
+argon2 = { version = "0.5", features = ["std"] }
+rand = "0.8"
+hmac = "0.12"
+sha2 = "0.10"
+
+# Auth
+jsonwebtoken = "9"
+oauth2 = "4.4"
+openidconnect = "3.5"
+ed25519-dalek = { version = "2.1", features = ["rand_core", "pkcs8", "pem"] }
+base64 = "0.22"
+# Base32 (no-padding) for OPDS app-password plaintexts — keeps tokens
+# header/URL safe without the `+`/`/` characters from base64 that some
+# clients mangle on paste.
+data-encoding = "2.6"
+constant_time_eq = "0.3"
+zeroize = { version = "1.8", features = ["derive"] }
+time = "0.3"
+
+# Email
+# `rustls-tls` so we don't pull native-tls/OpenSSL into the build.
+# `smtp-transport` is the default SMTP/SMTPS client; `pool` lets us
+# reuse connections across the handful of recovery-flow emails. The
+# `builder` feature gives us `MessageBuilder` for type-safe construction.
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "rustls-tls", "tokio1", "tokio1-rustls-tls", "pool"] }
+
+# Library scan / archive
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+lru = "0.12"
+walkdir = "2.5"
+tempfile = "3"
+notify = "7.0"
+notify-debouncer-full = "0.4"
+natord = "1.0.9"
+mime_guess = "2.0"
+infer = "0.16"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+# Lossy WebP encoder. The `image` crate's WebP codec is lossless-only at v0.25,
+# which produces files 5-10× larger than libwebp at q=80 — unacceptable for
+# the cover/strip thumbnail pipeline. `webp` bundles libwebp-sys so no system
+# package is required (CI/Docker still works), at a ~20s first-build cost.
+webp = "0.3"
+# SIMD-accelerated resize (AVX2 / NEON). Drops in for `image::imageops::resize`
+# in the thumbnail pipeline — the Lanczos3 path is the dominant cost for cover
+# generation, and fir is 3-5× faster than the `image` crate's scalar resize on
+# typical 3000×2000 comic pages. Pure-Rust, no native dep beyond what the
+# `webp` crate already pulls.
+fast_image_resize = "5"
+# Per-page work-stealing pool for the strip pipeline. A 30-page issue used to
+# be a serial loop (decode → resize → encode, repeat); rayon fans the
+# CPU-bound stages out across cores once the serial archive read has filled
+# the byte buffer.
+rayon = "1.10"
+globset = "0.4"
+unrar = "0.5"
+sevenz-rust = "0.6"
+tar = "0.4"
+
+# Background jobs (Redis-backed via apalis)
+apalis = { version = "0.6", features = ["limit", "tracing"] }
+apalis-redis = "0.6"
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+tokio-cron-scheduler = "0.13"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+
+# Tracing / observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-opentelemetry = "0.27"
+opentelemetry = "0.26"
+opentelemetry_sdk = { version = "0.26", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.26", features = ["grpc-tonic"] }
+opentelemetry-stdout = "0.26"
+
+# Metrics
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+
+# Errors
+thiserror = "2"
+anyhow = "1"
+
+# Config
+figment = { version = "0.10", features = ["env", "toml"] }
+dotenvy = "0.15"
+
+# Rate limiting
+tower_governor = { version = "0.8", features = ["axum"] }
+governor = "0.10"
+
+# Misc
+once_cell = "1.20"
+url = "2.5"
+percent-encoding = "2.3"
+quick-xml = { version = "0.36", features = ["serialize"] }
+slug = "0.1"
+ipnet = "2.10"
+
+# Test
+testcontainers = { version = "0.23" }
+testcontainers-modules = { version = "0.11", features = ["postgres", "redis"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+insta = { version = "1.41", features = ["json"] }
+proptest = "1.5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+# Keep line-table debug info so `cargo flamegraph` resolves function names.
+# Negligible binary growth (~1-3%) and zero runtime cost; the prod
+# distribution build can override with strip=true if needed.
+strip = "none"
+debug = "line-tables-only"
+
+[profile.dev]
+opt-level = 0
+debug = 1

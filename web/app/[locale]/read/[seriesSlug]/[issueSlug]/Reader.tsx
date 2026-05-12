@@ -1,0 +1,922 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useGesture } from "@use-gesture/react";
+import { toast } from "sonner";
+import { useReaderStore, type FitMode } from "@/lib/reader/store";
+import {
+  detectDirection,
+  detectViewMode,
+  type Direction,
+  type ViewMode,
+} from "@/lib/reader/detect";
+import { actionForKey, resolveKeybinds } from "@/lib/reader/keybinds";
+import { useReadingSession } from "@/lib/reader/session";
+import {
+  computeSpreadGroups,
+  firstPageOfGroup,
+  groupIndexForPage,
+  type SpreadGroup,
+} from "@/lib/reader/spreads";
+import { useIssueMarkers } from "@/lib/api/queries";
+import {
+  useCreateMarker,
+  useDeleteMarker,
+  useUpdateMarker,
+} from "@/lib/api/mutations";
+import type { PageInfo } from "@/lib/api/types";
+import { MarkerEditor } from "./MarkerEditor";
+import { MarkerOverlay } from "./MarkerOverlay";
+import { PageStrip } from "./PageStrip";
+import { PageImage } from "./PageImage";
+import { ReaderChrome } from "./ReaderChrome";
+import { ReadingProgress } from "./ReadingProgress";
+import { ShortcutsSheet } from "./ShortcutsSheet";
+
+const PROGRESS_DEBOUNCE_MS = 300;
+const PREFETCH_AHEAD = 2;
+const SWIPE_THRESHOLD_PX = 30;
+
+export function Reader({
+  issueId,
+  seriesId,
+  exitUrl,
+  totalPages,
+  initialPage,
+  pages,
+  manga,
+  userDefaultDirection,
+  userDefaultFitMode,
+  userDefaultViewMode,
+  userDefaultPageStrip,
+  userDefaultCoverSolo,
+  userKeybinds,
+  activityTrackingEnabled,
+  incognito = false,
+  readingMinActiveMs,
+  readingMinPages,
+  readingIdleMs,
+}: {
+  issueId: string;
+  seriesId: string | null;
+  /** URL to exit the reader to (the issue detail page). Computed by the
+   * page wrapper from the slug params. */
+  exitUrl: string;
+  totalPages: number;
+  initialPage: number;
+  pages: PageInfo[];
+  manga: string | null;
+  userDefaultDirection: Direction | null;
+  userDefaultFitMode: FitMode | null;
+  userDefaultViewMode: ViewMode | null;
+  userDefaultPageStrip: boolean;
+  userDefaultCoverSolo: boolean;
+  userKeybinds: Record<string, string>;
+  activityTrackingEnabled: boolean;
+  /** When true, suppress per-page progress writes and the reading-session
+   *  tracker for this read. Set by `?incognito=1` on the read page. */
+  incognito?: boolean;
+  readingMinActiveMs: number;
+  readingMinPages: number;
+  readingIdleMs: number;
+}) {
+  const router = useRouter();
+  const init = useReaderStore((s) => s.init);
+  const currentPage = useReaderStore((s) => s.currentPage);
+  const fitMode = useReaderStore((s) => s.fitMode);
+  const viewMode = useReaderStore((s) => s.viewMode);
+  const direction = useReaderStore((s) => s.direction);
+  const brightness = useReaderStore((s) => s.brightness);
+  const sepia = useReaderStore((s) => s.sepia);
+  const coverSolo = useReaderStore((s) => s.coverSolo);
+  const setPage = useReaderStore((s) => s.setPage);
+  const nextPage = useReaderStore((s) => s.nextPage);
+  const prevPage = useReaderStore((s) => s.prevPage);
+  const cycleFitMode = useReaderStore((s) => s.cycleFitMode);
+  const cycleViewMode = useReaderStore((s) => s.cycleViewMode);
+  const toggleChrome = useReaderStore((s) => s.toggleChrome);
+  const togglePageStrip = useReaderStore((s) => s.togglePageStrip);
+  const toggleMarkersHidden = useReaderStore((s) => s.toggleMarkersHidden);
+  const beginMarkerEdit = useReaderStore((s) => s.beginMarkerEdit);
+  const setMarkerMode = useReaderStore((s) => s.setMarkerMode);
+  const markerModeForKeybinds = useReaderStore((s) => s.markerMode);
+  const pendingMarkerForKeybinds = useReaderStore((s) => s.pendingMarker);
+
+  // Per-issue marker fetch — drives the overlay, the page-strip dots,
+  // and the bookmark toggle's "is this page already bookmarked?"
+  // lookup. One round-trip, shared via TanStack Query cache.
+  const issueMarkers = useIssueMarkers(issueId);
+  const createMarker = useCreateMarker();
+  // Per-page natural dimensions, populated as pages load. Stored in a
+  // ref so a slider that rebuilds PageImage doesn't trigger a re-render
+  // here — the overlay reads it directly.
+  const pageNaturalSize = useRef<
+    Map<number, { width: number; height: number }>
+  >(new Map());
+  const handleNaturalSize = useCallback(
+    (page: number) => (width: number, height: number) => {
+      pageNaturalSize.current.set(page, { width, height });
+    },
+    [],
+  );
+
+  // Bookmark-toggle helper: looks up an existing page-level bookmark
+  // for `currentPage` and creates/deletes accordingly. Used by the
+  // `b` keybind so it mirrors the chrome's bookmark button.
+  const existingPageBookmark = useMemo(
+    () =>
+      (issueMarkers.data?.items ?? []).find(
+        (m) =>
+          m.kind === "bookmark" && m.page_index === currentPage && !m.region,
+      ),
+    [issueMarkers.data, currentPage],
+  );
+  // Any page-level marker on the current page (bookmark / note) can
+  // carry the favorite star. Picks the same row order as the chrome's
+  // FavoriteToggleButton so keybind + UI stay in lockstep.
+  const existingPageMarkerForFav = useMemo(
+    () =>
+      (issueMarkers.data?.items ?? []).find(
+        (m) => m.page_index === currentPage && !m.region,
+      ),
+    [issueMarkers.data, currentPage],
+  );
+  // The delete mutation hook needs an id at construction time; mint
+  // it only when there's something to delete.
+  const deleteExistingBookmark = useDeleteMarker(
+    existingPageBookmark?.id ?? "",
+    issueId,
+  );
+  const updateFavoriteMarker = useUpdateMarker(
+    existingPageMarkerForFav?.id ?? "",
+    issueId,
+  );
+  const deleteFavoriteMarker = useDeleteMarker(
+    existingPageMarkerForFav?.id ?? "",
+    issueId,
+  );
+  const toggleBookmark = useCallback(() => {
+    if (existingPageBookmark) {
+      deleteExistingBookmark.mutate(undefined, {
+        onSuccess: () =>
+          toast.success(`Removed bookmark on page ${currentPage + 1}`),
+      });
+      return;
+    }
+    createMarker.mutate(
+      {
+        issue_id: issueId,
+        page_index: currentPage,
+        kind: "bookmark",
+      },
+      {
+        onSuccess: () => toast.success(`Bookmarked page ${currentPage + 1}`),
+      },
+    );
+  }, [
+    existingPageBookmark,
+    deleteExistingBookmark,
+    createMarker,
+    issueId,
+    currentPage,
+  ]);
+  // `s` keybind — mirrors FavoriteToggleButton in the chrome.
+  const toggleFavorite = useCallback(() => {
+    if (existingPageMarkerForFav) {
+      if (existingPageMarkerForFav.is_favorite) {
+        // If the marker only exists to carry the star, drop it.
+        // Otherwise just clear the flag so the user's note stays.
+        const hasOtherContent =
+          (existingPageMarkerForFav.body &&
+            existingPageMarkerForFav.body.length > 0) ||
+          existingPageMarkerForFav.kind !== "bookmark";
+        if (hasOtherContent) {
+          updateFavoriteMarker.mutate(
+            { is_favorite: false },
+            {
+              onSuccess: () =>
+                toast.success(`Unstarred page ${currentPage + 1}`),
+            },
+          );
+        } else {
+          deleteFavoriteMarker.mutate(undefined, {
+            onSuccess: () => toast.success(`Unstarred page ${currentPage + 1}`),
+          });
+        }
+      } else {
+        updateFavoriteMarker.mutate(
+          { is_favorite: true },
+          { onSuccess: () => toast.success(`Starred page ${currentPage + 1}`) },
+        );
+      }
+      return;
+    }
+    createMarker.mutate(
+      {
+        issue_id: issueId,
+        page_index: currentPage,
+        kind: "bookmark",
+        is_favorite: true,
+      },
+      {
+        onSuccess: () => toast.success(`Starred page ${currentPage + 1}`),
+      },
+    );
+  }, [
+    existingPageMarkerForFav,
+    updateFavoriteMarker,
+    deleteFavoriteMarker,
+    createMarker,
+    issueId,
+    currentPage,
+  ]);
+
+  const initialDirection = useMemo<Direction>(
+    () => detectDirection(manga, userDefaultDirection),
+    [manga, userDefaultDirection],
+  );
+  // User defaults take precedence over auto-detection on first mount; per-series
+  // localStorage still wins over both (see store.init).
+  const initialViewMode = useMemo<ViewMode>(
+    () => userDefaultViewMode ?? detectViewMode(pages),
+    [pages, userDefaultViewMode],
+  );
+  const initialFitMode = useMemo<FitMode>(
+    () => userDefaultFitMode ?? "width",
+    [userDefaultFitMode],
+  );
+
+  // Initial mount: hydrate the store from props.
+  useEffect(() => {
+    init({
+      issueId,
+      seriesId,
+      totalPages,
+      initialPage,
+      initialDirection,
+      initialViewMode,
+      initialFitMode,
+      initialPageStripVisible: userDefaultPageStrip,
+      initialCoverSolo: userDefaultCoverSolo,
+    });
+  }, [
+    init,
+    issueId,
+    seriesId,
+    totalPages,
+    initialPage,
+    initialDirection,
+    initialViewMode,
+    initialFitMode,
+    userDefaultPageStrip,
+    userDefaultCoverSolo,
+  ]);
+
+  // Resolve user → defaults at mount; pinned in a ref so the listener below
+  // doesn't churn when the keymap object identity changes.
+  const bindings = useMemo(() => resolveKeybinds(userKeybinds), [userKeybinds]);
+
+  // Spread-group derivation (Phase B). In double-page view we navigate
+  // between groups (a solo cover, a pair, a solo spread) instead of raw
+  // page indices, so a {4,5} pair never lands on {5,6} on the next flip.
+  // Single + webtoon modes don't pair pages and use the raw `currentPage`
+  // for navigation as before.
+  const groups = useMemo<ReadonlyArray<SpreadGroup>>(
+    () => computeSpreadGroups(pages, { coverSolo }),
+    [pages, coverSolo],
+  );
+  const currentGroupIdx = useMemo(
+    () => groupIndexForPage(groups, currentPage),
+    [groups, currentPage],
+  );
+  const visiblePages = useMemo<readonly number[]>(
+    () => groups[currentGroupIdx] ?? [currentPage],
+    [groups, currentGroupIdx, currentPage],
+  );
+
+  // Direction-aware navigation. In RTL, "next" should respond to ← and the
+  // right tap zone (so a swipe-right feels like turning the page forward).
+  const goNext = useCallback(() => {
+    if (viewMode === "double" && groups.length > 0) {
+      const target = Math.min(groups.length - 1, currentGroupIdx + 1);
+      setPage(firstPageOfGroup(groups, target));
+    } else {
+      nextPage();
+    }
+  }, [viewMode, groups, currentGroupIdx, setPage, nextPage]);
+  const goPrev = useCallback(() => {
+    if (viewMode === "double" && groups.length > 0) {
+      const target = Math.max(0, currentGroupIdx - 1);
+      setPage(firstPageOfGroup(groups, target));
+    } else {
+      prevPage();
+    }
+  }, [viewMode, groups, currentGroupIdx, setPage, prevPage]);
+  const onLeftZone = direction === "rtl" ? goNext : goPrev;
+  const onRightZone = direction === "rtl" ? goPrev : goNext;
+
+  // Keyboard nav (§7.4). Bindings are resolved from user prefs (M4) so the
+  // user's /settings/keybinds page can rebind every action. Spacebar always
+  // pages forward — it's not user-rebindable since the OS already steals it
+  // when a button has focus.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
+        return;
+      // `?` opens the shortcut sheet (always-on, not user-rebindable).
+      if (e.key === "?") {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
+        return;
+      }
+      // While the user is mid-selection or editing a pending marker,
+      // swallow page-nav + most reader actions so a stray arrow / space
+      // doesn't flip the page out from under the highlight. ESC still
+      // exits via MarkerOverlay's capture-phase handler. The arrow-key
+      // nudge in MarkerOverlay also runs in capture-phase, so it gets
+      // first crack at the event before we ever reach this branch.
+      const markerActive =
+        markerModeForKeybinds !== "idle" || pendingMarkerForKeybinds !== null;
+      if (markerActive) return;
+      // Spacebar always advances (regardless of binding).
+      if (e.key === " ") {
+        e.preventDefault();
+        goNext();
+        return;
+      }
+      const action = actionForKey(e, bindings);
+      if (!action) return;
+      e.preventDefault();
+      switch (action) {
+        case "nextPage":
+          if (
+            direction === "rtl" &&
+            (e.key === "ArrowRight" || e.key === "ArrowLeft")
+          ) {
+            // Arrow keys flip in RTL so the visual swipe-to-advance feels right.
+            if (e.key === "ArrowRight") goPrev();
+            else goNext();
+          } else {
+            goNext();
+          }
+          break;
+        case "prevPage":
+          if (
+            direction === "rtl" &&
+            (e.key === "ArrowRight" || e.key === "ArrowLeft")
+          ) {
+            if (e.key === "ArrowLeft") goNext();
+            else goPrev();
+          } else {
+            goPrev();
+          }
+          break;
+        case "firstPage":
+          // Jump to the first spread group in double-page mode (cover-solo
+          // when enabled), or page 0 otherwise. Same RTL adjustment as
+          // arrow-key navigation isn't needed: "first" is always page 0.
+          if (viewMode === "double" && groups.length > 0) {
+            setPage(firstPageOfGroup(groups, 0));
+          } else {
+            setPage(0);
+          }
+          break;
+        case "lastPage":
+          if (viewMode === "double" && groups.length > 0) {
+            setPage(firstPageOfGroup(groups, groups.length - 1));
+          } else {
+            setPage(totalPages - 1);
+          }
+          break;
+        case "toggleChrome":
+          toggleChrome();
+          break;
+        case "cycleFit":
+          cycleFitMode();
+          break;
+        case "cycleViewMode":
+          cycleViewMode();
+          break;
+        case "togglePageStrip":
+          togglePageStrip();
+          break;
+        case "quitReader":
+          router.push(exitUrl);
+          break;
+        case "bookmarkPage":
+          toggleBookmark();
+          break;
+        case "addNote":
+          beginMarkerEdit({
+            kind: "note",
+            page_index: currentPage,
+            region: null,
+            selection: null,
+            body: "",
+            is_favorite: false,
+            tags: [],
+          });
+          break;
+        case "startHighlight":
+          setMarkerMode("select-rect");
+          break;
+        case "favoritePage":
+          toggleFavorite();
+          break;
+        case "toggleMarkersHidden": {
+          // Toggle returns the next value via the store; surface a
+          // small toast so it's clear what just flipped (the visual
+          // delta isn't always obvious if there are few markers on the
+          // current page).
+          toggleMarkersHidden();
+          const nowHidden = useReaderStore.getState().markersHidden;
+          toast.message(nowHidden ? "Markers hidden" : "Markers shown");
+          break;
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    beginMarkerEdit,
+    bindings,
+    currentPage,
+    cycleFitMode,
+    cycleViewMode,
+    direction,
+    exitUrl,
+    goNext,
+    goPrev,
+    groups,
+    issueId,
+    markerModeForKeybinds,
+    pendingMarkerForKeybinds,
+    router,
+    setMarkerMode,
+    setPage,
+    toggleBookmark,
+    toggleFavorite,
+    toggleChrome,
+    toggleMarkersHidden,
+    togglePageStrip,
+    totalPages,
+    viewMode,
+  ]);
+
+  // Progress write — debounced so a fast page-flip doesn't hammer the server.
+  const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const csrfToken = useMemo(() => {
+    if (typeof document === "undefined") return "";
+    const m = document.cookie.match(/(?:^|;\s*)(?:__Host-)?comic_csrf=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  }, []);
+
+  useEffect(() => {
+    if (!issueId) return;
+    // Incognito skips the per-page progress write entirely. The
+    // reading-session tracker is also disabled by the parent (it gates on
+    // `activityTrackingEnabled`), so the server is never told the issue
+    // was opened in this mode.
+    if (incognito) return;
+    if (progressTimer.current) clearTimeout(progressTimer.current);
+    progressTimer.current = setTimeout(() => {
+      // `finished` is sticky on the server: omit it on mid-issue writes
+      // so a jump to a bookmark (or any non-last page) can't clear a
+      // previously-marked-read issue. We only assert `finished: true`
+      // when the user genuinely lands on the last page — explicit
+      // "Mark as unread" goes through the mutation hook with its own
+      // explicit `finished: false`.
+      const onLastPage = currentPage >= totalPages - 1;
+      const body: Record<string, unknown> = {
+        issue_id: issueId,
+        page: currentPage,
+      };
+      if (onLastPage) body.finished = true;
+      void fetch("/api/progress", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+        },
+        body: JSON.stringify(body),
+      }).catch(() => {
+        /* best-effort; will retry on next page change */
+      });
+    }, PROGRESS_DEBOUNCE_MS);
+    return () => {
+      if (progressTimer.current) clearTimeout(progressTimer.current);
+    };
+  }, [csrfToken, currentPage, incognito, issueId, totalPages]);
+
+  // M6a — capture the reading session (idempotent 30s heartbeat + final
+  // flush). Coexists with the per-page progress write above; one source
+  // (currentPage), two sinks (progress immediate / session aggregator).
+  // Pass `visiblePages` so paired pages both count toward the session
+  // envelope (start/end/distinct) in double-page mode.
+  useReadingSession({
+    issueId,
+    totalPages,
+    currentPage,
+    viewMode,
+    visiblePages,
+    trackingEnabled: activityTrackingEnabled,
+    minActiveMs: readingMinActiveMs,
+    minPages: readingMinPages,
+    idleMs: readingIdleMs,
+  });
+
+  // Prefetch upcoming pages by seeding the browser HTTP cache. In
+  // double-page mode we advance by group, not by page index, so we don't
+  // waste requests on the back of a pair we just rendered.
+  useEffect(() => {
+    if (viewMode === "webtoon") return; // webtoon renders the whole stack
+    if (viewMode === "double" && groups.length > 0) {
+      for (let g = 1; g <= PREFETCH_AHEAD; g += 1) {
+        const grp = groups[currentGroupIdx + g];
+        if (!grp) break;
+        for (const p of grp) {
+          const img = new Image();
+          img.src = `/api/issues/${issueId}/pages/${p}`;
+        }
+      }
+      return;
+    }
+    for (let i = 1; i <= PREFETCH_AHEAD; i += 1) {
+      const next = currentPage + i;
+      if (next >= totalPages) break;
+      const img = new Image();
+      img.src = `/api/issues/${issueId}/pages/${next}`;
+    }
+  }, [currentPage, currentGroupIdx, groups, issueId, totalPages, viewMode]);
+
+  // Reset scroll on page change in single/double mode so each new page
+  // starts at the top. Webtoon manages its own scroll position via the
+  // continuous-scroll layout.
+  useEffect(() => {
+    if (viewMode === "webtoon") return;
+    const reduced =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({
+      top: 0,
+      left: 0,
+      behavior: reduced ? "auto" : "instant",
+    });
+  }, [currentPage, viewMode]);
+
+  // Tailwind v4 preflight applies `max-width: 100%; height: auto` to every
+  // `<img>`, which makes a naive empty-class "original" identical to
+  // "max-w-full h-auto" for any page narrower than the viewport. Each mode
+  // therefore overrides the preflight explicitly so the three behaviors
+  // are actually distinct:
+  //
+  //   - width   → always fills viewport width (scales up if narrower).
+  //   - height  → always fills viewport height (overflows horizontally
+  //               for wide spreads — body scrolls).
+  //   - original → image at its intrinsic pixel size, no constraints.
+  const fitClass =
+    fitMode === "width"
+      ? "w-full h-auto max-w-none"
+      : fitMode === "height"
+        ? "h-screen w-auto max-w-none"
+        : "max-w-none w-auto h-auto";
+
+  // Gestures: drag (swipe) for page nav; pinch to cycle fit modes.
+  // Webtoon mode skips swipe — vertical scroll is the native interaction there.
+  const gestureRef = useRef<HTMLDivElement>(null);
+  // Disable swipe/pinch while the user is drawing a highlight or has a
+  // pending marker editor open: `@use-gesture/react` attaches native
+  // pointer listeners on this container that fire BEFORE React's
+  // synthetic handlers on the SVG overlay, so a horizontal drag in
+  // highlight mode was being interpreted as a page-flip swipe.
+  // Switching off the gesture entirely is cleaner than racing
+  // `stopPropagation` on the native handlers.
+  const gesturesEnabled =
+    markerModeForKeybinds === "idle" && pendingMarkerForKeybinds === null;
+  useGesture(
+    {
+      onDragEnd: ({ movement: [mx], cancel }) => {
+        if (viewMode === "webtoon") {
+          cancel();
+          return;
+        }
+        if (Math.abs(mx) < SWIPE_THRESHOLD_PX) return;
+        // Swipe-right (positive mx) → previous page in LTR, next in RTL.
+        const swipeIsForward = direction === "rtl" ? mx > 0 : mx < 0;
+        if (swipeIsForward) goNext();
+        else goPrev();
+      },
+      onPinchEnd: ({ movement: [mScale], cancel }) => {
+        if (viewMode === "webtoon") {
+          cancel();
+          return;
+        }
+        if (Math.abs(mScale) < 0.05) return;
+        cycleFitMode();
+      },
+    },
+    {
+      target: gestureRef,
+      drag: {
+        axis: "x",
+        filterTaps: true,
+        threshold: 10,
+        enabled: gesturesEnabled,
+      },
+      pinch: { enabled: gesturesEnabled },
+      eventOptions: { passive: false },
+    },
+  );
+
+  return (
+    <div
+      ref={gestureRef}
+      className="min-h-screen touch-pan-y bg-black text-neutral-200"
+    >
+      <ReadingProgress
+        current={viewMode === "double" ? currentGroupIdx : currentPage}
+        total={viewMode === "double" ? groups.length : totalPages}
+      />
+      <ReaderChrome
+        seriesId={seriesId}
+        issueId={issueId}
+        exitUrl={exitUrl}
+        totalPages={totalPages}
+        visiblePages={viewMode === "double" ? visiblePages : undefined}
+        incognito={incognito}
+      />
+
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {viewMode === "double" && visiblePages.length === 2
+          ? `Pages ${visiblePages[0]! + 1} and ${visiblePages[1]! + 1} of ${totalPages}`
+          : `Page ${currentPage + 1} of ${totalPages}`}
+      </div>
+
+      <div
+        style={{
+          filter:
+            brightness !== 1 || sepia !== 0
+              ? `brightness(${brightness}) sepia(${sepia})`
+              : undefined,
+        }}
+      >
+        {viewMode === "webtoon" ? (
+          <WebtoonView issueId={issueId} totalPages={totalPages} />
+        ) : viewMode === "double" ? (
+          <DoublePageView
+            issueId={issueId}
+            visiblePages={visiblePages}
+            direction={direction}
+            fitClass={fitClass}
+            onLeftZone={onLeftZone}
+            onRightZone={onRightZone}
+            onChromeZone={toggleChrome}
+            onNaturalSize={handleNaturalSize}
+            pageNaturalSize={pageNaturalSize}
+          />
+        ) : (
+          <SinglePageView
+            issueId={issueId}
+            currentPage={currentPage}
+            fitClass={fitClass}
+            onLeftZone={onLeftZone}
+            onRightZone={onRightZone}
+            onChromeZone={toggleChrome}
+            onNaturalSize={handleNaturalSize}
+            pageNaturalSize={pageNaturalSize}
+          />
+        )}
+      </div>
+
+      <PageStrip
+        issueId={issueId}
+        totalPages={totalPages}
+        currentPage={currentPage}
+        direction={direction}
+        pages={pages}
+      />
+      <ShortcutsSheet
+        open={shortcutsOpen}
+        onOpenChange={setShortcutsOpen}
+        bindings={bindings}
+      />
+      <MarkerEditor issueId={issueId} pageNaturalSize={pageNaturalSize} />
+    </div>
+  );
+}
+
+function SinglePageView({
+  issueId,
+  currentPage,
+  fitClass,
+  onLeftZone,
+  onRightZone,
+  onChromeZone,
+  onNaturalSize,
+  pageNaturalSize,
+}: {
+  issueId: string;
+  currentPage: number;
+  fitClass: string;
+  onLeftZone: () => void;
+  onRightZone: () => void;
+  onChromeZone: () => void;
+  onNaturalSize: (page: number) => (w: number, h: number) => void;
+  pageNaturalSize: React.RefObject<
+    Map<number, { width: number; height: number }>
+  >;
+}) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const markerMode = useReaderStore((s) => s.markerMode);
+  const natural = pageNaturalSize.current?.get(currentPage) ?? null;
+  // The wrapper is a block-level <div> rather than the previous
+  // `inline-block` <span> so it has no inline-baseline descender that
+  // could leave the overlay's `absolute inset-0` covering a slightly
+  // taller area than the rendered img. SVG percent coords + pointer
+  // math both anchor here, so visual rect placement matches the user's
+  // drag exactly.
+  // Track the rendered image element separately from the wrapper so
+  // the marker overlay can align to the actual image bounds. At
+  // fit=height the wrapper is full-width but the image is centered
+  // and narrower — without this ref the overlay would cover (and
+  // capture pointer coords from) the empty band on each side.
+  const imgRef = useRef<HTMLImageElement>(null);
+  return (
+    <main className="relative grid min-h-screen place-items-center">
+      <div ref={wrapperRef} className="relative w-full">
+        <PageImage
+          key={`${issueId}-${currentPage}`}
+          src={`/api/issues/${issueId}/pages/${currentPage}`}
+          alt={`Page ${currentPage + 1}`}
+          fitClass={fitClass}
+          onNaturalSize={onNaturalSize(currentPage)}
+          imgRef={imgRef}
+        />
+        <MarkerOverlay
+          issueId={issueId}
+          pageIndex={currentPage}
+          wrapperRef={wrapperRef}
+          imgRef={imgRef}
+          naturalSize={natural}
+        />
+      </div>
+      {markerMode === "idle" ? (
+        <TapZones
+          onLeft={onLeftZone}
+          onRight={onRightZone}
+          onChrome={onChromeZone}
+        />
+      ) : null}
+    </main>
+  );
+}
+
+function DoublePageView({
+  issueId,
+  visiblePages,
+  direction,
+  fitClass,
+  onLeftZone,
+  onRightZone,
+  onChromeZone,
+  onNaturalSize,
+  pageNaturalSize,
+}: {
+  issueId: string;
+  visiblePages: readonly number[];
+  direction: Direction;
+  fitClass: string;
+  onLeftZone: () => void;
+  onRightZone: () => void;
+  onChromeZone: () => void;
+  onNaturalSize: (page: number) => (w: number, h: number) => void;
+  pageNaturalSize: React.RefObject<
+    Map<number, { width: number; height: number }>
+  >;
+}) {
+  // RTL pairs render right-to-left; reuse `flex-row-reverse` to flip ordering.
+  const flexClass =
+    direction === "rtl" ? "flex flex-row-reverse" : "flex flex-row";
+  const markerMode = useReaderStore((s) => s.markerMode);
+
+  return (
+    <main className="relative grid min-h-screen place-items-center">
+      <div className={`${flexClass} items-center justify-center gap-1`}>
+        {visiblePages.map((p) => (
+          <DoublePagePane
+            key={`${issueId}-${p}`}
+            issueId={issueId}
+            page={p}
+            fitClass={fitClass}
+            onNaturalSize={onNaturalSize(p)}
+            naturalSize={pageNaturalSize.current?.get(p) ?? null}
+          />
+        ))}
+      </div>
+      {markerMode === "idle" ? (
+        <TapZones
+          onLeft={onLeftZone}
+          onRight={onRightZone}
+          onChrome={onChromeZone}
+        />
+      ) : null}
+    </main>
+  );
+}
+
+function DoublePagePane({
+  issueId,
+  page,
+  fitClass,
+  onNaturalSize,
+  naturalSize,
+}: {
+  issueId: string;
+  page: number;
+  fitClass: string;
+  onNaturalSize: (w: number, h: number) => void;
+  naturalSize: { width: number; height: number } | null;
+}) {
+  // `inline-block` is still right here — a double-page pane needs to
+  // size to its img content so two panes fit side-by-side. `align-top`
+  // kills the inline baseline so the SVG overlay (positioned with
+  // `absolute inset-0`) covers the exact img box, not a slightly
+  // taller line box.
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  return (
+    <div ref={wrapperRef} className="relative inline-block align-top">
+      <PageImage
+        src={`/api/issues/${issueId}/pages/${page}`}
+        alt={`Page ${page + 1}`}
+        fitClass={fitClass}
+        onNaturalSize={onNaturalSize}
+        imgRef={imgRef}
+      />
+      <MarkerOverlay
+        issueId={issueId}
+        pageIndex={page}
+        wrapperRef={wrapperRef}
+        imgRef={imgRef}
+        naturalSize={naturalSize}
+      />
+    </div>
+  );
+}
+
+function WebtoonView({
+  issueId,
+  totalPages,
+}: {
+  issueId: string;
+  totalPages: number;
+}) {
+  return (
+    <main className="flex min-h-screen flex-col items-center">
+      {Array.from({ length: totalPages }, (_, i) => (
+        <PageImage
+          key={`${issueId}-${i}`}
+          src={`/api/issues/${issueId}/pages/${i}`}
+          alt={`Page ${i + 1}`}
+          fitClass="max-w-full h-auto"
+          loading={i < 3 ? "eager" : "lazy"}
+        />
+      ))}
+    </main>
+  );
+}
+
+function TapZones({
+  onLeft,
+  onRight,
+  onChrome,
+}: {
+  onLeft: () => void;
+  onRight: () => void;
+  onChrome: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-10 grid grid-cols-3" aria-hidden="true">
+      <button
+        type="button"
+        className="cursor-w-resize"
+        onClick={onLeft}
+        aria-label="Left zone"
+      />
+      <button type="button" onClick={onChrome} aria-label="Toggle controls" />
+      <button
+        type="button"
+        className="cursor-e-resize"
+        onClick={onRight}
+        aria-label="Right zone"
+      />
+    </div>
+  );
+}

@@ -1,0 +1,29 @@
+# web-specific build-context filter. Keeps the Next image build context tight
+# so `docker build -f web/Dockerfile .` doesn't haul up the entire repo.
+
+# build artifacts
+**/.next
+**/.turbo
+**/node_modules
+
+# test + tooling outputs
+**/coverage
+**/playwright-report
+**/.playwright-mcp
+**/tsconfig.tsbuildinfo
+
+# tests aren't needed for the production bundle
+web/tests
+web/e2e
+web/playwright.config.ts
+
+# editor / OS noise
+**/.DS_Store
+**/.idea
+**/.vscode
+**/*.log
+
+# secrets — never ship a stray .env into the image
+**/.env
+**/.env.*
+!web/.env.example
