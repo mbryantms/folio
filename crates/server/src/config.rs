@@ -28,6 +28,21 @@ impl std::fmt::Display for AuthMode {
     }
 }
 
+impl AuthMode {
+    /// Parse the same string format `Display` produces. Returns `None`
+    /// for any other input — callers (overlay match arms,
+    /// `validate_auth_mode_string`) decide whether to WARN + ignore or
+    /// hard-fail.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "oidc" => Some(Self::Oidc),
+            "local" => Some(Self::Local),
+            "both" => Some(Self::Both),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub database_url: String,
@@ -207,6 +222,21 @@ fn default_archive_work_parallel() -> usize {
         .unwrap_or(2)
 }
 
+/// Where the effective value for a single setting came from. Surfaced by
+/// `GET /admin/settings` so an operator can see why an admin-UI save is
+/// being shadowed by an env var still set in the compose file (D2 in the
+/// runtime-config-admin plan).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Provenance {
+    /// Hardcoded default in `Config::load` / serde defaults.
+    Default,
+    /// Loaded from a `COMIC_*` env var or `config.toml`.
+    Env,
+    /// Loaded from the `app_setting` table.
+    Db,
+}
+
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
         // Env > config.toml > defaults.
@@ -218,7 +248,29 @@ impl Config {
         Ok(cfg)
     }
 
-    fn validate(&self) -> anyhow::Result<()> {
+    /// Apply DB-stored overrides on top of an env-loaded `Config`.
+    ///
+    /// Precedence: DB wins over env (D1 in the plan); collisions are logged
+    /// at WARN so operators can see when a stale `.env` is being shadowed.
+    /// M2 wires the SMTP block; M3+ adds auth/OIDC, log level, workers.
+    ///
+    /// Returns `Err` if a DB-stored value fails the post-overlay
+    /// `validate()` — the caller falls back to the env-only Config in
+    /// that case to keep the server bootable.
+    pub async fn overlay_db(
+        &mut self,
+        db: &sea_orm::DatabaseConnection,
+        secrets: &crate::secrets::Secrets,
+    ) -> anyhow::Result<()> {
+        let rows = crate::settings::read_all(db, secrets).await?;
+        for r in rows {
+            apply_overlay_row(self, &r);
+        }
+        self.validate()?;
+        Ok(())
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
         match self.auth_mode {
             AuthMode::Oidc | AuthMode::Both => {
                 if self.oidc_issuer.is_none()
@@ -240,17 +292,44 @@ impl Config {
         }
         // Fail fast on misconfigured TTL strings rather than at first sign-in.
         Self::parse_duration(&self.jwt_access_ttl)
-            .map_err(|e| anyhow::anyhow!("COMIC_JWT_ACCESS_TTL: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("jwt_access_ttl: {e}"))?;
         let refresh = Self::parse_duration(&self.jwt_refresh_ttl)
-            .map_err(|e| anyhow::anyhow!("COMIC_JWT_REFRESH_TTL: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("jwt_refresh_ttl: {e}"))?;
         let access = Self::parse_duration(&self.jwt_access_ttl)?;
         if refresh < access {
             anyhow::bail!(
-                "COMIC_JWT_REFRESH_TTL ({}) must be ≥ COMIC_JWT_ACCESS_TTL ({}); otherwise the refresh cookie expires before the access cookie and users get stuck on a hard logout",
+                "jwt_refresh_ttl ({}) must be ≥ jwt_access_ttl ({}); otherwise the refresh cookie expires before the access cookie and users get stuck on a hard logout",
                 self.jwt_refresh_ttl,
                 self.jwt_access_ttl,
             );
         }
+        // Log level must be a directive `tracing_subscriber::EnvFilter` can
+        // parse. Caught here so a bad value rejects the PATCH before the
+        // reload handle is touched.
+        tracing_subscriber::EnvFilter::try_new(&self.log_level)
+            .map_err(|e| anyhow::anyhow!("log_level: {e}"))?;
+
+        // Operational tuning ranges (M5). Bounds match the safety
+        // envelope agreed in the runtime-config-admin plan; values
+        // outside these reject the PATCH dry-run with 400.
+        fn check_range<T: PartialOrd + std::fmt::Display>(
+            name: &str,
+            value: T,
+            min: T,
+            max: T,
+        ) -> anyhow::Result<()> {
+            if value < min || value > max {
+                anyhow::bail!("{name} must be in [{min}, {max}], got {value}");
+            }
+            Ok(())
+        }
+        check_range("zip_lru_capacity", self.zip_lru_capacity, 1, 4096)?;
+        check_range("scan_worker_count", self.scan_worker_count, 1, 64)?;
+        check_range("post_scan_worker_count", self.post_scan_worker_count, 1, 64)?;
+        check_range("scan_batch_size", self.scan_batch_size, 1, 10_000)?;
+        check_range("scan_hash_buffer_kb", self.scan_hash_buffer_kb, 64, 65_536)?;
+        check_range("archive_work_parallel", self.archive_work_parallel, 1, 64)?;
+        check_range("thumb_inline_parallel", self.thumb_inline_parallel, 1, 64)?;
         Ok(())
     }
 
@@ -276,5 +355,272 @@ impl Config {
             "d" => Duration::from_secs(n * 60 * 60 * 24),
             _ => anyhow::bail!("invalid duration unit (use s|m|h|d): {s}"),
         })
+    }
+}
+
+/// Bind a single DB-stored setting row onto the corresponding [`Config`]
+/// field. Unknown keys are logged at DEBUG and ignored so an older binary
+/// can roll back across a migration window without losing data. Type
+/// errors are logged at WARN and the env value is kept — operators see
+/// the warning in /admin/logs.
+///
+/// "Collision" warnings fire only when the env-set value *differs* from
+/// the DB value; the bootstrap path that copies env→DB on first boot
+/// would otherwise be noisy on every restart even though the values
+/// agree.
+pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolved) {
+    use serde_json::Value;
+
+    fn warn_if_diverges(key: &str, env: Option<&str>, db: &str) {
+        if let Some(env) = env.filter(|e| !e.is_empty())
+            && env != db
+        {
+            tracing::warn!(
+                key = %key,
+                "app_setting collision: env and DB disagree on this key; DB value wins"
+            );
+        }
+    }
+    fn bad_type(key: &str, expected: &str, value: &Value) {
+        tracing::warn!(
+            key = %key,
+            expected = %expected,
+            got = %value,
+            "app_setting type mismatch; keeping env value"
+        );
+    }
+
+    match row.key.as_str() {
+        "smtp.host" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, cfg.smtp_host.as_deref(), s);
+                cfg.smtp_host = if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "smtp.port" => match row.value.as_u64() {
+            Some(n) if (1..=65535).contains(&n) => {
+                let n16 = n as u16;
+                if n16 != cfg.smtp_port {
+                    tracing::debug!(env = cfg.smtp_port, db = n16, "smtp.port overridden by DB");
+                }
+                cfg.smtp_port = n16;
+            }
+            Some(n) => tracing::warn!(key = "smtp.port", got = n, "out of range"),
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "smtp.tls" => match row.value.as_str() {
+            Some(s) if matches!(s, "none" | "starttls" | "tls") => {
+                warn_if_diverges(&row.key, Some(cfg.smtp_tls.as_str()), s);
+                cfg.smtp_tls = s.to_owned();
+            }
+            Some(other) => tracing::warn!(
+                key = "smtp.tls",
+                got = %other,
+                "expected one of none|starttls|tls; keeping env value"
+            ),
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "smtp.username" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, cfg.smtp_username.as_deref(), s);
+                cfg.smtp_username = if s.is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "smtp.password" => match row.value.as_str() {
+            Some(s) => {
+                // Never log password values; only flag the bare existence
+                // of a divergence so the operator knows to reconcile.
+                if let Some(env_pw) = cfg.smtp_password.as_deref().filter(|p| !p.is_empty())
+                    && env_pw != s
+                {
+                    tracing::warn!(
+                        key = "smtp.password",
+                        "app_setting collision: env and DB disagree on this key; DB value wins"
+                    );
+                }
+                cfg.smtp_password = if s.is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "smtp.from" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, cfg.smtp_from.as_deref(), s);
+                cfg.smtp_from = if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+
+        // ───────── Identity (M3) ─────────
+        "auth.mode" => match row.value.as_str() {
+            Some(s) => match AuthMode::parse(s) {
+                Some(mode) => {
+                    let prev_str = cfg.auth_mode.to_string();
+                    if prev_str != s {
+                        tracing::debug!(env = %prev_str, db = %s, "auth.mode overridden by DB");
+                    }
+                    cfg.auth_mode = mode;
+                }
+                None => tracing::warn!(
+                    key = "auth.mode",
+                    got = %s,
+                    "expected one of local|oidc|both; keeping env value"
+                ),
+            },
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "auth.local.registration_open" => match row.value.as_bool() {
+            Some(b) => {
+                if cfg.local_registration_open != b {
+                    tracing::debug!(env = cfg.local_registration_open, db = b, "auth.local.registration_open overridden by DB");
+                }
+                cfg.local_registration_open = b;
+            }
+            None => bad_type(&row.key, "bool", &row.value),
+        },
+        "auth.oidc.issuer" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, cfg.oidc_issuer.as_deref(), s);
+                cfg.oidc_issuer = if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "auth.oidc.client_id" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, cfg.oidc_client_id.as_deref(), s);
+                cfg.oidc_client_id = if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "auth.oidc.client_secret" => match row.value.as_str() {
+            Some(s) => {
+                // Never log secret values; only flag the bare existence
+                // of a divergence so the operator knows to reconcile.
+                if let Some(env_pw) = cfg.oidc_client_secret.as_deref().filter(|p| !p.is_empty())
+                    && env_pw != s
+                {
+                    tracing::warn!(
+                        key = "auth.oidc.client_secret",
+                        "app_setting collision: env and DB disagree on this key; DB value wins"
+                    );
+                }
+                cfg.oidc_client_secret = if s.is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "auth.oidc.trust_unverified_email" => match row.value.as_bool() {
+            Some(b) => {
+                if cfg.oidc_trust_unverified_email != b {
+                    tracing::debug!(
+                        env = cfg.oidc_trust_unverified_email,
+                        db = b,
+                        "auth.oidc.trust_unverified_email overridden by DB"
+                    );
+                }
+                cfg.oidc_trust_unverified_email = b;
+            }
+            None => bad_type(&row.key, "bool", &row.value),
+        },
+
+        // ───────── Tokens + hardening + log level (M4) ─────────
+        "auth.jwt.access_ttl" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, Some(cfg.jwt_access_ttl.as_str()), s);
+                cfg.jwt_access_ttl = s.to_owned();
+            }
+            None => bad_type(&row.key, "duration", &row.value),
+        },
+        "auth.jwt.refresh_ttl" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, Some(cfg.jwt_refresh_ttl.as_str()), s);
+                cfg.jwt_refresh_ttl = s.to_owned();
+            }
+            None => bad_type(&row.key, "duration", &row.value),
+        },
+        "auth.rate_limit_enabled" => match row.value.as_bool() {
+            Some(b) => {
+                if cfg.rate_limit_enabled != b {
+                    tracing::debug!(env = cfg.rate_limit_enabled, db = b, "auth.rate_limit_enabled overridden by DB");
+                }
+                cfg.rate_limit_enabled = b;
+            }
+            None => bad_type(&row.key, "bool", &row.value),
+        },
+        "observability.log_level" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, Some(cfg.log_level.as_str()), s);
+                cfg.log_level = s.to_owned();
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+
+        // ───────── Operational tuning (M5) ─────────
+        //
+        // These values are read at boot to size the apalis worker pools
+        // and the ZIP LRU. The overlay applies them so the *next* boot
+        // picks up the new values; live runtime change is not wired.
+        // Range validation runs in `Config::validate` so dry-run
+        // rejects out-of-range values with 400 before they reach DB.
+        "cache.zip_lru_capacity" => match row.value.as_u64() {
+            Some(n) => cfg.zip_lru_capacity = n as usize,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "workers.scan_count" => match row.value.as_u64() {
+            Some(n) => cfg.scan_worker_count = n as usize,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "workers.post_scan_count" => match row.value.as_u64() {
+            Some(n) => cfg.post_scan_worker_count = n as usize,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "workers.scan_batch_size" => match row.value.as_u64() {
+            Some(n) => cfg.scan_batch_size = n as usize,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "workers.scan_hash_buffer_kb" => match row.value.as_u64() {
+            Some(n) => cfg.scan_hash_buffer_kb = n as usize,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "workers.archive_work_parallel" => match row.value.as_u64() {
+            Some(n) => cfg.archive_work_parallel = n as usize,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "workers.thumb_inline_parallel" => match row.value.as_u64() {
+            Some(n) => cfg.thumb_inline_parallel = n as usize,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+
+        other => {
+            tracing::debug!(key = %other, "app_setting row ignored (no overlay binding yet)");
+        }
     }
 }

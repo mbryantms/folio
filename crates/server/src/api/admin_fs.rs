@@ -73,7 +73,7 @@ pub async fn list(
     _admin: RequireAdmin,
     Query(q): Query<ListQuery>,
 ) -> Response {
-    let configured_root = &app.cfg.library_path;
+    let configured_root = &app.cfg().library_path;
     // Canonicalising the configured root in addition to the request path
     // means a symlinked library root works as long as the requested path
     // resolves under the same canonical target. We surface a distinct

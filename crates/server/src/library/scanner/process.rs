@@ -216,7 +216,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     // syscall + page-cache-readahead overhead; default 1024 KB matches the
     // historical hardcoded chunk and was the right value all along — the
     // env var existed but wasn't wired until now.
-    let hash_buffer_kb = state.cfg.scan_hash_buffer_kb;
+    let hash_buffer_kb = state.cfg().scan_hash_buffer_kb;
     let (hash, archive_outcome, timing) = {
         let _archive_permit = state
             .archive_work_semaphore
@@ -454,7 +454,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             am.thumbnails_error = Set(None);
         }
         let strip_dir =
-            crate::library::thumbnails::issue_thumbs_dir(&state.cfg.data_path, &issue_id);
+            crate::library::thumbnails::issue_thumbs_dir(&state.cfg().data_path, &issue_id);
         if content_changed && strip_dir.exists() {
             // Best-effort — a leftover stale dir isn't fatal, the worker
             // will overwrite individual files. But we want to drop pages

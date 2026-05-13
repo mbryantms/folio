@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { Menu } from "lucide-react";
 
+import { LibrarySearch } from "@/components/LibrarySearch";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -47,6 +49,13 @@ export function MainShell({
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const sidebar = useSidebarState(defaultSidebar);
+  const pathname = usePathname();
+  // Mobile header search: surface only on the home page so it doesn't
+  // crowd the topbar on every series/issue page (search routes to "/?q="
+  // anyway). Strip the locale prefix before matching since
+  // `usePathname()` returns it (e.g. `/en`, `/fr-CA`).
+  const stripped = pathname.replace(/^\/[a-z]{2}(?:-[A-Z]{2})?(?=\/|$)/i, "");
+  const onHome = stripped === "" || stripped === "/";
   return (
     <div className="bg-background text-foreground min-h-screen">
       <header className="border-border bg-background/80 sticky top-0 z-30 flex h-14 items-center gap-3 border-b px-4 backdrop-blur md:px-6">
@@ -75,14 +84,31 @@ export function MainShell({
           collapsed={sidebar.collapsed}
           onToggle={sidebar.toggle}
         />
-        <Link href={homeHref} className="font-semibold tracking-tight">
+        <Link
+          href={homeHref}
+          // On mobile when the header search is showing, the brand label
+          // would crowd the input — hide it. The hamburger left of it is
+          // already a strong anchor.
+          className={cn(
+            "font-semibold tracking-tight",
+            onHome && "hidden sm:inline",
+          )}
+        >
           Folio
         </Link>
         <span className="text-muted-foreground ml-2 hidden text-xs font-medium tracking-widest uppercase sm:inline">
           Library
         </span>
+        {onHome && (
+          <LibrarySearch
+            initial=""
+            basePath={homeHref}
+            compact
+            className="md:hidden"
+          />
+        )}
         {user.role === "admin" ? (
-          <div className="ml-auto flex items-center">
+          <div className={cn("flex items-center", onHome ? "" : "ml-auto")}>
             <ScanEventBeacon />
           </div>
         ) : null}

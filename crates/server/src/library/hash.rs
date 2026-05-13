@@ -21,7 +21,7 @@ pub fn blake3_file(path: impl AsRef<Path>) -> std::io::Result<String> {
 }
 
 /// Same as [`blake3_file`], with an explicit chunk size in KB. Caller
-/// passes `state.cfg.scan_hash_buffer_kb` from the scanner hot path so the
+/// passes `state.cfg().scan_hash_buffer_kb` from the scanner hot path so the
 /// buffer is tunable without touching code.
 pub fn blake3_file_with_buffer(
     path: impl AsRef<Path>,

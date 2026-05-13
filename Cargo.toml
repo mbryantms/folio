@@ -83,6 +83,14 @@ argon2 = { version = "0.5", features = ["std"] }
 rand = "0.8"
 hmac = "0.12"
 sha2 = "0.10"
+# AEAD for app_setting secret rows (SMTP password, OIDC client secret).
+# 24-byte nonce avoids the birthday-bound concern when settings are written
+# infrequently with random nonces.
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+
+# Live-swap container for the resolved Config so the admin UI can update
+# runtime settings without restarting the server.
+arc-swap = "1.7"
 
 # Auth
 jsonwebtoken = "9"

@@ -26,7 +26,7 @@ use tracing::{
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{Layer, fmt};
+use tracing_subscriber::{EnvFilter, Layer, Registry, fmt, reload};
 
 /// Maximum number of log events retained in the in-process ring buffer.
 /// Sized for triage — if you need full history, ship logs to Loki.
@@ -289,15 +289,21 @@ fn level_str(level: &Level) -> String {
     }
 }
 
+/// Handle to swap the active `EnvFilter` directive without restarting the
+/// process. Replaced at runtime by `PATCH /admin/settings` when
+/// `observability.log_level` changes (M4 of the runtime-config-admin plan).
+pub type LogReloadHandle = reload::Handle<EnvFilter, Registry>;
+
 /// Bootstrap result — both handles are needed by `app::serve`.
 pub struct ObservabilityHandles {
     pub prometheus: PrometheusHandle,
     pub log_buffer: LogRingBuffer,
+    pub log_reload: LogReloadHandle,
 }
 
 pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
-    let env_filter = tracing_subscriber::EnvFilter::try_new(&cfg.log_level)
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_new(&cfg.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
+    let (filter_layer, log_reload) = reload::Layer::new(env_filter);
 
     let fmt_layer = fmt::layer()
         .json()
@@ -311,7 +317,7 @@ pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
     };
 
     tracing_subscriber::registry()
-        .with(env_filter)
+        .with(filter_layer)
         .with(fmt_layer)
         .with(ring_layer)
         .init();
@@ -326,6 +332,7 @@ pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
     Ok(ObservabilityHandles {
         prometheus,
         log_buffer,
+        log_reload,
     })
 }
 

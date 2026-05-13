@@ -1,14 +1,14 @@
 import { PageHeader } from "@/components/admin/PageHeader";
-import { AuthConfigClient } from "@/components/admin/observability/AuthConfigClient";
+import { AuthConfigEditor } from "@/components/admin/auth/AuthConfigEditor";
 
 export default function AuthConfigPage() {
   return (
     <>
       <PageHeader
         title="Auth config"
-        description="Read-only view of OIDC + local-auth configuration. Edit by setting environment variables and restarting."
+        description="Auth mode, local-registration, and OIDC. Changes take effect on save without restarting; the OIDC discovery cache is evicted automatically."
       />
-      <AuthConfigClient />
+      <AuthConfigEditor />
     </>
   );
 }

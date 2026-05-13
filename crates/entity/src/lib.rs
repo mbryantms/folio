@@ -10,6 +10,7 @@
 //! stays small.
 
 pub mod app_password;
+pub mod app_setting;
 pub mod audit_log;
 pub mod auth_session;
 pub mod catalog_source;
@@ -41,6 +42,7 @@ pub mod user_view_pin;
 
 pub mod prelude {
     pub use super::app_password::Entity as AppPassword;
+    pub use super::app_setting::Entity as AppSetting;
     pub use super::audit_log::Entity as AuditLog;
     pub use super::auth_session::Entity as AuthSession;
     pub use super::catalog_source::Entity as CatalogSource;

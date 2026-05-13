@@ -77,6 +77,13 @@ Default admin (first registered user becomes admin):
 - **Admin guard**: inline `if user.role != "admin" { return error(...) }`. No
   middleware-level enforcement yet. The `CurrentUser` extractor lives at
   [crates/server/src/auth/extractor.rs](crates/server/src/auth/extractor.rs).
+- **Runtime config split**: infrastructure stays in `.env`; policy
+  (SMTP, OIDC, auth mode, JWT TTLs, log level, workers) lives in the
+  `app_setting` table and is editable via `/admin/{auth,email,server}`.
+  DB wins over env (D1 in the plan). Secret rows are sealed with
+  XChaCha20-Poly1305 under `secrets/settings-encryption.key`. See
+  [docs/dev/runtime-configuration.md](docs/dev/runtime-configuration.md)
+  for the slice-by-slice matrix and the "add a new setting" recipe.
 - **Audit log**: every mutating admin handler emits via `crate::audit::record`.
   Action names are dotted (`admin.user.update`, `admin.user.library_access.set`).
   Append-only at the role level — never UPDATE/DELETE.
@@ -119,5 +126,6 @@ Default admin (first registered user becomes admin):
 - Library scanner deep dive: [docs/dev/library-scanner.md](docs/dev/library-scanner.md)
 - Reader keyboard map: [docs/dev/reader-shortcuts.md](docs/dev/reader-shortcuts.md)
 - OPDS readiness audit: [docs/dev/opds-audit.md](docs/dev/opds-audit.md)
+- Runtime-config split (env vs DB): [docs/dev/runtime-configuration.md](docs/dev/runtime-configuration.md)
 - Active plans live under `~/.claude/plans/`; check the auto-memory index for
   what's currently in flight vs. shipped.

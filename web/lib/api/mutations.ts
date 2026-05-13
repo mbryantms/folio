@@ -1451,3 +1451,57 @@ export function useReorderCollectionEntries(collectionId: string) {
     },
   );
 }
+
+// ---------- Runtime settings + email (runtime-config-admin M1/M2) ----------
+
+import type { TestEmailResp, UpdateSettingsReq } from "./types";
+
+/** Apply a batch of setting updates. Unknown keys reject the whole batch.
+ *  On success the server re-runs `Config::overlay_db`, swaps the live
+ *  snapshot, and (when an `smtp.*` key changed) rebuilds the email sender. */
+export function useUpdateSettings() {
+  const qc = useQueryClient();
+  return useApiMutation<unknown, UpdateSettingsReq>(
+    (body) => ({ path: "/admin/settings", method: "PATCH", body }),
+    {
+      successMessage: "Settings saved",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.adminSettings });
+        qc.invalidateQueries({ queryKey: queryKeys.adminAuthConfig });
+        qc.invalidateQueries({ queryKey: queryKeys.adminEmailStatus });
+      },
+    },
+  );
+}
+
+/** Fire a probe email to the calling admin's address. Successful responses
+ *  include `{ delivered, duration_ms, to }`. Errors surface as the
+ *  underlying lettre message so operators can diagnose. */
+export function useSendTestEmail() {
+  const qc = useQueryClient();
+  return useApiMutation<TestEmailResp, void>(
+    () => ({ path: "/admin/email/test", method: "POST" }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.adminEmailStatus });
+      },
+    },
+  );
+}
+
+import type { OidcDiscoverReq, OidcDiscoverResp } from "./types";
+
+/** Probe an OIDC issuer's discovery doc before committing it. Returns the
+ *  parsed endpoints + scopes_supported. Used by the "Test discovery"
+ *  button on /admin/auth so an admin can verify reachability without
+ *  saving a half-baked config. */
+export function useProbeOidcDiscovery() {
+  return useApiMutation<OidcDiscoverResp, OidcDiscoverReq>(
+    (body) => ({ path: "/admin/auth/oidc/discover", method: "POST", body }),
+    {
+      onError: () => {
+        /* surfaced by the form inline; default toast still fires */
+      },
+    },
+  );
+}

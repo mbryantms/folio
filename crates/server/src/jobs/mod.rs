@@ -161,8 +161,8 @@ impl JobRuntime {
     pub async fn run(self, state: AppState) {
         use apalis::prelude::*;
 
-        let scan_concurrency = state.cfg.scan_worker_count;
-        let post_concurrency = state.cfg.post_scan_worker_count;
+        let scan_concurrency = state.cfg().scan_worker_count;
+        let post_concurrency = state.cfg().post_scan_worker_count;
 
         let scan_worker = WorkerBuilder::new("scan")
             .concurrency(scan_concurrency)

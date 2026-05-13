@@ -19,6 +19,7 @@ export type IconName =
   | "Keyboard"
   | "Library"
   | "ListChecks"
+  | "Mail"
   | "Palette"
   | "Search"
   | "Server"
@@ -70,6 +71,7 @@ export function adminNav(localePrefix: string): NavSection[] {
       items: [
         { href: p("/server"), label: "Server info", icon: "Server" },
         { href: p("/auth"), label: "Auth config", icon: "Shield" },
+        { href: p("/email"), label: "Email", icon: "Mail" },
         { href: p("/logs"), label: "Logs", icon: "ListChecks" },
         {
           href: p("/search"),

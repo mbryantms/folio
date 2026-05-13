@@ -177,16 +177,16 @@ fn put_fake_thumbs(data_dir: &Path, issue_id: &str) {
 async fn wipe_issue_thumbs_removes_cover_and_strip_dir() {
     let app = TestApp::spawn().await;
     let id = seed(&app, "active").await;
-    put_fake_thumbs(&app.state().cfg.data_path, &id);
+    put_fake_thumbs(&app.state().cfg().data_path, &id);
 
-    thumbnails::wipe_issue_thumbs(&app.state().cfg.data_path, &id);
+    thumbnails::wipe_issue_thumbs(&app.state().cfg().data_path, &id);
 
     let cover = thumbnails::cover_path(
-        &app.state().cfg.data_path,
+        &app.state().cfg().data_path,
         &id,
         thumbnails::ThumbFormat::Webp,
     );
-    let dir = thumbnails::issue_thumbs_dir(&app.state().cfg.data_path, &id);
+    let dir = thumbnails::issue_thumbs_dir(&app.state().cfg().data_path, &id);
     assert!(!cover.exists(), "cover not wiped");
     assert!(!dir.exists(), "strip dir not wiped");
 }
@@ -197,28 +197,28 @@ async fn orphan_sweep_drops_artifacts_for_removed_issues() {
     // Two issues: one active, one in `removed` state.
     let active_id = seed(&app, "active").await;
     let removed_id = seed(&app, "removed").await;
-    put_fake_thumbs(&app.state().cfg.data_path, &active_id);
-    put_fake_thumbs(&app.state().cfg.data_path, &removed_id);
+    put_fake_thumbs(&app.state().cfg().data_path, &active_id);
+    put_fake_thumbs(&app.state().cfg().data_path, &removed_id);
 
     // A third "stranger" id with no DB row at all — also orphaned.
     let stranger = "f".repeat(64);
-    put_fake_thumbs(&app.state().cfg.data_path, &stranger);
+    put_fake_thumbs(&app.state().cfg().data_path, &stranger);
 
     let wiped = server::jobs::orphan_sweep::run(&app.state()).await.unwrap();
     assert_eq!(wiped, 2, "should wipe 2 (removed + stranger)");
 
     let active_cover = thumbnails::cover_path(
-        &app.state().cfg.data_path,
+        &app.state().cfg().data_path,
         &active_id,
         thumbnails::ThumbFormat::Webp,
     );
     let removed_cover = thumbnails::cover_path(
-        &app.state().cfg.data_path,
+        &app.state().cfg().data_path,
         &removed_id,
         thumbnails::ThumbFormat::Webp,
     );
     let stranger_cover = thumbnails::cover_path(
-        &app.state().cfg.data_path,
+        &app.state().cfg().data_path,
         &stranger,
         thumbnails::ThumbFormat::Webp,
     );
@@ -246,10 +246,10 @@ async fn list_issues_on_disk_finds_both_layouts() {
     let app = TestApp::spawn().await;
     let id1 = seed(&app, "active").await;
     let id2 = seed(&app, "active").await;
-    put_fake_thumbs(&app.state().cfg.data_path, &id1);
+    put_fake_thumbs(&app.state().cfg().data_path, &id1);
     // Only the strip dir exists for id2 — exercise that case.
     let strip = thumbnails::strip_path(
-        &app.state().cfg.data_path,
+        &app.state().cfg().data_path,
         &id2,
         0,
         thumbnails::ThumbFormat::Webp,
@@ -257,7 +257,7 @@ async fn list_issues_on_disk_finds_both_layouts() {
     std::fs::create_dir_all(strip.parent().unwrap()).unwrap();
     std::fs::write(&strip, b"x").unwrap();
 
-    let found = thumbnails::list_issues_on_disk(&app.state().cfg.data_path).unwrap();
+    let found = thumbnails::list_issues_on_disk(&app.state().cfg().data_path).unwrap();
     assert!(found.contains(&id1));
     assert!(found.contains(&id2));
 }

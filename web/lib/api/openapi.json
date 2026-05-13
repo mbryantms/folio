@@ -191,6 +191,45 @@
         }
       }
     },
+    "/admin/auth/oidc/discover": {
+      "post": {
+        "tags": [
+          "api::auth_config"
+        ],
+        "operationId": "probe_discovery",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcDiscoverReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcDiscoverResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid issuer URL"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "502": {
+            "description": "discovery doc unreachable / malformed"
+          }
+        }
+      }
+    },
     "/admin/catalog-sources": {
       "post": {
         "tags": [
@@ -278,6 +317,58 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/admin/email/status": {
+      "get": {
+        "tags": [
+          "api::admin_email"
+        ],
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailStatusView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/admin/email/test": {
+      "post": {
+        "tags": [
+          "api::admin_email"
+        ],
+        "operationId": "test_send",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestEmailResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "no email on caller's account"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "502": {
+            "description": "transport error"
           }
         }
       }
@@ -1099,6 +1190,63 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/admin/settings": {
+      "get": {
+        "tags": [
+          "api::admin_settings"
+        ],
+        "operationId": "get_all",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "api::admin_settings"
+        ],
+        "operationId": "update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSettingsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation"
           },
           "403": {
             "description": "admin only"
@@ -6896,6 +7044,44 @@
           }
         }
       },
+      "EmailStatusView": {
+        "type": "object",
+        "required": [
+          "configured"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "`true` when the live sender is a real transport (Lettre or Mock),\n`false` when SMTP is unset and the Noop fallback is installed."
+          },
+          "last_duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_send_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_send_ok": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
       "EngagementPoint": {
         "type": "object",
         "required": [
@@ -8286,6 +8472,69 @@
           }
         }
       },
+      "OidcDiscoverReq": {
+        "type": "object",
+        "required": [
+          "issuer"
+        ],
+        "properties": {
+          "issuer": {
+            "type": "string",
+            "description": "The OIDC issuer URL the admin is about to save. Used as the base\nfor `${issuer}/.well-known/openid-configuration`."
+          }
+        }
+      },
+      "OidcDiscoverResp": {
+        "type": "object",
+        "required": [
+          "issuer"
+        ],
+        "properties": {
+          "authorization_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_session_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "jwks_uri": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scopes_supported": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Truncated to the most useful fields above. The full doc is large\nand not all of it is admin-interesting; if a future need arises\nthe raw JSON can be added under a separate field."
+          },
+          "token_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "userinfo_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "OnDeckCard": {
         "oneOf": [
           {
@@ -9176,6 +9425,26 @@
           }
         }
       },
+      "RegistryEntry": {
+        "type": "object",
+        "required": [
+          "key",
+          "kind",
+          "is_secret"
+        ],
+        "properties": {
+          "is_secret": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`\"string\" | \"bool\" | \"uint\" | \"duration\"`."
+          }
+        }
+      },
       "RemovedIssueView": {
         "type": "object",
         "required": [
@@ -9417,6 +9686,23 @@
           "token": {
             "type": "string"
           }
+        }
+      },
+      "ResolvedEntry": {
+        "type": "object",
+        "required": [
+          "key",
+          "value",
+          "is_secret"
+        ],
+        "properties": {
+          "is_secret": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "value": {}
         }
       },
       "RevokeAllResp": {
@@ -10202,6 +10488,29 @@
           }
         }
       },
+      "SettingsView": {
+        "type": "object",
+        "required": [
+          "registry",
+          "values"
+        ],
+        "properties": {
+          "registry": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegistryEntry"
+            },
+            "description": "Catalog of every DB-overlayable setting recognized by this server\nbuild. Empty in M1; populated milestone-by-milestone."
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResolvedEntry"
+            },
+            "description": "Current effective values resolved from the DB overlay. Secret\nrows are returned as the literal string `\"<set>\"` so this surface\nnever leaks credentials. Order matches `registry`."
+          }
+        }
+      },
       "SortField": {
         "type": "string",
         "description": "Sort axes a saved view can choose. Distinct from [`Field`] because not\nevery filterable field is a sensible sort axis (e.g., multi-valued\ngenres can't sort).",
@@ -10234,6 +10543,27 @@
             "minimum": 0
           },
           "tag": {
+            "type": "string"
+          }
+        }
+      },
+      "TestEmailResp": {
+        "type": "object",
+        "required": [
+          "delivered",
+          "duration_ms",
+          "to"
+        ],
+        "properties": {
+          "delivered": {
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "to": {
             "type": "string"
           }
         }
@@ -11097,6 +11427,12 @@
             ],
             "description": "Series-level summary. `null` clears (the API will fall back to the\nfirst issue's summary on read)."
           }
+        }
+      },
+      "UpdateSettingsReq": {
+        "type": "object",
+        "additionalProperties": {
+          "description": "Map of setting key → new value. A `null` value deletes the row.\nUnknown keys reject the whole batch with a 400."
         }
       },
       "UpdateThumbnailsSettingsReq": {

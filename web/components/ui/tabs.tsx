@@ -14,7 +14,16 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "bg-muted text-muted-foreground inline-flex h-9 items-center justify-center rounded-md p-1",
+      // Mobile: full-width row that scrolls horizontally rather than
+      //   overflowing the viewport (the prior `inline-flex` blew out the
+      //   layout on phones with >3 tabs — see screenshot in the
+      //   runtime-config-admin work). md+: content-width like before.
+      // `[&>*]:shrink-0` keeps each trigger at its intrinsic width so
+      //   long labels ("Cast & Setting") stay readable inside the
+      //   scrollable strip. `scrollbar-hide` (custom util) keeps the
+      //   thumb out of the way; touch swipe still works.
+      "bg-muted text-muted-foreground flex h-9 w-full items-center justify-start overflow-x-auto rounded-md p-1 md:inline-flex md:w-fit md:justify-center md:overflow-visible",
+      "[&::-webkit-scrollbar]:hidden [&>*]:shrink-0 [scrollbar-width:none]",
       className,
     )}
     {...props}

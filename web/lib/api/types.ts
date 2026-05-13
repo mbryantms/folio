@@ -829,6 +829,65 @@ export type PublicAuthConfigView = {
   registration_open: boolean;
 };
 
+// ---------- Runtime-editable settings (`/admin/settings`) ----------
+
+export type SettingKind = "string" | "bool" | "uint" | "duration";
+
+export type SettingRegistryEntry = {
+  key: string;
+  kind: SettingKind;
+  is_secret: boolean;
+};
+
+export type SettingResolvedEntry = {
+  key: string;
+  /** Secret rows are returned as the literal string "<set>"; the API
+   *  never echoes the plaintext. */
+  value: unknown;
+  is_secret: boolean;
+};
+
+export type SettingsView = {
+  registry: SettingRegistryEntry[];
+  values: SettingResolvedEntry[];
+};
+
+/** PATCH /admin/settings body — flat key→value map. Use `null` to delete
+ *  a row. Unknown keys are rejected with 400 settings.unknown_key. */
+export type UpdateSettingsReq = Record<string, unknown>;
+
+// ---------- Email pipeline status (`/admin/email/status`) ----------
+
+export type EmailStatusView = {
+  configured: boolean;
+  last_send_at: string | null;
+  last_send_ok: boolean | null;
+  last_error: string | null;
+  last_duration_ms: number | null;
+};
+
+export type TestEmailResp = {
+  delivered: boolean;
+  duration_ms: number;
+  to: string;
+};
+
+// ---------- OIDC discovery probe (`/admin/auth/oidc/discover`) ----------
+
+export type OidcDiscoverReq = {
+  issuer: string;
+};
+
+export type OidcDiscoverResp = {
+  issuer: string;
+  authorization_endpoint: string | null;
+  token_endpoint: string | null;
+  jwks_uri: string | null;
+  end_session_endpoint: string | null;
+  userinfo_endpoint: string | null;
+  scopes_supported: string[] | null;
+};
+
 // ---------- (continues below) ----------
 
 export type ReadingStatsView = {

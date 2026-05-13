@@ -232,7 +232,7 @@ pub async fn confirm_issue(
         );
     }
     let issue_id = row.id.clone();
-    let data_dir = app.cfg.data_path.clone();
+    let data_dir = app.cfg().data_path.clone();
     let mut am: issue::ActiveModel = row.into();
     am.removal_confirmed_at = Set(Some(chrono::Utc::now().fixed_offset()));
     if let Err(e) = am.update(&app.db).await {

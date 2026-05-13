@@ -48,6 +48,7 @@ mod m20261216_000001_user_show_marker_count;
 mod m20261217_000001_marker_favorite_flag;
 mod m20261217_000002_marker_tags;
 mod m20261218_000001_people_search;
+mod m20260514_000001_app_settings;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -104,6 +105,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260512_000001_auth_session_id_token_hint::Migration),
             Box::new(m20260513_000001_app_passwords::Migration),
             Box::new(m20260513_000002_app_password_scopes::Migration),
+            Box::new(m20260514_000001_app_settings::Migration),
         ]
     }
 }

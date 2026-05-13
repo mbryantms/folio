@@ -285,7 +285,7 @@ async fn seed(app: &TestApp) -> (Uuid, String) {
     // Drop a fake cover thumb on disk. We only need a file at the right
     // path for the wipe sweep to have something to remove.
     let cover_path =
-        thumbnails::cover_path(&app.state().cfg.data_path, &issue_id, ThumbFormat::Webp);
+        thumbnails::cover_path(&app.state().cfg().data_path, &issue_id, ThumbFormat::Webp);
     std::fs::create_dir_all(cover_path.parent().unwrap()).unwrap();
     std::fs::write(&cover_path, b"fake-cover").unwrap();
 
@@ -349,7 +349,7 @@ async fn delete_library_cascades_and_wipes_thumbs() {
     .unwrap();
 
     let cover_path =
-        thumbnails::cover_path(&app.state().cfg.data_path, &issue_id, ThumbFormat::Webp);
+        thumbnails::cover_path(&app.state().cfg().data_path, &issue_id, ThumbFormat::Webp);
     assert!(cover_path.exists(), "fake cover should exist before delete");
 
     let (status, body) = delete_library(&app, &auth, lib_id).await;

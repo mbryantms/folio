@@ -51,7 +51,7 @@ pub struct ScanStats {
     #[serde(default)]
     pub parallel_phase_timings_ms: BTreeMap<String, u64>,
     /// Concurrency factor that produced `parallel_phase_timings_ms`. Equals
-    /// `state.cfg.scan_worker_count` for library scans; 1 for series/issue
+    /// `state.cfg().scan_worker_count` for library scans; 1 for series/issue
     /// narrow scans. `0` if no parallel work fired.
     #[serde(default)]
     pub parallel_workers: u32,

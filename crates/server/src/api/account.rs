@@ -33,7 +33,7 @@ use crate::state::AppState;
 
 // Access TTL flows from config; the CSRF cookie max-age must match the access
 // cookie's so JS doesn't think the form is signed-in after the access cookie
-// expires. Read at handler time via `app.cfg.access_ttl()`.
+// expires. Read at handler time via `app.cfg().access_ttl()`.
 
 pub fn routes() -> Router<AppState> {
     // PATCH is the JSON contract (XHR happy path); POST is the
@@ -237,7 +237,7 @@ pub async fn update(
     if changed.is_empty() {
         let csrf = new_csrf_token();
         let body = me_resp_from_row(&row, csrf.clone());
-        let jar = jar.add(csrf_cookie(csrf, app.cfg.access_ttl()));
+        let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
         return match format {
             ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
             ResponseFormat::Form => (jar, Redirect::to("/settings/account?ok=1")).into_response(),
@@ -272,7 +272,7 @@ pub async fn update(
 
     let csrf = new_csrf_token();
     let body = me_resp_from_row(&updated, csrf.clone());
-    let jar = jar.add(csrf_cookie(csrf, app.cfg.access_ttl()));
+    let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
     match format {
         ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
         ResponseFormat::Form => (jar, Redirect::to("/settings/account?ok=1")).into_response(),

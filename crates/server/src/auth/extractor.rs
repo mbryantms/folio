@@ -97,7 +97,7 @@ where
             return resolve_app_password(&app, &token).await;
         }
 
-        let keys = JwtKeys::from_secret(&app.secrets.jwt_ed25519, &app.cfg.public_url)
+        let keys = JwtKeys::from_secret(&app.secrets.jwt_ed25519, &app.cfg().public_url)
             .map_err(|_| AuthRejection::Internal)?;
         let claims = keys
             .verify_access(&token)

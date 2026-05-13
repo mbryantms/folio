@@ -36,6 +36,8 @@ import type {
   EngagementView,
   AuditListView,
   AuthConfigView,
+  EmailStatusView,
+  SettingsView,
   CatalogEntriesView,
   CatalogSourceListView,
   CblDetailView,
@@ -267,6 +269,11 @@ export const queryKeys = {
     ["admin", "activity", filters] as const,
   /** Read-only auth-config view. Cheap; cached for the session. */
   adminAuthConfig: ["admin", "auth-config"] as const,
+  /** Runtime-editable settings (M1 of runtime-config-admin). Registry
+   *  + resolved values; mutated via PATCH /admin/settings. */
+  adminSettings: ["admin", "settings"] as const,
+  /** Last-result probe for the outbound email pipeline (M2). */
+  adminEmailStatus: ["admin", "email", "status"] as const,
   /** Saved views (filter + CBL). `pinned` may be undefined for the
    *  full visible list. */
   savedViews: (filters: SavedViewListFilters = {}) =>
@@ -786,6 +793,33 @@ export function useAuthConfig(opts?: { enabled?: boolean }) {
     queryFn: () => jsonFetch<AuthConfigView>("/admin/auth/config"),
     enabled,
     staleTime: 60_000,
+  });
+}
+
+/** Runtime-editable settings list (M1+ of runtime-config-admin). The
+ *  registry grows milestone-by-milestone; secret values are returned as
+ *  `"<set>"` strings. */
+export function useAdminSettings(opts?: { enabled?: boolean }) {
+  const { enabled = true } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.adminSettings,
+    queryFn: () => jsonFetch<SettingsView>("/admin/settings"),
+    enabled,
+    staleTime: 5_000,
+  });
+}
+
+/** Outbound-email pipeline probe (M2). Refetches every 15s so the
+ *  /admin/email page reflects the result of a "Send test email" click
+ *  without manual reload. */
+export function useEmailStatus(opts?: { enabled?: boolean }) {
+  const { enabled = true } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.adminEmailStatus,
+    queryFn: () => jsonFetch<EmailStatusView>("/admin/email/status"),
+    enabled,
+    refetchInterval: 15_000,
+    staleTime: 0,
   });
 }
 

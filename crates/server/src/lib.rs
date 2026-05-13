@@ -14,6 +14,7 @@ pub mod jobs;
 pub mod library;
 pub mod middleware;
 pub mod reading;
+pub mod settings;
 pub mod slug;
 pub mod state;
 pub mod views;

@@ -1,8 +1,10 @@
 pub mod account;
 pub mod admin_activity;
+pub mod admin_email;
 pub mod admin_fs;
 pub mod admin_logs;
 pub mod admin_queue;
+pub mod admin_settings;
 pub mod admin_stats;
 pub mod admin_thumbs;
 pub mod admin_users;

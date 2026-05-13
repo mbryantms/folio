@@ -111,19 +111,20 @@ export default async function SeriesPage({
         <span className="text-foreground/80">{series.name}</span>
       </nav>
 
-      <header className="grid grid-cols-1 gap-8 lg:grid-cols-[18rem_1fr]">
+      <header className="grid grid-cols-1 gap-6 sm:gap-8 lg:grid-cols-[18rem_1fr]">
         {/* Cover column — bigger than before, with the primary CTA stacked
             directly underneath so it falls within natural eye-flow from
-            cover → action. */}
-        <div className="flex flex-col gap-4">
-          <div className="mx-auto w-72 max-w-full lg:mx-0">
+            cover → action. On mobile the cover shrinks (w-44) so the
+            title + CTA + status badges stay above the fold. */}
+        <div className="flex flex-col gap-3 sm:gap-4">
+          <div className="mx-auto w-44 max-w-full sm:w-56 lg:mx-0 lg:w-72">
             <Cover
               src={series.cover_url}
               alt={`Cover of ${series.name}`}
               fallback={series.publisher ?? "—"}
             />
           </div>
-          <div className="flex flex-col gap-2 lg:max-w-72">
+          <div className="mx-auto flex w-full max-w-xs flex-col gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
             {next.target ? (
               <Button asChild size="lg" className="w-full">
                 <Link href={readerUrl(next.target)}>

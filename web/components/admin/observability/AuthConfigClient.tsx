@@ -75,7 +75,15 @@ function LocalCard({ data }: { data: AuthConfigView }) {
             label="Self-serve registration"
             status={data.local.registration_open}
           />
-          <Row label="SMTP wired" status={data.local.smtp_configured} />
+          <li className="flex items-center justify-between">
+            <span className="text-muted-foreground">SMTP wired</span>
+            <a
+              href="/admin/email"
+              className="text-primary text-xs font-medium underline-offset-2 hover:underline"
+            >
+              {data.local.smtp_configured ? "Yes — manage" : "Configure"}
+            </a>
+          </li>
         </ul>
         <p className="text-muted-foreground mt-3 text-xs">
           When SMTP isn&rsquo;t configured, new local accounts skip email

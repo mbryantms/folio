@@ -48,7 +48,12 @@ export function PinnedViewsHome() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <LibrarySearch initial="" basePath="/" />
+          {/* On mobile the search lives in the topbar (see `MainShell`)
+              so it doesn't push the rails down. Desktop keeps it inline
+              in the page toolbar alongside the density toggle. */}
+          <div className="hidden md:block">
+            <LibrarySearch initial="" basePath="/" />
+          </div>
           <CardSizeOptions
             cardSize={cardSize}
             onCardSize={setCardSize}

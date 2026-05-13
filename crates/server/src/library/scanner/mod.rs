@@ -660,7 +660,7 @@ async fn emit_progress(
         phase_elapsed_ms: stats.phase_timings_ms.get(phase).copied(),
         files_per_sec: stats.files_per_sec,
         bytes_per_sec: stats.bytes_per_sec,
-        active_workers: (phase == "scanning").then_some(state.cfg.scan_worker_count.max(1) as u64),
+        active_workers: (phase == "scanning").then_some(state.cfg().scan_worker_count.max(1) as u64),
         dirty_folders: None,
         skipped_folders: Some(progress.series_skipped_unchanged),
         eta_ms: None,
@@ -730,7 +730,7 @@ async fn build_library_scan_plan(
     };
 
     let known = known_series_by_folder(state, lib).await?;
-    let concurrency = state.cfg.scan_worker_count.max(1);
+    let concurrency = state.cfg().scan_worker_count.max(1);
     let mut planned = futures::stream::iter(layout.series_folders.iter().cloned())
         .map(|folder| {
             let ignore = ignore.clone();
@@ -1211,7 +1211,7 @@ async fn run_phases(
     let mut seen_paths = HashSet::new();
     let mut status_reconcile_entries = Vec::new();
 
-    let concurrency = state.cfg.scan_worker_count.max(1);
+    let concurrency = state.cfg().scan_worker_count.max(1);
     // Anchor the parallel-phase totals so doc readers can derive
     // wall ≈ summed/parallel_workers. Set once on the global stats;
     // per-worker local stats start at 0 and merge() takes max.
@@ -1580,7 +1580,7 @@ async fn process_planned_folder(
     // very large series don't hold a single giant transaction. Per-batch
     // failures roll back that batch only — the next batches still commit
     // and the next scan re-tries the failed files.
-    let batch_size = state.cfg.scan_batch_size.max(1);
+    let batch_size = state.cfg().scan_batch_size.max(1);
     let manifest = process::IssueManifest::for_paths(&state.db, &archives).await?;
     // F-2: pre-fetch every existing slug for this series in one round-trip so
     // the per-archive INSERT path picks slugs against an in-memory HashSet

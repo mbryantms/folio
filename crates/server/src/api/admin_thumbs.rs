@@ -599,7 +599,7 @@ pub async fn force_recreate(
         }
     };
 
-    let wiped = wipe_issue_thumb_ids(app.cfg.data_path.clone(), issue_ids).await;
+    let wiped = wipe_issue_thumb_ids(app.cfg().data_path.clone(), issue_ids).await;
     if let Err(e) = clear_thumb_state_for_library(&app, lib_id, true).await {
         tracing::warn!(library_id = %lib_id, error = %e, "force-recreate: bulk clear failed");
     }
@@ -665,7 +665,7 @@ pub async fn delete_all(
         }
     };
 
-    let deleted = wipe_issue_thumb_ids(app.cfg.data_path.clone(), issue_ids).await;
+    let deleted = wipe_issue_thumb_ids(app.cfg().data_path.clone(), issue_ids).await;
     if let Err(e) = clear_thumb_state_for_library(&app, lib_id, false).await {
         tracing::warn!(library_id = %lib_id, error = %e, "delete-all: bulk clear failed");
     }
@@ -753,7 +753,7 @@ pub async fn regenerate_series_cover(
     };
 
     parallel_wipe_issue_files(
-        app.cfg.data_path.clone(),
+        app.cfg().data_path.clone(),
         issue_ids.clone(),
         WipeScope::Cover,
     )
@@ -916,7 +916,7 @@ pub async fn force_recreate_series_page_map(
     };
 
     parallel_wipe_issue_files(
-        app.cfg.data_path.clone(),
+        app.cfg().data_path.clone(),
         issue_ids.clone(),
         WipeScope::Strips,
     )
@@ -981,7 +981,7 @@ pub async fn regenerate_issue_cover(
         return resp;
     }
 
-    thumbnails::wipe_issue_cover(&app.cfg.data_path, &row.id);
+    thumbnails::wipe_issue_cover(&app.cfg().data_path, &row.id);
     clear_thumb_state(&app, &row).await;
 
     let enqueued =
@@ -1098,7 +1098,7 @@ pub async fn force_recreate_issue_page_map(
         return resp;
     }
 
-    thumbnails::wipe_issue_strips(&app.cfg.data_path, &row.id);
+    thumbnails::wipe_issue_strips(&app.cfg().data_path, &row.id);
 
     let enqueued =
         if post_scan::enqueue_thumb_job(&app, post_scan::ThumbsJob::strip(row.id.clone())).await {
@@ -1202,7 +1202,7 @@ async fn page_thumb_status_counts(
         .all(&app.db)
         .await?;
 
-    let data_dir = app.cfg.data_path.clone();
+    let data_dir = app.cfg().data_path.clone();
     let counts = tokio::task::spawn_blocking(move || {
         let mut total = 0u64;
         let mut generated = 0u64;

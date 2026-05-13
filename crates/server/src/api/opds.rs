@@ -229,7 +229,7 @@ async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
   </entry>
 </feed>
 "#,
-        base = xml_escape(&app.cfg.public_url),
+        base = xml_escape(&app.cfg().public_url),
         name = xml_escape("Comic Reader"),
         now = now,
         nav = NAV_CT,
@@ -285,7 +285,7 @@ async fn series_list(
   <link rel="up" href="/opds/v1" type="{nav}"/>
 {pagination}{entries}</feed>
 "#,
-        base = xml_escape(&app.cfg.public_url),
+        base = xml_escape(&app.cfg().public_url),
         now = now,
         acq = ACQ_CT,
         nav = NAV_CT,
@@ -457,7 +457,7 @@ async fn search_description(State(app): State<AppState>, _user: CurrentUser) -> 
 "#,
         name = xml_escape("Folio"),
         acq = ACQ_CT,
-        base = xml_escape(&app.cfg.public_url),
+        base = xml_escape(&app.cfg().public_url),
     );
     let mut hdrs = HeaderMap::new();
     hdrs.insert(

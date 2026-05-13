@@ -163,7 +163,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         kind: job.kind.as_str().to_owned(),
     });
 
-    let data_dir = app.cfg.data_path.clone();
+    let data_dir = app.cfg().data_path.clone();
     let issue_id = row.id.clone();
     let file_path = row.file_path.clone();
     let kind = job.kind;

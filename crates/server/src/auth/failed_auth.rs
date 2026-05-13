@@ -107,11 +107,29 @@ pub async fn record_failure(mut redis: redis::aio::ConnectionManager, ip: IpAddr
 
 /// Convenience used by `local::login` and `oidc::callback` on every auth
 /// failure path. No-op when we don't have a client IP (which shouldn't
-/// happen given the `set_context` middleware).
+/// happen given the `set_context` middleware) or when the operator has
+/// flipped `auth.rate_limit_enabled = false` via /admin/server.
 pub async fn record_failure_for(app: &AppState, ctx: &RequestContext) {
+    if !app.cfg().rate_limit_enabled {
+        return;
+    }
     if let Some(ip) = ctx.client_ip {
         record_failure(app.jobs.redis.clone(), ip).await;
     }
+}
+
+/// AppState-aware wrapper around [`check_lockout`] that short-circuits
+/// to `Ok(None)` when the operator has disabled rate limiting. Use this
+/// in preference to calling [`check_lockout`] directly so the kill
+/// switch covers both write (record) and read (check) paths uniformly.
+pub async fn check_lockout_for(
+    app: &AppState,
+    ip: IpAddr,
+) -> Result<Option<u64>, redis::RedisError> {
+    if !app.cfg().rate_limit_enabled {
+        return Ok(None);
+    }
+    check_lockout(app.jobs.redis.clone(), ip).await
 }
 
 /// Build the 429 response returned when an IP is in lockout. Shares the

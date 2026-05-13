@@ -25,6 +25,42 @@ use tokio::sync::Mutex;
 
 use crate::config::Config;
 
+/// Last-known operational status of the outbound email sender. Surfaced by
+/// `GET /admin/email/status` so an admin saving SMTP settings can confirm
+/// the new wiring actually delivers without waiting for a real recovery
+/// flow to fire.
+#[derive(Debug, Clone, Default)]
+pub struct EmailStatus {
+    /// True when the active sender is not the [`Noop`] fallback. The
+    /// status flips on save (via [`crate::state::AppState::replace_email`])
+    /// rather than on next-send, so the UI immediately reflects whether
+    /// SMTP is wired even if nothing has been sent yet.
+    pub configured: bool,
+    /// Wall-clock time of the last attempted send. `None` until at least
+    /// one [`crate::state::AppState::send_email`] call has run.
+    pub last_send_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Result of the last attempted send. `Some(true)` = success,
+    /// `Some(false)` = the underlying transport returned an error,
+    /// `None` = nothing has been attempted.
+    pub last_send_ok: Option<bool>,
+    /// Stringified transport error from the last failed send. `None` once
+    /// a subsequent successful send clears the slate.
+    pub last_error: Option<String>,
+    pub last_duration_ms: Option<u64>,
+}
+
+impl EmailStatus {
+    /// `configured` from the type of the active sender. The marker trait
+    /// [`IsConfigured`] separates real senders ([`LettreSender`],
+    /// [`MockSender`]) from the no-op fallback.
+    pub fn from_sender(sender: &dyn EmailSender) -> Self {
+        Self {
+            configured: sender.is_configured(),
+            ..Default::default()
+        }
+    }
+}
+
 /// A single transactional email. Bodies are plain-text by default; HTML is
 /// optional and renders as a multipart/alternative when present.
 #[derive(Clone, Debug)]
@@ -43,6 +79,13 @@ pub trait EmailSender: Send + Sync {
     /// failed but the user-visible action already succeeded" and log
     /// rather than bubble.
     async fn send(&self, email: Email) -> anyhow::Result<()>;
+
+    /// True when this sender will actually attempt delivery. False for
+    /// the [`Noop`] fallback. Drives `email_status.configured` so the
+    /// admin UI can show "SMTP wired" without making a probe send.
+    fn is_configured(&self) -> bool {
+        true
+    }
 }
 
 // ───────── Noop ─────────
@@ -62,6 +105,10 @@ impl EmailSender for Noop {
             email.body_text
         );
         Ok(())
+    }
+
+    fn is_configured(&self) -> bool {
+        false
     }
 }
 

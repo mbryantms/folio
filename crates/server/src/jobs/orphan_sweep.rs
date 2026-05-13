@@ -19,7 +19,7 @@ use std::collections::HashSet;
 
 /// Run one sweep. Returns the count of wiped issue artifacts.
 pub async fn run(state: &AppState) -> anyhow::Result<usize> {
-    let on_disk: HashSet<String> = thumbnails::list_issues_on_disk(&state.cfg.data_path)?;
+    let on_disk: HashSet<String> = thumbnails::list_issues_on_disk(&state.cfg().data_path)?;
     if on_disk.is_empty() {
         return Ok(0);
     }
@@ -42,7 +42,7 @@ pub async fn run(state: &AppState) -> anyhow::Result<usize> {
         if alive_set.contains(id) {
             continue;
         }
-        thumbnails::wipe_issue_thumbs(&state.cfg.data_path, id);
+        thumbnails::wipe_issue_thumbs(&state.cfg().data_path, id);
         wiped += 1;
     }
     Ok(wiped)

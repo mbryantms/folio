@@ -30,7 +30,7 @@ async fn hello(State(state): State<AppState>) -> impl IntoResponse {
     Json(Hello {
         app: "comic-reader",
         version: env!("CARGO_PKG_VERSION"),
-        auth_mode: state.cfg.auth_mode.to_string(),
+        auth_mode: state.cfg().auth_mode.to_string(),
         docs: "/openapi.json",
     })
 }

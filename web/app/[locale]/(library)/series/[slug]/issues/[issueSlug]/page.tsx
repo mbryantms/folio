@@ -149,9 +149,12 @@ export default async function IssuePage({
         <span className="text-foreground/80">{heading}</span>
       </nav>
 
-      <header className="grid grid-cols-1 gap-8 lg:grid-cols-[18rem_1fr]">
-        <div className="flex flex-col gap-4">
-          <div className="mx-auto w-72 max-w-full lg:mx-0">
+      <header className="grid grid-cols-1 gap-6 sm:gap-8 lg:grid-cols-[18rem_1fr]">
+        {/* Mobile: cover shrinks to ~44 (176px) to leave room for the
+            primary CTA + the title block above the fold. Scales up to
+            56 (224px) at sm, full 72 (288px) at lg. */}
+        <div className="flex flex-col gap-3 sm:gap-4">
+          <div className="mx-auto w-44 max-w-full sm:w-56 lg:mx-0 lg:w-72">
             <Cover
               src={
                 issue.state === "active"
@@ -162,7 +165,7 @@ export default async function IssuePage({
               fallback={issue.state === "active" ? "Cover" : issue.state}
             />
           </div>
-          <div className="flex flex-col gap-2 lg:max-w-72">
+          <div className="mx-auto flex w-full max-w-xs flex-col gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
             {issue.state === "active" ? (
               <Button asChild size="lg" className="w-full">
                 <Link href={readerUrl(issue)}>{readLabel}</Link>

@@ -4,13 +4,16 @@
 //! Files are written with mode `0600`. The directory itself is `0700`.
 //!
 //! Files:
-//!   `pepper`            — 32 bytes, argon2id pepper.
-//!   `jwt-ed25519.key`   — 32-byte Ed25519 private key (raw).
-//!   `csrf.key`          — 32 bytes, HMAC-SHA256 secret for stateless CSRF in some flows
-//!                         (currently the double-submit pattern uses cookie value comparison
-//!                         and doesn't need this; reserved for future use).
-//!   `email-token.key`   — 32 bytes, HMAC-SHA256 for stateless email verification/reset tokens.
-//!   `url-signing.key`   — 32 bytes, HMAC-SHA256 for OPDS-PSE signed URLs.
+//!   `pepper`                    — 32 bytes, argon2id pepper.
+//!   `jwt-ed25519.key`           — 32-byte Ed25519 private key (raw).
+//!   `csrf.key`                  — 32 bytes, HMAC-SHA256 secret for stateless CSRF in some flows
+//!                                 (currently the double-submit pattern uses cookie value comparison
+//!                                 and doesn't need this; reserved for future use).
+//!   `email-token.key`           — 32 bytes, HMAC-SHA256 for stateless email verification/reset tokens.
+//!   `url-signing.key`           — 32 bytes, HMAC-SHA256 for OPDS-PSE signed URLs.
+//!   `settings-encryption.key`   — 32 bytes, XChaCha20-Poly1305 AEAD key for
+//!                                 sealing secret rows in the `app_setting`
+//!                                 table (SMTP password, OIDC client secret).
 //!
 //! All loaders are idempotent. Workflow:
 //!   `Secrets::load(&data_dir)?`
@@ -30,6 +33,7 @@ pub struct Secrets {
     pub jwt_ed25519: SigningKey,
     pub email_token_key: Zeroizing<[u8; 32]>,
     pub url_signing_key: Zeroizing<[u8; 32]>,
+    pub settings_encryption_key: Zeroizing<[u8; 32]>,
 }
 
 impl Secrets {
@@ -41,12 +45,14 @@ impl Secrets {
         let jwt = load_or_generate_ed25519(&dir.join("jwt-ed25519.key"))?;
         let email = load_or_generate_bytes::<32>(&dir.join("email-token.key"))?;
         let url = load_or_generate_bytes::<32>(&dir.join("url-signing.key"))?;
+        let settings = load_or_generate_bytes::<32>(&dir.join("settings-encryption.key"))?;
 
         Ok(Self {
             pepper: Zeroizing::new(pepper),
             jwt_ed25519: jwt,
             email_token_key: Zeroizing::new(email),
             url_signing_key: Zeroizing::new(url),
+            settings_encryption_key: Zeroizing::new(settings),
         })
     }
 }

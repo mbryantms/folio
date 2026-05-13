@@ -165,6 +165,7 @@ use utoipa::OpenApi;
         api::admin_activity::list,
         api::auth_config::get_config,
         api::auth_config::get_public_config,
+        api::auth_config::probe_discovery,
         api::server_info::info,
         api::sessions::list,
         api::sessions::revoke_one,
@@ -172,6 +173,10 @@ use utoipa::OpenApi;
         api::app_passwords::list,
         api::app_passwords::create,
         api::app_passwords::revoke,
+        api::admin_settings::get_all,
+        api::admin_settings::update,
+        api::admin_email::status,
+        api::admin_email::test_send,
     ),
     components(schemas(
         shared::error::ApiError,
@@ -329,6 +334,8 @@ use utoipa::OpenApi;
         api::auth_config::OidcConfigView,
         api::auth_config::LocalConfigView,
         api::auth_config::PublicAuthConfigView,
+        api::auth_config::OidcDiscoverReq,
+        api::auth_config::OidcDiscoverResp,
         api::server_info::ServerInfoView,
         api::sessions::SessionView,
         api::sessions::SessionListView,
@@ -337,6 +344,12 @@ use utoipa::OpenApi;
         api::app_passwords::AppPasswordListView,
         api::app_passwords::AppPasswordCreatedView,
         api::app_passwords::CreateAppPasswordReq,
+        api::admin_settings::SettingsView,
+        api::admin_settings::RegistryEntry,
+        api::admin_settings::ResolvedEntry,
+        api::admin_settings::UpdateSettingsReq,
+        api::admin_email::EmailStatusView,
+        api::admin_email::TestEmailResp,
     ))
 )]
 pub struct ApiDoc;
@@ -345,7 +358,7 @@ pub fn openapi_spec() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
 }
 
-pub async fn serve(cfg: Config, handles: ObservabilityHandles) -> anyhow::Result<()> {
+pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Result<()> {
     let mut db_opts = ConnectOptions::new(cfg.database_url.clone());
     db_opts
         .max_connections(30)
@@ -363,6 +376,98 @@ pub async fn serve(cfg: Config, handles: ObservabilityHandles) -> anyhow::Result
 
     let secrets = crate::secrets::Secrets::load(&cfg.data_path)?;
 
+    // Capture the env-only Config before applying the DB overlay. The
+    // baseline lives in AppState and powers the
+    // rebuild-from-scratch path inside `PATCH /admin/settings` so
+    // deleting a DB row reverts to the env value.
+    let baseline = cfg.clone();
+
+    // First-boot bootstrap: copy env-set SMTP + auth values into
+    // `app_setting` when no sentinel row (smtp.host / auth.mode) exists
+    // yet. Lets an existing `compose.prod.yml` deployment upgrade in
+    // place without losing config — the admin UI sees the env-derived
+    // values and the operator can edit from there. Runs before
+    // `overlay_db` so the overlay re-reads what we just wrote (the
+    // WARN-on-collision logic suppresses warnings when env value == DB
+    // value, so this isn't noisy).
+    if let Err(e) = crate::settings::bootstrap::seed_smtp_from_env(&db, &cfg, &secrets).await {
+        tracing::warn!(error = %e, "SMTP env bootstrap failed; falling back to env-only");
+    }
+    if let Err(e) = crate::settings::bootstrap::seed_auth_from_env(&db, &cfg, &secrets).await {
+        tracing::warn!(error = %e, "auth env bootstrap failed; falling back to env-only");
+    }
+    if let Err(e) = crate::settings::bootstrap::seed_tokens_and_diagnostics_from_env(&db, &cfg)
+        .await
+    {
+        tracing::warn!(error = %e, "tokens/diagnostics env bootstrap failed; falling back to env-only");
+    }
+    if let Err(e) = crate::settings::bootstrap::seed_operational_from_env(&db, &cfg).await {
+        tracing::warn!(error = %e, "operational env bootstrap failed; falling back to env-only");
+    }
+
+    // Apply DB-stored setting overrides on top of the env-loaded config.
+    // Failures here fall back to the env-only Config so the server stays
+    // bootable when a malformed DB row exists.
+    if let Err(e) = cfg.overlay_db(&db, &secrets).await {
+        tracing::warn!(error = %e, "app_setting overlay failed; using env-only Config");
+    }
+
+    // Deprecation WARNs (since=2026-Q3): env vars in moved-to-DB blocks
+    // still work as boot-time defaults, but operators should migrate to
+    // the admin UI for live edits. See docs/dev/runtime-configuration.md.
+    if std::env::var("COMIC_SMTP_HOST")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some()
+    {
+        tracing::warn!(
+            target: "comic.deprecation",
+            since = "2026-Q3",
+            replace_with = "/admin/email",
+            "COMIC_SMTP_* env vars are deprecated; DB value wins once a row exists for each key"
+        );
+    }
+    if std::env::var("COMIC_AUTH_MODE").is_ok()
+        || std::env::var("COMIC_OIDC_ISSUER").is_ok()
+        || std::env::var("COMIC_LOCAL_REGISTRATION_OPEN").is_ok()
+    {
+        tracing::warn!(
+            target: "comic.deprecation",
+            since = "2026-Q3",
+            replace_with = "/admin/auth",
+            "COMIC_AUTH_MODE / COMIC_OIDC_* / COMIC_LOCAL_* env vars are deprecated"
+        );
+    }
+    if std::env::var("COMIC_JWT_ACCESS_TTL").is_ok()
+        || std::env::var("COMIC_JWT_REFRESH_TTL").is_ok()
+        || std::env::var("COMIC_RATE_LIMIT_ENABLED").is_ok()
+        || std::env::var("COMIC_LOG_LEVEL").is_ok()
+    {
+        tracing::warn!(
+            target: "comic.deprecation",
+            since = "2026-Q3",
+            replace_with = "/admin/auth + /admin/server",
+            "COMIC_JWT_*, COMIC_RATE_LIMIT_ENABLED, COMIC_LOG_LEVEL env vars are deprecated"
+        );
+    }
+    if std::env::var("COMIC_ZIP_LRU_CAPACITY").is_ok()
+        || std::env::var("COMIC_SCAN_WORKER_COUNT").is_ok()
+        || std::env::var("COMIC_POST_SCAN_WORKER_COUNT").is_ok()
+        || std::env::var("COMIC_SCAN_BATCH_SIZE").is_ok()
+        || std::env::var("COMIC_SCAN_HASH_BUFFER_KB").is_ok()
+        || std::env::var("COMIC_ARCHIVE_WORK_PARALLEL").is_ok()
+        || std::env::var("COMIC_THUMB_INLINE_PARALLEL").is_ok()
+    {
+        tracing::warn!(
+            target: "comic.deprecation",
+            since = "2026-Q3",
+            replace_with = "/admin/server",
+            "COMIC_ZIP_LRU_CAPACITY / COMIC_*_WORKER_COUNT / COMIC_SCAN_BATCH_SIZE / \
+             COMIC_SCAN_HASH_BUFFER_KB / COMIC_ARCHIVE_WORK_PARALLEL / COMIC_THUMB_INLINE_PARALLEL \
+             env vars are deprecated; values apply on next restart"
+        );
+    }
+
     let jobs = crate::jobs::JobRuntime::new(&cfg.redis_url, db.clone()).await?;
 
     let email = crate::email::build(&cfg)?;
@@ -370,10 +475,12 @@ pub async fn serve(cfg: Config, handles: ObservabilityHandles) -> anyhow::Result
     let bind = cfg.bind_addr;
     let state = AppState::new(
         cfg,
+        baseline,
         db,
         secrets,
         handles.prometheus,
         handles.log_buffer,
+        handles.log_reload,
         jobs,
         email,
     );
@@ -418,8 +525,13 @@ pub async fn serve(cfg: Config, handles: ObservabilityHandles) -> anyhow::Result
 
 pub fn router(state: AppState) -> Router {
     let request_id_header = axum::http::HeaderName::from_static("x-request-id");
-    let sec_headers = Arc::new(SecurityHeaders::new(&state.cfg));
-    let trusted_proxies = TrustedProxies::from_config(&state.cfg.trusted_proxies);
+    // Snapshot config at router-build time: SecurityHeaders + TrustedProxies
+    // are built once and live for the lifetime of the process. They don't
+    // hot-reload yet (deferred to a later milestone of the
+    // runtime-config-admin plan).
+    let cfg = state.cfg();
+    let sec_headers = Arc::new(SecurityHeaders::new(&cfg));
+    let trusted_proxies = TrustedProxies::from_config(&cfg.trusted_proxies);
 
     Router::new()
         .merge(api::health::routes())
@@ -460,6 +572,8 @@ pub fn router(state: AppState) -> Router {
         .merge(api::server_info::routes())
         .merge(api::sessions::routes())
         .merge(api::app_passwords::routes())
+        .merge(api::admin_settings::routes())
+        .merge(api::admin_email::routes())
         .merge(api::opds::routes())
         .merge(api::opds_v2::routes())
         .layer(axum::middleware::from_fn(auth::csrf::require_csrf))

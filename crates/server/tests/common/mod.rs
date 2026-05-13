@@ -18,10 +18,11 @@ use server::{
     config::{AuthMode, Config},
     email::MockSender,
     jobs::JobRuntime,
-    observability::LogRingBuffer,
+    observability::{LogReloadHandle, LogRingBuffer},
     secrets::Secrets,
     state::AppState,
 };
+use tracing_subscriber::{EnvFilter, reload};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -219,12 +220,22 @@ impl TestApp {
             .await
             .expect("connect redis");
         let email = MockSender::new();
+        let baseline = cfg.clone();
+        // Detached reload handle: the layer is never installed, so
+        // `.modify(...)` will fail silently. Tests that exercise the
+        // log-level swap don't depend on the global subscriber actually
+        // reconfiguring — they assert the handler reaches the modify
+        // call and returns 200.
+        let (_filter_layer, log_reload): (_, LogReloadHandle) =
+            reload::Layer::new(EnvFilter::new("info"));
         let state = AppState::new(
             cfg,
+            baseline,
             db,
             secrets,
             prometheus_handle(),
             LogRingBuffer::default(),
+            log_reload,
             jobs,
             Arc::new(email.clone()),
         );

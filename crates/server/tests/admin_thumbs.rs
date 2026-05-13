@@ -276,7 +276,7 @@ async fn status_counts_match_seeded_state() {
         ],
     )
     .await;
-    let data_dir = app.state().cfg.data_path.clone();
+    let data_dir = app.state().cfg().data_path.clone();
     for id in ids.iter().take(2) {
         let path = thumbnails::strip_path(&data_dir, id, 0, ThumbFormat::Webp);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -618,7 +618,7 @@ async fn regenerate_issue_cover_preserves_strip_dir() {
         .await
         .unwrap()
         .unwrap();
-    let data_dir = app.state().cfg.data_path.clone();
+    let data_dir = app.state().cfg().data_path.clone();
 
     // Plant a cover file + a strip file so we can prove the wipe scope.
     let cover_path = thumbnails::cover_path(&data_dir, &ids[0], ThumbFormat::Webp);
@@ -706,7 +706,7 @@ async fn force_recreate_issue_page_map_wipes_strips_only() {
         .await
         .unwrap()
         .unwrap();
-    let data_dir = app.state().cfg.data_path.clone();
+    let data_dir = app.state().cfg().data_path.clone();
 
     let cover_path = thumbnails::cover_path(&data_dir, &ids[0], ThumbFormat::Webp);
     fs::create_dir_all(cover_path.parent().unwrap()).unwrap();
@@ -803,7 +803,7 @@ async fn force_recreate_series_page_map_wipes_strips_only() {
         .unwrap()
         .series_id
         .to_string();
-    let data_dir = app.state().cfg.data_path.clone();
+    let data_dir = app.state().cfg().data_path.clone();
 
     for id in &ids {
         let cover_path = thumbnails::cover_path(&data_dir, id, ThumbFormat::Webp);

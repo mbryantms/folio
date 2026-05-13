@@ -199,14 +199,14 @@ async fn cover_worker_generates_cover_without_eager_strips() {
     .unwrap();
 
     // Cover lives at the legacy backwards-compat path.
-    let cover = thumbnails::cover_path(&state.cfg.data_path, &id, thumbnails::ThumbFormat::Webp);
+    let cover = thumbnails::cover_path(&state.cfg().data_path, &id, thumbnails::ThumbFormat::Webp);
     assert!(cover.exists(), "cover thumb missing: {}", cover.display());
 
     // Strip thumbnails are generated lazily by the reader catchup job, not by
     // the scan/admin cover job.
     for n in 0..5 {
         let strip =
-            thumbnails::strip_path(&state.cfg.data_path, &id, n, thumbnails::ThumbFormat::Webp);
+            thumbnails::strip_path(&state.cfg().data_path, &id, n, thumbnails::ThumbFormat::Webp);
         assert!(!strip.exists(), "strip page {n} should not be eager");
     }
 
@@ -239,7 +239,7 @@ async fn strip_worker_generates_strip_for_every_page() {
 
     for n in 0..5 {
         let strip =
-            thumbnails::strip_path(&state.cfg.data_path, &id, n, thumbnails::ThumbFormat::Webp);
+            thumbnails::strip_path(&state.cfg().data_path, &id, n, thumbnails::ThumbFormat::Webp);
         assert!(
             strip.exists(),
             "strip page {n} missing: {}",
@@ -271,7 +271,7 @@ async fn worker_is_idempotent_across_reruns() {
 
     // Capture mtime of the cover file so we can prove the second
     // pass didn't rewrite it.
-    let cover = thumbnails::cover_path(&state.cfg.data_path, &id, thumbnails::ThumbFormat::Webp);
+    let cover = thumbnails::cover_path(&state.cfg().data_path, &id, thumbnails::ThumbFormat::Webp);
     let mtime1 = std::fs::metadata(&cover).unwrap().modified().unwrap();
 
     // Sleep so the next stamp can't tie on second-resolution timestamps.
@@ -482,7 +482,7 @@ async fn worker_skips_non_active_issue() {
     .await
     .unwrap();
 
-    let cover = thumbnails::cover_path(&state.cfg.data_path, &id, thumbnails::ThumbFormat::Webp);
+    let cover = thumbnails::cover_path(&state.cfg().data_path, &id, thumbnails::ThumbFormat::Webp);
     assert!(!cover.exists(), "non-active issue should not gen thumbs");
     let row = IssueEntity::find_by_id(id)
         .one(&state.db)

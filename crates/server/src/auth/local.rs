@@ -299,10 +299,10 @@ pub async fn register(
         auth_failure_response(format, "/sign-in", safe_next.as_deref(), status, code, msg)
     };
 
-    if !matches!(app.cfg.auth_mode, AuthMode::Local | AuthMode::Both) {
+    if !matches!(app.cfg().auth_mode, AuthMode::Local | AuthMode::Both) {
         return fail(StatusCode::NOT_FOUND, "not_found", "local auth disabled");
     }
-    if !app.cfg.local_registration_open {
+    if !app.cfg().local_registration_open {
         return fail(
             StatusCode::FORBIDDEN,
             "auth.registration_closed",
@@ -343,7 +343,7 @@ pub async fn register(
     // and skips email verification.
     let user_count = UserEntity::find().count(&app.db).await.unwrap_or(1);
     let smtp_configured = app
-        .cfg
+        .cfg()
         .smtp_host
         .as_deref()
         .is_some_and(|s| !s.trim().is_empty());
@@ -416,8 +416,8 @@ pub async fn register(
                 VERIFY_EMAIL_TTL,
                 app.secrets.email_token_key.as_ref(),
             );
-            let msg = templates::verify_email(&app.cfg.public_url, email_addr, &tok);
-            if let Err(e) = app.email.send(msg).await {
+            let msg = templates::verify_email(&app.cfg().public_url, email_addr, &tok);
+            if let Err(e) = app.send_email(msg).await {
                 tracing::warn!(error = %e, user_id = %inserted.id, "verify-email send failed at register");
             }
         }
@@ -471,7 +471,7 @@ pub async fn login(
         auth_failure_response(format, "/sign-in", safe_next.as_deref(), status, code, msg)
     };
 
-    if !matches!(app.cfg.auth_mode, AuthMode::Local | AuthMode::Both) {
+    if !matches!(app.cfg().auth_mode, AuthMode::Local | AuthMode::Both) {
         return fail(StatusCode::NOT_FOUND, "not_found", "local auth disabled");
     }
 
@@ -480,7 +480,7 @@ pub async fn login(
     // 15 minutes — even credential-validation is skipped, so a continued
     // burst doesn't keep the password-hash CPU pegged.
     if let Some(ip) = ctx.client_ip
-        && let Ok(Some(retry)) = super::failed_auth::check_lockout(app.jobs.redis.clone(), ip).await
+        && let Ok(Some(retry)) = super::failed_auth::check_lockout_for(&app, ip).await
     {
         return match format {
             ResponseFormat::Json => super::failed_auth::lockout_response(retry),
@@ -627,7 +627,7 @@ pub async fn refresh(
     let new_rt_raw = new_refresh_token_raw();
     let new_hash = sha256_hex(&new_rt_raw);
     let now = chrono::Utc::now().fixed_offset();
-    let refresh_ttl = app.cfg.refresh_ttl();
+    let refresh_ttl = app.cfg().refresh_ttl();
     let new_expires = chrono::Utc::now() + chrono::Duration::seconds(refresh_ttl.as_secs() as i64);
 
     let session_id = sess.id;
@@ -729,7 +729,7 @@ pub async fn logout(State(app): State<AppState>, jar: CookieJar) -> axum::respon
         && let Ok(entry) = super::oidc::discover_entry_pub(&app).await
         && let Some(end_session) = entry.end_session_endpoint
     {
-        let post_logout = format!("{}/sign-in", app.cfg.public_url.trim_end_matches('/'));
+        let post_logout = format!("{}/sign-in", app.cfg().public_url.trim_end_matches('/'));
         let mut url = match url::Url::parse(&end_session) {
             Ok(u) => u,
             Err(e) => {
@@ -772,7 +772,7 @@ pub async fn me(
         .flatten();
 
     let body = me_resp_from_parts(&user, csrf.clone(), row.as_ref());
-    let jar = jar.add(csrf_cookie(csrf, app.cfg.access_ttl()));
+    let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
     (StatusCode::OK, jar, Json(body)).into_response()
 }
 
@@ -984,7 +984,7 @@ pub async fn update_preferences(
 
     let csrf = new_csrf_token();
     let body = me_resp_from_row(&updated, csrf.clone());
-    let mut jar = jar.add(csrf_cookie(csrf, app.cfg.access_ttl()));
+    let mut jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
     // If the language preference changed, refresh `NEXT_LOCALE` so the next
     // navigation picks up the new locale immediately (no relog needed).
     if req.language.is_some() {
@@ -1018,7 +1018,7 @@ pub async fn request_password_reset(
     State(app): State<AppState>,
     FormOrJson { data: req, format }: FormOrJson<RequestPasswordResetReq>,
 ) -> impl IntoResponse {
-    if !matches!(app.cfg.auth_mode, AuthMode::Local | AuthMode::Both) {
+    if !matches!(app.cfg().auth_mode, AuthMode::Local | AuthMode::Both) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let email_lower = req.email.trim().to_lowercase();
@@ -1041,8 +1041,8 @@ pub async fn request_password_reset(
             PASSWORD_RESET_TTL,
             app.secrets.email_token_key.as_ref(),
         );
-        let msg = templates::password_reset(&app.cfg.public_url, addr, &tok);
-        if let Err(e) = app.email.send(msg).await {
+        let msg = templates::password_reset(&app.cfg().public_url, addr, &tok);
+        if let Err(e) = app.send_email(msg).await {
             tracing::warn!(error = %e, user_id = %row.id, "password-reset send failed");
         } else {
             tracing::info!(user_id = %row.id, "password-reset email sent");
@@ -1094,7 +1094,7 @@ pub async fn reset_password(
         auth_failure_response(format, "/forgot-password", None, status, code, msg)
     };
 
-    if !matches!(app.cfg.auth_mode, AuthMode::Local | AuthMode::Both) {
+    if !matches!(app.cfg().auth_mode, AuthMode::Local | AuthMode::Both) {
         return fail_at_reset(StatusCode::NOT_FOUND, "not_found", "local auth disabled");
     }
     if req.new_password.len() < 12 {
@@ -1167,8 +1167,8 @@ pub async fn reset_password(
 
     // Best-effort confirmation email so a compromised user notices.
     if let Some(addr) = row.email.as_deref() {
-        let confirm = templates::password_changed(&app.cfg.public_url, addr);
-        if let Err(e) = app.email.send(confirm).await {
+        let confirm = templates::password_changed(&app.cfg().public_url, addr);
+        if let Err(e) = app.send_email(confirm).await {
             tracing::warn!(error = %e, user_id = %user_id, "password-changed confirmation send failed");
         }
     }
@@ -1198,7 +1198,7 @@ pub async fn verify_email(
     State(app): State<AppState>,
     Query(q): Query<VerifyEmailQuery>,
 ) -> impl IntoResponse {
-    if !matches!(app.cfg.auth_mode, AuthMode::Local | AuthMode::Both) {
+    if !matches!(app.cfg().auth_mode, AuthMode::Local | AuthMode::Both) {
         return error(StatusCode::NOT_FOUND, "not_found", "local auth disabled");
     }
     let user_id = match email_token::verify(
@@ -1263,7 +1263,7 @@ pub async fn resend_verification(
     State(app): State<AppState>,
     Json(req): Json<ResendVerificationReq>,
 ) -> impl IntoResponse {
-    if !matches!(app.cfg.auth_mode, AuthMode::Local | AuthMode::Both) {
+    if !matches!(app.cfg().auth_mode, AuthMode::Local | AuthMode::Both) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let email_lower = req.email.trim().to_lowercase();
@@ -1284,8 +1284,8 @@ pub async fn resend_verification(
             VERIFY_EMAIL_TTL,
             app.secrets.email_token_key.as_ref(),
         );
-        let msg = templates::verify_email(&app.cfg.public_url, addr, &tok);
-        if let Err(e) = app.email.send(msg).await {
+        let msg = templates::verify_email(&app.cfg().public_url, addr, &tok);
+        if let Err(e) = app.send_email(msg).await {
             tracing::warn!(error = %e, user_id = %row.id, "resend-verification send failed");
         } else {
             tracing::info!(user_id = %row.id, "verify-email resent");
@@ -1339,7 +1339,7 @@ async fn issue_session(
     let raw_rt = new_refresh_token_raw();
     let hash = sha256_hex(&raw_rt);
     let now = chrono::Utc::now();
-    let expires = now + chrono::Duration::seconds(app.cfg.refresh_ttl().as_secs() as i64);
+    let expires = now + chrono::Duration::seconds(app.cfg().refresh_ttl().as_secs() as i64);
 
     let am = SessionAM {
         id: Set(session_id),
@@ -1382,13 +1382,13 @@ fn finalize_session(
     format: ResponseFormat,
     redirect_to: Option<&str>,
 ) -> axum::response::Response {
-    let keys = match JwtKeys::from_secret(&app.secrets.jwt_ed25519, &app.cfg.public_url) {
+    let keys = match JwtKeys::from_secret(&app.secrets.jwt_ed25519, &app.cfg().public_url) {
         Ok(k) => k,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
 
-    let access_ttl = app.cfg.access_ttl();
-    let refresh_ttl = app.cfg.refresh_ttl();
+    let access_ttl = app.cfg().access_ttl();
+    let refresh_ttl = app.cfg().refresh_ttl();
     let access = match keys.issue_access(
         user_row.id,
         &user_row.role,

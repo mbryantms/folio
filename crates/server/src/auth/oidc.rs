@@ -86,8 +86,10 @@ async fn discovery_cache() -> &'static Arc<RwLock<HashMap<String, DiscoveryEntry
         .await
 }
 
-/// Clear the entire cache. Test hook + admin "force refresh" surface.
-#[allow(dead_code)]
+/// Clear the entire cache. Called by `PATCH /admin/settings` when an
+/// `auth.oidc.*` row changes so the next OIDC handshake re-fetches the
+/// discovery doc against the new issuer / client credentials. Also a
+/// test hook for the wiremock harness.
 pub(crate) async fn clear_discovery_cache() {
     if let Some(cell) = DISCOVERY_CACHE.get() {
         cell.write().await.clear();
@@ -106,8 +108,8 @@ struct StateCookie {
 /// past [`DISCOVERY_TTL`]. The cache is process-global so concurrent
 /// requests share a single live discovery handshake.
 async fn discover_entry(app: &AppState) -> anyhow::Result<DiscoveryEntry> {
-    let issuer = app
-        .cfg
+    let cfg = app.cfg();
+    let issuer = cfg
         .oidc_issuer
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("oidc not configured"))?
@@ -122,13 +124,11 @@ async fn discover_entry(app: &AppState) -> anyhow::Result<DiscoveryEntry> {
         }
     }
 
-    let client_id = app
-        .cfg
+    let client_id = cfg
         .oidc_client_id
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("oidc client_id not set"))?;
-    let client_secret = app
-        .cfg
+    let client_secret = cfg
         .oidc_client_secret
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("oidc client_secret not set"))?;
@@ -140,7 +140,7 @@ async fn discover_entry(app: &AppState) -> anyhow::Result<DiscoveryEntry> {
 
     let redirect = format!(
         "{}/auth/oidc/callback",
-        app.cfg.public_url.trim_end_matches('/')
+        cfg.public_url.trim_end_matches('/')
     );
     let client = CoreClient::from_provider_metadata(
         provider,
@@ -225,7 +225,7 @@ pub async fn start(
     jar: CookieJar,
     Query(q): Query<StartQuery>,
 ) -> Response {
-    if !matches!(app.cfg.auth_mode, AuthMode::Oidc | AuthMode::Both) {
+    if !matches!(app.cfg().auth_mode, AuthMode::Oidc | AuthMode::Both) {
         return error(StatusCode::NOT_FOUND, "not_found", "oidc disabled");
     }
     let client = match discover(&app).await {
@@ -315,13 +315,13 @@ pub async fn callback(
     Extension(ctx): Extension<RequestContext>,
     Query(q): Query<CallbackQuery>,
 ) -> Response {
-    if !matches!(app.cfg.auth_mode, AuthMode::Oidc | AuthMode::Both) {
+    if !matches!(app.cfg().auth_mode, AuthMode::Oidc | AuthMode::Both) {
         return error(StatusCode::NOT_FOUND, "not_found", "oidc disabled");
     }
 
     // Brute-force lockout check (§17.7). Shared with local::login.
     if let Some(ip) = ctx.client_ip
-        && let Ok(Some(retry)) = super::failed_auth::check_lockout(app.jobs.redis.clone(), ip).await
+        && let Ok(Some(retry)) = super::failed_auth::check_lockout_for(&app, ip).await
     {
         return super::failed_auth::lockout_response(retry);
     }
@@ -433,7 +433,7 @@ pub async fn callback(
     // email_verified policy (§12.7).
     let email_present = claims.email().is_some();
     let claim_email_verified = claims.email_verified();
-    let email_verified = match (claim_email_verified, app.cfg.oidc_trust_unverified_email) {
+    let email_verified = match (claim_email_verified, app.cfg().oidc_trust_unverified_email) {
         (Some(true), _) => true,
         (Some(false), _) => false,
         (None, true) => {
@@ -598,8 +598,8 @@ pub async fn callback(
     }
 
     // Issue session cookies (mirrors auth/local.rs).
-    let access_ttl = app.cfg.access_ttl();
-    let refresh_ttl = app.cfg.refresh_ttl();
+    let access_ttl = app.cfg().access_ttl();
+    let refresh_ttl = app.cfg().refresh_ttl();
     let session_id = Uuid::now_v7();
     let raw_rt = new_refresh_token_raw();
     let hash = sha256_hex(&raw_rt);
@@ -626,7 +626,7 @@ pub async fn callback(
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
 
-    let keys = match JwtKeys::from_secret(&app.secrets.jwt_ed25519, &app.cfg.public_url) {
+    let keys = match JwtKeys::from_secret(&app.secrets.jwt_ed25519, &app.cfg().public_url) {
         Ok(k) => k,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };

@@ -87,7 +87,7 @@ pub async fn thumb(
         app.uncache_thumb_path(&cache_key).await;
     }
     if let Some(existing) =
-        thumbnails::find_existing_variant(&app.cfg.data_path, &row.id, variant, page_index)
+        thumbnails::find_existing_variant(&app.cfg().data_path, &row.id, variant, page_index)
     {
         app.cache_thumb_path(cache_key.clone(), existing.clone())
             .await;
@@ -156,7 +156,7 @@ pub async fn thumb(
             return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable");
         }
     };
-    let data_dir = app.cfg.data_path.clone();
+    let data_dir = app.cfg().data_path.clone();
     let id_clone = row.id.clone();
     let r = tokio::task::spawn_blocking(move || {
         let mut cbz = arc.lock().expect("cbz mutex");

@@ -50,7 +50,7 @@ pub async fn validate_library(
     }
 
     // Loop check: root must not be the data dir.
-    if let Ok(data_canon) = std::fs::canonicalize(&state.cfg.data_path)
+    if let Ok(data_canon) = std::fs::canonicalize(&state.cfg().data_path)
         && root_canon == data_canon
     {
         return Err(ValidationError::LoopWithDataPath);

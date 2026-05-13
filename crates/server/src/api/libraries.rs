@@ -760,7 +760,7 @@ pub async fn delete_one(
     };
     let mut thumbs_swept = 0usize;
     for (issue_id,) in &issue_rows {
-        thumbnails::wipe_issue_thumbs(&app.cfg.data_path, issue_id);
+        thumbnails::wipe_issue_thumbs(&app.cfg().data_path, issue_id);
         thumbs_swept += 1;
     }
 
