@@ -54,8 +54,13 @@ dist/
 build/
 
 # Logs
+# `*.log` covers per-file output. The bare `logs/` pattern that used to
+# be here matched *any* directory named `logs/` anywhere in the tree,
+# which silently hid `web/app/[locale]/(admin)/admin/logs/page.tsx`
+# and any other route accidentally named "logs". Folio writes
+# structured logs to stdout (see crates/server/src/observability.rs),
+# so we don't need a generic `logs/` exclusion — `*.log` is enough.
 *.log
-logs/
 
 # Test artifacts
 coverage/

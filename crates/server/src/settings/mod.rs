@@ -60,26 +60,53 @@ pub enum Error {
 /// Rows with unknown keys are silently kept so an older binary can be rolled
 /// back across a migration window without losing data, but they are filtered
 /// out before they reach the [`Config`] overlay.
+///
+/// **Per-row resilience**: a single corrupted/un-decryptable secret row
+/// (e.g. sealed under an older `settings-encryption.key` from a previous
+/// data-volume) is logged at ERROR and *skipped* — the rest of the table
+/// still loads. This keeps the admin UI usable so the operator can
+/// reach `/admin/email` and `/admin/auth` to re-enter credentials, even
+/// after a key-rotation incident. Use [`crate::secrets`]' boot summary
+/// to spot regenerated keys.
 pub async fn read_all(db: &DatabaseConnection, secrets: &Secrets) -> Result<Vec<Resolved>, Error> {
     let rows = app_setting::Entity::find().all(db).await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
+        let key = row.key.clone();
         let value = if row.is_secret {
-            let sealed: crypto::SealedSecret = serde_json::from_value(row.value.clone())
-                .map_err(|_| Error::MalformedSecret(row.key.clone()))?;
-            let pt = crypto::open(&secrets.settings_encryption_key, &sealed)?;
-            let s = String::from_utf8(pt).map_err(|_| Error::MalformedSecret(row.key.clone()))?;
-            serde_json::Value::String(s)
+            match decrypt_secret_row(&row.value, secrets) {
+                Ok(s) => serde_json::Value::String(s),
+                Err(e) => {
+                    tracing::error!(
+                        key = %key,
+                        error = %e,
+                        "settings: secret row could not be decrypted; skipping. \
+                         Recovery: re-save this setting via the admin UI, or \
+                         delete the row (DELETE FROM app_setting WHERE key=...) \
+                         and let the bootstrap re-seed."
+                    );
+                    continue;
+                }
+            }
         } else {
             row.value.clone()
         };
         out.push(Resolved {
-            key: row.key,
+            key,
             value,
             is_secret: row.is_secret,
         });
     }
     Ok(out)
+}
+
+/// Single-row decrypt helper used by [`read_all`]. Separated so the
+/// `continue`-on-error path in the loop stays tidy.
+fn decrypt_secret_row(value: &serde_json::Value, secrets: &Secrets) -> Result<String, Error> {
+    let sealed: crypto::SealedSecret = serde_json::from_value(value.clone())
+        .map_err(|_| Error::MalformedSecret("envelope shape".into()))?;
+    let pt = crypto::open(&secrets.settings_encryption_key, &sealed)?;
+    String::from_utf8(pt).map_err(|_| Error::MalformedSecret("plaintext utf8".into()))
 }
 
 /// One pending change for [`write`]. `value = None` deletes the row.

@@ -67,7 +67,14 @@ services:
       # would fail open.
       COMIC_TRUSTED_PROXIES: ${COMIC_TRUSTED_PROXIES:-172.16.0.0/12}
     volumes:
-      - ${COMIC_LIBRARY_HOST_PATH:?required}:/library:ro
+      # Mount the host library at whatever path `COMIC_LIBRARY_PATH`
+      # asks the server to scan. Defaults to `/library` (matches the
+      # Dockerfile ENV) so a stock install just works without setting
+      # either variable. If you want the container path to match the
+      # host path (e.g. `/mnt/data` → `/mnt/data` for symmetry between
+      # dev and prod), set `COMIC_LIBRARY_PATH=/mnt/data` in `.env` and
+      # the mount target follows automatically — no compose edit.
+      - ${COMIC_LIBRARY_HOST_PATH:?required}:${COMIC_LIBRARY_PATH:-/library}:ro
       - comic_data:/data
     ports:
       - "${COMIC_APP_BIND:-127.0.0.1}:8080:8080"
