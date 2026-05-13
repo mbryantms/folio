@@ -60,10 +60,7 @@ async fn form_login_success_303_with_cookies() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/auth/local/login")
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(form(
                     "email=user%40example.com&password=correctly-horse-battery",
                 ))
@@ -108,10 +105,7 @@ async fn form_login_honors_safe_next_target() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/auth/local/login")
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(form(
                     "email=user%40example.com&password=correctly-horse-battery&next=%2Flibrary",
                 ))
@@ -140,10 +134,7 @@ async fn form_login_rejects_open_redirect() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/auth/local/login")
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(form(
                     // Protocol-relative URL would target evil.com if accepted.
                     "email=user%40example.com&password=correctly-horse-battery&next=%2F%2Fevil.com",
@@ -154,7 +145,12 @@ async fn form_login_rejects_open_redirect() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    let loc = resp.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let loc = resp
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert_eq!(
         loc, "/",
         "unsafe `next` is dropped and the default redirect target (`/`) is used"
@@ -173,20 +169,20 @@ async fn form_login_bad_credentials_303_to_sign_in() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/auth/local/login")
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
-                .body(form(
-                    "email=user%40example.com&password=wrong-password",
-                ))
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(form("email=user%40example.com&password=wrong-password"))
                 .unwrap(),
         )
         .await
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    let loc = resp.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let loc = resp
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(
         loc.starts_with("/sign-in?error=auth.invalid"),
         "form-fallback failure must 303 back to /sign-in with an error code, got {loc}"
@@ -203,10 +199,7 @@ async fn form_register_success_303_with_cookies() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/auth/local/register")
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(form(
                     "email=first%40example.com&password=correctly-horse-battery",
                 ))
@@ -236,10 +229,7 @@ async fn form_register_validation_failure_303_to_sign_in() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/auth/local/register")
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(form("email=first%40example.com&password=tooshort"))
                 .unwrap(),
         )
@@ -247,7 +237,12 @@ async fn form_register_validation_failure_303_to_sign_in() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    let loc = resp.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let loc = resp
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(loc.starts_with("/sign-in?error=validation"), "got {loc}");
 }
 
@@ -262,10 +257,7 @@ async fn form_request_password_reset_303_to_forgot_sent() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/auth/local/request-password-reset")
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(form("email=user%40example.com"))
                 .unwrap(),
         )
@@ -370,10 +362,7 @@ async fn csrf_middleware_accepts_hidden_form_field() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/me/account")
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(header::COOKIE, cookie_header)
                 .body(Body::from(body_str))
                 .unwrap(),
@@ -434,10 +423,7 @@ async fn csrf_middleware_rejects_form_field_mismatch() {
             Request::builder()
                 .method(Method::POST)
                 .uri("/me/account")
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(header::COOKIE, cookie_header)
                 .body(Body::from(body_str))
                 .unwrap(),

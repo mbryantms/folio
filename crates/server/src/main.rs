@@ -111,7 +111,10 @@ fn healthcheck_probe() -> i32 {
         }
     };
     // Status line starts `HTTP/1.1 200 …` — 16 bytes is enough for the code.
-    if head.get(..n).is_some_and(|s| s.starts_with(b"HTTP/1.1 200")) {
+    if head
+        .get(..n)
+        .is_some_and(|s| s.starts_with(b"HTTP/1.1 200"))
+    {
         0
     } else {
         let head_str = String::from_utf8_lossy(&head[..n]);

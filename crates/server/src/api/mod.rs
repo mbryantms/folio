@@ -1,5 +1,6 @@
 pub mod account;
 pub mod admin_activity;
+pub mod admin_fs;
 pub mod admin_logs;
 pub mod admin_queue;
 pub mod admin_stats;
@@ -20,6 +21,8 @@ pub mod libraries;
 pub mod markers;
 pub mod meta;
 pub mod opds;
+pub mod opds_pse;
+pub mod opds_v2;
 pub mod page_bytes;
 pub mod people;
 pub mod progress;

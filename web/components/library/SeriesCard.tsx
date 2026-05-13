@@ -1,20 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
 import {
   CoverMenuButton,
   type CoverMenuAction,
 } from "@/components/CoverMenuButton";
+import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { SeriesPlayOverlay } from "@/components/QuickReadOverlay";
 import { Badge } from "@/components/ui/badge";
+import { jsonFetch } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";
+import type { SeriesResumeView, SeriesView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { formatPublicationStatus } from "@/lib/format";
 import { collectionStatus } from "@/lib/series-status";
-import type { SeriesView } from "@/lib/api/types";
 import { seriesUrl } from "@/lib/urls";
 
 type Size = "sm" | "md";
@@ -53,10 +56,47 @@ export function SeriesCard({
   const status = formatPublicationStatus(series.status);
   const link = href ?? seriesUrl(series);
   const issueCount = series.issue_count ?? series.total_issues ?? null;
+  const router = useRouter();
   const upsertSeriesProgress = useUpsertSeriesProgress(series.id);
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "series",
     ref_id: series.id,
+    label: series.name,
+  });
+  const menuActions: CoverMenuAction[] = [
+    {
+      label: "Mark all read",
+      onSelect: () => upsertSeriesProgress.mutate({ finished: true }),
+    },
+    {
+      label: "Mark all unread",
+      onSelect: () => upsertSeriesProgress.mutate({ finished: false }),
+    },
+    ...collectionActions.actions,
+    ...(extraActions ?? []),
+  ];
+  const longPress = useCoverLongPressActions({
+    primary: {
+      label: `Read ${series.name}`,
+      onSelect: async () => {
+        // Mirrors SeriesPlayOverlay — async resume lookup before routing.
+        // Failures are quiet because the user can still drill into the
+        // series detail page from the sheet's "Open" gesture or by
+        // closing the sheet and short-tapping.
+        try {
+          const resume = await jsonFetch<SeriesResumeView>(
+            `/series/${encodeURIComponent(series.slug)}/resume`,
+          );
+          if (!resume.issue_slug) return;
+          router.push(
+            `/read/${encodeURIComponent(resume.series_slug)}/${encodeURIComponent(resume.issue_slug)}`,
+          );
+        } catch {
+          // ignore — match SeriesPlayOverlay's quiet-fail behavior
+        }
+      },
+    },
+    actions: menuActions,
     label: series.name,
   });
   // The "Add to Collection…" dialog must render as a *sibling* of the
@@ -75,7 +115,7 @@ export function SeriesCard({
           className,
         )}
       >
-        <div className="relative">
+        <div className="relative" {...longPress.wrapperProps}>
           <Cover
             src={series.cover_url}
             alt={series.name}
@@ -95,19 +135,7 @@ export function SeriesCard({
           <CollectionDot series={series} />
           <CoverMenuButton
             label={`Actions for ${series.name}`}
-            actions={[
-              {
-                label: "Mark all read",
-                onSelect: () => upsertSeriesProgress.mutate({ finished: true }),
-              },
-              {
-                label: "Mark all unread",
-                onSelect: () =>
-                  upsertSeriesProgress.mutate({ finished: false }),
-              },
-              ...collectionActions.actions,
-              ...(extraActions ?? []),
-            ]}
+            actions={menuActions}
           />
           <SeriesPlayOverlay
             seriesSlug={series.slug}
@@ -134,6 +162,7 @@ export function SeriesCard({
         </div>
       </Link>
       {collectionActions.dialog}
+      {longPress.sheet}
     </>
   );
 }

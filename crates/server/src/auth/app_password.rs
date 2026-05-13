@@ -28,6 +28,18 @@ use super::password;
 /// `eyJ...` (base64 of `{"`) is the JWT marker.
 pub const PREFIX: &str = "app_";
 
+/// Read-only scope — the default. Browse, download, page-stream.
+pub const SCOPE_READ: &str = "read";
+
+/// Read + progress-write scope. Adds the ability to PUT to the OPDS
+/// progress endpoint + KOReader sync shim.
+pub const SCOPE_READ_PROGRESS: &str = "read+progress";
+
+/// True iff `s` is one of the values we accept at issue/verify time.
+pub fn is_valid_scope(s: &str) -> bool {
+    matches!(s, SCOPE_READ | SCOPE_READ_PROGRESS)
+}
+
 /// Length of the random component (in bytes, pre-base32).
 const SECRET_BYTES: usize = 32;
 
@@ -48,15 +60,19 @@ fn random_plaintext() -> String {
     format!("{PREFIX}{body}")
 }
 
-/// Create a new app-password for `user_id`. Returns the new row's id and
-/// the plaintext — the plaintext must be displayed to the user
-/// immediately and is never retrievable again.
+/// Create a new app-password for `user_id` with the given `scope`.
+/// Returns the new row's id and the plaintext — the plaintext must be
+/// displayed to the user immediately and is never retrievable again.
 pub async fn issue(
     db: &sea_orm::DatabaseConnection,
     user_id: Uuid,
     label: &str,
+    scope: &str,
     pepper: &[u8],
 ) -> anyhow::Result<(Uuid, String)> {
+    if !is_valid_scope(scope) {
+        anyhow::bail!("invalid scope {scope:?}");
+    }
     let plaintext = random_plaintext();
     let hash = password::hash(&plaintext, pepper)?;
     let id = Uuid::now_v7();
@@ -69,19 +85,29 @@ pub async fn issue(
         last_used_at: Set(None),
         created_at: Set(now),
         revoked_at: Set(None),
+        scope: Set(scope.to_owned()),
     };
     am.insert(db).await?;
     Ok((id, plaintext))
 }
 
-/// Resolve a plaintext app-password to its owning user_id + row id.
+/// Resolved app-password — the parts the extractor needs after a
+/// successful Bearer/Basic match. The row id is informational (logs);
+/// `scope` drives `RequireScope` enforcement on progress-write paths.
+pub struct ResolvedAppPassword {
+    pub user_id: Uuid,
+    pub app_password_id: Uuid,
+    pub scope: String,
+}
+
+/// Resolve a plaintext app-password to its owning user + scope.
 /// Returns `None` for malformed prefix, missing user, or no matching
 /// active row. Updates `last_used_at` on success.
 pub async fn verify(
     db: &sea_orm::DatabaseConnection,
     plaintext: &str,
     pepper: &[u8],
-) -> Option<(Uuid, Uuid)> {
+) -> Option<ResolvedAppPassword> {
     if !looks_like_app_password(plaintext) {
         return None;
     }
@@ -98,10 +124,17 @@ pub async fn verify(
             // Best-effort timestamp bump — failure here is non-fatal
             // (lock contention, etc).
             let now = Utc::now().fixed_offset();
-            let mut am: AppPasswordAM = row.clone().into();
+            let user_id = row.user_id;
+            let app_password_id = row.id;
+            let scope = row.scope.clone();
+            let mut am: AppPasswordAM = row.into();
             am.last_used_at = Set(Some(now));
             let _ = am.update(db).await;
-            return Some((row.user_id, row.id));
+            return Some(ResolvedAppPassword {
+                user_id,
+                app_password_id,
+                scope,
+            });
         }
     }
     None

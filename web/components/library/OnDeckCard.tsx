@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
-import { CoverMenuButton } from "@/components/CoverMenuButton";
+import {
+  CoverMenuButton,
+  type CoverMenuAction,
+} from "@/components/CoverMenuButton";
+import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { formatIssueHeading } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -35,6 +40,7 @@ export function OnDeckCard({
 }) {
   const dismiss = useDismissRailItem();
   const upsertProgress = useUpsertIssueProgress();
+  const router = useRouter();
   const issue = card.issue;
   const numberLabel = issue.number ? `#${issue.number}` : "—";
   // `series_next` cards carry the series name as a sibling field;
@@ -65,72 +71,87 @@ export function OnDeckCard({
           target_id: card.cbl_list_id,
         };
 
+  const menuActions: CoverMenuAction[] = [
+    {
+      label: "Mark this issue as read",
+      onSelect: () => {
+        const pageCount = issue.page_count ?? 1;
+        upsertProgress.mutate({
+          issue_id: issue.id,
+          page: pageCount > 0 ? pageCount - 1 : 0,
+          finished: true,
+        });
+      },
+    },
+    {
+      label: "Mark this issue as unread",
+      onSelect: () =>
+        upsertProgress.mutate({
+          issue_id: issue.id,
+          page: 0,
+          finished: false,
+        }),
+    },
+    {
+      label: removeAction.label,
+      onSelect: () =>
+        dismiss.mutate({
+          target_kind: removeAction.target_kind,
+          target_id: removeAction.target_id,
+        }),
+    },
+  ];
+  const longPress = useCoverLongPressActions({
+    primary: {
+      label: `Read ${heading}`,
+      onSelect: () => router.push(readerUrl(issue)),
+    },
+    actions: menuActions,
+    label: meta,
+  });
+
   // Cover/title click → issue detail page (matches every other cover-
   // bearing card). The yellow play overlay is the ONLY surface that
   // routes straight to the reader.
   return (
-    <Link
-      href={issueUrl(issue)}
-      className={cn(
-        "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
-        className,
-      )}
-    >
-      <div className="relative">
-        <Cover
-          src={issue.cover_url}
-          alt={heading}
-          fallback={numberLabel}
-          className="w-full transition group-hover:brightness-110"
-        />
-        <CoverMenuButton
-          label={`Actions for ${heading}`}
-          actions={[
-            {
-              label: "Mark this issue as read",
-              onSelect: () => {
-                const pageCount = issue.page_count ?? 1;
-                upsertProgress.mutate({
-                  issue_id: issue.id,
-                  page: pageCount > 0 ? pageCount - 1 : 0,
-                  finished: true,
-                });
-              },
-            },
-            {
-              label: "Mark this issue as unread",
-              onSelect: () =>
-                upsertProgress.mutate({
-                  issue_id: issue.id,
-                  page: 0,
-                  finished: false,
-                }),
-            },
-            {
-              label: removeAction.label,
-              onSelect: () =>
-                dismiss.mutate({
-                  target_kind: removeAction.target_kind,
-                  target_id: removeAction.target_id,
-                }),
-            },
-          ]}
-        />
-        <QuickReadOverlay
-          readerHref={readerUrl(issue)}
-          label={`Read ${heading}`}
-        />
-      </div>
-      <div className="min-w-0 px-1">
-        <div className="text-muted-foreground truncate text-xs" title={meta}>
-          {meta}
+    <>
+      <Link
+        href={issueUrl(issue)}
+        className={cn(
+          "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
+          className,
+        )}
+      >
+        <div className="relative" {...longPress.wrapperProps}>
+          <Cover
+            src={issue.cover_url}
+            alt={heading}
+            fallback={numberLabel}
+            className="w-full transition group-hover:brightness-110"
+          />
+          <CoverMenuButton
+            label={`Actions for ${heading}`}
+            actions={menuActions}
+          />
+          <QuickReadOverlay
+            readerHref={readerUrl(issue)}
+            label={`Read ${heading}`}
+          />
         </div>
-        <div className="truncate text-sm font-medium" title={heading}>
-          {heading}
+        <div className="min-w-0 px-1">
+          <div className="text-muted-foreground truncate text-xs" title={meta}>
+            {meta}
+          </div>
+          <div className="truncate text-sm font-medium" title={heading}>
+            {heading}
+          </div>
+          <div className="text-muted-foreground mt-0.5 text-[11px]">
+            Up next
+          </div>
         </div>
-        <div className="text-muted-foreground mt-0.5 text-[11px]">Up next</div>
-      </div>
-    </Link>
+      </Link>
+      {longPress.sheet}
+    </>
   );
 }
 

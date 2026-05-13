@@ -19,11 +19,18 @@ use base64::Engine;
 use chrono::Utc;
 use common::TestApp;
 use entity::{
+    cbl_entry::ActiveModel as CblEntryAM,
+    cbl_list::ActiveModel as CblListAM,
+    collection_entry::ActiveModel as CollectionEntryAM,
     issue::ActiveModel as IssueAM,
     library,
+    saved_view::ActiveModel as SavedViewAM,
     series::{ActiveModel as SeriesAM, normalize_name},
+    user_view_pin::ActiveModel as UserViewPinAM,
 };
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, EntityTrait, QueryFilter, Set,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -786,8 +793,6 @@ async fn download_writes_audit_log() {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    use sea_orm::ColumnTrait;
-    use sea_orm::QueryFilter;
     let rows = entity::audit_log::Entity::find()
         .filter(entity::audit_log::Column::Action.eq("opds.download"))
         .all(&db)
@@ -797,4 +802,471 @@ async fn download_writes_audit_log() {
     assert_eq!(rows[0].target_type.as_deref(), Some("issue"));
     assert_eq!(rows[0].target_id.as_deref(), Some(id.as_str()));
     assert_eq!(rows[0].actor_id, auth.user_id);
+}
+
+// ─────────────────────────── M4 — personal surfaces ───────────────────────────
+
+async fn seed_cbl_list(db: &DatabaseConnection, owner: Option<Uuid>, name: &str) -> Uuid {
+    let id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    CblListAM {
+        id: Set(id),
+        owner_user_id: Set(owner),
+        source_kind: Set("upload".into()),
+        source_url: Set(None),
+        catalog_source_id: Set(None),
+        catalog_path: Set(None),
+        github_blob_sha: Set(None),
+        source_etag: Set(None),
+        source_last_modified: Set(None),
+        raw_sha256: Set(vec![0u8; 32]),
+        raw_xml: Set("<ReadingList />".into()),
+        parsed_name: Set(name.into()),
+        parsed_matchers_present: Set(false),
+        num_issues_declared: Set(None),
+        description: Set(Some(format!("{name} description"))),
+        imported_at: Set(now),
+        last_refreshed_at: Set(None),
+        last_match_run_at: Set(None),
+        refresh_schedule: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+async fn seed_cbl_entry(
+    db: &DatabaseConnection,
+    list_id: Uuid,
+    position: i32,
+    matched_issue_id: Option<&str>,
+) {
+    let now = Utc::now().fixed_offset();
+    let status = if matched_issue_id.is_some() {
+        "matched"
+    } else {
+        "missing"
+    };
+    CblEntryAM {
+        id: Set(Uuid::now_v7()),
+        cbl_list_id: Set(list_id),
+        position: Set(position),
+        series_name: Set("Seed".into()),
+        issue_number: Set(position.to_string()),
+        volume: Set(None),
+        year: Set(None),
+        cv_series_id: Set(None),
+        cv_issue_id: Set(None),
+        metron_series_id: Set(None),
+        metron_issue_id: Set(None),
+        matched_issue_id: Set(matched_issue_id.map(str::to_owned)),
+        match_status: Set(status.into()),
+        match_method: Set(None),
+        match_confidence: Set(None),
+        ambiguous_candidates: Set(None),
+        user_resolved_at: Set(None),
+        matched_at: Set(matched_issue_id.map(|_| now)),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+async fn seed_collection(db: &DatabaseConnection, owner: Uuid, name: &str) -> Uuid {
+    let id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    SavedViewAM {
+        id: Set(id),
+        user_id: Set(Some(owner)),
+        kind: Set("collection".into()),
+        system_key: Set(None),
+        name: Set(name.into()),
+        description: Set(Some(format!("{name} desc"))),
+        custom_year_start: Set(None),
+        custom_year_end: Set(None),
+        custom_tags: Set(Vec::new()),
+        match_mode: Set(None),
+        conditions: Set(None),
+        sort_field: Set(None),
+        sort_order: Set(None),
+        result_limit: Set(None),
+        cbl_list_id: Set(None),
+        auto_pin: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+async fn seed_collection_entry(
+    db: &DatabaseConnection,
+    view_id: Uuid,
+    position: i32,
+    series_id: Option<Uuid>,
+    issue_id: Option<&str>,
+) {
+    let kind = if series_id.is_some() {
+        "series"
+    } else {
+        "issue"
+    };
+    let now = Utc::now().fixed_offset();
+    CollectionEntryAM {
+        id: Set(Uuid::now_v7()),
+        saved_view_id: Set(view_id),
+        position: Set(position),
+        entry_kind: Set(kind.into()),
+        series_id: Set(series_id),
+        issue_id: Set(issue_id.map(str::to_owned)),
+        added_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+async fn seed_filter_view(
+    db: &DatabaseConnection,
+    owner: Uuid,
+    name: &str,
+    conditions: serde_json::Value,
+    sort_field: &str,
+    result_limit: i32,
+) -> Uuid {
+    let id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    SavedViewAM {
+        id: Set(id),
+        user_id: Set(Some(owner)),
+        kind: Set("filter_series".into()),
+        system_key: Set(None),
+        name: Set(name.into()),
+        description: Set(None),
+        custom_year_start: Set(None),
+        custom_year_end: Set(None),
+        custom_tags: Set(Vec::new()),
+        match_mode: Set(Some("all".into())),
+        conditions: Set(Some(conditions)),
+        sort_field: Set(Some(sort_field.into())),
+        sort_order: Set(Some("asc".into())),
+        result_limit: Set(Some(result_limit)),
+        cbl_list_id: Set(None),
+        auto_pin: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+async fn pin_view(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    view_id: Uuid,
+    pinned: bool,
+    sidebar: bool,
+) {
+    UserViewPinAM {
+        user_id: Set(user_id),
+        view_id: Set(view_id),
+        position: Set(0),
+        pinned: Set(pinned),
+        show_in_sidebar: Set(sidebar),
+        icon: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn root_navigation_includes_personal_subsections() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "root-personal@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let resp = get_with_auth(&app, "/opds/v1", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains(r#"href="/opds/v1/wtr""#));
+    assert!(body.contains(r#"href="/opds/v1/lists""#));
+    assert!(body.contains(r#"href="/opds/v1/collections""#));
+    assert!(body.contains(r#"href="/opds/v1/views""#));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wtr_acq_feed_seeds_and_lists_added_entry() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "wtr@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "WTR Pick").await;
+
+    // First call seeds. Confirm 200 + empty entry list.
+    let resp = get_with_auth(&app, "/opds/v1/wtr", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("<title>Want to Read</title>"));
+    assert_eq!(body.matches("<entry>").count(), 0, "fresh WTR is empty");
+
+    // Add a series entry via direct DB write (uses the same shape the
+    // collections.rs handler emits — independent of OPDS code paths).
+    use entity::saved_view::Column as SVCol;
+    let wtr = entity::saved_view::Entity::find()
+        .filter(SVCol::UserId.eq(auth.user_id))
+        .filter(SVCol::SystemKey.eq("want_to_read"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    seed_collection_entry(&db, wtr.id, 0, Some(series_id), None).await;
+
+    let resp = get_with_auth(&app, "/opds/v1/wtr", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 1);
+    assert!(body.contains(&format!(r#"href="/opds/v1/series/{series_id}""#)));
+    assert!(body.contains("WTR Pick"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cbl_list_acq_resolves_matched_issues_in_position_order() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cbl@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Run").await;
+    let i0 = seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("a.cbz"), b"a").await;
+    let i1 = seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("b.cbz"), b"b").await;
+
+    let list_id = seed_cbl_list(&db, Some(auth.user_id), "My List").await;
+    // Note: positions deliberately out of order in insertion to confirm
+    // we sort by `position` not insertion time.
+    seed_cbl_entry(&db, list_id, 1, Some(&i1)).await;
+    seed_cbl_entry(&db, list_id, 0, Some(&i0)).await;
+    // Unmatched entries must drop out of the acq feed.
+    seed_cbl_entry(&db, list_id, 2, None).await;
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/lists/{list_id}"),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 2, "unmatched dropped");
+    let pos_i0 = body.find(&format!("urn:issue:{i0}")).unwrap();
+    let pos_i1 = body.find(&format!("urn:issue:{i1}")).unwrap();
+    assert!(pos_i0 < pos_i1, "position 0 must come before position 1");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cbl_lists_nav_lists_user_owned_and_system() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "cbl-admin@example.com").await;
+    promote_to_admin(&app, admin.user_id).await;
+    let other = register(&app, "cbl-other@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let own = seed_cbl_list(&db, Some(admin.user_id), "Mine").await;
+    let _theirs = seed_cbl_list(&db, Some(other.user_id), "Theirs").await;
+    let system = seed_cbl_list(&db, None, "System").await;
+
+    let resp = get_with_auth(&app, "/opds/v1/lists", Header::Cookie(admin.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains(&own.to_string()));
+    assert!(body.contains(&system.to_string()), "system lists surface");
+    assert!(!body.contains("Theirs"), "other user's lists must not leak");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collections_nav_lists_user_owned() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "col-admin@example.com").await;
+    promote_to_admin(&app, admin.user_id).await;
+    let other = register(&app, "col-other@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let own = seed_collection(&db, admin.user_id, "Capes").await;
+    let _theirs = seed_collection(&db, other.user_id, "Cosmic").await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/collections",
+        Header::Cookie(admin.cookies()),
+    )
+    .await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains(&own.to_string()));
+    // WTR is auto-seeded for the calling user and shows up first.
+    assert!(body.contains("<title>Want to Read</title>"));
+    assert!(body.find("Want to Read").unwrap() < body.find("Capes").unwrap());
+    assert!(
+        !body.contains("Cosmic"),
+        "other user's collection invisible"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collection_acq_mixes_series_and_issues() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "mixed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Mixed Series").await;
+    let issue_id =
+        seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("m.cbz"), b"m").await;
+
+    let view_id = seed_collection(&db, auth.user_id, "Mixed").await;
+    seed_collection_entry(&db, view_id, 0, Some(series_id), None).await;
+    seed_collection_entry(&db, view_id, 1, None, Some(&issue_id)).await;
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/collections/{view_id}"),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 2);
+    // Series entry uses subsection link into per-series feed.
+    assert!(body.contains(&format!(r#"href="/opds/v1/series/{series_id}""#)));
+    // Issue entry uses acquisition link to the file endpoint.
+    assert!(body.contains(&format!(r#"href="/opds/v1/issues/{issue_id}/file""#)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collection_acq_other_user_returns_404() {
+    let app = TestApp::spawn().await;
+    let owner = register(&app, "co-owner@example.com").await;
+    promote_to_admin(&app, owner.user_id).await;
+    let snooper = register(&app, "co-snooper@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let view_id = seed_collection(&db, owner.user_id, "Private").await;
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/collections/{view_id}"),
+        Header::Cookie(snooper.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn views_nav_filters_to_pinned_filter_views() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "views@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let pinned = seed_filter_view(
+        &db,
+        auth.user_id,
+        "Pinned",
+        serde_json::json!([]),
+        "name",
+        20,
+    )
+    .await;
+    let sidebar = seed_filter_view(
+        &db,
+        auth.user_id,
+        "Sidebar",
+        serde_json::json!([]),
+        "name",
+        20,
+    )
+    .await;
+    let invisible = seed_filter_view(
+        &db,
+        auth.user_id,
+        "Invisible",
+        serde_json::json!([]),
+        "name",
+        20,
+    )
+    .await;
+
+    pin_view(&db, auth.user_id, pinned, true, false).await;
+    pin_view(&db, auth.user_id, sidebar, false, true).await;
+    // `invisible` has no pin row → must NOT appear.
+
+    let resp = get_with_auth(&app, "/opds/v1/views", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains(&pinned.to_string()));
+    assert!(body.contains(&sidebar.to_string()));
+    assert!(!body.contains(&invisible.to_string()), "unpinned filtered");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn view_acq_evaluates_filter_server_side() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "view-eval@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series(&db, lib_id, "Alpha").await;
+    seed_series(&db, lib_id, "Beta").await;
+    seed_series(&db, lib_id, "Gamma").await;
+
+    // Filter: name contains 'Beta'. `op: contains` on the name (text)
+    // field is the standard text-search predicate in the DSL.
+    let view_id = seed_filter_view(
+        &db,
+        auth.user_id,
+        "B-things",
+        serde_json::json!([
+            { "field": "name", "op": "contains", "value": "Beta" }
+        ]),
+        "name",
+        50,
+    )
+    .await;
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/views/{view_id}"),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("Beta"));
+    assert!(!body.contains("Alpha"), "filter excludes Alpha");
+    assert!(!body.contains("Gamma"), "filter excludes Gamma");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn view_acq_rejects_non_filter_kind() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "wrongkind@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    // Collections are saved_views with kind='collection'. /opds/v1/views
+    // only exposes filter_series kinds, so this must 404.
+    let collection_id = seed_collection(&db, auth.user_id, "Not a filter").await;
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/views/{collection_id}"),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

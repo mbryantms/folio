@@ -773,6 +773,23 @@ export type LogsResp = {
   capacity: number;
 };
 
+/** `GET /admin/fs/list` — directory listing for the New Library picker. */
+export type FsDirEntry = {
+  name: string;
+  /** Absolute path inside the container; pass back as `?path=` to drill in. */
+  path: string;
+};
+
+export type FsListResp = {
+  /** Canonical absolute path of the listed directory. */
+  path: string;
+  /** Canonical absolute path of the configured library root —
+   *  `COMIC_LIBRARY_PATH`. The picker uses this to gray out the "up"
+   *  button when the user reaches the root. */
+  root: string;
+  entries: FsDirEntry[];
+};
+
 export type ActivityKind = "audit" | "scan" | "health" | "reading";
 
 export type ActivityEntryView = {
@@ -1758,9 +1775,15 @@ export type RevokeAllSessionsResp = {
 
 // ────────────── App passwords (M7 — /me/app-passwords) ──────────────
 
+/** App-password scope. `read` is the default and grants browse + page-stream
+ *  + download. `read+progress` additionally lets the token write reading
+ *  progress via the OPDS progress endpoint and the KOReader sync shim. */
+export type AppPasswordScope = "read" | "read+progress";
+
 export type AppPasswordView = {
   id: string;
   label: string;
+  scope: AppPasswordScope;
   created_at: string;
   last_used_at: string | null;
 };
@@ -1772,6 +1795,7 @@ export type AppPasswordListView = {
 export type AppPasswordCreatedView = {
   id: string;
   label: string;
+  scope: AppPasswordScope;
   created_at: string;
   /** The plaintext token. Shown once and never retrievable again. */
   plaintext: string;
@@ -1779,4 +1803,6 @@ export type AppPasswordCreatedView = {
 
 export type CreateAppPasswordReq = {
   label: string;
+  /** Optional. Defaults server-side to `read` when omitted. */
+  scope?: AppPasswordScope;
 };

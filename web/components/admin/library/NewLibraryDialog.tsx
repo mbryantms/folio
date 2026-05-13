@@ -28,6 +28,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { useCreateLibrary } from "@/lib/api/mutations";
 
+import { DirectoryPicker } from "./DirectoryPicker";
+
 const schema = z.object({
   name: z.string().min(1, "Name is required").max(120),
   root_path: z.string().min(1, "Root path is required"),
@@ -102,14 +104,15 @@ export function NewLibraryDialog() {
                 <FormItem>
                   <FormLabel>Root path</FormLabel>
                   <FormControl>
-                    <Input
-                      placeholder="/srv/comics"
-                      className="font-mono text-sm"
-                      {...field}
+                    <DirectoryPicker
+                      value={field.value}
+                      onChange={field.onChange}
                     />
                   </FormControl>
                   <FormDescription>
-                    Absolute path on the server, must be readable.
+                    Browse to the folder Folio should scan. Scope is
+                    restricted to the container&apos;s library mount
+                    (<code className="font-mono">COMIC_LIBRARY_PATH</code>).
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -16,6 +16,7 @@ import {
   CoverMenuButton,
   type CoverMenuAction,
 } from "@/components/CoverMenuButton";
+import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
@@ -635,8 +636,19 @@ function MarkerCard({
     return list;
   }, [del, hasRegion, jumpHref, marker, router, update]);
 
+  const longPress = useCoverLongPressActions({
+    primary: jumpHref
+      ? {
+          label: "Jump to page",
+          onSelect: () => router.push(jumpHref),
+        }
+      : undefined,
+    actions,
+    label: `${kindMeta.shortLabel} · page ${marker.page_index + 1}`,
+  });
+
   const cardBody = (
-    <div className="relative">
+    <div className="relative" {...longPress.wrapperProps}>
       {/* Thumbnail height comes from the row-packed layout above;
        *  width is `100%` of the parent slot, which itself was sized
        *  to `aspect × height`. So the wrapper ends up an exact tile
@@ -664,6 +676,7 @@ function MarkerCard({
         label={`Actions for ${kindMeta.shortLabel} on page ${marker.page_index + 1}`}
         actions={actions}
       />
+      {longPress.sheet}
     </div>
   );
 

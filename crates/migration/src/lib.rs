@@ -13,6 +13,7 @@ mod m20260507_000001_add_slugs;
 mod m20260507_000002_user_language;
 mod m20260512_000001_auth_session_id_token_hint;
 mod m20260513_000001_app_passwords;
+mod m20260513_000002_app_password_scopes;
 mod m20260601_000001_user_reading_direction;
 mod m20260801_000001_scanner_v1;
 mod m20260901_000001_user_preferences;
@@ -102,6 +103,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261218_000001_people_search::Migration),
             Box::new(m20260512_000001_auth_session_id_token_hint::Migration),
             Box::new(m20260513_000001_app_passwords::Migration),
+            Box::new(m20260513_000002_app_password_scopes::Migration),
         ]
     }
 }

@@ -484,15 +484,13 @@ pub async fn login(
     {
         return match format {
             ResponseFormat::Json => super::failed_auth::lockout_response(retry),
-            ResponseFormat::Form => {
-                Redirect::to(&redirect_with_error(
-                    "/sign-in",
-                    "auth.locked",
-                    "too many attempts; try again later",
-                    safe_next.as_deref(),
-                ))
-                .into_response()
-            }
+            ResponseFormat::Form => Redirect::to(&redirect_with_error(
+                "/sign-in",
+                "auth.locked",
+                "too many attempts; try again later",
+                safe_next.as_deref(),
+            ))
+            .into_response(),
         };
     }
 

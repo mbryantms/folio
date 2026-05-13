@@ -865,6 +865,66 @@ async fn on_deck_cbl_next_picks_lowest_unfinished_position() {
 }
 
 #[tokio::test]
+async fn on_deck_cbl_wins_when_issue_overlaps_series_next() {
+    // When the same issue is the next-unread in both a user's series and a
+    // CBL that contains it, surface the CBL card only — the CBL frame
+    // (list name + 1-based position) carries strictly more context than
+    // the bare series card and the duplicate is the symptom this dedup
+    // exists to prevent.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-overlap@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-overlap").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-overlap-2").await;
+    let _issue3_id = seed_extra_issue(&app, lib_id, series_id, 3.0, "od-overlap-3").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    // CBL covers the same three issues as the series — so once issue 1 is
+    // finished, both queries pick issue 2 as "next".
+    let list_id = seed_cbl_list(
+        &app,
+        "Overlap",
+        &[(0, &issue1_id), (1, &issue2_id), (2, &_issue3_id)],
+    )
+    .await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+
+    // Exactly one card referencing issue2, and it must be the CBL framing.
+    let cards_for_issue2: Vec<_> = items
+        .iter()
+        .filter(|i| i["issue"]["id"] == issue2_id)
+        .collect();
+    assert_eq!(
+        cards_for_issue2.len(),
+        1,
+        "issue 2 must appear exactly once across On Deck cards, got {} ({:?})",
+        cards_for_issue2.len(),
+        items
+    );
+    assert_eq!(
+        cards_for_issue2[0]["kind"], "cbl_next",
+        "CBL wins on overlap"
+    );
+    assert_eq!(cards_for_issue2[0]["cbl_list_id"], list_id.to_string());
+
+    // And no orphan SeriesNext for the same series should remain.
+    let series_cards_for_series: Vec<_> = items
+        .iter()
+        .filter(|i| i["kind"] == "series_next" && i["issue"]["id"] == issue2_id)
+        .collect();
+    assert!(
+        series_cards_for_series.is_empty(),
+        "SeriesNext duplicate of the CBL pick must be filtered out"
+    );
+}
+
+#[tokio::test]
 async fn on_deck_excludes_caught_up_cbls() {
     let app = TestApp::spawn().await;
     let user = register(&app, "rail-od-done@example.com").await;

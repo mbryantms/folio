@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
-import { CoverMenuButton } from "@/components/CoverMenuButton";
+import {
+  CoverMenuButton,
+  type CoverMenuAction,
+} from "@/components/CoverMenuButton";
+import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { Badge } from "@/components/ui/badge";
@@ -30,15 +35,53 @@ export function CblIssueCard({
   const positionLabel = `#${entry.position + 1}`;
   const numberLabel = entry.issue_number ? `#${entry.issue_number}` : "—";
   const heading = issue?.title ?? entry.series_name;
+  const router = useRouter();
   const upsertProgress = useUpsertIssueProgress();
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue?.id ?? "",
     label: `${heading} ${numberLabel}`,
   });
+  const menuActions: CoverMenuAction[] =
+    issue && issue.state === "active"
+      ? [
+          {
+            label: "Mark as read",
+            onSelect: () =>
+              upsertProgress.mutate({
+                issue_id: issue.id,
+                page: Math.max((issue.page_count ?? 1) - 1, 0),
+                finished: true,
+              }),
+          },
+          {
+            label: "Mark as unread",
+            onSelect: () =>
+              upsertProgress.mutate({
+                issue_id: issue.id,
+                page: 0,
+                finished: false,
+              }),
+          },
+          ...collectionActions.actions,
+        ]
+      : [];
+  // Hook is always called (rules-of-hooks); when there's no resolved
+  // issue the sheet renders nothing useful, which is fine.
+  const longPress = useCoverLongPressActions({
+    primary:
+      issue && issue.state === "active"
+        ? {
+            label: `Read ${heading}`,
+            onSelect: () => router.push(readerUrl(issue)),
+          }
+        : undefined,
+    actions: menuActions,
+    label: `${positionLabel} · ${heading}`,
+  });
 
   const cover = (showActions: boolean) => (
-    <div className="relative">
+    <div className="relative" {...longPress.wrapperProps}>
       <Cover
         src={issue?.cover_url}
         alt={heading}
@@ -69,27 +112,7 @@ export function CblIssueCard({
         <>
           <CoverMenuButton
             label={`Actions for ${heading}`}
-            actions={[
-              {
-                label: "Mark as read",
-                onSelect: () =>
-                  upsertProgress.mutate({
-                    issue_id: issue.id,
-                    page: Math.max((issue.page_count ?? 1) - 1, 0),
-                    finished: true,
-                  }),
-              },
-              {
-                label: "Mark as unread",
-                onSelect: () =>
-                  upsertProgress.mutate({
-                    issue_id: issue.id,
-                    page: 0,
-                    finished: false,
-                  }),
-              },
-              ...collectionActions.actions,
-            ]}
+            actions={menuActions}
           />
           <QuickReadOverlay
             readerHref={readerUrl(issue)}
@@ -125,6 +148,7 @@ export function CblIssueCard({
           {meta}
         </Link>
         {collectionActions.dialog}
+        {longPress.sheet}
       </>
     );
   }

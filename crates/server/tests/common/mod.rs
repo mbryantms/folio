@@ -74,6 +74,11 @@ pub struct SpawnOpts {
     pub oidc_issuer: Option<String>,
     /// Mirrors `COMIC_OIDC_TRUST_UNVERIFIED_EMAIL`.
     pub oidc_trust_unverified_email: bool,
+    /// Override the library root path. Default of `/tmp/library` is a
+    /// bogus path that the scanner / fs-list handlers reject as missing
+    /// — pass `Some(real_dir)` when the test needs the handler to read
+    /// actual on-disk children.
+    pub library_root: Option<PathBuf>,
 }
 
 impl TestApp {
@@ -94,6 +99,17 @@ impl TestApp {
         Self::spawn_inner(SpawnOpts::default()).await
     }
 
+    /// Spawn with an explicit library-root path. Use for tests that
+    /// exercise filesystem-touching handlers (`/admin/fs/list`, the
+    /// scanner) against a real on-disk fixture tree.
+    pub async fn spawn_with_library_root(root: PathBuf) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            library_root: Some(root),
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
     /// Spawn with OIDC pointed at the provided issuer URL. `auth_mode`
     /// becomes `Both` so the local + recovery endpoints still work for
     /// fixture setup. `trust_unverified_email` mirrors the env knob.
@@ -102,6 +118,7 @@ impl TestApp {
             smtp_on: false,
             oidc_issuer: Some(issuer.into()),
             oidc_trust_unverified_email: trust_unverified,
+            library_root: None,
         })
         .await
     }
@@ -145,7 +162,10 @@ impl TestApp {
         let cfg = Config {
             database_url: db_url.clone(),
             redis_url: redis_url.clone(),
-            library_path: PathBuf::from("/tmp/library"),
+            library_path: opts
+                .library_root
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("/tmp/library")),
             data_path: data_dir.path().to_path_buf(),
             public_url: "http://localhost:8080".into(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),

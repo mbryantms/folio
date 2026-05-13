@@ -161,6 +161,7 @@ use utoipa::OpenApi;
         api::filter_options::teams,
         api::filter_options::locations,
         api::admin_logs::list,
+        api::admin_fs::list,
         api::admin_activity::list,
         api::auth_config::get_config,
         api::auth_config::get_public_config,
@@ -320,6 +321,8 @@ use utoipa::OpenApi;
         api::filter_options::OptionsView,
         api::admin_logs::LogsResp,
         api::admin_logs::LogEntryView,
+        api::admin_fs::ListResp,
+        api::admin_fs::DirEntry,
         api::admin_activity::ActivityListView,
         api::admin_activity::ActivityEntryView,
         api::auth_config::AuthConfigView,
@@ -451,12 +454,14 @@ pub fn router(state: AppState) -> Router {
         .merge(api::markers::routes())
         .merge(api::filter_options::routes())
         .merge(api::admin_logs::routes())
+        .merge(api::admin_fs::routes())
         .merge(api::admin_activity::routes())
         .merge(api::auth_config::routes())
         .merge(api::server_info::routes())
         .merge(api::sessions::routes())
         .merge(api::app_passwords::routes())
         .merge(api::opds::routes())
+        .merge(api::opds_v2::routes())
         .layer(axum::middleware::from_fn(auth::csrf::require_csrf))
         // Order matters: outermost wraps innermost. `set_context` needs to run
         // before handlers so `Request::extensions::get::<RequestContext>()`

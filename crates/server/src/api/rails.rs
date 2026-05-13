@@ -246,6 +246,15 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
 pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response {
     let acl = access::for_user(&app, &user).await;
     let mut items: Vec<(chrono::DateTime<chrono::FixedOffset>, OnDeckCard)> = Vec::new();
+    // SeriesNext cards are deferred into this buffer and filtered against
+    // the CBL set after both queries run. CBL framing wins on overlap: the
+    // "currently next" issue often coincides between a user's series and a
+    // CBL list containing that series, and the CBL card carries strictly
+    // more context (list name + 1-based position). The series card will
+    // resurface naturally once the user finishes the CBL position or no
+    // longer has a CBL covering the issue.
+    let mut series_buf: Vec<(chrono::DateTime<chrono::FixedOffset>, OnDeckCard)> = Vec::new();
+    let mut cbl_issue_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // ───── series_next candidates ─────
     //
@@ -323,7 +332,7 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
             Ok(Some(s)) => s,
             _ => continue,
         };
-        items.push((
+        series_buf.push((
             row.last_activity,
             OnDeckCard::SeriesNext {
                 issue: IssueSummaryView::from_model(issue_model, &series_row.slug)
@@ -387,6 +396,7 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
         let Some((issue_model, series_slug, series_name, position)) = next else {
             continue;
         };
+        cbl_issue_ids.insert(issue_model.id.clone());
         items.push((
             cand.last_activity,
             OnDeckCard::CblNext {
@@ -398,6 +408,16 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
                 last_activity: cand.last_activity.to_rfc3339(),
             },
         ));
+    }
+
+    // Drain the deferred SeriesNext buffer, skipping any whose issue is
+    // already covered by a CBL card.
+    for (ts, card) in series_buf {
+        let dup = matches!(&card, OnDeckCard::SeriesNext { issue, .. } if cbl_issue_ids.contains(&issue.id));
+        if dup {
+            continue;
+        }
+        items.push((ts, card));
     }
 
     // Merge by most-recent activity desc + cap.

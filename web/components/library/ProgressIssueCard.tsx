@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
-import { CoverMenuButton } from "@/components/CoverMenuButton";
+import {
+  CoverMenuButton,
+  type CoverMenuAction,
+} from "@/components/CoverMenuButton";
+import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { formatIssueHeading } from "@/lib/format";
@@ -34,6 +39,7 @@ export function ProgressIssueCard({
 }) {
   const dismiss = useDismissRailItem();
   const upsertProgress = useUpsertIssueProgress();
+  const router = useRouter();
 
   const issue = card.issue;
   const pageCount = issue.page_count ?? 0;
@@ -47,6 +53,43 @@ export function ProgressIssueCard({
     entry_kind: "issue",
     ref_id: issue.id,
     label: `${headerTitle} ${numberLabel}`,
+  });
+  const menuActions: CoverMenuAction[] = [
+    {
+      label: "Mark as read",
+      onSelect: () =>
+        upsertProgress.mutate({
+          issue_id: issue.id,
+          page: pageCount > 0 ? pageCount - 1 : 0,
+          finished: true,
+        }),
+    },
+    {
+      label: "Mark as unread",
+      onSelect: () =>
+        upsertProgress.mutate({
+          issue_id: issue.id,
+          page: 0,
+          finished: false,
+        }),
+    },
+    {
+      label: "Hide from rail",
+      onSelect: () =>
+        dismiss.mutate({
+          target_kind: "issue",
+          target_id: issue.id,
+        }),
+    },
+    ...collectionActions.actions,
+  ];
+  const longPress = useCoverLongPressActions({
+    primary: {
+      label: `Continue reading ${headerTitle}`,
+      onSelect: () => router.push(readerUrl(issue)),
+    },
+    actions: menuActions,
+    label: `${card.series_name} · ${numberLabel}`,
   });
 
   // Cover/title click → issue detail page (matches every other cover-
@@ -66,7 +109,7 @@ export function ProgressIssueCard({
           className,
         )}
       >
-        <div className="relative">
+        <div className="relative" {...longPress.wrapperProps}>
           <Cover
             src={issue.cover_url}
             alt={headerTitle}
@@ -87,35 +130,7 @@ export function ProgressIssueCard({
           </div>
           <CoverMenuButton
             label={`Actions for ${headerTitle}`}
-            actions={[
-              {
-                label: "Mark as read",
-                onSelect: () =>
-                  upsertProgress.mutate({
-                    issue_id: issue.id,
-                    page: pageCount > 0 ? pageCount - 1 : 0,
-                    finished: true,
-                  }),
-              },
-              {
-                label: "Mark as unread",
-                onSelect: () =>
-                  upsertProgress.mutate({
-                    issue_id: issue.id,
-                    page: 0,
-                    finished: false,
-                  }),
-              },
-              {
-                label: "Hide from rail",
-                onSelect: () =>
-                  dismiss.mutate({
-                    target_kind: "issue",
-                    target_id: issue.id,
-                  }),
-              },
-              ...collectionActions.actions,
-            ]}
+            actions={menuActions}
           />
           <QuickReadOverlay
             readerHref={readerUrl(issue)}
@@ -140,6 +155,7 @@ export function ProgressIssueCard({
         </div>
       </Link>
       {collectionActions.dialog}
+      {longPress.sheet}
     </>
   );
 }

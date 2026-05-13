@@ -51,6 +51,7 @@ import type {
   IssueSort,
   PeopleListView,
   LibraryView,
+  FsListResp,
   LogLevel,
   LogsResp,
   MeView,
@@ -257,6 +258,10 @@ export const queryKeys = {
   /** In-process log ring buffer. Tail filter is part of the key so the
    *  follow-tail toggle never collides with a paused snapshot. */
   adminLogs: (filters: AdminLogFilters) => ["admin", "logs", filters] as const,
+  /** Directory listing for the New Library picker. `path` is part of
+   *  the key so each drill-in is a separate cache entry. */
+  adminFsList: (path: string | undefined) =>
+    ["admin", "fs-list", path ?? ""] as const,
   /** Combined activity feed (audit / scan / health / reading volume). */
   adminActivity: (filters: AdminActivityFilters) =>
     ["admin", "activity", filters] as const,
@@ -730,6 +735,24 @@ export function useAdminLogs(
     refetchInterval: intervalMs ?? false,
     staleTime: intervalMs ?? 5_000,
     placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * Lists immediate-child directories under a path inside the configured
+ * library root. Backs the New Library dialog's path picker. Pass
+ * `undefined` (or omit) on the first call to land at the root.
+ */
+export function useAdminFsList(path: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.adminFsList(path),
+    queryFn: () =>
+      jsonFetch<FsListResp>(
+        `/admin/fs/list${path ? `?path=${encodeURIComponent(path)}` : ""}`,
+      ),
+    enabled,
+    // Folder structure changes rarely during a single dialog session.
+    staleTime: 30_000,
   });
 }
 

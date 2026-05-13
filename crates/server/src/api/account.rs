@@ -240,9 +240,7 @@ pub async fn update(
         let jar = jar.add(csrf_cookie(csrf, app.cfg.access_ttl()));
         return match format {
             ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
-            ResponseFormat::Form => {
-                (jar, Redirect::to("/settings/account?ok=1")).into_response()
-            }
+            ResponseFormat::Form => (jar, Redirect::to("/settings/account?ok=1")).into_response(),
         };
     }
 

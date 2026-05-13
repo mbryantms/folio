@@ -28,6 +28,13 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/components/collections/useCoverMenuCollectionActions", () => ({
   useCoverMenuCollectionActions: () => ({ actions: [], dialog: null }),
 }));
+// Touch-platform long-press sheet relies on `useSyncExternalStore` +
+// other hooks that can't run inside this node-env tree-inspection
+// pattern. Stub the hook to its no-op shape (matches the desktop path
+// where the hook returns empty handlers and a null sheet).
+vi.mock("@/components/CoverLongPressActions", () => ({
+  useCoverLongPressActions: () => ({ wrapperProps: {}, sheet: null }),
+}));
 
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
 import type {

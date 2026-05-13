@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
 import {
   CoverMenuButton,
   type CoverMenuAction,
 } from "@/components/CoverMenuButton";
+import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { Badge } from "@/components/ui/badge";
@@ -30,11 +32,50 @@ export function IssueCard({
 }) {
   const numberLabel = issue.number ? `#${issue.number}` : "—";
   const heading = formatIssueHeading(issue);
+  const router = useRouter();
   const upsertProgress = useUpsertIssueProgress();
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue.id,
     label: `${heading}${issue.number ? ` ${numberLabel}` : ""}`,
+  });
+  // Same actions backing the desktop kebab — sharing the array means
+  // touch (long-press sheet) and desktop (dropdown) can't drift.
+  const menuActions: CoverMenuAction[] =
+    issue.state === "active"
+      ? [
+          {
+            label: "Mark as read",
+            onSelect: () =>
+              upsertProgress.mutate({
+                issue_id: issue.id,
+                page: Math.max((issue.page_count ?? 1) - 1, 0),
+                finished: true,
+              }),
+          },
+          {
+            label: "Mark as unread",
+            onSelect: () =>
+              upsertProgress.mutate({
+                issue_id: issue.id,
+                page: 0,
+                finished: false,
+              }),
+          },
+          ...collectionActions.actions,
+          ...(extraActions ?? []),
+        ]
+      : [];
+  const longPress = useCoverLongPressActions({
+    primary:
+      issue.state === "active"
+        ? {
+            label: `Read ${heading}`,
+            onSelect: () => router.push(readerUrl(issue)),
+          }
+        : undefined,
+    actions: menuActions,
+    label: heading,
   });
   // State badge moves out of the top-left corner when the kebab is
   // present (kebab is hover-revealed; badge is always-on, so the kebab
@@ -53,7 +94,7 @@ export function IssueCard({
           className,
         )}
       >
-        <div className="relative">
+        <div className="relative" {...longPress.wrapperProps}>
           <Cover
             src={issue.cover_url}
             alt={heading}
@@ -72,28 +113,7 @@ export function IssueCard({
             <>
               <CoverMenuButton
                 label={`Actions for ${heading}`}
-                actions={[
-                  {
-                    label: "Mark as read",
-                    onSelect: () =>
-                      upsertProgress.mutate({
-                        issue_id: issue.id,
-                        page: Math.max((issue.page_count ?? 1) - 1, 0),
-                        finished: true,
-                      }),
-                  },
-                  {
-                    label: "Mark as unread",
-                    onSelect: () =>
-                      upsertProgress.mutate({
-                        issue_id: issue.id,
-                        page: 0,
-                        finished: false,
-                      }),
-                  },
-                  ...collectionActions.actions,
-                  ...(extraActions ?? []),
-                ]}
+                actions={menuActions}
               />
               <QuickReadOverlay
                 readerHref={readerUrl(issue)}
@@ -112,6 +132,7 @@ export function IssueCard({
         </div>
       </Link>
       {collectionActions.dialog}
+      {longPress.sheet}
     </>
   );
 }

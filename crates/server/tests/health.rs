@@ -61,4 +61,3 @@ async fn readyz_reports_both_db_and_redis_when_healthy() {
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["status"], "ready");
 }
-

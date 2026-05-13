@@ -20,10 +20,11 @@ pub mod jwt;
 pub mod local;
 pub mod oidc;
 pub mod password;
+pub mod url_signing;
 pub mod ws_ticket;
 pub mod xff;
 // `totp` removed in M3 — stub was never implemented. The `totp_secret`
 // column on `users` is left in place for forward-compat; we just don't
 // read or wire it. See ~/.claude/plans/auth-hardening-1.0.md M3.
 
-pub use extractor::{CurrentUser, RequireAdmin};
+pub use extractor::{CurrentUser, RequireAdmin, RequireProgressScope};

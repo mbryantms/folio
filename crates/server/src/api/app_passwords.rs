@@ -42,12 +42,19 @@ pub struct CreateAppPasswordReq {
     /// Free-form label so the user can tell their tokens apart.
     /// 1-80 characters; trimmed.
     pub label: String,
+    /// Optional scope tag — `read` (default) or `read+progress`.
+    /// Tokens with `read` can browse, page-stream, and download; the
+    /// progress-write surface (PUT `/opds/v1/issues/{id}/progress` and
+    /// the KOReader sync shim) requires `read+progress`.
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AppPasswordView {
     pub id: Uuid,
     pub label: String,
+    pub scope: String,
     pub created_at: String,
     pub last_used_at: Option<String>,
 }
@@ -61,6 +68,7 @@ pub struct AppPasswordListView {
 pub struct AppPasswordCreatedView {
     pub id: Uuid,
     pub label: String,
+    pub scope: String,
     pub created_at: String,
     /// The plaintext token. Shown once and never retrievable again.
     pub plaintext: String,
@@ -70,6 +78,7 @@ fn view(row: app_password::Model) -> AppPasswordView {
     AppPasswordView {
         id: row.id,
         label: row.label,
+        scope: row.scope,
         created_at: row.created_at.to_rfc3339(),
         last_used_at: row.last_used_at.map(|t| t.to_rfc3339()),
     }
@@ -158,8 +167,25 @@ pub async fn create(
         );
     }
 
+    // Scope defaults to `read` for backwards compat with pre-M7 clients
+    // that don't know about the field. `read+progress` requires the
+    // user explicitly opt in via the UI selector.
+    let scope = req
+        .scope
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(ap::SCOPE_READ);
+    if !ap::is_valid_scope(scope) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation.scope",
+            "scope must be 'read' or 'read+progress'",
+        );
+    }
+
     let (id, plaintext) =
-        match ap::issue(&app.db, user.id, &label, app.secrets.pepper.as_ref()).await {
+        match ap::issue(&app.db, user.id, &label, scope, app.secrets.pepper.as_ref()).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(error = %e, "issue app password failed");
@@ -180,7 +206,7 @@ pub async fn create(
             action: "user.app_password.create",
             target_type: Some("app_password"),
             target_id: Some(id.to_string()),
-            payload: serde_json::json!({ "label": label }),
+            payload: serde_json::json!({ "label": label, "scope": scope }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),
         },
@@ -190,6 +216,7 @@ pub async fn create(
     let body = AppPasswordCreatedView {
         id: row.id,
         label: row.label,
+        scope: row.scope,
         created_at: row.created_at.to_rfc3339(),
         plaintext,
     };

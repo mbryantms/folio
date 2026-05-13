@@ -45,8 +45,10 @@ pub async fn require_csrf(req: Request, next: Next) -> Response {
     if path_is_exempt(req.uri().path()) {
         return next.run(req).await;
     }
-    if has_bearer(req.headers()) {
-        // Bearer-only requests have no ambient credential; CSRF is moot.
+    if has_token_auth(req.headers()) {
+        // Out-of-band credential (Bearer JWT/app-password, or Basic
+        // carrying an `app_…` token — what OPDS clients send). No
+        // session cookie is implicated, so CSRF is moot.
         return next.run(req).await;
     }
 
@@ -126,11 +128,32 @@ fn is_unsafe(m: &Method) -> bool {
     )
 }
 
-fn has_bearer(h: &axum::http::HeaderMap) -> bool {
-    h.get(axum::http::header::AUTHORIZATION)
+/// True when the request carries an out-of-band credential the CSRF
+/// middleware should consider equivalent to a Bearer token: either an
+/// explicit `Authorization: Bearer …` OR an `Authorization: Basic …`
+/// whose decoded password component is an `app_…` token. Basic carrying
+/// a raw password (login flow only — and login is CSRF-exempt anyway)
+/// or a JWT is *not* treated as token auth.
+fn has_token_auth(h: &axum::http::HeaderMap) -> bool {
+    let Some(raw) = h
+        .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.starts_with("Bearer "))
-        .unwrap_or(false)
+    else {
+        return false;
+    };
+    if raw.starts_with("Bearer ") {
+        return true;
+    }
+    if let Some(b64) = raw.strip_prefix("Basic ") {
+        use base64::Engine;
+        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(b64.trim())
+            && let Ok(s) = std::str::from_utf8(&decoded)
+            && let Some((_user, password)) = s.split_once(':')
+        {
+            return super::app_password::looks_like_app_password(password);
+        }
+    }
+    false
 }
 
 /// Routes exempted from CSRF double-submit. These are either:

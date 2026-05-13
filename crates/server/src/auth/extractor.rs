@@ -27,6 +27,12 @@ pub struct CurrentUser {
     pub role: String,
     pub display_name: String,
     pub email: Option<String>,
+    /// `Some(scope)` only when this user resolved through an
+    /// app-password Bearer/Basic token. Cookie + JWT users authenticated
+    /// interactively, so they have implicit "all capabilities" and
+    /// `RequireScope` lets them through without checking. `None` ≡
+    /// "no scope restriction applies".
+    pub app_password_scope: Option<String>,
 }
 
 #[derive(Debug)]
@@ -117,6 +123,7 @@ where
             role: row.role,
             display_name: row.display_name,
             email: row.email,
+            app_password_scope: None,
         })
     }
 }
@@ -124,12 +131,11 @@ where
 /// Resolve an `app_…` Bearer token to its owning user. Bumps the row's
 /// `last_used_at` on success (best-effort, see `app_password::verify`).
 async fn resolve_app_password(app: &AppState, token: &str) -> Result<CurrentUser, AuthRejection> {
-    let (user_id, _ap_id) =
-        super::app_password::verify(&app.db, token, app.secrets.pepper.as_ref())
-            .await
-            .ok_or(AuthRejection::Invalid)?;
+    let resolved = super::app_password::verify(&app.db, token, app.secrets.pepper.as_ref())
+        .await
+        .ok_or(AuthRejection::Invalid)?;
     let row = UserEntity::find()
-        .filter(user::Column::Id.eq(user_id))
+        .filter(user::Column::Id.eq(resolved.user_id))
         .one(&app.db)
         .await
         .map_err(|_| AuthRejection::Internal)?
@@ -142,7 +148,45 @@ async fn resolve_app_password(app: &AppState, token: &str) -> Result<CurrentUser
         role: row.role,
         display_name: row.display_name,
         email: row.email,
+        app_password_scope: Some(resolved.scope),
     })
+}
+
+/// Wraps `CurrentUser` and asserts that, **if** the caller authenticated
+/// via an app-password Bearer/Basic token, that token's `scope` is at
+/// least `read+progress`. Cookie + JWT callers always pass — they
+/// authenticated interactively and have implicit full capability.
+///
+/// Used on `PUT /opds/v1/issues/{id}/progress` and the KOReader sync
+/// shim so a `read`-scope token can browse + download but can't
+/// silently write progress back into the user's account.
+#[derive(Clone, Debug)]
+pub struct RequireProgressScope(pub CurrentUser);
+
+impl std::ops::Deref for RequireProgressScope {
+    type Target = CurrentUser;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<S> FromRequestParts<S> for RequireProgressScope
+where
+    S: Send + Sync,
+    AppState: FromRef<S>,
+{
+    type Rejection = AuthRejection;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let user = CurrentUser::from_request_parts(parts, state).await?;
+        if let Some(scope) = user.app_password_scope.as_deref()
+            && scope != super::app_password::SCOPE_READ_PROGRESS
+        {
+            return Err(AuthRejection::Forbidden);
+        }
+        Ok(Self(user))
+    }
 }
 
 /// Admin-only wrapper around [`CurrentUser`]. Returns 403 with code

@@ -99,65 +99,68 @@ pub async fn upsert(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
+    let result = upsert_for(&app, user.id, &issue_row, req.page, req.finished, req.device).await;
+    match result {
+        Ok(model) => versioned(StatusCode::OK, Json(ProgressView::from(model)).into_response()),
+        Err(e) => {
+            tracing::warn!(error = %e, "progress upsert failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        }
+    }
+}
+
+/// Crate-wide upsert helper used by `POST /progress` AND the OPDS
+/// progress endpoints. The caller is responsible for ACL: this fn
+/// trusts that `issue_row` is one the `user_id` is allowed to read.
+/// Keeps the `finished`-is-sticky semantics intact across all callers.
+pub(crate) async fn upsert_for(
+    app: &AppState,
+    user_id: uuid::Uuid,
+    issue_row: &issue::Model,
+    page: i32,
+    finished: Option<bool>,
+    device: Option<String>,
+) -> Result<progress_record::Model, sea_orm::DbErr> {
     let percent = match issue_row.page_count.unwrap_or(0) {
-        n if n > 0 => (req.page as f64 / n as f64).clamp(0.0, 1.0),
+        n if n > 0 => (page as f64 / n as f64).clamp(0.0, 1.0),
         _ => 0.0,
     };
     let now = Utc::now().fixed_offset();
-
-    // sea-orm's `insert_with_on_conflict` is verbose; the simplest portable upsert
-    // is "find then insert/update" because we own both PK columns.
-    let existing = ProgressEntity::find_by_id((user.id, req.issue_id.clone()))
+    let existing = ProgressEntity::find_by_id((user_id, issue_row.id.clone()))
         .one(&app.db)
-        .await;
-    let model = match existing {
-        Ok(Some(prev)) => {
+        .await?;
+    match existing {
+        Some(prev) => {
             // `finished` is sticky on per-page writes: when the caller
             // omits it, we keep whatever was there. Mark-as-read /
             // mark-as-unread / last-page-auto-finish all send an
             // explicit value, so user-intended toggles still flow
             // through.
-            let next_finished = req.finished.unwrap_or(prev.finished);
+            let next_finished = finished.unwrap_or(prev.finished);
             let am = ProgressAM {
-                user_id: Unchanged(user.id),
-                issue_id: Unchanged(req.issue_id.clone()),
-                last_page: Set(req.page),
+                user_id: Unchanged(user_id),
+                issue_id: Unchanged(issue_row.id.clone()),
+                last_page: Set(page),
                 percent: Set(percent),
                 finished: Set(next_finished),
                 updated_at: Set(now),
-                device: Set(req.device.clone()),
+                device: Set(device),
             };
-            match am.update(&app.db).await {
-                Ok(m) => m,
-                Err(e) => {
-                    tracing::warn!(error = %e, "progress update failed");
-                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-                }
-            }
+            am.update(&app.db).await
         }
-        Ok(None) => {
+        None => {
             let am = ProgressAM {
-                user_id: Set(user.id),
-                issue_id: Set(req.issue_id.clone()),
-                last_page: Set(req.page),
+                user_id: Set(user_id),
+                issue_id: Set(issue_row.id.clone()),
+                last_page: Set(page),
                 percent: Set(percent),
-                finished: Set(req.finished.unwrap_or(false)),
+                finished: Set(finished.unwrap_or(false)),
                 updated_at: Set(now),
-                device: Set(req.device.clone()),
+                device: Set(device),
             };
-            match am.insert(&app.db).await {
-                Ok(m) => m,
-                Err(e) => {
-                    tracing::warn!(error = %e, "progress insert failed");
-                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-                }
-            }
+            am.insert(&app.db).await
         }
-        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
-    };
-
-    let view: ProgressView = model.into();
-    versioned(StatusCode::OK, Json(view).into_response())
+    }
 }
 
 pub async fn list(

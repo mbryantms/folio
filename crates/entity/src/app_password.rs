@@ -17,6 +17,10 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     #[sea_orm(nullable)]
     pub revoked_at: Option<DateTimeWithTimeZone>,
+    /// Capability tag — `'read'` (the default) or `'read+progress'`.
+    /// Enforced by a CHECK constraint at the DB level; defaults to
+    /// `read` so pre-M7 tokens keep their existing capability.
+    pub scope: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

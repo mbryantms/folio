@@ -50,7 +50,6 @@ export function adminNav(localePrefix: string): NavSection[] {
           href: p("/libraries"),
           label: "Libraries",
           icon: "Library",
-          placeholder: true,
         },
       ],
     },

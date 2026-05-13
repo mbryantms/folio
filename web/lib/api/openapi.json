@@ -282,6 +282,49 @@
         }
       }
     },
+    "/admin/fs/list": {
+      "get": {
+        "tags": [
+          "api::admin_fs"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Path to list. Omit (or pass empty) to list the root. The server\nwill reject anything that doesn't canonicalise to a descendant of\n`COMIC_LIBRARY_PATH`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "path validation failed"
+          },
+          "403": {
+            "description": "admin only, or path is outside library root"
+          },
+          "404": {
+            "description": "path does not exist"
+          }
+        }
+      }
+    },
     "/admin/libraries/{slug}/thumbnails": {
       "delete": {
         "tags": [
@@ -5220,6 +5263,13 @@
       "AccountReq": {
         "type": "object",
         "properties": {
+          "confirm_password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional second password field. The web form ships two `<input>`s\nfor confirmation; submitting them as `new_password` + `confirm_password`\nlets the no-JS fallback validate parity server-side. Ignored when\nabsent or equal."
+          },
           "current_password": {
             "type": [
               "string",
@@ -5524,6 +5574,7 @@
         "required": [
           "id",
           "label",
+          "scope",
           "created_at",
           "plaintext"
         ],
@@ -5541,6 +5592,9 @@
           "plaintext": {
             "type": "string",
             "description": "The plaintext token. Shown once and never retrievable again."
+          },
+          "scope": {
+            "type": "string"
           }
         }
       },
@@ -5563,6 +5617,7 @@
         "required": [
           "id",
           "label",
+          "scope",
           "created_at"
         ],
         "properties": {
@@ -5581,6 +5636,9 @@
               "string",
               "null"
             ]
+          },
+          "scope": {
+            "type": "string"
           }
         }
       },
@@ -6317,6 +6375,13 @@
           "label": {
             "type": "string",
             "description": "Free-form label so the user can tell their tokens apart.\n1-80 characters; trimmed."
+          },
+          "scope": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional scope tag — `read` (default) or `read+progress`.\nTokens with `read` can browse, page-stream, and download; the\nprogress-write surface (PUT `/opds/v1/issues/{id}/progress` and\nthe KOReader sync shim) requires `read+progress`."
           }
         }
       },
@@ -6784,6 +6849,21 @@
           "sessions": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "DirEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
           }
         }
       },
@@ -7693,6 +7773,30 @@
           }
         }
       },
+      "ListResp": {
+        "type": "object",
+        "required": [
+          "path",
+          "root",
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DirEntry"
+            }
+          },
+          "path": {
+            "type": "string",
+            "description": "Canonical absolute path of the listed directory. The picker uses\nthis for the breadcrumb and as the value to drill back up from."
+          },
+          "root": {
+            "type": "string",
+            "description": "Canonical absolute path of the configured library root. The\npicker uses this to know when \"up\" should be disabled."
+          }
+        }
+      },
       "LocalConfigView": {
         "type": "object",
         "required": [
@@ -7755,6 +7859,13 @@
         "properties": {
           "email": {
             "type": "string"
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Progressive-enhancement redirect target for the no-JS form path.\nValidated through `is_safe_redirect_target` before any 303. Ignored\nby the JSON path."
           },
           "password": {
             "type": "string"
@@ -9053,6 +9164,13 @@
           "email": {
             "type": "string"
           },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Progressive-enhancement redirect target for the no-JS form path.\nValidated through `is_safe_redirect_target` before any 303. Ignored\nby the JSON path (the client routes via `useRouter().push`)."
+          },
           "password": {
             "type": "string"
           }
@@ -9286,6 +9404,13 @@
           "new_password"
         ],
         "properties": {
+          "confirm_password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional second password field. The web form ships two `<input>`s\nfor confirmation; submitting them as `new_password` + `confirm_password`\nlets the no-JS fallback validate parity server-side. Ignored when\nabsent or equal."
+          },
           "new_password": {
             "type": "string"
           },

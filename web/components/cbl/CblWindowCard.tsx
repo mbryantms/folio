@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 
 import { Cover } from "@/components/Cover";
-import { CoverMenuButton } from "@/components/CoverMenuButton";
+import {
+  CoverMenuButton,
+  type CoverMenuAction,
+} from "@/components/CoverMenuButton";
+import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +50,7 @@ export function CblWindowCard({
   className?: string;
 }) {
   const upsertProgress = useUpsertIssueProgress();
+  const router = useRouter();
   const issue = entry.issue;
   const numberLabel = issue.number ? `#${issue.number}` : "—";
   const heading = formatIssueHeading(issue);
@@ -57,6 +63,47 @@ export function CblWindowCard({
 
   const inProgress = !entry.finished && entry.last_page > 0;
   const percent = Math.max(0, Math.min(100, Math.round(entry.percent * 100)));
+
+  const menuActions: CoverMenuAction[] =
+    issue.state === "active"
+      ? [
+          {
+            label: "Mark as read",
+            onSelect: () =>
+              upsertProgress.mutate({
+                issue_id: issue.id,
+                page: Math.max((issue.page_count ?? 1) - 1, 0),
+                finished: true,
+              }),
+          },
+          {
+            label: "Mark as unread",
+            onSelect: () =>
+              upsertProgress.mutate({
+                issue_id: issue.id,
+                page: 0,
+                finished: false,
+              }),
+          },
+          ...collectionActions.actions,
+        ]
+      : [];
+  const primaryLabel = isCurrent
+    ? `Continue reading ${heading}`
+    : entry.finished
+      ? `Re-read ${heading}`
+      : `Read ${heading}`;
+  const longPress = useCoverLongPressActions({
+    primary:
+      issue.state === "active"
+        ? {
+            label: primaryLabel,
+            onSelect: () => router.push(readerUrl(issue)),
+          }
+        : undefined,
+    actions: menuActions,
+    label: `${positionLabel} · ${heading}`,
+  });
 
   // Dialog must render outside <Link> — see SeriesCard for why.
   return (
@@ -76,6 +123,7 @@ export function CblWindowCard({
             isCurrent &&
               "ring-primary ring-offset-background ring-2 ring-offset-2",
           )}
+          {...longPress.wrapperProps}
         >
           <Cover
             src={issue.cover_url}
@@ -116,37 +164,11 @@ export function CblWindowCard({
             <>
               <CoverMenuButton
                 label={`Actions for ${heading}`}
-                actions={[
-                  {
-                    label: "Mark as read",
-                    onSelect: () =>
-                      upsertProgress.mutate({
-                        issue_id: issue.id,
-                        page: Math.max((issue.page_count ?? 1) - 1, 0),
-                        finished: true,
-                      }),
-                  },
-                  {
-                    label: "Mark as unread",
-                    onSelect: () =>
-                      upsertProgress.mutate({
-                        issue_id: issue.id,
-                        page: 0,
-                        finished: false,
-                      }),
-                  },
-                  ...collectionActions.actions,
-                ]}
+                actions={menuActions}
               />
               <QuickReadOverlay
                 readerHref={readerUrl(issue)}
-                label={
-                  isCurrent
-                    ? `Continue reading ${heading}`
-                    : entry.finished
-                      ? `Re-read ${heading}`
-                      : `Read ${heading}`
-                }
+                label={primaryLabel}
               />
             </>
           )}
@@ -166,6 +188,7 @@ export function CblWindowCard({
         </div>
       </Link>
       {collectionActions.dialog}
+      {longPress.sheet}
     </>
   );
 }
