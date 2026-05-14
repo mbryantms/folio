@@ -140,7 +140,9 @@ export function NewFilterViewDialog({
                       await pin.mutateAsync({ id: view.id, pinned: true });
                     } catch (e) {
                       if (e instanceof Error && e.message.includes("pin_cap")) {
-                        toast.message(
+                        // Plan-limit notice per the variant policy in
+                        // docs/dev/notifications-audit.md §3.
+                        toast.info(
                           "View saved (pin cap reached — pin from /settings/views).",
                         );
                       }

@@ -26,17 +26,15 @@ export function TokensCard({
   const accessBad = access !== initial.access_ttl && !DURATION_RE.test(access);
   const refreshBad =
     refresh !== initial.refresh_ttl && !DURATION_RE.test(refresh);
+  const dirty =
+    access !== initial.access_ttl || refresh !== initial.refresh_ttl;
 
   async function onSave() {
+    // `disabled={!dirty}` on the submit button makes the no-op path
+    // unreachable, so we don't need the in-handler short-circuit.
     const patch: Record<string, unknown> = {};
     if (access !== initial.access_ttl) patch["auth.jwt.access_ttl"] = access;
     if (refresh !== initial.refresh_ttl) patch["auth.jwt.refresh_ttl"] = refresh;
-
-    if (Object.keys(patch).length === 0) {
-      const { toast } = await import("sonner");
-      toast.info("No changes to save");
-      return;
-    }
     await update.mutateAsync(patch);
   }
 
@@ -94,7 +92,7 @@ export function TokensCard({
           </span>
           <Button
             onClick={onSave}
-            disabled={update.isPending || accessBad || refreshBad}
+            disabled={!dirty || update.isPending || accessBad || refreshBad}
           >
             {update.isPending ? "Saving…" : "Save"}
           </Button>

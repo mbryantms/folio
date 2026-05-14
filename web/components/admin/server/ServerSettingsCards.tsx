@@ -62,13 +62,9 @@ export function ServerSettingsCards() {
 function HardeningCard({ initial }: { initial: boolean }) {
   const [enabled, setEnabled] = useState(initial);
   const update = useUpdateSettings();
+  const dirty = enabled !== initial;
 
   async function onSave() {
-    if (enabled === initial) {
-      const { toast } = await import("sonner");
-      toast.info("No changes to save");
-      return;
-    }
     await update.mutateAsync({ "auth.rate_limit_enabled": enabled });
   }
 
@@ -91,7 +87,7 @@ function HardeningCard({ initial }: { initial: boolean }) {
           <Switch checked={enabled} onCheckedChange={setEnabled} />
         </div>
         <div className="flex justify-end">
-          <Button onClick={onSave} disabled={update.isPending}>
+          <Button onClick={onSave} disabled={!dirty || update.isPending}>
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>
@@ -118,13 +114,9 @@ function CachingCard({ initial }: { initial: number }) {
     (!/^\d+$/.test(capacity) ||
       Number(capacity) < 1 ||
       Number(capacity) > 4096);
+  const dirty = Number(capacity) !== initial;
 
   async function onSave() {
-    if (Number(capacity) === initial) {
-      const { toast } = await import("sonner");
-      toast.info("No changes to save");
-      return;
-    }
     await update.mutateAsync({ "cache.zip_lru_capacity": Number(capacity) });
   }
 
@@ -152,7 +144,10 @@ function CachingCard({ initial }: { initial: number }) {
           <RestartHint />
         </div>
         <div className="flex justify-end">
-          <Button onClick={onSave} disabled={update.isPending || bad}>
+          <Button
+            onClick={onSave}
+            disabled={!dirty || update.isPending || bad}
+          >
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>
@@ -198,6 +193,13 @@ function WorkersCard({
     thumb_inline_parallel: checkRange(state.thumb_inline_parallel, 1, 64),
   };
   const allValid = Object.values(valid).every(Boolean);
+  const dirty =
+    Number(state.scan_count) !== initial.scan_count ||
+    Number(state.post_scan_count) !== initial.post_scan_count ||
+    Number(state.scan_batch_size) !== initial.scan_batch_size ||
+    Number(state.scan_hash_buffer_kb) !== initial.scan_hash_buffer_kb ||
+    Number(state.archive_work_parallel) !== initial.archive_work_parallel ||
+    Number(state.thumb_inline_parallel) !== initial.thumb_inline_parallel;
 
   async function onSave() {
     const patch: Record<string, number> = {};
@@ -217,12 +219,6 @@ function WorkersCard({
       patch["workers.thumb_inline_parallel"] = Number(
         state.thumb_inline_parallel,
       );
-
-    if (Object.keys(patch).length === 0) {
-      const { toast } = await import("sonner");
-      toast.info("No changes to save");
-      return;
-    }
     await update.mutateAsync(patch);
   }
 
@@ -300,7 +296,10 @@ function WorkersCard({
         </div>
         <RestartHint />
         <div className="flex justify-end">
-          <Button onClick={onSave} disabled={update.isPending || !allValid}>
+          <Button
+            onClick={onSave}
+            disabled={!dirty || update.isPending || !allValid}
+          >
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>
@@ -314,13 +313,9 @@ const LOG_LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
 function DiagnosticsCard({ initial }: { initial: string }) {
   const [level, setLevel] = useState(initial);
   const update = useUpdateSettings();
+  const dirty = level !== initial;
 
   async function onSave() {
-    if (level === initial) {
-      const { toast } = await import("sonner");
-      toast.info("No changes to save");
-      return;
-    }
     await update.mutateAsync({ "observability.log_level": level });
   }
 
@@ -367,7 +362,7 @@ function DiagnosticsCard({ initial }: { initial: string }) {
           </p>
         </div>
         <div className="flex justify-end">
-          <Button onClick={onSave} disabled={update.isPending}>
+          <Button onClick={onSave} disabled={!dirty || update.isPending}>
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>

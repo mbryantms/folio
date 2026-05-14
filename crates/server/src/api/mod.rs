@@ -37,5 +37,6 @@ pub mod scan_runs;
 pub mod series;
 pub mod server_info;
 pub mod sessions;
+pub mod sidebar_layout;
 pub mod thumbnails;
 pub mod ws_scan_events;

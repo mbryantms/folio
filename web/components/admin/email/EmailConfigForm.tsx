@@ -60,11 +60,13 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
   });
 
   async function onSubmit(values: FormValues) {
+    // The submit button binds to `formState.isDirty` so the no-op path
+    // can't reach this handler. We still build the patch from a per-key
+    // diff to keep the audit log signal-rich (only fields the user
+    // actually changed).
     const patch: Record<string, unknown> = {};
 
-    // Strings: send `null` to clear, the trimmed value to set. Only
-    // include the key if it actually differs from the snapshot to keep
-    // the audit log signal-rich.
+    // Strings: send `null` to clear, the trimmed value to set.
     const diffString = (k: keyof SmtpInitial, key: string, next: string) => {
       const prev = String(initial[k] ?? "");
       if (prev === next) return;
@@ -84,14 +86,6 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
     // Password: empty input keeps the existing row untouched.
     if (values.password !== "") {
       patch["smtp.password"] = values.password;
-    }
-
-    if (Object.keys(patch).length === 0) {
-      // Nothing changed — re-rendering the form would no-op, surface a
-      // quick toast for the user rather than firing a useless request.
-      const { toast } = await import("sonner");
-      toast.info("No changes to save");
-      return;
     }
 
     await update.mutateAsync(patch);
@@ -229,7 +223,10 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
         />
 
         <div className="flex justify-end">
-          <Button type="submit" disabled={update.isPending}>
+          <Button
+            type="submit"
+            disabled={!form.formState.isDirty || update.isPending}
+          >
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>

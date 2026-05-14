@@ -25,6 +25,8 @@ import {
   useDeleteMarker,
   useUpdateMarker,
 } from "@/lib/api/mutations";
+import { markerToCreateReq } from "@/lib/markers/recreate";
+import { toast } from "sonner";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -284,11 +286,20 @@ function BookmarkToggleButton({
   const create = useCreateMarker();
   // The delete hook is keyed on a marker id; only mint it when we
   // actually have one to delete.
-  const del = useDeleteMarker(existing?.id ?? "", issueId);
+  const del = useDeleteMarker(existing?.id ?? "", issueId, { silent: true });
 
   const onClick = () => {
     if (existing) {
-      del.mutate();
+      const snapshot = existing;
+      del.mutate(undefined, {
+        onSuccess: () =>
+          toast.success("Bookmark removed", {
+            action: {
+              label: "Undo",
+              onClick: () => create.mutate(markerToCreateReq(snapshot)),
+            },
+          }),
+      });
       return;
     }
     create.mutate({
@@ -335,7 +346,7 @@ function FavoriteToggleButton({
   );
   const create = useCreateMarker();
   const update = useUpdateMarker(existing?.id ?? "", issueId);
-  const del = useDeleteMarker(existing?.id ?? "", issueId);
+  const del = useDeleteMarker(existing?.id ?? "", issueId, { silent: true });
 
   const onClick = () => {
     if (existing) {
@@ -349,7 +360,16 @@ function FavoriteToggleButton({
         if (hasOtherContent) {
           update.mutate({ is_favorite: false });
         } else {
-          del.mutate();
+          const snapshot = existing;
+          del.mutate(undefined, {
+            onSuccess: () =>
+              toast.success("Star removed", {
+                action: {
+                  label: "Undo",
+                  onClick: () => create.mutate(markerToCreateReq(snapshot)),
+                },
+              }),
+          });
         }
       } else {
         update.mutate({ is_favorite: true });

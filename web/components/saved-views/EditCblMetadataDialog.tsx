@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -125,8 +124,14 @@ function EditForm({
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
+    // Only push the CBL-list update when the schedule actually
+    // changed — otherwise the dialog fires two parallel saves and the
+    // user sees two "Saved" toasts for one click. `null` is the stored
+    // form of "manual", so normalize both sides before comparing.
+    const nextSchedule = schedule === "manual" ? null : schedule;
+    const scheduleChanged = nextSchedule !== (list.refresh_schedule ?? null);
     try {
-      await Promise.all([
+      const promises: Promise<unknown>[] = [
         updateView.mutateAsync({
           name: name.trim() || null,
           description: description.trim() || null,
@@ -134,16 +139,20 @@ function EditForm({
           custom_year_start: yearStart ? parseInt(yearStart, 10) : null,
           custom_year_end: yearEnd ? parseInt(yearEnd, 10) : null,
         }),
-        updateList.mutateAsync({
-          refresh_schedule: schedule === "manual" ? null : schedule,
-        }),
-      ]);
+      ];
+      if (scheduleChanged) {
+        promises.push(updateList.mutateAsync({ refresh_schedule: nextSchedule }));
+      }
+      await Promise.all(promises);
       qc.invalidateQueries({ queryKey: ["saved-views"] });
-      qc.invalidateQueries({ queryKey: ["cbl-lists"] });
-      toast.success("View updated");
+      if (scheduleChanged) {
+        qc.invalidateQueries({ queryKey: ["cbl-lists"] });
+      }
       onClose();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update view");
+    } catch {
+      // useApiMutation already surfaced the error toast for whichever
+      // mutation failed — keep the catch so the dialog stays open and
+      // the user can adjust their input and retry.
     }
   }
 

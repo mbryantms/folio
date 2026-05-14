@@ -9,6 +9,7 @@ import {
   useAddCollectionEntry,
   useRemoveCollectionEntry,
 } from "@/lib/api/mutations";
+import { TOAST } from "@/lib/api/toast-strings";
 import type { CollectionEntryKind } from "@/lib/api/types";
 
 import {
@@ -51,7 +52,7 @@ export function useCoverMenuCollectionActions(opts: {
       disabled: !wtrId || addToWtr.isPending,
       onSelect: () => {
         if (!wtrId) {
-          toast.error("Want to Read isn't ready yet — try again in a moment.");
+          toast.error(TOAST.WTR_NOT_READY);
           return;
         }
         addToWtr.mutate(

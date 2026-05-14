@@ -54,8 +54,17 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
     !state.oidc_client_secret_set &&
     !state.oidc_client_secret_input;
   const oidcIncomplete = issuerMissing || clientIdMissing || secretMissing;
+  const dirty =
+    state.mode !== initial.mode ||
+    state.registration_open !== initial.registration_open ||
+    state.oidc_issuer.trim() !== initial.oidc_issuer.trim() ||
+    state.oidc_client_id.trim() !== initial.oidc_client_id.trim() ||
+    state.oidc_client_secret_input !== "" ||
+    state.oidc_trust_unverified_email !== initial.oidc_trust_unverified_email;
 
   async function onSave() {
+    // `disabled={!dirty}` on the submit button makes the no-op path
+    // unreachable, so we can build the patch without short-circuiting.
     const patch: Record<string, unknown> = {};
 
     if (state.mode !== initial.mode) patch["auth.mode"] = state.mode;
@@ -77,11 +86,6 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
       patch["auth.oidc.trust_unverified_email"] = state.oidc_trust_unverified_email;
     }
 
-    if (Object.keys(patch).length === 0) {
-      const { toast } = await import("sonner");
-      toast.info("No changes to save");
-      return;
-    }
     await update.mutateAsync(patch);
     // Clear the secret input on success — `oidc_client_secret_set` will
     // flip true on the next query refresh.
@@ -296,7 +300,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
             OIDC fields incomplete — save will be rejected by the server.
           </span>
         )}
-        <Button onClick={onSave} disabled={update.isPending}>
+        <Button onClick={onSave} disabled={!dirty || update.isPending}>
           {update.isPending ? "Saving…" : "Save changes"}
         </Button>
       </div>

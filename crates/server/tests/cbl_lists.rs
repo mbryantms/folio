@@ -465,6 +465,69 @@ async fn delete_cascades_entries_and_refresh_log() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_cascades_linked_cbl_saved_view() {
+    // Regression for the "On Deck stacks N copies after N add/remove
+    // cycles" bug (dev DB 2026-05-14): the import dialog creates a
+    // kind='cbl' saved_view alongside the cbl_lists row. The FK was
+    // ON DELETE SET NULL, but the saved_views_kind_chk CHECK
+    // constraint (kind='cbl' ↔ cbl_list_id IS NOT NULL) rejected the
+    // NULL update, aborting the whole DELETE silently. After the
+    // migration changed the action to CASCADE, deleting the CBL list
+    // now also drops the linked saved view.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "frank@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap().to_owned();
+
+    // Frontend's CBL import dialog calls this same endpoint right after
+    // upload to register the saved view that backs the rail / sidebar
+    // entry. Without that step the bug doesn't trigger, because there's
+    // nothing referencing cbl_lists.id.
+    let body = serde_json::json!({
+        "kind": "cbl",
+        "name": "Sample saved view",
+        "cbl_list_id": &list_id,
+    });
+    let (status, view_body) = http(
+        &app,
+        Method::POST,
+        "/me/saved-views",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "saved view create: {view_body:?}");
+    let saved_view_id = view_body["id"].as_str().unwrap().to_owned();
+
+    let url = format!("/me/cbl-lists/{list_id}");
+    let (status, body) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "DELETE must not fail on the kind=cbl saved_view check constraint: {body:?}",
+    );
+
+    // Both the CBL row and the dependent saved view are gone.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let list_uuid = Uuid::parse_str(&list_id).unwrap();
+    let view_uuid = Uuid::parse_str(&saved_view_id).unwrap();
+    let list = entity::cbl_list::Entity::find_by_id(list_uuid)
+        .one(&db)
+        .await
+        .unwrap();
+    assert!(list.is_none(), "cbl_lists row should be gone");
+    let saved = entity::saved_view::Entity::find_by_id(view_uuid)
+        .one(&db)
+        .await
+        .unwrap();
+    assert!(
+        saved.is_none(),
+        "linked kind=cbl saved_view should have cascaded",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn non_owner_cannot_access_other_users_list() {
     let app = TestApp::spawn().await;
     let owner = register(&app, "owner@example.com").await;

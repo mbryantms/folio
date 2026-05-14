@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import {
   ChevronUp,
-  HelpCircle,
+  Keyboard,
   LogOut,
   Settings,
   Shield,
@@ -19,8 +19,10 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useShortcutsSheet } from "@/components/GlobalShortcutsSheet";
 
 /**
  * Sidebar footer: user identity + dropdown of account actions. Replaces the
@@ -39,16 +41,23 @@ export function UserFooter({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const shortcuts = useShortcutsSheet();
   const isAdmin = user.role === "admin";
   const initials = computeInitials(user.display_name, user.email);
 
   async function signOut() {
     const csrf = readCsrfCookie();
-    await fetch("/api/auth/logout", {
+    const ok = await fetch("/api/auth/logout", {
       method: "POST",
       credentials: "include",
       headers: csrf ? { "X-CSRF-Token": csrf } : undefined,
-    }).catch(() => undefined);
+    })
+      .then((r) => r.ok)
+      .catch(() => false);
+    if (ok) toast.success("Signed out");
+    // Silent on failure — the next protected request will redirect to
+    // /sign-in, which is the real signal. A toast.error here would
+    // compete with that redirect.
     start(() => router.refresh());
   }
 
@@ -128,14 +137,9 @@ export function UserFooter({
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={() =>
-              toast("Help coming soon", {
-                description: "User-facing docs land in a follow-up.",
-              })
-            }
-          >
-            <HelpCircle /> Help
+          <DropdownMenuItem onSelect={() => shortcuts.open()}>
+            <Keyboard /> Keyboard shortcuts
+            <DropdownMenuShortcut>?</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

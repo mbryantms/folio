@@ -1,36 +1,104 @@
 /**
- * Snapshot tests for the sidebar nav builder. Locks the Browse section
- * shape so the markers + collections M3 changes (drop Favorites, add
- * Collections + Want to Read) don't regress quietly.
+ * Snapshot tests for the sidebar nav builder. After navigation
+ * customization M1 `mainNav()` consumes a `SidebarLayoutView` from
+ * `/me/sidebar-layout` — the server already resolves order,
+ * visibility, label, icon, and href, so the function's job is just to
+ * group consecutive same-kind entries into the legacy
+ * `MainNavSection[]` shape that [`MainSidebar`](../../components/library/MainSidebar.tsx)
+ * still consumes.
+ *
+ * These tests pin: (a) the default ordering matches the legacy
+ * three-section layout, (b) hidden entries don't render, (c) interleaved
+ * kinds split into multiple sections instead of being silently merged.
  */
 import { describe, expect, it } from "vitest";
 
 import { mainNav } from "@/components/library/main-nav";
-import type { LibraryView, SavedViewView } from "@/lib/api/types";
+import type {
+  SidebarEntryView,
+  SidebarLayoutView,
+} from "@/lib/api/types";
 
-function lib(overrides: Partial<LibraryView> = {}): LibraryView {
+function entry(
+  overrides: Partial<SidebarEntryView> & Pick<SidebarEntryView, "kind" | "ref_id">,
+): SidebarEntryView {
   return {
-    id: "lib-1",
-    slug: "lib-1",
-    name: "Main",
-    root_path: "/library",
-    default_language: "en",
-    default_reading_direction: "ltr",
-    dedupe_by_content: false,
-    scan_schedule_cron: null,
-    last_scan_at: null,
-    file_watch_enabled: true,
-    soft_delete_days: 30,
-    ignore_globs: [],
-    report_missing_comicinfo: false,
-    generate_page_thumbs_on_scan: false,
+    label: overrides.ref_id,
+    icon: "Sparkles",
+    href: `/${overrides.ref_id}`,
+    visible: true,
+    position: 0,
     ...overrides,
   };
 }
 
-describe("mainNav Browse section", () => {
+/** Mirror of the server `BUILTIN_REGISTRY` plus the synthetic
+ *  "All Libraries" entry and a single library, in default order. Match
+ *  `compute_layout`'s output exactly so any drift shows up here. */
+function defaultLayout(): SidebarLayoutView {
+  return {
+    entries: [
+      {
+        kind: "builtin",
+        ref_id: "home",
+        label: "Home",
+        icon: "Home",
+        href: "/",
+        visible: true,
+        position: 0,
+      },
+      {
+        kind: "builtin",
+        ref_id: "bookmarks",
+        label: "Bookmarks",
+        icon: "Bookmark",
+        href: "/bookmarks",
+        visible: true,
+        position: 1,
+      },
+      {
+        kind: "builtin",
+        ref_id: "collections",
+        label: "Collections",
+        icon: "Folder",
+        href: "/collections",
+        visible: true,
+        position: 2,
+      },
+      {
+        kind: "builtin",
+        ref_id: "want_to_read",
+        label: "Want to Read",
+        icon: "ListPlus",
+        href: "/views/want-to-read",
+        visible: true,
+        position: 3,
+      },
+      {
+        kind: "library",
+        ref_id: "all",
+        label: "All Libraries",
+        icon: "Library",
+        href: "/?library=all",
+        visible: true,
+        position: 4,
+      },
+      {
+        kind: "library",
+        ref_id: "lib-1",
+        label: "Main",
+        icon: "Library",
+        href: "/?library=lib-1",
+        visible: true,
+        position: 5,
+      },
+    ],
+  };
+}
+
+describe("mainNav default layout", () => {
   it("contains Home / Bookmarks / Collections / Want to Read in order", () => {
-    const sections = mainNav("", [lib()]);
+    const sections = mainNav("", defaultLayout());
     const browse = sections.find((s) => s.label === "Browse");
     expect(browse).toBeDefined();
     expect(browse!.items.map((i) => i.label)).toEqual([
@@ -42,33 +110,21 @@ describe("mainNav Browse section", () => {
   });
 
   it("Favorites is gone", () => {
-    const sections = mainNav("", []);
+    const sections = mainNav("", defaultLayout());
     const labels = sections.flatMap((s) => s.items.map((i) => i.label));
     expect(labels).not.toContain("Favorites");
   });
 
-  it("Bookmarks is no longer a placeholder once markers M6 has shipped", () => {
-    const sections = mainNav("", []);
+  it("Bookmarks links to /bookmarks", () => {
+    const sections = mainNav("", defaultLayout());
     const bookmarks = sections
       .find((s) => s.label === "Browse")!
       .items.find((i) => i.label === "Bookmarks");
-    expect(bookmarks?.placeholder).not.toBe(true);
     expect(bookmarks?.href).toBe("/bookmarks");
   });
 
-  it("Collections + Want to Read are NOT placeholders", () => {
-    const sections = mainNav("", []);
-    const browse = sections.find((s) => s.label === "Browse")!;
-    expect(
-      browse.items.find((i) => i.label === "Collections")?.placeholder,
-    ).not.toBe(true);
-    expect(
-      browse.items.find((i) => i.label === "Want to Read")?.placeholder,
-    ).not.toBe(true);
-  });
-
   it("Want to Read links to the kebab-case alias /views/want-to-read", () => {
-    const sections = mainNav("/en", []);
+    const sections = mainNav("/en", defaultLayout());
     const wtr = sections
       .find((s) => s.label === "Browse")!
       .items.find((i) => i.label === "Want to Read");
@@ -76,19 +132,19 @@ describe("mainNav Browse section", () => {
   });
 
   it("Collections links to /collections", () => {
-    const sections = mainNav("/en", []);
+    const sections = mainNav("/en", defaultLayout());
     const collections = sections
       .find((s) => s.label === "Browse")!
       .items.find((i) => i.label === "Collections");
     expect(collections?.href).toBe("/en/collections");
   });
 
-  it("matches the locked Browse shape (snapshot)", () => {
-    // Markers M7 acceptance: fresh sign-in shows Home / Bookmarks /
-    // Libraries / Collections / Want to Read. No Favorites. No
-    // placeholders. The exact shape lives here so future nav tweaks
-    // surface a deliberate test update instead of silent drift.
-    const sections = mainNav("", [lib({ id: "lib-1", name: "Main" })]);
+  it("matches the locked default shape (snapshot)", () => {
+    // Built-ins (Browse) followed by the libraries group with the
+    // synthetic "All Libraries" leading the real libraries. Any change
+    // to BUILTIN_REGISTRY or the synthetic-entry order surfaces here as
+    // a deliberate test update.
+    const sections = mainNav("", defaultLayout());
     expect(sections).toMatchInlineSnapshot(`
       [
         {
@@ -134,74 +190,110 @@ describe("mainNav Browse section", () => {
       ]
     `);
   });
+});
 
-  it("with sidebar views appended, adds a Saved views section but Browse is unchanged", () => {
-    const view: SavedViewView = {
-      id: "v-pinned",
-      kind: "filter_series",
-      user_id: "u1",
-      is_system: false,
-      name: "My Filter",
-      description: null,
-      custom_year_start: null,
-      custom_year_end: null,
-      custom_tags: [],
-      match_mode: "all",
-      conditions: [],
-      sort_field: "created_at",
-      sort_order: "desc",
-      result_limit: 12,
-      cbl_list_id: null,
-      pinned: false,
-      pinned_position: null,
-      show_in_sidebar: true,
-      icon: null,
-      system_key: null,
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    };
-    const sections = mainNav("", [], [view]);
+describe("mainNav with saved views and overrides", () => {
+  it("adds a Saved views section when a sidebar view follows the libraries", () => {
+    const layout = defaultLayout();
+    layout.entries.push({
+      kind: "view",
+      ref_id: "v-pinned",
+      label: "My Filter",
+      icon: "filter",
+      href: "/views/v-pinned",
+      visible: true,
+      position: 6,
+    });
+    const sections = mainNav("", layout);
     expect(sections.map((s) => s.label)).toEqual([
       "Browse",
       "Libraries",
       "Saved views",
     ]);
+    const saved = sections.find((s) => s.label === "Saved views")!;
+    expect(saved.items.map((i) => i.label)).toEqual(["My Filter"]);
+  });
+
+  it("hidden entries are dropped before sections are built", () => {
+    const layout = defaultLayout();
+    // Hide Collections; Browse should still be a contiguous run, just
+    // shorter. "All Libraries" stays in the Libraries section.
+    const collections = layout.entries.find(
+      (e) => e.ref_id === "collections",
+    )!;
+    collections.visible = false;
+    const sections = mainNav("", layout);
     const browse = sections.find((s) => s.label === "Browse")!;
     expect(browse.items.map((i) => i.label)).toEqual([
       "Home",
       "Bookmarks",
-      "Collections",
       "Want to Read",
     ]);
   });
 
-  it("kind='collection' saved views map to the Folder default icon", () => {
-    const view: SavedViewView = {
-      id: "c1",
-      kind: "collection",
-      user_id: "u1",
-      is_system: false,
-      name: "My Capes",
-      description: null,
-      custom_year_start: null,
-      custom_year_end: null,
-      custom_tags: [],
-      match_mode: null,
-      conditions: null,
-      sort_field: null,
-      sort_order: null,
-      result_limit: null,
-      cbl_list_id: null,
-      pinned: true,
-      pinned_position: 0,
-      show_in_sidebar: true,
-      icon: null,
-      system_key: null,
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
+  it("interleaved kinds split into multiple sections", () => {
+    // User drops a saved view between Bookmarks and Collections. We
+    // surface three sections instead of falsely advertising the view
+    // as a "Browse" item.
+    const layout: SidebarLayoutView = {
+      entries: [
+        entry({
+          kind: "builtin",
+          ref_id: "home",
+          label: "Home",
+          icon: "Home",
+          href: "/",
+          position: 0,
+        }),
+        entry({
+          kind: "builtin",
+          ref_id: "bookmarks",
+          label: "Bookmarks",
+          icon: "Bookmark",
+          href: "/bookmarks",
+          position: 1,
+        }),
+        entry({
+          kind: "view",
+          ref_id: "v-1",
+          label: "My View",
+          icon: "filter",
+          href: "/views/v-1",
+          position: 2,
+        }),
+        entry({
+          kind: "builtin",
+          ref_id: "collections",
+          label: "Collections",
+          icon: "Folder",
+          href: "/collections",
+          position: 3,
+        }),
+      ],
     };
-    const sections = mainNav("/en", [], [view]);
-    const savedSection = sections.find((s) => s.label === "Saved views");
-    expect(savedSection?.items[0]?.icon).toBe("Folder");
+    const sections = mainNav("", layout);
+    expect(sections.map((s) => [s.label, s.items.map((i) => i.label)]))
+      .toEqual([
+        ["Browse", ["Home", "Bookmarks"]],
+        ["Saved views", ["My View"]],
+        ["Browse", ["Collections"]],
+      ]);
+  });
+
+  it("locale prefix is applied to every href", () => {
+    const sections = mainNav("/en", defaultLayout());
+    const hrefs = sections.flatMap((s) => s.items.map((i) => i.href));
+    expect(hrefs).toEqual([
+      "/en/",
+      "/en/bookmarks",
+      "/en/collections",
+      "/en/views/want-to-read",
+      "/en/?library=all",
+      "/en/?library=lib-1",
+    ]);
+  });
+
+  it("empty layout returns no sections", () => {
+    expect(mainNav("", { entries: [] })).toEqual([]);
   });
 });

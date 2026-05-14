@@ -60,7 +60,9 @@ export function MarkerEditor({
 
   const create = useCreateMarker();
   const update = useUpdateMarker(editingMarkerId ?? "", issueId);
-  const del = useDeleteMarker(editingMarkerId ?? "", issueId);
+  const del = useDeleteMarker(editingMarkerId ?? "", issueId, {
+    silent: true,
+  });
 
   const [body, setBody] = React.useState("");
   const [detectedText, setDetectedText] = React.useState<string | null>(null);
@@ -175,8 +177,33 @@ export function MarkerEditor({
   }
 
   function handleDelete() {
-    if (!editingMarkerId) return;
-    del.mutate(undefined, { onSuccess: () => close() });
+    if (!editingMarkerId || !pendingMarker) return;
+    // Snapshot the marker before delete so Undo can recreate it. We
+    // capture the *editor's current view* of the marker (which mirrors
+    // the persisted row at open time — unsaved edits would have gone
+    // through `update.mutate` first if the user clicked Save).
+    const snapshot = {
+      issue_id: issueId,
+      page_index: pendingMarker.page_index,
+      kind: pendingMarker.kind,
+      region: pendingMarker.region,
+      selection: pendingMarker.selection,
+      body: pendingMarker.body || null,
+      color: null,
+      is_favorite: pendingMarker.is_favorite,
+      tags: pendingMarker.tags,
+    };
+    del.mutate(undefined, {
+      onSuccess: () => {
+        toast.success("Removed", {
+          action: {
+            label: "Undo",
+            onClick: () => create.mutate(snapshot),
+          },
+        });
+        close();
+      },
+    });
   }
 
   /** Re-run OCR against the pending marker's region. For new

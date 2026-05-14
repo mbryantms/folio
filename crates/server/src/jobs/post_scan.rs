@@ -381,6 +381,19 @@ async fn stamp_error(app: &AppState, row: &issue::Model, msg: String) {
     let now = chrono::Utc::now().fixed_offset();
     let mut am: issue::ActiveModel = row.clone().into();
     am.thumbnails_error = Set(Some(msg));
+    // Stamp `thumbnails_generated_at` AND bump `thumbnail_version` to the
+    // current sentinel on the error path. Both clauses of the post-scan
+    // enqueue query (`generated_at IS NULL` and `version < CURRENT`)
+    // must miss this row, otherwise a permanently-failing decode
+    // (e.g. a publisher's 928-byte placeholder at position 0) keeps
+    // re-cycling through the queue forever and blocks the scan from
+    // reporting complete. Operators retry explicitly via "Force
+    // recreate" on the admin thumbnails tab, which clears
+    // `thumbnails_error` + `thumbnails_generated_at` and re-issues
+    // the cover job. A future `THUMBNAIL_VERSION` bump then naturally
+    // sweeps everyone (success or failure) into a fresh attempt.
+    am.thumbnails_generated_at = Set(Some(now));
+    am.thumbnail_version = Set(crate::library::thumbnails::THUMBNAIL_VERSION);
     am.updated_at = Set(now);
     if let Err(e) = am.update(&app.db).await {
         tracing::warn!(issue_id = %row.id, error = %e, "thumbs job: stamp_error update failed");
@@ -535,10 +548,15 @@ async fn active_issue_rows_for_thumbs(
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::State.eq("active"))
         .filter(
+            // Never attempted OR version bumped. Failures are NOT
+            // auto-retried — `stamp_error` now stamps `generated_at`,
+            // so a permanently-failing decode (e.g. corrupt cover
+            // image) doesn't loop the post-scan queue forever.
+            // Manual retry: admin "Force recreate" clears both
+            // columns. Global retry: bump THUMBNAIL_VERSION.
             Condition::any()
                 .add(issue::Column::ThumbnailsGeneratedAt.is_null())
-                .add(issue::Column::ThumbnailVersion.lt(THUMBNAIL_VERSION))
-                .add(issue::Column::ThumbnailsError.is_not_null()),
+                .add(issue::Column::ThumbnailVersion.lt(THUMBNAIL_VERSION)),
         );
     if let Some(series_id) = series_id {
         query = query.filter(issue::Column::SeriesId.eq(series_id));
@@ -559,9 +577,11 @@ async fn enqueue_post_scan_rows(
 ) -> usize {
     let mut count = 0usize;
     for row in rows {
+        // Mirror the query above: never attempted or version bumped. A
+        // stamped `thumbnails_error` no longer requalifies for
+        // auto-retry — see the comment in `active_issue_rows_for_thumbs`.
         let cover_pending = row.thumbnails_generated_at.is_none()
-            || row.thumbnail_version < THUMBNAIL_VERSION
-            || row.thumbnails_error.is_some();
+            || row.thumbnail_version < THUMBNAIL_VERSION;
         if !cover_pending {
             continue;
         }

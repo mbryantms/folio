@@ -866,6 +866,7 @@ async fn run_series_phases(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| planned.path.to_string_lossy().into_owned());
+    let folder_path_str = planned.path.to_string_lossy().into_owned();
     let process_started = Instant::now();
     let outcome =
         process_planned_folder(state, lib, planned, stats, health, None, force, false).await?;
@@ -889,6 +890,14 @@ async fn run_series_phases(
     .await;
 
     let seen_paths: HashSet<String> = outcome.seen_paths.into_iter().collect();
+    // Per-series scan walks exactly one folder. Pass it as the
+    // singleton folder set so the reconcile pass only soft-deletes
+    // issues actually located under it.
+    let scanned_folder_paths: HashSet<String> = if outcome.processed {
+        std::iter::once(folder_path_str).collect()
+    } else {
+        HashSet::new()
+    };
     emit_progress(
         state,
         lib.id,
@@ -901,8 +910,14 @@ async fn run_series_phases(
     )
     .await;
     let reconcile_started = Instant::now();
-    crate::library::reconcile::reconcile_series_seen(&state.db, series_id, &seen_paths, stats)
-        .await?;
+    crate::library::reconcile::reconcile_series_seen(
+        &state.db,
+        series_id,
+        &seen_paths,
+        &scanned_folder_paths,
+        stats,
+    )
+    .await?;
     stats.record_phase("reconcile", reconcile_started.elapsed());
     progress.completed = progress.completed.saturating_add(1).min(progress.total);
     emit_progress(
@@ -1209,6 +1224,9 @@ async fn run_phases(
         .collect();
     let mut scanned_series = HashSet::new();
     let mut seen_paths = HashSet::new();
+    // Folder paths whose `process_planned_folder` returned `processed=true`.
+    // Drives the folder-scoped reconcile (see `reconcile_library_seen`).
+    let mut scanned_folder_paths: HashSet<String> = HashSet::new();
     let mut status_reconcile_entries = Vec::new();
 
     let concurrency = state.cfg().scan_worker_count.max(1);
@@ -1232,6 +1250,11 @@ async fn run_phases(
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| planned.path.to_string_lossy().into_owned());
+                // Full folder path is needed by the reconcile pass to
+                // scope soft-deletes to folders we actually walked.
+                // Capture before `planned` is consumed by
+                // `process_planned_folder`.
+                let folder_path_str = planned.path.to_string_lossy().into_owned();
                 let work_units = 1 + planned.archives.len() as u64;
                 let result = process_planned_folder(
                     &state,
@@ -1244,7 +1267,14 @@ async fn run_phases(
                     true,
                 )
                 .await;
-                (label, work_units, result, local_stats, local_health)
+                (
+                    label,
+                    folder_path_str,
+                    work_units,
+                    result,
+                    local_stats,
+                    local_health,
+                )
             }
         })
         .buffer_unordered(concurrency);
@@ -1257,7 +1287,7 @@ async fn run_phases(
     loop {
         tokio::select! {
             maybe_result = folder_results.next() => {
-                let Some((label, work_units, result, local_stats, local_health)) = maybe_result else {
+                let Some((label, folder_path_str, work_units, result, local_stats, local_health)) = maybe_result else {
                     break;
                 };
                 let mut folder_processed = false;
@@ -1278,6 +1308,7 @@ async fn run_phases(
                     if outcome.processed {
                         scanned_series.insert(series_id);
                         seen_paths.extend(outcome.seen_paths);
+                        scanned_folder_paths.insert(folder_path_str);
                     }
                 }
             }
@@ -1352,6 +1383,7 @@ async fn run_phases(
         lib.id,
         &scanned_series,
         &seen_paths,
+        &scanned_folder_paths,
         &present_folders,
         stats,
     )

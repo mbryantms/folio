@@ -56,9 +56,11 @@ import type {
   UpdateCollectionReq,
   UpdateIssueReq,
   UpdateLibraryReq,
+  UpdateLayoutReq,
   UpdateMarkerReq,
   UpdateSavedViewReq,
   UpdateSeriesReq,
+  SidebarLayoutView,
   UpdateThumbnailsSettingsReq,
   UpdateUserReq,
   UpsertProgressReq,
@@ -366,6 +368,9 @@ export function useSetSeriesRating(seriesSlug: string) {
 /**
  * `PUT /series/{slug}/issues/{slug}/rating` — same shape as the series
  * rating endpoint but scoped to a single issue.
+ *
+ * No toast on success — the star control fills in inline; a per-click
+ * toast would be noisy. Mirrors `useSetSeriesRating`.
  */
 export function useSetIssueRating(seriesSlug: string, issueSlug: string) {
   return useApiMutation<RatingView, SetRatingReq>(
@@ -454,7 +459,10 @@ export function useUpsertSeriesProgress(seriesId: string) {
 
 /** `POST /me/saved-views/{id}/icon` — pick (or reset) the icon shown
  *  on this rail's home header + sidebar entry. `icon = null` resets to
- *  the kind-based default. */
+ *  the kind-based default.
+ *
+ *  No toast on success — the icon swap is the visual signal; a toast
+ *  for every icon flip in the picker grid would be unusable. */
 export function useSetSavedViewIcon() {
   const qc = useQueryClient();
   return useApiMutation<null, { id: string; icon: string | null }>(
@@ -650,6 +658,7 @@ export function useRevokeAllSessions() {
   return useApiMutation<RevokeAllSessionsResp, void>(
     () => ({ path: "/me/sessions/revoke-all", method: "POST" }),
     {
+      successMessage: "All sessions revoked",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.sessions });
         qc.invalidateQueries({ queryKey: queryKeys.me });
@@ -660,6 +669,9 @@ export function useRevokeAllSessions() {
 
 // ---------- App passwords (M7) ----------
 
+/** No toast on success — the response is the generated password, which
+ *  the caller renders in a modal-with-copy-button. A toast would
+ *  compete with the modal for the user's attention. */
 export function useCreateAppPassword() {
   const qc = useQueryClient();
   return useApiMutation<AppPasswordCreatedView, CreateAppPasswordReq>(
@@ -923,7 +935,10 @@ export function useForceRecreateIssuePageMap(
 
 // ---------- CBL lists (saved-views M6) ----------
 
-/** POST /me/cbl-lists — create from JSON body (URL or catalog source). */
+/** POST /me/cbl-lists — create from JSON body (URL or catalog source).
+ *
+ *  No toast on success — the dialog closes and the user lands on the
+ *  freshly-imported list's detail page; the route change is the signal. */
 export function useCreateCblList() {
   const qc = useQueryClient();
   return useApiMutation<CblListView, CreateCblListReq>(
@@ -1063,6 +1078,10 @@ export function useClearMatchEntry(listId: string) {
 
 // ---------- Saved views (M6 needs create + delete + pin from import flow) ----------
 
+/** No toast on success — the create dialog closes and the user lands
+ *  on the new view's detail route; the route change is the signal.
+ *  AddViewButton additionally fires its own context-aware toast when
+ *  it chains a pin after create. */
 export function useCreateSavedView() {
   const qc = useQueryClient();
   return useApiMutation<SavedViewView, CreateSavedViewReq>(
@@ -1231,8 +1250,73 @@ export function useSidebarSavedView() {
   );
 }
 
+/** PATCH /me/sidebar-layout — whole-array replace of the calling user's
+ *  override rows in `user_sidebar_entries`. The server returns the
+ *  resolved layout (defaults + overrides merged) which we drop straight
+ *  into the cache; missing entries fall back to defaults, so a
+ *  `{ entries: [] }` payload acts as a "reset to defaults".
+ *
+ *  Optimistic: write the requested entries into the cache before the
+ *  round-trip so the drag-and-drop UI feels instant; rollback to the
+ *  pre-mutation snapshot if the request fails. `router.refresh()` on
+ *  settled so the server-rendered library layout (`[locale]/(library)/layout.tsx`)
+ *  re-fetches and the actual sidebar redraws.
+ *
+ *  No toast on success — drag drops settle visibly, switch flips are
+ *  immediate, and the sidebar redraws within ~100ms. NavigationManager's
+ *  "Reset to defaults" path explicitly toasts at the call site. */
+export function useUpdateSidebarLayout() {
+  const qc = useQueryClient();
+  const router = useRouter();
+  return useApiMutation<SidebarLayoutView, UpdateLayoutReq>(
+    (body) => ({ path: "/me/sidebar-layout", method: "PATCH", body }),
+    {
+      onMutate: async (input) => {
+        await qc.cancelQueries({ queryKey: queryKeys.sidebarLayout });
+        const snapshot = qc.getQueryData<SidebarLayoutView>(
+          queryKeys.sidebarLayout,
+        );
+        // Build an optimistic layout by overlaying the requested
+        // overrides on the previous response. Entries not in the
+        // payload keep their previous shape; this matches the server's
+        // merge semantics so the optimistic state is consistent with
+        // what the next GET would return.
+        if (snapshot) {
+          const byKey = new Map<string, (typeof input.entries)[number]>();
+          for (const e of input.entries) {
+            byKey.set(`${e.kind}:${e.ref_id}`, e);
+          }
+          const next: SidebarLayoutView = {
+            entries: snapshot.entries.map((e) => {
+              const o = byKey.get(`${e.kind}:${e.ref_id}`);
+              return o ? { ...e, visible: o.visible, position: o.position } : e;
+            }),
+          };
+          next.entries.sort((a, b) => a.position - b.position);
+          qc.setQueryData<SidebarLayoutView>(queryKeys.sidebarLayout, next);
+        }
+        return { snapshot };
+      },
+      onError: (_err, _vars, ctx) => {
+        const snap = (ctx as { snapshot?: SidebarLayoutView } | undefined)
+          ?.snapshot;
+        if (snap) qc.setQueryData(queryKeys.sidebarLayout, snap);
+      },
+      onSuccess: (data) => {
+        if (data) qc.setQueryData(queryKeys.sidebarLayout, data);
+      },
+      onSettled: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+        router.refresh();
+      },
+    },
+  );
+}
+
 /** POST /me/saved-views/reorder. Server expects view ids in the desired
- *  pin order; views not currently pinned are rejected. */
+ *  pin order; views not currently pinned are rejected.
+ *
+ *  No toast on success — the drag settles into place visibly. */
 export function useReorderSavedViews() {
   const qc = useQueryClient();
   return useApiMutation<unknown, { view_ids: string[] }>(
@@ -1271,11 +1355,21 @@ export function useDeleteAllThumbnails(libraryId: string) {
 /** Create a new user collection. The cover-menu "Create new… " flow
  *  chains this with `useAddCollectionEntry` to insert the just-selected
  *  series/issue. */
-export function useCreateCollection() {
+/** `silent: true` suppresses the success toast for callers that
+ *  compose their own toast after a multi-step flow (e.g. the
+ *  `AddToCollectionDialog` create-then-add path emits a combined
+ *  "Added to X" toast and skips the standalone "Collection X created"). */
+export function useCreateCollection(opts?: { silent?: boolean }) {
   const qc = useQueryClient();
   return useApiMutation<SavedViewView, CreateCollectionReq>(
     (body) => ({ path: "/me/collections", method: "POST", body }),
     {
+      ...(opts?.silent
+        ? {}
+        : {
+            successMessage: (data: SavedViewView | null) =>
+              `Collection "${data?.name ?? "Untitled"}" created`,
+          }),
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.collections });
         // Sidebar reads from `/me/saved-views`; new collections appear
@@ -1365,7 +1459,11 @@ export function useRemoveCollectionEntry(collectionId: string) {
 /** Create a marker — bookmark / note / favorite / highlight. The
  *  reader cover-menu and `b` / `n` / `h` keybinds chain here. On
  *  success the per-issue + global feed caches are invalidated so the
- *  overlay and `/bookmarks` page refresh together. */
+ *  overlay and `/bookmarks` page refresh together.
+ *
+ *  No toast on success — reader keybind call sites wrap with
+ *  kind-specific toasts ("Bookmarked page X", "Starred page X"); a
+ *  generic "Marker created" would compete. */
 export function useCreateMarker() {
   const qc = useQueryClient();
   return useApiMutation<MarkerView, CreateMarkerReq>(
@@ -1416,12 +1514,23 @@ export function useUpdateMarker(id: string, issueId: string) {
   );
 }
 
-export function useDeleteMarker(id: string, issueId: string) {
+/** `silent: true` suppresses the default "Removed" toast for callers
+ *  that compose their own (a) Reader keybinds emit kind-specific
+ *  labels like "Removed bookmark on page X"; (b) every delete surface
+ *  pairs the toast with an Undo action via `markerToCreateReq` +
+ *  `useCreateMarker`. The 8 marker-delete call sites all use
+ *  `silent: true` post-M3.5 — see docs/dev/notifications-audit.md
+ *  §F-8 / cleanup plan M3.5. */
+export function useDeleteMarker(
+  id: string,
+  issueId: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<unknown, void>(
     () => ({ path: `/me/markers/${id}`, method: "DELETE" }),
     {
-      successMessage: "Removed",
+      ...(opts?.silent ? {} : { successMessage: "Removed" }),
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: ["markers", "issue", issueId] });
         qc.invalidateQueries({ queryKey: ["markers", "list"] });
@@ -1433,7 +1542,9 @@ export function useDeleteMarker(id: string, issueId: string) {
 }
 
 /** Apply a full reorder of entries in one transaction. The server
- *  rejects partial reorders — every current entry id must be present. */
+ *  rejects partial reorders — every current entry id must be present.
+ *
+ *  No toast on success — drag drops settle visibly. */
 export function useReorderCollectionEntries(collectionId: string) {
   const qc = useQueryClient();
   return useApiMutation<unknown, ReorderEntriesReq>(
@@ -1475,13 +1586,16 @@ export function useUpdateSettings() {
 }
 
 /** Fire a probe email to the calling admin's address. Successful responses
- *  include `{ delivered, duration_ms, to }`. Errors surface as the
- *  underlying lettre message so operators can diagnose. */
+ *  include `{ delivered, duration_ms, to }`. The card also renders an
+ *  inline "Delivered to X in Y ms" line; the toast adds an off-card
+ *  acknowledgement for admins scrolled past the test button. Errors
+ *  surface as the underlying lettre message so operators can diagnose. */
 export function useSendTestEmail() {
   const qc = useQueryClient();
   return useApiMutation<TestEmailResp, void>(
     () => ({ path: "/admin/email/test", method: "POST" }),
     {
+      successMessage: "Test email sent",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.adminEmailStatus });
       },
@@ -1494,7 +1608,11 @@ import type { OidcDiscoverReq, OidcDiscoverResp } from "./types";
 /** Probe an OIDC issuer's discovery doc before committing it. Returns the
  *  parsed endpoints + scopes_supported. Used by the "Test discovery"
  *  button on /admin/auth so an admin can verify reachability without
- *  saving a half-baked config. */
+ *  saving a half-baked config.
+ *
+ *  No toast on success — the form renders the parsed result inline
+ *  next to the probe button; a toast would be redundant. Error toast
+ *  fires via useApiMutation's default. */
 export function useProbeOidcDiscovery() {
   return useApiMutation<OidcDiscoverResp, OidcDiscoverReq>(
     (body) => ({ path: "/admin/auth/oidc/discover", method: "POST", body }),

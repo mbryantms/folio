@@ -14,9 +14,10 @@ use crate::entry_name;
 use crate::{ArchiveEntry, ArchiveError, ArchiveLimits};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
+use zip::read::ZipFile;
 
 /// Files we always skip per §4.1 (`^\.|^__MACOSX|Thumbs\.db|\.xml$|\.json$|\.txt$`).
 /// Case-insensitive on directory names (`__MACOSX`/`__macosx`) and stem rules.
@@ -44,10 +45,50 @@ fn is_image(name: &str) -> bool {
 pub struct Cbz {
     path: PathBuf,
     limits: ArchiveLimits,
-    archive: ZipArchive<File>,
+    /// Holds either the file-backed reader (happy path, default) or a
+    /// memory-backed reader that owns a rewritten copy of the file with
+    /// the malformed Unicode-Path extra fields stripped. See
+    /// [`recover_zip_bytes`] for what triggers the rewrite.
+    archive: OpenedZip,
     entries: Vec<ArchiveEntry>,
     /// canonical (lowercased) name → entry index
     by_canonical: HashMap<String, usize>,
+}
+
+/// Backing reader for the inner `ZipArchive`. Two flavors share Cbz so the
+/// rare recovery path (see [`recover_zip_bytes`]) doesn't poison the type
+/// of every Cbz handle. Methods that touch the archive dispatch via the
+/// [`ZipFileLike`] trait so the duplication stays at the entry-open boundary.
+enum OpenedZip {
+    File(ZipArchive<File>),
+    Mem(ZipArchive<Cursor<Vec<u8>>>),
+}
+
+impl OpenedZip {
+    fn len(&self) -> usize {
+        match self {
+            Self::File(a) => a.len(),
+            Self::Mem(a) => a.len(),
+        }
+    }
+}
+
+/// Common surface across the two `ZipArchive` reader types so the dispatch
+/// helpers below don't need to be written twice. Mirrors the inherent
+/// `ZipFile` methods used by `Cbz` (Read + a couple of size/compression
+/// getters).
+trait ZipFileLike: Read {
+    fn entry_size(&self) -> u64;
+    fn entry_compression(&self) -> zip::CompressionMethod;
+}
+
+impl ZipFileLike for ZipFile<'_> {
+    fn entry_size(&self) -> u64 {
+        self.size()
+    }
+    fn entry_compression(&self) -> zip::CompressionMethod {
+        self.compression()
+    }
 }
 
 impl std::fmt::Debug for Cbz {
@@ -62,28 +103,57 @@ impl std::fmt::Debug for Cbz {
 impl Cbz {
     pub fn open(path: impl AsRef<Path>, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
         let path = path.as_ref().to_path_buf();
-        let f = File::open(&path)?;
-        let mut archive = ZipArchive::new(f).map_err(map_zip_err)?;
+        let archive = open_zip_with_recovery(&path)?;
+        Self::finish(path, limits, archive)
+    }
 
-        if archive.len() as u64 > limits.max_entries {
+    /// Build the index/entry tables. Shared between the happy-path (File)
+    /// open and the recovery-path (in-memory cursor over rewritten bytes).
+    fn finish(
+        path: PathBuf,
+        limits: ArchiveLimits,
+        mut archive: OpenedZip,
+    ) -> Result<Self, ArchiveError> {
+        let n = archive.len();
+        if n as u64 > limits.max_entries {
             return Err(ArchiveError::CapExceeded("entry count"));
         }
 
-        let mut entries: Vec<ArchiveEntry> = Vec::with_capacity(archive.len());
-        let mut by_canonical: HashMap<String, usize> = HashMap::with_capacity(archive.len());
+        let mut entries: Vec<ArchiveEntry> = Vec::with_capacity(n);
+        let mut by_canonical: HashMap<String, usize> = HashMap::with_capacity(n);
         let mut total_uncompressed: u64 = 0;
 
-        for i in 0..archive.len() {
-            let raw = archive.by_index_raw(i).map_err(map_zip_err)?;
-            // Encryption check (§4.6) — done before name validation so encrypted
-            // archives report `Encrypted`, not `UnsafeEntry`.
-            if raw.encrypted() {
+        for i in 0..n {
+            // Pull just the raw-entry fields we need, dropping the borrow
+            // so subsequent loop iterations can re-borrow the archive.
+            let (encrypted, name, unc, cmp, is_dir) = match &mut archive {
+                OpenedZip::File(a) => {
+                    let raw = a.by_index_raw(i).map_err(map_zip_err)?;
+                    (
+                        raw.encrypted(),
+                        raw.name().to_string(),
+                        raw.size(),
+                        raw.compressed_size(),
+                        raw.is_dir(),
+                    )
+                }
+                OpenedZip::Mem(a) => {
+                    let raw = a.by_index_raw(i).map_err(map_zip_err)?;
+                    (
+                        raw.encrypted(),
+                        raw.name().to_string(),
+                        raw.size(),
+                        raw.compressed_size(),
+                        raw.is_dir(),
+                    )
+                }
+            };
+
+            // Encryption check (§4.6) — done before name validation so
+            // encrypted archives report `Encrypted`, not `UnsafeEntry`.
+            if encrypted {
                 return Err(ArchiveError::Encrypted);
             }
-            let name = raw.name().to_string();
-            // Per-entry size caps.
-            let unc = raw.size();
-            let cmp = raw.compressed_size();
             if unc > limits.max_entry_bytes {
                 return Err(ArchiveError::CapExceeded("single entry uncompressed bytes"));
             }
@@ -103,7 +173,7 @@ impl Cbz {
             }
 
             // Skip directory placeholders (zero-length, name ending in '/').
-            if raw.is_dir() {
+            if is_dir {
                 continue;
             }
 
@@ -139,6 +209,25 @@ impl Cbz {
             entries,
             by_canonical,
         })
+    }
+
+    /// Dispatch `f` over an opened entry, hiding the inner reader type.
+    /// `f` receives a `&mut dyn ZipFileLike` so call sites stay generic
+    /// over both `OpenedZip` variants.
+    fn with_entry<F, T>(&mut self, index: usize, f: F) -> Result<T, ArchiveError>
+    where
+        F: FnOnce(&mut dyn ZipFileLike) -> Result<T, ArchiveError>,
+    {
+        match &mut self.archive {
+            OpenedZip::File(a) => {
+                let mut zf = a.by_index(index).map_err(map_zip_err)?;
+                f(&mut zf)
+            }
+            OpenedZip::Mem(a) => {
+                let mut zf = a.by_index(index).map_err(map_zip_err)?;
+                f(&mut zf)
+            }
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -200,25 +289,26 @@ impl Cbz {
     /// Read an entry's full uncompressed bytes. Caps at `limits.max_entry_bytes`
     /// regardless of central-directory claims (defends against a lying central dir).
     pub fn read_entry_bytes(&mut self, entry: &ArchiveEntry) -> Result<Vec<u8>, ArchiveError> {
-        let mut zf = self.archive.by_index(entry.index).map_err(map_zip_err)?;
         let cap = self.limits.max_entry_bytes;
-        let mut out = Vec::with_capacity(zf.size().min(64 * 1024) as usize);
-        let mut taken = 0u64;
-        let mut buf = [0u8; 64 * 1024];
-        loop {
-            let n = zf.read(&mut buf)?;
-            if n == 0 {
-                break;
+        self.with_entry(entry.index, |zf| {
+            let mut out = Vec::with_capacity(zf.entry_size().min(64 * 1024) as usize);
+            let mut taken = 0u64;
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                let n = zf.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                taken = taken.saturating_add(n as u64);
+                if taken > cap {
+                    return Err(ArchiveError::CapExceeded(
+                        "entry exceeded max_entry_bytes during read",
+                    ));
+                }
+                out.extend_from_slice(&buf[..n]);
             }
-            taken = taken.saturating_add(n as u64);
-            if taken > cap {
-                return Err(ArchiveError::CapExceeded(
-                    "entry exceeded max_entry_bytes during read",
-                ));
-            }
-            out.extend_from_slice(&buf[..n]);
-        }
-        Ok(out)
+            Ok(out)
+        })
     }
 
     pub fn read_entry_prefix(
@@ -226,21 +316,22 @@ impl Cbz {
         entry: &ArchiveEntry,
         max_bytes: usize,
     ) -> Result<Vec<u8>, ArchiveError> {
-        let mut zf = self.archive.by_index(entry.index).map_err(map_zip_err)?;
         let cap = self.limits.max_entry_bytes.min(max_bytes as u64);
-        let mut out = Vec::with_capacity(cap.min(64 * 1024) as usize);
-        let mut taken = 0u64;
-        let mut buf = [0u8; 16 * 1024];
-        while taken < cap {
-            let want = (cap - taken).min(buf.len() as u64) as usize;
-            let n = zf.read(&mut buf[..want])?;
-            if n == 0 {
-                break;
+        self.with_entry(entry.index, |zf| {
+            let mut out = Vec::with_capacity(cap.min(64 * 1024) as usize);
+            let mut taken = 0u64;
+            let mut buf = [0u8; 16 * 1024];
+            while taken < cap {
+                let want = (cap - taken).min(buf.len() as u64) as usize;
+                let n = zf.read(&mut buf[..want])?;
+                if n == 0 {
+                    break;
+                }
+                taken += n as u64;
+                out.extend_from_slice(&buf[..n]);
             }
-            taken += n as u64;
-            out.extend_from_slice(&buf[..n]);
-        }
-        Ok(out)
+            Ok(out)
+        })
     }
 
     /// Read a byte range `[start, start+len)` of an entry's uncompressed bytes.
@@ -261,43 +352,44 @@ impl Cbz {
         start: u64,
         len: u64,
     ) -> Result<Vec<u8>, ArchiveError> {
-        let mut zf = self.archive.by_index(entry.index).map_err(map_zip_err)?;
-        if zf.compression() != zip::CompressionMethod::Stored {
-            tracing::debug!(
-                name = %entry.name,
-                "Range request on DEFLATED entry; decompressing from offset 0"
-            );
-        }
-
         let cap = self.limits.max_entry_bytes;
         if start.saturating_add(len) > cap {
             return Err(ArchiveError::CapExceeded("range exceeds entry cap"));
         }
-
-        let mut buf = [0u8; 64 * 1024];
-        let mut skipped = 0u64;
-        while skipped < start {
-            let want = (start - skipped).min(buf.len() as u64) as usize;
-            let n = zf.read(&mut buf[..want])?;
-            if n == 0 {
-                // Range start is at or past EOF; return empty.
-                return Ok(Vec::new());
+        let entry_name = entry.name.clone();
+        self.with_entry(entry.index, |zf| {
+            if zf.entry_compression() != zip::CompressionMethod::Stored {
+                tracing::debug!(
+                    name = %entry_name,
+                    "Range request on DEFLATED entry; decompressing from offset 0"
+                );
             }
-            skipped += n as u64;
-        }
 
-        let mut out = Vec::with_capacity(len.min(64 * 1024) as usize);
-        let mut taken = 0u64;
-        while taken < len {
-            let want = (len - taken).min(buf.len() as u64) as usize;
-            let n = zf.read(&mut buf[..want])?;
-            if n == 0 {
-                break;
+            let mut buf = [0u8; 64 * 1024];
+            let mut skipped = 0u64;
+            while skipped < start {
+                let want = (start - skipped).min(buf.len() as u64) as usize;
+                let n = zf.read(&mut buf[..want])?;
+                if n == 0 {
+                    // Range start is at or past EOF; return empty.
+                    return Ok(Vec::new());
+                }
+                skipped += n as u64;
             }
-            out.extend_from_slice(&buf[..n]);
-            taken += n as u64;
-        }
-        Ok(out)
+
+            let mut out = Vec::with_capacity(len.min(64 * 1024) as usize);
+            let mut taken = 0u64;
+            while taken < len {
+                let want = (len - taken).min(buf.len() as u64) as usize;
+                let n = zf.read(&mut buf[..want])?;
+                if n == 0 {
+                    break;
+                }
+                out.extend_from_slice(&buf[..n]);
+                taken += n as u64;
+            }
+            Ok(out)
+        })
     }
 
     /// Stream an entry into a writer, caps enforced.
@@ -306,25 +398,187 @@ impl Cbz {
         entry: &ArchiveEntry,
         sink: &mut W,
     ) -> Result<u64, ArchiveError> {
-        let mut zf = self.archive.by_index(entry.index).map_err(map_zip_err)?;
         let cap = self.limits.max_entry_bytes;
-        let mut taken = 0u64;
-        let mut buf = [0u8; 64 * 1024];
-        loop {
-            let n = zf.read(&mut buf)?;
-            if n == 0 {
-                break;
+        self.with_entry(entry.index, |zf| {
+            let mut taken = 0u64;
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                let n = zf.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                taken = taken.saturating_add(n as u64);
+                if taken > cap {
+                    return Err(ArchiveError::CapExceeded(
+                        "entry exceeded max_entry_bytes during stream",
+                    ));
+                }
+                sink.write_all(&buf[..n])?;
             }
-            taken = taken.saturating_add(n as u64);
-            if taken > cap {
-                return Err(ArchiveError::CapExceeded(
-                    "entry exceeded max_entry_bytes during stream",
-                ));
-            }
-            sink.write_all(&buf[..n])?;
-        }
-        Ok(taken)
+            Ok(taken)
+        })
     }
+}
+
+/// Try the happy-path File-backed open first. If it fails with the
+/// "Could not find EOCD" / "No CDFH found" symptom — the surface error
+/// for malformed Info-ZIP Unicode Path extras (`0x7075`) whose stored
+/// CRC32 doesn't match the CDFH's CP437 filename — fall back to a
+/// memory-backed read of the file with every `0x7075` extra stripped
+/// from the central directory. Observed on the Araña Heart of the
+/// Spider (2005) CBZs in production 2026-05-14: the publisher's tool
+/// wrote the UTF-8 path with a CRC of the *UTF-8* bytes, but the zip
+/// crate computes the CRC against the raw CP437 file_name field, so
+/// they never match. `unzip` ignores the mismatch; we have to rewrite
+/// the bytes.
+fn open_zip_with_recovery(path: &Path) -> Result<OpenedZip, ArchiveError> {
+    let f = File::open(path)?;
+    match ZipArchive::new(f) {
+        Ok(a) => Ok(OpenedZip::File(a)),
+        Err(zip::result::ZipError::InvalidArchive(msg))
+            if msg.contains("Could not find EOCD") || msg.contains("No CDFH found") =>
+        {
+            let bytes = std::fs::read(path)?;
+            let recovered = recover_zip_bytes(&bytes).ok_or_else(|| {
+                ArchiveError::Malformed(format!("{msg} (recovery rewrite failed)"))
+            })?;
+            let archive = ZipArchive::new(Cursor::new(recovered)).map_err(|e| {
+                let err = map_zip_err(e);
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "cbz: recovery rewrite produced an archive the zip crate still rejects",
+                );
+                err
+            })?;
+            tracing::info!(
+                path = %path.display(),
+                "cbz: recovered from malformed Unicode-Path CRC by stripping 0x7075 extras",
+            );
+            Ok(OpenedZip::Mem(archive))
+        }
+        Err(e) => Err(map_zip_err(e)),
+    }
+}
+
+/// Rewrite the in-memory byte buffer to strip the Info-ZIP Unicode Path
+/// extra field (`0x7075`) from every Central Directory File Header, then
+/// patch the EOCD's `central_directory_size`. Returns `None` if the
+/// structure doesn't parse — recovery is opportunistic, so a non-match
+/// just means the original parse error stands.
+///
+/// Local file headers aren't touched: the zip crate never validates LFH
+/// extras (it only uses the length field to compute data_start), so the
+/// "bad CRC" path never fires from the LFH side.
+fn recover_zip_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+    const EOCD_SIG: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+    const CDFH_SIG: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
+    const SCAN_BYTES: usize = 65_557;
+
+    if bytes.len() < 22 {
+        return None;
+    }
+
+    // Scan backwards for the EOCD signature. Comments after the EOCD can
+    // push it up to 65535 bytes from EOF, so cap the window at 65557
+    // (22 + 65535).
+    let scan_start = bytes.len().saturating_sub(SCAN_BYTES);
+    let mut eocd_off = None;
+    for i in (scan_start..bytes.len().saturating_sub(3)).rev() {
+        if bytes[i..i + 4] == EOCD_SIG {
+            eocd_off = Some(i);
+            break;
+        }
+    }
+    let eocd_off = eocd_off?;
+
+    // Parse what we need from the EOCD.
+    let body = &bytes[eocd_off + 4..eocd_off + 22];
+    let n_files = u16::from_le_bytes(body[6..8].try_into().ok()?) as usize;
+    let cd_size = u32::from_le_bytes(body[8..12].try_into().ok()?) as usize;
+    let cd_offset = u32::from_le_bytes(body[12..16].try_into().ok()?) as usize;
+    let comment_len = u16::from_le_bytes(body[16..18].try_into().ok()?) as usize;
+
+    if cd_offset.checked_add(cd_size)? > bytes.len() {
+        return None;
+    }
+    if eocd_off + 22 + comment_len > bytes.len() {
+        return None;
+    }
+
+    // Walk the CDFH entries, building a cleaned copy with all `0x7075`
+    // extras dropped.
+    let mut cleaned_cd = Vec::with_capacity(cd_size);
+    let mut p = cd_offset;
+    for _ in 0..n_files {
+        if p + 46 > bytes.len() || bytes[p..p + 4] != CDFH_SIG {
+            return None;
+        }
+        let fname_len = u16::from_le_bytes(bytes[p + 28..p + 30].try_into().ok()?) as usize;
+        let extra_len = u16::from_le_bytes(bytes[p + 30..p + 32].try_into().ok()?) as usize;
+        let comment_len_entry =
+            u16::from_le_bytes(bytes[p + 32..p + 34].try_into().ok()?) as usize;
+        let total_len = 46 + fname_len + extra_len + comment_len_entry;
+        if p + total_len > bytes.len() {
+            return None;
+        }
+        let extra_start = p + 46 + fname_len;
+        let extra_end = extra_start + extra_len;
+        let cleaned_extra = strip_extras(&bytes[extra_start..extra_end], 0x7075)?;
+        let new_extra_len = cleaned_extra.len();
+
+        // Copy the 46-byte header, patch the extra_field_length, then
+        // emit filename + cleaned-extra + comment.
+        let mut header = bytes[p..p + 46].to_vec();
+        let new_extra_len_u16: u16 = new_extra_len.try_into().ok()?;
+        header[30..32].copy_from_slice(&new_extra_len_u16.to_le_bytes());
+        cleaned_cd.extend_from_slice(&header);
+        cleaned_cd.extend_from_slice(&bytes[p + 46..p + 46 + fname_len]);
+        cleaned_cd.extend_from_slice(&cleaned_extra);
+        cleaned_cd
+            .extend_from_slice(&bytes[extra_end..extra_end + comment_len_entry]);
+
+        p += total_len;
+    }
+
+    // Compose the rewritten file: data prefix (verbatim) + cleaned CD +
+    // patched EOCD (cd_size updated, cd_offset unchanged) + EOCD comment.
+    let new_cd_size: u32 = cleaned_cd.len().try_into().ok()?;
+    let mut out =
+        Vec::with_capacity(cd_offset + cleaned_cd.len() + 22 + comment_len);
+    out.extend_from_slice(&bytes[..cd_offset]);
+    out.extend_from_slice(&cleaned_cd);
+    let mut eocd = bytes[eocd_off..eocd_off + 22].to_vec();
+    eocd[12..16].copy_from_slice(&new_cd_size.to_le_bytes());
+    out.extend_from_slice(&eocd);
+    out.extend_from_slice(&bytes[eocd_off + 22..eocd_off + 22 + comment_len]);
+    Some(out)
+}
+
+/// Walk a CDFH/LFH extra-field block and return a copy with every entry
+/// whose tag matches `drop_tag` removed. Returns `None` if the structure
+/// is malformed (a length runs past the end of the block).
+fn strip_extras(extra: &[u8], drop_tag: u16) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(extra.len());
+    let mut p = 0;
+    while p + 4 <= extra.len() {
+        let tag = u16::from_le_bytes(extra[p..p + 2].try_into().ok()?);
+        let len = u16::from_le_bytes(extra[p + 2..p + 4].try_into().ok()?) as usize;
+        if p + 4 + len > extra.len() {
+            return None;
+        }
+        if tag != drop_tag {
+            out.extend_from_slice(&extra[p..p + 4 + len]);
+        }
+        p += 4 + len;
+    }
+    if p != extra.len() {
+        // Trailing bytes that don't form a complete TLV — unusual but
+        // not necessarily fatal; preserve them so we don't corrupt
+        // anything we don't understand.
+        out.extend_from_slice(&extra[p..]);
+    }
+    Some(out)
 }
 
 fn map_zip_err(e: zip::result::ZipError) -> ArchiveError {
@@ -526,6 +780,87 @@ mod tests {
         assert!(a.find("ComicInfo.xml").is_some());
         let bytes = a.read_entry_bytes("ComicInfo.xml").unwrap();
         assert_eq!(bytes, b"<x/>");
+    }
+
+    #[test]
+    fn opens_cbz_with_corrupt_unicode_path_crc() {
+        // Regression for the Araña Heart of the Spider (2005) CBZs (dev DB
+        // 2026-05-14): the publisher's tool stored an Info-ZIP Unicode
+        // Path extra field (`0x7075`) with a CRC32 of the *UTF-8* filename
+        // bytes, but the zip crate computes the CRC against the raw CP437
+        // `file_name_raw` field. They never match, the zip crate bails
+        // mid-CD-read, the find-EOCD loop swallows the real error and
+        // surfaces it as `InvalidArchive("Could not find EOCD")`.
+        //
+        // Build a CBZ that simulates the same failure mode (poisoned
+        // `0x7075` extra in the first CDFH), then assert `Cbz::open`
+        // recovers it.
+        let png = one_pixel_png();
+        let cbz = build_cbz(&[("page.png", &png), ("ComicInfo.xml", b"<ComicInfo/>")]);
+        let bytes = std::fs::read(cbz.path()).unwrap();
+
+        // Locate EOCD + first CDFH.
+        let eocd_off = bytes
+            .windows(4)
+            .rposition(|w| w == [0x50, 0x4b, 0x05, 0x06])
+            .expect("EOCD");
+        let cd_size =
+            u32::from_le_bytes(bytes[eocd_off + 12..eocd_off + 16].try_into().unwrap()) as usize;
+        let cd_offset =
+            u32::from_le_bytes(bytes[eocd_off + 16..eocd_off + 20].try_into().unwrap()) as usize;
+        assert_eq!(&bytes[cd_offset..cd_offset + 4], b"PK\x01\x02");
+        let fname_len =
+            u16::from_le_bytes(bytes[cd_offset + 28..cd_offset + 30].try_into().unwrap()) as usize;
+        let extra_len =
+            u16::from_le_bytes(bytes[cd_offset + 30..cd_offset + 32].try_into().unwrap()) as usize;
+
+        // Build a poisoned `0x7075` Info-ZIP Unicode Path extra:
+        //   tag(2) + len(2) + version(1) + crc32(4, deliberately wrong) + utf8 name
+        let poison: Vec<u8> = vec![
+            0x75, 0x70, // tag = 0x7075 (LE)
+            0x09, 0x00, // payload length = 9
+            0x01, // version
+            0xDE, 0xAD, 0xBE, 0xEF, // CRC32 that won't match "page.png"
+            b'p', b'a', b'g', b'e',
+        ];
+
+        // Splice the poisoned extra in after the filename in the first
+        // CDFH, growing the CD by `poison.len()` bytes. Patch the CDFH's
+        // extra_field_length and the EOCD's central_directory_size to
+        // match.
+        let inject_at = cd_offset + 46 + fname_len + extra_len;
+        let mut poisoned = Vec::with_capacity(bytes.len() + poison.len());
+        poisoned.extend_from_slice(&bytes[..inject_at]);
+        poisoned.extend_from_slice(&poison);
+        poisoned.extend_from_slice(&bytes[inject_at..]);
+        let new_extra_len = (extra_len + poison.len()) as u16;
+        poisoned[cd_offset + 30..cd_offset + 32]
+            .copy_from_slice(&new_extra_len.to_le_bytes());
+        let new_eocd_off = eocd_off + poison.len();
+        let new_cd_size = (cd_size + poison.len()) as u32;
+        poisoned[new_eocd_off + 12..new_eocd_off + 16]
+            .copy_from_slice(&new_cd_size.to_le_bytes());
+
+        // Sanity: the standalone zip crate should now reject this file —
+        // that's the symptom we're recovering from.
+        let bare = zip::ZipArchive::new(Cursor::new(poisoned.clone()));
+        assert!(
+            bare.is_err(),
+            "test setup is broken: poisoned CBZ still opens cleanly via zip crate",
+        );
+
+        // Recovery path opens it successfully.
+        let tmp = tempfile::Builder::new()
+            .suffix(".cbz")
+            .tempfile()
+            .expect("tempfile");
+        std::fs::write(tmp.path(), &poisoned).expect("write poisoned");
+        let mut a = Cbz::open(tmp.path(), ArchiveLimits::default())
+            .expect("recovery should make the archive openable");
+        let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(pages, vec!["page.png"]);
+        let ci = a.read_entry_bytes_by_name("ComicInfo.xml").expect("read ComicInfo");
+        assert_eq!(ci, b"<ComicInfo/>");
     }
 
     #[test]

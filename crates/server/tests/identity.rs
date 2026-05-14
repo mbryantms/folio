@@ -217,6 +217,74 @@ async fn folder_rename_keeps_same_series_row() {
 }
 
 #[tokio::test]
+async fn two_volumes_of_same_series_get_distinct_rows_and_dont_cycle() {
+    // Regression for the "folder-collapse" bug (dev DB 2026-05-14): two
+    // sibling on-disk folders for different volumes of one comic
+    // (`Wolverine & the X-Men (2011)` and `…(2014)` in production) used
+    // to merge into one `series` row because identity resolution matched
+    // by normalized_name+year alone. The shared row could only hold one
+    // `folder_path`, so subsequent scans cycled — soft-deleting
+    // whichever folder's issues weren't this scan's `seen_paths`, then
+    // restoring them next time.
+    //
+    // After the fix, identity resolution also keys on `volume` (which
+    // the filename parser extracts from `V<n>` tokens), so the two
+    // folders resolve to distinct rows even when their ComicInfo years
+    // overlap.
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    let folder_v1 = tmp.path().join("Series Mu (2011)");
+    let folder_v2 = tmp.path().join("Series Mu (2014)");
+    std::fs::create_dir_all(&folder_v1).unwrap();
+    std::fs::create_dir_all(&folder_v2).unwrap();
+    // Filenames carry V-tokens so the parser infers different `volume`
+    // values per folder. Matches the real-world Mylar3 naming
+    // convention (`<Series> V<YYYY> <issue>.cbz`).
+    write_cbz(&folder_v1.join("Series Mu V2011 001.cbz"), 1);
+    write_cbz(&folder_v2.join("Series Mu V2014 001.cbz"), 2);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    let stats = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(
+        stats.series_created, 2,
+        "each volume folder must own its own series row: {stats:?}",
+    );
+
+    let series = SeriesEntity::find()
+        .filter(SeriesCol::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(series.len(), 2, "two distinct series rows expected");
+    let mut folder_paths: Vec<String> = series
+        .iter()
+        .filter_map(|s| s.folder_path.clone())
+        .collect();
+    folder_paths.sort();
+    assert_eq!(
+        folder_paths,
+        vec![
+            folder_v1.to_string_lossy().into_owned(),
+            folder_v2.to_string_lossy().into_owned(),
+        ],
+        "each series row tracks exactly one folder",
+    );
+
+    // A second scan over a stable two-folder library must not cycle.
+    let stats2 = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(
+        stats2.issues_removed, 0,
+        "stable library: nothing should be soft-deleted on rescan: {stats2:?}",
+    );
+    assert_eq!(
+        stats2.issues_restored, 0,
+        "stable library: nothing should be restored on rescan: {stats2:?}",
+    );
+}
+
+#[tokio::test]
 async fn match_key_patch_persists_and_is_sticky() {
     let app = TestApp::spawn().await;
     let auth = register_admin(&app).await;

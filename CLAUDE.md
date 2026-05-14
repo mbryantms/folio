@@ -97,6 +97,25 @@ Default admin (first registered user becomes admin):
   copy at `web/lib/api/types.generated.ts` — diff against `types.ts`
   to spot drift, but don't replace `types.ts` until codegen becomes
   the source of truth.
+- **Notifications**: every mutation flows through `useApiMutation` in
+  [web/lib/api/mutations.ts](web/lib/api/mutations.ts), which always
+  toasts on error (unwrapping the server's `error.message`) and toasts
+  on success when the hook author opts in via `successMessage`. Don't
+  layer `toast.success(...)` at the call site — put the message on the
+  hook. Variants: `toast.success` = completion with after-state,
+  `toast.error` = failure, `toast.message` = symmetric toggle,
+  `toast.info` = app-state notice (plan limits, coming soon),
+  `toast.loading` = work without other progress UI. Shared strings
+  (e.g. `"Want to Read isn't ready yet…"`, `"Name is required"`) live
+  in [web/lib/api/toast-strings.ts](web/lib/api/toast-strings.ts).
+  Form-submit no-changes paths use `disabled={!isDirty}`, not a toast.
+  Auth forms (sign-in / register / forgot / reset) intentionally use
+  inline `<Banner>` + `<FormMessage>` instead of toasts — see
+  [docs/dev/notifications-audit.md](docs/dev/notifications-audit.md)
+  §F-6. Destructive mutations get an `AlertDialog` confirm at the call
+  site; marker deletes are the exception and use Undo toast actions
+  via [web/lib/markers/recreate.ts](web/lib/markers/recreate.ts)
+  instead.
 
 ## Editing rules
 

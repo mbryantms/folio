@@ -21,7 +21,9 @@ import {
   apiMutate,
   useAddCollectionEntry,
   useCreateCollection,
+  useRemoveCollectionEntry,
 } from "@/lib/api/mutations";
+import { TOAST } from "@/lib/api/toast-strings";
 import { cn } from "@/lib/utils";
 import type {
   AddEntryReq,
@@ -186,6 +188,10 @@ function PickRow({
   icon: React.ReactNode;
 }) {
   const add = useAddCollectionEntry(collection.id);
+  // Mirrors the IssueSettingsMenu / SeriesSettingsMenu / cover-menu
+  // add-to-WTR pattern: every "Added to <name>" toast carries an Undo
+  // action so the operation is one-click reversible.
+  const remove = useRemoveCollectionEntry(collection.id);
   return (
     <button
       type="button"
@@ -193,8 +199,18 @@ function PickRow({
         add.mutate(
           { entry_kind: target.entry_kind, ref_id: target.ref_id },
           {
-            onSuccess: () => {
-              toast.success(`Added to ${collection.name}`);
+            onSuccess: (entry) => {
+              if (!entry) {
+                toast.success(`Added to ${collection.name}`);
+                onAdded();
+                return;
+              }
+              toast.success(`Added to ${collection.name}`, {
+                action: {
+                  label: "Undo",
+                  onClick: () => remove.mutate({ entryId: entry.id }, {}),
+                },
+              });
               onAdded();
             },
           },
@@ -223,7 +239,10 @@ function CreateForm({
   onCreated: () => void;
 }) {
   const qc = useQueryClient();
-  const create = useCreateCollection();
+  // Silent so the chained "Added to X" toast below is the only success
+  // signal — otherwise users get "Collection X created" *and* "Added to X"
+  // for a single click.
+  const create = useCreateCollection({ silent: true });
   const [name, setName] = React.useState(initialName);
   const [busy, setBusy] = React.useState(false);
 
@@ -231,7 +250,7 @@ function CreateForm({
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
-      toast.error("Name is required");
+      toast.error(TOAST.NAME_REQUIRED);
       return;
     }
     setBusy(true);
@@ -259,7 +278,30 @@ function CreateForm({
         queryKey: ["collections", "entries", created.id],
       });
       qc.invalidateQueries({ queryKey: queryKeys.collections });
-      toast.success(`Added to ${trimmed}`);
+      // Undo discards the whole collection (not just the entry) since
+      // the user's intent was "add to a new place" — leaving an empty
+      // collection lying around isn't what they asked for. Uses apiMutate
+      // directly because `useDeleteCollection(id)` binds at hook-call
+      // time and we don't know the id until create resolves.
+      toast.success(`Added to ${trimmed}`, {
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            try {
+              await apiMutate({
+                path: `/me/collections/${created.id}`,
+                method: "DELETE",
+              });
+              qc.invalidateQueries({ queryKey: queryKeys.collections });
+              qc.invalidateQueries({ queryKey: ["saved-views"] });
+            } catch {
+              // apiMutate doesn't toast on error; swallow here too — the
+              // undo affordance is best-effort. If it fails the user can
+              // delete the stray collection from the catalog.
+            }
+          },
+        },
+      });
       onCreated();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));

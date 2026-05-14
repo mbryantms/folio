@@ -21,6 +21,7 @@ export type IconName =
   | "ListChecks"
   | "Mail"
   | "Palette"
+  | "PanelLeft"
   | "Search"
   | "Server"
   | "Shield"
@@ -98,7 +99,14 @@ export function settingsNav(localePrefix: string): NavSection[] {
     },
     {
       label: "Library",
-      items: [{ href: p("/views"), label: "Saved views", icon: "ListChecks" }],
+      items: [
+        { href: p("/views"), label: "Saved views", icon: "ListChecks" },
+        {
+          href: p("/navigation"),
+          label: "Navigation",
+          icon: "PanelLeft",
+        },
+      ],
     },
     {
       label: "Account",

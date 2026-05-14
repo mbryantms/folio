@@ -33,7 +33,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 import { useCblList, useCblRefreshLog } from "@/lib/api/queries";
 import {
   useDeleteCblList,
@@ -558,6 +561,7 @@ function SettingsTab({
   const deleteList = useDeleteCblList(list.id);
   const deleteView = useDeleteSavedView(savedView.id);
   const [editOpen, setEditOpen] = React.useState(false);
+  const [hideMissing, setHideMissing] = useCblHideMissing(list.id);
 
   async function deleteEverything() {
     // Saved view first so the cbl_list isn't orphaned mid-flight.
@@ -582,6 +586,27 @@ function SettingsTab({
           refresh schedule. Entries themselves stay sourced from the imported
           `.cbl` file.
         </p>
+      </div>
+      <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+        <div className="min-w-0">
+          <Label
+            htmlFor={`hide-missing-${list.id}`}
+            className="text-sm font-medium"
+          >
+            Hide missing entries
+          </Label>
+          <p className="text-muted-foreground mt-1 text-xs">
+            On the consumption view, skip entries that aren&apos;t in your
+            library. CBL position numbers stay accurate and a small gap
+            marker shows where missing entries were. Saved per list, this
+            device.
+          </p>
+        </div>
+        <Switch
+          id={`hide-missing-${list.id}`}
+          checked={hideMissing}
+          onCheckedChange={setHideMissing}
+        />
       </div>
       <dl className="text-muted-foreground grid grid-cols-[8rem_1fr] gap-y-1 text-sm">
         <dt>Source kind</dt>

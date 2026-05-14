@@ -11,7 +11,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useIssueMarkers } from "@/lib/api/queries";
-import { useDeleteMarker } from "@/lib/api/mutations";
+import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations";
+import { markerToCreateReq } from "@/lib/markers/recreate";
 import {
   useReaderStore,
   type MarkerMode,
@@ -545,7 +546,8 @@ function PagePin({
   issueId: string;
   onEdit: () => void;
 }) {
-  const del = useDeleteMarker(marker.id, issueId);
+  const del = useDeleteMarker(marker.id, issueId, { silent: true });
+  const create = useCreateMarker();
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -573,7 +575,16 @@ function PagePin({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              del.mutate();
+              const snapshot = marker;
+              del.mutate(undefined, {
+                onSuccess: () =>
+                  toast.success("Removed", {
+                    action: {
+                      label: "Undo",
+                      onClick: () => create.mutate(markerToCreateReq(snapshot)),
+                    },
+                  }),
+              });
             }}
             className="text-destructive hover:text-destructive/80 inline-flex items-center gap-1 text-xs"
           >

@@ -125,7 +125,13 @@ function BrowserDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      {/* `[&>*]:min-w-0` clamps each grid item below max-content so the
+          dialog respects its own max-w. Without it, a long monospace
+          path or folder name (the breadcrumb, the path footer, an
+          un-wrappable directory name in the list) inflates the grid
+          tracks past max-w-lg and the dialog visibly overflows the
+          parent "New library" dialog underneath. */}
+      <DialogContent className="max-w-lg [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle>Choose a library folder</DialogTitle>
           <DialogDescription>
@@ -197,7 +203,10 @@ function BrowserDialog({
                         aria-hidden="true"
                         className="text-muted-foreground h-4 w-4 shrink-0"
                       />
-                      <span className="truncate">{entry.name}</span>
+                      {/* `min-w-0` lets `truncate` actually clip — a
+                          flex item defaults to `min-width: auto`
+                          (≈ content size), which defeats truncation. */}
+                      <span className="min-w-0 truncate">{entry.name}</span>
                     </button>
                   </li>
                 ))}
@@ -206,7 +215,10 @@ function BrowserDialog({
           </ScrollArea>
         </div>
 
-        <div className="text-muted-foreground font-mono text-xs">
+        {/* `break-all` allows mid-word breaks so a long
+            `/library/media/comics/...` path wraps inside the dialog
+            instead of forcing the grid wider than `max-w-lg`. */}
+        <div className="text-muted-foreground font-mono text-xs break-all">
           {currentPath || "—"}
         </div>
 

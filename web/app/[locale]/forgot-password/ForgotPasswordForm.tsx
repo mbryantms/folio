@@ -48,6 +48,9 @@ export function ForgotPasswordForm({
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Auth forms use inline error banners + <FormMessage> instead of
+  // toasts; success is signalled by route navigation or alternate view
+  // state. See docs/dev/notifications-audit.md §F-6 for the standard.
   const onSubmit = form.handleSubmit(async (values) => {
     setSubmitting(true);
     try {

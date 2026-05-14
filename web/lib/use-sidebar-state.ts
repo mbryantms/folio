@@ -2,6 +2,13 @@
 
 import * as React from "react";
 
+import { useMe } from "@/lib/api/queries";
+import {
+  actionForKey,
+  resolveKeybinds,
+  shouldSkipHotkey,
+} from "@/lib/reader/keybinds";
+
 import {
   SIDEBAR_COOKIE,
   SIDEBAR_COOKIE_MAX_AGE_SEC,
@@ -18,10 +25,11 @@ import {
  * Server-rendered initial state comes from the cookie via the layout's
  * `parseSidebarState(...)` call; the hook persists subsequent changes
  * back to the same cookie so a hard reload doesn't flash. Also wires
- * the `Mod+B` keyboard shortcut to toggle.
+ * the `toggleSidebar` keybind (default `Mod+B`) to toggle.
  */
 export function useSidebarState(initial: SidebarState) {
   const [state, setState] = React.useState<SidebarState>(initial);
+  const me = useMe();
 
   // Persist on every change. `SameSite=Lax` keeps the cookie usable on
   // top-level navigation, which is what the layout's `cookies().get(...)`
@@ -34,30 +42,26 @@ export function useSidebarState(initial: SidebarState) {
       ` SameSite=Lax`;
   }, [state]);
 
-  // Keyboard shortcut. Modifier is Cmd on Mac, Ctrl elsewhere — matches
-  // VS Code, Cursor, GitHub. Skip when an input has focus so typing "b"
-  // in a search field doesn't jolt the layout.
+  // `toggleSidebar` is a global-scoped registry action so users can
+  // rebind it under Settings → Keybinds. Default is `Mod+B` (VS Code /
+  // Cursor / GitHub convention). The shared `shouldSkipHotkey` gate
+  // keeps typing "b" in a search field from collapsing the shell.
+  const bindings = React.useMemo(() => {
+    const stored = (me.data?.keybinds ?? null) as Record<string, string> | null;
+    return resolveKeybinds(stored);
+  }, [me.data?.keybinds]);
+
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     const handler = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.shiftKey || e.altKey) return;
-      if (e.key !== "b" && e.key !== "B") return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
+      if (shouldSkipHotkey(e)) return;
+      if (actionForKey(e, bindings) !== "toggleSidebar") return;
       e.preventDefault();
       setState((s) => (s === "expanded" ? "collapsed" : "expanded"));
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [bindings]);
 
   const toggle = React.useCallback(
     () => setState((s) => (s === "expanded" ? "collapsed" : "expanded")),

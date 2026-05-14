@@ -9,7 +9,7 @@ export default function SavedViewsSettingsPage() {
     <>
       <PageHeader
         title="Saved views"
-        description="Filter views and CBL reading lists. Drag to reorder pinned views; pin/unpin to control what shows up on the home page."
+        description="Create, edit, and delete filter views and CBL reading lists. Where they appear — home rails and sidebar — is managed from Navigation."
       />
       <SavedViewsManager />
       {/* QuickApplyPrefill reads `?quick_field=&quick_value=` to open

@@ -3,6 +3,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { cookies } from "next/headers";
 import { GlobalHotkeys } from "@/components/GlobalHotkeys";
+import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
 import { QueryProvider } from "@/components/QueryProvider";
 import { ScanResultListener } from "@/components/ScanResultListener";
 import { ThemeProvider } from "@/components/ThemeProvider";
@@ -60,7 +61,7 @@ export default async function RootLayout({
             <QueryProvider>
               <ScanResultListener />
               <GlobalHotkeys />
-              {children}
+              <GlobalShortcutsSheet>{children}</GlobalShortcutsSheet>
             </QueryProvider>
           </NextIntlClientProvider>
           <Toaster />

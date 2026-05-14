@@ -9,6 +9,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ShortcutsHelpButton } from "@/components/shell/ShortcutsHelpButton";
 import { UserFooter } from "@/components/shell/UserFooter";
 import { useMarkerCount } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
@@ -188,6 +189,9 @@ export function MainSidebar({
             </div>
           ))}
         </nav>
+        <div className={cn("px-2 pb-1", collapsed && "px-2")}>
+          <ShortcutsHelpButton collapsed={collapsed} />
+        </div>
       </TooltipProvider>
       <UserFooter user={user} collapsed={collapsed} />
     </div>

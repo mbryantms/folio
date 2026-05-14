@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import { UserNav } from "./UserNav";
 
@@ -32,11 +33,17 @@ function HeaderSignOut() {
 
   async function signOut() {
     const csrf = readCsrfCookie();
-    await fetch("/api/auth/logout", {
+    const ok = await fetch("/api/auth/logout", {
       method: "POST",
       credentials: "include",
       headers: csrf ? { "X-CSRF-Token": csrf } : undefined,
-    }).catch(() => undefined);
+    })
+      .then((r) => r.ok)
+      .catch(() => false);
+    if (ok) toast.success("Signed out");
+    // Silent on failure — the next protected request will redirect to
+    // /sign-in, which is the real signal. A toast.error here would
+    // compete with that redirect.
     setHasSession(false);
     start(() => router.refresh());
   }

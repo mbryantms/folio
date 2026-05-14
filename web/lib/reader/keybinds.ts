@@ -27,6 +27,7 @@ export type KeybindAction =
   // global
   | "openSettings"
   | "openSearch"
+  | "toggleSidebar"
   // reader
   | "nextPage"
   | "prevPage"
@@ -42,11 +43,14 @@ export type KeybindAction =
   | "addNote"
   | "startHighlight"
   | "favoritePage"
-  | "toggleMarkersHidden";
+  | "toggleMarkersHidden"
+  | "nextBookmark"
+  | "prevBookmark";
 
 export const GLOBAL_KEYBIND_ACTIONS: readonly KeybindAction[] = [
   "openSettings",
   "openSearch",
+  "toggleSidebar",
 ] as const;
 
 export const READER_KEYBIND_ACTIONS: readonly KeybindAction[] = [
@@ -64,6 +68,8 @@ export const READER_KEYBIND_ACTIONS: readonly KeybindAction[] = [
   "startHighlight",
   "favoritePage",
   "toggleMarkersHidden",
+  "nextBookmark",
+  "prevBookmark",
 ] as const;
 
 /** All actions in display order: global first, then reader. */
@@ -75,6 +81,7 @@ export const KEYBIND_ACTIONS: readonly KeybindAction[] = [
 export const KEYBIND_SCOPES: Record<KeybindAction, KeybindScope> = {
   openSettings: "global",
   openSearch: "global",
+  toggleSidebar: "global",
   nextPage: "reader",
   prevPage: "reader",
   firstPage: "reader",
@@ -89,11 +96,14 @@ export const KEYBIND_SCOPES: Record<KeybindAction, KeybindScope> = {
   startHighlight: "reader",
   favoritePage: "reader",
   toggleMarkersHidden: "reader",
+  nextBookmark: "reader",
+  prevBookmark: "reader",
 };
 
 export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   openSettings: "Open settings",
   openSearch: "Open search",
+  toggleSidebar: "Toggle sidebar",
   nextPage: "Next page",
   prevPage: "Previous page",
   firstPage: "First page",
@@ -108,6 +118,8 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   startHighlight: "Start highlight",
   favoritePage: "Favorite this page",
   toggleMarkersHidden: "Show / hide markers",
+  nextBookmark: "Next bookmark",
+  prevBookmark: "Previous bookmark",
 };
 
 export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
@@ -116,6 +128,7 @@ export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
   // memory consistent on each platform.
   openSettings: "Mod+,",
   openSearch: "Mod+k",
+  toggleSidebar: "Mod+b",
   nextPage: "ArrowRight",
   prevPage: "ArrowLeft",
   firstPage: "Home",
@@ -134,6 +147,10 @@ export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
   // `o` for overlays — toggles every marker overlay (regions, pins,
   // page-strip dots) without touching the saved data.
   toggleMarkersHidden: "o",
+  // Vim-flavored bookmark navigation. `]` jumps forward to the next
+  // bookmark-kind marker on a later page; `[` jumps back.
+  nextBookmark: "]",
+  prevBookmark: "[",
 };
 
 /**
@@ -152,6 +169,25 @@ export function resolveKeybinds(
     }
   }
   return out;
+}
+
+/**
+ * Should this keystroke be ignored by global / reader hotkey dispatchers?
+ * Returns true when focus is inside an input-like surface so that typing
+ * "b" in a search field doesn't fire the bookmark-page action. Uses
+ * `closest()` so contentEditable + nested inputs inside custom components
+ * are caught even when `e.target` isn't the input element itself.
+ */
+export function shouldSkipHotkey(e: KeyboardEvent): boolean {
+  // Defensive: `HTMLElement` is undefined in the SSR / test (node) env;
+  // there are no key events there anyway, so "don't skip" is the safe
+  // default and lets node-env vitests exercise the function.
+  if (typeof HTMLElement === "undefined") return false;
+  const t = e.target;
+  if (!(t instanceof HTMLElement)) return false;
+  return !!t.closest(
+    'input, textarea, select, [contenteditable="true"], [contenteditable=""]',
+  );
 }
 
 // ─────────────────────────── chord parsing ──────────────────────────
@@ -322,6 +358,30 @@ function formatSingleKey(key: string): string {
     default:
       return key.length === 1 ? key.toUpperCase() : key;
   }
+}
+
+/**
+ * Find an action whose binding collides with the candidate chord, ignoring
+ * `excludeAction` (the row currently being edited). Used by the settings
+ * editor to warn before two actions silently share a chord — `actionForKey`
+ * resolves to the first match in registry order, so a collision would just
+ * make the lower-priority action dead. Comparison is scope-blind: a global
+ * chord that matches a reader chord still counts, because the global
+ * dispatcher fires inside the reader too.
+ */
+export function findConflict(
+  chord: string,
+  excludeAction: KeybindAction,
+  resolved: Record<KeybindAction, string>,
+): KeybindAction | null {
+  const target = parseChord(chord);
+  if (!target.key) return null;
+  for (const action of KEYBIND_ACTIONS) {
+    if (action === excludeAction) continue;
+    const other = parseChord(resolved[action]);
+    if (chordsMatch(other, target)) return action;
+  }
+  return null;
 }
 
 /**

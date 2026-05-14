@@ -11,7 +11,11 @@ import {
   type Direction,
   type ViewMode,
 } from "@/lib/reader/detect";
-import { actionForKey, resolveKeybinds } from "@/lib/reader/keybinds";
+import {
+  actionForKey,
+  resolveKeybinds,
+  shouldSkipHotkey,
+} from "@/lib/reader/keybinds";
 import { useReadingSession } from "@/lib/reader/session";
 import {
   computeSpreadGroups,
@@ -25,6 +29,7 @@ import {
   useDeleteMarker,
   useUpdateMarker,
 } from "@/lib/api/mutations";
+import { markerToCreateReq } from "@/lib/markers/recreate";
 import type { PageInfo } from "@/lib/api/types";
 import { MarkerEditor } from "./MarkerEditor";
 import { MarkerOverlay } from "./MarkerOverlay";
@@ -32,7 +37,6 @@ import { PageStrip } from "./PageStrip";
 import { PageImage } from "./PageImage";
 import { ReaderChrome } from "./ReaderChrome";
 import { ReadingProgress } from "./ReadingProgress";
-import { ShortcutsSheet } from "./ShortcutsSheet";
 
 const PROGRESS_DEBOUNCE_MS = 300;
 const PREFETCH_AHEAD = 2;
@@ -143,10 +147,14 @@ export function Reader({
     [issueMarkers.data, currentPage],
   );
   // The delete mutation hook needs an id at construction time; mint
-  // it only when there's something to delete.
+  // it only when there's something to delete. `silent: true` so the
+  // keybind-specific toast below ("Removed bookmark on page X") is the
+  // only success signal — without it, the hook's generic "Removed"
+  // would fire alongside, double-toasting one click.
   const deleteExistingBookmark = useDeleteMarker(
     existingPageBookmark?.id ?? "",
     issueId,
+    { silent: true },
   );
   const updateFavoriteMarker = useUpdateMarker(
     existingPageMarkerForFav?.id ?? "",
@@ -155,12 +163,19 @@ export function Reader({
   const deleteFavoriteMarker = useDeleteMarker(
     existingPageMarkerForFav?.id ?? "",
     issueId,
+    { silent: true },
   );
   const toggleBookmark = useCallback(() => {
     if (existingPageBookmark) {
+      const snapshot = existingPageBookmark;
       deleteExistingBookmark.mutate(undefined, {
         onSuccess: () =>
-          toast.success(`Removed bookmark on page ${currentPage + 1}`),
+          toast.success(`Removed bookmark on page ${currentPage + 1}`, {
+            action: {
+              label: "Undo",
+              onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
+            },
+          }),
       });
       return;
     }
@@ -200,8 +215,15 @@ export function Reader({
             },
           );
         } else {
+          const snapshot = existingPageMarkerForFav;
           deleteFavoriteMarker.mutate(undefined, {
-            onSuccess: () => toast.success(`Unstarred page ${currentPage + 1}`),
+            onSuccess: () =>
+              toast.success(`Unstarred page ${currentPage + 1}`, {
+                action: {
+                  label: "Undo",
+                  onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
+                },
+              }),
           });
         }
       } else {
@@ -319,22 +341,36 @@ export function Reader({
   // Keyboard nav (§7.4). Bindings are resolved from user prefs (M4) so the
   // user's /settings/keybinds page can rebind every action. Spacebar always
   // pages forward — it's not user-rebindable since the OS already steals it
-  // when a button has focus.
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // when a button has focus. The `?` shortcut-sheet toggle lives in
+  // `<GlobalShortcutsSheet>` at the root so it works everywhere; the
+  // sheet picks a Reader-first section ordering on this route.
+
+  // `g g` leader state. Bare `g` arms the leader; a second `g` within
+  // 500 ms fires firstPage. Stored in a ref so the listener can read
+  // and clear it without forcing a re-render between strokes.
+  const ggLeaderRef = useRef<number | null>(null);
+  const GG_LEADER_MS = 500;
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      )
-        return;
-      // `?` opens the shortcut sheet (always-on, not user-rebindable).
-      if (e.key === "?") {
-        e.preventDefault();
-        setShortcutsOpen((v) => !v);
-        return;
+    const goFirstPage = () => {
+      // Jump to the first spread group in double-page mode (cover-solo
+      // when enabled), or page 0 otherwise. RTL doesn't flip here:
+      // "first" is always page 0 regardless of reading direction.
+      if (viewMode === "double" && groups.length > 0) {
+        setPage(firstPageOfGroup(groups, 0));
+      } else {
+        setPage(0);
       }
+    };
+    const goLastPage = () => {
+      if (viewMode === "double" && groups.length > 0) {
+        setPage(firstPageOfGroup(groups, groups.length - 1));
+      } else {
+        setPage(totalPages - 1);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (shouldSkipHotkey(e)) return;
       // While the user is mid-selection or editing a pending marker,
       // swallow page-nav + most reader actions so a stray arrow / space
       // doesn't flip the page out from under the highlight. ESC still
@@ -348,6 +384,30 @@ export function Reader({
       if (e.key === " ") {
         e.preventDefault();
         goNext();
+        return;
+      }
+      // Vim aliases (not in the keybind registry — they're convention,
+      // not customization). `g g` → firstPage; `Shift+G` → lastPage.
+      // Aliases survive a user rebinding `firstPage` / `lastPage` away
+      // from Home / End.
+      const noChord = !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (noChord && e.key === "g" && !e.shiftKey) {
+        e.preventDefault();
+        const now = Date.now();
+        const lead = ggLeaderRef.current;
+        if (lead != null && now - lead < GG_LEADER_MS) {
+          ggLeaderRef.current = null;
+          goFirstPage();
+        } else {
+          ggLeaderRef.current = now;
+        }
+        return;
+      }
+      // Any other key resets the leader so `g x` doesn't carry state.
+      ggLeaderRef.current = null;
+      if (noChord && (e.key === "G" || (e.key === "g" && e.shiftKey))) {
+        e.preventDefault();
+        goLastPage();
         return;
       }
       const action = actionForKey(e, bindings);
@@ -378,21 +438,10 @@ export function Reader({
           }
           break;
         case "firstPage":
-          // Jump to the first spread group in double-page mode (cover-solo
-          // when enabled), or page 0 otherwise. Same RTL adjustment as
-          // arrow-key navigation isn't needed: "first" is always page 0.
-          if (viewMode === "double" && groups.length > 0) {
-            setPage(firstPageOfGroup(groups, 0));
-          } else {
-            setPage(0);
-          }
+          goFirstPage();
           break;
         case "lastPage":
-          if (viewMode === "double" && groups.length > 0) {
-            setPage(firstPageOfGroup(groups, groups.length - 1));
-          } else {
-            setPage(totalPages - 1);
-          }
+          goLastPage();
           break;
         case "toggleChrome":
           toggleChrome();
@@ -439,6 +488,31 @@ export function Reader({
           toast.message(nowHidden ? "Markers hidden" : "Markers shown");
           break;
         }
+        case "nextBookmark": {
+          const pages = (issueMarkers.data?.items ?? [])
+            .filter((m) => m.kind === "bookmark")
+            .map((m) => m.page_index)
+            .sort((a, b) => a - b);
+          const next = pages.find((p) => p > currentPage);
+          if (next != null) setPage(next);
+          break;
+        }
+        case "prevBookmark": {
+          const pages = (issueMarkers.data?.items ?? [])
+            .filter((m) => m.kind === "bookmark")
+            .map((m) => m.page_index)
+            .sort((a, b) => a - b);
+          // Walk backwards to find the largest page-index strictly less
+          // than the current — `findLast` would be cleaner but the
+          // tsconfig target lags the ES2023 lib.
+          let prev: number | undefined;
+          for (const p of pages) {
+            if (p < currentPage) prev = p;
+            else break;
+          }
+          if (prev != null) setPage(prev);
+          break;
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -455,6 +529,7 @@ export function Reader({
     goPrev,
     groups,
     issueId,
+    issueMarkers.data,
     markerModeForKeybinds,
     pendingMarkerForKeybinds,
     router,
@@ -701,11 +776,6 @@ export function Reader({
         currentPage={currentPage}
         direction={direction}
         pages={pages}
-      />
-      <ShortcutsSheet
-        open={shortcutsOpen}
-        onOpenChange={setShortcutsOpen}
-        bindings={bindings}
       />
       <MarkerEditor issueId={issueId} pageNaturalSize={pageNaturalSize} />
     </div>

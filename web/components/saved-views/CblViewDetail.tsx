@@ -1,14 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { Download, RefreshCw } from "lucide-react";
+import { Check, Download, EyeOff, RefreshCw } from "lucide-react";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
 import { CblStatsPills } from "@/components/cbl/CblStatsPills";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
-import { Button } from "@/components/ui/button";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { PopoverPortalContainer } from "@/components/ui/popover";
 import {
   Sheet,
@@ -19,7 +19,8 @@ import {
 } from "@/components/ui/sheet";
 import { useCblList, useCblListIssues } from "@/lib/api/queries";
 import { useRefreshCblList } from "@/lib/api/mutations";
-import type { SavedViewView } from "@/lib/api/types";
+import type { CblEntryView, IssueSummaryView, SavedViewView } from "@/lib/api/types";
+import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 
 import { ViewHeader } from "./ViewHeader";
 
@@ -69,6 +70,7 @@ function CblViewDetailInner({
     max: CARD_SIZE_MAX,
     defaultSize: CARD_SIZE_DEFAULT,
   });
+  const [hideMissing, setHideMissing] = useCblHideMissing(listId);
 
   if (detail.isLoading) {
     return (
@@ -103,6 +105,47 @@ function CblViewDetailInner({
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   };
 
+  // Build the render plan. When `hideMissing` is on, skip missing
+  // entries and insert a `gap` placeholder whenever the next visible
+  // entry's CBL position isn't adjacent to the previous one. Position
+  // numbers on the visible cards stay truthful (entry.position is the
+  // canonical CBL index) regardless of how many were hidden.
+  type RenderItem =
+    | { kind: "entry"; entry: CblEntryView; issue: IssueSummaryView | undefined }
+    | { kind: "gap"; key: string; count: number };
+  const items: RenderItem[] = [];
+  if (hideMissing) {
+    const visible = entries.filter((e) => e.match_status !== "missing");
+    let prevPos: number | null = null;
+    for (const entry of visible) {
+      if (prevPos !== null) {
+        const gap = entry.position - prevPos - 1;
+        if (gap > 0) {
+          items.push({
+            kind: "gap",
+            key: `gap-${prevPos}-${entry.position}`,
+            count: gap,
+          });
+        }
+      }
+      items.push({
+        kind: "entry",
+        entry,
+        issue: issueByPosition.get(entry.position),
+      });
+      prevPos = entry.position;
+    }
+  } else {
+    for (const entry of entries) {
+      items.push({
+        kind: "entry",
+        entry,
+        issue: issueByPosition.get(entry.position),
+      });
+    }
+  }
+  const missingCount = entries.filter((e) => e.match_status === "missing").length;
+
   return (
     <div className="space-y-6">
       <ViewHeader
@@ -112,7 +155,7 @@ function CblViewDetailInner({
           <>
             {/* Same two-pill summary the home rail header carries —
              *  `size="header"` bumps padding/typography so the pills
-             *  line up with the adjacent `size="sm"` buttons. */}
+             *  line up with the adjacent `size="sm"` icon button. */}
             <CblStatsPills cblListId={list.id} size="header" />
             <CardSizeOptions
               cardSize={cardSize}
@@ -122,50 +165,95 @@ function CblViewDetailInner({
               step={CARD_SIZE_STEP}
               defaultSize={CARD_SIZE_DEFAULT}
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              asChild
-              title="Download as .cbl"
-            >
-              <a href={`/api/me/cbl-lists/${list.id}/export`} download>
-                <Download className="mr-1 h-4 w-4" /> Export
+          </>
+        }
+        extraMenuItems={
+          <>
+            <DropdownMenuItem asChild>
+              <a
+                href={`/api/me/cbl-lists/${list.id}/export`}
+                download
+                title="Download as .cbl"
+              >
+                <Download className="mr-2 h-4 w-4" /> Export
               </a>
-            </Button>
+            </DropdownMenuItem>
+            {missingCount > 0 ? (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setHideMissing(!hideMissing);
+                }}
+              >
+                {hideMissing ? (
+                  <Check className="mr-2 h-4 w-4" />
+                ) : (
+                  <EyeOff className="mr-2 h-4 w-4" />
+                )}
+                {hideMissing
+                  ? `Showing matched only (${missingCount} hidden)`
+                  : `Hide ${missingCount} missing`}
+              </DropdownMenuItem>
+            ) : null}
             {canRefresh ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => refresh.mutate({})}
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  if (!refresh.isPending) refresh.mutate({});
+                }}
                 disabled={refresh.isPending}
-                title="Pull latest from source"
               >
                 <RefreshCw
-                  className={`mr-1 h-4 w-4 ${refresh.isPending ? "animate-spin" : ""}`}
+                  className={`mr-2 h-4 w-4 ${refresh.isPending ? "animate-spin" : ""}`}
                 />
                 Refresh
-              </Button>
+              </DropdownMenuItem>
             ) : null}
           </>
         }
       />
-      <CblInfoRow list={list} />
+      {/* Catalog/source path + import date — useful context on the
+       *  desktop detail page, but redundant on mobile where the title
+       *  already identifies the list. Hide to save vertical real
+       *  estate; full info still lives on the CBL management page
+       *  (`<CblDetail>`) which renders the same row at all widths. */}
+      <div className="hidden md:block">
+        <CblInfoRow list={list} />
+      </div>
       {entries.length === 0 ? (
         <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
           This list has no entries yet.
         </div>
+      ) : items.length === 0 ? (
+        <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
+          Every entry in this list is currently missing from your library.
+          Toggle &ldquo;Hide missing&rdquo; off to see them.
+        </div>
       ) : (
         <ul role="list" className="grid gap-3" style={gridStyle}>
-          {entries.map((entry) => (
-            <li key={entry.id}>
-              <CblIssueCard
-                entry={entry}
-                issue={issueByPosition.get(entry.position)}
-              />
-            </li>
-          ))}
+          {items.map((item) =>
+            item.kind === "entry" ? (
+              <li key={item.entry.id}>
+                <CblIssueCard entry={item.entry} issue={item.issue} />
+              </li>
+            ) : (
+              <li
+                key={item.key}
+                className="grid place-items-center"
+                aria-label={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
+                title={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
+              >
+                <div className="border-border/60 text-muted-foreground/80 inline-flex flex-col items-center rounded-md border border-dashed px-2.5 py-1.5">
+                  <span className="font-mono text-sm leading-none tracking-widest">
+                    •••
+                  </span>
+                  <span className="mt-1 text-[10px] tracking-wider uppercase">
+                    {item.count} missing
+                  </span>
+                </div>
+              </li>
+            ),
+          )}
         </ul>
       )}
 

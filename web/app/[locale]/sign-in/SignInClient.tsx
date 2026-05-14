@@ -282,6 +282,11 @@ function SsoButton({ next }: { next: string | null }) {
   );
 }
 
+// Auth forms (this LoginForm, RegisterForm below, plus
+// forgot-password and reset-password) use inline error banners +
+// <FormMessage> instead of toasts; success is signalled by route
+// navigation. See docs/dev/notifications-audit.md §F-6 for the
+// standard. One comment covers both forms in this file.
 function LoginForm({ next }: { next: string | null }) {
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),

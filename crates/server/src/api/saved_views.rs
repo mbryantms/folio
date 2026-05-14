@@ -52,6 +52,21 @@ pub const KIND_COLLECTION: &str = "collection";
 /// on first GET in M2).
 pub const SYSTEM_KEY_WANT_TO_READ: &str = "want_to_read";
 
+/// Explicit top-down order for the four `auto_pin` system rails on a
+/// fresh user's home page. Earlier in the slice = higher on the home
+/// page. Anything `auto_pin = true` but not listed here lands after
+/// these, ordered by `created_at` (so future system rails still seed
+/// cleanly without code edits).
+///
+/// IDs (not names) so a future rename of the seeded rows doesn't
+/// silently re-order new users' pin sets.
+pub const DEFAULT_HOME_PIN_ORDER: &[&str] = &[
+    "00000000-0000-0000-0000-000000000010", // Continue reading (m20261212)
+    "00000000-0000-0000-0000-000000000011", // On deck         (m20261212)
+    "00000000-0000-0000-0000-000000000001", // Recently Added   (m20261205)
+    "00000000-0000-0000-0000-000000000002", // Recently Updated (m20261205)
+];
+
 const MAX_RESULT_LIMIT: u64 = 200;
 const MIN_RESULT_LIMIT: u64 = 1;
 const MAX_PIN_COUNT: i64 = 12;
@@ -365,6 +380,29 @@ async fn ensure_pins_seeded(
         .order_by_asc(saved_view::Column::Id)
         .all(db)
         .await?;
+    // Re-order so `DEFAULT_HOME_PIN_ORDER` ids come first in the listed
+    // order, then any remaining auto-pin views (future rails) by their
+    // db order. Keeps the SQL portable while letting product decide the
+    // top-down sequence on the home page.
+    let system = {
+        let mut by_id: std::collections::HashMap<Uuid, saved_view::Model> =
+            system.into_iter().map(|m| (m.id, m)).collect();
+        let mut ordered: Vec<saved_view::Model> = Vec::with_capacity(by_id.len());
+        for id_str in DEFAULT_HOME_PIN_ORDER {
+            if let Ok(id) = Uuid::parse_str(id_str)
+                && let Some(m) = by_id.remove(&id)
+            {
+                ordered.push(m);
+            }
+        }
+        // Any auto-pin view not in the explicit list lands at the end,
+        // sorted by created_at (preserved from the query above via
+        // a stable second pass).
+        let mut leftovers: Vec<saved_view::Model> = by_id.into_values().collect();
+        leftovers.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+        ordered.extend(leftovers);
+        ordered
+    };
     for v in system.iter() {
         if existing_view_ids.contains(&v.id) {
             continue;

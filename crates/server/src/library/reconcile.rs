@@ -101,6 +101,15 @@ pub async fn reconcile_library_seen(
     library_id: Uuid,
     scanned_series_ids: &HashSet<Uuid>,
     seen_paths: &HashSet<String>,
+    // Folders that were actually walked this scan. An issue belonging to a
+    // scanned series but whose `file_path` lives **outside** every scanned
+    // folder must be left alone — it's a sibling folder we didn't visit.
+    // Without this filter, two distinct on-disk folders that collapsed to
+    // one series row would cycle: each scan soft-deletes whichever
+    // folder's issues weren't this run's `seen_paths`, then the next scan
+    // restores them and removes the others (folder-collapse bug, dev DB
+    // 2026-05-14).
+    scanned_folder_paths: &HashSet<String>,
     present_folders: &HashSet<String>,
     stats: &mut ScanStats,
 ) -> anyhow::Result<()> {
@@ -115,7 +124,8 @@ pub async fn reconcile_library_seen(
             )
             .all(db)
             .await?;
-        reconcile_issue_rows_seen(db, issues, seen_paths, now, stats).await?;
+        reconcile_issue_rows_seen(db, issues, seen_paths, scanned_folder_paths, now, stats)
+            .await?;
         mark_empty_series_removed(db, scanned_series_ids.iter().copied(), now, stats).await?;
     }
 
@@ -244,6 +254,9 @@ pub async fn reconcile_series_seen(
     db: &DatabaseConnection,
     series_id: Uuid,
     seen_paths: &HashSet<String>,
+    // The folder(s) actually walked this scan. See
+    // [`reconcile_library_seen`] for the rationale.
+    scanned_folder_paths: &HashSet<String>,
     stats: &mut ScanStats,
 ) -> anyhow::Result<()> {
     let now = Utc::now().fixed_offset();
@@ -252,16 +265,28 @@ pub async fn reconcile_series_seen(
         .filter(issue::Column::SeriesId.eq(series_id))
         .all(db)
         .await?;
-    reconcile_issue_rows_seen(db, issues, seen_paths, now, stats).await?;
+    reconcile_issue_rows_seen(db, issues, seen_paths, scanned_folder_paths, now, stats).await?;
     mark_empty_series_removed(db, std::iter::once(series_id), now, stats).await?;
 
     Ok(())
+}
+
+/// Is `path` equal to, or nested under, any folder in `folders`? Uses a
+/// trailing-slash check so `/foo` does **not** match `/foo-bar/baz.cbz`.
+fn path_under_any(path: &str, folders: &HashSet<String>) -> bool {
+    folders.iter().any(|folder| {
+        path == folder
+            || (path.len() > folder.len()
+                && path.starts_with(folder)
+                && path.as_bytes()[folder.len()] == b'/')
+    })
 }
 
 async fn reconcile_issue_rows_seen(
     db: &DatabaseConnection,
     issues: Vec<issue::Model>,
     seen_paths: &HashSet<String>,
+    scanned_folder_paths: &HashSet<String>,
     now: chrono::DateTime<chrono::FixedOffset>,
     stats: &mut ScanStats,
 ) -> anyhow::Result<()> {
@@ -270,7 +295,16 @@ async fn reconcile_issue_rows_seen(
     for row in issues {
         let seen = seen_paths.contains(&row.file_path);
         match (row.removed_at.is_some(), seen) {
-            (false, false) => remove_ids.push(row.id),
+            (false, false) => {
+                // Only soft-delete when this scan actually walked the
+                // folder the file claims to live in. An issue whose
+                // file_path is outside every scanned folder belongs to a
+                // sibling folder we didn't visit — leave it alone for
+                // that folder's own scan.
+                if path_under_any(&row.file_path, scanned_folder_paths) {
+                    remove_ids.push(row.id);
+                }
+            }
             (true, true) => restore_ids.push(row.id),
             _ => {}
         }

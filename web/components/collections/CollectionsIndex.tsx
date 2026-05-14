@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useCollections } from "@/lib/api/queries";
 import { useCreateCollection } from "@/lib/api/mutations";
+import { TOAST } from "@/lib/api/toast-strings";
 import type { SavedViewView } from "@/lib/api/types";
 
 const WANT_TO_READ_KEY = "want_to_read";
@@ -149,7 +150,7 @@ function NewCollectionDialog({
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
-      toast.error("Name is required");
+      toast.error(TOAST.NAME_REQUIRED);
       return;
     }
     create.mutate(

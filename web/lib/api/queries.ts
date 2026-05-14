@@ -64,6 +64,7 @@ import type {
   RemovedListView,
   SavedViewListView,
   SavedViewView,
+  SidebarLayoutView,
   ScanPreviewView,
   AppPasswordListView,
   ScanRunView,
@@ -274,6 +275,10 @@ export const queryKeys = {
   adminSettings: ["admin", "settings"] as const,
   /** Last-result probe for the outbound email pipeline (M2). */
   adminEmailStatus: ["admin", "email", "status"] as const,
+  /** Resolved sidebar layout (built-ins + libraries + saved views in
+   *  the user's chosen order, with visibility flags). Mutating drag-
+   *  reorder + hide-toggle goes through `useUpdateSidebarLayout`. */
+  sidebarLayout: ["sidebar-layout"] as const,
   /** Saved views (filter + CBL). `pinned` may be undefined for the
    *  full visible list. */
   savedViews: (filters: SavedViewListFilters = {}) =>
@@ -910,6 +915,19 @@ export function usePeopleSearch(filters: PeopleSearchFilters = {}) {
     queryFn: () => jsonFetch<PeopleListView>(`/people${buildQuery(filters)}`),
     enabled,
     placeholderData: keepPreviousData,
+  });
+}
+
+// ---------- Sidebar layout (navigation customization M1) ----------
+
+/** Client-side fetch of the resolved sidebar layout. The
+ *  `/settings/navigation` page uses this so drag-reorder + hide-toggle
+ *  can update the cache optimistically; the main app shell still reads
+ *  the layout server-side in `[locale]/(library)/layout.tsx`. */
+export function useSidebarLayout() {
+  return useQuery({
+    queryKey: queryKeys.sidebarLayout,
+    queryFn: () => jsonFetch<SidebarLayoutView>("/me/sidebar-layout"),
   });
 }
 

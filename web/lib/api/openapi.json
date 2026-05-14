@@ -4700,6 +4700,57 @@
         }
       }
     },
+    "/me/sidebar-layout": {
+      "get": {
+        "tags": [
+          "api::sidebar_layout"
+        ],
+        "operationId": "get_layout",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SidebarLayoutView"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "api::sidebar_layout"
+        ],
+        "operationId": "update_layout",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLayoutReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SidebarLayoutView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid kind or duplicate ref"
+          }
+        }
+      }
+    },
     "/people": {
       "get": {
         "tags": [
@@ -10511,6 +10562,56 @@
           }
         }
       },
+      "SidebarEntryView": {
+        "type": "object",
+        "required": [
+          "kind",
+          "ref_id",
+          "label",
+          "icon",
+          "href",
+          "visible",
+          "position"
+        ],
+        "properties": {
+          "href": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SidebarLayoutView": {
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SidebarEntryView"
+            }
+          }
+        }
+      },
       "SortField": {
         "type": "string",
         "description": "Sort axes a saved view can choose. Distinct from [`Field`] because not\nevery filterable field is a sensible sort axis (e.g., multi-valued\ngenres can't sort).",
@@ -10971,6 +11072,30 @@
           }
         }
       },
+      "UpdateEntryReq": {
+        "type": "object",
+        "required": [
+          "kind",
+          "ref_id",
+          "visible",
+          "position"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        }
+      },
       "UpdateIssueReq": {
         "type": "object",
         "description": "Body for `PATCH /series/{series_slug}/issues/{issue_slug}`.\n\nEvery field is optional. For nullable columns the body distinguishes:\n  - field absent     → leave column untouched\n  - field present, null → clear column, mark as user-edited\n  - field present, set  → write column, mark as user-edited\n\n`additional_links` is replace-all: send the full desired array, or `[]`\nto clear. Empty / whitespace-only `url` entries are rejected.\n\nMirrors the editable subset of ComicInfo.xml — fields the scanner reads\nfrom the file. The scanner consults `user_edited` on rescan and skips\nmatching columns, so DB edits are sticky and the source file is never\nrewritten.",
@@ -11209,6 +11334,20 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "UpdateLayoutReq": {
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpdateEntryReq"
+            }
           }
         }
       },

@@ -70,6 +70,9 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
     );
   }
 
+  // Auth forms use inline error banners + <FormMessage> instead of
+  // toasts; success is signalled by route navigation. See
+  // docs/dev/notifications-audit.md §F-6 for the standard.
   const onSubmit = form.handleSubmit(async (values) => {
     setError(null);
     setSubmitting(true);

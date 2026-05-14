@@ -124,7 +124,15 @@ pub async fn resolve_or_create(
         return Ok(SeriesMatch::ByFolderPath { id });
     }
 
-    // (3) Normalized name + year.
+    // (3) Normalized name + year + volume.
+    //
+    // Volume is part of the lookup so that "Wolverine & the X-Men (2011)"
+    // and "…(2014)" — different on-disk folders whose filenames carry
+    // distinct V-tokens (`V2011` vs `V2014`) — resolve to different
+    // series rows even when their ComicInfo `<Year>` happens to overlap.
+    // Without the volume filter, the second folder used to merge into
+    // the first via normalized_name+year alone (folder-collapse bug,
+    // dev DB 2026-05-14).
     let normalized = normalize_name(&hint.series_name);
     let mut q = SeriesEntity::find()
         .filter(series::Column::LibraryId.eq(library_id))
@@ -133,7 +141,13 @@ pub async fn resolve_or_create(
         Some(y) => q.filter(series::Column::Year.eq(y)),
         None => q.filter(series::Column::Year.is_null()),
     };
-    if let Some(row) = q.one(db).await? {
+    q = match hint.volume {
+        Some(v) => q.filter(series::Column::Volume.eq(v)),
+        None => q.filter(series::Column::Volume.is_null()),
+    };
+    if let Some(row) = q.one(db).await?
+        && !existing_folder_blocks_merge(&row, &folder_str)
+    {
         // Backfill folder_path so future scans take the fast path; also
         // pick up any external IDs the previous scan didn't have.
         let id = row.id;
@@ -158,52 +172,107 @@ pub async fn resolve_or_create(
     }
 
     // (4) Create.
-    let id = Uuid::now_v7();
+    //
+    // Slug allocation has a TOCTOU race under parallel scans: two
+    // workers building distinct series can both observe "this slug is
+    // free" before either commits, then collide on `series_slug_uniq`.
+    // Retry on that specific violation — `allocate_series_slug` will
+    // see the conflicting row on the next pass and append a suffix.
     let now = Utc::now().fixed_offset();
-    let slug = crate::slug::allocate_series_slug(
-        db,
-        &hint.series_name,
-        hint.year,
-        hint.volume,
-        hint.publisher.as_deref(),
-    )
-    .await?;
-    let am = SeriesAM {
-        id: Set(id),
-        library_id: Set(library_id),
-        name: Set(hint.series_name.clone()),
-        normalized_name: Set(normalized),
-        slug: Set(slug),
-        year: Set(hint.year),
-        volume: Set(hint.volume),
-        publisher: Set(hint.publisher.clone()),
-        imprint: Set(hint.imprint.clone()),
-        status: Set("continuing".into()),
-        total_issues: Set(hint.total_issues),
-        age_rating: Set(hint.age_rating.clone()),
-        summary: Set(None),
-        language_code: Set(hint
-            .language
-            .clone()
-            .unwrap_or_else(|| default_language.to_string())),
-        comicvine_id: Set(hint.comicvine_id),
-        metron_id: Set(hint.metron_id),
-        gtin: Set(None),
-        series_group: Set(hint.series_group.clone()),
-        alternate_names: Set(serde_json::json!([])),
-        created_at: Set(now),
-        updated_at: Set(now),
-        folder_path: Set(Some(folder_str)),
-        last_scanned_at: Set(None),
-        match_key: Set(None),
-        removed_at: Set(None),
-        removal_confirmed_at: Set(None),
-        // Scanner-created series have no manual status override.
-        // PATCH /series/{slug} stamps this when a user pins a status.
-        status_user_set_at: Set(None),
+    let mut attempts = 0u32;
+    loop {
+        attempts += 1;
+        let id = Uuid::now_v7();
+        let slug = crate::slug::allocate_series_slug(
+            db,
+            &hint.series_name,
+            hint.year,
+            hint.volume,
+            hint.publisher.as_deref(),
+        )
+        .await?;
+        let am = SeriesAM {
+            id: Set(id),
+            library_id: Set(library_id),
+            name: Set(hint.series_name.clone()),
+            normalized_name: Set(normalized.clone()),
+            slug: Set(slug),
+            year: Set(hint.year),
+            volume: Set(hint.volume),
+            publisher: Set(hint.publisher.clone()),
+            imprint: Set(hint.imprint.clone()),
+            status: Set("continuing".into()),
+            total_issues: Set(hint.total_issues),
+            age_rating: Set(hint.age_rating.clone()),
+            summary: Set(None),
+            language_code: Set(hint
+                .language
+                .clone()
+                .unwrap_or_else(|| default_language.to_string())),
+            comicvine_id: Set(hint.comicvine_id),
+            metron_id: Set(hint.metron_id),
+            gtin: Set(None),
+            series_group: Set(hint.series_group.clone()),
+            alternate_names: Set(serde_json::json!([])),
+            created_at: Set(now),
+            updated_at: Set(now),
+            folder_path: Set(Some(folder_str.clone())),
+            last_scanned_at: Set(None),
+            match_key: Set(None),
+            removed_at: Set(None),
+            removal_confirmed_at: Set(None),
+            // Scanner-created series have no manual status override.
+            // PATCH /series/{slug} stamps this when a user pins a status.
+            status_user_set_at: Set(None),
+        };
+        match am.insert(db).await {
+            Ok(_) => return Ok(SeriesMatch::Created { id }),
+            Err(e) if is_slug_unique_violation(&e) && attempts < 5 => {
+                tracing::warn!(
+                    attempts,
+                    series_name = %hint.series_name,
+                    folder = %folder_str,
+                    "series slug allocation race; retrying with fresh allocation",
+                );
+                continue;
+            }
+            Err(e) => return Err(anyhow::Error::new(e)),
+        }
+    }
+}
+
+/// True when `err` is a Postgres unique-constraint violation against the
+/// `series_slug_uniq` index. Used by [`resolve_or_create`] to distinguish a
+/// recoverable concurrent-allocation race from genuine schema/data errors.
+fn is_slug_unique_violation(err: &sea_orm::DbErr) -> bool {
+    let msg = err.to_string();
+    msg.contains("series_slug_uniq")
+}
+
+/// Should the normalized-name+year fallback refuse to merge `incoming_folder`
+/// into the candidate `row`?
+///
+/// Volume disambiguation: two distinct on-disk folders that share a
+/// normalized series name and per-issue ComicInfo `<Year>` (e.g.
+/// `Wolverine & the X-Men (2011)` and `…(2014)`) are *not* the same series
+/// — they're different volumes that happen to overlap in publication
+/// year. If we let the second folder backfill `series.folder_path`, every
+/// future scan would flip the row's folder_path between the two, and the
+/// reconcile pass would alternately soft-delete each volume's issues
+/// (folder-collapse bug, observed in the dev DB 2026-05-14).
+///
+/// Returns `true` (block the merge → fall through to create) only when
+/// the candidate row has a different folder_path that still exists on
+/// disk. If the existing folder is gone, this is a legitimate rename and
+/// the merge proceeds as before.
+fn existing_folder_blocks_merge(row: &series::Model, incoming_folder: &str) -> bool {
+    let Some(existing) = row.folder_path.as_deref() else {
+        return false;
     };
-    am.insert(db).await?;
-    Ok(SeriesMatch::Created { id })
+    if existing == incoming_folder {
+        return false;
+    }
+    Path::new(existing).is_dir()
 }
 
 /// Fill in ComicVine / Metron series IDs on an existing series row when the

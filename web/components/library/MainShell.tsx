@@ -14,6 +14,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { SidebarTrigger } from "@/components/shell/SidebarTrigger";
+import { SkipToContent } from "@/components/shell/SkipToContent";
 import type { SidebarState } from "@/lib/sidebar-state";
 import { useSidebarState } from "@/lib/use-sidebar-state";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,7 @@ export function MainShell({
   const onHome = stripped === "" || stripped === "/";
   return (
     <div className="bg-background text-foreground min-h-screen">
+      <SkipToContent />
       <header className="border-border bg-background/80 sticky top-0 z-30 flex h-14 items-center gap-3 border-b px-4 backdrop-blur md:px-6">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
@@ -132,7 +134,11 @@ export function MainShell({
             />
           </div>
         </aside>
-        <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8"
+        >
           {children}
         </main>
       </div>

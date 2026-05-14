@@ -1508,6 +1508,37 @@ export type PinView = {
   position?: number | null;
 };
 
+// ---------- Sidebar layout (navigation customization M1) ----------
+
+export type SidebarEntryKind = "builtin" | "library" | "view";
+
+export type SidebarEntryView = {
+  kind: SidebarEntryKind;
+  /** Built-in registry key ("home", "bookmarks", …), library UUID, or
+   *  saved-view UUID — disambiguated by `kind`. */
+  ref_id: string;
+  label: string;
+  icon: string;
+  href: string;
+  visible: boolean;
+  position: number;
+};
+
+export type SidebarLayoutView = {
+  entries: SidebarEntryView[];
+};
+
+export type UpdateEntryReq = {
+  kind: SidebarEntryKind;
+  ref_id: string;
+  visible: boolean;
+  position: number;
+};
+
+export type UpdateLayoutReq = {
+  entries: UpdateEntryReq[];
+};
+
 // ---------- CBL reading lists ----------
 
 export type CblSourceKind = "upload" | "url" | "catalog";

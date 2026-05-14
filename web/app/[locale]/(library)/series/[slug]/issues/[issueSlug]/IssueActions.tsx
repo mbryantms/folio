@@ -37,6 +37,7 @@ import type {
   UpdateIssueReq,
   UpdateSeriesReq,
 } from "@/lib/api/types";
+import { useIssueShortcuts } from "@/lib/keyboard/use-issue-shortcuts";
 import type { ReadState } from "@/lib/reading-state";
 
 import { IssueSettingsMenu } from "./IssueSettingsMenu";
@@ -79,6 +80,14 @@ export function IssueActions({
     issue.slug,
     issue.library_id,
   );
+
+  // Keyboard shortcuts (M5): `r`/`u`/`b`/`i`/`e`. Gated off while a
+  // modal owns focus so a stray bare-key press inside the edit sheet
+  // can't fire an issue-level action.
+  useIssueShortcuts(issue, {
+    enabled: !editOpen && !confirmForceRecreate,
+    onEdit: () => setEditOpen(true),
+  });
 
   return (
     <>

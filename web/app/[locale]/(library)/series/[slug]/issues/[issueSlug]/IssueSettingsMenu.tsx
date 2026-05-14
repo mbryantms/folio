@@ -53,6 +53,8 @@ import {
   useIssueMarkers,
   useMe,
 } from "@/lib/api/queries";
+import { TOAST } from "@/lib/api/toast-strings";
+import { markerToCreateReq } from "@/lib/markers/recreate";
 import { readerUrl } from "@/lib/urls";
 import type { IssueDetailView } from "@/lib/api/types";
 import type { ReadState } from "@/lib/reading-state";
@@ -109,14 +111,20 @@ export function IssueSettingsMenu({
     (m) => m.kind === "bookmark" && m.page_index === 0,
   );
   const createMarker = useCreateMarker();
-  const deleteMarker = useDeleteMarker(
-    existingBookmark?.id ?? "",
-    issue.id,
-  );
+  const deleteMarker = useDeleteMarker(existingBookmark?.id ?? "", issue.id, {
+    silent: true,
+  });
   const toggleBookmark = () => {
     if (existingBookmark) {
+      const snapshot = existingBookmark;
       deleteMarker.mutate(undefined, {
-        onSuccess: () => toast.success("Bookmark removed"),
+        onSuccess: () =>
+          toast.success("Bookmark removed", {
+            action: {
+              label: "Undo",
+              onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
+            },
+          }),
       });
     } else {
       createMarker.mutate(
@@ -142,7 +150,7 @@ export function IssueSettingsMenu({
 
   const addToReadingList = () => {
     if (!wtrId) {
-      toast.error("Want to Read isn't ready yet — try again in a moment.");
+      toast.error(TOAST.WTR_NOT_READY);
       return;
     }
     addToWtr.mutate(

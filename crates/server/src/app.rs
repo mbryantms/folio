@@ -117,6 +117,8 @@ use utoipa::OpenApi;
         api::saved_views::admin_create,
         api::saved_views::admin_update,
         api::saved_views::admin_delete,
+        api::sidebar_layout::get_layout,
+        api::sidebar_layout::update_layout,
         api::cbl_lists::list,
         api::cbl_lists::detail,
         api::cbl_lists::upload,
@@ -283,6 +285,10 @@ use utoipa::OpenApi;
         api::saved_views::PinView,
         api::saved_views::PreviewReq,
         api::saved_views::SetIconReq,
+        api::sidebar_layout::SidebarLayoutView,
+        api::sidebar_layout::SidebarEntryView,
+        api::sidebar_layout::UpdateLayoutReq,
+        api::sidebar_layout::UpdateEntryReq,
         crate::views::dsl::FilterDsl,
         crate::views::dsl::Condition,
         crate::views::dsl::Field,
@@ -561,6 +567,7 @@ pub fn router(state: AppState) -> Router {
         .merge(api::reading_sessions::routes())
         .merge(api::admin_stats::routes())
         .merge(api::saved_views::routes())
+        .merge(api::sidebar_layout::routes())
         .merge(api::cbl_lists::routes())
         .merge(api::collections::routes())
         .merge(api::markers::routes())

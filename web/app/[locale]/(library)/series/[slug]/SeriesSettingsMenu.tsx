@@ -44,6 +44,7 @@ import {
   useUpsertSeriesProgress,
 } from "@/lib/api/mutations";
 import { useCollections, useMe } from "@/lib/api/queries";
+import { TOAST } from "@/lib/api/toast-strings";
 
 const WANT_TO_READ_KEY = "want_to_read";
 
@@ -98,7 +99,7 @@ export function SeriesSettingsMenu({
 
   const addToReadingList = () => {
     if (!wtrId) {
-      toast.error("Want to Read isn't ready yet — try again in a moment.");
+      toast.error(TOAST.WTR_NOT_READY);
       return;
     }
     addToWtr.mutate(

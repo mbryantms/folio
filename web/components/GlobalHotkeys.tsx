@@ -9,6 +9,7 @@ import {
   KEYBIND_SCOPES,
   actionForKey,
   resolveKeybinds,
+  shouldSkipHotkey,
 } from "@/lib/reader/keybinds";
 
 /**
@@ -40,13 +41,21 @@ export function GlobalHotkeys() {
     function onKey(e: KeyboardEvent) {
       // Don't hijack typing in form fields or rich-text surfaces. Reader
       // and the search input apply the same gate via their own listeners.
-      const t = e.target;
+      if (shouldSkipHotkey(e)) return;
+
+      // Bare `/` opens search — common web convention (GitHub / YouTube /
+      // Discord). Not in the keybind registry: it's an alias for
+      // `openSearch`, not a rebindable action. Users who rebind
+      // `openSearch` still keep `/` as a fixed alias.
       if (
-        t instanceof HTMLInputElement ||
-        t instanceof HTMLTextAreaElement ||
-        t instanceof HTMLSelectElement ||
-        (t instanceof HTMLElement && t.isContentEditable)
+        e.key === "/" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey
       ) {
+        e.preventDefault();
+        setSearchOpen(true);
         return;
       }
 
@@ -61,6 +70,10 @@ export function GlobalHotkeys() {
           e.preventDefault();
           setSearchOpen(true);
           break;
+        // `toggleSidebar` is global-scoped for discoverability (so it
+        // appears in Settings → Keybinds + the shortcuts sheet) but the
+        // sidebar hook owns its dispatch. Fall through here so we don't
+        // claim the keystroke before the sidebar listener sees it.
         default:
           break;
       }

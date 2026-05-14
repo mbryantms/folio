@@ -449,11 +449,21 @@ async fn worker_marks_error_on_unreadable_archive() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        row.thumbnails_generated_at.is_none(),
-        "should not stamp done"
-    );
     assert!(row.thumbnails_error.is_some(), "should record the error");
+    // Error path stamps `generated_at` too so the post-scan enqueue
+    // query (`generated_at IS NULL OR version < CURRENT`) skips this
+    // row on the next pass — see `stamp_error` rationale in post_scan.rs.
+    // Operators retry via admin "Force recreate" (clears both columns)
+    // or a global THUMBNAIL_VERSION bump.
+    assert!(
+        row.thumbnails_generated_at.is_some(),
+        "error path should stamp generated_at to break retry loop"
+    );
+    assert_eq!(
+        row.thumbnail_version,
+        server::library::thumbnails::THUMBNAIL_VERSION,
+        "error path bumps version to current sentinel"
+    );
 }
 
 #[tokio::test]

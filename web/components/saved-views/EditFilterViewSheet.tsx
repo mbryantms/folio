@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -99,12 +98,11 @@ export function EditFilterViewSheet({
                     result_limit: state.resultLimit,
                   });
                   qc.invalidateQueries({ queryKey: ["saved-views"] });
-                  toast.success("View updated");
                   onOpenChange(false);
-                } catch (e) {
-                  toast.error(
-                    e instanceof Error ? e.message : "Failed to update view",
-                  );
+                } catch {
+                  // useApiMutation already surfaced the error toast — keep
+                  // the catch so the sheet stays open and the user can
+                  // adjust their input and retry.
                 }
               }}
             />

@@ -20,6 +20,7 @@ import {
   KEYBIND_LABELS,
   READER_KEYBIND_ACTIONS,
   comboFromEvent,
+  findConflict,
   formatKey,
   resolveKeybinds,
   type KeybindAction,
@@ -27,10 +28,19 @@ import {
 
 import { SettingsSection } from "./SettingsSection";
 
+interface PendingCapture {
+  action: KeybindAction;
+  chord: string;
+  conflict: KeybindAction;
+}
+
 export function KeybindEditor() {
   const me = useMe();
   const update = useUpdatePreferences();
   const [editing, setEditing] = useState<KeybindAction | null>(null);
+  // A captured chord that conflicts with another action sits here until
+  // the user picks Save Anyway / Cancel. Cleared on commit or dismiss.
+  const [pending, setPending] = useState<PendingCapture | null>(null);
 
   if (me.isLoading) return <Skeleton className="h-72 w-full" />;
   if (me.error || !me.data) {
@@ -42,10 +52,22 @@ export function KeybindEditor() {
   const stored = (me.data.keybinds ?? {}) as Record<string, string>;
   const resolved = resolveKeybinds(stored);
 
-  function setBinding(action: KeybindAction, key: string) {
+  function commit(action: KeybindAction, key: string) {
     const next = { ...stored, [action]: key };
     update.mutate({ keybinds: next });
     setEditing(null);
+    setPending(null);
+  }
+  function attempt(action: KeybindAction, chord: string) {
+    // Compute the resolved map as if the candidate were already saved,
+    // then look for any other action that would map to the same chord.
+    const resolvedNext = resolveKeybinds({ ...stored, [action]: chord });
+    const conflict = findConflict(chord, action, resolvedNext);
+    if (conflict) {
+      setPending({ action, chord, conflict });
+      return;
+    }
+    commit(action, chord);
   }
   function clearBinding(action: KeybindAction) {
     const next = { ...stored };
@@ -95,8 +117,14 @@ export function KeybindEditor() {
       </SettingsSection>
       <CaptureDialog
         action={editing}
-        onCancel={() => setEditing(null)}
-        onCapture={(key) => editing && setBinding(editing, key)}
+        pending={pending}
+        onCancel={() => {
+          setEditing(null);
+          setPending(null);
+        }}
+        onCapture={(key) => editing && attempt(editing, key)}
+        onSaveAnyway={() => pending && commit(pending.action, pending.chord)}
+        onRetry={() => setPending(null)}
       />
     </>
   );
@@ -121,6 +149,13 @@ function BindingList({
       {actions.map((action) => {
         const isOverridden = typeof stored[action] === "string";
         const current = resolved[action];
+        // RTL caption: surfaced only when the binding actually uses an
+        // arrow key, since the LTR / RTL flip is hard-coded against
+        // `ArrowLeft` / `ArrowRight` in Reader.tsx. Users who rebind
+        // away from arrows lose the direction-aware swap (correctly so).
+        const isDirectionAware =
+          (action === "nextPage" || action === "prevPage") &&
+          (current === "ArrowLeft" || current === "ArrowRight");
         return (
           <li
             key={action}
@@ -133,6 +168,11 @@ function BindingList({
               <p className="text-muted-foreground text-xs">
                 Default: {formatKey(KEYBIND_DEFAULTS[action])}
               </p>
+              {isDirectionAware ? (
+                <p className="text-muted-foreground/80 mt-0.5 text-xs italic">
+                  Direction-aware — swaps with the opposite arrow in RTL mode.
+                </p>
+              ) : null}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -164,35 +204,78 @@ function BindingList({
 /**
  * Modal that listens for the next keyboard event and reports the captured
  * `KeyboardEvent.key`. Escape always cancels (so users can back out without
- * being trapped). Modifier-only presses are ignored.
+ * being trapped). Modifier-only presses are ignored. When the captured
+ * chord conflicts with another action, the body swaps from "Listening…"
+ * to a warning + Save Anyway / Try Again.
  */
 function CaptureDialog({
   action,
+  pending,
   onCancel,
   onCapture,
+  onSaveAnyway,
+  onRetry,
 }: {
   action: KeybindAction | null;
+  pending: PendingCapture | null;
   onCancel: () => void;
   onCapture: (key: string) => void;
+  onSaveAnyway: () => void;
+  onRetry: () => void;
 }) {
   return (
     <Dialog open={action !== null} onOpenChange={(open) => !open && onCancel()}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>Press a key</DialogTitle>
+          <DialogTitle>
+            {pending ? "Binding already in use" : "Press a key"}
+          </DialogTitle>
           <DialogDescription>
-            {action
-              ? `Choose a new binding for "${KEYBIND_LABELS[action]}". Escape to cancel.`
-              : null}
+            {pending ? (
+              <>
+                <span className="text-foreground font-mono">
+                  {formatKey(pending.chord)}
+                </span>{" "}
+                is already bound to{" "}
+                <span className="text-foreground">
+                  {KEYBIND_LABELS[pending.conflict]}
+                </span>
+                . Saving will leave that action dead until you change one of
+                them.
+              </>
+            ) : action ? (
+              `Choose a new binding for "${KEYBIND_LABELS[action]}". Escape to cancel.`
+            ) : null}
           </DialogDescription>
         </DialogHeader>
-        {action ? (
+        {pending ? (
+          <div className="grid place-items-center py-6">
+            <kbd className="border-destructive/60 bg-destructive/10 text-foreground rounded border px-3 py-2 font-mono text-base">
+              {formatKey(pending.chord)}
+            </kbd>
+          </div>
+        ) : action ? (
           <CaptureBody onCancel={onCancel} onCapture={onCapture} />
         ) : null}
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={onCancel}>
-            Cancel
-          </Button>
+          {pending ? (
+            <>
+              <Button type="button" variant="outline" onClick={onRetry}>
+                Try a different key
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={onSaveAnyway}
+              >
+                Save anyway
+              </Button>
+            </>
+          ) : (
+            <Button type="button" variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

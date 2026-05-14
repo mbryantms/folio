@@ -18,11 +18,17 @@ const TabsList = React.forwardRef<
       //   overflowing the viewport (the prior `inline-flex` blew out the
       //   layout on phones with >3 tabs — see screenshot in the
       //   runtime-config-admin work). md+: content-width like before.
+      // `justify-[safe_center]` is the CSS "safe center" keyword pair —
+      //   center the children when they fit, fall back to start when
+      //   they overflow. Without `safe`, an overflowing strip centers
+      //   the row in place, clipping both ends equally and burying the
+      //   first tab; with `safe`, overflow scrolls from the leading
+      //   edge as users expect. A plain `justify-start` would always
+      //   left-align, which broke the centered 2-tab sign-in form.
       // `[&>*]:shrink-0` keeps each trigger at its intrinsic width so
       //   long labels ("Cast & Setting") stay readable inside the
-      //   scrollable strip. `scrollbar-hide` (custom util) keeps the
-      //   thumb out of the way; touch swipe still works.
-      "bg-muted text-muted-foreground flex h-9 w-full items-center justify-start overflow-x-auto rounded-md p-1 md:inline-flex md:w-fit md:justify-center md:overflow-visible",
+      //   scrollable strip.
+      "bg-muted text-muted-foreground flex h-9 w-full items-center justify-[safe_center] overflow-x-auto rounded-md p-1 md:inline-flex md:w-fit md:overflow-visible",
       "[&::-webkit-scrollbar]:hidden [&>*]:shrink-0 [scrollbar-width:none]",
       className,
     )}

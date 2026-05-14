@@ -11,6 +11,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme={theme as ToasterProps["theme"]}
+      // Sonner's default is `["altKey", "KeyT"]`; making it explicit so
+      // the keyboard-shortcuts sheet has a documented contract to point
+      // at, and so a future change is a one-line edit here rather than
+      // a silent default-shift on the library upgrade path.
+      hotkey={["altKey", "KeyT"]}
       className="toaster group"
       toastOptions={{
         classNames: {

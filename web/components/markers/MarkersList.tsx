@@ -22,7 +22,12 @@ import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useMarkers, useMarkerTags } from "@/lib/api/queries";
-import { useDeleteMarker, useUpdateMarker } from "@/lib/api/mutations";
+import {
+  useCreateMarker,
+  useDeleteMarker,
+  useUpdateMarker,
+} from "@/lib/api/mutations";
+import { markerToCreateReq } from "@/lib/markers/recreate";
 import type {
   MarkerKind,
   MarkerRegion,
@@ -573,7 +578,8 @@ function MarkerCard({
   marker: MarkerView;
   thumbHeight: number;
 }) {
-  const del = useDeleteMarker(marker.id, marker.issue_id);
+  const del = useDeleteMarker(marker.id, marker.issue_id, { silent: true });
+  const create = useCreateMarker();
   const update = useUpdateMarker(marker.id, marker.issue_id);
   const router = useRouter();
   const jumpHref = buildJumpHref(marker);
@@ -630,11 +636,25 @@ function MarkerCard({
     list.push({
       label: "Delete",
       destructive: true,
-      onSelect: () => del.mutate(undefined),
+      onSelect: () => {
+        // Capture the snapshot before the row vanishes from the list
+        // so Undo can recreate from a stable value (we can't read
+        // `marker` after the cache invalidation drops it).
+        const snapshot = marker;
+        del.mutate(undefined, {
+          onSuccess: () =>
+            toast.success("Removed", {
+              action: {
+                label: "Undo",
+                onClick: () => create.mutate(markerToCreateReq(snapshot)),
+              },
+            }),
+        });
+      },
       disabled: del.isPending,
     });
     return list;
-  }, [del, hasRegion, jumpHref, marker, router, update]);
+  }, [create, del, hasRegion, jumpHref, marker, router, update]);
 
   const longPress = useCoverLongPressActions({
     primary: jumpHref

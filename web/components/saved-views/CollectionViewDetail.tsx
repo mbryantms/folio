@@ -57,6 +57,7 @@ import {
   useReorderCollectionEntries,
   useUpdateCollection,
 } from "@/lib/api/mutations";
+import { TOAST } from "@/lib/api/toast-strings";
 import { cn } from "@/lib/utils";
 import type { CollectionEntryView, SavedViewView } from "@/lib/api/types";
 
@@ -391,7 +392,7 @@ function EditCollectionDialog({
     e.preventDefault();
     const trimmedName = name.trim();
     if (!trimmedName) {
-      toast.error("Name is required");
+      toast.error(TOAST.NAME_REQUIRED);
       return;
     }
     onSave({

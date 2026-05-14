@@ -49,6 +49,9 @@ mod m20261217_000001_marker_favorite_flag;
 mod m20261217_000002_marker_tags;
 mod m20261218_000001_people_search;
 mod m20260514_000001_app_settings;
+mod m20260514_000002_series_volume_uniq;
+mod m20260514_000003_cbl_list_cascade_saved_view;
+mod m20260514_000004_user_sidebar_entries;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -106,6 +109,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260513_000001_app_passwords::Migration),
             Box::new(m20260513_000002_app_password_scopes::Migration),
             Box::new(m20260514_000001_app_settings::Migration),
+            Box::new(m20260514_000002_series_volume_uniq::Migration),
+            Box::new(m20260514_000003_cbl_list_cascade_saved_view::Migration),
+            Box::new(m20260514_000004_user_sidebar_entries::Migration),
         ]
     }
 }
