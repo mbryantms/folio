@@ -67,6 +67,7 @@ import type {
   SidebarLayoutView,
   ScanPreviewView,
   AppPasswordListView,
+  ProgressView,
   ScanRunView,
   SeriesListView,
   SeriesSort,
@@ -334,6 +335,10 @@ export const queryKeys = {
   sessions: ["auth", "sessions"] as const,
   /** /me/app-passwords — self-managed Bearer credentials (M7). */
   appPasswords: ["auth", "app-passwords"] as const,
+  /** `GET /progress` — full per-user progress list, used by issue cards
+   *  to render finished / in-progress badges. Invalidated by progress
+   *  mutations. */
+  userProgress: ["progress", "list"] as const,
 };
 
 export type SavedViewListFilters = {
@@ -1251,5 +1256,21 @@ export function useOnDeck() {
   return useQuery({
     queryKey: queryKeys.onDeck,
     queryFn: () => jsonFetch<OnDeckView>("/me/on-deck"),
+  });
+}
+
+/** Full per-user progress list. Powers the finished/in-progress badges
+ *  on issue covers across library/series/saved-view surfaces. One
+ *  shared query — every IssueCard subscribes by the same key, so the
+ *  network call fans out across the page. Mutations in
+ *  [mutations.ts](./mutations.ts) invalidate this. */
+export function useUserProgress() {
+  return useQuery({
+    queryKey: queryKeys.userProgress,
+    queryFn: async () => {
+      const resp = await jsonFetch<{ records: ProgressView[] }>("/progress");
+      return new Map(resp.records.map((r) => [r.issue_id, r]));
+    },
+    staleTime: 30_000,
   });
 }

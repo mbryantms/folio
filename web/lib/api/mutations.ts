@@ -425,11 +425,15 @@ export function useScanIssue(seriesSlug: string, issueSlug: string) {
  * read/unread" actions.
  */
 export function useUpsertIssueProgress() {
-  return useApiMutation<ProgressView, UpsertProgressReq>((body) => ({
-    path: "/progress",
-    method: "POST",
-    body,
-  }));
+  const qc = useQueryClient();
+  return useApiMutation<ProgressView, UpsertProgressReq>(
+    (body) => ({ path: "/progress", method: "POST", body }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+      },
+    },
+  );
 }
 
 /**
@@ -438,6 +442,7 @@ export function useUpsertIssueProgress() {
  * have to fan out per-issue requests for long series.
  */
 export function useUpsertSeriesProgress(seriesId: string) {
+  const qc = useQueryClient();
   return useApiMutation<UpsertSeriesProgressResp, UpsertSeriesProgressReq>(
     (body) => ({ path: `/series/${seriesId}/progress`, method: "POST", body }),
     {
@@ -450,6 +455,9 @@ export function useUpsertSeriesProgress(seriesId: string) {
         }
         const verb = input.finished ? "read" : "unread";
         return `Marked ${data.updated} issue${data.updated === 1 ? "" : "s"} as ${verb}`;
+      },
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.userProgress });
       },
     },
   );

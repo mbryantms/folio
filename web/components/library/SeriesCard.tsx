@@ -180,9 +180,10 @@ export function SeriesCardSkeleton({ size = "md" }: { size?: Size }) {
   );
 }
 
-/** Small green/amber dot in the cover's bottom-right corner. Sits behind
- *  the play overlay on hover — both anchor to `right-2 bottom-2`, the
- *  32px play button visually covers the 10px dot when revealed. */
+/** Small green/amber dot in the cover's bottom-left corner. Lives opposite
+ *  the play overlay so the 32px hover button doesn't cover it. The
+ *  symmetric bottom-left slot on issue cards hosts the "finished"
+ *  check badge — same idiom, different axis (ownership vs. read state). */
 function CollectionDot({ series }: { series: SeriesView }) {
   const state = collectionStatus(series);
   if (!state) return null;
@@ -197,7 +198,7 @@ function CollectionDot({ series }: { series: SeriesView }) {
       title={tooltip}
       aria-label={tooltip}
       className={cn(
-        "absolute right-2 bottom-2 h-2.5 w-2.5 rounded-full ring-1 ring-black/10 dark:ring-white/10",
+        "absolute bottom-2 left-2 h-2.5 w-2.5 rounded-full ring-1 ring-black/10 dark:ring-white/10",
         state === "complete" ? "bg-emerald-500" : "bg-amber-500",
       )}
     />

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Check } from "lucide-react";
 
 import { Cover } from "@/components/Cover";
 import {
@@ -13,6 +14,7 @@ import { useCoverMenuCollectionActions } from "@/components/collections/useCover
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
+import { useUserProgress } from "@/lib/api/queries";
 import { formatIssueHeading } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { IssueSummaryView } from "@/lib/api/types";
@@ -34,6 +36,18 @@ export function IssueCard({
   const heading = formatIssueHeading(issue);
   const router = useRouter();
   const upsertProgress = useUpsertIssueProgress();
+  // Shared `/progress` query — one network call regardless of grid size,
+  // TanStack dedupes by queryKey. Absent (undefined) means unread or
+  // still loading; we render no badge in either case so the cover
+  // doesn't flicker once data arrives.
+  const progressMap = useUserProgress().data;
+  const progress = progressMap?.get(issue.id);
+  const finished = progress?.finished ?? false;
+  const inProgress =
+    !!progress && !finished && progress.percent > 0;
+  const percent = inProgress
+    ? Math.max(0, Math.min(100, Math.round(progress.percent * 100)))
+    : 0;
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue.id,
@@ -108,6 +122,30 @@ export function IssueCard({
             >
               {issue.state}
             </Badge>
+          )}
+          {/* Read state — bottom-left mirrors `CollectionDot` on series
+           *  cards (one "status indicator" slot per card type). No
+           *  cover dimming on browse surfaces: the library/home rails
+           *  want covers to stay vibrant. */}
+          {issue.state === "active" && finished && (
+            <span
+              aria-label="Read"
+              title="Read"
+              className="bg-primary/90 text-primary-foreground absolute bottom-2 left-2 inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 shadow-sm ring-black/10 backdrop-blur dark:ring-white/10"
+            >
+              <Check aria-hidden="true" className="h-3.5 w-3.5" />
+            </span>
+          )}
+          {issue.state === "active" && inProgress && (
+            <div
+              className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
+              aria-hidden="true"
+            >
+              <div
+                className="bg-primary h-full transition-[width]"
+                style={{ width: `${percent}%` }}
+              />
+            </div>
           )}
           {issue.state === "active" && (
             <>
