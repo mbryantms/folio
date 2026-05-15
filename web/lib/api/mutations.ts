@@ -1279,6 +1279,10 @@ export function useSidebarSavedView() {
       },
       onSettled: () => {
         qc.invalidateQueries({ queryKey: ["saved-views"] });
+        // The /settings/navigation NavigationManager reads from this
+        // client-side query; without invalidating it the new row only
+        // appears after a manual refresh.
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
         // The library layout fetches sidebar views server-side; refresh
         // so the nav reflects the change.
         router.refresh();

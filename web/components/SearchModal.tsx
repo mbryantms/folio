@@ -110,7 +110,7 @@ export function SearchModal({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="top-[20%] max-w-xl translate-y-0 gap-0 overflow-hidden p-0"
+        className="top-[10%] flex max-h-[80vh] max-w-xl translate-y-0 flex-col gap-0 overflow-hidden p-0"
         onOpenAutoFocus={(e) => {
           e.preventDefault();
           inputRef.current?.focus();
@@ -121,7 +121,7 @@ export function SearchModal({
           Quick search across your library. Press Enter to open the highlighted
           result, or Mod+Enter to jump to the full results page.
         </DialogDescription>
-        <div className="border-border border-b">
+        <div className="border-border shrink-0 border-b">
           <input
             ref={inputRef}
             type="search"
@@ -217,7 +217,7 @@ function ResultsBody({
     <div
       role="listbox"
       aria-label="Search results"
-      className="max-h-96 overflow-y-auto py-1"
+      className="min-h-0 flex-1 overflow-y-auto py-1"
     >
       {sections.map(({ def, hits, fromIdx }) => {
         return (
@@ -309,7 +309,7 @@ function SearchFooter({
   // The shortcut hints hide on narrow viewports so the "View all" link
   // always remains visible without competing for space.
   return (
-    <div className="border-border text-muted-foreground flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t px-3 py-2 text-xs">
+    <div className="border-border text-muted-foreground flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t px-3 py-2 text-xs">
       <div className="hidden items-center gap-3 sm:flex">
         {enabled && total > 0 ? (
           <>
