@@ -22,13 +22,13 @@ use server::{
     secrets::Secrets,
     state::AppState,
 };
-use tracing_subscriber::{EnvFilter, reload};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::redis::Redis;
+use tracing_subscriber::{EnvFilter, reload};
 
 /// One Prometheus recorder per test process — `install_recorder` errors on
 /// second call. Stored in a OnceLock so concurrent tests share the handle.
@@ -214,6 +214,11 @@ impl TestApp {
             scan_hash_buffer_kb: 64,
             archive_work_parallel: 2,
             thumb_inline_parallel: 2,
+            archive_max_entries: 50_000,
+            archive_max_total_bytes: 8 * 1024 * 1024 * 1024,
+            archive_max_entry_bytes: 512 * 1024 * 1024,
+            archive_max_ratio: 200,
+            archive_max_nesting: 1,
         };
 
         let jobs = JobRuntime::new(&redis_url, db.clone())

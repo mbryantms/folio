@@ -560,6 +560,50 @@ Signature = HMAC-SHA256 over `(issue_id, page, exp, u)` with a server-side key (
 
 ## 9. Sync
 
+> **2026-05-15 decision: Automerge / CRDT path considered, not chosen.**
+> The original §9 below specified per-user Automerge documents stored as
+> BYTEA in Postgres, exchanged over WebSocket. After implementing
+> Phases 2–3, the workloads that motivated the CRDT design either don't
+> exist or were solved without one:
+>
+> - **Progress** is a single monotonic integer per (user, issue). The
+>   server resolves multi-device conflicts with `max(last_page)` in a
+>   handful of SQL lines — exactly the outcome Automerge's custom
+>   `max(page)` merge rule was specified to produce.
+> - **Bookmarks / annotations** ship via the markers system as
+>   individual rows with primary keys (Markers + Collections plan,
+>   M1–M8). Each marker is its own resource, so concurrent multi-device
+>   adds merge by set-union via the relational schema. No CRDT
+>   machinery is involved or needed.
+> - **Shared collections** are explicitly **owner-authoritative**
+>   (§9.5) — members read via REST and don't replicate state. The
+>   one workload that genuinely benefits from a CRDT (concurrent
+>   collaborative editing) was scoped out of v1 anyway.
+> - **Offline-first** is a benefit only when there's a native client
+>   with rich offline editing. The web client is the only client today;
+>   if web-offline matters in the future, a service-worker mutation
+>   queue is dramatically simpler than full CRDT replicas.
+>
+> The cost of the Automerge path (BYTEA storage, WebSocket auth
+> handshake, compaction worker, change-history GC, sharding, lz4
+> compression, multi-language client bindings, 90-day cutover
+> retention, custom merge rules, DoS bounds) is real and recurring.
+> The benefit is theoretical until a native client with offline
+> editing actually ships.
+>
+> **What replaces it for v1:** keep `progress_records` as the
+> authoritative store; server resolves conflicts with `max(last_page)`
+> on write. Markers + collections already work without CRDTs.
+>
+> **What would change the decision:** a native client (Phase 6 mobile,
+> Phase 5 desktop) actively being built where offline editing of
+> reading state is a real product requirement. At that point, re-
+> evaluate Automerge against simpler alternatives (service-worker
+> outbox, RxDB-style sync, WebSocket push of server-resolved deltas).
+>
+> Sections below describe the original Automerge design verbatim
+> for historical context. **Do not implement.**
+
 ### 9.1 What syncs
 - Read progress (issue, page, percent, timestamp, device).
 - Bookmarks, ratings, finished-state.
@@ -605,12 +649,18 @@ Browsers cannot set `Authorization: Bearer …` on `new WebSocket(url)`. Auth fl
 4. Tickets are user-scoped and single-use; ticket validation rate-limited at 30/s per IP.
 
 ### 9.7 Phase 2 → Phase 4 progress migration
-Phase 2 stores progress in `progress_records` table directly. Phase 4 introduces Automerge docs.
 
-- **Backfill:** on first authenticated connect from a Phase-4-aware client, the server constructs a fresh Automerge progress doc from the user's existing `progress_records` rows and persists it.
-- **Cutover:** the `POST /progress` endpoint version is bumped (`/v2/progress` style or via header negotiation). Phase 2 clients receive 410 Gone; users are prompted to refresh the web app (PWA shell will auto-update).
-- **Fallback window:** `progress_records` table kept read-only as truth for 90 days post-cutover. After 90 days, dropped in a follow-up migration.
-- **Test:** a CI integration test seeds a Phase-2-style DB, runs the upgrade, runs the new client against it, and asserts progress matches.
+**Status (2026-05-15): not happening.** See the decision note at the
+top of §9. The `progress_records` table is the authoritative store
+for v1; no Automerge migration is planned. The historical migration
+recipe below is preserved for context — do not implement.
+
+~~Phase 2 stores progress in `progress_records` table directly. Phase 4 introduces Automerge docs.~~
+
+- ~~**Backfill:** on first authenticated connect from a Phase-4-aware client, the server constructs a fresh Automerge progress doc from the user's existing `progress_records` rows and persists it.~~
+- ~~**Cutover:** the `POST /progress` endpoint version is bumped (`/v2/progress` style or via header negotiation). Phase 2 clients receive 410 Gone; users are prompted to refresh the web app (PWA shell will auto-update).~~
+- ~~**Fallback window:** `progress_records` table kept read-only as truth for 90 days post-cutover. After 90 days, dropped in a follow-up migration.~~
+- ~~**Test:** a CI integration test seeds a Phase-2-style DB, runs the upgrade, runs the new client against it, and asserts progress matches.~~
 
 ---
 

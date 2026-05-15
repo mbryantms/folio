@@ -142,10 +142,7 @@ fn load_or_generate_bytes<const N: usize>(
     }
 }
 
-fn load_or_generate_ed25519(
-    path: &PathBuf,
-    report: &mut LoadReport,
-) -> anyhow::Result<SigningKey> {
+fn load_or_generate_ed25519(path: &PathBuf, report: &mut LoadReport) -> anyhow::Result<SigningKey> {
     if path.exists() {
         let bytes = fs::read(path)?;
         if bytes.len() != SECRET_KEY_LENGTH {

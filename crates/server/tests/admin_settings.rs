@@ -210,8 +210,8 @@ async fn secret_roundtrips_through_db() {
     // `app_setting`, then read it back through `settings::read_all` and
     // confirm we get the plaintext.
     let plaintext = "hunter2-extra-special";
-    let sealed = crypto::seal(&state.secrets.settings_encryption_key, plaintext.as_bytes())
-        .expect("seal");
+    let sealed =
+        crypto::seal(&state.secrets.settings_encryption_key, plaintext.as_bytes()).expect("seal");
 
     use entity::app_setting;
     use sea_orm::{ActiveValue::Set, EntityTrait};

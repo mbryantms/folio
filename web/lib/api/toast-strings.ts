@@ -23,4 +23,10 @@ export const TOAST = {
    *  lands next to the field; the toast form is a fallback when the
    *  trigger is outside a form (cover-menu inline rename, etc.). */
   NAME_REQUIRED: "Name is required",
+
+  /** Multi-page rails M6 — user-page CRUD completion messages. */
+  PAGE_CREATED: "Page created",
+  PAGE_RENAMED: "Page renamed",
+  PAGE_DELETED: "Page deleted",
+  PAGE_UPDATED: "Page updated",
 } as const;

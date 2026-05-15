@@ -19,10 +19,22 @@ export default async function ReadPage({
   searchParams,
 }: {
   params: Promise<{ seriesSlug: string; issueSlug: string }>;
-  searchParams: Promise<{ from?: string; incognito?: string; page?: string }>;
+  searchParams: Promise<{
+    from?: string;
+    incognito?: string;
+    page?: string;
+    /** Saved-view id (kind=`cbl`) when the reader was entered from a CBL
+     *  surface. Forwarded to the next-up resolver so "next" picks the
+     *  next list entry rather than the next series issue. */
+    cbl?: string;
+  }>;
 }) {
   const { seriesSlug, issueSlug } = await params;
-  const { from, incognito, page } = await searchParams;
+  const { from, incognito, page, cbl } = await searchParams;
+  // Trust the URL contract: a malformed `?cbl=` just falls through to
+  // series-next on the server. No client-side validation needed — the
+  // resolver fails soft.
+  const cblSavedViewId = typeof cbl === "string" && cbl.length > 0 ? cbl : null;
   // `?from=start` is the "Read from beginning" entry point: skip the
   // saved-progress prefetch so the reader opens at page 0 even when the
   // user has prior progress on this issue. The reader's normal save-on-
@@ -132,6 +144,7 @@ export default async function ReadPage({
     <Reader
       issueId={issue.id}
       seriesId={issue.series_id}
+      cblSavedViewId={cblSavedViewId}
       exitUrl={`/series/${seriesSlug}/issues/${issueSlug}`}
       totalPages={totalPages}
       initialPage={initialPage}

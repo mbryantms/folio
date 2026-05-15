@@ -516,6 +516,12 @@ available but is not enqueued by default scans; the handler
 ([post_scan.rs:668](../../crates/server/src/jobs/post_scan.rs#L668)) is
 also a no-op pending the "did you mean" trigram refresh.
 
+> **Deferred (2026-05-15):** the trigram-index refresh + the search-UI
+> "did you mean" surface were considered for the incompleteness
+> cleanup (finding D-3) and **punted to search v1.1**. Search functions
+> fine without suggestion fallback today; revisit when search-quality
+> concerns surface. See the [incompleteness audit](incompleteness-audit.md#d-3-dictionary-did-you-mean-trigram-refresh).
+
 ### Audit log
 
 The scanner does not currently emit audit-log entries. Library /

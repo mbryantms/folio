@@ -64,9 +64,14 @@ const WANT_TO_READ_KEY = "want_to_read";
 /**
  * Consolidated actions menu for the issue page. Groups read-state +
  * library + admin actions under one trigger so the page header stays
- * compact, and stubs out the "Coming soon" affordances (favorite,
- * bookmark, reading list, collection, download) so users can see what's
- * planned without clicking through to a 404.
+ * compact:
+ *
+ *   - **Reading:** read-from-start, incognito, mark read/unread,
+ *     bookmark toggle (a page-0 marker).
+ *   - **Library:** add to Want to Read, add to collection…, download
+ *     (OPDS file route).
+ *   - **Admin** (admin role only): rescan issue, thumbnail + page-map
+ *     regeneration, edit issue metadata.
  *
  * The "Edit" action is rendered by the dialog wrapper, not here — the
  * dialog's `<DialogTrigger asChild>` wants its own button (a menu item
@@ -75,11 +80,17 @@ const WANT_TO_READ_KEY = "want_to_read";
 export function IssueSettingsMenu({
   issue,
   readState,
+  cblSavedViewId,
   onEdit,
   onForceRecreatePageMap,
 }: {
   issue: IssueDetailView;
   readState: ReadState;
+  /** Saved-view id of the CBL the user is reading through (when the
+   *  issue page was arrived at via `?cbl=`). Forwarded onto the menu's
+   *  read-shortcut URLs so the reader's next-up resolver keeps picking
+   *  list entries after a "Read from beginning" or incognito click. */
+  cblSavedViewId?: string | null;
   /** Called when the user picks "Edit issue" — the parent owns the
    *  edit-dialog state because the menu auto-closes on item select. */
   onEdit?: () => void;
@@ -210,13 +221,17 @@ export function IssueSettingsMenu({
   const readFromStart = () => {
     // The reader page reads `?from=start` and skips the saved-progress
     // prefetch, so passing the param avoids a write-then-navigate race.
-    router.push(`${readerUrl(issue)}?from=start`);
+    const base = readerUrl(issue, { cbl: cblSavedViewId });
+    const sep = base.includes("?") ? "&" : "?";
+    router.push(`${base}${sep}from=start`);
   };
   const readIncognito = () => {
     // `?incognito=1` disables the reading-session tracker and the
     // /progress writes for this read. Server is never told the issue was
     // opened. Read-from-saved-progress is still respected.
-    router.push(`${readerUrl(issue)}?incognito=1`);
+    const base = readerUrl(issue, { cbl: cblSavedViewId });
+    const sep = base.includes("?") ? "&" : "?";
+    router.push(`${base}${sep}incognito=1`);
   };
 
   const busy =

@@ -22,7 +22,7 @@ use axum::{
 use chrono::Utc;
 use common::TestApp;
 use entity::{
-    cbl_entry, cbl_list,
+    cbl_entry, cbl_list, saved_view,
     issue::ActiveModel as IssueAM,
     library, library_user_access, progress_record,
     series::{ActiveModel as SeriesAM, normalize_name},
@@ -962,7 +962,9 @@ async fn on_deck_dismissal_hides_series_and_auto_restores() {
     demote_to_user(&app, user.user_id).await;
 
     let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-dismiss").await;
-    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-dismiss-2").await;
+    // issue2 is required so `pick_next_in_series` has an unread pick once
+    // issue1 is marked finished.
+    let _issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-dismiss-2").await;
     grant_access(&app, user.user_id, lib_id).await;
 
     // Use a past timestamp so the dismissal row (written at real-clock NOW)
@@ -989,20 +991,241 @@ async fn on_deck_dismissal_hides_series_and_auto_restores() {
     let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
     assert_eq!(body["items"].as_array().unwrap().len(), 0, "dismissed");
 
-    // New activity in the future → auto-restore.
+    // New activity in the future → auto-restore. Re-save issue1's
+    // finished state with a fresher timestamp; only "meaningful" progress
+    // (finished OR last_page > 0) counts toward the candidate CTE since
+    // the mark-all-unread fix, so a zero-progress bump no longer works as
+    // an activity signal.
     let t_new = chrono::DateTime::parse_from_rfc3339("2031-01-01T00:00:00Z").unwrap();
-    // Mark issue2 partially read, then back to unread, so the series'
-    // last activity is fresh AND it has no in-progress issue blocking it
-    // from On Deck.
-    write_progress(&app, user.user_id, &issue2_id, 0, false, t_new).await;
-    // The above row alone doesn't qualify (last_page = 0 doesn't count as
-    // in-progress, but the row exists). The CTE that gathers candidates
-    // joins on any progress_record, so the bumped updated_at on issue2's
-    // row is the activity signal.
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t_new).await;
     let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         1,
         "auto-restore on new activity"
+    );
+}
+
+#[tokio::test]
+async fn on_deck_excludes_fully_unread_series() {
+    // After a user marks an entire series as unread, "mark all as unread"
+    // writes (last_page = 0, finished = false) rows on every formerly-
+    // touched issue. The series should drop off On Deck — there's no
+    // genuine "next up after the issue I finished" signal anymore.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-unread@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-unread").await;
+    let _issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-unread-2").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
+
+    // Baseline: card present after finishing issue 1.
+    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+    assert_eq!(body["items"][0]["kind"], "series_next");
+    let _ = series_id;
+
+    // Simulate "mark all unread" — zeroed progress row on the formerly
+    // finished issue.
+    let t1 = chrono::DateTime::parse_from_rfc3339("2030-02-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 0, false, t1).await;
+
+    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    assert_eq!(
+        body["items"].as_array().unwrap().len(),
+        0,
+        "fully-unread series must not appear in On Deck"
+    );
+}
+
+#[tokio::test]
+async fn on_deck_cbl_carve_out_for_fully_unread_series() {
+    // The single carve-out from the mark-all-unread filter: if the series'
+    // first issue is the next-up in a CBL list the user has progress in,
+    // the CBL card still surfaces (the series_next path is suppressed,
+    // but the CBL path runs independently and shows the issue with its
+    // list/position framing).
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-cbl-unread@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-cbl-unread").await;
+    let _issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-cbl-unread-2").await;
+    grant_access(&app, user.user_id, lib_id).await;
+    let _ = series_id;
+
+    let list_id = seed_cbl_list(&app, "CBL Carve", &[(0, &issue1_id), (1, &_issue2_id)]).await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
+
+    // Now "mark all unread" the series → both issues end up at zeroed
+    // progress rows.
+    let t1 = chrono::DateTime::parse_from_rfc3339("2030-02-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 0, false, t1).await;
+
+    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+    let cbl_cards: Vec<_> = items.iter().filter(|i| i["kind"] == "cbl_next").collect();
+    let series_cards: Vec<_> = items
+        .iter()
+        .filter(|i| i["kind"] == "series_next")
+        .collect();
+    assert!(
+        series_cards.is_empty(),
+        "fully-unread series must not surface as series_next, got {series_cards:?}"
+    );
+    assert_eq!(
+        cbl_cards.len(),
+        1,
+        "CBL carve-out: list still surfaces its next-unfinished entry"
+    );
+    assert_eq!(cbl_cards[0]["cbl_list_id"], list_id.to_string());
+    assert_eq!(cbl_cards[0]["issue"]["id"], issue1_id);
+    assert_eq!(cbl_cards[0]["position"], 1);
+}
+
+// ───── B-2: cbl_saved_view_id on CblNext ─────
+
+/// Wrap a CBL list in a kind='cbl' saved view so the on-deck handler
+/// can populate the `cbl_saved_view_id` field. Duplicated from the
+/// next_up test helpers by design (the two test files cover different
+/// handlers and the helper is tiny).
+async fn seed_cbl_saved_view(
+    app: &TestApp,
+    owner_user_id: Option<Uuid>,
+    cbl_list_id: Uuid,
+    name: &str,
+) -> Uuid {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    let id = Uuid::now_v7();
+    saved_view::ActiveModel {
+        id: Set(id),
+        user_id: Set(owner_user_id),
+        kind: Set("cbl".into()),
+        system_key: Set(None),
+        name: Set(name.into()),
+        description: Set(None),
+        custom_year_start: Set(None),
+        custom_year_end: Set(None),
+        custom_tags: Set(vec![]),
+        match_mode: Set(None),
+        conditions: Set(None),
+        sort_field: Set(None),
+        sort_order: Set(None),
+        result_limit: Set(None),
+        cbl_list_id: Set(Some(cbl_list_id)),
+        auto_pin: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn on_deck_cbl_next_carries_saved_view_id_when_one_exists() {
+    // B-2 fix: the home On Deck rail's CBL card must surface the
+    // saved-view id so the web can thread `?cbl=` onto the reader URL
+    // and keep the user's CBL context across page turns.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-cbl-sv@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-cbl-sv").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-cbl-sv-2").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let list_id = seed_cbl_list(&app, "Wrapped", &[(0, &issue1_id), (1, &issue2_id)]).await;
+    let sv_id = seed_cbl_saved_view(&app, None, list_id, "Wrapped view").await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let cbl_card = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "cbl_next")
+        .expect("cbl_next card should exist");
+    assert_eq!(cbl_card["cbl_list_id"], list_id.to_string());
+    assert_eq!(
+        cbl_card["cbl_saved_view_id"], sv_id.to_string(),
+        "saved-view id missing — web can't thread `?cbl=` without it"
+    );
+}
+
+#[tokio::test]
+async fn on_deck_cbl_next_omits_saved_view_id_when_no_view_wraps_the_list() {
+    // No saved view → field is absent (serde-skipped). The reader
+    // still works, just without persistent CBL context.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-cbl-no-sv@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-cbl-no-sv").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-cbl-no-sv-2").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let list_id = seed_cbl_list(&app, "Bare", &[(0, &issue1_id), (1, &issue2_id)]).await;
+    let _ = list_id;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let cbl_card = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "cbl_next")
+        .expect("cbl_next card should exist");
+    assert!(
+        cbl_card.get("cbl_saved_view_id").is_none()
+            || cbl_card["cbl_saved_view_id"].is_null(),
+        "expected cbl_saved_view_id absent / null; got {:?}",
+        cbl_card.get("cbl_saved_view_id")
+    );
+}
+
+#[tokio::test]
+async fn on_deck_cbl_saved_view_tiebreak_prefers_user_owned() {
+    // Tiebreak: if both a user-owned and a system-owned saved view
+    // wrap the same CBL, the user-owned one wins.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-cbl-tiebreak@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-cbl-tb").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-cbl-tb-2").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let list_id = seed_cbl_list(&app, "Shared", &[(0, &issue1_id), (1, &issue2_id)]).await;
+    // System saved view inserted FIRST (lower id); user-owned second.
+    // Without the tiebreak the system one would win on id order alone.
+    let _sys_sv = seed_cbl_saved_view(&app, None, list_id, "System wrap").await;
+    let user_sv = seed_cbl_saved_view(&app, Some(user.user_id), list_id, "My wrap").await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let cbl_card = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "cbl_next")
+        .expect("cbl_next card should exist");
+    assert_eq!(
+        cbl_card["cbl_saved_view_id"], user_sv.to_string(),
+        "user-owned saved view must win the tiebreak over system-owned"
     );
 }

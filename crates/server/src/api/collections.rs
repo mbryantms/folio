@@ -181,7 +181,11 @@ async fn fetch_owned(
     Ok(row)
 }
 
-fn to_view(model: &saved_view::Model, pin: Option<&user_view_pin::Model>) -> SavedViewView {
+fn to_view(
+    model: &saved_view::Model,
+    pin: Option<&user_view_pin::Model>,
+    pinned_on_pages: Vec<String>,
+) -> SavedViewView {
     let pinned = pin.map(|p| p.pinned).unwrap_or(false);
     let show_in_sidebar = pin.map(|p| p.show_in_sidebar).unwrap_or(false);
     SavedViewView {
@@ -211,6 +215,7 @@ fn to_view(model: &saved_view::Model, pin: Option<&user_view_pin::Model>) -> Sav
         is_system: model.user_id.is_none(),
         system_key: model.system_key.clone(),
         icon: pin.and_then(|p| p.icon.clone()),
+        pinned_on_pages,
     }
 }
 
@@ -264,16 +269,23 @@ pub(crate) async fn ensure_want_to_read_seeded(
             // under "Saved views". The pin row still lands so the
             // user's per-view icon override (`user_view_pins.icon`)
             // has a place to live should they customize it later.
-            let _ = user_view_pin::ActiveModel {
-                user_id: Set(user_id),
-                view_id: Set(m.id),
-                position: Set(0),
-                pinned: Set(false),
-                show_in_sidebar: Set(false),
-                icon: Set(Some("list-plus".into())),
+            // Multi-page rails M1: every pin row lives on a page. The seed
+            // belongs on the user's auto-created system page; if the lookup
+            // fails (only possible in pathological test states) we still
+            // return the saved view — the pin row is optional metadata.
+            if let Ok(page_id) = crate::pages::system_page_id(db, user_id).await {
+                let _ = user_view_pin::ActiveModel {
+                    user_id: Set(user_id),
+                    page_id: Set(page_id),
+                    view_id: Set(m.id),
+                    position: Set(0),
+                    pinned: Set(false),
+                    show_in_sidebar: Set(false),
+                    icon: Set(Some("list-plus".into())),
+                }
+                .insert(db)
+                .await;
             }
-            .insert(db)
-            .await;
             Ok(m)
         }
         Err(_) => {
@@ -322,6 +334,17 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
         .all(&app.db)
         .await
         .unwrap_or_default();
+    // Pin lookup for the legacy single-pin fields, plus a per-view
+    // page list for the multi-pin picker on the saved-view detail page.
+    let mut pinned_pages_by_view: HashMap<Uuid, Vec<String>> = HashMap::new();
+    for p in &pins {
+        if p.pinned {
+            pinned_pages_by_view
+                .entry(p.view_id)
+                .or_default()
+                .push(p.page_id.to_string());
+        }
+    }
     let pin_by_view: HashMap<Uuid, user_view_pin::Model> =
         pins.into_iter().map(|p| (p.view_id, p)).collect();
 
@@ -329,7 +352,10 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
     // pull WTR to the top in a stable second pass.)
     let mut items: Vec<SavedViewView> = rows
         .iter()
-        .map(|m| to_view(m, pin_by_view.get(&m.id)))
+        .map(|m| {
+            let pages = pinned_pages_by_view.get(&m.id).cloned().unwrap_or_default();
+            to_view(m, pin_by_view.get(&m.id), pages)
+        })
         .collect();
     items.sort_by(|a, b| {
         let a_wtr = a.system_key.as_deref() == Some(SYSTEM_KEY_WANT_TO_READ);
@@ -403,7 +429,7 @@ pub async fn create(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    (StatusCode::CREATED, Json(to_view(&saved, None))).into_response()
+    (StatusCode::CREATED, Json(to_view(&saved, None, Vec::new()))).into_response()
 }
 
 #[utoipa::path(
@@ -453,12 +479,31 @@ pub async fn update(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    let pin = user_view_pin::Entity::find_by_id((user.id, updated.id))
-        .one(&app.db)
+    // Fetch every pin row for this view so the response mirrors the
+    // list endpoint shape — `pinned_on_pages` keeps the multi-pin
+    // picker honest after an inline rename + refresh.
+    let all_pins: Vec<user_view_pin::Model> = user_view_pin::Entity::find()
+        .filter(user_view_pin::Column::UserId.eq(user.id))
+        .filter(user_view_pin::Column::ViewId.eq(updated.id))
+        .all(&app.db)
         .await
-        .ok()
-        .flatten();
-    Json(to_view(&updated, pin.as_ref())).into_response()
+        .unwrap_or_default();
+    let pages: Vec<String> = all_pins
+        .iter()
+        .filter(|p| p.pinned)
+        .map(|p| p.page_id.to_string())
+        .collect();
+    let system_pid = crate::pages::system_page_id(&app.db, user.id).await.ok();
+    let pin = all_pins
+        .iter()
+        .find(|p| Some(p.page_id) == system_pid)
+        .cloned()
+        .or_else(|| {
+            let mut sorted = all_pins.clone();
+            sorted.sort_by_key(|p| p.position);
+            sorted.into_iter().next()
+        });
+    Json(to_view(&updated, pin.as_ref(), pages)).into_response()
 }
 
 #[utoipa::path(

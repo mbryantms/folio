@@ -78,11 +78,7 @@ async fn register_authed(app: &TestApp, email: &str, password: &str) -> Authed {
     }
 }
 
-async fn patch_settings(
-    app: &TestApp,
-    auth: &Authed,
-    body: Value,
-) -> axum::http::Response<Body> {
+async fn patch_settings(app: &TestApp, auth: &Authed, body: Value) -> axum::http::Response<Body> {
     app.router
         .clone()
         .oneshot(
@@ -148,12 +144,7 @@ async fn hash_buffer_below_floor_rejected() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
-    let resp = patch_settings(
-        &app,
-        &admin,
-        json!({ "workers.scan_hash_buffer_kb": 32 }),
-    )
-    .await;
+    let resp = patch_settings(&app, &admin, json!({ "workers.scan_hash_buffer_kb": 32 })).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_combination");

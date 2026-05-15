@@ -1660,11 +1660,21 @@ async fn koreader_sync_put(
         // KOReader expects 401 (not 404) when the hash is unknown to
         // the syncing user — keeps the client's retry behavior sane on
         // device-side cache drift.
-        Ok(None) => return error(StatusCode::UNAUTHORIZED, "document_unknown", "document_unknown"),
+        Ok(None) => {
+            return error(
+                StatusCode::UNAUTHORIZED,
+                "document_unknown",
+                "document_unknown",
+            );
+        }
         Err(e) => return server_error(e.to_string()),
     };
     if !visible(&app, &user, row.library_id).await {
-        return error(StatusCode::UNAUTHORIZED, "document_unknown", "document_unknown");
+        return error(
+            StatusCode::UNAUTHORIZED,
+            "document_unknown",
+            "document_unknown",
+        );
     }
     let page_count = row.page_count.unwrap_or(0).max(0);
     let page = if page_count > 0 {
@@ -1672,24 +1682,22 @@ async fn koreader_sync_put(
     } else {
         0
     };
-    let finished_hint = if req.percentage >= 1.0 { Some(true) } else { None };
+    let finished_hint = if req.percentage >= 1.0 {
+        Some(true)
+    } else {
+        None
+    };
     // Roll the KOReader marker string into the `device` column so a
     // later GET can echo it back. `device` is the only free-form
     // string column on `progress_records`, hence the double duty.
     let device = req.progress.clone().or(req.device.clone());
-    let model = match crate::api::progress::upsert_for(
-        &app,
-        user.id,
-        &row,
-        page,
-        finished_hint,
-        device,
-    )
-    .await
-    {
-        Ok(m) => m,
-        Err(e) => return server_error(e.to_string()),
-    };
+    let model =
+        match crate::api::progress::upsert_for(&app, user.id, &row, page, finished_hint, device)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => return server_error(e.to_string()),
+        };
 
     audit::record(
         &app.db,

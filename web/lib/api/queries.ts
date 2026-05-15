@@ -46,7 +46,9 @@ import type {
   CblWindowView,
   ContinueReadingView,
   HealthIssueView,
+  NextUpView,
   OnDeckView,
+  PageView,
   PreviewReq,
   RefreshLogListView,
   IssueListView,
@@ -285,6 +287,8 @@ export const queryKeys = {
    *  full visible list. */
   savedViews: (filters: SavedViewListFilters = {}) =>
     ["saved-views", "list", filters] as const,
+  /** Multi-page rails: the user's full page list (system + custom). */
+  mePages: ["me", "pages"] as const,
   savedView: (id: string) => ["saved-views", "detail", id] as const,
   savedViewResults: (id: string, cursor?: string) =>
     ["saved-views", "results", id, cursor ?? null] as const,
@@ -330,6 +334,17 @@ export const queryKeys = {
   continueReading: ["rails", "continue-reading"] as const,
   /** On-deck rail (`/me/on-deck`). Same invalidation set as continueReading. */
   onDeck: ["rails", "on-deck"] as const,
+  /** Reader's single-issue "what's next?" resolver
+   *  (`/issues/{id}/next-up`). Separate cache entry per (issue, cbl)
+   *  pairing so a CBL-context read and a series-context read don't
+   *  trample each other's results. */
+  nextUp: (issueId: string, cblSavedViewId?: string | null) =>
+    ["reader", "next-up", issueId, cblSavedViewId ?? ""] as const,
+  /** Reader's single-issue "what came before?" resolver
+   *  (`/issues/{id}/prev-up`). Symmetric with nextUp; pure sequence
+   *  nav, doesn't filter by finished state. */
+  prevUp: (issueId: string, cblSavedViewId?: string | null) =>
+    ["reader", "prev-up", issueId, cblSavedViewId ?? ""] as const,
   /** Catalog source list (admin-managed, public read). */
   catalogSources: ["catalog", "sources"] as const,
   /** Cached `.cbl` listing inside a configured catalog source. */
@@ -356,6 +371,11 @@ export type CblEntriesFilters = {
 
 export type SavedViewListFilters = {
   pinned?: boolean;
+  /** Multi-page rails M3: restrict the pinned filter to a single page.
+   *  When set, the result is the views pinned on that page only and
+   *  implies `pinned=true` server-side. Omit + pair with `pinned: true`
+   *  for the legacy "system Home" alias still supported in M3-M5. */
+  pinnedOn?: string;
 };
 
 export type AdminLogFilters = {
@@ -956,10 +976,28 @@ export function useSavedViews(filters: SavedViewListFilters = {}) {
   if (typeof filters.pinned === "boolean") {
     params.pinned = String(filters.pinned);
   }
+  if (filters.pinnedOn) {
+    params.pinned_on = filters.pinnedOn;
+  }
   return useQuery({
     queryKey: queryKeys.savedViews(filters),
     queryFn: () =>
       jsonFetch<SavedViewListView>(`/me/saved-views${buildQuery(params)}`),
+    placeholderData: keepPreviousData,
+    // pinnedOn is gated on resolving the system page id; skip the
+    // request until the caller has it.
+    enabled: filters.pinnedOn === undefined || filters.pinnedOn.length > 0,
+  });
+}
+
+/** Multi-page rails: list the user's pages (system Home + custom).
+ *  Drives the `/pages/[slug]` route resolver and the upcoming multi-pin
+ *  picker. Stable cache — `useMePages()` is safe to call from any tree
+ *  without coordination. */
+export function useMePages() {
+  return useQuery({
+    queryKey: queryKeys.mePages,
+    queryFn: () => jsonFetch<PageView[]>("/me/pages"),
     placeholderData: keepPreviousData,
   });
 }
@@ -1348,6 +1386,58 @@ export function useOnDeck() {
   return useQuery({
     queryKey: queryKeys.onDeck,
     queryFn: () => jsonFetch<OnDeckView>("/me/on-deck"),
+  });
+}
+
+/** Per-issue "what should I read next?" resolver — drives the reader's
+ *  `Shift+N` keybind and the end-of-issue card (M4). Picks CBL > series
+ *  > none. Pass the saved-view id of the CBL the user is reading through
+ *  via `cblSavedViewId`; omit it for series-only resolution.
+ *
+ *  Cached for 5 minutes — progress flips that move the resolved target
+ *  show up via the existing progress-mutation invalidation chain on the
+ *  *next* read; not worth a tighter loop since the reader is mostly
+ *  read-only during a single session. */
+export function useNextUp(
+  issueId: string,
+  cblSavedViewId?: string | null,
+  opts?: { enabled?: boolean },
+) {
+  const enabled = (opts?.enabled ?? true) && issueId.length > 0;
+  return useQuery({
+    queryKey: queryKeys.nextUp(issueId, cblSavedViewId),
+    queryFn: () => {
+      const qs = cblSavedViewId
+        ? `?cbl=${encodeURIComponent(cblSavedViewId)}`
+        : "";
+      return jsonFetch<NextUpView>(`/issues/${encodeURIComponent(issueId)}/next-up${qs}`);
+    },
+    enabled,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** Per-issue "what came before?" resolver — sibling to `useNextUp` for
+ *  the reader's `Shift+P` keybind. Picks CBL > series > none. Pure
+ *  sequential navigation; doesn't filter by finished state (a user
+ *  pressing `Shift+P` is asking to back up one step, not to find an
+ *  unread issue). `fallback_suggestion` is never populated for prev. */
+export function usePrevUp(
+  issueId: string,
+  cblSavedViewId?: string | null,
+  opts?: { enabled?: boolean },
+) {
+  const enabled = (opts?.enabled ?? true) && issueId.length > 0;
+  return useQuery({
+    queryKey: queryKeys.prevUp(issueId, cblSavedViewId),
+    queryFn: () => {
+      const qs = cblSavedViewId
+        ? `?cbl=${encodeURIComponent(cblSavedViewId)}`
+        : "";
+      return jsonFetch<NextUpView>(`/issues/${encodeURIComponent(issueId)}/prev-up${qs}`);
+    },
+    enabled,
+    staleTime: 5 * 60 * 1000,
   });
 }
 

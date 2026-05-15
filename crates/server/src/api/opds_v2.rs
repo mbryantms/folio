@@ -32,9 +32,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use entity::{
-    cbl_entry, cbl_list, collection_entry, issue, saved_view, series, user_view_pin,
-};
+use entity::{cbl_entry, cbl_list, collection_entry, issue, saved_view, series, user_view_pin};
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, Statement, sea_query::PostgresQueryBuilder,
@@ -649,10 +647,7 @@ fn publication_for(
             .unwrap_or_else(|| "Issue".into())
     });
     let mut metadata = serde_json::Map::new();
-    metadata.insert(
-        "@type".into(),
-        Value::from("http://schema.org/Periodical"),
-    );
+    metadata.insert("@type".into(), Value::from("http://schema.org/Periodical"));
     metadata.insert("title".into(), Value::from(label));
     metadata.insert(
         "identifier".into(),
@@ -666,19 +661,13 @@ fn publication_for(
         metadata.insert("language".into(), Value::from(lang));
     }
     if let Some(pub_) = i.publisher.as_deref().filter(|s| !s.is_empty()) {
-        metadata.insert(
-            "publisher".into(),
-            json!({ "name": pub_ }),
-        );
+        metadata.insert("publisher".into(), json!({ "name": pub_ }));
     }
     if let Some(d) = opds::iso_date_from_ymd(i.year, i.month, i.day) {
         metadata.insert("published".into(), Value::from(d));
     }
     if let Some(name) = opds::first_csv_field(i.writer.as_deref()) {
-        metadata.insert(
-            "author".into(),
-            json!([{ "name": name }]),
-        );
+        metadata.insert("author".into(), json!([{ "name": name }]));
     }
     let mut subjects: Vec<Value> = Vec::new();
     for c in opds::csv_fields(i.genre.as_deref()).chain(opds::csv_fields(i.tags.as_deref())) {
@@ -736,7 +725,10 @@ fn publication_for(
 
 fn series_nav_entry(s: &series::Model) -> Value {
     let mut metadata = serde_json::Map::new();
-    metadata.insert("identifier".into(), Value::from(format!("urn:series:{}", s.id)));
+    metadata.insert(
+        "identifier".into(),
+        Value::from(format!("urn:series:{}", s.id)),
+    );
     metadata.insert("modified".into(), Value::from(s.updated_at.to_rfc3339()));
     if let Some(summary) = s.summary.as_deref().filter(|s| !s.is_empty()) {
         metadata.insert("description".into(), Value::from(summary));
@@ -905,4 +897,3 @@ fn url_escape(s: &str) -> String {
         })
         .collect()
 }
-

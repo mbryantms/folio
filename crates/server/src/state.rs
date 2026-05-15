@@ -5,7 +5,7 @@ use crate::email::{Email, EmailSender, EmailStatus};
 use crate::jobs::JobRuntime;
 use crate::library::events::Broadcaster;
 use crate::library::zip_lru::ZipLru;
-use crate::observability::{LogRingBuffer, LogReloadHandle};
+use crate::observability::{LogReloadHandle, LogRingBuffer};
 use crate::secrets::Secrets;
 use arc_swap::ArcSwap;
 use metrics_exporter_prometheus::PrometheusHandle;
@@ -99,7 +99,7 @@ impl AppState {
         jobs: JobRuntime,
         email: Arc<dyn EmailSender>,
     ) -> Self {
-        let zip_lru = ZipLru::new(cfg.zip_lru_capacity);
+        let zip_lru = ZipLru::new(cfg.zip_lru_capacity, cfg.archive_limits());
         let thumb_inline_parallel = cfg.thumb_inline_parallel.max(1);
         let thumb_inline_semaphore = Arc::new(Semaphore::new(thumb_inline_parallel));
         let archive_work_parallel = cfg.archive_work_parallel.max(1);

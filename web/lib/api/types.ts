@@ -541,6 +541,11 @@ export type OnDeckCard =
       issue: IssueSummaryView;
       cbl_list_id: string;
       cbl_list_name: string;
+      /** Saved-view id (kind=`cbl`) wrapping this CBL list, when the
+       *  caller can see one. Threaded onto reader URLs as `?cbl=<id>`
+       *  so the next-up resolver keeps picking from the list across
+       *  page turns. Absent when no saved view points at this list. */
+      cbl_saved_view_id?: string;
       /** 1-based, matches the CBL detail page's "#N" badge. */
       position: number;
       last_activity: string;
@@ -555,6 +560,29 @@ export type CreateRailDismissalReq = {
   /** One of `'issue' | 'series' | 'cbl'`. */
   target_kind: "issue" | "series" | "cbl";
   target_id: string;
+};
+
+/** Response shape for `GET /issues/{id}/next-up?cbl=<saved_view_id>`. Drives
+ *  the reader's "next issue" affordances (keybind, end-of-issue card).
+ *  Resolution order: CBL > series > none. CBL fields only populated when
+ *  `source === "cbl"`. `fallback_suggestion` is reserved — always null in
+ *  M1; populated in M4/M5 when the end-of-issue card needs the peek. */
+export type NextUpSource = "cbl" | "series" | "none";
+
+export type NextUpView = {
+  source: NextUpSource;
+  target?: IssueSummaryView;
+  cbl_list_id?: string;
+  cbl_list_name?: string;
+  /** 1-based position of the target entry within the CBL ("3 of 24"). */
+  cbl_position?: number;
+  cbl_total?: number;
+  fallback_suggestion?: OnDeckCard;
+  /** Server flag: the caller passed `?cbl=<id>` but the current issue
+   *  wasn't actually in that CBL. The reader page wrapper scrubs the
+   *  dead param from the URL via `router.replace` so a refresh / shared
+   *  link no longer carries the stale reference. */
+  cbl_param_was_stale?: boolean;
 };
 
 // ---------- Reading sessions (M6a) ----------
@@ -1459,6 +1487,10 @@ export type SavedViewView = {
   /** Per-user icon override key. `null` falls back to a kind-based
    *  default resolved client-side via the rail-icon registry. */
   icon?: string | null;
+  /** Multi-page rails M6: every page (system + custom) this view is
+   *  currently pinned to. Drives the multi-pin picker. Empty when no
+   *  pin rows exist. Always populated regardless of `pinnedOn` filter. */
+  pinned_on_pages: string[];
   created_at: string;
   updated_at: string;
 };
@@ -1504,13 +1536,43 @@ export type PreviewReq = {
 
 export type PinView = {
   view_id: string;
+  /** Page this row belongs to. Multi-page rails M3: every pin is
+   *  scoped to a `(user, page, view)` triple; this field identifies
+   *  the page for the row in the response. */
+  page_id: string;
   pinned: boolean;
   position?: number | null;
 };
 
+/** Body for `POST /me/saved-views/{id}/pin`. Send `{ page_ids: [...] }`
+ *  to pin the view to one or more pages in a single call. Omit (or send
+ *  an empty array) and the server defaults to the caller's system Home
+ *  page — a transitional shim for the legacy single-pin call site
+ *  removed in M5/M6 once the multi-pin picker ships. */
+export type PinReq = {
+  page_ids?: string[];
+};
+
+/** Body for `POST /me/saved-views/{id}/unpin`. `page_id` defaults to
+ *  the caller's system Home page when omitted (legacy shim). */
+export type UnpinReq = {
+  page_id?: string | null;
+};
+
 // ---------- Sidebar layout (navigation customization M1) ----------
 
-export type SidebarEntryKind = "builtin" | "library" | "view";
+/** `"header"` and `"spacer"` are layout-only rows the user can insert
+ *  to organize the sidebar — they carry no link, only a label (header)
+ *  or a visual gap (spacer). Default section titles are emitted by the
+ *  server as `kind="header"` entries with stable `ref_id`s like
+ *  `default:browse`, `default:libraries`. */
+export type SidebarEntryKind =
+  | "builtin"
+  | "library"
+  | "view"
+  | "page"
+  | "header"
+  | "spacer";
 
 export type SidebarEntryView = {
   kind: SidebarEntryKind;
@@ -1533,6 +1595,10 @@ export type UpdateEntryReq = {
   ref_id: string;
   visible: boolean;
   position: number;
+  /** Required for `kind='header'`; ignored for `kind='spacer'`;
+   *  optional override for other kinds (null/missing falls back to
+   *  the server-resolved label). */
+  label?: string | null;
 };
 
 export type UpdateLayoutReq = {
@@ -1760,6 +1826,51 @@ export type AddEntryReq = {
 export type ReorderEntriesReq = {
   /** Must include every current entry id — partial reorders rejected. */
   entry_ids: string[];
+};
+
+// ─── Pages (multi-page rails M2) ───
+
+/** A user-owned page that pins saved-view rails. Every user has one
+ *  `is_system = true` row named "Home" (slug `home`) reachable at `/`.
+ *  Custom pages live at `/pages/{slug}`. */
+export type PageView = {
+  id: string;
+  name: string;
+  /** Per-user unique slug. System page is always `"home"`. */
+  slug: string;
+  is_system: boolean;
+  position: number;
+  /** Count of `user_view_pin` rows where `pinned = true` for this
+   *  (user, page) pair. Drives sidebar badges + page-picker readouts
+   *  without a separate pins fetch. */
+  pin_count: number;
+  /** Optional free-form description rendered under the title.
+   *  `null` (or absent) hides the descriptor row. */
+  description?: string | null;
+  /** Whether this page appears in the sidebar nav. System pages always
+   *  surface via the builtin Home entry; the toggle is exposed only on
+   *  custom pages. */
+  show_in_sidebar: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreatePageReq = {
+  name: string;
+};
+
+export type UpdatePageReq = {
+  name?: string;
+  /** Omit (or send `null`) to leave the description alone. Send an
+   *  empty string to clear it; serde can't reliably distinguish a
+   *  missing field from an explicit null. */
+  description?: string | null;
+};
+
+export type ReorderPagesReq = {
+  /** Must include every owned page id exactly once (including the
+   *  system page) — partial reorders rejected. */
+  page_ids: string[];
 };
 
 // ─── Markers (markers + collections M5) ───

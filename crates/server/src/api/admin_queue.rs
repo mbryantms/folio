@@ -8,7 +8,7 @@
 
 use apalis::prelude::Storage;
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -16,7 +16,9 @@ use axum::{
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 
+use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
+use crate::middleware::RequestContext;
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -92,7 +94,8 @@ pub async fn queue_depth(
 )]
 pub async fn clear_queue(
     axum::extract::State(app): axum::extract::State<AppState>,
-    _admin: RequireAdmin,
+    admin: RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     Json(req): Json<QueueClearReq>,
 ) -> impl IntoResponse {
     let before = match queue_depth_counts(&app).await {
@@ -129,6 +132,29 @@ pub async fn clear_queue(
             return internal();
         }
     };
+
+    // Per CLAUDE.md, every mutating admin handler emits via
+    // `crate::audit::record`. The queue isn't a single addressable
+    // entity so `target_id` stays None; the payload carries the target
+    // tag + before/after depths so the audit row is self-documenting.
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: admin.0.id,
+            action: "admin.queue.clear",
+            target_type: Some("queue"),
+            target_id: None,
+            payload: serde_json::json!({
+                "target": req.target,
+                "deleted_keys": deleted_keys,
+                "before": before,
+                "after": after,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
 
     Json(QueueClearResp {
         target: req.target,

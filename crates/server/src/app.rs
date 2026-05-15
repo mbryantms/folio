@@ -93,6 +93,8 @@ use utoipa::OpenApi;
         api::rails::on_deck,
         api::rails::create_dismissal,
         api::rails::delete_dismissal,
+        api::next_up::next_up,
+        api::next_up::prev_up,
         api::reading_sessions::upsert,
         api::reading_sessions::list,
         api::reading_sessions::stats,
@@ -147,6 +149,12 @@ use utoipa::OpenApi;
         api::collections::add_entry,
         api::collections::remove_entry,
         api::collections::reorder_entries,
+        api::pages::list,
+        api::pages::create,
+        api::pages::update,
+        api::pages::delete_one,
+        api::pages::reorder,
+        api::pages::set_sidebar,
         api::markers::list,
         api::markers::create,
         api::markers::count,
@@ -247,6 +255,8 @@ use utoipa::OpenApi;
         api::rails::OnDeckCard,
         api::rails::ProgressInfo,
         api::rails::CreateDismissalReq,
+        api::next_up::NextUpView,
+        api::next_up::NextUpSource,
         api::reading_sessions::UpsertReq,
         api::reading_sessions::ReadingSessionView,
         api::reading_sessions::ReadingSessionListView,
@@ -324,6 +334,11 @@ use utoipa::OpenApi;
         api::collections::UpdateCollectionReq,
         api::collections::AddEntryReq,
         api::collections::ReorderEntriesReq,
+        api::pages::PageView,
+        api::pages::CreatePageReq,
+        api::pages::UpdatePageReq,
+        api::pages::ReorderPagesReq,
+        api::pages::SetSidebarQuery,
         api::markers::MarkerView,
         api::markers::MarkerListView,
         api::markers::MarkerCountView,
@@ -405,8 +420,8 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     if let Err(e) = crate::settings::bootstrap::seed_auth_from_env(&db, &cfg, &secrets).await {
         tracing::warn!(error = %e, "auth env bootstrap failed; falling back to env-only");
     }
-    if let Err(e) = crate::settings::bootstrap::seed_tokens_and_diagnostics_from_env(&db, &cfg)
-        .await
+    if let Err(e) =
+        crate::settings::bootstrap::seed_tokens_and_diagnostics_from_env(&db, &cfg).await
     {
         tracing::warn!(error = %e, "tokens/diagnostics env bootstrap failed; falling back to env-only");
     }
@@ -566,6 +581,7 @@ pub fn router(state: AppState) -> Router {
         .merge(api::thumbnails::routes())
         .merge(api::progress::routes())
         .merge(api::rails::routes())
+        .merge(api::next_up::routes())
         .merge(api::ratings::routes())
         .merge(api::reading_sessions::routes())
         .merge(api::admin_stats::routes())
@@ -573,6 +589,7 @@ pub fn router(state: AppState) -> Router {
         .merge(api::sidebar_layout::routes())
         .merge(api::cbl_lists::routes())
         .merge(api::collections::routes())
+        .merge(api::pages::routes())
         .merge(api::markers::routes())
         .merge(api::filter_options::routes())
         .merge(api::admin_logs::routes())

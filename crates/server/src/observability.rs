@@ -323,7 +323,23 @@ pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
         .init();
 
     if cfg.otlp_endpoint.is_some() {
-        tracing::info!("OTLP exporter requested but OTel wiring is deferred to a later sub-phase");
+        // The original §13 plan was to ship a tracing-opentelemetry
+        // exporter behind this env var. After implementing Phases 2-3
+        // it was reconsidered and dropped for v1 (2026-05-15): the
+        // opentelemetry crate stack has a notoriously volatile compat
+        // matrix, no real demand has materialized (the Prometheus
+        // `/metrics` endpoint already covers the operator-monitoring
+        // use case), and the runtime-config admin slice for OTLP
+        // would still need design work. Logged here so a self-hoster
+        // who set the env var sees a clear "not wired" hint.
+        //
+        // Re-evaluate if: a hosted Folio deployment ships (needs
+        // remote-traces shipping), OR a user reports a real need.
+        // See docs/dev/incompleteness-audit.md §D-9.
+        tracing::info!(
+            "COMIC_OTLP_ENDPOINT is set but OTLP wiring is intentionally not shipped in v1 \
+             (considered, not chosen — see incompleteness-audit.md §D-9)"
+        );
     }
 
     let prometheus = PrometheusBuilder::new()

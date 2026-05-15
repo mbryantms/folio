@@ -96,6 +96,19 @@ pub enum OnDeckCard {
         issue: IssueSummaryView,
         cbl_list_id: String,
         cbl_list_name: String,
+        /// Saved-view id (kind=`cbl`) wrapping this CBL list, when the
+        /// caller can see one. Web threads it onto the reader URL as
+        /// `?cbl=<id>` so the next-up resolver keeps picking from the
+        /// list across page turns. `None` when no saved view points at
+        /// this `cbl_list_id` for the caller — the reader still works,
+        /// just without persistent CBL context.
+        ///
+        /// Tiebreak when multiple saved views match: user-owned wins
+        /// over system-owned (NULL `user_id`); within a tier, lowest
+        /// `id` wins. Stable + cheap; the picker UI can pick a
+        /// different one later if needed.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cbl_saved_view_id: Option<String>,
         /// 1-based position of the entry within its CBL list (matches the
         /// "#N" badge the CBL detail UI shows).
         position: i32,
@@ -245,6 +258,27 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
 )]
 pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response {
     let acl = access::for_user(&app, &user).await;
+    let mut items = match compute_on_deck(&app, user.id, &acl).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    items.truncate(24);
+    Json(OnDeckView { items }).into_response()
+}
+
+/// Composes the On Deck rail's cards (series_next + cbl_next mixed),
+/// sorted by most-recent activity desc. Same logic the `/me/on-deck`
+/// handler ships — extracted so the next-up resolver can ask for a
+/// single "top" card to render as the caught-up state's fallback
+/// suggestion. Returns the FULL sorted list; callers cap as they need.
+///
+/// Pre-D-6 this was inline inside `on_deck`; the extraction is purely
+/// mechanical (same queries, same dedup, same ordering).
+pub(crate) async fn compute_on_deck(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &access::VisibleLibraries,
+) -> Result<Vec<OnDeckCard>, Response> {
     let mut items: Vec<(chrono::DateTime<chrono::FixedOffset>, OnDeckCard)> = Vec::new();
     // SeriesNext cards are deferred into this buffer and filtered against
     // the CBL set after both queries run. CBL framing wins on overlap: the
@@ -258,10 +292,14 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
 
     // ───── series_next candidates ─────
     //
-    // Series the user has any progress in, MAX(updated_at) per series, but
-    // excluding series with a still-in-progress issue (those land in
-    // Continue Reading instead). Dismissals are honored with auto-restore
-    // (the dismissal expires once new progress lands past `dismissed_at`).
+    // Series the user has *meaningful* progress in, MAX(updated_at) per
+    // series, but excluding series with a still-in-progress issue (those
+    // land in Continue Reading instead). "Meaningful" = finished OR read
+    // past page 0; "mark all as unread" writes (last_page=0, finished=
+    // false) rows rather than deleting, so without this filter a fully-
+    // reset series would keep surfacing the first issue as on-deck.
+    // Dismissals are honored with auto-restore (the dismissal expires
+    // once new progress lands past `dismissed_at`).
     #[derive(Debug, FromQueryResult)]
     struct SeriesRow {
         series_id: Uuid,
@@ -280,6 +318,7 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
                     WHERE p.user_id = $1
                       AND i.state = 'active'
                       AND i.removed_at IS NULL
+                      AND (p.finished = true OR p.last_page > 0)
                     GROUP BY i.series_id
                 ),
                 in_progress AS (
@@ -306,7 +345,7 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
                 ORDER BY started.last_activity DESC
                 LIMIT 40
             "#,
-            [user.id.into()],
+            [user_id.into()],
         ))
         .all(&app.db)
         .await
@@ -314,7 +353,7 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "rails: on-deck series query failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                return Err(error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"));
             }
         };
 
@@ -322,10 +361,11 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
         if !acl.contains(row.library_id) {
             continue;
         }
-        let next = match pick_next_in_series(&app, user.id, row.series_id).await {
-            Ok(opt) => opt,
-            Err(resp) => return resp,
-        };
+        let next =
+            match crate::api::next_up::pick_next_in_series(app, user_id, row.series_id).await {
+                Ok(opt) => opt,
+                Err(resp) => return Err(resp),
+            };
         let Some(issue_model) = next else { continue };
         // Resolve the slug now (the join column wasn't in our CTE).
         let series_row = match series::Entity::find_by_id(row.series_id).one(&app.db).await {
@@ -350,6 +390,45 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
     // next_entry_issue_id) tuple in one query per list for clarity; the
     // total candidate count is bounded by the user's actual CBL usage so
     // the round-trip count is small in practice.
+    //
+    // Pre-fetch the (cbl_list_id → saved_view_id) lookup for every
+    // saved view of kind='cbl' the caller can see. Lets each CblNext
+    // card carry the saved-view id so the web can thread `?cbl=` onto
+    // the reader URL. Tiebreak: user-owned saved view wins over
+    // system-owned (NULL user_id); within a tier, lowest id wins.
+    let cbl_saved_view_by_list_id: std::collections::HashMap<Uuid, Uuid> = {
+        use entity::saved_view;
+        use sea_orm::{Condition, QueryOrder};
+        let rows = match saved_view::Entity::find()
+            .filter(saved_view::Column::Kind.eq("cbl"))
+            .filter(saved_view::Column::CblListId.is_not_null())
+            .filter(
+                Condition::any()
+                    .add(saved_view::Column::UserId.is_null())
+                    .add(saved_view::Column::UserId.eq(user_id)),
+            )
+            // user-owned rows (UserId IS NOT NULL) first; within tier, lowest id wins.
+            .order_by_desc(Expr::cust("user_id IS NOT NULL"))
+            .order_by_asc(saved_view::Column::Id)
+            .all(&app.db)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "rails: on-deck saved-view lookup failed");
+                return Err(error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"));
+            }
+        };
+        let mut map = std::collections::HashMap::new();
+        for sv in rows {
+            if let Some(list_id) = sv.cbl_list_id {
+                // First insert wins thanks to the ORDER BY tiebreak.
+                map.entry(list_id).or_insert(sv.id);
+            }
+        }
+        map
+    };
+
     #[derive(Debug, FromQueryResult)]
     struct CblCandidate {
         cbl_list_id: Uuid,
@@ -376,7 +455,7 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
                 ORDER BY MAX(p.updated_at) DESC
                 LIMIT 40
             "#,
-            [user.id.into()],
+            [user_id.into()],
         ))
         .all(&app.db)
         .await
@@ -384,19 +463,30 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "rails: on-deck cbl query failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                return Err(error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"));
             }
         };
 
     for cand in &cbl_candidates {
-        let next = match pick_next_in_cbl(&app, user.id, cand.cbl_list_id, &acl).await {
+        let next = match crate::api::next_up::pick_next_in_cbl(
+            app,
+            user_id,
+            cand.cbl_list_id,
+            acl,
+            None,
+        )
+        .await
+        {
             Ok(opt) => opt,
-            Err(resp) => return resp,
+            Err(resp) => return Err(resp),
         };
         let Some((issue_model, series_slug, series_name, position)) = next else {
             continue;
         };
         cbl_issue_ids.insert(issue_model.id.clone());
+        let cbl_saved_view_id = cbl_saved_view_by_list_id
+            .get(&cand.cbl_list_id)
+            .map(|id| id.to_string());
         items.push((
             cand.last_activity,
             OnDeckCard::CblNext {
@@ -404,6 +494,7 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
                     .with_series_name(series_name),
                 cbl_list_id: cand.cbl_list_id.to_string(),
                 cbl_list_name: cand.cbl_list_name.clone(),
+                cbl_saved_view_id,
                 position,
                 last_activity: cand.last_activity.to_rfc3339(),
             },
@@ -420,188 +511,37 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
         items.push((ts, card));
     }
 
-    // Merge by most-recent activity desc + cap.
+    // Merge by most-recent activity desc; caller caps to per-surface
+    // limit (the rail truncates to 24, the next-up resolver takes 1).
     items.sort_by(|a, b| b.0.cmp(&a.0));
-    items.truncate(24);
-    let payload = OnDeckView {
-        items: items.into_iter().map(|(_, c)| c).collect(),
-    };
-    Json(payload).into_response()
+    Ok(items.into_iter().map(|(_, c)| c).collect())
 }
 
-/// Server-side port of the client's `pickNextIssue` algorithm
-/// ([web/lib/reading-state.ts]) — applied to a single series. Returns the
-/// next-unread `issue::Model` or `None` if every active issue is already
-/// finished / there are no active issues at all.
-///
-/// Called from the On Deck handler only after we've already filtered out
-/// series with an in-progress issue, so step 1 of the original algorithm
-/// (continue resumable in-progress) is a no-op here. We still apply step
-/// 2 (first unfinished) and skip step 3 (all-finished restart) because
-/// "Read again" doesn't belong in an On Deck queue.
-async fn pick_next_in_series(
+/// Top On Deck card for the user, excluding cards that target the
+/// given issue (so the next-up resolver doesn't suggest the issue the
+/// reader is already on). Drives the `fallback_suggestion` field on
+/// `NextUpView` when `source == "none"`. Returns `Ok(None)` when no
+/// applicable card exists (new user, fully caught-up, etc.).
+pub(crate) async fn top_on_deck_card(
     app: &AppState,
     user_id: Uuid,
-    series_id: Uuid,
-) -> Result<Option<issue::Model>, Response> {
-    use entity::progress_record;
-    use sea_orm::QueryOrder;
-
-    let issues: Vec<issue::Model> = match issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
-        .order_by_asc(Expr::cust("sort_number IS NULL"))
-        .order_by_asc(issue::Column::SortNumber)
-        .order_by_asc(issue::Column::Id)
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "rails: pick_next_in_series issues lookup failed");
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            ));
-        }
-    };
-    if issues.is_empty() {
-        return Ok(None);
-    }
-    let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
-    let progress_rows = match progress_record::Entity::find()
-        .filter(progress_record::Column::UserId.eq(user_id))
-        .filter(progress_record::Column::IssueId.is_in(issue_ids))
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "rails: pick_next_in_series progress lookup failed");
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            ));
-        }
-    };
-    let progress_by_id: std::collections::HashMap<String, progress_record::Model> = progress_rows
-        .into_iter()
-        .map(|p| (p.issue_id.clone(), p))
-        .collect();
-
-    // First not-finished issue in sort order. Caller has already excluded
-    // series with mid-issue in-progress rows, so any unread / unstarted
-    // issue here is the right pick.
-    for iss in issues {
-        let progress = progress_by_id.get(&iss.id);
-        let finished = progress.map(|p| p.finished).unwrap_or(false);
-        if !finished {
-            return Ok(Some(iss));
-        }
-    }
-    Ok(None)
-}
-
-/// For a CBL list, find the lowest-position matched entry whose issue is
-/// not yet finished + is visible to the user (library ACL). Returns the
-/// issue + parent series (slug, name) + 1-based position when found, or
-/// `None` when every matched entry is finished or no matched entry
-/// passes the ACL filter.
-async fn pick_next_in_cbl(
-    app: &AppState,
-    user_id: Uuid,
-    cbl_list_id: Uuid,
     acl: &access::VisibleLibraries,
-) -> Result<Option<(issue::Model, String, String, i32)>, Response> {
-    use entity::{cbl_entry, progress_record};
-    use sea_orm::QueryOrder;
-
-    let entries = match cbl_entry::Entity::find()
-        .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
-        .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
-        .order_by_asc(cbl_entry::Column::Position)
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "rails: pick_next_in_cbl entries lookup failed");
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            ));
-        }
-    };
-    if entries.is_empty() {
-        return Ok(None);
-    }
-
-    // Pull progress rows for all matched issues at once so per-entry
-    // status checks are O(1).
-    let matched_ids: Vec<String> = entries
-        .iter()
-        .filter_map(|e| e.matched_issue_id.clone())
-        .collect();
-    let progress_rows = match progress_record::Entity::find()
-        .filter(progress_record::Column::UserId.eq(user_id))
-        .filter(progress_record::Column::IssueId.is_in(matched_ids))
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "rails: pick_next_in_cbl progress lookup failed");
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            ));
-        }
-    };
-    let progress_by_issue: std::collections::HashMap<String, progress_record::Model> =
-        progress_rows
-            .into_iter()
-            .map(|p| (p.issue_id.clone(), p))
-            .collect();
-
-    for entry in entries {
-        let Some(issue_id) = entry.matched_issue_id.clone() else {
-            continue;
+    exclude_issue_id: Option<&str>,
+) -> Result<Option<OnDeckCard>, Response> {
+    let cards = compute_on_deck(app, user_id, acl).await?;
+    Ok(cards.into_iter().find(|c| {
+        let id = match c {
+            OnDeckCard::SeriesNext { issue, .. } | OnDeckCard::CblNext { issue, .. } => {
+                issue.id.as_str()
+            }
         };
-        let finished = progress_by_issue
-            .get(&issue_id)
-            .map(|p| p.finished)
-            .unwrap_or(false);
-        if finished {
-            continue;
-        }
-        // Resolve the issue + parent series for ACL + slug.
-        let Ok(Some(issue_model)) = issue::Entity::find_by_id(issue_id).one(&app.db).await else {
-            continue;
-        };
-        if !acl.contains(issue_model.library_id) {
-            continue;
-        }
-        let (series_slug, series_name) = match series::Entity::find_by_id(issue_model.series_id)
-            .one(&app.db)
-            .await
-        {
-            Ok(Some(s)) => (s.slug, s.name),
-            _ => continue,
-        };
-        return Ok(Some((
-            issue_model,
-            series_slug,
-            series_name,
-            entry.position + 1,
-        )));
-    }
-    Ok(None)
+        exclude_issue_id != Some(id)
+    }))
 }
+
+// `pick_next_in_series` and `pick_next_in_cbl` live in `crate::api::next_up`
+// so the new `/issues/{id}/next-up` resolver and this rail share one
+// definition. See [`next_up::pick_next_in_series`] / [`next_up::pick_next_in_cbl`].
 
 #[utoipa::path(
     post,

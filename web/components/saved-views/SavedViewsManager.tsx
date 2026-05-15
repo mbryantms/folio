@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Lock, Pencil, Trash2 } from "lucide-react";
+import { Lock, Pencil, Pin, Trash2 } from "lucide-react";
 
 import {
   AlertDialog,
@@ -18,15 +18,13 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
   useDeleteSavedView,
-  usePinSavedView,
   useSidebarSavedView,
 } from "@/lib/api/mutations";
 import { useSavedViews } from "@/lib/api/queries";
 import type { SavedViewView } from "@/lib/api/types";
 
 import { AddViewButton } from "./AddViewButton";
-
-const PIN_CAP = 12;
+import { MultiPinDialog } from "./MultiPinDialog";
 
 /** Per-user saved-views **catalog**. Lives at `/settings/views`. Pure
  *  CRUD surface — create / open-to-edit / delete. Per-row Switches
@@ -48,8 +46,6 @@ export function SavedViewsManager() {
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     );
   }, [all]);
-  const pinnedCount = all.filter((v) => v.pinned).length;
-  const atPinCap = pinnedCount >= PIN_CAP;
 
   if (viewsQ.isLoading) {
     return (
@@ -61,12 +57,20 @@ export function SavedViewsManager() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground text-sm">
-          {sorted.length} view{sorted.length === 1 ? "" : "s"}.{" "}
+          {sorted.length} view{sorted.length === 1 ? "" : "s"}. Manage page
+          rails under{" "}
+          <Link
+            href="/settings/pages"
+            className="text-foreground underline underline-offset-2"
+          >
+            Pages
+          </Link>
+          ; sidebar order under{" "}
           <Link
             href="/settings/navigation"
             className="text-foreground underline underline-offset-2"
           >
-            Reorder home rails and the sidebar
+            Sidebar
           </Link>
           .
         </p>
@@ -80,7 +84,7 @@ export function SavedViewsManager() {
       ) : (
         <ul className="border-border/60 divide-border/60 divide-y rounded-lg border">
           {sorted.map((view) => (
-            <ViewRow key={view.id} view={view} atPinCap={atPinCap} />
+            <ViewRow key={view.id} view={view} />
           ))}
         </ul>
       )}
@@ -88,18 +92,13 @@ export function SavedViewsManager() {
   );
 }
 
-function ViewRow({
-  view,
-  atPinCap,
-}: {
-  view: SavedViewView;
-  atPinCap: boolean;
-}) {
-  const pin = usePinSavedView();
+function ViewRow({ view }: { view: SavedViewView }) {
   const sidebar = useSidebarSavedView();
   const del = useDeleteSavedView(view.id);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [pinOpen, setPinOpen] = React.useState(false);
   const isCbl = view.kind === "cbl";
+  const pinnedCount = view.pinned_on_pages.length;
 
   return (
     <li className="bg-background flex items-center gap-3 px-3 py-2">
@@ -164,17 +163,29 @@ function ViewRow({
         </>
       )}
 
-      <ToggleControl
-        label="On home"
-        checked={view.pinned}
-        disabled={!view.pinned && atPinCap}
-        title={
-          !view.pinned && atPinCap
-            ? `Pin cap reached (${PIN_CAP}). Unpin one to add another.`
-            : undefined
-        }
-        onCheckedChange={(next) => pin.mutate({ id: view.id, pinned: next })}
-      />
+      {/* Multi-page rails M6: pinning is per-page. The pill opens a
+       *  picker that lists every user page (system + custom) with a
+       *  checkbox; toggling pins/unpins this view on that specific
+       *  page. The label reflects total pin count so you can see
+       *  at-a-glance whether the view appears anywhere. */}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="shrink-0"
+        onClick={() => setPinOpen(true)}
+        title="Pin this view to one or more pages"
+      >
+        <Pin className="h-3.5 w-3.5 sm:mr-1" />
+        <span className="hidden sm:inline">
+          {pinnedCount === 0
+            ? "Pin to pages…"
+            : pinnedCount === 1
+              ? "Pinned to 1 page"
+              : `Pinned to ${pinnedCount} pages`}
+        </span>
+      </Button>
+      <MultiPinDialog view={view} open={pinOpen} onOpenChange={setPinOpen} />
       <ToggleControl
         label="In sidebar"
         checked={view.show_in_sidebar}

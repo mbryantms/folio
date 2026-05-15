@@ -1,7 +1,11 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// Phase 2 placeholder; superseded by Automerge sync in Phase 4 (§9.7).
+/// Authoritative per-(user, issue) reading-progress store. The spec's
+/// original §9 plan to replace this with Automerge CRDT documents was
+/// reconsidered and dropped on 2026-05-15 — server-side
+/// `max(last_page)` resolves every multi-device conflict this table
+/// actually sees. See the decision note at spec §9.
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "progress_records")]
 pub struct Model {

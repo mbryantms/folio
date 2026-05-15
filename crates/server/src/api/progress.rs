@@ -1,10 +1,15 @@
 //! `POST /progress` (upsert), `GET /progress?since=…` (sync delta).
 //!
-//! Phase 2 storage layer for reading progress (§9.7). Writes back to the
-//! `progress_records` table; replaced by Automerge sync in Phase 4.
+//! Authoritative storage layer for reading progress, backed by the
+//! `progress_records` table. Multi-device conflicts are resolved by
+//! `max(last_page)` on the server. The spec's original §9 plan to
+//! swap this for Automerge CRDT sync was reconsidered and dropped on
+//! 2026-05-15 (see spec §9 decision note).
 //!
-//! Forward-compat: every response carries `X-Progress-Api: 1`. Phase 4 bumps
-//! the value and old clients receive 410 Gone via a different code path.
+//! Forward-compat: every response carries `X-Progress-Api: 1`. The
+//! header is retained as a versioning hook in case the wire format
+//! ever changes; the Automerge cutover that originally motivated it
+//! is no longer planned.
 
 use axum::{
     Json, Router,
@@ -99,9 +104,20 @@ pub async fn upsert(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
-    let result = upsert_for(&app, user.id, &issue_row, req.page, req.finished, req.device).await;
+    let result = upsert_for(
+        &app,
+        user.id,
+        &issue_row,
+        req.page,
+        req.finished,
+        req.device,
+    )
+    .await;
     match result {
-        Ok(model) => versioned(StatusCode::OK, Json(ProgressView::from(model)).into_response()),
+        Ok(model) => versioned(
+            StatusCode::OK,
+            Json(ProgressView::from(model)).into_response(),
+        ),
         Err(e) => {
             tracing::warn!(error = %e, "progress upsert failed");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")

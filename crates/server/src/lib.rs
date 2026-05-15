@@ -13,6 +13,7 @@ pub mod email;
 pub mod jobs;
 pub mod library;
 pub mod middleware;
+pub mod pages;
 pub mod reading;
 pub mod settings;
 pub mod slug;

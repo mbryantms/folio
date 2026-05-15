@@ -86,14 +86,21 @@ export async function apiMutate<T>({
   body,
 }: ApiMutationInput): Promise<T | null> {
   const csrf = getCsrfToken();
+  // Only declare `Content-Type: application/json` when there's an
+  // actual JSON body to send. axum's `Option<Json<T>>` extractor
+  // accepts a missing body cleanly but errors with 400 ("EOF while
+  // parsing a value") when the header is present and the body is
+  // empty — biting the legacy "Pin to home" pill on /settings/views
+  // which posts no body to /me/saved-views/{id}/pin.
+  const hasBody = body !== undefined;
   const res = await apiFetch(path, {
     method,
     headers: {
-      "Content-Type": "application/json",
       Accept: "application/json",
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
       ...(csrf ? { "X-CSRF-Token": csrf } : {}),
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: hasBody ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
     let detail = "";
@@ -1140,6 +1147,11 @@ export function useDeleteSavedView(id: string) {
       successMessage: "View deleted",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: ["saved-views"] });
+        // Sidebar layout caches the list of pinned + show-in-sidebar
+        // saved views; without this invalidation a deleted view's
+        // sidebar row sticks around until a hard reload, and clicking
+        // it lands on a 404.
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
       },
     },
   );
@@ -1339,12 +1351,16 @@ export function useUpdateSidebarLayout() {
 }
 
 /** POST /me/saved-views/reorder. Server expects view ids in the desired
- *  pin order; views not currently pinned are rejected.
+ *  pin order; views not currently pinned to the target page are rejected.
+ *
+ *  Multi-page rails M3: `page_id` is optional — omit to target the
+ *  caller's system Home page (legacy shim until M5/M6 plumbs the active
+ *  page id through every drag-source).
  *
  *  No toast on success — the drag settles into place visibly. */
 export function useReorderSavedViews() {
   const qc = useQueryClient();
-  return useApiMutation<unknown, { view_ids: string[] }>(
+  return useApiMutation<unknown, { view_ids: string[]; page_id?: string }>(
     (body) => ({ path: "/me/saved-views/reorder", method: "POST", body }),
     {
       onSuccess: () => {
@@ -1628,7 +1644,15 @@ export function useSendTestEmail() {
   );
 }
 
-import type { OidcDiscoverReq, OidcDiscoverResp } from "./types";
+import type {
+  CreatePageReq,
+  OidcDiscoverReq,
+  OidcDiscoverResp,
+  PageView,
+  ReorderPagesReq,
+  UpdatePageReq,
+} from "./types";
+import { TOAST } from "./toast-strings";
 
 /** Probe an OIDC issuer's discovery doc before committing it. Returns the
  *  parsed endpoints + scopes_supported. Used by the "Test discovery"
@@ -1644,6 +1668,197 @@ export function useProbeOidcDiscovery() {
     {
       onError: () => {
         /* surfaced by the form inline; default toast still fires */
+      },
+    },
+  );
+}
+
+// ---------- Multi-page rails (M6) ----------
+
+/** `POST /me/pages`. Creates a user page. The server lazy-creates the
+ *  system Home row on first access; this mutation is for *custom*
+ *  pages only. Successful response is the new `PageView`. */
+export function useCreatePage() {
+  const qc = useQueryClient();
+  const router = useRouter();
+  return useApiMutation<PageView, CreatePageReq>(
+    (body) => ({ path: "/me/pages", method: "POST", body }),
+    {
+      successMessage: TOAST.PAGE_CREATED,
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.mePages });
+        // Sidebar layout pulls page entries; refresh so the new page
+        // appears immediately.
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+        router.refresh();
+      },
+    },
+  );
+}
+
+/** `PATCH /me/pages/{id}`. Renames a page (custom pages re-derive
+ *  slug; system page keeps `slug=home` per the M2 contract) and/or
+ *  updates the description. Caller picks the success message via the
+ *  input shape — `name` set means rename, `description` set means
+ *  description update, both fall back to a generic toast. */
+export function useUpdatePage(id: string) {
+  const qc = useQueryClient();
+  const router = useRouter();
+  return useApiMutation<PageView, UpdatePageReq>(
+    (body) => ({ path: `/me/pages/${id}`, method: "PATCH", body }),
+    {
+      successMessage: (_data, input) => {
+        if (typeof input.name === "string") return TOAST.PAGE_RENAMED;
+        if (input.description !== undefined) return TOAST.PAGE_UPDATED;
+        return TOAST.PAGE_UPDATED;
+      },
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.mePages });
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+        router.refresh();
+      },
+    },
+  );
+}
+
+/** Backwards-compatible alias for code paths that still want to express
+ *  a rename specifically. Both names point at the same hook so existing
+ *  call sites keep their semantics until they migrate. */
+export const useRenamePage = useUpdatePage;
+
+/** `POST /me/pages/{id}/sidebar?show=...`. Toggle whether the page
+ *  surfaces in the left-nav sidebar. System pages reject with 409 —
+ *  the builtin Home entry has its own toggle in /settings/navigation. */
+export function useTogglePageSidebar(id: string) {
+  const qc = useQueryClient();
+  const router = useRouter();
+  return useApiMutation<void, { show: boolean }>(
+    ({ show }) => ({
+      path: `/me/pages/${id}/sidebar?show=${show ? "true" : "false"}`,
+      method: "POST",
+    }),
+    {
+      successMessage: (_data, input) =>
+        input.show ? "Page added to sidebar" : "Page hidden from sidebar",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.mePages });
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+        router.refresh();
+      },
+    },
+  );
+}
+
+/** `DELETE /me/pages/{id}`. 409s on the system page. FK cascade tears
+ *  down pin rows and any explicit `kind='page'` sidebar overrides. */
+export function useDeletePage(id: string) {
+  const qc = useQueryClient();
+  const router = useRouter();
+  return useApiMutation<void, void>(
+    () => ({ path: `/me/pages/${id}`, method: "DELETE" }),
+    {
+      successMessage: TOAST.PAGE_DELETED,
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.mePages });
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+        // The current route may *be* the deleted page; bounce home.
+        router.push("/");
+        router.refresh();
+      },
+    },
+  );
+}
+
+/** `POST /me/pages/reorder`. Body must include every owned page id
+ *  (system + custom) exactly once. Drives the sidebar pages-section
+ *  DnD. No toast on success — the drag settles into place visibly. */
+export function useReorderPages() {
+  const qc = useQueryClient();
+  const router = useRouter();
+  return useApiMutation<void, ReorderPagesReq>(
+    (body) => ({ path: "/me/pages/reorder", method: "POST", body }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.mePages });
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+        router.refresh();
+      },
+    },
+  );
+}
+
+/** Toggle a saved view's pin on a specific page. Drives the multi-pin
+ *  picker on the saved-view detail page; `pinned=true` adds a pin row
+ *  via the existing pin endpoint (`{page_ids: [pageId]}`); `pinned=false`
+ *  removes it via unpin (`{page_id: pageId}`).
+ *
+ *  Optimistic: updates `pinned_on_pages` in every cached saved-view
+ *  list so the checkboxes flip on click without a refetch round-trip. */
+export function useTogglePinOnPage() {
+  const qc = useQueryClient();
+  const router = useRouter();
+  return useApiMutation<
+    unknown,
+    { viewId: string; pageId: string; pinned: boolean }
+  >(
+    ({ viewId, pageId, pinned }) =>
+      pinned
+        ? {
+            path: `/me/saved-views/${viewId}/pin`,
+            method: "POST",
+            body: { page_ids: [pageId] },
+          }
+        : {
+            path: `/me/saved-views/${viewId}/unpin`,
+            method: "POST",
+            body: { page_id: pageId },
+          },
+    {
+      // No toast — the checkbox state IS the after-state, and pinning
+      // five views at once would otherwise spam five toasts.
+      onMutate: async ({ viewId, pageId, pinned }) => {
+        await qc.cancelQueries({ queryKey: ["saved-views"] });
+        const snapshot = qc.getQueriesData<SavedViewListView>({
+          queryKey: ["saved-views", "list"],
+        });
+        for (const [key, data] of snapshot) {
+          if (!data) continue;
+          qc.setQueryData<SavedViewListView>(key, {
+            ...data,
+            items: data.items.map((v) =>
+              v.id === viewId
+                ? {
+                    ...v,
+                    pinned_on_pages: pinned
+                      ? [...new Set([...v.pinned_on_pages, pageId])]
+                      : v.pinned_on_pages.filter((p) => p !== pageId),
+                  }
+                : v,
+            ),
+          });
+        }
+        return { snapshot };
+      },
+      onError: (_err, _vars, ctx) => {
+        const snap = (
+          ctx as
+            | {
+                snapshot?: ReadonlyArray<
+                  readonly [readonly unknown[], SavedViewListView | undefined]
+                >;
+              }
+            | undefined
+        )?.snapshot;
+        if (snap) {
+          for (const [key, data] of snap) {
+            qc.setQueryData(key, data);
+          }
+        }
+      },
+      onSettled: () => {
+        qc.invalidateQueries({ queryKey: ["saved-views"] });
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+        router.refresh();
       },
     },
   );

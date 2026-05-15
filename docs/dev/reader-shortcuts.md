@@ -30,6 +30,8 @@ Default bindings — reader scope:
 | `o`     | Show / hide markers  | Hides every overlay without deleting data     |
 | `]`     | Next bookmark        | Jumps to the next bookmark-kind marker        |
 | `[`     | Previous bookmark    | Jumps to the previous bookmark-kind marker    |
+| `Shift+N` | Next issue         | Navigates to the resolver's pick (CBL > series); toasts when caught up |
+| `Shift+P` | Previous issue     | Sequential back-nav (pure sort-order; ignores read state); toasts at first issue |
 
 Default bindings — global scope (work outside the reader too):
 
@@ -132,6 +134,65 @@ Backed by `GET /issues/{id}/pages/{n}/thumb` — lazy-generated on first
 request via the same ZIP LRU as the cover thumbnail. Stored at
 `/data/thumbs/<issue_id>/<n>.webp` for `n ≥ 1`; cover (`n = 0`) stays at
 `<issue_id>.webp` for backwards compatibility.
+
+## Next-issue resolver
+
+`Shift+N`, the end-of-issue card (auto-shown on the last page), and
+`Shift+P` (back-navigation) all ask the same family of server
+resolvers. The endpoints are `GET /issues/{issue_id}/next-up?cbl=<saved_view_id>`
+and `GET /issues/{issue_id}/prev-up?cbl=<saved_view_id>`. Both share
+the response shape (`NextUpView`) and resolution order:
+
+1. **CBL** — if `?cbl=<saved_view_id>` resolves to a saved view the
+   user can see with `kind='cbl'` AND the current issue is in that
+   list, return the next-unfinished entry after the current position.
+2. **Series** — otherwise (or after a CBL fallthrough), walk the
+   current issue's series in sort order and return the first
+   ACL-visible not-finished issue strictly after the current one.
+3. **None** — both branches dry: the response carries `source: "none"`
+   and the end-of-issue card renders the caught-up empty state.
+
+The CBL context is carried by the `?cbl=` query param on the reader
+URL — produced by every CBL → reader/issue link (`<CblIssueCard>`,
+`<CblWindowCard>`, the CBL detail page). When the resolver picks a CBL
+next, the next reader URL forwards the param; a series fallthrough
+strips it so the reader resets to series-only context.
+
+When the param is *stale* (CBL exists but the current issue isn't in
+it — e.g., the entry was deleted), the server returns
+`cbl_param_was_stale: true` and the web layer strips `?cbl=` from the
+current URL via `router.replace`, so a page refresh / shared link no
+longer carries the dead reference.
+
+### prev-up semantic differences
+
+`prev-up` mirrors the URL contract and response shape but has two
+behavioral differences vs. `next-up`:
+
+1. **No `finished` filter.** Prev is pure sequence navigation — a
+   user pressing `Shift+P` is asking to back up one step, not to
+   find an unread issue. If the user is on issue 5 and issues 3-4
+   are already finished, `prev-up` returns issue 4.
+2. **`fallback_suggestion` is never populated.** "You're already at
+   the start, here's an unrelated suggestion" doesn't make sense;
+   the field stays null for prev results.
+
+Resolver, helpers, and tests live in
+[`crates/server/src/api/next_up.rs`](../../crates/server/src/api/next_up.rs)
+(`next_up` + `prev_up` handlers share the file); the web side is the
+`useNextUp` / `usePrevUp` hooks in
+[`web/lib/api/queries.ts`](../../web/lib/api/queries.ts).
+
+### Resolver telemetry
+
+Two Prometheus metrics exposed at `/metrics`:
+
+| Metric | Type | Labels | What it measures |
+|---|---|---|---|
+| `comic_reader_next_up_resolved_total` | counter | `source` ∈ {`cbl`, `series`, `none`} | One increment per resolution; lets you see the CBL/series/caught-up mix per user activity. |
+| `comic_reader_next_up_latency_seconds` | histogram | none | End-to-end handler latency on every return path (Drop-on-exit timer in [`next_up.rs`](../../crates/server/src/api/next_up.rs)). Default Prometheus buckets cover 5 ms → 10 s — the series-walk worst case (large libraries) lives at the upper end. |
+| `comic_reader_prev_up_resolved_total` | counter | `source` ∈ {`cbl`, `series`, `none`} | Sibling of the next-up counter; lets you compare nav direction usage. |
+| `comic_reader_prev_up_latency_seconds` | histogram | none | Same shape as the next-up histogram; same `LatencyTimer` instrumentation pattern. |
 
 ## See also
 

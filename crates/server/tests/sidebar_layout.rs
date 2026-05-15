@@ -188,25 +188,13 @@ async fn default_layout_contains_builtins_and_libraries() {
     seed_library(&app, "Comics").await;
     seed_library(&app, "Manga").await;
 
-    let (status, json) = http(
-        &app,
-        Method::GET,
-        "/me/sidebar-layout",
-        Some(&admin),
-        None,
-    )
-    .await;
+    let (status, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&admin), None).await;
     assert_eq!(status, StatusCode::OK, "json: {json:#?}");
     let entries = json["entries"].as_array().unwrap();
 
     let by_kind: Vec<(&str, &str)> = entries
         .iter()
-        .map(|e| {
-            (
-                e["kind"].as_str().unwrap(),
-                e["ref_id"].as_str().unwrap(),
-            )
-        })
+        .map(|e| (e["kind"].as_str().unwrap(), e["ref_id"].as_str().unwrap()))
         .collect();
 
     // Built-ins in declared order.
@@ -258,7 +246,11 @@ async fn non_admin_only_sees_granted_libraries() {
         .collect();
     // "All Libraries" is always present (synthetic); only the granted
     // real library follows it.
-    assert_eq!(lib_labels, vec!["All Libraries", "A-lib"], "only granted lib shows");
+    assert_eq!(
+        lib_labels,
+        vec!["All Libraries", "A-lib"],
+        "only granted lib shows"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -284,14 +276,7 @@ async fn patch_overrides_visibility_and_position() {
     assert_eq!(status, StatusCode::OK, "patch failed: {json:#?}");
 
     // Verify by reading back.
-    let (status, json) = http(
-        &app,
-        Method::GET,
-        "/me/sidebar-layout",
-        Some(&auth),
-        None,
-    )
-    .await;
+    let (status, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let entries = json["entries"].as_array().unwrap();
 
@@ -353,14 +338,7 @@ async fn patch_empty_clears_overrides() {
     assert_eq!(status, StatusCode::OK);
 
     // GET should reflect defaults (bookmarks visible again).
-    let (_, json) = http(
-        &app,
-        Method::GET,
-        "/me/sidebar-layout",
-        Some(&auth),
-        None,
-    )
-    .await;
+    let (_, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
     let bookmarks = json["entries"]
         .as_array()
         .unwrap()
@@ -446,4 +424,314 @@ async fn default_home_pin_order_is_curated() {
         ],
         "fresh user pin order should be curated top-down",
     );
+}
+
+// ───── multi-page rails M4 coverage ─────
+
+async fn create_page(app: &TestApp, auth: &Authed, name: &str) -> String {
+    let (status, body) = http(
+        app,
+        Method::POST,
+        "/me/pages",
+        Some(auth),
+        Some(serde_json::json!({ "name": name })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create page {name}: {body:#?}");
+    body["id"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn custom_pages_appear_after_libraries_by_default() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "pages-layout@example.com").await;
+    let marvel = create_page(&app, &auth, "Marvel").await;
+    let indie = create_page(&app, &auth, "Indie").await;
+    seed_library(&app, "Comics").await;
+
+    let (status, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let entries = json["entries"].as_array().unwrap();
+    let by_kind_ref: Vec<(String, String)> = entries
+        .iter()
+        .map(|e| {
+            (
+                e["kind"].as_str().unwrap().to_owned(),
+                e["ref_id"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let pos = |kind: &str, refid: &str| -> usize {
+        by_kind_ref
+            .iter()
+            .position(|(k, r)| k == kind && r == refid)
+            .unwrap_or_else(|| panic!("missing {kind}:{refid} in {by_kind_ref:#?}"))
+    };
+    // Default order: Browse builtins → Libraries → Pages.
+    let book = pos("builtin", "bookmarks");
+    let libs_header = pos("header", "default:libraries");
+    let pages_header = pos("header", "default:pages");
+    let p_marvel = pos("page", &marvel);
+    let p_indie = pos("page", &indie);
+    assert!(book < libs_header, "Bookmarks comes before Libraries");
+    assert!(libs_header < pages_header, "Libraries comes before Pages");
+    assert!(pages_header < p_marvel && pages_header < p_indie);
+
+    // Custom pages render with /pages/{slug} href and LayoutGrid icon.
+    let marvel_entry = entries
+        .iter()
+        .find(|e| e["ref_id"].as_str() == Some(&marvel))
+        .unwrap();
+    assert_eq!(marvel_entry["href"], "/pages/marvel");
+    assert_eq!(marvel_entry["icon"], "LayoutGrid");
+    assert_eq!(marvel_entry["label"], "Marvel");
+    assert_eq!(marvel_entry["visible"], true);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn home_label_reflects_renamed_system_page() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "home-rename@example.com").await;
+
+    let (_, pages) = http(&app, Method::GET, "/me/pages", Some(&auth), None).await;
+    let home_id = pages
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["is_system"] == true)
+        .map(|p| p["id"].as_str().unwrap().to_owned())
+        .unwrap();
+    let (status, _) = http(
+        &app,
+        Method::PATCH,
+        &format!("/me/pages/{home_id}"),
+        Some(&auth),
+        Some(serde_json::json!({ "name": "Library" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, layout) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let entries = layout["entries"].as_array().unwrap();
+    let home = entries
+        .iter()
+        .find(|e| e["kind"] == "builtin" && e["ref_id"] == "home")
+        .unwrap();
+    assert_eq!(home["label"], "Library");
+    // href stays `/` — the route, not the label, is what's stable.
+    assert_eq!(home["href"], "/");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn patch_accepts_kind_page_override() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-override@example.com").await;
+    let page_id = create_page(&app, &auth, "Custom").await;
+
+    // Hide the custom page entry via an override row.
+    let body = serde_json::json!({
+        "entries": [
+            { "kind": "page", "ref_id": page_id, "visible": false, "position": 5 },
+        ]
+    });
+    let (status, _) = http(
+        &app,
+        Method::PATCH,
+        "/me/sidebar-layout",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let entry = json["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "page" && e["ref_id"] == page_id)
+        .unwrap()
+        .clone();
+    assert_eq!(entry["visible"], false);
+    assert_eq!(entry["position"], 5);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deleted_page_drops_from_layout() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-delete@example.com").await;
+    let page_id = create_page(&app, &auth, "ToDelete").await;
+
+    // Confirm the page is in the layout.
+    let (_, before) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    assert!(
+        before["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "page" && e["ref_id"] == page_id)
+    );
+
+    // Delete the page; layout drops the row even if a stale override
+    // would otherwise resurrect it.
+    let (status, _) = http(
+        &app,
+        Method::DELETE,
+        &format!("/me/pages/{page_id}"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, after) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    assert!(
+        !after["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "page" && e["ref_id"] == page_id),
+        "deleted page should not surface as a sidebar entry"
+    );
+}
+
+// ───── header + spacer coverage ─────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn default_layout_includes_section_headers() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "headers-default@example.com").await;
+    seed_library(&app, "Comics").await;
+
+    let (_, layout) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let entries = layout["entries"].as_array().unwrap();
+    let headers: Vec<(String, String)> = entries
+        .iter()
+        .filter(|e| e["kind"] == "header")
+        .map(|e| {
+            (
+                e["ref_id"].as_str().unwrap().to_owned(),
+                e["label"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    // No saved view in sidebar yet so the "Saved views" default header
+    // doesn't appear; the other two do.
+    assert!(
+        headers
+            .iter()
+            .any(|(r, l)| r == "default:browse" && l == "Browse")
+    );
+    assert!(
+        headers
+            .iter()
+            .any(|(r, l)| r == "default:libraries" && l == "Libraries")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn patch_accepts_custom_header_and_spacer() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "headers-patch@example.com").await;
+
+    let body = serde_json::json!({
+        "entries": [
+            {
+                "kind": "header",
+                "ref_id": "00000000-0000-0000-0000-000000000123",
+                "label": "Reading list",
+                "visible": true,
+                "position": 0
+            },
+            {
+                "kind": "spacer",
+                "ref_id": "00000000-0000-0000-0000-000000000456",
+                "visible": true,
+                "position": 1
+            },
+        ]
+    });
+    let (status, _) = http(
+        &app,
+        Method::PATCH,
+        "/me/sidebar-layout",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, layout) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let entries = layout["entries"].as_array().unwrap();
+    let custom_header = entries
+        .iter()
+        .find(|e| e["kind"] == "header" && e["ref_id"] == "00000000-0000-0000-0000-000000000123")
+        .unwrap();
+    assert_eq!(custom_header["label"], "Reading list");
+    let spacer = entries.iter().find(|e| e["kind"] == "spacer").unwrap();
+    assert_eq!(spacer["ref_id"], "00000000-0000-0000-0000-000000000456");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn patch_rejects_header_without_label() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "headers-empty@example.com").await;
+
+    let body = serde_json::json!({
+        "entries": [
+            {
+                "kind": "header",
+                "ref_id": "00000000-0000-0000-0000-000000000789",
+                "visible": true,
+                "position": 0
+            },
+        ]
+    });
+    let (status, json) = http(
+        &app,
+        Method::PATCH,
+        "/me/sidebar-layout",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"], "validation");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn label_override_renames_default_entries() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "label-override@example.com").await;
+
+    // Override the default "Libraries" header label.
+    let body = serde_json::json!({
+        "entries": [
+            {
+                "kind": "header",
+                "ref_id": "default:libraries",
+                "label": "My shelves",
+                "visible": true,
+                "position": 10
+            },
+        ]
+    });
+    let (status, _) = http(
+        &app,
+        Method::PATCH,
+        "/me/sidebar-layout",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, layout) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let entry = layout["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "header" && e["ref_id"] == "default:libraries")
+        .unwrap();
+    assert_eq!(entry["label"], "My shelves");
 }

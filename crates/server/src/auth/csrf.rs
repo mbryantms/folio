@@ -197,6 +197,3 @@ fn csrf_error() -> Response {
     resp
 }
 
-// Suppress unused-import warning if Body becomes unused after refactor.
-#[allow(dead_code)]
-fn _phantom_body(_: Body) {}

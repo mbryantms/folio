@@ -205,8 +205,12 @@ async fn cover_worker_generates_cover_without_eager_strips() {
     // Strip thumbnails are generated lazily by the reader catchup job, not by
     // the scan/admin cover job.
     for n in 0..5 {
-        let strip =
-            thumbnails::strip_path(&state.cfg().data_path, &id, n, thumbnails::ThumbFormat::Webp);
+        let strip = thumbnails::strip_path(
+            &state.cfg().data_path,
+            &id,
+            n,
+            thumbnails::ThumbFormat::Webp,
+        );
         assert!(!strip.exists(), "strip page {n} should not be eager");
     }
 
@@ -238,8 +242,12 @@ async fn strip_worker_generates_strip_for_every_page() {
     .unwrap();
 
     for n in 0..5 {
-        let strip =
-            thumbnails::strip_path(&state.cfg().data_path, &id, n, thumbnails::ThumbFormat::Webp);
+        let strip = thumbnails::strip_path(
+            &state.cfg().data_path,
+            &id,
+            n,
+            thumbnails::ThumbFormat::Webp,
+        );
         assert!(
             strip.exists(),
             "strip page {n} missing: {}",

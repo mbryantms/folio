@@ -538,7 +538,11 @@ pub async fn detail(
 
 fn parse_status_filter(s: &str) -> Result<Vec<&str>, ()> {
     const ALLOWED: &[&str] = &["matched", "ambiguous", "missing", "manual"];
-    let parts: Vec<&str> = s.split(',').map(str::trim).filter(|p| !p.is_empty()).collect();
+    let parts: Vec<&str> = s
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
     if parts.is_empty() {
         return Err(());
     }
@@ -623,7 +627,10 @@ pub async fn entries(
                 );
             }
         };
-        sel = sel.filter(cbl_entry::Column::MatchStatus.is_in(parts.iter().map(|s| s.to_string()).collect::<Vec<_>>()));
+        sel = sel.filter(
+            cbl_entry::Column::MatchStatus
+                .is_in(parts.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+        );
     }
 
     if let Some(cursor) = q.cursor.as_deref() {
@@ -691,25 +698,30 @@ pub async fn entries(
         .iter()
         .filter_map(|e| e.matched_issue_id.clone())
         .collect();
-    let issue_by_id: std::collections::HashMap<String, entity::issue::Model> = if issue_ids.is_empty() {
-        std::collections::HashMap::new()
-    } else {
-        match entity::issue::Entity::find()
-            .filter(entity::issue::Column::Id.is_in(issue_ids))
-            .all(&app.db)
-            .await
-        {
-            Ok(rows) => rows.into_iter().map(|i| (i.id.clone(), i)).collect(),
-            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
-        }
-    };
+    let issue_by_id: std::collections::HashMap<String, entity::issue::Model> =
+        if issue_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            match entity::issue::Entity::find()
+                .filter(entity::issue::Column::Id.is_in(issue_ids))
+                .all(&app.db)
+                .await
+            {
+                Ok(rows) => rows.into_iter().map(|i| (i.id.clone(), i)).collect(),
+                Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+            }
+        };
     let series_ids: std::collections::HashSet<Uuid> =
         issue_by_id.values().map(|i| i.series_id).collect();
-    let series_by_id: std::collections::HashMap<Uuid, entity::series::Model> = if series_ids.is_empty() {
+    let series_by_id: std::collections::HashMap<Uuid, entity::series::Model> = if series_ids
+        .is_empty()
+    {
         std::collections::HashMap::new()
     } else {
         match entity::series::Entity::find()
-            .filter(entity::series::Column::Id.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
+            .filter(
+                entity::series::Column::Id.is_in(series_ids.iter().copied().collect::<Vec<_>>()),
+            )
             .all(&app.db)
             .await
         {

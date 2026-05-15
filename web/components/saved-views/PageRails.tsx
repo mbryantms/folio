@@ -7,26 +7,48 @@ import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
 import { useSavedViews } from "@/lib/api/queries";
 
+import { PageActionsMenu } from "./PageActionsMenu";
+import { PageHeading } from "./PageHeading";
 import { SavedViewRail } from "./SavedViewRail";
 
-/** Card-size bounds for the home rails. Mirrors the library-grid bounds
- *  so toggling between Home and a library grid feels consistent, but
+/** Card-size bounds for the page rails. Mirrors the library-grid bounds
+ *  so toggling between a page and a library grid feels consistent, but
  *  uses its own storage key so each surface remembers its own density. */
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = "folio.home.cardSize";
 
-/** Home-page rail dispatcher. Owns the page header + inline toolbar
- *  (search box, density toggle) and renders the user's pinned saved
- *  views below. Pin order, reorder, add, edit, and delete all live on
- *  `/settings/views` so the home page stays clean — no filter/sort
- *  controls either, since each rail is already a curated view. */
-export function PinnedViewsHome() {
-  const pinnedQ = useSavedViews({ pinned: true });
+/** Page-rail dispatcher. Owns the page header + inline toolbar
+ *  (search box, density toggle) and renders the saved views pinned to
+ *  the supplied page below. Pinning, reorder, add, edit, delete all
+ *  happen elsewhere — the page itself stays read-only.
+ *
+ *  Multi-page rails M5: same component drives both `/` (system Home)
+ *  and `/pages/[slug]`. The caller resolves the page identity once
+ *  (server-side in the route shell) and passes it down via props. */
+export function PageRails({
+  pageId,
+  pageName,
+  pageDescription,
+  isSystem,
+  showInSidebar,
+}: {
+  pageId: string;
+  pageName: string;
+  pageDescription: string | null;
+  isSystem: boolean;
+  showInSidebar: boolean;
+}) {
+  const pinnedQ = useSavedViews({ pinnedOn: pageId });
+  // Per-page density key so customizing Marvel doesn't reset Home (or
+  // vice versa). System page keeps the legacy global key so existing
+  // users' Home density survives the M5 rename without a migration.
+  const storageKey = isSystem
+    ? "folio.home.cardSize"
+    : `folio.page.cardSize.${pageId}`;
   const [cardSize, setCardSize] = useCardSize({
-    storageKey: CARD_SIZE_STORAGE_KEY,
+    storageKey,
     min: CARD_SIZE_MIN,
     max: CARD_SIZE_MAX,
     defaultSize: CARD_SIZE_DEFAULT,
@@ -41,12 +63,12 @@ export function PinnedViewsHome() {
         // Header → first rail spacing also follows the density toggle.
         style={{ marginBottom: "var(--density-page-pad-y)" }}
       >
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Home</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Pinned saved views and reading lists.
-          </p>
-        </div>
+        <PageHeading
+          pageId={pageId}
+          pageName={pageName}
+          pageDescription={pageDescription}
+          isSystem={isSystem}
+        />
         <div className="flex flex-wrap items-center gap-2">
           {/* On mobile the search lives in the topbar (see `MainShell`)
               so it doesn't push the rails down. Desktop keeps it inline
@@ -62,6 +84,12 @@ export function PinnedViewsHome() {
             step={CARD_SIZE_STEP}
             defaultSize={CARD_SIZE_DEFAULT}
           />
+          <PageActionsMenu
+            pageId={pageId}
+            pageDescription={pageDescription}
+            isSystem={isSystem}
+            showInSidebar={showInSidebar}
+          />
         </div>
       </div>
 
@@ -70,7 +98,7 @@ export function PinnedViewsHome() {
           Loading views…
         </div>
       ) : items.length === 0 ? (
-        <EmptyPinnedState />
+        <EmptyPinnedState isSystem={isSystem} />
       ) : (
         // Rail-to-rail spacing is driven by the density token defined
         // in `globals.css`: `--density-rail-gap` is 2.5rem in
@@ -89,22 +117,37 @@ export function PinnedViewsHome() {
   );
 }
 
-function EmptyPinnedState() {
+function EmptyPinnedState({ isSystem }: { isSystem: boolean }) {
   return (
     <div className="border-border/60 rounded-lg border border-dashed p-8">
       <h2 className="text-xl font-semibold tracking-tight">
         No pinned views yet
       </h2>
       <p className="text-muted-foreground mt-2 text-sm">
-        Manage your saved views in{" "}
-        <Link
-          href="/settings/views"
-          className="text-foreground font-medium underline-offset-4 hover:underline"
-        >
-          Settings → Saved views
-        </Link>
-        . You can create filter views, import CBL reading lists, and pick which
-        ones show up here.
+        {isSystem ? (
+          <>
+            Manage your saved views in{" "}
+            <Link
+              href="/settings/views"
+              className="text-foreground font-medium underline-offset-4 hover:underline"
+            >
+              Settings → Saved views
+            </Link>
+            . You can create filter views, import CBL reading lists, and pick
+            which ones show up here.
+          </>
+        ) : (
+          <>
+            Pin saved views to this page from{" "}
+            <Link
+              href="/settings/views"
+              className="text-foreground font-medium underline-offset-4 hover:underline"
+            >
+              Settings → Saved views
+            </Link>
+            .
+          </>
+        )}
       </p>
     </div>
   );

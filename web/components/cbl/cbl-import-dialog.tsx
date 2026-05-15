@@ -847,6 +847,13 @@ function SaveStep({
             onChange={(e) => setYearEnd(e.target.value)}
           />
         </div>
+        {/* Auto-fill hint anchored under the year inputs. Server seeds
+         *  `custom_year_*` from `cbl_entries.year` (`saved_views.rs`
+         *  `cbl_year_range`) when both fields land empty. */}
+        <p className="text-muted-foreground -mt-1 text-xs sm:col-span-2 sm:col-start-2">
+          Leave blank to auto-fill from the list&rsquo;s earliest and latest
+          issue year.
+        </p>
       </div>
       <div className="flex items-center justify-between">
         <Button type="button" variant="ghost" onClick={onCancel}>

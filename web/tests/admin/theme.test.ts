@@ -33,14 +33,20 @@ describe("theme guards", () => {
 });
 
 describe("resolvedDataTheme", () => {
-  it("returns dark for the system / amber / unknown / dark themes", () => {
-    expect(resolvedDataTheme("system")).toBe("dark");
-    expect(resolvedDataTheme("amber")).toBe("dark");
+  // M6 (D-4) shipped curated `light` and `amber` palettes. Each
+  // selectable theme now maps 1:1 to a `data-theme` attribute the CSS
+  // in `globals.css` keys off. `system` stays mapped to `dark` until
+  // we explicitly turn on `enableSystem` in `ThemeProvider` (a
+  // separate scope item that needs FOUC-on-hydration handling).
+  it("maps each curated theme to its own data-theme attribute", () => {
     expect(resolvedDataTheme("dark")).toBe("dark");
+    expect(resolvedDataTheme("light")).toBe("light");
+    expect(resolvedDataTheme("amber")).toBe("amber");
+  });
+
+  it("returns dark for the system / unknown / nullish cases", () => {
+    expect(resolvedDataTheme("system")).toBe("dark");
     expect(resolvedDataTheme(null)).toBe("dark");
     expect(resolvedDataTheme(undefined)).toBe("dark");
-  });
-  it("returns light only for light", () => {
-    expect(resolvedDataTheme("light")).toBe("light");
   });
 });

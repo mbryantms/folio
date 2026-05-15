@@ -132,6 +132,13 @@ pub struct SavedViewView {
     /// it against its rail-icon registry and silently falls back if the
     /// key is unknown.
     pub icon: Option<String>,
+    /// Multi-page rails M6: every page (system + custom) this view is
+    /// currently pinned to. Drives the multi-pin picker on the
+    /// saved-view detail page. Empty when the caller has no pin rows
+    /// for this view. Always populated regardless of the request's
+    /// `pinned_on` filter so the picker reflects ground truth.
+    #[serde(default)]
+    pub pinned_on_pages: Vec<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -191,15 +198,44 @@ pub struct UpdateSavedViewReq {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ReorderReq {
-    /// View IDs in desired pin order. Views not currently pinned are
-    /// rejected; views pinned but absent from the list keep their
-    /// existing position.
+    /// Page whose pins are being reordered. Omit to default to the
+    /// caller's system "Home" page — transitional shim until the web
+    /// migrates to explicit page ids (M5/M6).
+    #[serde(default)]
+    pub page_id: Option<Uuid>,
+    /// View IDs in desired pin order. Views not currently pinned to
+    /// `page_id` are rejected; pinned views absent from the list keep
+    /// their existing position.
     pub view_ids: Vec<Uuid>,
+}
+
+/// Body for `POST /me/saved-views/{id}/pin`.
+///
+/// Multi-page rails M3: the same view can now be pinned to multiple
+/// pages in a single call. Omitting the body (or sending an empty
+/// `page_ids`) targets the caller's system Home page so existing
+/// web clients keep working until they migrate to the multi-page
+/// picker (M5/M6).
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+pub struct PinReq {
+    #[serde(default)]
+    pub page_ids: Vec<Uuid>,
+}
+
+/// Body for `POST /me/saved-views/{id}/unpin`. Omit to default to the
+/// caller's system Home page (legacy shim).
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+pub struct UnpinReq {
+    #[serde(default)]
+    pub page_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PinView {
     pub view_id: String,
+    /// Page this row belongs to. Mirrors the request's `page_id` (or the
+    /// resolved system page when the legacy no-body form was used).
+    pub page_id: String,
     pub pinned: bool,
     pub position: Option<i32>,
 }
@@ -214,12 +250,24 @@ pub struct PreviewReq {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListQuery {
-    /// When `Some(true)`, list only the views the user has pinned. When
-    /// `Some(false)`, only unpinned. When `None`, all visible views.
+    /// When `Some(true)`, list only the views the user has pinned (on
+    /// any page; pair with `pinned_on` to scope to a specific page).
+    /// When `Some(false)`, only unpinned. When `None`, all visible views.
+    ///
+    /// Legacy shim: with `pinned = Some(true)` and `pinned_on = None`,
+    /// the server defaults to the caller's system Home page so the
+    /// existing home-rail fetch keeps working pre-multi-page-UI. Removed
+    /// once M5/M6 lands explicit `pinned_on` everywhere.
     #[serde(default)]
     pub pinned: Option<bool>,
+    /// Restrict the pinned filter to a specific page. Ignored when
+    /// `pinned` is `Some(false)` or `None`.
+    #[serde(default)]
+    pub pinned_on: Option<Uuid>,
     /// Same shape as `pinned` but for sidebar visibility — drives the
-    /// `Saved views` section of the main left nav.
+    /// `Saved views` section of the main left nav. Sidebar prefs only
+    /// live on the system-page pin row, so this implicitly filters
+    /// against the caller's Home.
     #[serde(default)]
     pub show_in_sidebar: Option<bool>,
 }
@@ -320,9 +368,10 @@ async fn fetch_view(
 async fn user_pin(
     db: &impl ConnectionTrait,
     user_id: Uuid,
+    page_id: Uuid,
     view_id: Uuid,
 ) -> Result<Option<user_view_pin::Model>, sea_orm::DbErr> {
-    user_view_pin::Entity::find_by_id((user_id, view_id))
+    user_view_pin::Entity::find_by_id((user_id, page_id, view_id))
         .one(db)
         .await
 }
@@ -355,6 +404,9 @@ async fn ensure_pins_seeded(
     db: &impl ConnectionTrait,
     user_id: Uuid,
 ) -> Result<(), sea_orm::DbErr> {
+    // Every pin row lives on a page; until M3 wires the page-aware HTTP
+    // surface, seed against the user's auto-created system "Home" page.
+    let page_id = crate::pages::system_page_id(db, user_id).await?;
     // Existing pins → look up the user's current max position so any new
     // rail we add gets appended (no position collisions, no reshuffling).
     let existing: Vec<user_view_pin::Model> = user_view_pin::Entity::find()
@@ -409,6 +461,7 @@ async fn ensure_pins_seeded(
         }
         user_view_pin::ActiveModel {
             user_id: Set(user_id),
+            page_id: Set(page_id),
             view_id: Set(v.id),
             position: Set(next_position),
             pinned: Set(true),
@@ -422,7 +475,11 @@ async fn ensure_pins_seeded(
     Ok(())
 }
 
-fn to_view(model: &saved_view::Model, pref: Option<&user_view_pin::Model>) -> SavedViewView {
+fn to_view(
+    model: &saved_view::Model,
+    pref: Option<&user_view_pin::Model>,
+    pinned_on_pages: Vec<String>,
+) -> SavedViewView {
     let custom_tags = model.custom_tags.clone();
     let pinned = pref.map(|p| p.pinned).unwrap_or(false);
     let show_in_sidebar = pref.map(|p| p.show_in_sidebar).unwrap_or(false);
@@ -453,6 +510,7 @@ fn to_view(model: &saved_view::Model, pref: Option<&user_view_pin::Model>) -> Sa
         is_system: model.user_id.is_none(),
         system_key: model.system_key.clone(),
         icon: pref.and_then(|p| p.icon.clone()),
+        pinned_on_pages,
     }
 }
 
@@ -479,15 +537,71 @@ pub async fn list(
         tracing::warn!(user_id = %user.id, error = %e, "saved_views: want_to_read seed failed");
     }
 
-    let pins = match user_pins(&app.db, user.id).await {
+    // Multi-page rails M3: when the caller asks for pinned views,
+    // resolve which page to filter against. Explicit `pinned_on` wins;
+    // otherwise default to the user's system Home page (legacy shim).
+    // When `pinned` is None / `Some(false)`, no page filter applies and
+    // the response includes pins from every page the caller owns.
+    let display_page = if matches!(q.pinned, Some(true)) || q.pinned_on.is_some() {
+        let resolved = match q.pinned_on {
+            Some(p) => p,
+            None => match crate::pages::system_page_id(&app.db, user.id).await {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::error!(error = %e, "saved_views: system page resolve failed");
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
+            },
+        };
+        Some(resolved)
+    } else {
+        None
+    };
+    // Multi-page rails M6: always fetch the user's full pin set so the
+    // response can populate `pinned_on_pages` even when the request is
+    // scoped via `pinned_on`. `display_pin_by_view` retains the single
+    // pin used for the legacy `pinned`/`pinned_position`/`icon` fields;
+    // when `pinned_on` is explicit we prefer that page's row so the
+    // response reflects the filter the caller asked for.
+    let all_pins = match user_pins(&app.db, user.id).await {
         Ok(p) => p,
         Err(e) => {
             tracing::error!(error = %e, "saved_views: list pins failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    let pin_by_view: std::collections::HashMap<Uuid, user_view_pin::Model> =
-        pins.into_iter().map(|p| (p.view_id, p)).collect();
+    let mut pinned_pages_by_view: std::collections::HashMap<Uuid, Vec<String>> =
+        std::collections::HashMap::new();
+    for p in &all_pins {
+        if p.pinned {
+            pinned_pages_by_view
+                .entry(p.view_id)
+                .or_default()
+                .push(p.page_id.to_string());
+        }
+    }
+    let display_pin_by_view: std::collections::HashMap<Uuid, user_view_pin::Model> = all_pins
+        .iter()
+        .fold(std::collections::HashMap::new(), |mut acc, p| {
+            let prefer = match display_page {
+                Some(page_id) if p.page_id == page_id => true,
+                Some(_) => false,
+                None => true,
+            };
+            if !prefer {
+                acc.entry(p.view_id).or_insert_with(|| p.clone());
+                return acc;
+            }
+            acc.entry(p.view_id)
+                .and_modify(|cur: &mut user_view_pin::Model| {
+                    let cur_matches = display_page.map(|pid| cur.page_id == pid).unwrap_or(false);
+                    if !cur_matches || p.position < cur.position {
+                        *cur = p.clone();
+                    }
+                })
+                .or_insert_with(|| p.clone());
+            acc
+        });
 
     let mut select = saved_view::Entity::find();
     // System views (`user_id IS NULL`) and the caller's own.
@@ -505,13 +619,29 @@ pub async fn list(
         }
     };
 
+    // Explicit `pinned_on=<page>` implies "show me pins on that page",
+    // even when `pinned` was omitted. Folds the two filters into one.
+    let effective_pinned = if q.pinned_on.is_some() {
+        Some(true)
+    } else {
+        q.pinned
+    };
     let mut items: Vec<SavedViewView> = rows
         .into_iter()
         .filter_map(|m| {
-            let pin = pin_by_view.get(&m.id);
-            let is_pinned = pin.map(|p| p.pinned).unwrap_or(false);
+            let pin = display_pin_by_view.get(&m.id);
+            // When the caller scoped the request to a specific page,
+            // "pinned" means "pinned on *that* page" — the display pin
+            // already reflects that page when present, so its `pinned`
+            // flag answers the question directly.
+            let is_pinned = match display_page {
+                Some(page_id) => pin
+                    .map(|p| p.pinned && p.page_id == page_id)
+                    .unwrap_or(false),
+                None => pin.map(|p| p.pinned).unwrap_or(false),
+            };
             let in_sidebar = pin.map(|p| p.show_in_sidebar).unwrap_or(false);
-            match q.pinned {
+            match effective_pinned {
                 Some(true) if !is_pinned => return None,
                 Some(false) if is_pinned => return None,
                 _ => {}
@@ -521,7 +651,8 @@ pub async fn list(
                 Some(false) if in_sidebar => return None,
                 _ => {}
             }
-            Some(to_view(&m, pin))
+            let pages = pinned_pages_by_view.get(&m.id).cloned().unwrap_or_default();
+            Some(to_view(&m, pin, pages))
         })
         .collect();
 
@@ -610,6 +741,25 @@ async fn create_inner(
 
     let id = Uuid::now_v7();
     let now = Utc::now().fixed_offset();
+
+    // Seed `custom_year_start` / `custom_year_end` from the CBL's own
+    // entries when the caller didn't specify either. Source-of-truth
+    // is `cbl_entries.year` (the raw years from the `.cbl` XML), not
+    // the matched-issue years — so the range reflects the list itself
+    // and survives a library that hasn't matched everything yet. If
+    // the caller passed *either* bound explicitly, we respect their
+    // intent rather than blending halves.
+    let (mut year_start, mut year_end) = (req.custom_year_start, req.custom_year_end);
+    if req.kind == KIND_CBL
+        && year_start.is_none()
+        && year_end.is_none()
+        && let Some(list_id) = req.cbl_list_id
+    {
+        let (lo, hi) = cbl_year_range(&app.db, list_id).await;
+        year_start = lo;
+        year_end = hi;
+    }
+
     let am = saved_view::ActiveModel {
         id: Set(id),
         user_id: Set(owner),
@@ -620,8 +770,8 @@ async fn create_inner(
             .as_ref()
             .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty())),
-        custom_year_start: Set(req.custom_year_start),
-        custom_year_end: Set(req.custom_year_end),
+        custom_year_start: Set(year_start),
+        custom_year_end: Set(year_end),
         custom_tags: Set(req.custom_tags.clone().unwrap_or_default()),
         match_mode: Set(if req.kind == KIND_FILTER_SERIES {
             Some(match_mode_str(
@@ -687,7 +837,7 @@ async fn create_inner(
     };
     // Admin-created system views aren't pinned automatically (per Q8 / C8).
     let _ = is_admin_caller;
-    (StatusCode::CREATED, Json(to_view(&saved, None))).into_response()
+    (StatusCode::CREATED, Json(to_view(&saved, None, Vec::new()))).into_response()
 }
 
 fn match_mode_str(m: MatchMode) -> String {
@@ -700,6 +850,42 @@ fn match_mode_str(m: MatchMode) -> String {
 fn compile_error_response(e: CompileError) -> axum::response::Response {
     let msg = e.to_string();
     error(StatusCode::UNPROCESSABLE_ENTITY, "filter_invalid", &msg)
+}
+
+/// Earliest + latest `cbl_entries.year` for a CBL list, parsed as
+/// 4-digit integers. Source of truth is the imported `.cbl` itself —
+/// not just the entries that matched library issues — so the range
+/// reflects what the user pasted in even when most rows are still
+/// `missing`. Used to seed `custom_year_start` / `custom_year_end` on
+/// freshly-created CBL saved views.
+async fn cbl_year_range(
+    db: &sea_orm::DatabaseConnection,
+    list_id: Uuid,
+) -> (Option<i32>, Option<i32>) {
+    use sea_orm::{DbBackend, FromQueryResult, Statement, sea_query::Value};
+
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        min_year: Option<i32>,
+        max_year: Option<i32>,
+    }
+
+    // The `~ '^[0-9]{4}$'` guard filters out empty, ISO-formatted
+    // ("2025-01"), and otherwise garbled `year` strings so the
+    // `::int` cast never panics. Postgres evaluates the regex first.
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+            SELECT MIN(year::int) AS min_year, MAX(year::int) AS max_year
+            FROM cbl_entries
+            WHERE cbl_list_id = $1 AND year ~ '^[0-9]{4}$'
+        "#,
+        [Value::from(list_id)],
+    );
+    match Row::find_by_statement(stmt).one(db).await {
+        Ok(Some(r)) => (r.min_year, r.max_year),
+        _ => (None, None),
+    }
 }
 
 #[utoipa::path(
@@ -864,10 +1050,39 @@ async fn apply_update(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    let pin = user_pin(&app.db, row.user_id.unwrap_or(Uuid::nil()), updated.id)
-        .await
-        .unwrap_or_default();
-    Json(to_view(&updated, pin.as_ref())).into_response()
+    // Multi-page rails M6: the response decorates the saved view with
+    // its full set of pinned pages so a rename + refresh on the detail
+    // page keeps the multi-pin picker accurate without a separate query.
+    let (display_pin, pinned_pages) = match row.user_id {
+        Some(owner_id) => {
+            let all_pins: Vec<user_view_pin::Model> = user_view_pin::Entity::find()
+                .filter(user_view_pin::Column::UserId.eq(owner_id))
+                .filter(user_view_pin::Column::ViewId.eq(updated.id))
+                .all(&app.db)
+                .await
+                .unwrap_or_default();
+            let pages: Vec<String> = all_pins
+                .iter()
+                .filter(|p| p.pinned)
+                .map(|p| p.page_id.to_string())
+                .collect();
+            // Legacy "display pin" — prefer the system-page row if present,
+            // else the lowest-position pin.
+            let system_pid = crate::pages::system_page_id(&app.db, owner_id).await.ok();
+            let display_pin = all_pins
+                .iter()
+                .find(|p| Some(p.page_id) == system_pid)
+                .cloned()
+                .or_else(|| {
+                    let mut sorted = all_pins.clone();
+                    sorted.sort_by_key(|p| p.position);
+                    sorted.into_iter().next()
+                });
+            (display_pin, pages)
+        }
+        None => (None, Vec::new()),
+    };
+    Json(to_view(&updated, display_pin.as_ref(), pinned_pages)).into_response()
 }
 
 #[utoipa::path(
@@ -965,13 +1180,35 @@ pub async fn admin_delete(
     post,
     path = "/me/saved-views/{id}/pin",
     params(("id" = String, Path,)),
-    responses((status = 200, body = PinView))
+    request_body = PinReq,
+    responses((status = 200, body = Vec<PinView>))
 )]
 pub async fn pin(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
+    bytes: axum::body::Bytes,
 ) -> impl IntoResponse {
+    // Permissive body parsing: empty body (no Content-Type or
+    // `application/json` with zero-length payload) falls back to the
+    // default `PinReq` and the system-page shim. Required to keep the
+    // legacy `usePinSavedView` pill on /settings/views working — it
+    // posts with the JSON content-type header but no body, which
+    // `Option<Json<T>>` would otherwise reject as a parse error.
+    let req: PinReq = if bytes.is_empty() {
+        PinReq::default()
+    } else {
+        match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(e) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "validation",
+                    &format!("invalid body: {e}"),
+                );
+            }
+        }
+    };
     let view = match fetch_view(&app.db, id).await {
         Ok(Some(v)) => v,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "view not found"),
@@ -984,78 +1221,160 @@ pub async fn pin(
         return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
     }
 
-    let existing = match user_pin(&app.db, user.id, id).await {
-        Ok(p) => p,
-        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
-    };
-    if let Some(row) = existing.as_ref()
-        && row.pinned
-    {
-        return Json(PinView {
-            view_id: id.to_string(),
-            pinned: true,
-            position: Some(row.position),
-        })
-        .into_response();
-    }
-
-    // Cap enforcement (Q4: hard cap of 12 with "Show all views →" disclosure).
-    let active_count = user_view_pin::Entity::find()
-        .filter(user_view_pin::Column::UserId.eq(user.id))
-        .filter(user_view_pin::Column::Pinned.eq(true))
-        .count(&app.db)
-        .await
-        .unwrap_or(0) as i64;
-    if active_count >= MAX_PIN_COUNT {
-        return error(
-            StatusCode::CONFLICT,
-            "pin_cap_reached",
-            "unpin one to add another",
-        );
-    }
-
-    let pos = active_count as i32;
-    let result = if let Some(row) = existing {
-        let mut am: user_view_pin::ActiveModel = row.into();
-        am.pinned = Set(true);
-        am.position = Set(pos);
-        am.update(&app.db).await
-    } else {
-        user_view_pin::ActiveModel {
-            user_id: Set(user.id),
-            view_id: Set(id),
-            position: Set(pos),
-            pinned: Set(true),
-            show_in_sidebar: Set(false),
-            icon: Set(None),
+    // Resolve target pages. Empty list → default to the system Home page,
+    // matching the legacy no-body call shape until M5/M6 migrates the web.
+    let target_pages: Vec<Uuid> = if req.page_ids.is_empty() {
+        match crate::pages::system_page_id(&app.db, user.id).await {
+            Ok(id) => vec![id],
+            Err(e) => {
+                tracing::error!(error = %e, "saved_views: system page resolve failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
         }
-        .insert(&app.db)
-        .await
+    } else {
+        // Dedupe to keep cap counting honest.
+        let mut seen: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+        req.page_ids
+            .iter()
+            .copied()
+            .filter(|p| seen.insert(*p))
+            .collect()
     };
-    if let Err(e) = result {
-        tracing::error!(error = %e, "saved_views: pin upsert failed");
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+
+    // Validate every page belongs to the user — block ahead of any
+    // upsert so a 404 in the middle of a multi-pin call doesn't leave
+    // partial state behind.
+    let owned_pages: std::collections::HashSet<Uuid> = match entity::user_page::Entity::find()
+        .filter(entity::user_page::Column::UserId.eq(user.id))
+        .all(&app.db)
+        .await
+    {
+        Ok(rows) => rows.into_iter().map(|p| p.id).collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "saved_views: page ownership lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    for page_id in &target_pages {
+        if !owned_pages.contains(page_id) {
+            return error(StatusCode::NOT_FOUND, "not_found", "page not found");
+        }
     }
-    Json(PinView {
-        view_id: id.to_string(),
-        pinned: true,
-        position: Some(pos),
-    })
-    .into_response()
+
+    let mut results: Vec<PinView> = Vec::with_capacity(target_pages.len());
+    for page_id in target_pages {
+        let existing = match user_pin(&app.db, user.id, page_id, id).await {
+            Ok(p) => p,
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        };
+        if let Some(row) = existing.as_ref()
+            && row.pinned
+        {
+            // Idempotent: already pinned on this page.
+            results.push(PinView {
+                view_id: id.to_string(),
+                page_id: page_id.to_string(),
+                pinned: true,
+                position: Some(row.position),
+            });
+            continue;
+        }
+        // Cap enforcement per (user, page).
+        let active_count = user_view_pin::Entity::find()
+            .filter(user_view_pin::Column::UserId.eq(user.id))
+            .filter(user_view_pin::Column::PageId.eq(page_id))
+            .filter(user_view_pin::Column::Pinned.eq(true))
+            .count(&app.db)
+            .await
+            .unwrap_or(0) as i64;
+        if active_count >= MAX_PIN_COUNT {
+            return error(
+                StatusCode::CONFLICT,
+                "pin_cap_reached",
+                "unpin one to add another",
+            );
+        }
+        let pos = active_count as i32;
+        let upsert = if let Some(row) = existing {
+            let mut am: user_view_pin::ActiveModel = row.into();
+            am.pinned = Set(true);
+            am.position = Set(pos);
+            am.update(&app.db).await.map(|m| m.position)
+        } else {
+            user_view_pin::ActiveModel {
+                user_id: Set(user.id),
+                page_id: Set(page_id),
+                view_id: Set(id),
+                position: Set(pos),
+                pinned: Set(true),
+                show_in_sidebar: Set(false),
+                icon: Set(None),
+            }
+            .insert(&app.db)
+            .await
+            .map(|m| m.position)
+        };
+        match upsert {
+            Ok(p) => results.push(PinView {
+                view_id: id.to_string(),
+                page_id: page_id.to_string(),
+                pinned: true,
+                position: Some(p),
+            }),
+            Err(e) => {
+                tracing::error!(error = %e, "saved_views: pin upsert failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    }
+    Json(results).into_response()
 }
 
 #[utoipa::path(
     post,
     path = "/me/saved-views/{id}/unpin",
     params(("id" = String, Path,)),
+    request_body = UnpinReq,
     responses((status = 200, body = PinView))
 )]
 pub async fn unpin(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
+    bytes: axum::body::Bytes,
 ) -> impl IntoResponse {
-    if let Some(row) = match user_pin(&app.db, user.id, id).await {
+    let req: UnpinReq = if bytes.is_empty() {
+        UnpinReq::default()
+    } else {
+        match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(e) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "validation",
+                    &format!("invalid body: {e}"),
+                );
+            }
+        }
+    };
+    let page_id = match req.page_id {
+        Some(p) => {
+            // Validate ownership before mutating.
+            match entity::user_page::Entity::find_by_id(p).one(&app.db).await {
+                Ok(Some(row)) if row.user_id == user.id => p,
+                Ok(_) => return error(StatusCode::NOT_FOUND, "not_found", "page not found"),
+                Err(e) => {
+                    tracing::error!(error = %e, "saved_views: unpin page lookup failed");
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
+            }
+        }
+        None => match crate::pages::system_page_id(&app.db, user.id).await {
+            Ok(id) => id,
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        },
+    };
+    if let Some(row) = match user_pin(&app.db, user.id, page_id, id).await {
         Ok(p) => p,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     } {
@@ -1063,7 +1382,7 @@ pub async fn unpin(
         if prune {
             // Drop the row entirely if no other prefs are set on it; the
             // PK row is just a position holder otherwise.
-            let _ = user_view_pin::Entity::delete_by_id((user.id, id))
+            let _ = user_view_pin::Entity::delete_by_id((user.id, page_id, id))
                 .exec(&app.db)
                 .await;
         } else {
@@ -1072,11 +1391,12 @@ pub async fn unpin(
             let _ = am.update(&app.db).await;
         }
     }
-    if let Err(e) = compact_pin_positions(&app.db, user.id).await {
+    if let Err(e) = compact_pin_positions(&app.db, user.id, page_id).await {
         tracing::warn!(error = %e, "saved_views: position compaction failed");
     }
     Json(PinView {
         view_id: id.to_string(),
+        page_id: page_id.to_string(),
         pinned: false,
         position: None,
     })
@@ -1109,7 +1429,11 @@ pub async fn set_sidebar(
         return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
     }
     let want = q.show.unwrap_or(true);
-    let existing = match user_pin(&app.db, user.id, id).await {
+    let page_id = match crate::pages::system_page_id(&app.db, user.id).await {
+        Ok(id) => id,
+        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+    };
+    let existing = match user_pin(&app.db, user.id, page_id, id).await {
         Ok(p) => p,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
@@ -1118,7 +1442,7 @@ pub async fn set_sidebar(
             // Drop the row entirely if turning sidebar off and nothing else
             // is keeping it alive.
             if !want && !row.pinned {
-                let _ = user_view_pin::Entity::delete_by_id((user.id, id))
+                let _ = user_view_pin::Entity::delete_by_id((user.id, page_id, id))
                     .exec(&app.db)
                     .await;
                 return StatusCode::NO_CONTENT.into_response();
@@ -1129,6 +1453,7 @@ pub async fn set_sidebar(
         }
         None if want => user_view_pin::ActiveModel {
             user_id: Set(user.id),
+            page_id: Set(page_id),
             view_id: Set(id),
             // Position is irrelevant for a sidebar-only entry; park at 0.
             position: Set(0),
@@ -1204,7 +1529,11 @@ pub async fn set_icon(
         );
     }
 
-    let existing = match user_pin(&app.db, user.id, id).await {
+    let page_id = match crate::pages::system_page_id(&app.db, user.id).await {
+        Ok(id) => id,
+        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+    };
+    let existing = match user_pin(&app.db, user.id, page_id, id).await {
         Ok(p) => p,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
@@ -1216,6 +1545,7 @@ pub async fn set_icon(
         }
         (None, Some(_)) => user_view_pin::ActiveModel {
             user_id: Set(user.id),
+            page_id: Set(page_id),
             view_id: Set(id),
             // No pin / sidebar bound by setting an icon alone — same
             // policy the sidebar toggle uses when starting from scratch.
@@ -1239,9 +1569,11 @@ pub async fn set_icon(
 async fn compact_pin_positions(
     db: &impl ConnectionTrait,
     user_id: Uuid,
+    page_id: Uuid,
 ) -> Result<(), sea_orm::DbErr> {
     let mut pins = user_view_pin::Entity::find()
         .filter(user_view_pin::Column::UserId.eq(user_id))
+        .filter(user_view_pin::Column::PageId.eq(page_id))
         .filter(user_view_pin::Column::Pinned.eq(true))
         .order_by_asc(user_view_pin::Column::Position)
         .all(db)
@@ -1271,9 +1603,32 @@ pub async fn reorder(
         Ok(t) => t,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
+    // Resolve target page. Explicit page_id (validated to belong to the
+    // caller) wins; otherwise fall back to the system Home page.
+    let page_id = match req.page_id {
+        Some(p) => match entity::user_page::Entity::find_by_id(p).one(&txn).await {
+            Ok(Some(row)) if row.user_id == user.id => p,
+            Ok(_) => {
+                let _ = txn.rollback().await;
+                return error(StatusCode::NOT_FOUND, "not_found", "page not found");
+            }
+            Err(e) => {
+                let _ = txn.rollback().await;
+                tracing::error!(error = %e, "saved_views: reorder page lookup failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        },
+        None => match crate::pages::system_page_id(&txn, user.id).await {
+            Ok(id) => id,
+            Err(_) => {
+                let _ = txn.rollback().await;
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        },
+    };
     // Validate every id is currently pinned by the user.
     for view_id in &req.view_ids {
-        let pin = match user_pin(&txn, user.id, *view_id).await {
+        let pin = match user_pin(&txn, user.id, page_id, *view_id).await {
             Ok(p) => p,
             Err(_) => {
                 let _ = txn.rollback().await;
@@ -1298,6 +1653,7 @@ pub async fn reorder(
     for (i, view_id) in req.view_ids.iter().enumerate() {
         let am = user_view_pin::ActiveModel {
             user_id: Unchanged(user.id),
+            page_id: Unchanged(page_id),
             view_id: Unchanged(*view_id),
             position: Set(10_000 + i as i32),
             pinned: NotSet,
@@ -1309,6 +1665,7 @@ pub async fn reorder(
     for (i, view_id) in req.view_ids.iter().enumerate() {
         let am = user_view_pin::ActiveModel {
             user_id: Unchanged(user.id),
+            page_id: Unchanged(page_id),
             view_id: Unchanged(*view_id),
             position: Set(i as i32),
             pinned: NotSet,

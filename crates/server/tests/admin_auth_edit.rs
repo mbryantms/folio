@@ -198,10 +198,7 @@ async fn switching_to_oidc_with_all_creds_succeeds() {
     // Live config reflects the change.
     let cfg = app.state().cfg();
     assert_eq!(cfg.auth_mode.to_string(), "both");
-    assert_eq!(
-        cfg.oidc_issuer.as_deref(),
-        Some("https://idp.example.test")
-    );
+    assert_eq!(cfg.oidc_issuer.as_deref(), Some("https://idp.example.test"));
     assert_eq!(cfg.oidc_client_id.as_deref(), Some("folio-test"));
     assert_eq!(
         cfg.oidc_client_secret.as_deref(),
@@ -351,7 +348,10 @@ async fn discover_probe_parses_endpoints_from_mock_op() {
         body["authorization_endpoint"],
         format!("{issuer}/authorize")
     );
-    assert_eq!(body["end_session_endpoint"], format!("{issuer}/end_session"));
+    assert_eq!(
+        body["end_session_endpoint"],
+        format!("{issuer}/end_session")
+    );
     let scopes = body["scopes_supported"].as_array().unwrap();
     assert_eq!(scopes.len(), 3);
 }

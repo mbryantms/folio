@@ -8,9 +8,9 @@
 //!   POST  /auth/logout          (cross-mode)
 //!   GET   /auth/me              (cross-mode)
 //!
-//! Local self-serve recovery (verify-email, request-password-reset, reset-password,
-//! resend-verification) lands when SMTP wiring is added — endpoint stubs return 501
-//! so OpenAPI surfaces them now.
+//! Local self-serve recovery (verify-email, request-password-reset,
+//! reset-password, resend-verification) is wired and uses the SMTP
+//! sender configured under /admin/email.
 
 use axum::{
     Extension, Json, Router,

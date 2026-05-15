@@ -56,7 +56,12 @@ export function MainSidebar({
         <nav
           aria-label={`${title} navigation`}
           className={cn(
-            "flex flex-1 flex-col gap-6 overflow-y-auto py-6 text-sm",
+            // Section-to-section gap kept compact — the uppercase
+            // header rows give visual separation on their own, and a
+            // bigger gap stacks up too much white space when the user
+            // splits a kind across two groups (e.g. "All Libraries" in
+            // one section, the named libraries in another).
+            "flex flex-1 flex-col gap-3 overflow-y-auto py-6 text-sm",
             collapsed ? "px-2" : "px-3",
           )}
         >
@@ -67,9 +72,23 @@ export function MainSidebar({
               </p>
             </div>
           )}
-          {sections.map((section) => (
-            <div key={section.label} className="flex flex-col gap-1">
-              {!collapsed && (
+          {sections.map((section, sectionIdx) => {
+            // Spacer rows: small visual gap, no header, no items.
+            if (section.isSpacer) {
+              return (
+                <div
+                  key={`spacer-${sectionIdx}`}
+                  className="h-0.5"
+                  aria-hidden
+                />
+              );
+            }
+            return (
+            <div
+              key={`${section.label ?? "untitled"}-${sectionIdx}`}
+              className="flex flex-col gap-1"
+            >
+              {!collapsed && section.label && (
                 <p className="text-muted-foreground/70 px-3 text-[11px] font-medium tracking-widest uppercase">
                   {section.label}
                 </p>
@@ -187,7 +206,8 @@ export function MainSidebar({
                 })}
               </ul>
             </div>
-          ))}
+            );
+          })}
         </nav>
         <div className={cn("px-2 pb-1", collapsed && "px-2")}>
           <ShortcutsHelpButton collapsed={collapsed} />

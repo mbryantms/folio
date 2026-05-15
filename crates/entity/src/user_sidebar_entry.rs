@@ -21,6 +21,12 @@ pub struct Model {
     pub ref_id: String,
     pub visible: bool,
     pub position: i32,
+    /// Optional label override. For `kind='header'` this is the section
+    /// title; for `kind='spacer'` it's ignored; for everything else it
+    /// overrides the server-resolved label (e.g. rename "Bookmarks"
+    /// → "Pins"). `NULL` falls back to the default.
+    #[sea_orm(nullable)]
+    pub label: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

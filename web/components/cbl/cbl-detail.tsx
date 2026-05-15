@@ -18,8 +18,6 @@ import {
   X,
 } from "lucide-react";
 
-import { EditCblMetadataDialog } from "@/components/saved-views/EditCblMetadataDialog";
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,10 +31,17 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   useCblList,
@@ -47,6 +52,8 @@ import {
   useDeleteCblList,
   useDeleteSavedView,
   useRefreshCblList,
+  useUpdateCblList,
+  useUpdateSavedView,
 } from "@/lib/api/mutations";
 import type {
   CblDetailView,
@@ -693,6 +700,13 @@ function RefreshRow({ entry }: { entry: RefreshLogEntryView }) {
   );
 }
 
+const REFRESH_OPTIONS: { value: string; label: string }[] = [
+  { value: "manual", label: "Manual only" },
+  { value: "@daily", label: "Daily" },
+  { value: "@weekly", label: "Weekly" },
+  { value: "@monthly", label: "Monthly" },
+];
+
 function SettingsTab({
   list,
   savedView,
@@ -703,8 +717,80 @@ function SettingsTab({
   const router = useRouter();
   const deleteList = useDeleteCblList(list.id);
   const deleteView = useDeleteSavedView(savedView.id);
-  const [editOpen, setEditOpen] = React.useState(false);
-  const [hideMissing, setHideMissing] = useCblHideMissing(list.id);
+  const updateView = useUpdateSavedView(savedView.id);
+  const updateList = useUpdateCblList(list.id);
+
+  // Seed from current values. After save, props update via the
+  // refetched queries; local state stays in sync with what the user
+  // submitted. If the user reopens the manage sheet later, this tab
+  // remounts and reseeds fresh.
+  const [name, setName] = React.useState(savedView.name);
+  const [description, setDescription] = React.useState(
+    savedView.description ?? "",
+  );
+  const [tagsRaw, setTagsRaw] = React.useState(
+    savedView.custom_tags.join(", "),
+  );
+  const [yearStart, setYearStart] = React.useState(
+    savedView.custom_year_start != null
+      ? String(savedView.custom_year_start)
+      : "",
+  );
+  const [yearEnd, setYearEnd] = React.useState(
+    savedView.custom_year_end != null ? String(savedView.custom_year_end) : "",
+  );
+  const [schedule, setSchedule] = React.useState<string>(
+    list.refresh_schedule ?? "manual",
+  );
+
+  // Normalize each field the same way the server stores it so the
+  // dirty check compares apples to apples. Tag comparison is
+  // order-sensitive — the server preserves user-entered order.
+  const trimmedName = name.trim();
+  const trimmedDesc = description.trim();
+  const tagList = tagsRaw
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const nextSchedule = schedule === "manual" ? null : schedule;
+  const yearStartNum = yearStart ? parseInt(yearStart, 10) : null;
+  const yearEndNum = yearEnd ? parseInt(yearEnd, 10) : null;
+  const isDirty =
+    trimmedName !== savedView.name ||
+    trimmedDesc !== (savedView.description ?? "") ||
+    tagList.join("|") !== savedView.custom_tags.join("|") ||
+    yearStartNum !== (savedView.custom_year_start ?? null) ||
+    yearEndNum !== (savedView.custom_year_end ?? null) ||
+    nextSchedule !== (list.refresh_schedule ?? null);
+
+  const submitting = updateView.isPending || updateList.isPending;
+  const canSave = isDirty && !submitting && trimmedName !== "";
+
+  async function save() {
+    // Only push the CBL-list update when the schedule actually
+    // changed — otherwise we'd fire two parallel saves and toast twice.
+    const scheduleChanged = nextSchedule !== (list.refresh_schedule ?? null);
+    try {
+      const promises: Promise<unknown>[] = [
+        updateView.mutateAsync({
+          name: trimmedName || null,
+          description: trimmedDesc || null,
+          custom_tags: tagList,
+          custom_year_start: yearStartNum,
+          custom_year_end: yearEndNum,
+        }),
+      ];
+      if (scheduleChanged) {
+        promises.push(
+          updateList.mutateAsync({ refresh_schedule: nextSchedule }),
+        );
+      }
+      await Promise.all(promises);
+    } catch {
+      // useApiMutation already surfaced the error — keep state so the
+      // user can adjust and retry without retyping.
+    }
+  }
 
   async function deleteEverything() {
     // Saved view first so the cbl_list isn't orphaned mid-flight.
@@ -714,44 +800,88 @@ function SettingsTab({
   }
 
   return (
-    <div className="flex max-w-xl flex-col gap-4">
-      <div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setEditOpen(true)}
-        >
-          <Pencil className="mr-1 h-4 w-4" /> Edit metadata
-        </Button>
-        <p className="text-muted-foreground mt-2 text-xs">
-          Edits the saved-view name, description, tags, year overlay, and
-          refresh schedule. Entries themselves stay sourced from the imported
-          `.cbl` file.
-        </p>
-      </div>
-      <div className="flex items-start justify-between gap-4 rounded-md border p-3">
-        <div className="min-w-0">
-          <Label
-            htmlFor={`hide-missing-${list.id}`}
-            className="text-sm font-medium"
-          >
-            Hide missing entries
-          </Label>
-          <p className="text-muted-foreground mt-1 text-xs">
-            On the consumption view, skip entries that aren&apos;t in your
-            library. CBL position numbers stay accurate and a small gap
-            marker shows where missing entries were. Saved per list, this
-            device.
-          </p>
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="flex flex-col gap-1 sm:col-span-2">
+          <Label htmlFor={`cbl-settings-name-${savedView.id}`}>Name</Label>
+          <Input
+            id={`cbl-settings-name-${savedView.id}`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
         </div>
-        <Switch
-          id={`hide-missing-${list.id}`}
-          checked={hideMissing}
-          onCheckedChange={setHideMissing}
-        />
+        <div className="flex flex-col gap-1 sm:col-span-2">
+          <Label htmlFor={`cbl-settings-desc-${savedView.id}`}>
+            Description
+          </Label>
+          <Textarea
+            id={`cbl-settings-desc-${savedView.id}`}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+          />
+        </div>
+        <div className="flex flex-col gap-1 sm:col-span-2">
+          <Label htmlFor={`cbl-settings-tags-${savedView.id}`}>
+            Tags (comma-separated)
+          </Label>
+          <Input
+            id={`cbl-settings-tags-${savedView.id}`}
+            value={tagsRaw}
+            onChange={(e) => setTagsRaw(e.target.value)}
+            placeholder="event, big-two"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={`cbl-settings-year-from-${savedView.id}`}>
+            Year from
+          </Label>
+          <Input
+            id={`cbl-settings-year-from-${savedView.id}`}
+            type="number"
+            value={yearStart}
+            onChange={(e) => setYearStart(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={`cbl-settings-year-to-${savedView.id}`}>
+            Year to
+          </Label>
+          <Input
+            id={`cbl-settings-year-to-${savedView.id}`}
+            type="number"
+            value={yearEnd}
+            onChange={(e) => setYearEnd(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-1 sm:col-span-2">
+          <Label htmlFor={`cbl-settings-schedule-${savedView.id}`}>
+            Refresh schedule
+          </Label>
+          <Select value={schedule} onValueChange={setSchedule}>
+            <SelectTrigger id={`cbl-settings-schedule-${savedView.id}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {REFRESH_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
-      <dl className="text-muted-foreground grid grid-cols-[8rem_1fr] gap-y-1 text-sm">
+      <div className="flex justify-end">
+        <Button type="button" onClick={save} disabled={!canSave}>
+          {submitting ? "Saving…" : "Save"}
+        </Button>
+      </div>
+      {/* Read-only context — source kind, source URL, catalog path,
+       *  last refreshed timestamp. Refresh schedule isn't listed
+       *  again here because the editable Select above is the
+       *  authoritative surface for that field. */}
+      <dl className="text-muted-foreground grid grid-cols-[8rem_1fr] gap-y-1 border-t pt-3 text-sm">
         <dt>Source kind</dt>
         <dd className="text-foreground">{list.source_kind}</dd>
         {list.source_url ? (
@@ -770,8 +900,6 @@ function SettingsTab({
             </dd>
           </>
         ) : null}
-        <dt>Refresh schedule</dt>
-        <dd className="text-foreground">{list.refresh_schedule ?? "manual"}</dd>
         {list.last_refreshed_at ? (
           <>
             <dt>Last refreshed</dt>
@@ -806,12 +934,6 @@ function SettingsTab({
           </AlertDialogContent>
         </AlertDialog>
       </div>
-      <EditCblMetadataDialog
-        view={savedView}
-        list={list}
-        open={editOpen}
-        onOpenChange={setEditOpen}
-      />
     </div>
   );
 }

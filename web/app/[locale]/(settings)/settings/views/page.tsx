@@ -9,7 +9,7 @@ export default function SavedViewsSettingsPage() {
     <>
       <PageHeader
         title="Saved views"
-        description="Create, edit, and delete filter views and CBL reading lists. Where they appear — home rails and sidebar — is managed from Navigation."
+        description="Create, edit, and delete filter views and CBL reading lists. Pin them to one or more pages from the row menu; sidebar arrangement lives under Sidebar."
       />
       <SavedViewsManager />
       {/* QuickApplyPrefill reads `?quick_field=&quick_value=` to open

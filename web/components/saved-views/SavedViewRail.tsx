@@ -247,7 +247,11 @@ function CblRailBody({
             // auto-scroll the current entry into view.
             data-rail-current={isCurrent ? "true" : undefined}
           >
-            <CblWindowCard entry={entry} isCurrent={isCurrent} />
+            <CblWindowCard
+              entry={entry}
+              isCurrent={isCurrent}
+              cblSavedViewId={view.id}
+            />
           </div>
         );
       })}

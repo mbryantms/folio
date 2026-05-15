@@ -23,7 +23,8 @@ import {
   groupIndexForPage,
   type SpreadGroup,
 } from "@/lib/reader/spreads";
-import { useIssueMarkers } from "@/lib/api/queries";
+import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
+import { readerUrl } from "@/lib/urls";
 import {
   useCreateMarker,
   useDeleteMarker,
@@ -31,6 +32,7 @@ import {
 } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import type { PageInfo } from "@/lib/api/types";
+import { EndOfIssueCard } from "./EndOfIssueCard";
 import { MarkerEditor } from "./MarkerEditor";
 import { MarkerOverlay } from "./MarkerOverlay";
 import { PageStrip } from "./PageStrip";
@@ -45,6 +47,7 @@ const SWIPE_THRESHOLD_PX = 30;
 export function Reader({
   issueId,
   seriesId,
+  cblSavedViewId,
   exitUrl,
   totalPages,
   initialPage,
@@ -64,6 +67,11 @@ export function Reader({
 }: {
   issueId: string;
   seriesId: string | null;
+  /** Saved-view id of the CBL the user is reading through. When set,
+   *  the next-up resolver picks from that list instead of the parent
+   *  series. Forwarded onto the next-issue URL when source === "cbl"
+   *  so the CBL session persists across issues. */
+  cblSavedViewId: string | null;
   /** URL to exit the reader to (the issue detail page). Computed by the
    * page wrapper from the slug params. */
   exitUrl: string;
@@ -112,6 +120,84 @@ export function Reader({
   // lookup. One round-trip, shared via TanStack Query cache.
   const issueMarkers = useIssueMarkers(issueId);
   const createMarker = useCreateMarker();
+  // Prefetch the "what's next?" target on mount so the `Shift+N` keybind
+  // (and the M4 end-of-issue card) can navigate without waiting on a
+  // round-trip. The hook handles the CBL > series > none resolution
+  // server-side; the client just consumes the result.
+  const nextUp = useNextUp(issueId, cblSavedViewId);
+  // CBL self-healing: when the server tells us `?cbl=<id>` pointed at a
+  // CBL the current issue isn't in (entry deleted, shared link from a
+  // sibling list, etc.), strip the dead param from the URL so a refresh
+  // / shared link doesn't carry it forward. `router.replace` keeps the
+  // browser history clean. Render-phase setState-style guard: a state
+  // flag prevents repeated replaces if the resolver's data sticks
+  // around in cache across renders.
+  const [cblParamScrubbed, setCblParamScrubbed] = useState(false);
+  if (
+    !cblParamScrubbed &&
+    cblSavedViewId &&
+    nextUp.data?.cbl_param_was_stale === true
+  ) {
+    setCblParamScrubbed(true);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("cbl");
+      router.replace(url.pathname + url.search);
+    }
+  }
+  const goNextIssue = useCallback(() => {
+    const data = nextUp.data;
+    if (!data || !data.target) {
+      // Either the resolver hasn't loaded yet, or it returned source =
+      // "none" — both translate to "nothing to do" from the user's POV.
+      // A soft toast keeps the action discoverable instead of feeling
+      // broken when the user mashes the key on the last issue.
+      if (data && data.source === "none") {
+        toast.message("You're caught up — no next issue.");
+      }
+      return;
+    }
+    // Forward the CBL context only when the resolver also picked CBL —
+    // a series fallback means the user is no longer following the list
+    // and the next read should reset to series-only context.
+    const forwardCbl = data.source === "cbl" ? cblSavedViewId : null;
+    router.push(readerUrl(data.target, { cbl: forwardCbl }));
+  }, [cblSavedViewId, nextUp.data, router]);
+
+  // Symmetric to useNextUp for the `Shift+P` keybind. Pure sequential
+  // back-navigation (no finished-state filter); the resolver returns
+  // source=none when the user is already at the first issue.
+  const prevUp = usePrevUp(issueId, cblSavedViewId);
+  const goPrevIssue = useCallback(() => {
+    const data = prevUp.data;
+    if (!data || !data.target) {
+      if (data && data.source === "none") {
+        toast.message("Already at the first issue.");
+      }
+      return;
+    }
+    const forwardCbl = data.source === "cbl" ? cblSavedViewId : null;
+    router.push(readerUrl(data.target, { cbl: forwardCbl }));
+  }, [cblSavedViewId, prevUp.data, router]);
+
+  // End-of-issue side panel. Opens only when the user *attempts to
+  // advance past* the last page (e.g., right-arrow / spacebar / swipe
+  // forward / right-tap zone). Reaching the last page is not by itself
+  // a trigger — the panel must never sit on top of the comic the user
+  // is still reading. `goNext` does the intercept (see below).
+  //
+  // Auto-dismiss when the page state moves back below the last page so
+  // a `goPrev` after the panel opens closes it cleanly. No once-per-
+  // mount gate is needed: the trigger is user-initiated, not implicit.
+  const [showEndCard, setShowEndCard] = useState(false);
+  if (showEndCard && currentPage < totalPages - 1) {
+    setShowEndCard(false);
+  }
+  const dismissEndCard = useCallback(() => setShowEndCard(false), []);
+  const continueFromEndCard = useCallback(() => {
+    setShowEndCard(false);
+    goNextIssue();
+  }, [goNextIssue]);
   // Per-page natural dimensions, populated as pages load. Stored in a
   // ref so a slider that rebuilds PageImage doesn't trigger a re-render
   // here — the overlay reads it directly.
@@ -319,14 +405,42 @@ export function Reader({
 
   // Direction-aware navigation. In RTL, "next" should respond to ← and the
   // right tap zone (so a swipe-right feels like turning the page forward).
+  //
+  // End-of-issue intercept: when the user attempts to advance past the
+  // last page (or last spread-group in double mode), open the
+  // EndOfIssueCard side panel instead of no-opping. Don't hijack while
+  // a marker is in flight — same suppression rule the rest of the
+  // reader uses for incidental UI.
   const goNext = useCallback(() => {
+    const markerActive =
+      markerModeForKeybinds !== "idle" || pendingMarkerForKeybinds !== null;
     if (viewMode === "double" && groups.length > 0) {
-      const target = Math.min(groups.length - 1, currentGroupIdx + 1);
+      const atLastGroup = currentGroupIdx >= groups.length - 1;
+      if (atLastGroup) {
+        if (!markerActive) setShowEndCard(true);
+        return;
+      }
+      const target = currentGroupIdx + 1;
       setPage(firstPageOfGroup(groups, target));
     } else {
+      const atLastPage = totalPages > 0 && currentPage >= totalPages - 1;
+      if (atLastPage) {
+        if (!markerActive) setShowEndCard(true);
+        return;
+      }
       nextPage();
     }
-  }, [viewMode, groups, currentGroupIdx, setPage, nextPage]);
+  }, [
+    viewMode,
+    groups,
+    currentGroupIdx,
+    currentPage,
+    totalPages,
+    markerModeForKeybinds,
+    pendingMarkerForKeybinds,
+    setPage,
+    nextPage,
+  ]);
   const goPrev = useCallback(() => {
     if (viewMode === "double" && groups.length > 0) {
       const target = Math.max(0, currentGroupIdx - 1);
@@ -456,6 +570,13 @@ export function Reader({
           togglePageStrip();
           break;
         case "quitReader":
+          // End-of-issue card swallows the first Esc — second one exits
+          // as normal. Keeps "Stay here" reachable from the keyboard
+          // without a separate keybind.
+          if (showEndCard) {
+            setShowEndCard(false);
+            break;
+          }
           router.push(exitUrl);
           break;
         case "bookmarkPage":
@@ -513,6 +634,12 @@ export function Reader({
           if (prev != null) setPage(prev);
           break;
         }
+        case "nextIssue":
+          goNextIssue();
+          break;
+        case "prevIssue":
+          goPrevIssue();
+          break;
       }
     };
     window.addEventListener("keydown", onKey);
@@ -526,10 +653,13 @@ export function Reader({
     direction,
     exitUrl,
     goNext,
+    goNextIssue,
     goPrev,
+    goPrevIssue,
     groups,
     issueId,
     issueMarkers.data,
+    showEndCard,
     markerModeForKeybinds,
     pendingMarkerForKeybinds,
     router,
@@ -778,6 +908,15 @@ export function Reader({
         pages={pages}
       />
       <MarkerEditor issueId={issueId} pageNaturalSize={pageNaturalSize} />
+      <EndOfIssueCard
+        open={showEndCard}
+        data={nextUp.data}
+        isLoading={nextUp.isLoading}
+        direction={direction}
+        exitUrl={exitUrl}
+        onContinue={continueFromEndCard}
+        onDismiss={dismissEndCard}
+      />
     </div>
   );
 }

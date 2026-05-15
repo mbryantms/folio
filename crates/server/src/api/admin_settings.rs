@@ -26,8 +26,7 @@ use crate::settings::{self, registry};
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/admin/settings", get(get_all).patch(update))
+    Router::new().route("/admin/settings", get(get_all).patch(update))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -244,18 +243,13 @@ pub async fn update(
 /// Dry-run validation: build the Config that *would* result from applying
 /// `updates` on top of the env baseline + existing DB rows, then run the
 /// post-overlay validator. Returns a user-facing message on failure.
-async fn dry_run_validate(
-    app: &AppState,
-    updates: &[settings::Update],
-) -> Result<(), String> {
+async fn dry_run_validate(app: &AppState, updates: &[settings::Update]) -> Result<(), String> {
     let existing = settings::read_all(&app.db, &app.secrets)
         .await
         .map_err(|e| format!("failed to read current settings: {e}"))?;
 
-    let mut merged: std::collections::HashMap<String, settings::Resolved> = existing
-        .into_iter()
-        .map(|r| (r.key.clone(), r))
-        .collect();
+    let mut merged: std::collections::HashMap<String, settings::Resolved> =
+        existing.into_iter().map(|r| (r.key.clone(), r)).collect();
     for u in updates {
         match &u.value {
             None => {

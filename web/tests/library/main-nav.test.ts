@@ -32,12 +32,21 @@ function entry(
   };
 }
 
-/** Mirror of the server `BUILTIN_REGISTRY` plus the synthetic
- *  "All Libraries" entry and a single library, in default order. Match
- *  `compute_layout`'s output exactly so any drift shows up here. */
+/** Mirror of the server `compute_layout` output — explicit header rows
+ *  bookend each group, matching the new layout contract where section
+ *  labels are server-supplied rather than client-inferred from kind. */
 function defaultLayout(): SidebarLayoutView {
   return {
     entries: [
+      {
+        kind: "header",
+        ref_id: "default:browse",
+        label: "Browse",
+        icon: "",
+        href: "",
+        visible: true,
+        position: 0,
+      },
       {
         kind: "builtin",
         ref_id: "home",
@@ -45,7 +54,7 @@ function defaultLayout(): SidebarLayoutView {
         icon: "Home",
         href: "/",
         visible: true,
-        position: 0,
+        position: 1,
       },
       {
         kind: "builtin",
@@ -54,7 +63,7 @@ function defaultLayout(): SidebarLayoutView {
         icon: "Bookmark",
         href: "/bookmarks",
         visible: true,
-        position: 1,
+        position: 2,
       },
       {
         kind: "builtin",
@@ -63,7 +72,7 @@ function defaultLayout(): SidebarLayoutView {
         icon: "Folder",
         href: "/collections",
         visible: true,
-        position: 2,
+        position: 3,
       },
       {
         kind: "builtin",
@@ -72,7 +81,16 @@ function defaultLayout(): SidebarLayoutView {
         icon: "ListPlus",
         href: "/views/want-to-read",
         visible: true,
-        position: 3,
+        position: 4,
+      },
+      {
+        kind: "header",
+        ref_id: "default:libraries",
+        label: "Libraries",
+        icon: "",
+        href: "",
+        visible: true,
+        position: 5,
       },
       {
         kind: "library",
@@ -81,7 +99,7 @@ function defaultLayout(): SidebarLayoutView {
         icon: "Library",
         href: "/?library=all",
         visible: true,
-        position: 4,
+        position: 6,
       },
       {
         kind: "library",
@@ -90,7 +108,7 @@ function defaultLayout(): SidebarLayoutView {
         icon: "Library",
         href: "/?library=lib-1",
         visible: true,
-        position: 5,
+        position: 7,
       },
     ],
   };
@@ -153,21 +171,25 @@ describe("mainNav default layout", () => {
               "href": "/",
               "icon": "Home",
               "label": "Home",
+              "pageId": undefined,
             },
             {
               "href": "/bookmarks",
               "icon": "Bookmark",
               "label": "Bookmarks",
+              "pageId": undefined,
             },
             {
               "href": "/collections",
               "icon": "Folder",
               "label": "Collections",
+              "pageId": undefined,
             },
             {
               "href": "/views/want-to-read",
               "icon": "ListPlus",
               "label": "Want to Read",
+              "pageId": undefined,
             },
           ],
           "label": "Browse",
@@ -178,11 +200,13 @@ describe("mainNav default layout", () => {
               "href": "/?library=all",
               "icon": "Library",
               "label": "All Libraries",
+              "pageId": undefined,
             },
             {
               "href": "/?library=lib-1",
               "icon": "Library",
               "label": "Main",
+              "pageId": undefined,
             },
           ],
           "label": "Libraries",
@@ -193,17 +217,28 @@ describe("mainNav default layout", () => {
 });
 
 describe("mainNav with saved views and overrides", () => {
-  it("adds a Saved views section when a sidebar view follows the libraries", () => {
+  it("adds a Saved views section when a header + view follow the libraries", () => {
     const layout = defaultLayout();
-    layout.entries.push({
-      kind: "view",
-      ref_id: "v-pinned",
-      label: "My Filter",
-      icon: "filter",
-      href: "/views/v-pinned",
-      visible: true,
-      position: 6,
-    });
+    layout.entries.push(
+      {
+        kind: "header",
+        ref_id: "default:views",
+        label: "Saved views",
+        icon: "",
+        href: "",
+        visible: true,
+        position: 8,
+      },
+      {
+        kind: "view",
+        ref_id: "v-pinned",
+        label: "My Filter",
+        icon: "filter",
+        href: "/views/v-pinned",
+        visible: true,
+        position: 9,
+      },
+    );
     const sections = mainNav("", layout);
     expect(sections.map((s) => s.label)).toEqual([
       "Browse",
@@ -231,19 +266,27 @@ describe("mainNav with saved views and overrides", () => {
     ]);
   });
 
-  it("interleaved kinds split into multiple sections", () => {
-    // User drops a saved view between Bookmarks and Collections. We
-    // surface three sections instead of falsely advertising the view
-    // as a "Browse" item.
+  it("custom headers split groups even when interleaved kinds appear", () => {
+    // With server-supplied headers driving section boundaries, the
+    // user can deliberately break a run of same-kind items into two
+    // headed groups (or vice versa).
     const layout: SidebarLayoutView = {
       entries: [
+        entry({
+          kind: "header",
+          ref_id: "default:browse",
+          label: "Browse",
+          icon: "",
+          href: "",
+          position: 0,
+        }),
         entry({
           kind: "builtin",
           ref_id: "home",
           label: "Home",
           icon: "Home",
           href: "/",
-          position: 0,
+          position: 1,
         }),
         entry({
           kind: "builtin",
@@ -251,7 +294,15 @@ describe("mainNav with saved views and overrides", () => {
           label: "Bookmarks",
           icon: "Bookmark",
           href: "/bookmarks",
-          position: 1,
+          position: 2,
+        }),
+        entry({
+          kind: "header",
+          ref_id: "custom:filters",
+          label: "Filters",
+          icon: "",
+          href: "",
+          position: 3,
         }),
         entry({
           kind: "view",
@@ -259,7 +310,15 @@ describe("mainNav with saved views and overrides", () => {
           label: "My View",
           icon: "filter",
           href: "/views/v-1",
-          position: 2,
+          position: 4,
+        }),
+        entry({
+          kind: "header",
+          ref_id: "custom:more",
+          label: "More",
+          icon: "",
+          href: "",
+          position: 5,
         }),
         entry({
           kind: "builtin",
@@ -267,7 +326,7 @@ describe("mainNav with saved views and overrides", () => {
           label: "Collections",
           icon: "Folder",
           href: "/collections",
-          position: 3,
+          position: 6,
         }),
       ],
     };
@@ -275,9 +334,67 @@ describe("mainNav with saved views and overrides", () => {
     expect(sections.map((s) => [s.label, s.items.map((i) => i.label)]))
       .toEqual([
         ["Browse", ["Home", "Bookmarks"]],
-        ["Saved views", ["My View"]],
-        ["Browse", ["Collections"]],
+        ["Filters", ["My View"]],
+        ["More", ["Collections"]],
       ]);
+  });
+
+  it("spacer entries emit a spacer section between content groups", () => {
+    const layout: SidebarLayoutView = {
+      entries: [
+        entry({
+          kind: "header",
+          ref_id: "h1",
+          label: "Top",
+          icon: "",
+          href: "",
+          position: 0,
+        }),
+        entry({
+          kind: "builtin",
+          ref_id: "home",
+          label: "Home",
+          icon: "Home",
+          href: "/",
+          position: 1,
+        }),
+        entry({
+          kind: "spacer",
+          ref_id: "s1",
+          label: "",
+          icon: "",
+          href: "",
+          position: 2,
+        }),
+        entry({
+          kind: "header",
+          ref_id: "h2",
+          label: "Bottom",
+          icon: "",
+          href: "",
+          position: 3,
+        }),
+        entry({
+          kind: "builtin",
+          ref_id: "bookmarks",
+          label: "Bookmarks",
+          icon: "Bookmark",
+          href: "/bookmarks",
+          position: 4,
+        }),
+      ],
+    };
+    const sections = mainNav("", layout);
+    expect(sections.length).toBe(3);
+    expect(sections[0]).toMatchObject({
+      label: "Top",
+      items: [{ label: "Home" }],
+    });
+    expect(sections[1]).toMatchObject({ isSpacer: true });
+    expect(sections[2]).toMatchObject({
+      label: "Bottom",
+      items: [{ label: "Bookmarks" }],
+    });
   });
 
   it("locale prefix is applied to every href", () => {
@@ -295,5 +412,58 @@ describe("mainNav with saved views and overrides", () => {
 
   it("empty layout returns no sections", () => {
     expect(mainNav("", { entries: [] })).toEqual([]);
+  });
+
+  it("kind='page' entries surface in a server-headered 'Pages' section", () => {
+    // Multi-page rails M4: the server emits a "Pages" header before
+    // the custom-page rows when at least one exists. Client renders
+    // them under that section verbatim.
+    const layout: SidebarLayoutView = {
+      entries: [
+        entry({
+          kind: "header",
+          ref_id: "default:browse",
+          label: "Browse",
+          icon: "",
+          href: "",
+          position: 0,
+        }),
+        entry({
+          kind: "builtin",
+          ref_id: "home",
+          label: "Library", // renamed system page bleeds into the label
+          icon: "Home",
+          href: "/",
+          position: 1,
+        }),
+        entry({
+          kind: "header",
+          ref_id: "default:pages",
+          label: "Pages",
+          icon: "",
+          href: "",
+          position: 2,
+        }),
+        entry({
+          kind: "page",
+          ref_id: "page-1",
+          label: "Marvel",
+          icon: "LayoutGrid",
+          href: "/pages/marvel",
+          position: 3,
+        }),
+      ],
+    };
+    const sections = mainNav("", layout);
+    expect(sections.map((s) => [s.label, s.items.map((i) => i.label)]))
+      .toEqual([
+        ["Browse", ["Library"]],
+        ["Pages", ["Marvel"]],
+      ]);
+    const marvel = sections
+      .find((s) => s.label === "Pages")!
+      .items.find((i) => i.label === "Marvel")!;
+    expect(marvel.href).toBe("/pages/marvel");
+    expect(marvel.icon).toBe("LayoutGrid");
   });
 });

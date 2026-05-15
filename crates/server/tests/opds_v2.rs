@@ -324,7 +324,11 @@ async fn seed_collection_entry(
     series_id: Option<Uuid>,
     issue_id: Option<&str>,
 ) {
-    let kind = if series_id.is_some() { "series" } else { "issue" };
+    let kind = if series_id.is_some() {
+        "series"
+    } else {
+        "issue"
+    };
     let now = Utc::now().fixed_offset();
     CollectionEntryAM {
         id: Set(Uuid::now_v7()),
@@ -439,8 +443,10 @@ async fn seed_filter_view(
 }
 
 async fn pin_view(db: &DatabaseConnection, user_id: Uuid, view_id: Uuid) {
+    let page_id = server::pages::system_page_id(db, user_id).await.unwrap();
     UserViewPinAM {
         user_id: Set(user_id),
+        page_id: Set(page_id),
         view_id: Set(view_id),
         position: Set(0),
         pinned: Set(true),
@@ -455,7 +461,10 @@ async fn pin_view(db: &DatabaseConnection, user_id: Uuid, view_id: Uuid) {
 // ───────────────── shape-level assertion helpers ─────────────────
 
 fn assert_link_typed(link: &Value) {
-    assert!(link["rel"].is_string() || link["rel"].is_array(), "link rel: {link}");
+    assert!(
+        link["rel"].is_string() || link["rel"].is_array(),
+        "link rel: {link}"
+    );
     assert!(link["href"].is_string(), "link href: {link}");
 }
 
@@ -496,7 +505,10 @@ async fn root_shape_advertises_v2_subsections() {
     assert!(nav_hrefs.contains(&"/opds/v2/lists"));
     assert!(nav_hrefs.contains(&"/opds/v2/collections"));
     assert!(nav_hrefs.contains(&"/opds/v2/views"));
-    assert!(link_with_rel(links, "search").is_some(), "search template link");
+    assert!(
+        link_with_rel(links, "search").is_some(),
+        "search template link"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -518,7 +530,10 @@ async fn series_list_paginates_in_json() {
     assert!(link_with_rel(links, "first").is_some());
     assert!(link_with_rel(links, "next").is_some());
     assert!(link_with_rel(links, "last").is_some());
-    assert!(link_with_rel(links, "previous").is_none(), "page 1 has no previous");
+    assert!(
+        link_with_rel(links, "previous").is_none(),
+        "page 1 has no previous"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -545,10 +560,12 @@ async fn publication_shape_includes_pse_template() {
     assert_eq!(pubs.len(), 1);
     let p = &pubs[0];
     assert_eq!(p["metadata"]["@type"], "http://schema.org/Periodical");
-    assert!(p["metadata"]["identifier"]
-        .as_str()
-        .unwrap()
-        .starts_with("urn:folio:issue:"));
+    assert!(
+        p["metadata"]["identifier"]
+            .as_str()
+            .unwrap()
+            .starts_with("urn:folio:issue:")
+    );
     let links = p["links"].as_array().unwrap();
     let acq = link_with_rel(links, "http://opds-spec.org/acquisition").unwrap();
     assert_eq!(
@@ -720,14 +737,8 @@ async fn collection_acq_splits_series_and_issues() {
     let tmp = tempfile::tempdir().unwrap();
     let lib_id = seed_library(&db, tmp.path()).await;
     let series_id = seed_series(&db, lib_id, "Mixed Series").await;
-    let issue_id = seed_issue_with_file(
-        &db,
-        lib_id,
-        series_id,
-        &tmp.path().join("m.cbz"),
-        b"m",
-    )
-    .await;
+    let issue_id =
+        seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("m.cbz"), b"m").await;
     let view_id = seed_collection(&db, auth.user_id, "Mixed").await;
     seed_collection_entry(&db, view_id, 0, Some(series_id), None).await;
     seed_collection_entry(&db, view_id, 1, None, Some(&issue_id)).await;
@@ -752,8 +763,7 @@ async fn collection_other_user_returns_404() {
     let snooper = register(&app, "v2-co-snoop@example.com").await;
     let db = Database::connect(&app.db_url).await.unwrap();
     let view_id = seed_collection(&db, owner.user_id, "Private").await;
-    let (s, _body) =
-        get_json(&app, &snooper, &format!("/opds/v2/collections/{view_id}")).await;
+    let (s, _body) = get_json(&app, &snooper, &format!("/opds/v2/collections/{view_id}")).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
@@ -764,8 +774,7 @@ async fn views_nav_filters_to_pinned_filter_views() {
     promote_to_admin(&app, auth.user_id).await;
     let db = Database::connect(&app.db_url).await.unwrap();
     let pinned = seed_filter_view(&db, auth.user_id, "Pinned", serde_json::json!([])).await;
-    let _invisible =
-        seed_filter_view(&db, auth.user_id, "Hidden", serde_json::json!([])).await;
+    let _invisible = seed_filter_view(&db, auth.user_id, "Hidden", serde_json::json!([])).await;
     pin_view(&db, auth.user_id, pinned).await;
     let (s, body) = get_json(&app, &auth, "/opds/v2/views").await;
     assert_eq!(s, StatusCode::OK);

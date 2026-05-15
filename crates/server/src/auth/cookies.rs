@@ -4,7 +4,6 @@
 //! Path=/). The session and refresh cookies are HttpOnly; the CSRF cookie is not — JS
 //! reads it for the double-submit header.
 
-use axum::http::HeaderValue;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use std::time::Duration;
 
@@ -92,12 +91,6 @@ fn time_from_std(d: Duration) -> time::Duration {
     time::Duration::seconds(d.as_secs().min(i64::MAX as u64) as i64)
 }
 
-/// Set-Cookie header builder for use when CookieJar isn't convenient.
-#[allow(dead_code)]
-pub fn set_cookie_header(cookie: &Cookie<'_>) -> HeaderValue {
-    HeaderValue::from_str(&cookie.to_string()).expect("cookie has only ascii")
-}
-
 /// Generate a fresh CSRF token (32 bytes, base64url, no padding).
 pub fn new_csrf_token() -> String {
     use base64::Engine;
@@ -123,9 +116,3 @@ pub fn sha256_hex(input: &str) -> String {
     format!("{:x}", h.finalize())
 }
 
-// Suppress unused-import warning when downstream callers don't need this.
-#[allow(dead_code)]
-fn _ensure_sha2() {
-    use sha2::Sha256;
-    let _: Option<Sha256> = None;
-}

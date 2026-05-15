@@ -335,13 +335,7 @@ async fn read_scope_token_rejected_with_403() {
 
     // Default scope is `read`.
     let token = mint_token(&app, &auth, "read-only", None).await;
-    let resp = put_progress(
-        &app,
-        &token,
-        &issue_id,
-        serde_json::json!({ "page": 4 }),
-    )
-    .await;
+    let resp = put_progress(&app, &token, &issue_id, serde_json::json!({ "page": 4 })).await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -406,13 +400,7 @@ async fn cookie_session_bypasses_scope_check() {
     let series_id = seed_series(&db, lib_id, "S").await;
     let issue_id = seed_issue(&db, lib_id, series_id, &tmp.path().join("a.cbz"), b"a", 10).await;
 
-    let resp = put_progress_cookie(
-        &app,
-        &auth,
-        &issue_id,
-        serde_json::json!({ "page": 3 }),
-    )
-    .await;
+    let resp = put_progress_cookie(&app, &auth, &issue_id, serde_json::json!({ "page": 3 })).await;
     assert_eq!(
         resp.status(),
         StatusCode::OK,
@@ -579,9 +567,7 @@ async fn koreader_shim_rejects_mismatched_document_body() {
                 .uri(format!("/opds/v1/syncs/progress/{issue_id}"))
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    r#"{"document":"different","percentage":0.5}"#,
-                ))
+                .body(Body::from(r#"{"document":"different","percentage":0.5}"#))
                 .unwrap(),
         )
         .await
@@ -600,13 +586,7 @@ async fn progress_write_audit_logged() {
     let issue_id = seed_issue(&db, lib_id, series_id, &tmp.path().join("a.cbz"), b"a", 10).await;
     let token = mint_token(&app, &auth, "audit", Some("read+progress")).await;
 
-    let resp = put_progress(
-        &app,
-        &token,
-        &issue_id,
-        serde_json::json!({ "page": 1 }),
-    )
-    .await;
+    let resp = put_progress(&app, &token, &issue_id, serde_json::json!({ "page": 1 })).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     let rows = entity::audit_log::Entity::find()

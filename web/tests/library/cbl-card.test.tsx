@@ -106,9 +106,15 @@ function findByType(node: React.ReactNode, type: unknown): unknown {
   return null;
 }
 
+const SV_ID = "00000000-0000-0000-0000-00000000abcd";
+
 describe("CblIssueCard", () => {
   it("matched + hydrated issue renders a Link to the issue page", () => {
-    const tree = CblIssueCard({ entry: entry(), issue: issue() });
+    const tree = CblIssueCard({
+      entry: entry(),
+      issue: issue(),
+      cblSavedViewId: SV_ID,
+    });
     const link = findByType(tree, Link) as React.ReactElement<{
       href?: string;
     }> | null;
@@ -116,10 +122,23 @@ describe("CblIssueCard", () => {
     expect(link!.props.href).toContain("/series/invincible/issues/issue-1");
   });
 
+  it("threads cblSavedViewId onto the issue link as ?cbl=", () => {
+    const tree = CblIssueCard({
+      entry: entry(),
+      issue: issue(),
+      cblSavedViewId: SV_ID,
+    });
+    const link = findByType(tree, Link) as React.ReactElement<{
+      href?: string;
+    }> | null;
+    expect(link!.props.href).toContain(`?cbl=${SV_ID}`);
+  });
+
   it("ambiguous entry without a hydrated issue renders as a plain div", () => {
     const tree = CblIssueCard({
       entry: entry({ match_status: "ambiguous" }),
       issue: undefined,
+      cblSavedViewId: SV_ID,
     });
     expect(rootType(tree)).toBe("div");
   });
@@ -128,6 +147,7 @@ describe("CblIssueCard", () => {
     const tree = CblIssueCard({
       entry: entry({ match_status: "missing" }),
       issue: undefined,
+      cblSavedViewId: SV_ID,
     });
     expect(rootType(tree)).toBe("div");
   });

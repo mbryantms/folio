@@ -124,6 +124,22 @@ pub struct Config {
     #[serde(default = "default_thumb_inline_parallel")]
     pub thumb_inline_parallel: usize,
 
+    // Archive limits (spec §4.1.1). Defaults mirror the `archive` crate's
+    // `ArchiveLimits::default()`; overridable per-deploy via the
+    // `COMIC_ARCHIVE_MAX_*` env vars to tune DoS bounds for unusually
+    // large libraries (or to harden against malicious uploads on a
+    // public-facing deployment).
+    #[serde(default = "default_archive_max_entries")]
+    pub archive_max_entries: u64,
+    #[serde(default = "default_archive_max_total_bytes")]
+    pub archive_max_total_bytes: u64,
+    #[serde(default = "default_archive_max_entry_bytes")]
+    pub archive_max_entry_bytes: u64,
+    #[serde(default = "default_archive_max_ratio")]
+    pub archive_max_ratio: u32,
+    #[serde(default = "default_archive_max_nesting")]
+    pub archive_max_nesting: u8,
+
     // SMTP
     #[serde(default)]
     pub smtp_host: Option<String>,
@@ -221,6 +237,25 @@ fn default_archive_work_parallel() -> usize {
         .map(|n| n.get().clamp(2, 8))
         .unwrap_or(2)
 }
+// Mirrors `archive::ArchiveLimits::default()`. Listed inline so a
+// reviewer sees the contract without cross-file hopping; the
+// `Config::archive_limits()` accessor downstream is the single source
+// of truth that actually feeds the archive crate.
+fn default_archive_max_entries() -> u64 {
+    50_000
+}
+fn default_archive_max_total_bytes() -> u64 {
+    8 * 1024 * 1024 * 1024
+}
+fn default_archive_max_entry_bytes() -> u64 {
+    512 * 1024 * 1024
+}
+fn default_archive_max_ratio() -> u32 {
+    200
+}
+fn default_archive_max_nesting() -> u8 {
+    1
+}
 
 /// Where the effective value for a single setting came from. Surfaced by
 /// `GET /admin/settings` so an operator can see why an admin-UI save is
@@ -246,6 +281,24 @@ impl Config {
             .extract()?;
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Build the `archive::ArchiveLimits` the archive crate consumes,
+    /// reading the env-tunable caps from this config. Subprocess-bound
+    /// fields (wall_timeout / rss_bytes) stay at the `ArchiveLimits::
+    /// default()` values for now — those govern CBR/CB7 extraction
+    /// which is currently stubbed; revisit when those formats ship.
+    pub fn archive_limits(&self) -> archive::ArchiveLimits {
+        let defaults = archive::ArchiveLimits::default();
+        archive::ArchiveLimits {
+            max_entries: self.archive_max_entries,
+            max_total_bytes: self.archive_max_total_bytes,
+            max_entry_bytes: self.archive_max_entry_bytes,
+            max_compression_ratio: self.archive_max_ratio,
+            max_nesting_depth: self.archive_max_nesting,
+            subprocess_wall_timeout: defaults.subprocess_wall_timeout,
+            subprocess_rss_bytes: defaults.subprocess_rss_bytes,
+        }
     }
 
     /// Apply DB-stored overrides on top of an env-loaded `Config`.
@@ -489,7 +542,11 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
         "auth.local.registration_open" => match row.value.as_bool() {
             Some(b) => {
                 if cfg.local_registration_open != b {
-                    tracing::debug!(env = cfg.local_registration_open, db = b, "auth.local.registration_open overridden by DB");
+                    tracing::debug!(
+                        env = cfg.local_registration_open,
+                        db = b,
+                        "auth.local.registration_open overridden by DB"
+                    );
                 }
                 cfg.local_registration_open = b;
             }
@@ -569,7 +626,11 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
         "auth.rate_limit_enabled" => match row.value.as_bool() {
             Some(b) => {
                 if cfg.rate_limit_enabled != b {
-                    tracing::debug!(env = cfg.rate_limit_enabled, db = b, "auth.rate_limit_enabled overridden by DB");
+                    tracing::debug!(
+                        env = cfg.rate_limit_enabled,
+                        db = b,
+                        "auth.rate_limit_enabled overridden by DB"
+                    );
                 }
                 cfg.rate_limit_enabled = b;
             }
@@ -621,6 +682,86 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
 
         other => {
             tracing::debug!(key = %other, "app_setting row ignored (no overlay binding yet)");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D-10: confirm `Config::archive_limits()` round-trips every
+    /// env-tunable field into the `archive::ArchiveLimits` the
+    /// archive crate consumes. Defaults the test config to absurd
+    /// values per field so a swap or typo in the accessor surfaces
+    /// immediately rather than getting masked by matching defaults.
+    #[test]
+    fn archive_limits_round_trips_env_tunable_fields() {
+        let cfg = Config {
+            archive_max_entries: 1234,
+            archive_max_total_bytes: 5_678_900,
+            archive_max_entry_bytes: 1_111_222,
+            archive_max_ratio: 7,
+            archive_max_nesting: 3,
+            ..test_config_skeleton()
+        };
+        let limits = cfg.archive_limits();
+        assert_eq!(limits.max_entries, 1234);
+        assert_eq!(limits.max_total_bytes, 5_678_900);
+        assert_eq!(limits.max_entry_bytes, 1_111_222);
+        assert_eq!(limits.max_compression_ratio, 7);
+        assert_eq!(limits.max_nesting_depth, 3);
+        // Subprocess-bound fields are CBR/CB7-specific and keep the
+        // archive crate's defaults; this is the contract.
+        let defaults = archive::ArchiveLimits::default();
+        assert_eq!(limits.subprocess_wall_timeout, defaults.subprocess_wall_timeout);
+        assert_eq!(limits.subprocess_rss_bytes, defaults.subprocess_rss_bytes);
+    }
+
+    /// Minimal `Config` skeleton — only the fields needed to exist
+    /// for `archive_limits()` to be callable. All non-archive fields
+    /// get default-shaped values; do NOT add archive_max_* here so
+    /// the round-trip test above can set them explicitly via
+    /// `..test_config_skeleton()`.
+    fn test_config_skeleton() -> Config {
+        Config {
+            database_url: String::new(),
+            redis_url: String::new(),
+            library_path: PathBuf::new(),
+            data_path: PathBuf::new(),
+            public_url: "http://localhost".into(),
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            log_level: "info".into(),
+            trusted_proxies: String::new(),
+            auth_mode: AuthMode::Local,
+            oidc_issuer: None,
+            oidc_client_id: None,
+            oidc_client_secret: None,
+            oidc_trust_unverified_email: false,
+            local_registration_open: true,
+            jwt_access_ttl: "24h".into(),
+            jwt_refresh_ttl: "30d".into(),
+            rate_limit_enabled: true,
+            otlp_endpoint: None,
+            auto_migrate: false,
+            zip_lru_capacity: 16,
+            scan_worker_count: 1,
+            post_scan_worker_count: 1,
+            scan_batch_size: 100,
+            scan_hash_buffer_kb: 64,
+            archive_work_parallel: 1,
+            thumb_inline_parallel: 1,
+            archive_max_entries: 0,
+            archive_max_total_bytes: 0,
+            archive_max_entry_bytes: 0,
+            archive_max_ratio: 0,
+            archive_max_nesting: 0,
+            smtp_host: None,
+            smtp_port: 587,
+            smtp_username: None,
+            smtp_password: None,
+            smtp_tls: "starttls".into(),
+            smtp_from: None,
         }
     }
 }

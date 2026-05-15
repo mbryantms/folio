@@ -43,7 +43,7 @@ use super::cookies::{
 };
 use super::jwt::JwtKeys;
 
-use entity::auth_session::{ActiveModel as SessionAM, Entity as SessionEntity};
+use entity::auth_session::ActiveModel as SessionAM;
 use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 
 const OIDC_STATE_COOKIE: &str = "__Host-comic_oidc";
@@ -689,12 +689,6 @@ pub fn is_safe_redirect_target(s: &str) -> bool {
         return false;
     }
     true
-}
-
-// Suppress unused-import warnings for items the SessionEntity import touches via SessionAM.
-#[allow(dead_code)]
-fn _phantom() {
-    let _ = SessionEntity::find();
 }
 
 #[cfg(test)]

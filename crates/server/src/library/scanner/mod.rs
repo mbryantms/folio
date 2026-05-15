@@ -660,7 +660,8 @@ async fn emit_progress(
         phase_elapsed_ms: stats.phase_timings_ms.get(phase).copied(),
         files_per_sec: stats.files_per_sec,
         bytes_per_sec: stats.bytes_per_sec,
-        active_workers: (phase == "scanning").then_some(state.cfg().scan_worker_count.max(1) as u64),
+        active_workers: (phase == "scanning")
+            .then_some(state.cfg().scan_worker_count.max(1) as u64),
         dirty_folders: None,
         skipped_folders: Some(progress.series_skipped_unchanged),
         eta_ms: None,
@@ -1557,7 +1558,7 @@ async fn process_planned_folder(
     let series_id = if let Some(series_id) = known_series_id {
         series_id
     } else {
-        let mut hint = process::peek_identity_hint(&archives[0]);
+        let mut hint = process::peek_identity_hint(&archives[0], state.cfg().archive_limits());
         if let Some(meta) = series_json.as_ref() {
             // series.json fills gaps where ComicInfo is silent.
             if let Some(name) = meta.name.as_deref()

@@ -43,7 +43,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use entity::{library, saved_view, user_sidebar_entry, user_view_pin};
+use entity::{library, saved_view, user_page, user_sidebar_entry, user_view_pin};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
     TransactionTrait,
@@ -59,6 +59,16 @@ use crate::state::AppState;
 pub const KIND_BUILTIN: &str = "builtin";
 pub const KIND_LIBRARY: &str = "library";
 pub const KIND_VIEW: &str = "view";
+/// Multi-page rails M4 — a user-created page (`user_page.id`).
+/// `ref_id` carries the page id; the entry surfaces in the sidebar
+/// between the Home built-in and Bookmarks.
+pub const KIND_PAGE: &str = "page";
+/// Custom section title row. `ref_id` is a client-generated UUID
+/// (composite-PK uniqueness); `label` carries the displayed text.
+pub const KIND_HEADER: &str = "header";
+/// Visual gap row — no label, no link. `ref_id` is a client-generated
+/// UUID for PK uniqueness.
+pub const KIND_SPACER: &str = "spacer";
 
 /// Built-in sidebar entries, in their default top-down order. The
 /// client maps each `key` to an icon via the same registry used by
@@ -109,10 +119,7 @@ pub struct BuiltinDef {
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route(
-        "/me/sidebar-layout",
-        get(get_layout).patch(update_layout),
-    )
+    Router::new().route("/me/sidebar-layout", get(get_layout).patch(update_layout))
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -142,6 +149,10 @@ pub struct UpdateEntryReq {
     pub ref_id: String,
     pub visible: bool,
     pub position: i32,
+    /// Optional label override (required for `kind='header'`; ignored
+    /// for `kind='spacer'`; optional for other kinds).
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 #[utoipa::path(
@@ -181,7 +192,7 @@ pub async fn update_layout(
     let mut seen: HashSet<(String, String)> = HashSet::new();
     for e in &req.entries {
         match e.kind.as_str() {
-            KIND_BUILTIN | KIND_LIBRARY | KIND_VIEW => {}
+            KIND_BUILTIN | KIND_LIBRARY | KIND_VIEW | KIND_PAGE | KIND_HEADER | KIND_SPACER => {}
             other => {
                 return error(
                     StatusCode::BAD_REQUEST,
@@ -189,6 +200,15 @@ pub async fn update_layout(
                     &format!("unknown sidebar entry kind '{other}'"),
                 );
             }
+        }
+        // Header rows must carry a non-empty label; otherwise the
+        // sidebar would render a mute row with no affordance.
+        if e.kind == KIND_HEADER && e.label.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "validation",
+                "header entries require a non-empty label",
+            );
         }
         if !seen.insert((e.kind.clone(), e.ref_id.clone())) {
             return error(
@@ -220,12 +240,18 @@ pub async fn update_layout(
     }
 
     for e in req.entries {
+        let label = e
+            .label
+            .as_ref()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
         let am = user_sidebar_entry::ActiveModel {
             user_id: Set(user.id),
             kind: Set(e.kind),
             ref_id: Set(e.ref_id),
             visible: Set(e.visible),
             position: Set(e.position),
+            label: Set(label),
         };
         if let Err(err) = am.insert(&txn).await {
             tracing::error!(error = %err, "insert override failed");
@@ -264,18 +290,42 @@ pub async fn compute_layout(
         override_by_key.insert((o.kind.clone(), o.ref_id.clone()), o);
     }
 
+    // Multi-page rails M4: pull every user_page row in one query. The
+    // system row's `name` overrides the Home built-in's hardcoded label
+    // (so renaming Home → "Library" sticks in the sidebar); custom rows
+    // produce kind='page' sidebar entries interleaved after Home.
+    let pages: Vec<user_page::Model> = user_page::Entity::find()
+        .filter(user_page::Column::UserId.eq(user.id))
+        .order_by_asc(user_page::Column::Position)
+        .order_by_asc(user_page::Column::CreatedAt)
+        .all(&app.db)
+        .await?;
+    let home_label: Option<String> = pages.iter().find(|p| p.is_system).map(|p| p.name.clone());
+    let custom_pages: Vec<&user_page::Model> = pages.iter().filter(|p| !p.is_system).collect();
+
     let mut defaults: Vec<SidebarEntryView> = Vec::new();
 
-    // 2. Built-ins, in BUILTIN_REGISTRY order.
-    for b in BUILTIN_REGISTRY {
+    // 2. Built-ins, with a leading "Browse" section header. Each
+    //    default header carries a stable `ref_id` of the form
+    //    `default:<section>` so user overrides can hide/move/rename
+    //    them through the regular override path. Custom headers
+    //    inserted by the user use kind='header' with client-generated
+    //    UUIDs as ref_id and never collide with these defaults.
+    defaults.push(default_header("default:browse", "Browse"));
+    for b in BUILTIN_REGISTRY.iter() {
+        let label = if b.key == "home" {
+            home_label.clone().unwrap_or_else(|| b.label.to_string())
+        } else {
+            b.label.to_string()
+        };
         defaults.push(SidebarEntryView {
             kind: KIND_BUILTIN.to_string(),
             ref_id: b.key.to_string(),
-            label: b.label.to_string(),
+            label,
             icon: b.icon.to_string(),
             href: b.href.to_string(),
             visible: true,
-            position: 0, // overwritten in step 5
+            position: 0, // overwritten in the position-assignment pass
         });
     }
 
@@ -283,6 +333,7 @@ pub async fn compute_layout(
     //    can see (alphabetical, matching the current hardcoded main-nav
     //    ordering). Both share `kind = 'library'` so the client groups
     //    them in one section even though one is virtual.
+    defaults.push(default_header("default:libraries", "Libraries"));
     defaults.push(SidebarEntryView {
         kind: KIND_LIBRARY.to_string(),
         ref_id: ALL_LIBRARIES_REF_ID.to_string(),
@@ -312,6 +363,25 @@ pub async fn compute_layout(
         });
     }
 
+    // 3b. User-created pages follow the libraries by default. The user
+    //     can drag them anywhere afterwards; the default position keeps
+    //     pages out of the Browse section so the curated built-ins +
+    //     library list aren't disrupted by every new page.
+    if !custom_pages.is_empty() {
+        defaults.push(default_header("default:pages", "Pages"));
+        for page in &custom_pages {
+            defaults.push(SidebarEntryView {
+                kind: KIND_PAGE.to_string(),
+                ref_id: page.id.to_string(),
+                label: page.name.clone(),
+                icon: "LayoutGrid".to_string(),
+                href: format!("/pages/{}", page.slug),
+                visible: true,
+                position: 0,
+            });
+        }
+    }
+
     // 4. Saved views the user has flagged `show_in_sidebar = true`
     //    (legacy column — a follow-on milestone retires it once
     //    `user_sidebar_entries` is the only reader). Pulled in
@@ -324,6 +394,7 @@ pub async fn compute_layout(
         .all(&app.db)
         .await?;
     if !pin_rows.is_empty() {
+        defaults.push(default_header("default:views", "Saved views"));
         let view_ids: Vec<Uuid> = pin_rows.iter().map(|p| p.view_id).collect();
         let view_rows: Vec<saved_view::Model> = saved_view::Entity::find()
             .filter(saved_view::Column::Id.is_in(view_ids))
@@ -348,22 +419,85 @@ pub async fn compute_layout(
     }
 
     // 5. Assign default positions (index in the default list) and apply
-    //    overrides. Overrides win on (visible, position). Items not in
-    //    the override map keep their default values.
+    //    overrides. Overrides win on (visible, position, label). Items
+    //    not in the override map keep their default values. After this
+    //    pass, every (kind, ref_id) override that *also* matched a
+    //    default has been consumed; what's left in `override_by_key`
+    //    is the user's purely-additive rows (custom headers, spacers,
+    //    or overrides for resources that have since disappeared).
+    let max_default_position = defaults.len() as i32;
     for (idx, entry) in defaults.iter_mut().enumerate() {
         entry.position = idx as i32;
         if let Some(o) = override_by_key.remove(&(entry.kind.clone(), entry.ref_id.clone())) {
             entry.visible = o.visible;
             entry.position = o.position;
+            if let Some(label) = o.label
+                && !label.is_empty()
+            {
+                entry.label = label;
+            }
         }
     }
 
-    // 6. Stable sort by effective position. Two items with the same
+    // 6. Surface custom rows that have no default counterpart — user-
+    //    inserted headers, spacers, and label-overrides for resources
+    //    we no longer know about (which would be filtered out anyway
+    //    by their kind handler if reintroduced). Headers + spacers
+    //    always emit; orphans of other kinds are dropped so the layout
+    //    stays consistent with the rest of the app.
+    let mut leftover_position = max_default_position;
+    let mut extras: Vec<user_sidebar_entry::Model> = override_by_key.into_values().collect();
+    extras.sort_by_key(|o| (o.position, o.kind.clone(), o.ref_id.clone()));
+    for o in extras {
+        match o.kind.as_str() {
+            KIND_HEADER => {
+                defaults.push(SidebarEntryView {
+                    kind: KIND_HEADER.to_string(),
+                    ref_id: o.ref_id,
+                    label: o.label.unwrap_or_default(),
+                    icon: String::new(),
+                    href: String::new(),
+                    visible: o.visible,
+                    position: o.position,
+                });
+            }
+            KIND_SPACER => {
+                defaults.push(SidebarEntryView {
+                    kind: KIND_SPACER.to_string(),
+                    ref_id: o.ref_id,
+                    label: String::new(),
+                    icon: String::new(),
+                    href: String::new(),
+                    visible: o.visible,
+                    position: o.position,
+                });
+            }
+            _ => {
+                // Orphan override (resource disappeared) — drop it.
+            }
+        }
+        leftover_position += 1;
+    }
+    let _ = leftover_position; // sentinel for future re-ordering logic
+
+    // 7. Stable sort by effective position. Two items with the same
     //    explicit override position keep their default-list relative
     //    order — predictable for the client.
     defaults.sort_by_key(|e| e.position);
 
     Ok(defaults)
+}
+
+fn default_header(ref_id: &str, label: &str) -> SidebarEntryView {
+    SidebarEntryView {
+        kind: KIND_HEADER.to_string(),
+        ref_id: ref_id.to_string(),
+        label: label.to_string(),
+        icon: String::new(),
+        href: String::new(),
+        visible: true,
+        position: 0,
+    }
 }
 
 fn view_default_icon(v: &saved_view::Model) -> String {

@@ -23,7 +23,6 @@ use crate::library::events::ScanEvent;
 use crate::library::thumbnails::{self, THUMBNAIL_VERSION, ThumbFormat, ThumbnailQuality};
 use crate::state::AppState;
 use apalis::prelude::*;
-use archive::ArchiveLimits;
 use entity::{issue, library};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QuerySelect, Set,
@@ -167,13 +166,16 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     let issue_id = row.id.clone();
     let file_path = row.file_path.clone();
     let kind = job.kind;
+    // `ArchiveLimits` is `Copy`; capture before spawn_blocking so the
+    // post-scan archive open honors any `COMIC_ARCHIVE_MAX_*` overrides.
+    let archive_limits = app.cfg().archive_limits();
 
     let outcome = match app.archive_work_semaphore.clone().acquire_owned().await {
         Ok(permit) => {
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 let mut archive =
-                    archive::open(std::path::Path::new(&file_path), ArchiveLimits::default())?;
+                    archive::open(std::path::Path::new(&file_path), archive_limits)?;
                 match kind {
                     ThumbsJobKind::Cover => {
                         thumbnails::generate_with_quality(
@@ -580,8 +582,8 @@ async fn enqueue_post_scan_rows(
         // Mirror the query above: never attempted or version bumped. A
         // stamped `thumbnails_error` no longer requalifies for
         // auto-retry — see the comment in `active_issue_rows_for_thumbs`.
-        let cover_pending = row.thumbnails_generated_at.is_none()
-            || row.thumbnail_version < THUMBNAIL_VERSION;
+        let cover_pending =
+            row.thumbnails_generated_at.is_none() || row.thumbnail_version < THUMBNAIL_VERSION;
         if !cover_pending {
             continue;
         }

@@ -974,8 +974,10 @@ async fn pin_view(
     pinned: bool,
     sidebar: bool,
 ) {
+    let page_id = server::pages::system_page_id(db, user_id).await.unwrap();
     UserViewPinAM {
         user_id: Set(user_id),
+        page_id: Set(page_id),
         view_id: Set(view_id),
         position: Set(0),
         pinned: Set(pinned),

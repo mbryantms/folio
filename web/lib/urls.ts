@@ -47,6 +47,21 @@ export function adminSeriesUrl(s: { slug: string } | string): string {
 // ───── Issue ─────
 
 /**
+ * Optional URL options that thread reading-context through to the
+ * reader / issue detail. `cbl` is the saved-view id (kind=`cbl`) the
+ * user is reading through — the reader uses it to pick "next" out of
+ * the list instead of the parent series. Omit when the user is not in
+ * a CBL context.
+ */
+export type IssueUrlOpts = { cbl?: string | null };
+
+function appendOpts(base: string, opts?: IssueUrlOpts): string {
+  if (!opts?.cbl) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}cbl=${encodeURIComponent(opts.cbl)}`;
+}
+
+/**
  * Issue detail URL, nested under the parent series. Accepts either a full
  * `IssueDetailView` / `IssueSummaryView` (which carry `series_slug`), or
  * an explicit `(seriesSlug, issueSlug)` pair when the caller has them
@@ -54,31 +69,47 @@ export function adminSeriesUrl(s: { slug: string } | string): string {
  */
 export function issueUrl(
   i: Pick<IssueSummaryView, "slug" | "series_slug">,
+  opts?: IssueUrlOpts,
 ): string;
-export function issueUrl(seriesSlug: string, issueSlug: string): string;
+export function issueUrl(
+  seriesSlug: string,
+  issueSlug: string,
+  opts?: IssueUrlOpts,
+): string;
 export function issueUrl(
   a: string | Pick<IssueSummaryView, "slug" | "series_slug">,
-  b?: string,
+  b?: string | IssueUrlOpts,
+  c?: IssueUrlOpts,
 ): string {
   if (typeof a === "string") {
-    return `/series/${encodeURIComponent(a)}/issues/${encodeURIComponent(b!)}`;
+    const base = `/series/${encodeURIComponent(a)}/issues/${encodeURIComponent(b as string)}`;
+    return appendOpts(base, c);
   }
-  return `/series/${encodeURIComponent(a.series_slug)}/issues/${encodeURIComponent(a.slug)}`;
+  const base = `/series/${encodeURIComponent(a.series_slug)}/issues/${encodeURIComponent(a.slug)}`;
+  return appendOpts(base, b as IssueUrlOpts | undefined);
 }
 
 /** Reader URL for an issue. Same nesting as `issueUrl` but rooted at `/read`. */
 export function readerUrl(
   i: Pick<IssueSummaryView, "slug" | "series_slug">,
+  opts?: IssueUrlOpts,
 ): string;
-export function readerUrl(seriesSlug: string, issueSlug: string): string;
+export function readerUrl(
+  seriesSlug: string,
+  issueSlug: string,
+  opts?: IssueUrlOpts,
+): string;
 export function readerUrl(
   a: string | Pick<IssueSummaryView, "slug" | "series_slug">,
-  b?: string,
+  b?: string | IssueUrlOpts,
+  c?: IssueUrlOpts,
 ): string {
   if (typeof a === "string") {
-    return `/read/${encodeURIComponent(a)}/${encodeURIComponent(b!)}`;
+    const base = `/read/${encodeURIComponent(a)}/${encodeURIComponent(b as string)}`;
+    return appendOpts(base, c);
   }
-  return `/read/${encodeURIComponent(a.series_slug)}/${encodeURIComponent(a.slug)}`;
+  const base = `/read/${encodeURIComponent(a.series_slug)}/${encodeURIComponent(a.slug)}`;
+  return appendOpts(base, b as IssueUrlOpts | undefined);
 }
 
 // ───── Page bytes (still UUID — internal/signed) ─────

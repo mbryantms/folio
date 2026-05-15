@@ -58,6 +58,15 @@ export function OnDeckCard({
       ? `${card.series_name} · ${numberLabel}`
       : `${card.cbl_list_name} · entry ${card.position}`;
 
+  // For CBL cards, thread the wrapping saved-view id onto every
+  // outbound reader / issue URL so the next-up resolver keeps picking
+  // from the list across page turns. `cbl_saved_view_id` is absent
+  // when no saved view points at this cbl_list_id for the caller; in
+  // that case the URLs render without `?cbl=` and the reader falls
+  // back to series-next (the B-2 audit-finding fix).
+  const cblParam =
+    card.kind === "cbl_next" ? (card.cbl_saved_view_id ?? null) : null;
+
   const removeAction =
     card.kind === "series_next"
       ? {
@@ -104,7 +113,7 @@ export function OnDeckCard({
   const longPress = useCoverLongPressActions({
     primary: {
       label: `Read ${heading}`,
-      onSelect: () => router.push(readerUrl(issue)),
+      onSelect: () => router.push(readerUrl(issue, { cbl: cblParam })),
     },
     actions: menuActions,
     label: meta,
@@ -116,7 +125,7 @@ export function OnDeckCard({
   return (
     <>
       <Link
-        href={issueUrl(issue)}
+        href={issueUrl(issue, { cbl: cblParam })}
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
           className,
@@ -134,7 +143,7 @@ export function OnDeckCard({
             actions={menuActions}
           />
           <QuickReadOverlay
-            readerHref={readerUrl(issue)}
+            readerHref={readerUrl(issue, { cbl: cblParam })}
             label={`Read ${heading}`}
           />
         </div>

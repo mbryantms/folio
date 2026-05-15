@@ -23,6 +23,7 @@ import { issueUrl, readerUrl } from "@/lib/urls";
 export function CblIssueCard({
   entry,
   issue,
+  cblSavedViewId,
   className,
 }: {
   entry: CblEntryView;
@@ -30,6 +31,10 @@ export function CblIssueCard({
    *  the user's library. Missing/ambiguous entries pass `undefined`
    *  here and the card renders the entry's raw metadata as a placeholder. */
   issue?: IssueSummaryView;
+  /** Saved-view id of the CBL this card belongs to. Threaded into the
+   *  reader URL as `?cbl=` so the reader's next-issue resolver picks
+   *  the next list entry instead of the next series issue. */
+  cblSavedViewId: string;
   className?: string;
 }) {
   const positionLabel = `#${entry.position + 1}`;
@@ -73,7 +78,8 @@ export function CblIssueCard({
       issue && issue.state === "active"
         ? {
             label: `Read ${heading}`,
-            onSelect: () => router.push(readerUrl(issue)),
+            onSelect: () =>
+              router.push(readerUrl(issue, { cbl: cblSavedViewId })),
           }
         : undefined,
     actions: menuActions,
@@ -115,7 +121,7 @@ export function CblIssueCard({
             actions={menuActions}
           />
           <QuickReadOverlay
-            readerHref={readerUrl(issue)}
+            readerHref={readerUrl(issue, { cbl: cblSavedViewId })}
             label={`Read ${heading}`}
           />
         </>
@@ -143,7 +149,10 @@ export function CblIssueCard({
   if (issue) {
     return (
       <>
-        <Link href={issueUrl(issue)} className={wrapClass}>
+        <Link
+          href={issueUrl(issue, { cbl: cblSavedViewId })}
+          className={wrapClass}
+        >
           {cover(issue.state === "active")}
           {meta}
         </Link>

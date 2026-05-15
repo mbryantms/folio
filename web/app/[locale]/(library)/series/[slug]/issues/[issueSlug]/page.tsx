@@ -48,10 +48,18 @@ import { IssueActions } from "./IssueActions";
 
 export default async function IssuePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string; issueSlug: string }>;
+  searchParams: Promise<{ cbl?: string }>;
 }) {
   const { slug: seriesSlug, issueSlug } = await params;
+  // Propagate the CBL reading-context onto the primary "Read" CTA so
+  // a user arriving here via a CBL link keeps their next-up resolver
+  // tied to the list when they hit Read.
+  const { cbl } = await searchParams;
+  const cblSavedViewId =
+    typeof cbl === "string" && cbl.length > 0 ? cbl : null;
   let issue: IssueDetailView;
   try {
     issue = await apiGet<IssueDetailView>(
@@ -168,14 +176,21 @@ export default async function IssuePage({
           <div className="mx-auto flex w-full max-w-xs flex-col gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
             {issue.state === "active" ? (
               <Button asChild size="lg" className="w-full">
-                <Link href={readerUrl(issue)}>{readLabel}</Link>
+                <Link href={readerUrl(issue, { cbl: cblSavedViewId })}>
+                  {readLabel}
+                </Link>
               </Button>
             ) : (
               <p className="border-border text-muted-foreground rounded-md border border-dashed px-4 py-2 text-center text-xs">
                 Cannot read — issue state: {issue.state}
               </p>
             )}
-            <IssueActions issue={issue} series={series} readState={readState} />
+            <IssueActions
+              issue={issue}
+              series={series}
+              readState={readState}
+              cblSavedViewId={cblSavedViewId}
+            />
           </div>
         </div>
 

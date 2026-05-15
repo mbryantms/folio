@@ -2501,6 +2501,94 @@
         }
       }
     },
+    "/issues/{issue_id}/next-up": {
+      "get": {
+        "tags": [
+          "api::next_up"
+        ],
+        "summary": "Resolve the next issue the user should read after the given one. Picks\nCBL > series; returns `source: \"none\"` when neither branch has a\nviable target.",
+        "operationId": "next_up",
+        "parameters": [
+          {
+            "name": "issue_id",
+            "in": "path",
+            "description": "Current issue id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cbl",
+            "in": "query",
+            "description": "Saved-view id (kind='cbl') the caller is reading through",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NextUpView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "current issue not found or invisible to caller"
+          }
+        }
+      }
+    },
+    "/issues/{issue_id}/prev-up": {
+      "get": {
+        "tags": [
+          "api::next_up"
+        ],
+        "summary": "Resolve the previous issue the user should navigate to. Picks\nCBL > series; returns `source: \"none\"` when neither branch has a\nviable target (e.g., user is on the first issue of the series and\nno CBL context).",
+        "operationId": "prev_up",
+        "parameters": [
+          {
+            "name": "issue_id",
+            "in": "path",
+            "description": "Current issue id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cbl",
+            "in": "query",
+            "description": "Saved-view id (kind='cbl') the caller is reading through",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NextUpView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "current issue not found or invisible to caller"
+          }
+        }
+      }
+    },
     "/libraries": {
       "get": {
         "tags": [
@@ -4079,6 +4167,172 @@
         }
       }
     },
+    "/me/pages": {
+      "get": {
+        "tags": [
+          "api::pages"
+        ],
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PageView"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "api::pages"
+        ],
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePageReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/pages/reorder": {
+      "post": {
+        "tags": [
+          "api::pages"
+        ],
+        "operationId": "reorder",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderPagesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/me/pages/{id}": {
+      "delete": {
+        "tags": [
+          "api::pages"
+        ],
+        "operationId": "delete_one",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "api::pages"
+        ],
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePageReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/pages/{id}/sidebar": {
+      "post": {
+        "tags": [
+          "api::pages"
+        ],
+        "operationId": "set_sidebar",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "show",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/me/preferences": {
       "patch": {
         "tags": [
@@ -4572,13 +4826,26 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinReq"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PinView"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PinView"
+                  }
                 }
               }
             }
@@ -4681,6 +4948,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnpinReq"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "",
@@ -6918,6 +7195,17 @@
           }
         }
       },
+      "CreatePageReq": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "CreateSavedViewReq": {
         "type": "object",
         "required": [
@@ -8603,6 +8891,81 @@
           }
         }
       },
+      "NextUpSource": {
+        "type": "string",
+        "enum": [
+          "cbl",
+          "series",
+          "none"
+        ]
+      },
+      "NextUpView": {
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "cbl_list_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when `source == \"cbl\"`. The id of the CBL list (NOT the\nsaved-view id the caller sent) — useful for downstream UI that\nwants to deep-link into the CBL detail."
+          },
+          "cbl_list_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when `source == \"cbl\"`. The CBL list's human-readable name,\nfor the chrome pill's \"in {list}\" sub-label."
+          },
+          "cbl_param_was_stale": {
+            "type": "boolean",
+            "description": "`true` when the caller passed `?cbl=<id>` but the current issue\nwasn't in that CBL (entry deleted, stale share-link, etc.). The\nweb layer uses this as a signal to strip the dead param from the\nURL via `router.replace` so a refresh / shared link no longer\ncarries the stale reference."
+          },
+          "cbl_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Set when `source == \"cbl\"`. 1-based position of the *target*\nentry within the CBL (so the reader can show \"Issue 4 of 24\")."
+          },
+          "cbl_total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Set when `source == \"cbl\"`. Total matched entries in the CBL."
+          },
+          "fallback_suggestion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OnDeckCard",
+                "description": "Top On Deck card to show as a peek when `source == \"none\"`. M1\nalways returns `None`; populating it remains deferred work since\nthe on_deck composition isn't factored as a reusable helper yet.\nThe web layer falls back to a \"Browse the library\" CTA when this\nfield is absent."
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/NextUpSource"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IssueSummaryView",
+                "description": "The next-up issue, denormalized with its parent series slug + name\nso the reader can render the pill / end-card without a follow-up\nfetch. `None` iff `source == \"none\"`."
+              }
+            ]
+          }
+        }
+      },
       "OidcConfigView": {
         "type": "object",
         "required": [
@@ -8738,6 +9101,13 @@
               },
               "cbl_list_name": {
                 "type": "string"
+              },
+              "cbl_saved_view_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Saved-view id (kind=`cbl`) wrapping this CBL list, when the\ncaller can see one. Web threads it onto the reader URL as\n`?cbl=<id>` so the next-up resolver keeps picking from the\nlist across page turns. `None` when no saved view points at\nthis `cbl_list_id` for the caller — the reader still works,\njust without persistent CBL context.\n\nTiebreak when multiple saved views match: user-owned wins\nover system-owned (NULL `user_id`); within a tier, lowest\n`id` wins. Stable + cheap; the picker UI can pick a\ndifferent one later if needed."
               },
               "issue": {
                 "$ref": "#/components/schemas/IssueSummaryView"
@@ -8882,6 +9252,60 @@
           }
         }
       },
+      "PageView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "is_system",
+          "position",
+          "pin_count",
+          "show_in_sidebar",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional free-form description rendered under the title. `None`\n(or absent) hides the descriptor row."
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_system": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pin_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Count of `user_view_pin` rows where `pinned = true` for this\n(user, page) pair. Lets the sidebar render a badge or the page\npicker show \"n / 12\" without fetching every pin row."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "show_in_sidebar": {
+            "type": "boolean",
+            "description": "Whether this page appears in the sidebar nav. Computed from\n`user_sidebar_entries` — missing override means visible (the\ndefault). System pages always show via the builtin Home entry\nregardless of this flag."
+          },
+          "slug": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
       "PeopleListView": {
         "type": "object",
         "required": [
@@ -8919,13 +9343,31 @@
           }
         }
       },
+      "PinReq": {
+        "type": "object",
+        "description": "Body for `POST /me/saved-views/{id}/pin`.\n\nMulti-page rails M3: the same view can now be pinned to multiple\npages in a single call. Omitting the body (or sending an empty\n`page_ids`) targets the caller's system Home page so existing\nweb clients keep working until they migrate to the multi-page\npicker (M5/M6).",
+        "properties": {
+          "page_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
       "PinView": {
         "type": "object",
         "required": [
           "view_id",
+          "page_id",
           "pinned"
         ],
         "properties": {
+          "page_id": {
+            "type": "string",
+            "description": "Page this row belongs to. Mirrors the request's `page_id` (or the\nresolved system page when the legacy no-body form was used)."
+          },
           "pinned": {
             "type": "boolean"
           },
@@ -9713,19 +10155,42 @@
           }
         }
       },
+      "ReorderPagesReq": {
+        "type": "object",
+        "required": [
+          "page_ids"
+        ],
+        "properties": {
+          "page_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
       "ReorderReq": {
         "type": "object",
         "required": [
           "view_ids"
         ],
         "properties": {
+          "page_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Page whose pins are being reordered. Omit to default to the\ncaller's system \"Home\" page — transitional shim until the web\nmigrates to explicit page ids (M5/M6)."
+          },
           "view_ids": {
             "type": "array",
             "items": {
               "type": "string",
               "format": "uuid"
             },
-            "description": "View IDs in desired pin order. Views not currently pinned are\nrejected; views pinned but absent from the list keep their\nexisting position."
+            "description": "View IDs in desired pin order. Views not currently pinned to\n`page_id` are rejected; pinned views absent from the list keep\ntheir existing position."
           }
         }
       },
@@ -9971,6 +10436,13 @@
           "pinned": {
             "type": "boolean",
             "description": "Whether the calling user has this view pinned to their home rail."
+          },
+          "pinned_on_pages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Multi-page rails M6: every page (system + custom) this view is\ncurrently pinned to. Drives the multi-pin picker on the\nsaved-view detail page. Empty when the caller has no pin rows\nfor this view. Always populated regardless of the request's\n`pinned_on` filter so the picker reflects ground truth."
           },
           "pinned_position": {
             "type": [
@@ -10647,6 +11119,18 @@
           }
         }
       },
+      "SetSidebarQuery": {
+        "type": "object",
+        "properties": {
+          "show": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` (default) shows the page in the sidebar; `false` hides it.\nIdempotent — repeated calls with the same value are no-ops."
+          }
+        }
+      },
       "SettingsView": {
         "type": "object",
         "required": [
@@ -11121,6 +11605,19 @@
           }
         }
       },
+      "UnpinReq": {
+        "type": "object",
+        "description": "Body for `POST /me/saved-views/{id}/unpin`. Omit to default to the\ncaller's system Home page (legacy shim).",
+        "properties": {
+          "page_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "UpdateCatalogSourceReq": {
         "type": "object",
         "properties": {
@@ -11191,6 +11688,13 @@
         "properties": {
           "kind": {
             "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional label override (required for `kind='header'`; ignored\nfor `kind='spacer'`; optional for other kinds)."
           },
           "position": {
             "type": "integer",
@@ -11548,6 +12052,24 @@
               "type": "string"
             },
             "description": "Replace tag list. Send `[]` to clear, omit to leave unchanged."
+          }
+        }
+      },
+      "UpdatePageReq": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Description string. Omitting (or sending null) leaves the\nexisting value alone; sending an empty (or whitespace-only)\nstring clears it. Avoids the `Option<Option<T>>` trick — serde\ncan't reliably distinguish absent from explicit null without a\ncustom deserializer, so the \"clear via empty string\" convention\nis the contract."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

@@ -14,6 +14,14 @@ mod m20260507_000002_user_language;
 mod m20260512_000001_auth_session_id_token_hint;
 mod m20260513_000001_app_passwords;
 mod m20260513_000002_app_password_scopes;
+mod m20260514_000001_app_settings;
+mod m20260514_000002_series_volume_uniq;
+mod m20260514_000003_cbl_list_cascade_saved_view;
+mod m20260514_000004_user_sidebar_entries;
+mod m20260515_000001_user_pages;
+mod m20260515_000002_sidebar_entries_page_kind;
+mod m20260515_000003_user_page_description;
+mod m20260515_000004_sidebar_headers_spacers;
 mod m20260601_000001_user_reading_direction;
 mod m20260801_000001_scanner_v1;
 mod m20260901_000001_user_preferences;
@@ -48,10 +56,6 @@ mod m20261216_000001_user_show_marker_count;
 mod m20261217_000001_marker_favorite_flag;
 mod m20261217_000002_marker_tags;
 mod m20261218_000001_people_search;
-mod m20260514_000001_app_settings;
-mod m20260514_000002_series_volume_uniq;
-mod m20260514_000003_cbl_list_cascade_saved_view;
-mod m20260514_000004_user_sidebar_entries;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -112,6 +116,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20260514_000002_series_volume_uniq::Migration),
             Box::new(m20260514_000003_cbl_list_cascade_saved_view::Migration),
             Box::new(m20260514_000004_user_sidebar_entries::Migration),
+            Box::new(m20260515_000001_user_pages::Migration),
+            Box::new(m20260515_000002_sidebar_entries_page_kind::Migration),
+            Box::new(m20260515_000003_user_page_description::Migration),
+            Box::new(m20260515_000004_sidebar_headers_spacers::Migration),
         ]
     }
 }

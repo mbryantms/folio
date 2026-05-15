@@ -2,9 +2,9 @@ import { LibrarySearch } from "@/components/LibrarySearch";
 import { LibraryGridView } from "@/components/library/LibraryGridView";
 import { parseLibraryGridFilters } from "@/components/library/library-grid-filters";
 import { SeriesCard } from "@/components/library/SeriesCard";
-import { PinnedViewsHome } from "@/components/saved-views/PinnedViewsHome";
+import { PageRails } from "@/components/saved-views/PageRails";
 import { apiGet, ApiError } from "@/lib/api/fetch";
-import type { LibraryView, SeriesListView } from "@/lib/api/types";
+import type { LibraryView, PageView, SeriesListView } from "@/lib/api/types";
 
 /** App-Router resolves `searchParams` to this shape; the library grid
  *  funnels every filter dimension through the URL (chip deep-links,
@@ -64,7 +64,32 @@ export default async function HomePage({
     );
   }
 
-  return <PinnedViewsHome />;
+  // Multi-page rails M5: the bare `/` route resolves to the user's
+  // system "Home" page. Server-side fetch avoids the loading flash the
+  // old client-only path produced. `/me/pages` lazy-creates the system
+  // row on first access, so we're guaranteed to find one — the fallback
+  // is defensive for failed/unauthed fetches where middleware will be
+  // redirecting anyway.
+  const pages = await apiGet<PageView[]>("/me/pages").catch(
+    () => [] as PageView[],
+  );
+  const system = pages.find((p) => p.is_system);
+  if (!system) {
+    return (
+      <div className="text-muted-foreground py-12 text-sm">
+        Couldn&apos;t load your home page. Reload to try again.
+      </div>
+    );
+  }
+  return (
+    <PageRails
+      pageId={system.id}
+      pageName={system.name}
+      pageDescription={system.description ?? null}
+      isSystem
+      showInSidebar={system.show_in_sidebar}
+    />
+  );
 }
 
 /** Stable string key over the filter-relevant query params. Excludes

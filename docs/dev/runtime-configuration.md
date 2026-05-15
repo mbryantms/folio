@@ -23,6 +23,8 @@ Plan: [`~/.claude/plans/runtime-config-admin-1.0.md`](../../../.claude/plans/run
 | `COMIC_PUBLIC_URL` | Used to build the OIDC redirect URI; OIDC clients depend on a stable redirect. |
 | `COMIC_TRUSTED_PROXIES` | Feeds the XFF walker installed at router-build time. |
 | `COMIC_AUTO_MIGRATE` | Decides whether to run migrations before serving. |
+| `COMIC_LOAD_DOTENV` | Boot-time flag that gates `.env` file loading; meaningless after boot completes. |
+| `COMIC_GITHUB_TOKEN` | Read by the CBL-catalog refresher on each fetch; not a moveable policy setting (per-deploy credential, not user-visible config). |
 
 Compose-only keys (`REPO_OWNER`, `TAG`, `POSTGRES_PASSWORD`,
 `COMIC_LIBRARY_HOST_PATH`, `COMIC_APP_BIND`, `COMIC_WEB_BIND`) stay in
@@ -99,9 +101,14 @@ edit from there.
   painful case) but the per-route buckets stay installed regardless.
   Disabling them at runtime needs a custom tower `Service` wrapping each
   `GovernorLayer`. Tracked as future work.
-- **OTLP exporter** (`COMIC_OTLP_ENDPOINT`): currently no-op (logged at
-  init), so there's nothing to live-reload. Will be addressed when OTLP
-  emission is actually wired.
+- ~~**OTLP exporter** (`COMIC_OTLP_ENDPOINT`)~~: **considered, not chosen
+  for v1** (2026-05-15). The env var stays read by `Config` but
+  observability.rs logs a clear "intentionally not shipped" hint when it's
+  set. The opentelemetry crate matrix has a volatile compat story; no real
+  user demand has surfaced; Prometheus `/metrics` already covers
+  operator-monitoring. Re-evaluate when a hosted-Folio deployment ships or
+  a user reports a need Prometheus can't cover. See
+  [docs/dev/incompleteness-audit.md §D-9](incompleteness-audit.md#d-9-otlp-exporter-wiring--resolved-2026-05-15-considered-not-chosen).
 - **Provenance badges** (`GET /admin/settings` returning source: env vs
   DB vs default): plumbing exists in the `Provenance` enum but isn't
   surfaced in responses or the UI yet.

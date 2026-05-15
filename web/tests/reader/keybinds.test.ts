@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   GLOBAL_KEYBIND_ACTIONS,
   KEYBIND_DEFAULTS,
+  KEYBIND_LABELS,
   KEYBIND_SCOPES,
+  READER_KEYBIND_ACTIONS,
   actionForKey,
   findConflict,
   formatKey,
@@ -94,6 +96,44 @@ describe("toggleSidebar registry entry", () => {
     expect(
       actionForKey({ key: "b", ctrlKey: true }, bindings),
     ).toBe("toggleSidebar");
+  });
+});
+
+describe("nextIssue registry entry", () => {
+  // Smoke checks for the M2 keybind. The Settings → Keybinds editor
+  // auto-derives its list from READER_KEYBIND_ACTIONS + KEYBIND_LABELS,
+  // so a presence-check here is enough to guarantee the action shows
+  // up there with the right human label and default chord.
+  it("is registered as a reader-scoped action with Shift+N default", () => {
+    expect(READER_KEYBIND_ACTIONS).toContain("nextIssue");
+    expect(KEYBIND_SCOPES.nextIssue).toBe("reader");
+    expect(KEYBIND_DEFAULTS.nextIssue).toBe("Shift+N");
+    expect(KEYBIND_LABELS.nextIssue).toBe("Next issue");
+  });
+
+  it("dispatches via actionForKey on Shift+N", () => {
+    const bindings = resolveKeybinds(undefined);
+    expect(
+      actionForKey({ key: "N", shiftKey: true }, bindings),
+    ).toBe("nextIssue");
+  });
+});
+
+describe("prevIssue registry entry", () => {
+  // Sibling to nextIssue (D-7). Same auto-derivation pattern for the
+  // editor UI; presence + chord assertion is the contract.
+  it("is registered as a reader-scoped action with Shift+P default", () => {
+    expect(READER_KEYBIND_ACTIONS).toContain("prevIssue");
+    expect(KEYBIND_SCOPES.prevIssue).toBe("reader");
+    expect(KEYBIND_DEFAULTS.prevIssue).toBe("Shift+P");
+    expect(KEYBIND_LABELS.prevIssue).toBe("Previous issue");
+  });
+
+  it("dispatches via actionForKey on Shift+P", () => {
+    const bindings = resolveKeybinds(undefined);
+    expect(
+      actionForKey({ key: "P", shiftKey: true }, bindings),
+    ).toBe("prevIssue");
   });
 });
 

@@ -36,6 +36,7 @@ pub mod series_credit;
 pub mod series_genre;
 pub mod series_tag;
 pub mod user;
+pub mod user_page;
 pub mod user_rating;
 pub mod user_series_progress;
 pub mod user_sidebar_entry;
@@ -69,6 +70,7 @@ pub mod prelude {
     pub use super::series_genre::Entity as SeriesGenre;
     pub use super::series_tag::Entity as SeriesTag;
     pub use super::user::Entity as User;
+    pub use super::user_page::Entity as UserPage;
     pub use super::user_rating::Entity as UserRating;
     pub use super::user_series_progress::Entity as UserSeriesProgress;
     pub use super::user_sidebar_entry::Entity as UserSidebarEntry;

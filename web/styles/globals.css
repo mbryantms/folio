@@ -66,6 +66,36 @@
 }
 
 /*
+ * Amber — sepia / paper-warmth reading palette. Light-theme cousin to
+ * `[data-theme="light"]` but shifted toward warm cream paper +
+ * burnt-amber ink, inspired by Kindle / Kobo "warm light" reading
+ * modes. Easier on the eyes in dim warm-lit rooms than the pure-white
+ * light theme. The accent picker can still override `--primary` /
+ * `--accent` / `--ring` on top of these base tokens.
+ */
+[data-theme="amber"] {
+  --background: 38 35% 93%;
+  --foreground: 28 30% 15%;
+  --card: 38 45% 96%;
+  --card-foreground: 28 30% 15%;
+  --popover: 38 45% 96%;
+  --popover-foreground: 28 30% 15%;
+  --primary: 28 70% 38%;
+  --primary-foreground: 38 35% 96%;
+  --secondary: 36 28% 86%;
+  --secondary-foreground: 28 30% 15%;
+  --muted: 36 28% 86%;
+  --muted-foreground: 28 16% 38%;
+  --accent: 28 70% 38%;
+  --accent-foreground: 38 35% 96%;
+  --destructive: 0 60% 45%;
+  --destructive-foreground: 38 35% 96%;
+  --border: 32 20% 80%;
+  --input: 32 20% 80%;
+  --ring: 28 70% 38%;
+}
+
+/*
  * M4: accent palettes. Override `--primary`, `--accent`, `--ring` so the
  * tone of CTA/focus state shifts to the user's choice. Default is `amber`
  * (no `data-accent` attribute set).

@@ -8,7 +8,6 @@ import {
   PanelLeftClose,
   Pencil,
   Pin,
-  PinOff,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -20,9 +19,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { usePinSavedView, useSidebarSavedView } from "@/lib/api/mutations";
+import { useSidebarSavedView } from "@/lib/api/mutations";
 import { cn } from "@/lib/utils";
 import type { SavedViewView } from "@/lib/api/types";
+
+import { MultiPinDialog } from "./MultiPinDialog";
 
 /** Detail-page header shared by both filter and CBL view types.
  *
@@ -43,12 +44,18 @@ import type { SavedViewView } from "@/lib/api/types";
 export function ViewHeader({
   view,
   onEdit,
+  titleSuffix,
   extraActions,
   extraMenuItems,
   className,
 }: {
   view: SavedViewView;
   onEdit?: () => void;
+  /** Optional node rendered directly under the title and above the
+   *  description. CBL views feed in their year range here so it
+   *  sits prominently rather than living in the small-text info row
+   *  below. Kept generic so other view kinds can use the slot too. */
+  titleSuffix?: React.ReactNode;
   /** Inline controls placed to the right of the title and left of the
    *  overflow menu. Use for stats, density toggles, badges — anything
    *  the user wants visible at a glance. */
@@ -60,9 +67,10 @@ export function ViewHeader({
   extraMenuItems?: React.ReactNode;
   className?: string;
 }) {
-  const pin = usePinSavedView();
   const sidebar = useSidebarSavedView();
+  const [pinOpen, setPinOpen] = React.useState(false);
   const canEdit = onEdit !== undefined && !view.is_system;
+  const pinnedCount = view.pinned_on_pages.length;
   return (
     <header className={cn("space-y-3", className)}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -72,12 +80,27 @@ export function ViewHeader({
            *  the right edge. Desktop keeps the single-line truncate so
            *  pathological titles don't push the action cluster
            *  off-screen. */}
-          <h1
-            className="text-2xl font-semibold tracking-tight md:truncate"
-            title={view.name}
-          >
-            {view.name}
-          </h1>
+          {/* Title + suffix layout:
+           *    Mobile  → stacked (`flex-col`). Title takes full width
+           *              and wraps as needed; suffix appears on its
+           *              own line directly below.
+           *    Desktop → inline + baseline-aligned. `min-w-0` on the
+           *              h1 keeps `md:truncate` working inside the
+           *              flex line; `shrink-0` on the suffix keeps it
+           *              visible when the title is long. */}
+          <div className="flex min-w-0 flex-col gap-1 md:flex-row md:items-baseline md:gap-3">
+            <h1
+              className="min-w-0 text-2xl font-semibold tracking-tight md:truncate"
+              title={view.name}
+            >
+              {view.name}
+            </h1>
+            {titleSuffix ? (
+              <span className="text-muted-foreground text-base font-medium md:shrink-0">
+                {titleSuffix}
+              </span>
+            ) : null}
+          </div>
           {view.description ? (
             <p className="text-muted-foreground text-sm">{view.description}</p>
           ) : null}
@@ -147,23 +170,21 @@ export function ViewHeader({
               <DropdownMenuItem
                 onSelect={(e) => {
                   e.preventDefault();
-                  pin.mutate({ id: view.id, pinned: !view.pinned });
+                  setPinOpen(true);
                 }}
               >
-                {view.pinned ? (
-                  <>
-                    <PinOff className="mr-2 h-4 w-4" /> Unpin from home
-                  </>
-                ) : (
-                  <>
-                    <Pin className="mr-2 h-4 w-4" /> Pin to home
-                  </>
-                )}
+                <Pin className="mr-2 h-4 w-4" />
+                {pinnedCount === 0
+                  ? "Pin to pages…"
+                  : pinnedCount === 1
+                    ? "Pinned to 1 page"
+                    : `Pinned to ${pinnedCount} pages`}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
+      <MultiPinDialog view={view} open={pinOpen} onOpenChange={setPinOpen} />
     </header>
   );
 }

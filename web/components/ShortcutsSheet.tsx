@@ -125,7 +125,12 @@ export function ShortcutsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-80 flex-col border-neutral-800 bg-neutral-950/95 text-neutral-100"
+        // `sm:max-w-3xl` (768px) buys room for two columns of rows
+        // without crowding the chips. Overrides the Sheet primitive's
+        // default `sm:max-w-sm` (384px) cap. `overflow-y-auto` stays
+        // as a defensive guard for very short viewports, but at this
+        // width + 2-col layout, scrolling is no longer the default.
+        className="flex w-full flex-col border-neutral-800 bg-neutral-950/95 text-neutral-100 sm:max-w-3xl"
       >
         <SheetHeader>
           <SheetTitle className="text-neutral-100">
@@ -136,11 +141,20 @@ export function ShortcutsSheet({
             <span className="text-neutral-200">Settings → Keybinds</span>.
           </SheetDescription>
         </SheetHeader>
-        {/* `min-h-0` lets the flex child shrink so `overflow-y-auto`
-         *  kicks in once the section list exceeds the viewport. Without
-         *  it the child claims its natural height and clips off-screen. */}
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          {sections}
+          {/* Desktop (md+): two-column grid. Reader spans both rows
+           *  on the left (it's the dominant section); Global + Marker
+           *  stack on the right. Both columns visible at once means
+           *  `initialSection` doesn't pick a "lead" here — it only
+           *  steers the mobile fallback below. */}
+          <div className="hidden gap-x-6 gap-y-4 md:grid md:grid-cols-2">
+            <div className="md:row-span-2">{readerSection}</div>
+            <div>{globalSection}</div>
+            <div>{markerSection}</div>
+          </div>
+          {/* Mobile (single column): respect `initialSection` so the
+           *  reader's most-used shortcuts land first in-context. */}
+          <div className="space-y-4 md:hidden">{sections}</div>
         </div>
       </SheetContent>
     </Sheet>
@@ -156,8 +170,11 @@ function Section({
   hint?: string;
   children: React.ReactNode;
 }) {
+  // No `mt-6` — vertical spacing is owned by the parent (grid
+  // `gap-y-4` on desktop, `space-y-4` on mobile). Per-section margin
+  // here would double up against the parent gap.
   return (
-    <div className="mt-6">
+    <div>
       <h3 className="mb-2 text-xs font-semibold tracking-wide text-neutral-500 uppercase">
         {title}
       </h3>

@@ -66,12 +66,17 @@ export function IssueActions({
   issue,
   series,
   readState,
+  cblSavedViewId,
 }: {
   issue: IssueDetailView;
   /** Parent series — null when the breadcrumb fetch failed. The drawer's
    *  series-status field is hidden when the series isn't available. */
   series: SeriesView | null;
   readState: ReadState;
+  /** Saved-view id of the CBL the user is reading through (when this
+   *  page was arrived at via `?cbl=`). Forwarded onto the read-shortcut
+   *  URLs in the settings menu. */
+  cblSavedViewId?: string | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmForceRecreate, setConfirmForceRecreate] = useState(false);
@@ -94,6 +99,7 @@ export function IssueActions({
       <IssueSettingsMenu
         issue={issue}
         readState={readState}
+        cblSavedViewId={cblSavedViewId}
         onEdit={() => setEditOpen(true)}
         onForceRecreatePageMap={() => setConfirmForceRecreate(true)}
       />

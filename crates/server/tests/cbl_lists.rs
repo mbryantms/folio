@@ -497,7 +497,11 @@ async fn delete_cascades_linked_cbl_saved_view() {
         Some(body),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "saved view create: {view_body:?}");
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "saved view create: {view_body:?}"
+    );
     let saved_view_id = view_body["id"].as_str().unwrap().to_owned();
 
     let url = format!("/me/cbl-lists/{list_id}");
@@ -744,7 +748,11 @@ async fn entries_endpoint_paginates_via_cursor_and_returns_total_on_first_page()
         }
         cursor = body["next_cursor"].as_str().map(str::to_owned);
     }
-    assert_eq!(seen.len(), 269, "cursor walk covers every entry exactly once");
+    assert_eq!(
+        seen.len(),
+        269,
+        "cursor walk covers every entry exactly once"
+    );
     let dedup: std::collections::HashSet<_> = seen.iter().collect();
     assert_eq!(dedup.len(), 269, "no entry returned twice across pages");
 }
@@ -771,7 +779,10 @@ async fn entries_status_filter_narrows_results() {
     assert_eq!(body["items"].as_array().unwrap().len(), 3);
     for item in body["items"].as_array().unwrap() {
         assert_eq!(item["match_status"].as_str(), Some("matched"));
-        assert!(item["issue"].is_object(), "matched entries hydrate the issue");
+        assert!(
+            item["issue"].is_object(),
+            "matched entries hydrate the issue"
+        );
     }
 
     // ambiguous + missing — Resolution-tab use case.
@@ -864,4 +875,65 @@ async fn detail_endpoint_no_longer_embeds_entries() {
     assert_eq!(body["stats"]["total"].as_i64(), Some(269));
     assert_eq!(body["stats"]["matched"].as_i64(), Some(3));
     assert_eq!(body["stats"]["missing"].as_i64(), Some(266));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cbl_saved_view_auto_seeds_year_range_from_entries() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "year-seeder@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap();
+
+    // Caller omits both year bounds → server seeds from the cbl_entries
+    // year column. sample.cbl spans 2002..=2026, regardless of which
+    // of those issues actually matched library content.
+    let body = serde_json::json!({
+        "kind": "cbl",
+        "name": "Invincible Universe",
+        "cbl_list_id": list_id,
+    });
+    let (status, view) = http(
+        &app,
+        Method::POST,
+        "/me/saved-views",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "view: {view:#?}");
+    assert_eq!(view["custom_year_start"].as_i64(), Some(2002));
+    assert_eq!(view["custom_year_end"].as_i64(), Some(2026));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cbl_saved_view_respects_explicit_year_overrides() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "year-override@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap();
+
+    // Caller supplies one explicit bound → auto-seed is skipped entirely
+    // (we don't blend halves), the other side stays null.
+    let body = serde_json::json!({
+        "kind": "cbl",
+        "name": "Manually scoped",
+        "cbl_list_id": list_id,
+        "custom_year_start": 2010,
+    });
+    let (status, view) = http(
+        &app,
+        Method::POST,
+        "/me/saved-views",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "view: {view:#?}");
+    assert_eq!(view["custom_year_start"].as_i64(), Some(2010));
+    assert!(
+        view["custom_year_end"].is_null(),
+        "explicit override skips auto-seed: {view:#?}",
+    );
 }

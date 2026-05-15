@@ -837,3 +837,397 @@ async fn sidebar_only_view_doesnt_consume_pin_cap() {
             .any(|i| i["id"].as_str() == Some(&id)),
     );
 }
+
+// ───── multi-page rails M3 coverage ─────
+
+/// Create a filter view and return its id. Reduces boilerplate across
+/// the page-aware tests below.
+async fn make_filter_view(app: &TestApp, auth: &Authed, name: &str) -> String {
+    let body = serde_json::json!({
+        "kind": "filter_series",
+        "name": name,
+        "filter": { "match_mode": "all", "conditions": [] },
+        "sort_field": "created_at",
+        "sort_order": "desc",
+        "result_limit": 12,
+    });
+    let (status, v) = http(app, Method::POST, "/me/saved-views", Some(auth), Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "create view {name}: {v:#?}");
+    v["id"].as_str().unwrap().to_owned()
+}
+
+/// Create a user page and return its id.
+async fn make_page(app: &TestApp, auth: &Authed, name: &str) -> String {
+    let (status, p) = http(
+        app,
+        Method::POST,
+        "/me/pages",
+        Some(auth),
+        Some(serde_json::json!({ "name": name })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create page {name}: {p:#?}");
+    p["id"].as_str().unwrap().to_owned()
+}
+
+async fn system_page_id_for(app: &TestApp, auth: &Authed) -> String {
+    let (_, pages) = http(app, Method::GET, "/me/pages", Some(auth), None).await;
+    pages
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["is_system"] == true)
+        .map(|p| p["id"].as_str().unwrap().to_owned())
+        .expect("system page exists")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pin_to_multiple_pages_creates_independent_rows() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "multipin@example.com").await;
+
+    let view_id = make_filter_view(&app, &auth, "Multi").await;
+    let page_a = make_page(&app, &auth, "Page A").await;
+    let page_b = make_page(&app, &auth, "Page B").await;
+
+    let (status, resp) = http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{view_id}/pin"),
+        Some(&auth),
+        Some(serde_json::json!({ "page_ids": [page_a, page_b] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = resp.as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+    let pages_in_resp: std::collections::HashSet<&str> =
+        arr.iter().map(|r| r["page_id"].as_str().unwrap()).collect();
+    assert!(pages_in_resp.contains(page_a.as_str()));
+    assert!(pages_in_resp.contains(page_b.as_str()));
+    for row in arr {
+        assert_eq!(row["view_id"].as_str().unwrap(), view_id);
+        assert_eq!(row["pinned"], true);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pin_unknown_page_returns_404() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "unknown-page@example.com").await;
+    let view_id = make_filter_view(&app, &auth, "X").await;
+    let stranger = Uuid::now_v7();
+
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{view_id}/pin"),
+        Some(&auth),
+        Some(serde_json::json!({ "page_ids": [stranger] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"]["code"], "not_found");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pin_other_users_page_returns_404() {
+    let app = TestApp::spawn().await;
+    let alice = register(&app, "alice@example.com").await;
+    let bob = register(&app, "bob@example.com").await;
+    let alice_page = make_page(&app, &alice, "Alice page").await;
+    let bob_view = make_filter_view(&app, &bob, "Bob view").await;
+
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{bob_view}/pin"),
+        Some(&bob),
+        Some(serde_json::json!({ "page_ids": [alice_page] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn per_page_cap_is_independent() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-cap@example.com").await;
+    let page_a = make_page(&app, &auth, "A").await;
+    let page_b = make_page(&app, &auth, "B").await;
+
+    // 12 distinct views; pin all to page A.
+    let mut ids = Vec::new();
+    for i in 0..12 {
+        let id = make_filter_view(&app, &auth, &format!("View {i}")).await;
+        ids.push(id.clone());
+        let (status, _) = http(
+            &app,
+            Method::POST,
+            &format!("/me/saved-views/{id}/pin"),
+            Some(&auth),
+            Some(serde_json::json!({ "page_ids": [page_a] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "pin {i} to A");
+    }
+
+    // 13th pin on page A must hit the cap.
+    let extra = make_filter_view(&app, &auth, "Overflow").await;
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{extra}/pin"),
+        Some(&auth),
+        Some(serde_json::json!({ "page_ids": [page_a] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "pin_cap_reached");
+
+    // …but the same view pins fine on page B (cap is per page).
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{extra}/pin"),
+        Some(&auth),
+        Some(serde_json::json!({ "page_ids": [page_b] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unpin_one_page_leaves_other_intact() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "unpin-scoped@example.com").await;
+    let view_id = make_filter_view(&app, &auth, "Dual").await;
+    let page_a = make_page(&app, &auth, "A").await;
+    let page_b = make_page(&app, &auth, "B").await;
+
+    http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{view_id}/pin"),
+        Some(&auth),
+        Some(serde_json::json!({ "page_ids": [page_a, page_b] })),
+    )
+    .await;
+
+    // Unpin from A.
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{view_id}/unpin"),
+        Some(&auth),
+        Some(serde_json::json!({ "page_id": page_a })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Still pinned on B.
+    let (_, b_list) = http(
+        &app,
+        Method::GET,
+        &format!("/me/saved-views?pinned_on={page_b}"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    let on_b: Vec<&str> = b_list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert!(on_b.contains(&view_id.as_str()));
+
+    // Gone from A.
+    let (_, a_list) = http(
+        &app,
+        Method::GET,
+        &format!("/me/saved-views?pinned_on={page_a}"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    let on_a: Vec<&str> = a_list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert!(!on_a.contains(&view_id.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reorder_scoped_to_explicit_page() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "reorder-scoped@example.com").await;
+    let page_a = make_page(&app, &auth, "A").await;
+    let page_b = make_page(&app, &auth, "B").await;
+
+    let v1 = make_filter_view(&app, &auth, "v1").await;
+    let v2 = make_filter_view(&app, &auth, "v2").await;
+    let v3 = make_filter_view(&app, &auth, "v3").await;
+
+    // Pin v1, v2 to A; v3 to B.
+    for id in [&v1, &v2] {
+        http(
+            &app,
+            Method::POST,
+            &format!("/me/saved-views/{id}/pin"),
+            Some(&auth),
+            Some(serde_json::json!({ "page_ids": [page_a] })),
+        )
+        .await;
+    }
+    http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{v3}/pin"),
+        Some(&auth),
+        Some(serde_json::json!({ "page_ids": [page_b] })),
+    )
+    .await;
+
+    // Reorder on A: v2 then v1.
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/me/saved-views/reorder",
+        Some(&auth),
+        Some(serde_json::json!({ "page_id": page_a, "view_ids": [v2, v1] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Validate A order.
+    let (_, a_list) = http(
+        &app,
+        Method::GET,
+        &format!("/me/saved-views?pinned_on={page_a}"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    let a_order: Vec<&str> = a_list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(a_order, vec![v2.as_str(), v1.as_str()]);
+
+    // B unaffected: still just v3.
+    let (_, b_list) = http(
+        &app,
+        Method::GET,
+        &format!("/me/saved-views?pinned_on={page_b}"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    let b_order: Vec<&str> = b_list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(b_order, vec![v3.as_str()]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_pin_with_content_type_and_empty_body_succeeds() {
+    // Regression: the web's `usePinSavedView` posts with
+    // `Content-Type: application/json` but no body. axum's
+    // `Option<Json<PinReq>>` extractor must treat that as None (default
+    // shim → system page) instead of letting an empty-body JSON parse
+    // error bubble out as a 400. See the M6 follow-up that flipped
+    // the legacy "On home" pill in /settings/views from 400 back to OK.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "legacy-pill@example.com").await;
+    let view_id = make_filter_view(&app, &auth, "Legacy pill").await;
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/me/saved-views/{view_id}/pin"))
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &auth.csrf)
+        // Header set, no body — exact shape the legacy pill produces.
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pinned_true_is_alias_for_system_page() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "pinned-alias@example.com").await;
+    let view_id = make_filter_view(&app, &auth, "OnHome").await;
+    let custom = make_page(&app, &auth, "Marvel").await;
+
+    // Pin to a custom page only.
+    http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{view_id}/pin"),
+        Some(&auth),
+        Some(serde_json::json!({ "page_ids": [custom] })),
+    )
+    .await;
+
+    // Legacy `?pinned=true` defaults to system Home → should not include
+    // the view (which is only pinned on the custom page).
+    let (_, home_list) = http(
+        &app,
+        Method::GET,
+        "/me/saved-views?pinned=true",
+        Some(&auth),
+        None,
+    )
+    .await;
+    let home_ids: Vec<&str> = home_list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert!(!home_ids.contains(&view_id.as_str()));
+
+    // Now pin to system Home too (no body = legacy shim).
+    let sys = system_page_id_for(&app, &auth).await;
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &format!("/me/saved-views/{view_id}/pin"),
+        Some(&auth),
+        Some(serde_json::json!({ "page_ids": [sys] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, home_list) = http(
+        &app,
+        Method::GET,
+        "/me/saved-views?pinned=true",
+        Some(&auth),
+        None,
+    )
+    .await;
+    let home_ids: Vec<&str> = home_list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert!(home_ids.contains(&view_id.as_str()));
+}

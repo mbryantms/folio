@@ -1,6 +1,9 @@
-//! Phase-2 placeholder: a `progress_records` table that the simple progress
-//! endpoint can write to. Phase 4 introduces Automerge sync; the migration
-//! plan in §9.7 will backfill from this table and then drop it.
+//! `progress_records` — authoritative per-(user, issue) reading-state
+//! store. The file is named `_placeholder` because the spec's original
+//! §9 plan was to replace this with Automerge CRDT documents in Phase
+//! 4; that plan was reconsidered and dropped on 2026-05-15 (see spec
+//! §9 decision note). The table is permanent; the filename is
+//! retained for git history continuity.
 
 use sea_orm_migration::prelude::*;
 

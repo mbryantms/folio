@@ -90,7 +90,7 @@ Deferred to follow-ups:
 - **JXL → AVIF transcode pipeline** — no JXL fixtures committed; spec carve-out
 - **Authenticated axe-core walk** — library → series → issue → reader requires a seeded fixture harness; current baseline covers the public sign-in surface only
 - **OPDS app passwords + PSE + signed URLs** — Phase 6
-- **Automerge sync for progress** — Phase 4; the API contract is stable so the backend swap is transparent
+- ~~**Automerge sync for progress** — Phase 4; the API contract is stable so the backend swap is transparent~~ **Dropped 2026-05-15** — see spec §9 decision note. Progress stays on `progress_records` with server-side `max(last_page)` conflict resolution; no CRDT migration planned.
 - **apalis worker for thumbnails** — synchronous in-scanner generation still fine at fixture scale
 
 "Done when": ✅ open an issue, page through it, close, reopen, resume on the same page. ✅ Range request edge cases pass test. ✅ ZIP-LRU FD count visible in `/metrics`. ⏳ Soak script written but not yet run for the full hour against `compose.prod.yml` (manual gate before declaring Phase 2 closed in releases).
@@ -210,12 +210,74 @@ Cross-cutting tech debt entries (carry-over for follow-up plan):
 
 ---
 
+## Multi-page rails 1.0 ✅
+
+Plan: `~/.claude/plans/multi-page-rails-1.0.md`. Shipped 2026-05-15.
+
+Generalized the single hardcoded home page into a user-curated **page**
+entity: each page carries its own pinned saved-view rails and an entry
+in the sidebar. M1 → M7.
+
+- **`user_page` table** — `(id, user_id, name, slug, is_system,
+  position, description, timestamps)`. Per-user unique slug; partial
+  unique index ensures exactly one `is_system = true` Home row per
+  user. Custom pages capped at 20/user.
+- **`user_view_pin` PK widened** to `(user_id, page_id, view_id)`.
+  Migration back-fills existing pin rows onto each user's auto-created
+  Home page so today's home rails keep rendering.
+- **Server CRUD** at [crates/server/src/api/pages.rs](../../crates/server/src/api/pages.rs):
+  list / create (`POST /me/pages`) / patch (rename + description) /
+  delete / reorder + per-page sidebar-visibility toggle. The bare `/`
+  route resolves to the system Home; custom pages render at
+  `/pages/[slug]` (server-side slug→id lookup, `notFound()` on miss,
+  redirect `/pages/home` → `/`).
+- **Page-aware pin endpoints** in `saved_views.rs` — `pin` accepts
+  `{page_ids: [Uuid]}` (multi-pin), `unpin`/`reorder` accept `{page_id}`,
+  `GET /me/saved-views?pinned_on=<page>` filters per page.
+  `SavedViewView.pinned_on_pages: Vec<String>` exposes ground truth
+  for the multi-pin picker. Legacy no-body POSTs continue to target
+  the system Home page as a transitional shim.
+- **Sidebar layout** ([api::sidebar_layout](../../crates/server/src/api/sidebar_layout.rs))
+  gained `kind='page'` for custom pages plus `kind='header'` /
+  `kind='spacer'` for user-curated section dividers. The unified
+  `compute_layout` emits explicit default headers (`default:browse`,
+  `default:libraries`, `default:pages` when any custom pages exist) so
+  the client renders the response as a flat ordered list — no more
+  client-side group inference. `label` overrides on any row (e.g.
+  rename "Bookmarks" → "Pins") are honored.
+- **Web settings split** under `/settings/`:
+  - **`views`** — Saved views CRUD; per-row "Pin to pages…" picker.
+  - **`pages`** — tabbed page-list. Each tab shows the page's rails with
+    drag-reorder + add/remove via picker, plus inline rename, edit
+    description, sidebar-visibility toggle, and delete.
+  - **`navigation`** — unified ordered sidebar list with drag-reorder,
+    custom headers + spacers (with rename/remove), label overrides,
+    and an Add picker (search input + sticky kind-grouped sections:
+    Built-ins / Pages / Libraries / Filter views / CBL lists /
+    Collections / Headers / Spacers).
+- **Coverage** — 16 pages integration tests, 19 saved_views tests
+  (multi-page pin, per-page cap, scoped reorder, pinned_on filter,
+  legacy no-body pin), 15 sidebar_layout tests (default headers,
+  custom header/spacer round-trip, label override, page in layout),
+  plus 264 web vitest cases (page-rails prop wiring, multi-pin picker
+  state, spacer grouping, mainNav header sections).
+
+Deferred to follow-ups:
+
+- Shared / public pages.
+- Server-bundled default pages beyond Home.
+- Page-level layout modes (no grid view; only rail mode).
+- Cross-page pin sync ("always pin to all my pages").
+- Page templates / cloning.
+
+---
+
 ## Phases 3.5+ — outline only
 
 | Phase | Focus | Status |
 |-------|-------|--------|
 | 3.5   | Accessibility audit milestone | not started |
-| 4     | Sync (Automerge) | not started |
+| 4     | ~~Sync (Automerge)~~ — **considered, not chosen** (2026-05-15) | dropped |
 | 5     | Lists, arcs, reviews + library access UI | not started |
 | 6     | Search v2 + OPDS 2.0 + v1.0 GA | not started |
 | 7+    | Relationships, iOS, Android, polish | not started |

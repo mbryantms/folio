@@ -17,6 +17,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useCblList, useCblListEntriesInfinite } from "@/lib/api/queries";
 import { useRefreshCblList } from "@/lib/api/mutations";
 import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
@@ -162,6 +168,10 @@ function CblViewDetailInner({
       <ViewHeader
         view={savedView}
         onEdit={() => setEditOpen(true)}
+        titleSuffix={renderYearRangeBadge(
+          savedView.custom_year_start,
+          savedView.custom_year_end,
+        )}
         extraActions={
           <>
             {/* Same two-pill summary the home rail header carries —
@@ -228,6 +238,8 @@ function CblViewDetailInner({
        *  already identifies the list. Hide to save vertical real
        *  estate; full info still lives on the CBL management page
        *  (`<CblDetail>`) which renders the same row at all widths. */}
+      {/* Year range moved up next to the title via `titleSuffix`; this
+       *  row keeps source + matchers + imported date. */}
       <div className="hidden md:block">
         <CblInfoRow list={list} />
       </div>
@@ -253,6 +265,7 @@ function CblViewDetailInner({
                   <CblIssueCard
                     entry={item.entry}
                     issue={item.entry.issue ?? undefined}
+                    cblSavedViewId={savedView.id}
                   />
                 </li>
               ) : (
@@ -318,5 +331,52 @@ function CblViewDetailInner({
         </SheetContent>
       </Sheet>
     </div>
+  );
+}
+
+/** Compact year-range string for the title-adjacent header slot.
+ *  `2002–2026` when both bounds exist, single-sided (`from 2002`,
+ *  `up to 2026`) when only one does, equal-year collapse, `null`
+ *  when neither is set. */
+function formatYearRange(
+  start?: number | null,
+  end?: number | null,
+): string | null {
+  if (start != null && end != null) {
+    return start === end ? `${start}` : `${start}–${end}`;
+  }
+  if (start != null) return `from ${start}`;
+  if (end != null) return `up to ${end}`;
+  return null;
+}
+
+/** Year-range badge for `ViewHeader.titleSuffix`. Renders the formatted
+ *  range as a tooltip-trigger so the user can hover for a quick
+ *  description of what the range is and where it came from. Returns
+ *  `null` when the saved view has no year bounds — keeps the header
+ *  tight for the common no-overlay case. */
+function renderYearRangeBadge(
+  start?: number | null,
+  end?: number | null,
+): React.ReactNode {
+  const label = formatYearRange(start, end);
+  if (!label) return null;
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="cursor-help underline decoration-dotted decoration-1 underline-offset-4"
+            aria-label={`Year range: ${label}`}
+          >
+            {label}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs">
+          Year range covered by this list. Auto-filled from the earliest
+          and latest entry at import; edit in Settings.
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

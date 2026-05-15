@@ -144,8 +144,11 @@ impl MockSender {
             .expect("MockSender::last: outbox is empty")
     }
 
-    /// Drop everything in the outbox. Tests that exercise multiple flows
-    /// in one TestApp use this to scope assertions.
+    /// Drop everything in the outbox. Tests that exercise multiple
+    /// flows in one TestApp use this to scope assertions. The
+    /// `#[allow(dead_code)]` is load-bearing: this is called from
+    /// `tests/local_recovery.rs`, but the lib crate's dead-code lint
+    /// doesn't see integration-test consumers.
     #[allow(dead_code)]
     pub async fn clear(&self) {
         self.inner.lock().await.clear();

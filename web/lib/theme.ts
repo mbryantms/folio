@@ -42,14 +42,17 @@ export const DENSITY_COOKIE = "comic_density";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 /**
- * `system` resolves to `dark` for now because we don't ship a curated light
- * palette in v1. `amber` collapses to `dark` at the data-theme level — the
- * accent picker handles the amber tinting separately.
+ * Resolve the user's stored theme token to the `data-theme` attribute value
+ * the CSS in `globals.css` keys off. `system` stays mapped to `dark` because
+ * `ThemeProvider` is configured with `enableSystem={false}` — flipping that
+ * is a separate scope item (FOUC handling on hydration). Users who want
+ * light or amber pick them explicitly.
  */
 export function resolvedDataTheme(
   theme: Theme | null | undefined,
-): "dark" | "light" {
+): "dark" | "light" | "amber" {
   if (theme === "light") return "light";
+  if (theme === "amber") return "amber";
   return "dark";
 }
 

@@ -217,6 +217,9 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     // historical hardcoded chunk and was the right value all along — the
     // env var existed but wasn't wired until now.
     let hash_buffer_kb = state.cfg().scan_hash_buffer_kb;
+    // `ArchiveLimits` is `Copy`; capture once before spawn_blocking so
+    // a `COMIC_ARCHIVE_MAX_*` env override flows into the parse path.
+    let archive_limits = state.cfg().archive_limits();
     let (hash, archive_outcome, timing) = {
         let _archive_permit = state
             .archive_work_semaphore
@@ -229,7 +232,8 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             let hash =
                 crate::library::hash::blake3_file_with_buffer(&path_for_blocking, hash_buffer_kb)?;
             let hash_ms = hash_started.elapsed().as_millis() as u64;
-            let (archive_outcome, mut timing) = parse_archive_timed(&path_for_blocking);
+            let (archive_outcome, mut timing) =
+                parse_archive_timed(&path_for_blocking, archive_limits);
             timing.hash_ms = hash_ms;
             Ok::<_, anyhow::Error>((hash, archive_outcome, timing))
         })
@@ -652,18 +656,22 @@ fn row_needs_comicinfo_count_backfill(row: &issue::Model) -> bool {
             .is_some_and(|v| !v.is_null())
 }
 
-fn parse_archive_with(path: &Path, mode: ParseMode) -> ArchiveOutcome {
-    parse_archive_timed_with(path, mode).0
+fn parse_archive_with(path: &Path, mode: ParseMode, limits: ArchiveLimits) -> ArchiveOutcome {
+    parse_archive_timed_with(path, mode, limits).0
 }
 
-fn parse_archive_timed(path: &Path) -> (ArchiveOutcome, ArchiveTiming) {
-    parse_archive_timed_with(path, ParseMode::FullIngest)
+fn parse_archive_timed(path: &Path, limits: ArchiveLimits) -> (ArchiveOutcome, ArchiveTiming) {
+    parse_archive_timed_with(path, ParseMode::FullIngest, limits)
 }
 
-fn parse_archive_timed_with(path: &Path, mode: ParseMode) -> (ArchiveOutcome, ArchiveTiming) {
+fn parse_archive_timed_with(
+    path: &Path,
+    mode: ParseMode,
+    limits: ArchiveLimits,
+) -> (ArchiveOutcome, ArchiveTiming) {
     let parse_started = Instant::now();
     let mut timing = ArchiveTiming::default();
-    let mut archive = match archive::open(path, ArchiveLimits::default()) {
+    let mut archive = match archive::open(path, limits) {
         Ok(c) => c,
         Err(ArchiveError::Encrypted) => return (ArchiveOutcome::Encrypted, timing),
         Err(ArchiveError::Io(s)) => return (ArchiveOutcome::Unreadable(s), timing),
@@ -1122,8 +1130,8 @@ pub fn read_series_json(folder: &Path) -> Option<SeriesMetadata> {
 /// pipeline runs against; if the file can't be opened or has no ComicInfo,
 /// filename inference still gives us a usable Series name (or the literal
 /// "Unknown Series" fallback).
-pub fn peek_identity_hint(path: &Path) -> SeriesIdentityHint {
-    let info = match parse_archive_with(path, ParseMode::IdentityOnly) {
+pub fn peek_identity_hint(path: &Path, limits: ArchiveLimits) -> SeriesIdentityHint {
+    let info = match parse_archive_with(path, ParseMode::IdentityOnly, limits) {
         ArchiveOutcome::Ok { info, metron, .. } => {
             // Apply MetronInfo precedence so the identity hint reflects the
             // strongest available metadata.

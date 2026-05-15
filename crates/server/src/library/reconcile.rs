@@ -124,8 +124,7 @@ pub async fn reconcile_library_seen(
             )
             .all(db)
             .await?;
-        reconcile_issue_rows_seen(db, issues, seen_paths, scanned_folder_paths, now, stats)
-            .await?;
+        reconcile_issue_rows_seen(db, issues, seen_paths, scanned_folder_paths, now, stats).await?;
         mark_empty_series_removed(db, scanned_series_ids.iter().copied(), now, stats).await?;
     }
 

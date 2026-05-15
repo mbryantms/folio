@@ -17,6 +17,7 @@ export type IconName =
   | "Key"
   | "KeyRound"
   | "Keyboard"
+  | "LayoutGrid"
   | "Library"
   | "ListChecks"
   | "Mail"
@@ -74,12 +75,6 @@ export function adminNav(localePrefix: string): NavSection[] {
         { href: p("/auth"), label: "Auth config", icon: "Shield" },
         { href: p("/email"), label: "Email", icon: "Mail" },
         { href: p("/logs"), label: "Logs", icon: "ListChecks" },
-        {
-          href: p("/search"),
-          label: "Search",
-          icon: "Search",
-          placeholder: true,
-        },
       ],
     },
   ];
@@ -101,11 +96,8 @@ export function settingsNav(localePrefix: string): NavSection[] {
       label: "Library",
       items: [
         { href: p("/views"), label: "Saved views", icon: "ListChecks" },
-        {
-          href: p("/navigation"),
-          label: "Navigation",
-          icon: "PanelLeft",
-        },
+        { href: p("/pages"), label: "Pages", icon: "LayoutGrid" },
+        { href: p("/navigation"), label: "Sidebar", icon: "PanelLeft" },
       ],
     },
     {

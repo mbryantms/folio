@@ -2,7 +2,6 @@
 
 import { useEffect } from "react";
 import { useTheme } from "next-themes";
-import { toast } from "sonner";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMe } from "@/lib/api/queries";
@@ -90,11 +89,6 @@ export function ThemePicker() {
   const density = isDensity(me.data.density) ? me.data.density : "comfortable";
 
   function pickTheme(next: Theme) {
-    if (next === "light" || next === "amber") {
-      // Light + amber palettes deferred per plan (M4 leaves the slot wired
-      // up but only ships dark/system today).
-      toast.info("Coming soon: a curated light palette lands in a follow-up.");
-    }
     writeThemeCookie(next);
     setTheme(resolvedDataTheme(next));
     update.mutate({ theme: next });
@@ -118,7 +112,7 @@ export function ThemePicker() {
     <div className="space-y-6">
       <SettingsSection
         title="Theme"
-        description="Dark stays the canonical palette in v1. Light and amber slots are wired up but not curated yet."
+        description="Dark is the canonical palette. Light is a clean white alternative; Amber is a sepia paper-warmth palette for warm-lit rooms. System currently follows Dark."
       >
         <SegmentedControl
           value={theme}

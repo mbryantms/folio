@@ -29,11 +29,7 @@ pub async fn seed_smtp_from_env(
     cfg: &Config,
     secrets: &Secrets,
 ) -> anyhow::Result<()> {
-    let Some(host) = cfg
-        .smtp_host
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-    else {
+    let Some(host) = cfg.smtp_host.as_deref().filter(|s| !s.trim().is_empty()) else {
         return Ok(());
     };
 
@@ -51,20 +47,8 @@ pub async fn seed_smtp_from_env(
     let now = chrono::Utc::now().fixed_offset();
 
     insert_plain(db, "smtp.host", serde_json::json!(host), now).await?;
-    insert_plain(
-        db,
-        "smtp.port",
-        serde_json::json!(cfg.smtp_port),
-        now,
-    )
-    .await?;
-    insert_plain(
-        db,
-        "smtp.tls",
-        serde_json::json!(cfg.smtp_tls),
-        now,
-    )
-    .await?;
+    insert_plain(db, "smtp.port", serde_json::json!(cfg.smtp_port), now).await?;
+    insert_plain(db, "smtp.tls", serde_json::json!(cfg.smtp_tls), now).await?;
     if let Some(from) = cfg.smtp_from.as_deref().filter(|s| !s.trim().is_empty()) {
         insert_plain(db, "smtp.from", serde_json::json!(from), now).await?;
     }
@@ -125,7 +109,13 @@ pub async fn seed_auth_from_env(
     }
 
     let now = chrono::Utc::now().fixed_offset();
-    insert_plain(db, "auth.mode", serde_json::json!(cfg.auth_mode.to_string()), now).await?;
+    insert_plain(
+        db,
+        "auth.mode",
+        serde_json::json!(cfg.auth_mode.to_string()),
+        now,
+    )
+    .await?;
     insert_plain(
         db,
         "auth.local.registration_open",
@@ -146,27 +136,13 @@ pub async fn seed_auth_from_env(
     // tell the difference between "operator-cleared via UI" and
     // "operator never set."
     let oidc_active = matches!(cfg.auth_mode, AuthMode::Oidc | AuthMode::Both);
-    if oidc_active
-        && let Some(iss) = cfg
-            .oidc_issuer
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-    {
+    if oidc_active && let Some(iss) = cfg.oidc_issuer.as_deref().filter(|s| !s.trim().is_empty()) {
         insert_plain(db, "auth.oidc.issuer", serde_json::json!(iss), now).await?;
     }
-    if oidc_active
-        && let Some(cid) = cfg
-            .oidc_client_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-    {
+    if oidc_active && let Some(cid) = cfg.oidc_client_id.as_deref().filter(|s| !s.is_empty()) {
         insert_plain(db, "auth.oidc.client_id", serde_json::json!(cid), now).await?;
     }
-    if oidc_active
-        && let Some(secret) = cfg
-            .oidc_client_secret
-            .as_deref()
-            .filter(|s| !s.is_empty())
+    if oidc_active && let Some(secret) = cfg.oidc_client_secret.as_deref().filter(|s| !s.is_empty())
     {
         let sealed = crypto::seal(&secrets.settings_encryption_key, secret.as_bytes())?;
         let value = serde_json::to_value(sealed)?;

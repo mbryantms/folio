@@ -79,11 +79,7 @@ async fn register_authed(app: &TestApp, email: &str, password: &str) -> Authed {
     }
 }
 
-async fn patch_settings(
-    app: &TestApp,
-    auth: &Authed,
-    body: Value,
-) -> axum::http::Response<Body> {
+async fn patch_settings(app: &TestApp, auth: &Authed, body: Value) -> axum::http::Response<Body> {
     app.router
         .clone()
         .oneshot(
@@ -201,12 +197,7 @@ async fn log_level_overlay_takes_effect() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
-    let resp = patch_settings(
-        &app,
-        &admin,
-        json!({ "observability.log_level": "debug" }),
-    )
-    .await;
+    let resp = patch_settings(&app, &admin, json!({ "observability.log_level": "debug" })).await;
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(app.state().cfg().log_level, "debug");
 }

@@ -41,12 +41,17 @@ import { cn } from "@/lib/utils";
 export function CblWindowCard({
   entry,
   isCurrent,
+  cblSavedViewId,
   className,
 }: {
   entry: CblWindowEntry;
   /** True when this entry is the user's next-to-read in the CBL — adds
    *  a ring + slight scale so the rail visually anchors on it. */
   isCurrent: boolean;
+  /** Saved-view id of the CBL this rail belongs to. Threaded into the
+   *  reader URL as `?cbl=` so the next-issue resolver picks the next
+   *  list entry instead of the next series issue. */
+  cblSavedViewId: string;
   className?: string;
 }) {
   const upsertProgress = useUpsertIssueProgress();
@@ -98,7 +103,8 @@ export function CblWindowCard({
       issue.state === "active"
         ? {
             label: primaryLabel,
-            onSelect: () => router.push(readerUrl(issue)),
+            onSelect: () =>
+              router.push(readerUrl(issue, { cbl: cblSavedViewId })),
           }
         : undefined,
     actions: menuActions,
@@ -109,7 +115,7 @@ export function CblWindowCard({
   return (
     <>
       <Link
-        href={issueUrl(issue)}
+        href={issueUrl(issue, { cbl: cblSavedViewId })}
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
           className,
@@ -167,7 +173,7 @@ export function CblWindowCard({
                 actions={menuActions}
               />
               <QuickReadOverlay
-                readerHref={readerUrl(issue)}
+                readerHref={readerUrl(issue, { cbl: cblSavedViewId })}
                 label={primaryLabel}
               />
             </>

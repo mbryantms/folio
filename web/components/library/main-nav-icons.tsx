@@ -6,6 +6,7 @@ import {
   Folder,
   Heart,
   Home,
+  LayoutGrid,
   Library,
   ListPlus,
   Sparkles,
@@ -27,6 +28,7 @@ export const mainNavIcons: Record<MainNavItem["icon"], LucideIcon> = {
   Heart,
   Library,
   Calendar,
+  LayoutGrid,
   Sparkles,
   // The remaining IconName values from admin/nav.ts — not used today by the
   // library shell, but having them in the map keeps `MainNavItem.icon: IconName |

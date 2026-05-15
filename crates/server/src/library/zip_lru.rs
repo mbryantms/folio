@@ -21,13 +21,18 @@ const OPEN_FDS: &str = "comic_zip_lru_open_fds";
 
 pub struct ZipLru {
     inner: Mutex<LruCache<String, Arc<Mutex<Cbz>>>>,
+    /// Archive caps applied at open time. Captured at boot from
+    /// `Config::archive_limits()` so a `COMIC_ARCHIVE_MAX_*` override
+    /// flows through every cached open. `Copy`, ~64 bytes — cheap to
+    /// keep alongside the cache.
+    limits: ArchiveLimits,
 }
 
 impl ZipLru {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, limits: ArchiveLimits) -> Self {
         let cap = NonZeroUsize::new(capacity.max(1)).unwrap();
         let inner = Mutex::new(LruCache::new(cap));
-        let me = Self { inner };
+        let me = Self { inner, limits };
         metrics::describe_gauge!(OPEN_FDS, "Open file descriptors held by the ZIP LRU");
         metrics::describe_counter!(HITS, "ZIP LRU cache hits");
         metrics::describe_counter!(MISSES, "ZIP LRU cache misses");
@@ -53,7 +58,7 @@ impl ZipLru {
         }
 
         // Miss: open outside the lock (CBZ open parses the central directory).
-        let cbz = Cbz::open(path, ArchiveLimits::default())?;
+        let cbz = Cbz::open(path, self.limits)?;
         let arc = Arc::new(Mutex::new(cbz));
 
         let mut cache = self.inner.lock().unwrap();

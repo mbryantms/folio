@@ -45,7 +45,9 @@ export type KeybindAction =
   | "favoritePage"
   | "toggleMarkersHidden"
   | "nextBookmark"
-  | "prevBookmark";
+  | "prevBookmark"
+  | "nextIssue"
+  | "prevIssue";
 
 export const GLOBAL_KEYBIND_ACTIONS: readonly KeybindAction[] = [
   "openSettings",
@@ -70,6 +72,8 @@ export const READER_KEYBIND_ACTIONS: readonly KeybindAction[] = [
   "toggleMarkersHidden",
   "nextBookmark",
   "prevBookmark",
+  "nextIssue",
+  "prevIssue",
 ] as const;
 
 /** All actions in display order: global first, then reader. */
@@ -98,6 +102,8 @@ export const KEYBIND_SCOPES: Record<KeybindAction, KeybindScope> = {
   toggleMarkersHidden: "reader",
   nextBookmark: "reader",
   prevBookmark: "reader",
+  nextIssue: "reader",
+  prevIssue: "reader",
 };
 
 export const KEYBIND_LABELS: Record<KeybindAction, string> = {
@@ -120,6 +126,8 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   toggleMarkersHidden: "Show / hide markers",
   nextBookmark: "Next bookmark",
   prevBookmark: "Previous bookmark",
+  nextIssue: "Next issue",
+  prevIssue: "Previous issue",
 };
 
 export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
@@ -151,6 +159,13 @@ export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
   // bookmark-kind marker on a later page; `[` jumps back.
   nextBookmark: "]",
   prevBookmark: "[",
+  // `n` is taken by `addNote` so we use the shifted variant; same
+  // "N for next" muscle memory. Calls the next-up resolver and
+  // navigates to whatever it picks (CBL > series).
+  nextIssue: "Shift+N",
+  // Symmetric with nextIssue; "P for prev." Pure sequential nav (no
+  // finished-state filter) — back-by-one regardless of read state.
+  prevIssue: "Shift+P",
 };
 
 /**

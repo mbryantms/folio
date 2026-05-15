@@ -1,5 +1,5 @@
 import type { IconName, NavSection } from "@/components/admin/nav";
-import type { SidebarEntryView, SidebarLayoutView } from "@/lib/api/types";
+import type { SidebarLayoutView } from "@/lib/api/types";
 
 /** Icon key — either a fixed nav-bar icon (`IconName` and the legacy
  *  aliases listed here) or a rail-icon registry key like `"sparkles"`,
@@ -14,6 +14,7 @@ export type MainNavIconKey =
   | "Sparkles"
   | "Calendar"
   | "Home"
+  | "LayoutGrid"
   | string;
 
 export type MainNavItem = {
@@ -21,38 +22,37 @@ export type MainNavItem = {
   label: string;
   icon: MainNavIconKey;
   placeholder?: boolean;
+  /** Multi-page rails M6: present for `kind="page"` entries; carries
+   *  the `user_page.id` so the sidebar's DnD reorder can call
+   *  `POST /me/pages/reorder` without re-resolving slugs. */
+  pageId?: string;
 };
 
+/** A run of consecutive non-header / non-spacer entries grouped under
+ *  a server-supplied section label. Empty section labels (custom rows
+ *  without a header before them) collapse to `null` and the renderer
+ *  shows the items without a heading. */
 export type MainNavSection = {
-  label: string;
+  /** Section title displayed at the top of this run. `null` when the
+   *  run has no preceding header (custom items inserted at the very
+   *  top of the layout). */
+  label: string | null;
   items: MainNavItem[];
+  /** `true` for "spacer" boundaries — the renderer adds vertical
+   *  padding above this section without a label row. Mutually
+   *  exclusive with a meaningful `label`. */
+  isSpacer?: boolean;
 };
-
-/** Section label for a run of entries that share the same `kind`. With
- *  navigation customization M1 the order is user-driven, so a user who
- *  drops a saved view between two built-ins will see three short
- *  sections instead of one — the alternative ("Browse" wrapping
- *  interleaved kinds) would be misleading. */
-function sectionLabelForKind(kind: SidebarEntryView["kind"]): string {
-  switch (kind) {
-    case "builtin":
-      return "Browse";
-    case "library":
-      return "Libraries";
-    case "view":
-      return "Saved views";
-  }
-}
 
 /**
  * Build the data-driven sidebar from a resolved [`SidebarLayoutView`].
- * The layout is computed server-side (see `server::api::sidebar_layout`)
- * and already encodes order, visibility, label, icon, and href for every
- * entry — built-ins, libraries the user can see, and saved views. This
- * function just filters out hidden entries and groups consecutive
- * same-kind entries into sections so the existing
- * [`MainSidebar`](./MainSidebar.tsx) renderer can keep its
- * `MainNavSection[]` interface.
+ * The server emits a flat ordered list of entries — built-ins,
+ * libraries, saved views, pages, plus explicit header/spacer rows.
+ * This function splits that list into [`MainNavSection`]s using the
+ * server-supplied `kind="header"` rows as section boundaries.
+ *
+ * Anything not preceded by a header lands in a `label: null` group so
+ * the renderer can show those items without inventing a title.
  *
  * `localePrefix` is prepended to every href — empty string for the
  * locale-neutral routing folio uses today; left in for symmetry with
@@ -63,23 +63,39 @@ export function mainNav(
   layout: SidebarLayoutView,
 ): MainNavSection[] {
   const sections: MainNavSection[] = [];
-  let current: MainNavSection | null = null;
-  let currentKind: SidebarEntryView["kind"] | null = null;
+  let current: MainNavSection = { label: null, items: [] };
+
+  const flush = () => {
+    if (current.items.length > 0 || current.isSpacer || current.label) {
+      sections.push(current);
+    }
+  };
 
   for (const entry of layout.entries) {
     if (!entry.visible) continue;
-    if (currentKind !== entry.kind) {
-      current = { label: sectionLabelForKind(entry.kind), items: [] };
-      sections.push(current);
-      currentKind = entry.kind;
+    if (entry.kind === "header") {
+      flush();
+      current = { label: entry.label, items: [] };
+      continue;
     }
-    current!.items.push({
+    if (entry.kind === "spacer") {
+      flush();
+      sections.push({ label: null, items: [], isSpacer: true });
+      current = { label: null, items: [] };
+      continue;
+    }
+    current.items.push({
       href: `${localePrefix}${entry.href}`,
       label: entry.label,
       icon: entry.icon as MainNavIconKey,
+      pageId: entry.kind === "page" ? entry.ref_id : undefined,
     });
   }
-  return sections;
+  flush();
+  // Drop empty-and-labelless sections (e.g. trailing flush with nothing).
+  return sections.filter(
+    (s) => s.isSpacer || s.items.length > 0 || (s.label && s.label.length > 0),
+  );
 }
 
 // Re-export for type compatibility with existing admin nav consumers.
