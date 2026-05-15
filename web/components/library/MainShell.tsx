@@ -72,7 +72,19 @@ export function MainShell({
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-72 p-0">
+          <SheetContent
+            side="left"
+            className="w-72 p-0"
+            onClick={(e) => {
+              // Mobile UX: clicking a link inside the drawer should close
+              // the drawer along with navigating. Buttons (theme toggle,
+              // help, user menu trigger) intentionally don't match — they
+              // open submenus that the user is still interacting with.
+              if ((e.target as HTMLElement).closest("a")) {
+                setMobileOpen(false);
+              }
+            }}
+          >
             <SheetTitle className="sr-only">Library navigation</SheetTitle>
             <MainSidebar
               sections={sections}

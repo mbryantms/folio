@@ -59,7 +59,17 @@ export function AdminShell({
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-72 p-0">
+          <SheetContent
+            side="left"
+            className="w-72 p-0"
+            onClick={(e) => {
+              // Mobile UX: clicking a link inside the drawer should close
+              // it along with navigating. Buttons stay click-through.
+              if ((e.target as HTMLElement).closest("a")) {
+                setMobileOpen(false);
+              }
+            }}
+          >
             <SheetTitle className="sr-only">{title} navigation</SheetTitle>
             <AdminSidebar sections={sections} title={title} user={user} />
           </SheetContent>
