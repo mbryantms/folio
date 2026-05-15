@@ -21,7 +21,7 @@ import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useMarkers, useMarkerTags } from "@/lib/api/queries";
+import { useMarkersInfinite, useMarkerTags } from "@/lib/api/queries";
 import {
   useCreateMarker,
   useDeleteMarker,
@@ -102,21 +102,47 @@ export function MarkersList() {
     filter === "all" || filter === "favorite"
       ? undefined
       : (filter as MarkerKind);
-  const query = useMarkers({
+  // Infinite scroll — the previous single-shot 200-cap meant power
+  // users with > 200 markers silently lost access to older ones.
+  // Filters (kind, favorite, tags, search) all drive server-side
+  // query params, not client-side `.filter()` over the loaded page.
+  const query = useMarkersInfinite({
     kind: kindFilter,
     is_favorite: isFavoriteFilter ? true : undefined,
     q: debouncedSearch || undefined,
     tags: selectedTags.length > 0 ? selectedTags.join(",") : undefined,
     tag_match: selectedTags.length > 0 ? tagMatch : undefined,
-    limit: 200,
   });
   const tagsQuery = useMarkerTags();
   const availableTags = tagsQuery.data?.items ?? [];
 
-  const items = query.data?.items ?? [];
+  const items = React.useMemo<MarkerView[]>(
+    () => query.data?.pages.flatMap((p) => p.items) ?? [],
+    [query.data],
+  );
   const groups = React.useMemo(() => groupBySeries(items), [items]);
   const hasFilterOrSearch =
     filter !== "all" || debouncedSearch.length > 0 || selectedTags.length > 0;
+
+  // IntersectionObserver sentinel for infinite scroll. Same rootMargin
+  // as `IssuesPanel` / `CblViewDetail` so behavior stays consistent.
+  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          if (query.hasNextPage && !query.isFetchingNextPage) {
+            void query.fetchNextPage();
+          }
+        }
+      },
+      { rootMargin: "400px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [query]);
 
   function toggleTag(tag: string) {
     setSelectedTags((prev) =>
@@ -280,6 +306,16 @@ export function MarkersList() {
               <RowPackedSection items={group.items} cardSize={cardSize} />
             </section>
           ))}
+          <div
+            ref={sentinelRef}
+            aria-hidden
+            className={query.hasNextPage ? "h-12" : "hidden"}
+          />
+          {query.isFetchingNextPage ? (
+            <p className="text-muted-foreground text-center text-xs">
+              Loading more markers…
+            </p>
+          ) : null}
         </div>
       )}
     </div>

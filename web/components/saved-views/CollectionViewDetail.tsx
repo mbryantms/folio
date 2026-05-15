@@ -50,7 +50,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
-import { useCollectionEntries } from "@/lib/api/queries";
+import { useCollectionEntriesInfinite } from "@/lib/api/queries";
 import {
   useDeleteCollection,
   useRemoveCollectionEntry,
@@ -82,7 +82,16 @@ export function CollectionViewDetail({
 }) {
   const router = useRouter();
   const isWantToRead = savedView.system_key === WANT_TO_READ_KEY;
-  const entriesQ = useCollectionEntries(savedView.id, { limit: 200 });
+  // Auto-walk every page. Reorder semantics require the full list of
+  // entry ids — sending a half-loaded view to `useReorderCollectionEntries`
+  // would wipe everything past the load window. The fetch runs in 200-entry
+  // pages; for typical user-curated collections this is one round-trip.
+  const entriesQ = useCollectionEntriesInfinite(savedView.id);
+  React.useEffect(() => {
+    if (entriesQ.hasNextPage && !entriesQ.isFetchingNextPage) {
+      void entriesQ.fetchNextPage();
+    }
+  }, [entriesQ]);
   const reorder = useReorderCollectionEntries(savedView.id);
   const remove = useRemoveCollectionEntry(savedView.id);
   const update = useUpdateCollection(savedView.id);
@@ -107,8 +116,11 @@ export function CollectionViewDetail({
     }),
   );
 
-  const allEntries = entriesQ.data?.items ?? [];
-  const total = entriesQ.data?.total ?? allEntries.length;
+  const allEntries = React.useMemo<CollectionEntryView[]>(
+    () => entriesQ.data?.pages.flatMap((p) => p.items) ?? [],
+    [entriesQ.data],
+  );
+  const total = entriesQ.data?.pages[0]?.total ?? allEntries.length;
   // Sort by the optimistic order when the user is mid-drag; otherwise
   // server order. Optimistic order references the entry ids that exist
   // server-side so the cache invalidation flushes it cleanly.
@@ -186,23 +198,33 @@ export function CollectionViewDetail({
       ) : orderedEntries.length === 0 ? (
         <EmptyState isWantToRead={isWantToRead} />
       ) : (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
-        >
-          <SortableContext items={renderIds} strategy={rectSortingStrategy}>
-            <ul role="list" className="grid gap-3" style={gridStyle}>
-              {orderedEntries.map((entry) => (
-                <SortableEntry
-                  key={entry.id}
-                  entry={entry}
-                  onRemove={() => remove.mutate({ entryId: entry.id })}
-                />
-              ))}
-            </ul>
-          </SortableContext>
-        </DndContext>
+        <>
+          {/* Reorder needs the *full* id list — `useReorderCollectionEntries`
+              wipes anything not in `entry_ids`. Hide the DnD sensors until
+              pagination drains so a mid-load drag can't truncate the tail. */}
+          <DndContext
+            sensors={entriesQ.hasNextPage ? [] : sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={renderIds} strategy={rectSortingStrategy}>
+              <ul role="list" className="grid gap-3" style={gridStyle}>
+                {orderedEntries.map((entry) => (
+                  <SortableEntry
+                    key={entry.id}
+                    entry={entry}
+                    onRemove={() => remove.mutate({ entryId: entry.id })}
+                  />
+                ))}
+              </ul>
+            </SortableContext>
+          </DndContext>
+          {entriesQ.isFetchingNextPage ? (
+            <p className="text-muted-foreground mt-3 text-center text-xs">
+              Loading more ({orderedEntries.length} of {total})…
+            </p>
+          ) : null}
+        </>
       )}
 
       <EditCollectionDialog

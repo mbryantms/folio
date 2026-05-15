@@ -1598,9 +1598,25 @@ export type CblEntryView = {
   matched_at?: string | null;
 };
 
-export type CblDetailView = CblListView & {
-  entries: CblEntryView[];
+/** One entry + the hydrated `IssueSummaryView` for its matched issue
+ *  (`null` for unmatched entries, and for matched-but-inaccessible
+ *  issues). Returned by the paginated `/entries` endpoint so the UI
+ *  doesn't need a second hydration round-trip. */
+export type CblEntryHydratedView = CblEntryView & {
+  issue: IssueSummaryView | null;
 };
+
+export type CblEntryListView = {
+  items: CblEntryHydratedView[];
+  next_cursor: string | null;
+  /** Filter-set count on the first page only. `null` on subsequent pages. */
+  total: number | null;
+};
+
+/** Detail response — list metadata + aggregate counts on `stats`.
+ *  Entries used to be embedded here (capped at 500); they now live
+ *  exclusively on `/me/cbl-lists/{id}/entries` (cursor-paginated). */
+export type CblDetailView = CblListView;
 
 export type CreateCblListReq =
   | {

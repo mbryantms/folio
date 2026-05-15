@@ -116,6 +116,18 @@ Default admin (first registered user becomes admin):
   site; marker deletes are the exception and use Undo toast actions
   via [web/lib/markers/recreate.ts](web/lib/markers/recreate.ts)
   instead.
+- **List pagination**: list views must never silently truncate.
+  Use `useInfiniteQuery` with an IntersectionObserver sentinel
+  (template:
+  [`web/app/[locale]/(library)/series/[slug]/IssuesPanel.tsx`](web/app/[locale]/(library)/series/[slug]/IssuesPanel.tsx)).
+  New collection endpoints accept `cursor + limit` and return
+  `next_cursor`; the response includes `total` only on the first
+  page so subsequent fetches stay cheap. Filter chips drive
+  **server-side** query params (e.g. `?status=ambiguous,missing`),
+  not client-side `.filter()` over a finite array — the moment a
+  cap exists, an in-memory filter starts lying. Surfaces with
+  drag-reorder (collections) auto-walk all pages before enabling
+  the DnD sensors so the reorder mutation sees the full list.
 
 ## Editing rules
 

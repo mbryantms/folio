@@ -3127,6 +3127,7 @@
         "tags": [
           "api::cbl_lists"
         ],
+        "summary": "Detail endpoint — returns list metadata + aggregate stats only.\nEntries used to be embedded here (capped at 500), which silently\ntruncated long lists; they now live exclusively on the paginated\n`/entries` endpoint. The per-status counts the UI used to derive\nfrom `entries` are on `list.stats`.",
         "operationId": "detail",
         "parameters": [
           {
@@ -3207,6 +3208,73 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/me/cbl-lists/{id}/entries": {
+      "get": {
+        "tags": [
+          "api::cbl_lists"
+        ],
+        "summary": "`GET /me/cbl-lists/{id}/entries` — paginated walk over CBL entries\nin position order, hydrated with `IssueSummaryView` for matched\nrows. Status filter is server-side, so the Resolution tab can\nstream just `ambiguous,missing` without touching the matched majority.",
+        "operationId": "entries",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Comma-separated subset of matched,ambiguous,missing,manual",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CblEntryListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid cursor or status"
+          },
+          "403": {
+            "description": "not your list"
+          },
+          "404": {
+            "description": "list not found"
           }
         }
       }
@@ -6050,22 +6118,62 @@
         "allOf": [
           {
             "$ref": "#/components/schemas/CblListView"
+          }
+        ],
+        "description": "Detail response — list metadata + aggregate counts only. Entries\nmoved to the paginated `/me/cbl-lists/{id}/entries` endpoint as of\n2026-05-14; see [docs/dev plans](../../../../.claude/plans/list-pagination-completeness-1.0.md)\nfor rationale (large lists silently truncated at 500). The fields\non `CblListView.stats` carry the per-status counts that used to be\ncomputed client-side from `entries`."
+      },
+      "CblEntryHydratedView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CblEntryView"
           },
           {
             "type": "object",
-            "required": [
-              "entries"
-            ],
             "properties": {
-              "entries": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/CblEntryView"
-                }
+              "issue": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IssueSummaryView",
+                    "description": "Hydrated matched issue. `None` for unmatched entries, and also\n`None` when the matched issue lives in a library the caller\ncan't access (we still surface the entry — the position label\nis meaningful even without a cover)."
+                  }
+                ]
               }
             }
           }
-        ]
+        ],
+        "description": "One entry + its hydrated `IssueSummaryView` (when `matched_issue_id`\nresolves to an issue the caller can see). Returned by the paginated\nentries endpoint so the consumption grid + Reading Order tab don't\nneed a second `/issues` round-trip."
+      },
+      "CblEntryListView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CblEntryHydratedView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor for the next page. `None` when this page is the\nlast one for the given filter set."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Count of all entries matching the filter. Returned ONLY on the\nfirst page (cursor absent) — keeps subsequent fetches cheap."
+          }
+        }
       },
       "CblEntryView": {
         "type": "object",

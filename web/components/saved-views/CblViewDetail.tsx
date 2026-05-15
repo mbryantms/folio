@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, Download, EyeOff, RefreshCw } from "lucide-react";
+import { Check, Download, EyeOff, Loader2, RefreshCw } from "lucide-react";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
@@ -17,9 +17,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { useCblList, useCblListIssues } from "@/lib/api/queries";
+import { useCblList, useCblListEntriesInfinite } from "@/lib/api/queries";
 import { useRefreshCblList } from "@/lib/api/mutations";
-import type { CblEntryView, IssueSummaryView, SavedViewView } from "@/lib/api/types";
+import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
 import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 
 import { ViewHeader } from "./ViewHeader";
@@ -55,7 +55,15 @@ function CblViewDetailInner({
   listId: string;
 }) {
   const detail = useCblList(listId);
-  const issues = useCblListIssues(listId, { limit: 1000 });
+  // Server-filter when `hideMissing` is on: only fetch entries we'll
+  // render. Otherwise pull everything in position order. Entries
+  // arrive with their `IssueSummaryView` already attached, so no
+  // separate hydration round-trip is needed (the old
+  // `useCblListIssues({ limit: 1000 })` is gone).
+  const [hideMissing, setHideMissing] = useCblHideMissing(listId);
+  const entriesQuery = useCblListEntriesInfinite(listId, {
+    status: hideMissing ? "matched,ambiguous,manual" : undefined,
+  });
   const refresh = useRefreshCblList(listId);
   const [editOpen, setEditOpen] = React.useState(false);
   // Re-anchors `ManualMatchPopover` (and any other descendant popover)
@@ -70,7 +78,30 @@ function CblViewDetailInner({
     max: CARD_SIZE_MAX,
     defaultSize: CARD_SIZE_DEFAULT,
   });
-  const [hideMissing, setHideMissing] = useCblHideMissing(listId);
+
+  // Infinite-scroll sentinel — once it intersects the viewport,
+  // fetch the next page. Matches the pattern in IssuesPanel +
+  // ResolutionTab so behavior stays consistent across surfaces.
+  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          if (
+            entriesQuery.hasNextPage &&
+            !entriesQuery.isFetchingNextPage
+          ) {
+            void entriesQuery.fetchNextPage();
+          }
+        }
+      },
+      { rootMargin: "600px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [entriesQuery]);
 
   if (detail.isLoading) {
     return (
@@ -86,38 +117,27 @@ function CblViewDetailInner({
   }
 
   const list = detail.data;
-  const entries = list.entries ?? [];
-  const matchedIssues = issues.data?.items ?? [];
-  // Walk both lists (entries is full, matchedIssues is in CBL position
-  // order but excludes unmatched) to associate each entry with its
-  // hydrated issue summary, falling back to the raw entry for
-  // unmatched/ambiguous/missing rows.
-  const issueByPosition = new Map<number, (typeof matchedIssues)[number]>();
-  let cursor = 0;
-  for (const entry of entries) {
-    if (entry.matched_issue_id && cursor < matchedIssues.length) {
-      issueByPosition.set(entry.position, matchedIssues[cursor]);
-      cursor++;
-    }
-  }
+  const loadedEntries: CblEntryHydratedView[] =
+    entriesQuery.data?.pages.flatMap((p) => p.items) ?? [];
+  const filterTotal = entriesQuery.data?.pages[0]?.total ?? null;
+  const missingCount = list.stats.missing;
   const canRefresh = list.source_kind !== "upload";
   const gridStyle: React.CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   };
 
-  // Build the render plan. When `hideMissing` is on, skip missing
-  // entries and insert a `gap` placeholder whenever the next visible
-  // entry's CBL position isn't adjacent to the previous one. Position
-  // numbers on the visible cards stay truthful (entry.position is the
-  // canonical CBL index) regardless of how many were hidden.
+  // Build the render plan. When `hideMissing` is on, the server has
+  // already filtered out missing entries; we still walk loaded
+  // positions to insert a `gap` placeholder where the canonical CBL
+  // index isn't contiguous. Position numbers on the visible cards
+  // stay truthful regardless of how many were hidden.
   type RenderItem =
-    | { kind: "entry"; entry: CblEntryView; issue: IssueSummaryView | undefined }
+    | { kind: "entry"; entry: CblEntryHydratedView }
     | { kind: "gap"; key: string; count: number };
   const items: RenderItem[] = [];
   if (hideMissing) {
-    const visible = entries.filter((e) => e.match_status !== "missing");
     let prevPos: number | null = null;
-    for (const entry of visible) {
+    for (const entry of loadedEntries) {
       if (prevPos !== null) {
         const gap = entry.position - prevPos - 1;
         if (gap > 0) {
@@ -128,23 +148,14 @@ function CblViewDetailInner({
           });
         }
       }
-      items.push({
-        kind: "entry",
-        entry,
-        issue: issueByPosition.get(entry.position),
-      });
+      items.push({ kind: "entry", entry });
       prevPos = entry.position;
     }
   } else {
-    for (const entry of entries) {
-      items.push({
-        kind: "entry",
-        entry,
-        issue: issueByPosition.get(entry.position),
-      });
+    for (const entry of loadedEntries) {
+      items.push({ kind: "entry", entry });
     }
   }
-  const missingCount = entries.filter((e) => e.match_status === "missing").length;
 
   return (
     <div className="space-y-6">
@@ -220,7 +231,11 @@ function CblViewDetailInner({
       <div className="hidden md:block">
         <CblInfoRow list={list} />
       </div>
-      {entries.length === 0 ? (
+      {entriesQuery.isLoading ? (
+        <div className="text-muted-foreground py-12 text-sm">
+          Loading entries…
+        </div>
+      ) : list.stats.total === 0 ? (
         <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
           This list has no entries yet.
         </div>
@@ -230,31 +245,48 @@ function CblViewDetailInner({
           Toggle &ldquo;Hide missing&rdquo; off to see them.
         </div>
       ) : (
-        <ul role="list" className="grid gap-3" style={gridStyle}>
-          {items.map((item) =>
-            item.kind === "entry" ? (
-              <li key={item.entry.id}>
-                <CblIssueCard entry={item.entry} issue={item.issue} />
-              </li>
-            ) : (
-              <li
-                key={item.key}
-                className="grid place-items-center"
-                aria-label={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
-                title={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
-              >
-                <div className="border-border/60 text-muted-foreground/80 inline-flex flex-col items-center rounded-md border border-dashed px-2.5 py-1.5">
-                  <span className="font-mono text-sm leading-none tracking-widest">
-                    •••
-                  </span>
-                  <span className="mt-1 text-[10px] tracking-wider uppercase">
-                    {item.count} missing
-                  </span>
-                </div>
-              </li>
-            ),
-          )}
-        </ul>
+        <>
+          <ul role="list" className="grid gap-3" style={gridStyle}>
+            {items.map((item) =>
+              item.kind === "entry" ? (
+                <li key={item.entry.id}>
+                  <CblIssueCard
+                    entry={item.entry}
+                    issue={item.entry.issue ?? undefined}
+                  />
+                </li>
+              ) : (
+                <li
+                  key={item.key}
+                  className="grid place-items-center"
+                  aria-label={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
+                  title={`${item.count} missing ${item.count === 1 ? "entry" : "entries"} hidden`}
+                >
+                  <div className="border-border/60 text-muted-foreground/80 inline-flex flex-col items-center rounded-md border border-dashed px-2.5 py-1.5">
+                    <span className="font-mono text-sm leading-none tracking-widest">
+                      •••
+                    </span>
+                    <span className="mt-1 text-[10px] tracking-wider uppercase">
+                      {item.count} missing
+                    </span>
+                  </div>
+                </li>
+              ),
+            )}
+          </ul>
+          <div
+            ref={sentinelRef}
+            aria-hidden
+            className={entriesQuery.hasNextPage ? "h-12" : "hidden"}
+          />
+          {entriesQuery.isFetchingNextPage ? (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 text-xs">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading more (
+              {loadedEntries.length}
+              {filterTotal != null ? ` of ${filterTotal}` : ""})…
+            </p>
+          ) : null}
+        </>
       )}
 
       <Sheet open={editOpen} onOpenChange={setEditOpen}>

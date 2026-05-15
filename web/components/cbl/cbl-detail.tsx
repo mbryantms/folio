@@ -37,7 +37,12 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
-import { useCblList, useCblRefreshLog } from "@/lib/api/queries";
+import { cn } from "@/lib/utils";
+import {
+  useCblList,
+  useCblListEntriesInfinite,
+  useCblRefreshLog,
+} from "@/lib/api/queries";
 import {
   useDeleteCblList,
   useDeleteSavedView,
@@ -45,7 +50,7 @@ import {
 } from "@/lib/api/mutations";
 import type {
   CblDetailView,
-  CblEntryView,
+  CblEntryHydratedView,
   CblMatchStatus,
   RefreshLogEntryView,
   SavedViewView,
@@ -128,17 +133,13 @@ function CblDetailInner({
           value="reading-order"
           className="flex min-h-0 flex-1 flex-col"
         >
-          <ReadingOrderTab
-            listId={listId}
-            entries={data.entries}
-            stats={data.stats}
-          />
+          <ReadingOrderTab listId={listId} stats={data.stats} />
         </TabsContent>
         <TabsContent
           value="resolution"
           className="min-h-0 flex-1 overflow-y-auto"
         >
-          <ResolutionTab listId={listId} entries={data.entries} />
+          <ResolutionTab listId={listId} stats={data.stats} />
         </TabsContent>
         <TabsContent value="history" className="min-h-0 flex-1 overflow-y-auto">
           <HistoryTab listId={listId} list={data} />
@@ -293,11 +294,9 @@ function StatusBadge({ status }: { status: CblMatchStatus }) {
 
 function ReadingOrderTab({
   listId,
-  entries,
   stats,
 }: {
   listId: string;
-  entries: CblEntryView[];
   stats: {
     total: number;
     matched: number;
@@ -307,18 +306,52 @@ function ReadingOrderTab({
   };
 }) {
   const [filter, setFilter] = React.useState<"all" | CblMatchStatus>("all");
-  const filtered = React.useMemo(() => {
-    if (filter === "all") return entries;
-    return entries.filter((e) => e.match_status === filter);
-  }, [entries, filter]);
+  // Server-side status filter — chip click triggers a new infinite
+  // query, no client-side `.filter()` over a finite array.
+  const query = useCblListEntriesInfinite(listId, {
+    status: filter === "all" ? undefined : filter,
+  });
+  const items = React.useMemo<CblEntryHydratedView[]>(
+    () => query.data?.pages.flatMap((p) => p.items) ?? [],
+    [query.data],
+  );
+  // Page-1 total is the server's COUNT over the filter set; while
+  // loading, fall back to the matching stat from the list-level
+  // aggregate counts so the table frame isn't blank.
+  const filterTotal =
+    query.data?.pages[0]?.total ??
+    (filter === "all"
+      ? stats.total
+      : filter === "matched"
+        ? stats.matched
+        : filter === "ambiguous"
+          ? stats.ambiguous
+          : filter === "missing"
+            ? stats.missing
+            : stats.manual);
 
   const parentRef = React.useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
-    count: filtered.length,
+    count: items.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 56,
     overscan: 8,
   });
+
+  // Auto-fetch when the last virtual row is near the end of the loaded
+  // window. Matches the IntersectionObserver pattern other infinite
+  // surfaces use, but works inside the virtualizer's range model.
+  const virtualItems = virtualizer.getVirtualItems();
+  const lastIndex = virtualItems[virtualItems.length - 1]?.index ?? -1;
+  React.useEffect(() => {
+    if (
+      query.hasNextPage &&
+      !query.isFetchingNextPage &&
+      lastIndex >= items.length - 5
+    ) {
+      void query.fetchNextPage();
+    }
+  }, [lastIndex, items.length, query]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 pt-1">
@@ -349,69 +382,146 @@ function ReadingOrderTab({
           <div className="text-right">Match</div>
         </div>
         <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
-          <div
-            style={{
-              height: `${virtualizer.getTotalSize()}px`,
-              position: "relative",
-              width: "100%",
-            }}
-          >
-            {virtualizer.getVirtualItems().map((vi) => {
-              const entry = filtered[vi.index];
-              return (
-                <div
-                  key={entry.id}
-                  className="border-border absolute top-0 left-0 grid w-full grid-cols-[60px_1fr_60px_60px_120px_60px] items-center gap-2 border-b px-3 text-sm"
-                  style={{
-                    height: `${vi.size}px`,
-                    transform: `translateY(${vi.start}px)`,
-                  }}
-                >
-                  <div className="text-muted-foreground">
-                    {entry.position + 1}
+          {query.isLoading ? (
+            <div className="text-muted-foreground flex items-center gap-2 p-4 text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading entries…
+            </div>
+          ) : items.length === 0 ? (
+            <div className="text-muted-foreground p-4 text-sm">
+              {filter === "all"
+                ? "No entries in this list yet."
+                : `No ${filter} entries.`}
+            </div>
+          ) : (
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                position: "relative",
+                width: "100%",
+              }}
+            >
+              {virtualItems.map((vi) => {
+                const entry = items[vi.index];
+                return (
+                  <div
+                    key={entry.id}
+                    className="border-border absolute top-0 left-0 grid w-full grid-cols-[60px_1fr_60px_60px_120px_60px] items-center gap-2 border-b px-3 text-sm"
+                    style={{
+                      height: `${vi.size}px`,
+                      transform: `translateY(${vi.start}px)`,
+                    }}
+                  >
+                    <div className="text-muted-foreground">
+                      {entry.position + 1}
+                    </div>
+                    <div className="truncate" title={entry.series_name}>
+                      {entry.series_name}
+                    </div>
+                    <div className="font-mono text-xs">
+                      #{entry.issue_number}
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      {entry.year ?? "—"}
+                    </div>
+                    <div>
+                      <StatusBadge status={entry.match_status} />
+                    </div>
+                    <div className="text-right">
+                      <ManualMatchPopover
+                        listId={listId}
+                        entry={entry}
+                        trigger={
+                          <Button type="button" size="sm" variant="ghost">
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                        }
+                      />
+                    </div>
                   </div>
-                  <div className="truncate" title={entry.series_name}>
-                    {entry.series_name}
-                  </div>
-                  <div className="font-mono text-xs">#{entry.issue_number}</div>
-                  <div className="text-muted-foreground text-xs">
-                    {entry.year ?? "—"}
-                  </div>
-                  <div>
-                    <StatusBadge status={entry.match_status} />
-                  </div>
-                  <div className="text-right">
-                    <ManualMatchPopover
-                      listId={listId}
-                      entry={entry}
-                      trigger={
-                        <Button type="button" size="sm" variant="ghost">
-                          <Pencil className="h-3 w-3" />
-                        </Button>
-                      }
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {/* Footer row: visible count vs. total for the active filter,
+         *  plus a spinner when paging in more rows. */}
+        <div className="text-muted-foreground bg-muted/20 flex shrink-0 items-center justify-between border-t px-3 py-1.5 text-xs">
+          <span>
+            {items.length} of {filterTotal} loaded
+          </span>
+          {query.isFetchingNextPage ? (
+            <span className="flex items-center gap-1.5">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading more…
+            </span>
+          ) : null}
         </div>
       </div>
     </div>
   );
 }
 
+type ResolutionFilter = "both" | "ambiguous" | "missing";
+
+const RESOLUTION_FILTERS: { value: ResolutionFilter; label: string }[] = [
+  { value: "both", label: "All bad matches" },
+  { value: "ambiguous", label: "Ambiguous" },
+  { value: "missing", label: "Missing" },
+];
+
 function ResolutionTab({
   listId,
-  entries,
+  stats,
 }: {
   listId: string;
-  entries: CblEntryView[];
+  stats: {
+    ambiguous: number;
+    missing: number;
+  };
 }) {
-  const ambiguous = entries.filter((e) => e.match_status === "ambiguous");
-  const missing = entries.filter((e) => e.match_status === "missing");
+  const [filter, setFilter] = React.useState<ResolutionFilter>("both");
+  // Server filter — Resolution tab never touches matched rows. A
+  // 50k-entry list with 5 bad matches is just two pages here.
+  const query = useCblListEntriesInfinite(listId, {
+    status:
+      filter === "both"
+        ? "ambiguous,missing"
+        : filter === "ambiguous"
+          ? "ambiguous"
+          : "missing",
+  });
+  const items = React.useMemo<CblEntryHydratedView[]>(
+    () => query.data?.pages.flatMap((p) => p.items) ?? [],
+    [query.data],
+  );
+  const filterTotal =
+    query.data?.pages[0]?.total ??
+    (filter === "both"
+      ? stats.ambiguous + stats.missing
+      : filter === "ambiguous"
+        ? stats.ambiguous
+        : stats.missing);
 
-  if (ambiguous.length === 0 && missing.length === 0) {
+  // IntersectionObserver sentinel — works because Resolution scrolls
+  // its outer TabsContent rather than running a virtualizer.
+  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          if (query.hasNextPage && !query.isFetchingNextPage) {
+            void query.fetchNextPage();
+          }
+        }
+      },
+      { rootMargin: "400px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [query]);
+
+  if (stats.ambiguous + stats.missing === 0) {
     return (
       <div className="text-muted-foreground rounded-md border border-dashed p-6 text-sm">
         Nothing to resolve — every entry matched.
@@ -420,33 +530,57 @@ function ResolutionTab({
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {ambiguous.length > 0 ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold">
-            Ambiguous ({ambiguous.length})
-          </h3>
-          <ul className="divide-border border-border divide-y rounded-md border">
-            {ambiguous.map((entry) => (
-              <li key={entry.id} className="p-3">
-                <ResolutionRow listId={listId} entry={entry} />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      {missing.length > 0 ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold">Missing ({missing.length})</h3>
-          <ul className="divide-border border-border divide-y rounded-md border">
-            {missing.map((entry) => (
-              <li key={entry.id} className="p-3">
-                <ResolutionRow listId={listId} entry={entry} />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-2">
+        {RESOLUTION_FILTERS.map((f) => (
+          <Button
+            key={f.value}
+            type="button"
+            size="sm"
+            variant={filter === f.value ? "default" : "outline"}
+            onClick={() => setFilter(f.value)}
+          >
+            {f.label}
+            <Badge variant="secondary" className="ml-2 px-1.5 py-0 text-xs">
+              {f.value === "both"
+                ? stats.ambiguous + stats.missing
+                : f.value === "ambiguous"
+                  ? stats.ambiguous
+                  : stats.missing}
+            </Badge>
+          </Button>
+        ))}
+      </div>
+      {query.isLoading ? (
+        <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading entries…
+        </div>
+      ) : items.length === 0 ? (
+        <div className="text-muted-foreground rounded-md border border-dashed p-6 text-sm">
+          {filter === "ambiguous"
+            ? "No ambiguous matches."
+            : filter === "missing"
+              ? "No missing entries."
+              : "Nothing to resolve."}
+        </div>
+      ) : (
+        <ul className="divide-border border-border divide-y rounded-md border">
+          {items.map((entry) => (
+            <li key={entry.id} className="p-3">
+              <ResolutionRow listId={listId} entry={entry} />
+            </li>
+          ))}
+        </ul>
+      )}
+      <div
+        ref={sentinelRef}
+        aria-hidden
+        className={cn("h-12", query.hasNextPage ? "" : "hidden")}
+      />
+      <div className="text-muted-foreground text-xs">
+        {items.length} of {filterTotal} loaded
+        {query.isFetchingNextPage ? " · loading more…" : ""}
+      </div>
     </div>
   );
 }
@@ -456,11 +590,17 @@ function ResolutionRow({
   entry,
 }: {
   listId: string;
-  entry: CblEntryView;
+  entry: CblEntryHydratedView;
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <StatusBadge status={entry.match_status} />
+          <span className="text-muted-foreground text-xs">
+            #{entry.position + 1}
+          </span>
+        </div>
         <div className="truncate font-medium">{entry.series_name}</div>
         <div className="text-muted-foreground text-xs">
           #{entry.issue_number}
@@ -482,7 +622,10 @@ function ResolutionRow({
 }
 
 function HistoryTab({ listId, list }: { listId: string; list: CblDetailView }) {
-  const log = useCblRefreshLog(listId, { limit: 50 });
+  // 100 = server's clamp (cbl_lists.rs:1247 `unwrap_or(20).min(100)`).
+  // Refresh logs decay in usefulness — paginating them isn't worth the
+  // UI cost; we just ask for the entire window the server will hand back.
+  const log = useCblRefreshLog(listId, { limit: 100 });
   const refresh = useRefreshCblList(listId);
 
   if (log.isLoading) {

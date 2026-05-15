@@ -22,11 +22,22 @@ const MIN_QUERY_LEN = 2;
 
 interface GlobalSearchOpts {
   /** Soft per-category cap. The modal passes a small number (~5) so the
-   *  dropdown doesn't grow unbounded; the full search page passes a
-   *  bigger one. The hook only forwards this to backends that accept a
-   *  `limit` — anything that returns a small fixed top-N stays as-is. */
+   *  dropdown doesn't grow unbounded. When omitted, each backend is
+   *  asked for its server-side max — so the search-page rails stop
+   *  silently clamping (e.g., the issues backend caps at 50 regardless
+   *  of `limit`, so the old shared `75` lied about its real ceiling). */
   perCategory?: number;
 }
+
+/** Server-side max per backend. Mirrors the `MAX_LIMIT` constants in
+ *  `crates/server/src/api/{issues,people,series}.rs`. Used by the
+ *  search-page rails when no explicit `perCategory` is supplied so the
+ *  request never asks for more than the backend will return. */
+const BACKEND_MAX = {
+  series: 100,
+  issues: 50,
+  people: 100,
+} as const;
 
 /** Raw payload arrays for the cover-renderable categories. The
  *  `/search` page reads these so it can render proper `<SeriesCard>` /
@@ -107,16 +118,21 @@ export function useGlobalSearch(
 ): GlobalSearchResult {
   const query = rawQuery.trim();
   const enabled = query.length >= MIN_QUERY_LEN;
-  const limit = opts.perCategory;
+  // Resolve per-backend limit: explicit override wins (modal passes 5),
+  // otherwise ask each backend for its server-side max so the rails
+  // don't silently clamp.
+  const seriesLimit = opts.perCategory ?? BACKEND_MAX.series;
+  const issuesLimit = opts.perCategory ?? BACKEND_MAX.issues;
+  const peopleLimit = opts.perCategory ?? BACKEND_MAX.people;
 
   const series = useSeriesList(
-    enabled ? { q: query, ...(limit !== undefined ? { limit } : {}) } : {},
+    enabled ? { q: query, limit: seriesLimit } : {},
   );
   const issues = useIssueSearch(
-    enabled ? { q: query, ...(limit !== undefined ? { limit } : {}) } : {},
+    enabled ? { q: query, limit: issuesLimit } : {},
   );
   const people = usePeopleSearch(
-    enabled ? { q: query, ...(limit !== undefined ? { limit } : {}) } : {},
+    enabled ? { q: query, limit: peopleLimit } : {},
   );
 
   const seriesItems = useMemo<SeriesView[]>(

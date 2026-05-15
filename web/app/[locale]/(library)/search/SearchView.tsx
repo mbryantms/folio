@@ -21,10 +21,6 @@ import {
   type SearchHit,
 } from "@/lib/search/types";
 
-/** How many hits we ask each backend for. Tuned so the rails feel full
- *  even on broad queries; the "View all" tile bridges to the
- *  category-filtered grid when there's more. */
-const PER_CATEGORY_LIMIT = 75;
 const QUERY_DEBOUNCE_MS = 250;
 
 const CARD_SIZE_MIN = 120;
@@ -85,10 +81,11 @@ export function SearchView({
     window.history.replaceState({}, "", url.toString());
   }, [debounced]);
 
-  const { enabled, isLoading, groups, payloads, total } = useGlobalSearch(
-    debounced,
-    { perCategory: PER_CATEGORY_LIMIT },
-  );
+  // Omit `perCategory` so each backend serves its server-side max (the
+  // old single `75` quietly clamped to 50 on the issues backend,
+  // hiding rows from the rail). Modal usage still passes a small N.
+  const { enabled, isLoading, groups, payloads, total } =
+    useGlobalSearch(debounced);
 
   const activeDef = category
     ? SEARCH_CATEGORIES.find((c) => c.key === category)

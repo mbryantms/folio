@@ -41,6 +41,7 @@ import type {
   CatalogEntriesView,
   CatalogSourceListView,
   CblDetailView,
+  CblEntryListView,
   CblListListView,
   CblWindowView,
   ContinueReadingView,
@@ -297,8 +298,11 @@ export const queryKeys = {
   ) => ["filter-options", kind, filters] as const,
   cblLists: ["cbl-lists", "list"] as const,
   cblList: (id: string) => ["cbl-lists", "detail", id] as const,
-  cblEntries: (id: string, cursor?: string) =>
-    ["cbl-lists", "entries", id, cursor ?? null] as const,
+  /** Cursor-paginated CBL entries, optionally narrowed by status. Use
+   *  `["cbl-lists", "entries", id]` (no filters) as a prefix to
+   *  invalidate every status-variant in one go. */
+  cblListEntries: (id: string, filters?: CblEntriesFilters) =>
+    ["cbl-lists", "entries", id, filters ?? {}] as const,
   cblListIssues: (id: string, opts?: { limit?: number; offset?: number }) =>
     ["cbl-lists", "issues", id, opts ?? {}] as const,
   /** Reading-window slice — anchored on the user's next unread matched
@@ -339,6 +343,15 @@ export const queryKeys = {
    *  to render finished / in-progress badges. Invalidated by progress
    *  mutations. */
   userProgress: ["progress", "list"] as const,
+};
+
+/** Filter shape for `useCblListEntriesInfinite`. `status` is a
+ *  comma-separated subset of `matched,ambiguous,missing,manual`;
+ *  omit (or pass empty) for "all". `limit` overrides the server
+ *  default of 100, clamped to [1, 200]. */
+export type CblEntriesFilters = {
+  status?: string;
+  limit?: number;
 };
 
 export type SavedViewListFilters = {
@@ -1038,6 +1051,33 @@ export function useCblList(id: string) {
   });
 }
 
+/** Cursor-paginated walk over a CBL list's entries. Each item carries
+ *  the entry **and** its hydrated `IssueSummaryView` (for matched
+ *  rows), so the consumption grid + management sheet don't need a
+ *  second `/issues` round-trip. Status filter is server-side, so the
+ *  Resolution tab can stream only bad matches.
+ *
+ *  Replaces the old "embed `entries[]` in `/me/cbl-lists/{id}` and
+ *  filter client-side" pattern, which silently capped lists at 500. */
+export function useCblListEntriesInfinite(
+  id: string,
+  filters: CblEntriesFilters = {},
+) {
+  const params: Record<string, string | number> = {};
+  if (filters.status) params.status = filters.status;
+  if (filters.limit != null) params.limit = filters.limit;
+  return useInfiniteQuery({
+    queryKey: queryKeys.cblListEntries(id, filters),
+    enabled: !!id,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<CblEntryListView>(
+        `/me/cbl-lists/${id}/entries${buildQuery({ ...params, cursor: pageParam })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+  });
+}
+
 /** Matched issues from a CBL list in `position` order. Backed by
  *  `/me/cbl-lists/{id}/issues`; pages with `limit` + `offset`. */
 export function useCblListIssues(
@@ -1104,7 +1144,11 @@ export type MarkerListFilters = {
 };
 
 /** Cursor-paginated global feed of the caller's markers. Filters by
- *  kind, issue, and free-text search against `body` + `selection.text`. */
+ *  kind, issue, and free-text search against `body` + `selection.text`.
+ *  Single-page variant — kept for surfaces that need a one-shot fetch
+ *  with a known finite count. The Bookmarks index uses
+ *  [`useMarkersInfinite`](#useMarkersInfinite) instead so no marker
+ *  is ever hidden behind a hard cap. */
 export function useMarkers(filters: MarkerListFilters = {}) {
   const params: Record<string, string> = {};
   if (filters.kind) params.kind = filters.kind;
@@ -1120,6 +1164,30 @@ export function useMarkers(filters: MarkerListFilters = {}) {
     queryFn: () =>
       jsonFetch<MarkerListView>(`/me/markers${buildQuery(params)}`),
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Infinite-scroll variant of `useMarkers`. Strip caller `cursor` (if
+ *  any) so the query owns paging; everything else flows through as
+ *  server-side filters. */
+export function useMarkersInfinite(filters: MarkerListFilters = {}) {
+  const rest = stripCursor(filters);
+  const params: Record<string, string> = {};
+  if (rest.kind) params.kind = rest.kind;
+  if (rest.issue_id) params.issue_id = rest.issue_id;
+  if (rest.q) params.q = rest.q;
+  if (rest.is_favorite === true) params.is_favorite = "true";
+  if (rest.tags) params.tags = rest.tags;
+  if (rest.tag_match) params.tag_match = rest.tag_match;
+  if (rest.limit) params.limit = String(rest.limit);
+  return useInfiniteQuery({
+    queryKey: queryKeys.markers(filters),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<MarkerListView>(
+        `/me/markers${buildQuery({ ...params, cursor: pageParam })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
 }
 
@@ -1184,7 +1252,11 @@ export function useCollection(id: string) {
 }
 
 /** Hydrated mixed-series-and-issue entries for a collection, in
- *  position order. Pages via opaque cursor; `total` is first-page-only. */
+ *  position order. Pages via opaque cursor; `total` is first-page-only.
+ *  Single-shot variant — keep for surfaces (e.g. rail previews) that
+ *  want only the first page. The collection detail page uses
+ *  [`useCollectionEntriesInfinite`](#useCollectionEntriesInfinite) so
+ *  reorder semantics see the full list. */
 export function useCollectionEntries(
   id: string,
   opts?: { cursor?: string; limit?: number },
@@ -1199,6 +1271,26 @@ export function useCollectionEntries(
         `/me/collections/${id}/entries${buildQuery(params)}`,
       ),
     enabled: !!id,
+  });
+}
+
+/** Cursor-paginated walk over every collection entry. The detail page
+ *  uses this with an auto-walk effect so reorder semantics see the
+ *  full list — sending `entry_ids` from a half-loaded view would wipe
+ *  the tail. */
+export function useCollectionEntriesInfinite(id: string) {
+  return useInfiniteQuery({
+    queryKey: ["collections", "entries-infinite", id] as const,
+    enabled: !!id,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<CollectionEntriesView>(
+        `/me/collections/${id}/entries${buildQuery({
+          cursor: pageParam,
+          limit: 200,
+        })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
 }
 

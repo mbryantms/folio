@@ -695,3 +695,173 @@ async fn patch_refresh_schedule_null_clears_column() {
         body["refresh_schedule"]
     );
 }
+
+// ───── /entries pagination (M1 of the list-pagination-completeness plan) ─────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entries_endpoint_paginates_via_cursor_and_returns_total_on_first_page() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-walker@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap();
+
+    // Page 1: total reported, cursor present (269 entries > 100 default).
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/me/cbl-lists/{list_id}/entries"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_i64(), Some(269), "total on first page");
+    let cursor1 = body["next_cursor"].as_str().expect("cursor on page 1");
+    let items1 = body["items"].as_array().unwrap();
+    assert_eq!(items1.len(), 100, "default page size = 100");
+
+    // Walk all pages, accumulate ids. Total visited should equal 269.
+    let mut seen: Vec<String> = items1
+        .iter()
+        .map(|i| i["id"].as_str().unwrap().to_owned())
+        .collect();
+    let mut cursor = Some(cursor1.to_owned());
+    while let Some(c) = cursor {
+        let (status, body) = http(
+            &app,
+            Method::GET,
+            &format!("/me/cbl-lists/{list_id}/entries?cursor={c}"),
+            Some(&auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // total is first-page-only.
+        assert!(body["total"].is_null(), "total only on first page");
+        for it in body["items"].as_array().unwrap() {
+            seen.push(it["id"].as_str().unwrap().to_owned());
+        }
+        cursor = body["next_cursor"].as_str().map(str::to_owned);
+    }
+    assert_eq!(seen.len(), 269, "cursor walk covers every entry exactly once");
+    let dedup: std::collections::HashSet<_> = seen.iter().collect();
+    assert_eq!(dedup.len(), 269, "no entry returned twice across pages");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entries_status_filter_narrows_results() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "filterer@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap();
+
+    // matched only — sample has 3 matched issues.
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/me/cbl-lists/{list_id}/entries?status=matched"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_i64(), Some(3));
+    assert_eq!(body["items"].as_array().unwrap().len(), 3);
+    for item in body["items"].as_array().unwrap() {
+        assert_eq!(item["match_status"].as_str(), Some("matched"));
+        assert!(item["issue"].is_object(), "matched entries hydrate the issue");
+    }
+
+    // ambiguous + missing — Resolution-tab use case.
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/me/cbl-lists/{list_id}/entries?status=ambiguous,missing"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // Sample has 266 missing + 0 ambiguous.
+    assert_eq!(body["total"].as_i64(), Some(266));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entries_rejects_invalid_status_and_cursor() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "rejected@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap();
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/me/cbl-lists/{list_id}/entries?status=bogus"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"].as_str(), Some("validation"));
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/me/cbl-lists/{list_id}/entries?cursor=not-base64-or-malformed"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"].as_str(), Some("validation"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entries_endpoint_rejects_non_owner() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "owner@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap();
+
+    let other = register(&app, "interloper@example.com").await;
+    let (status, _) = http(
+        &app,
+        Method::GET,
+        &format!("/me/cbl-lists/{list_id}/entries"),
+        Some(&other),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn detail_endpoint_no_longer_embeds_entries() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "detail-watcher@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap();
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/me/cbl-lists/{list_id}"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("entries").is_none(),
+        "detail response must not embed entries (M1 of list-pagination-completeness): {body:#?}",
+    );
+    // stats carry the per-status counts the UI used to derive client-side.
+    assert_eq!(body["stats"]["total"].as_i64(), Some(269));
+    assert_eq!(body["stats"]["matched"].as_i64(), Some(3));
+    assert_eq!(body["stats"]["missing"].as_i64(), Some(266));
+}

@@ -55,6 +55,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/me/cbl-lists/{id}/refresh", post(refresh_one))
         .route("/me/cbl-lists/{id}/refresh-log", get(refresh_log))
+        .route("/me/cbl-lists/{id}/entries", get(entries))
         .route("/me/cbl-lists/{id}/issues", get(issues))
         .route("/me/cbl-lists/{id}/window", get(reading_window))
         .route("/me/cbl-lists/{id}/export", get(export))
@@ -150,11 +151,42 @@ pub struct CblEntryView {
     pub matched_at: Option<String>,
 }
 
+/// Detail response — list metadata + aggregate counts only. Entries
+/// moved to the paginated `/me/cbl-lists/{id}/entries` endpoint as of
+/// 2026-05-14; see [docs/dev plans](../../../../.claude/plans/list-pagination-completeness-1.0.md)
+/// for rationale (large lists silently truncated at 500). The fields
+/// on `CblListView.stats` carry the per-status counts that used to be
+/// computed client-side from `entries`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CblDetailView {
     #[serde(flatten)]
     pub list: CblListView,
-    pub entries: Vec<CblEntryView>,
+}
+
+/// One entry + its hydrated `IssueSummaryView` (when `matched_issue_id`
+/// resolves to an issue the caller can see). Returned by the paginated
+/// entries endpoint so the consumption grid + Reading Order tab don't
+/// need a second `/issues` round-trip.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CblEntryHydratedView {
+    #[serde(flatten)]
+    pub entry: CblEntryView,
+    /// Hydrated matched issue. `None` for unmatched entries, and also
+    /// `None` when the matched issue lives in a library the caller
+    /// can't access (we still surface the entry — the position label
+    /// is meaningful even without a cover).
+    pub issue: Option<crate::api::series::IssueSummaryView>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CblEntryListView {
+    pub items: Vec<CblEntryHydratedView>,
+    /// Opaque cursor for the next page. `None` when this page is the
+    /// last one for the given filter set.
+    pub next_cursor: Option<String>,
+    /// Count of all entries matching the filter. Returned ONLY on the
+    /// first page (cursor absent) — keeps subsequent fetches cheap.
+    pub total: Option<i64>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -240,6 +272,19 @@ pub struct DetailQuery {
     pub limit: Option<u64>,
     #[serde(default)]
     pub offset: Option<u64>,
+}
+
+/// Query params for `GET /me/cbl-lists/{id}/entries`. `status` is a
+/// comma-separated subset of {matched, ambiguous, missing, manual};
+/// omit for "all". `cursor` is opaque (base64 of `position:id`).
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct EntriesQuery {
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u64>,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -461,6 +506,11 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
     Json(CblListListView { items }).into_response()
 }
 
+/// Detail endpoint — returns list metadata + aggregate stats only.
+/// Entries used to be embedded here (capped at 500), which silently
+/// truncated long lists; they now live exclusively on the paginated
+/// `/entries` endpoint. The per-status counts the UI used to derive
+/// from `entries` are on `list.stats`.
 #[utoipa::path(
     get,
     path = "/me/cbl-lists/{id}",
@@ -471,7 +521,6 @@ pub async fn detail(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
-    Query(q): Query<DetailQuery>,
 ) -> impl IntoResponse {
     let list = match fetch_list(&app.db, id).await {
         Ok(l) => l,
@@ -480,31 +529,226 @@ pub async fn detail(
     if let Err(resp) = ensure_owner(&list, &user).await {
         return resp;
     }
+    let stats = stats_for(&app.db, id, user.id).await.unwrap_or_default();
+    Json(CblDetailView {
+        list: list_to_view(&list, stats),
+    })
+    .into_response()
+}
+
+fn parse_status_filter(s: &str) -> Result<Vec<&str>, ()> {
+    const ALLOWED: &[&str] = &["matched", "ambiguous", "missing", "manual"];
+    let parts: Vec<&str> = s.split(',').map(str::trim).filter(|p| !p.is_empty()).collect();
+    if parts.is_empty() {
+        return Err(());
+    }
+    for p in &parts {
+        if !ALLOWED.contains(p) {
+            return Err(());
+        }
+    }
+    Ok(parts)
+}
+
+fn encode_entry_cursor(position: i32, id: &str) -> String {
+    use base64::Engine;
+    let s = format!("{position}:{id}");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s.as_bytes())
+}
+
+fn parse_entry_cursor(s: &str) -> Result<(i32, Uuid), ()> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(s.as_bytes())
+        .map_err(|_| ())?;
+    let txt = std::str::from_utf8(&bytes).map_err(|_| ())?;
+    let (pos, id) = txt.split_once(':').ok_or(())?;
+    let parsed_pos: i32 = pos.parse().map_err(|_| ())?;
+    let parsed_id = Uuid::parse_str(id).map_err(|_| ())?;
+    Ok((parsed_pos, parsed_id))
+}
+
+/// `GET /me/cbl-lists/{id}/entries` — paginated walk over CBL entries
+/// in position order, hydrated with `IssueSummaryView` for matched
+/// rows. Status filter is server-side, so the Resolution tab can
+/// stream just `ambiguous,missing` without touching the matched majority.
+#[utoipa::path(
+    get,
+    path = "/me/cbl-lists/{id}/entries",
+    params(
+        ("id" = String, Path,),
+        ("cursor" = Option<String>, Query,),
+        ("limit" = Option<u64>, Query,),
+        ("status" = Option<String>, Query, description = "Comma-separated subset of matched,ambiguous,missing,manual"),
+    ),
+    responses(
+        (status = 200, body = CblEntryListView),
+        (status = 400, description = "invalid cursor or status"),
+        (status = 403, description = "not your list"),
+        (status = 404, description = "list not found"),
+    )
+)]
+pub async fn entries(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+    Query(q): Query<EntriesQuery>,
+) -> impl IntoResponse {
+    let list = match fetch_list(&app.db, id).await {
+        Ok(l) => l,
+        Err(resp) => return resp,
+    };
+    if let Err(resp) = ensure_owner(&list, &user).await {
+        return resp;
+    }
+
+    // Page-size: default 100 (per plan), max 200 — comfortable for
+    // virtualized table rows and cover-grid alike. Anything bigger
+    // and the hydration round-trip starts to dominate.
+    let limit = q.limit.unwrap_or(100).clamp(1, 200);
+
     let mut sel = cbl_entry::Entity::find()
         .filter(cbl_entry::Column::CblListId.eq(id))
-        .order_by_asc(cbl_entry::Column::Position);
-    if let Some(status) = q.status.as_deref() {
-        if !["matched", "ambiguous", "missing", "manual"].contains(&status) {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "validation",
-                "invalid status filter",
-            );
-        }
-        sel = sel.filter(cbl_entry::Column::MatchStatus.eq(status));
+        .order_by_asc(cbl_entry::Column::Position)
+        .order_by_asc(cbl_entry::Column::Id);
+
+    if let Some(status_str) = q.status.as_deref() {
+        let parts = match parse_status_filter(status_str) {
+            Ok(p) => p,
+            Err(_) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "validation",
+                    "invalid status filter (expected comma-separated subset of matched,ambiguous,missing,manual)",
+                );
+            }
+        };
+        sel = sel.filter(cbl_entry::Column::MatchStatus.is_in(parts.iter().map(|s| s.to_string()).collect::<Vec<_>>()));
     }
-    let limit = q.limit.unwrap_or(500).min(2000);
-    let offset = q.offset.unwrap_or(0);
+
+    if let Some(cursor) = q.cursor.as_deref() {
+        let (after_pos, after_id) = match parse_entry_cursor(cursor) {
+            Ok(c) => c,
+            Err(_) => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
+        };
+        // Tuple-compare semantics: rows whose (position, id) sorts
+        // strictly after the cursor's (position, id). Expressed as
+        // (position > P) OR (position = P AND id > I).
+        sel = sel.filter(
+            sea_orm::Condition::any()
+                .add(cbl_entry::Column::Position.gt(after_pos))
+                .add(
+                    sea_orm::Condition::all()
+                        .add(cbl_entry::Column::Position.eq(after_pos))
+                        .add(cbl_entry::Column::Id.gt(after_id)),
+                ),
+        );
+    }
+
     use sea_orm::QuerySelect;
-    let rows = match sel.limit(limit).offset(offset).all(&app.db).await {
+    // Fetch limit+1 to detect "more pages" without a separate count.
+    let rows = match sel.limit(limit + 1).all(&app.db).await {
         Ok(r) => r,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    let stats = stats_for(&app.db, id, user.id).await.unwrap_or_default();
-    let entries = rows.iter().map(entry_to_view).collect();
-    Json(CblDetailView {
-        list: list_to_view(&list, stats),
-        entries,
+    let has_more = rows.len() as u64 > limit;
+    let page_rows: Vec<_> = rows.into_iter().take(limit as usize).collect();
+    let next_cursor = if has_more {
+        page_rows
+            .last()
+            .map(|e| encode_entry_cursor(e.position, &e.id.to_string()))
+    } else {
+        None
+    };
+
+    // First-page-only total: a COUNT over the filter set. Skipping
+    // this on subsequent pages keeps "scroll to the end" cheap.
+    let total = if q.cursor.is_none() {
+        let mut count_sel = cbl_entry::Entity::find().filter(cbl_entry::Column::CblListId.eq(id));
+        if let Some(status_str) = q.status.as_deref() {
+            // Already validated above; re-parsing is fine.
+            if let Ok(parts) = parse_status_filter(status_str) {
+                count_sel = count_sel.filter(
+                    cbl_entry::Column::MatchStatus
+                        .is_in(parts.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+                );
+            }
+        }
+        use sea_orm::PaginatorTrait;
+        match count_sel.count(&app.db).await {
+            Ok(n) => Some(n as i64),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    // Batch-hydrate matched issues. One query for issues, one for
+    // their parent series, then we build the view for entries the
+    // caller can see. Unmatched entries are returned with
+    // `issue: None` so the UI still renders the row.
+    let issue_ids: Vec<String> = page_rows
+        .iter()
+        .filter_map(|e| e.matched_issue_id.clone())
+        .collect();
+    let issue_by_id: std::collections::HashMap<String, entity::issue::Model> = if issue_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        match entity::issue::Entity::find()
+            .filter(entity::issue::Column::Id.is_in(issue_ids))
+            .all(&app.db)
+            .await
+        {
+            Ok(rows) => rows.into_iter().map(|i| (i.id.clone(), i)).collect(),
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        }
+    };
+    let series_ids: std::collections::HashSet<Uuid> =
+        issue_by_id.values().map(|i| i.series_id).collect();
+    let series_by_id: std::collections::HashMap<Uuid, entity::series::Model> = if series_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        match entity::series::Entity::find()
+            .filter(entity::series::Column::Id.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
+            .all(&app.db)
+            .await
+        {
+            Ok(rows) => rows.into_iter().map(|s| (s.id, s)).collect(),
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        }
+    };
+    use crate::api::series::IssueSummaryView;
+    use crate::library::access;
+    let visible = access::for_user(&app, &user).await;
+
+    let items: Vec<CblEntryHydratedView> = page_rows
+        .iter()
+        .map(|entry| {
+            let issue_view = entry
+                .matched_issue_id
+                .as_ref()
+                .and_then(|iid| issue_by_id.get(iid))
+                .and_then(|issue| {
+                    let series = series_by_id.get(&issue.series_id)?;
+                    if !visible.contains(series.library_id) {
+                        return None;
+                    }
+                    Some(
+                        IssueSummaryView::from_model(issue.clone(), &series.slug)
+                            .with_series_name(series.name.clone()),
+                    )
+                });
+            CblEntryHydratedView {
+                entry: entry_to_view(entry),
+                issue: issue_view,
+            }
+        })
+        .collect();
+
+    Json(CblEntryListView {
+        items,
+        next_cursor,
+        total,
     })
     .into_response()
 }

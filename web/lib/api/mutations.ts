@@ -1045,6 +1045,12 @@ export function useRefreshCblList(id: string) {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.cblList(id) });
         qc.invalidateQueries({ queryKey: queryKeys.cblRefreshLog(id) });
+        // Refresh applies upstream changes — every paginated entries
+        // view (any status filter) must re-fetch.
+        qc.invalidateQueries({
+          queryKey: ["cbl-lists", "entries", id],
+          exact: false,
+        });
       },
     },
   );
@@ -1063,6 +1069,13 @@ export function useManualMatchEntry(listId: string) {
       successMessage: "Match saved",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.cblList(listId) });
+        // Aggregate counts on the detail response change with each
+        // resolution, and every entries page may have moved an entry
+        // between Matched/Ambiguous/Missing/Manual buckets.
+        qc.invalidateQueries({
+          queryKey: ["cbl-lists", "entries", listId],
+          exact: false,
+        });
       },
     },
   );
@@ -1079,6 +1092,10 @@ export function useClearMatchEntry(listId: string) {
       successMessage: "Match cleared",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.cblList(listId) });
+        qc.invalidateQueries({
+          queryKey: ["cbl-lists", "entries", listId],
+          exact: false,
+        });
       },
     },
   );
