@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,17 @@ export function AdminShell({
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const sidebar = useSidebarState(defaultSidebar);
+  // Radix Dialog/Sheet sets `pointer-events: none` on <body> while
+  // open. When the mobile sheet closes simultaneously with a cross
+  // layout-group navigation, the previous shell can unmount before
+  // Radix's exit animation completes, leaving the body lock stuck.
+  // Clearing it on mount restores click handling on the freshly-
+  // routed page.
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.body.style.pointerEvents = "";
+    }
+  }, []);
   return (
     <div className="bg-background text-foreground min-h-screen">
       <SkipToContent />

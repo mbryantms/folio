@@ -525,7 +525,7 @@ function RailRow({
       <div className="min-w-0 flex-1">
         <Link
           href={`/views/${view.id}`}
-          className="hover:text-foreground truncate text-sm font-medium"
+          className="hover:text-foreground block truncate text-sm font-medium"
           title={view.name}
         >
           {view.name}

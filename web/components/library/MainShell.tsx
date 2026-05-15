@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 
 import { LibrarySearch } from "@/components/LibrarySearch";
@@ -51,6 +51,17 @@ export function MainShell({
   const [mobileOpen, setMobileOpen] = useState(false);
   const sidebar = useSidebarState(defaultSidebar);
   const pathname = usePathname();
+  // Radix Dialog/Sheet sets `pointer-events: none` on <body> while
+  // open. When the mobile sheet closes simultaneously with a cross
+  // layout-group navigation (e.g. `/` → `/admin` → `/settings`), the
+  // previous shell can unmount before Radix's exit animation
+  // completes, leaving the body lock stuck. Clearing it on mount
+  // restores click handling on the freshly-routed page.
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.body.style.pointerEvents = "";
+    }
+  }, []);
   // Mobile header search: surface only on the home page so it doesn't
   // crowd the topbar on every series/issue page (search routes to "/?q="
   // anyway). Strip the locale prefix before matching since
