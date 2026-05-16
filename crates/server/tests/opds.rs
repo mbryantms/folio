@@ -1729,3 +1729,234 @@ async fn series_entry_promotes_rich_summary_to_content_html() {
     assert!(body.contains(r#"<content type="html">"#));
     assert!(body.contains("&lt;p&gt;A &lt;strong&gt;rich&lt;/strong&gt;"));
 }
+
+// ───────────── M3 (opds-richer-feeds): user Pages → OPDS ─────────────
+
+/// Insert a custom (non-system) page for `user_id` so /opds/v1/pages
+/// surfaces something other than the auto-created Home.
+async fn seed_custom_page(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    name: &str,
+    slug: &str,
+    position: i32,
+) -> Uuid {
+    use entity::user_page::ActiveModel as UserPageAM;
+    let id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    UserPageAM {
+        id: Set(id),
+        user_id: Set(user_id),
+        name: Set(name.into()),
+        slug: Set(slug.into()),
+        is_system: Set(false),
+        position: Set(position),
+        description: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+/// Pin a saved-view to a specific page (not the system page) — the
+/// existing `pin_view` helper always targets system_page_id, which
+/// isn't enough for tests that need custom pages.
+async fn pin_view_to_page(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    page_id: Uuid,
+    view_id: Uuid,
+    position: i32,
+    pinned: bool,
+    sidebar: bool,
+) {
+    UserViewPinAM {
+        user_id: Set(user_id),
+        page_id: Set(page_id),
+        view_id: Set(view_id),
+        position: Set(position),
+        pinned: Set(pinned),
+        show_in_sidebar: Set(sidebar),
+        icon: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+/// `/opds/v1/pages` lists every page the user owns in `position`
+/// order. The auto-created Home page appears alongside any custom
+/// pages and drills into `/opds/v1/pages/{slug}`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pages_nav_lists_user_pages_in_position_order() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "pages-list@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    // Touch system_page_id to materialise the Home row before adding
+    // custom pages — otherwise lazy-creation runs at request time and
+    // would interleave with our test setup.
+    let _ = server::pages::system_page_id(&db, auth.user_id)
+        .await
+        .unwrap();
+    seed_custom_page(&db, auth.user_id, "Marvel", "marvel", 1).await;
+    seed_custom_page(&db, auth.user_id, "DC", "dc", 2).await;
+
+    let resp = get_with_auth(&app, "/opds/v1/pages", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains(r#"<title>My pages</title>"#));
+    assert!(body.contains(r#"<title>Home</title>"#));
+    assert!(body.contains(r#"<title>Marvel</title>"#));
+    assert!(body.contains(r#"<title>DC</title>"#));
+    // Position order: Home (0) → Marvel (1) → DC (2).
+    let home = body.find("Home").unwrap();
+    let marvel = body.find("Marvel").unwrap();
+    let dc = body.find("DC").unwrap();
+    assert!(
+        home < marvel && marvel < dc,
+        "position order violated: {body}"
+    );
+    // Drill-in link for the custom page surfaces its slug.
+    assert!(body.contains(r#"href="/opds/v1/pages/marvel""#));
+    assert!(body.contains(r#"href="/opds/v1/pages/dc""#));
+    assert!(body.contains(r#"href="/opds/v1/pages/home""#));
+}
+
+/// Visiting a page that has no pinned views returns an empty nav
+/// feed (200 OK, zero entries) — clients render an "empty section"
+/// message rather than treating the absence as an error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_acq_returns_empty_feed_when_no_pins() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-empty@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    seed_custom_page(&db, auth.user_id, "Untouched", "untouched", 1).await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/pages/untouched",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("<title>Untouched</title>"));
+    // No `<entry>` blocks for views.
+    assert!(
+        !body.contains("<entry>"),
+        "empty feed must emit no entries: {body}"
+    );
+}
+
+/// A populated page surfaces its pinned saved-views as subsection
+/// nav entries in pin-position order, each linking back into the
+/// existing `/opds/v1/views/{id}` handler.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_acq_renders_pinned_views_in_position_order() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-pins@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let page_id = seed_custom_page(&db, auth.user_id, "Curated", "curated", 1).await;
+    let v_a = seed_filter_view(
+        &db,
+        auth.user_id,
+        "Alpha",
+        serde_json::json!({"all":[]}),
+        "name",
+        50,
+    )
+    .await;
+    let v_b = seed_filter_view(
+        &db,
+        auth.user_id,
+        "Bravo",
+        serde_json::json!({"all":[]}),
+        "name",
+        50,
+    )
+    .await;
+    // Insert pins out of position order to verify the handler sorts.
+    pin_view_to_page(&db, auth.user_id, page_id, v_b, 1, true, false).await;
+    pin_view_to_page(&db, auth.user_id, page_id, v_a, 0, true, false).await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/pages/curated",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("<title>Curated</title>"));
+    assert!(body.contains(&format!(r#"href="/opds/v1/views/{v_a}""#)));
+    assert!(body.contains(&format!(r#"href="/opds/v1/views/{v_b}""#)));
+    let alpha = body.find("Alpha").unwrap();
+    let bravo = body.find("Bravo").unwrap();
+    assert!(
+        alpha < bravo,
+        "Alpha (pin position 0) must precede Bravo (1)"
+    );
+}
+
+/// Pins where neither `pinned` nor `show_in_sidebar` is set are
+/// stored but inactive — the user has the view in their library but
+/// isn't actively using it. Don't surface those in the page feed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_acq_filters_out_unpinned_views() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-unpinned@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let page_id = seed_custom_page(&db, auth.user_id, "Mixed", "mixed", 1).await;
+    let active = seed_filter_view(
+        &db,
+        auth.user_id,
+        "Active",
+        serde_json::json!({"all":[]}),
+        "name",
+        50,
+    )
+    .await;
+    let dormant = seed_filter_view(
+        &db,
+        auth.user_id,
+        "Dormant",
+        serde_json::json!({"all":[]}),
+        "name",
+        50,
+    )
+    .await;
+    pin_view_to_page(&db, auth.user_id, page_id, active, 0, true, false).await;
+    pin_view_to_page(&db, auth.user_id, page_id, dormant, 1, false, false).await;
+
+    let resp = get_with_auth(&app, "/opds/v1/pages/mixed", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("Active"));
+    assert!(!body.contains("Dormant"));
+}
+
+/// Pages are private per-user. A user requesting another user's
+/// page slug must see 404, not a leak of name/contents.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_acq_returns_404_for_other_users_page() {
+    let app = TestApp::spawn().await;
+    let owner = register(&app, "page-owner@example.com").await;
+    promote_to_admin(&app, owner.user_id).await;
+    let intruder = register(&app, "page-intruder@example.com").await;
+    promote_to_admin(&app, intruder.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    seed_custom_page(&db, owner.user_id, "Private", "private", 1).await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/pages/private",
+        Header::Cookie(intruder.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

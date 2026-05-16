@@ -32,7 +32,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use entity::{cbl_entry, cbl_list, collection_entry, issue, saved_view, series, user_view_pin};
+use entity::{
+    cbl_entry, cbl_list, collection_entry, issue, saved_view, series, user_page, user_view_pin,
+};
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, Statement, sea_query::PostgresQueryBuilder,
@@ -72,6 +74,10 @@ pub fn routes() -> Router<AppState> {
         .route("/opds/v2/collections/{id}", get(collection_acq))
         .route("/opds/v2/views", get(views_nav))
         .route("/opds/v2/views/{id}", get(view_acq))
+        // M3 of opds-richer-feeds — user-curated Pages, v2 JSON
+        // mirror of /opds/v1/pages.
+        .route("/opds/v2/pages", get(pages_nav))
+        .route("/opds/v2/pages/{slug}", get(page_acq))
         // M7 — progress write. Same handler as v1; OPDS 2.0 clients
         // posting to either path land in the same audit row.
         .route(
@@ -103,6 +109,7 @@ async fn root(State(_app): State<AppState>, _user: CurrentUser) -> Response {
             { "title": "Reading lists", "href": "/opds/v2/lists", "type": NAV_CT },
             { "title": "Collections", "href": "/opds/v2/collections", "type": NAV_CT },
             { "title": "Saved views", "href": "/opds/v2/views", "type": NAV_CT },
+            { "title": "My pages", "href": "/opds/v2/pages", "type": NAV_CT },
         ],
     });
     json_response(body)
@@ -625,6 +632,144 @@ async fn view_acq(
             "href": format!("/opds/v2/views/{id}"),
             "type": NAV_CT,
         }],
+        "navigation": navigation,
+    });
+    json_response(body)
+}
+
+// ────────────── M3 of opds-richer-feeds — user Pages, v2 ──────────────
+
+/// `GET /opds/v2/pages` — JSON mirror of [`super::opds::pages_nav`].
+/// Lists the calling user's pages in position order; each entry
+/// drills into the per-page nav feed at `/opds/v2/pages/{slug}`.
+async fn pages_nav(State(app): State<AppState>, user: CurrentUser) -> Response {
+    let pages = match user_page::Entity::find()
+        .filter(user_page::Column::UserId.eq(user.id))
+        .order_by_asc(user_page::Column::Position)
+        .all(&app.db)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let navigation: Vec<Value> = pages
+        .iter()
+        .map(|p| {
+            let mut metadata = serde_json::Map::new();
+            metadata.insert(
+                "identifier".into(),
+                Value::from(format!("urn:page:{}", p.id)),
+            );
+            metadata.insert("modified".into(), Value::from(p.updated_at.to_rfc3339()));
+            if let Some(d) = p.description.as_deref().filter(|s| !s.is_empty()) {
+                metadata.insert("description".into(), Value::from(d));
+            }
+            json!({
+                "title": p.name,
+                "href": format!("/opds/v2/pages/{}", p.slug),
+                "type": NAV_CT,
+                "metadata": Value::Object(metadata),
+            })
+        })
+        .collect();
+    let body = json!({
+        "metadata": { "title": "My pages", "numberOfItems": navigation.len() },
+        "links": [{ "rel": "self", "href": "/opds/v2/pages", "type": NAV_CT }],
+        "navigation": navigation,
+    });
+    json_response(body)
+}
+
+/// `GET /opds/v2/pages/{slug}` — JSON mirror of
+/// [`super::opds::page_acq`]. Expands one page into its pinned
+/// saved-views as navigation entries linking back into
+/// `/opds/v2/views/{id}`. Ownership-gated (404 on a slug the
+/// calling user doesn't own); only `pinned || show_in_sidebar`
+/// rows surface, in pin position order.
+async fn page_acq(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(slug): AxPath<String>,
+) -> Response {
+    let page = match user_page::Entity::find()
+        .filter(user_page::Column::UserId.eq(user.id))
+        .filter(user_page::Column::Slug.eq(slug.clone()))
+        .one(&app.db)
+        .await
+    {
+        Ok(Some(p)) => p,
+        Ok(None) => return not_found(),
+        Err(e) => return server_error(e.to_string()),
+    };
+    let pins = match user_view_pin::Entity::find()
+        .filter(user_view_pin::Column::UserId.eq(user.id))
+        .filter(user_view_pin::Column::PageId.eq(page.id))
+        .order_by_asc(user_view_pin::Column::Position)
+        .all(&app.db)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let visible_pins: Vec<&user_view_pin::Model> = pins
+        .iter()
+        .filter(|p| p.pinned || p.show_in_sidebar)
+        .collect();
+    let self_href = format!("/opds/v2/pages/{}", page.slug);
+    if visible_pins.is_empty() {
+        let body = json!({
+            "metadata": {
+                "title": page.name,
+                "identifier": format!("urn:page:{}", page.id),
+                "numberOfItems": 0,
+            },
+            "links": [{ "rel": "self", "href": self_href, "type": NAV_CT }],
+            "navigation": [],
+        });
+        return json_response(body);
+    }
+    let view_ids: Vec<Uuid> = visible_pins.iter().map(|p| p.view_id).collect();
+    let view_rows = match saved_view::Entity::find()
+        .filter(saved_view::Column::Id.is_in(view_ids.clone()))
+        .filter(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+        .filter(
+            Condition::any()
+                .add(saved_view::Column::UserId.is_null())
+                .add(saved_view::Column::UserId.eq(user.id)),
+        )
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let view_by_id: HashMap<Uuid, &saved_view::Model> =
+        view_rows.iter().map(|v| (v.id, v)).collect();
+    // Walk pins in pin-position order so the OPDS surface mirrors
+    // the order the user sees in the web rail grid.
+    let navigation: Vec<Value> = visible_pins
+        .iter()
+        .filter_map(|pin| view_by_id.get(&pin.view_id))
+        .map(|v| {
+            json!({
+                "title": v.name,
+                "href": format!("/opds/v2/views/{}", v.id),
+                "type": NAV_CT,
+                "metadata": {
+                    "identifier": format!("urn:view:{}", v.id),
+                    "description": v.description,
+                    "modified": v.updated_at.to_rfc3339(),
+                },
+            })
+        })
+        .collect();
+    let body = json!({
+        "metadata": {
+            "title": page.name,
+            "identifier": format!("urn:page:{}", page.id),
+            "numberOfItems": navigation.len(),
+        },
+        "links": [{ "rel": "self", "href": self_href, "type": NAV_CT }],
         "navigation": navigation,
     });
     json_response(body)

@@ -1092,3 +1092,122 @@ async fn series_nav_omits_empty_metadata_fields() {
     // language is always set (column non-nullable, defaults to "en").
     assert_eq!(m.get("language").and_then(|v| v.as_str()), Some("en"));
 }
+
+// ─────────── M3 (opds-richer-feeds): user Pages → OPDS 2.0 ───────────
+
+async fn seed_custom_page_v2(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    name: &str,
+    slug: &str,
+    position: i32,
+) -> Uuid {
+    use entity::user_page::ActiveModel as UserPageAM;
+    let id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    UserPageAM {
+        id: Set(id),
+        user_id: Set(user_id),
+        name: Set(name.into()),
+        slug: Set(slug.into()),
+        is_system: Set(false),
+        position: Set(position),
+        description: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+async fn pin_view_to_page_v2(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    page_id: Uuid,
+    view_id: Uuid,
+    position: i32,
+    pinned: bool,
+    sidebar: bool,
+) {
+    UserViewPinAM {
+        user_id: Set(user_id),
+        page_id: Set(page_id),
+        view_id: Set(view_id),
+        position: Set(position),
+        pinned: Set(pinned),
+        show_in_sidebar: Set(sidebar),
+        icon: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+/// `/opds/v2/pages` returns the user's pages as a navigation array in
+/// position order, each href routing into the JSON per-page feed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_pages_nav_lists_user_pages() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-pages-list@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let _ = server::pages::system_page_id(&db, auth.user_id)
+        .await
+        .unwrap();
+    seed_custom_page_v2(&db, auth.user_id, "Capes", "capes", 1).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/pages").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["metadata"]["title"], "My pages");
+    let nav = body["navigation"].as_array().unwrap();
+    let titles: Vec<&str> = nav.iter().filter_map(|n| n["title"].as_str()).collect();
+    assert!(titles.contains(&"Home"));
+    assert!(titles.contains(&"Capes"));
+    let capes = nav.iter().find(|n| n["title"] == "Capes").unwrap();
+    assert_eq!(capes["href"], "/opds/v2/pages/capes");
+}
+
+/// `/opds/v2/pages/{slug}` expands to the page's pinned views in
+/// pin-position order, each entry routing back into the existing
+/// /opds/v2/views/{id} handler.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_page_acq_expands_pinned_views_in_order() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-page-pins@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let page_id = seed_custom_page_v2(&db, auth.user_id, "Picks", "picks", 1).await;
+    let v_a = seed_filter_view(&db, auth.user_id, "First", serde_json::json!({"all":[]})).await;
+    let v_b = seed_filter_view(&db, auth.user_id, "Second", serde_json::json!({"all":[]})).await;
+    pin_view_to_page_v2(&db, auth.user_id, page_id, v_b, 1, true, false).await;
+    pin_view_to_page_v2(&db, auth.user_id, page_id, v_a, 0, true, false).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/pages/picks").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["metadata"]["title"], "Picks");
+    let nav = body["navigation"].as_array().unwrap();
+    assert_eq!(nav.len(), 2);
+    // pin-position 0 first.
+    assert_eq!(nav[0]["title"], "First");
+    assert_eq!(nav[0]["href"], format!("/opds/v2/views/{v_a}"));
+    assert_eq!(nav[1]["title"], "Second");
+    assert_eq!(nav[1]["href"], format!("/opds/v2/views/{v_b}"));
+}
+
+/// One user cannot read another user's page slug — must 404 (status
+/// only; content isn't inspected because none should be returned).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_page_acq_returns_404_for_other_users_page() {
+    let app = TestApp::spawn().await;
+    let owner = register(&app, "v2-pages-owner@example.com").await;
+    promote_to_admin(&app, owner.user_id).await;
+    let intruder = register(&app, "v2-pages-intruder@example.com").await;
+    promote_to_admin(&app, intruder.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    seed_custom_page_v2(&db, owner.user_id, "Owned", "owned", 1).await;
+
+    let (status, _) = get_json(&app, &intruder, "/opds/v2/pages/owned").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

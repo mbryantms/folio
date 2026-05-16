@@ -30,7 +30,7 @@ use axum::{
 };
 use entity::{
     cbl_entry, cbl_list, collection_entry, issue, library_user_access, saved_view, series,
-    series_credit, series_genre, user_view_pin,
+    series_credit, series_genre, user_page, user_view_pin,
 };
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
@@ -78,6 +78,13 @@ pub fn routes() -> Router<AppState> {
         .route("/opds/v1/collections/{id}", get(collection_acq))
         .route("/opds/v1/views", get(views_nav))
         .route("/opds/v1/views/{id}", get(view_acq))
+        // M3 of opds-richer-feeds — user-curated Pages surfaced as OPDS
+        // feeds. /opds/v1/pages lists the user's pages in position order;
+        // /opds/v1/pages/{slug} expands one page into its pinned saved-
+        // views, each linking back into the existing /opds/v1/views/{id}
+        // handler.
+        .route("/opds/v1/pages", get(pages_nav))
+        .route("/opds/v1/pages/{slug}", get(page_acq))
         // M5 — PSE (Page Streaming Extension). Sig-auth only: no
         // CurrentUser extractor on the handler, the URL itself carries
         // the bearer (`?u=&exp=&sig=`). Shares the OPDS rate-limit
@@ -226,6 +233,12 @@ async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
     <title>Saved views</title>
     <updated>{now}</updated>
     <link rel="subsection" href="/opds/v1/views" type="{nav}"/>
+  </entry>
+  <entry>
+    <id>{base}/opds/v1/pages</id>
+    <title>My pages</title>
+    <updated>{now}</updated>
+    <link rel="subsection" href="/opds/v1/pages" type="{nav}"/>
   </entry>
 </feed>
 "#,
@@ -1561,6 +1574,144 @@ async fn view_acq(
         nav = NAV_CT,
     );
     atom(body)
+}
+
+// ────────────── M3 of opds-richer-feeds — user Pages ──────────────
+//
+// Cross-link the multi-page rails feature (memory: multi_page_rails_done)
+// into OPDS. Each user's pages become a top-level browse hierarchy so the
+// reader's "All series" / "Recently added" sections sit alongside the
+// user's curated rails ("My horror reads", "Currently in progress", etc.)
+// without needing the web UI to discover them.
+
+/// `GET /opds/v1/pages` — navigation feed listing the calling user's
+/// pages in `position` order. Each entry drills into the per-page acq
+/// feed at `/opds/v1/pages/{slug}`. Returns the user's own pages only
+/// — pages are private; this is also enforced by the per-row
+/// `user_id` filter (no shared-page concept today).
+async fn pages_nav(State(app): State<AppState>, user: CurrentUser) -> Response {
+    let pages = match user_page::Entity::find()
+        .filter(user_page::Column::UserId.eq(user.id))
+        .order_by_asc(user_page::Column::Position)
+        .all(&app.db)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let entries: String = pages
+        .iter()
+        .map(|p| {
+            render_nav_entry(
+                &format!("urn:page:{}", p.id),
+                &p.name,
+                p.description.as_deref(),
+                &p.updated_at.to_rfc3339(),
+                &format!("/opds/v1/pages/{}", xml_escape(&p.slug)),
+            )
+        })
+        .collect();
+    atom(wrap_nav_feed(
+        "urn:opds:pages",
+        "My pages",
+        "/opds/v1/pages",
+        &entries,
+    ))
+}
+
+/// `GET /opds/v1/pages/{slug}` — navigation feed expanding one page
+/// into its pinned saved-views. Each pin renders as a `subsection`
+/// link into the existing `/opds/v1/views/{id}` handler, which
+/// already knows how to render a view's results as series entries.
+///
+/// Ownership: 404 on a slug the calling user doesn't own. Bare
+/// "page not found" is intentional — operator-grade leak guard,
+/// same as `/opds/v1/views/{id}` for non-owned views.
+///
+/// Pin visibility: same logic as the existing /opds/v1/views nav
+/// feed — surface pins where `pinned = true` (rail-visible) or
+/// `show_in_sidebar = true`. A pin that's neither is unscoped state
+/// the user has saved but isn't actively using; hide it.
+///
+/// Pin kinds: only filter-views are exposed today. The mixed
+/// `collection` kind would also work but lives at /opds/v1/lists
+/// already, so we defer the cross-link until M7 unifies the surface.
+async fn page_acq(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(slug): AxPath<String>,
+) -> Response {
+    let page = match user_page::Entity::find()
+        .filter(user_page::Column::UserId.eq(user.id))
+        .filter(user_page::Column::Slug.eq(slug.clone()))
+        .one(&app.db)
+        .await
+    {
+        Ok(Some(p)) => p,
+        Ok(None) => return not_found(),
+        Err(e) => return server_error(e.to_string()),
+    };
+    let pins = match user_view_pin::Entity::find()
+        .filter(user_view_pin::Column::UserId.eq(user.id))
+        .filter(user_view_pin::Column::PageId.eq(page.id))
+        .order_by_asc(user_view_pin::Column::Position)
+        .all(&app.db)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let visible_pins: Vec<&user_view_pin::Model> = pins
+        .iter()
+        .filter(|p| p.pinned || p.show_in_sidebar)
+        .collect();
+    let self_href = format!("/opds/v1/pages/{}", xml_escape(&page.slug));
+    if visible_pins.is_empty() {
+        return atom(wrap_nav_feed(
+            &format!("urn:page:{}", page.id),
+            &page.name,
+            &self_href,
+            "",
+        ));
+    }
+    let view_ids: Vec<Uuid> = visible_pins.iter().map(|p| p.view_id).collect();
+    let view_rows = match saved_view::Entity::find()
+        .filter(saved_view::Column::Id.is_in(view_ids.clone()))
+        .filter(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+        .filter(
+            // Same belt-and-braces ownership check as `/opds/v1/views`.
+            Condition::any()
+                .add(saved_view::Column::UserId.is_null())
+                .add(saved_view::Column::UserId.eq(user.id)),
+        )
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let view_by_id: HashMap<Uuid, &saved_view::Model> =
+        view_rows.iter().map(|v| (v.id, v)).collect();
+    // Walk pins in pin-position order so the OPDS surface mirrors
+    // the order the user sees in the web sidebar / rail grid.
+    let mut entries = String::new();
+    for pin in &visible_pins {
+        if let Some(v) = view_by_id.get(&pin.view_id) {
+            entries.push_str(&render_nav_entry(
+                &format!("urn:view:{}", v.id),
+                &v.name,
+                v.description.as_deref(),
+                &v.updated_at.to_rfc3339(),
+                &format!("/opds/v1/views/{}", v.id),
+            ));
+        }
+    }
+    atom(wrap_nav_feed(
+        &format!("urn:page:{}", page.id),
+        &page.name,
+        &self_href,
+        &entries,
+    ))
 }
 
 // ────────────── M4 helpers ──────────────
