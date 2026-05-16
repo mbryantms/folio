@@ -1,12 +1,12 @@
 "use client";
 
-import { useReaderStore } from "@/lib/reader/store";
 import { readingPercent } from "@/lib/reader/fullscreen";
 
 /**
- * Thin reading-progress bar pinned to the top edge of the viewport. Visible
- * only while the chrome is shown — when chrome auto-hides, the bar fades
- * out with it so the user is left with just the comic. Width transitions
+ * Thin reading-progress bar sitting along the bottom edge of the top
+ * chrome bar. Rendered as an absolute child of `<ReaderChrome>`'s
+ * `<header>`, so it inherits the chrome's slide-up transition when
+ * auto-hide kicks in — no separate fade needed here. Width transitions
  * smoothly on page change so flipping pages reads as a small slide.
  *
  * Caller decides what `current` / `total` mean: page index in single/
@@ -20,7 +20,6 @@ export function ReadingProgress({
   current: number;
   total: number;
 }) {
-  const chromeVisible = useReaderStore((s) => s.chromeVisible);
   const pct = readingPercent(current, total);
   return (
     <div
@@ -29,9 +28,7 @@ export function ReadingProgress({
       aria-valuenow={Math.round(pct)}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-hidden={chromeVisible ? undefined : true}
-      data-state={chromeVisible ? "open" : "closed"}
-      className="pointer-events-none fixed inset-x-0 top-0 z-40 h-0.5 bg-neutral-800/40 transition-opacity duration-200 ease-out data-[state=closed]:opacity-0 data-[state=open]:opacity-100 motion-reduce:transition-none"
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-neutral-800/40"
     >
       <span
         aria-hidden="true"

@@ -38,7 +38,6 @@ import { MarkerOverlay } from "./MarkerOverlay";
 import { PageStrip } from "./PageStrip";
 import { PageImage } from "./PageImage";
 import { ReaderChrome } from "./ReaderChrome";
-import { ReadingProgress } from "./ReadingProgress";
 
 const PROGRESS_DEBOUNCE_MS = 300;
 const PREFETCH_AHEAD = 2;
@@ -783,6 +782,9 @@ export function Reader({
   // are actually distinct:
   //
   //   - width   → always fills viewport width (scales up if narrower).
+  //               In double-page view the pair fills viewport width 50/50
+  //               (via `paneClass` on the pane wrapper); in webtoon each
+  //               image fills viewport width.
   //   - height  → always fills viewport height (overflows horizontally
   //               for wide spreads — body scrolls).
   //   - original → image at its intrinsic pixel size, no constraints.
@@ -792,6 +794,12 @@ export function Reader({
       : fitMode === "height"
         ? "h-screen w-auto max-w-none"
         : "max-w-none w-auto h-auto";
+  // Double-page panes need different wrapper sizing depending on fitMode.
+  // In width mode each pane is forced to share the viewport row (flex-1
+  // with min-w-0 so the inner img can shrink); in height/original modes
+  // the pane is content-sized so the natural image width drives layout.
+  const doublePaneClass =
+    fitMode === "width" ? "flex-1 min-w-0" : "inline-block";
 
   // Gestures: drag (swipe) for page nav; pinch to cycle fit modes.
   // Webtoon mode skips swipe — vertical scroll is the native interaction there.
@@ -845,16 +853,14 @@ export function Reader({
       ref={gestureRef}
       className="min-h-screen touch-pan-y bg-black text-neutral-200"
     >
-      <ReadingProgress
-        current={viewMode === "double" ? currentGroupIdx : currentPage}
-        total={viewMode === "double" ? groups.length : totalPages}
-      />
       <ReaderChrome
         seriesId={seriesId}
         issueId={issueId}
         exitUrl={exitUrl}
         totalPages={totalPages}
         visiblePages={viewMode === "double" ? visiblePages : undefined}
+        progressCurrent={viewMode === "double" ? currentGroupIdx : currentPage}
+        progressTotal={viewMode === "double" ? groups.length : totalPages}
         incognito={incognito}
       />
 
@@ -873,13 +879,18 @@ export function Reader({
         }}
       >
         {viewMode === "webtoon" ? (
-          <WebtoonView issueId={issueId} totalPages={totalPages} />
+          <WebtoonView
+            issueId={issueId}
+            totalPages={totalPages}
+            fitClass={fitClass}
+          />
         ) : viewMode === "double" ? (
           <DoublePageView
             issueId={issueId}
             visiblePages={visiblePages}
             direction={direction}
             fitClass={fitClass}
+            paneClass={doublePaneClass}
             onLeftZone={onLeftZone}
             onRightZone={onRightZone}
             onChromeZone={toggleChrome}
@@ -992,6 +1003,7 @@ function DoublePageView({
   visiblePages,
   direction,
   fitClass,
+  paneClass,
   onLeftZone,
   onRightZone,
   onChromeZone,
@@ -1002,6 +1014,7 @@ function DoublePageView({
   visiblePages: readonly number[];
   direction: Direction;
   fitClass: string;
+  paneClass: string;
   onLeftZone: () => void;
   onRightZone: () => void;
   onChromeZone: () => void;
@@ -1014,16 +1027,23 @@ function DoublePageView({
   const flexClass =
     direction === "rtl" ? "flex flex-row-reverse" : "flex flex-row";
   const markerMode = useReaderStore((s) => s.markerMode);
+  // In width-fit mode each pane is forced to share viewport width 50/50,
+  // so the flex container itself needs to span the viewport. In other
+  // modes it sizes to the natural image widths.
+  const containerWidthClass = paneClass.includes("flex-1") ? "w-screen" : "";
 
   return (
     <main className="relative grid min-h-screen place-items-center">
-      <div className={`${flexClass} items-center justify-center gap-1`}>
+      <div
+        className={`${flexClass} ${containerWidthClass} items-center justify-center gap-1`}
+      >
         {visiblePages.map((p) => (
           <DoublePagePane
             key={`${issueId}-${p}`}
             issueId={issueId}
             page={p}
             fitClass={fitClass}
+            paneClass={paneClass}
             onNaturalSize={onNaturalSize(p)}
             naturalSize={pageNaturalSize.current?.get(p) ?? null}
           />
@@ -1044,24 +1064,32 @@ function DoublePagePane({
   issueId,
   page,
   fitClass,
+  paneClass,
   onNaturalSize,
   naturalSize,
 }: {
   issueId: string;
   page: number;
   fitClass: string;
+  paneClass: string;
   onNaturalSize: (w: number, h: number) => void;
   naturalSize: { width: number; height: number } | null;
 }) {
-  // `inline-block` is still right here — a double-page pane needs to
-  // size to its img content so two panes fit side-by-side. `align-top`
-  // kills the inline baseline so the SVG overlay (positioned with
-  // `absolute inset-0`) covers the exact img box, not a slightly
-  // taller line box.
+  // Pane sizing depends on fitMode (passed in as `paneClass`):
+  //  - "flex-1 min-w-0"  → width-fit: each pane shares the viewport row
+  //                       50/50; `min-w-0` lets the inner img shrink.
+  //  - "inline-block"    → height/original-fit: pane sizes to image
+  //                       content so two panes fit side-by-side.
+  // `align-top` (kept for the inline-block path) kills the inline-baseline
+  // descender so the SVG overlay's `absolute inset-0` covers the img box
+  // exactly.
   const wrapperRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   return (
-    <div ref={wrapperRef} className="relative inline-block align-top">
+    <div
+      ref={wrapperRef}
+      className={`relative align-top ${paneClass}`}
+    >
       <PageImage
         src={`/api/issues/${issueId}/pages/${page}`}
         alt={`Page ${page + 1}`}
@@ -1083,20 +1111,93 @@ function DoublePagePane({
 function WebtoonView({
   issueId,
   totalPages,
+  fitClass,
 }: {
   issueId: string;
   totalPages: number;
+  fitClass: string;
 }) {
+  const currentPage = useReaderStore((s) => s.currentPage);
+  const setPage = useReaderStore((s) => s.setPage);
+  const containerRef = useRef<HTMLElement>(null);
+  // Tracks the most recent page index that came from the scroll observer
+  // (vs. an external setPage call e.g. from PageStrip). When `currentPage`
+  // diverges from this we treat it as an external jump and scroll the
+  // matching page into view.
+  const lastObservedPage = useRef<number>(-1);
+
+  // IntersectionObserver tracks which page is most visible as the user
+  // scrolls. The store's `currentPage` then drives ReadingProgress + the
+  // PageStrip highlight + the chrome counter, all of which were frozen at
+  // the issue's initial page before this.
+  useEffect(() => {
+    if (totalPages === 0) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const items = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-page-idx]"),
+    );
+    if (items.length === 0) return;
+    const ratios = new Map<number, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          const raw = e.target.getAttribute("data-page-idx");
+          if (raw === null) continue;
+          ratios.set(Number(raw), e.intersectionRatio);
+        }
+        let bestIdx = -1;
+        let bestRatio = 0;
+        for (const [idx, r] of ratios) {
+          if (r > bestRatio) {
+            bestRatio = r;
+            bestIdx = idx;
+          }
+        }
+        if (bestIdx >= 0) {
+          lastObservedPage.current = bestIdx;
+          setPage(bestIdx);
+        }
+      },
+      { threshold: [0, 0.25, 0.5, 0.75, 1] },
+    );
+    for (const el of items) observer.observe(el);
+    return () => observer.disconnect();
+  }, [issueId, totalPages, setPage]);
+
+  // External `setPage` calls (PageStrip click, keyboard jump, resumed
+  // progress on first paint) should scroll the matching page into view.
+  // The `lastObservedPage` ref discriminates these from observer-driven
+  // updates so we don't fight our own scroll-tracking.
+  useEffect(() => {
+    if (currentPage === lastObservedPage.current) return;
+    const el = containerRef.current?.querySelector<HTMLElement>(
+      `[data-page-idx="${currentPage}"]`,
+    );
+    if (!el) return;
+    const reduced =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({
+      behavior: reduced ? "auto" : "smooth",
+      block: "start",
+    });
+  }, [currentPage]);
+
   return (
-    <main className="flex min-h-screen flex-col items-center">
+    <main
+      ref={containerRef}
+      className="flex min-h-screen flex-col items-center"
+    >
       {Array.from({ length: totalPages }, (_, i) => (
-        <PageImage
-          key={`${issueId}-${i}`}
-          src={`/api/issues/${issueId}/pages/${i}`}
-          alt={`Page ${i + 1}`}
-          fitClass="max-w-full h-auto"
-          loading={i < 3 ? "eager" : "lazy"}
-        />
+        <div key={`${issueId}-${i}`} data-page-idx={i}>
+          <PageImage
+            src={`/api/issues/${issueId}/pages/${i}`}
+            alt={`Page ${i + 1}`}
+            fitClass={fitClass}
+            loading={i < 3 ? "eager" : "lazy"}
+          />
+        </div>
       ))}
     </main>
   );

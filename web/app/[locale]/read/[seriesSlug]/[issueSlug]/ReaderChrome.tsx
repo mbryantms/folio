@@ -46,6 +46,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ReaderSettings } from "./ReaderSettings";
+import { ReadingProgress } from "./ReadingProgress";
 
 const AUTO_HIDE_MS = 4000;
 
@@ -60,6 +61,8 @@ export function ReaderChrome({
   exitUrl,
   totalPages,
   visiblePages,
+  progressCurrent,
+  progressTotal,
   incognito = false,
 }: {
   seriesId: string | null;
@@ -75,6 +78,12 @@ export function ReaderChrome({
    * the active group is a pair). When omitted, the chrome falls back to
    * single-index display. */
   visiblePages?: readonly number[];
+  /** Current "step" used to drive the reading-progress bar at the
+   *  chrome's bottom edge. Page index in single/webtoon, group index in
+   *  double-page mode — the parent picks the right one. */
+  progressCurrent: number;
+  /** Total steps matching `progressCurrent` (totalPages or groups.length). */
+  progressTotal: number;
   /** When true, render an "Incognito" chip in the chrome so the user can
    *  see the read isn't being tracked. */
   incognito?: boolean;
@@ -146,6 +155,7 @@ export function ReaderChrome({
           <SettingsButton seriesId={seriesId} onPinChange={setChromePinned} />
           <FullscreenButton />
         </span>
+        <ReadingProgress current={progressCurrent} total={progressTotal} />
       </header>
     </TooltipProvider>
   );
