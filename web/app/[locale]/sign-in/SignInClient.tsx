@@ -272,12 +272,19 @@ function SsoButton({ next }: { next: string | null }) {
   const href = next
     ? `/auth/oidc/start?redirect_after=${encodeURIComponent(next)}`
     : `/auth/oidc/start`;
+  // Plain `<a>` instead of next/link: this URL is a Rust route that
+  // immediately 302s to the OIDC provider, not a Next page. With
+  // `<Link>`, App Router prefetches it as RSC on render — which
+  // pointlessly fires an OIDC discovery cycle per visit and surfaces
+  // any IdP misconfig as a 500 in the console before the user even
+  // clicks (the prod sign-in incident on 2026-05-16 first appeared
+  // through this path). Force a normal full-page navigation.
   return (
     <Button asChild variant="outline" className="w-full">
-      <Link href={href}>
+      <a href={href}>
         <LogIn className="size-4" />
         Sign in with SSO
-      </Link>
+      </a>
     </Button>
   );
 }

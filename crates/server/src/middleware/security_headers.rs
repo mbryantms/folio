@@ -85,9 +85,23 @@ pub fn build_csp(template: &CspTemplate, nonce: Option<&str>) -> HeaderValue {
         Some(n) => {
             // `'strict-dynamic'` makes scripts loaded by the nonced
             // bootstrap inherit trust without each needing `'self'` or
-            // a nonce of their own — the canonical CSP3 posture. In
-            // dev we still bolt on `'unsafe-eval'` for React Refresh.
-            format!("'self' 'nonce-{n}' 'strict-dynamic'{unsafe_eval}")
+            // a nonce of their own — the canonical CSP3 posture.
+            // `'self'` is omitted on purpose: browsers ignore it once
+            // `'strict-dynamic'` is present and emit a console warning
+            // if it's listed. In dev we still bolt on `'unsafe-eval'`
+            // for React Refresh.
+            //
+            // `'sha256-CZ6sxw5J…'` whitelists one specific inline
+            // script Next.js emits without a nonce (observed in prod;
+            // content is stable across requests). Hash-based, so if
+            // Next ever changes that script content the entry stops
+            // matching and the block re-surfaces — visible regression
+            // rather than silent accumulation. The bulk of inline
+            // scripts (flight payload pushes etc.) get nonces via
+            // `getScriptNonceFromHeader` parsing our request CSP.
+            format!(
+                "'nonce-{n}' 'strict-dynamic' 'sha256-CZ6sxw5J9fnBmFLteUj3ajNhEVqMElLD+l/3BBNAhys='{unsafe_eval}"
+            )
         }
         // No nonce wired (test-only path or any future caller that
         // bypasses `set_nonce`). Match v0.2.1 hotfix posture.
@@ -110,6 +124,21 @@ pub fn build_csp(template: &CspTemplate, nonce: Option<&str>) -> HeaderValue {
     // script-src nonce + `'strict-dynamic'` is the meaningful XSS
     // defence.
     let trusted_types = "";
+    // Notes on directives we *don't* set explicitly:
+    //   - `script-src-elem` / `script-src-attr` fall back to `script-src`
+    //     above. Folio renders zero inline event handlers (no `onclick=`)
+    //     so a tighter `-attr 'none'` is feasible — defer until we wire
+    //     a regression check that catches accidental introductions.
+    //   - `style-src-elem` / `style-src-attr` could split nonce-able
+    //     `<style>` tags from un-nonceable `style="…"` attributes.
+    //     Verified-Next-noncing-every-style is the gate; defer.
+    //   - `prefetch-src` and `navigate-to` are removed from CSP 3 and
+    //     never had universal browser support — don't add.
+    //
+    // `report-uri` is the legacy mechanism (Firefox, Safari, older
+    // Chromiums); `report-to` plus the matching `Reporting-Endpoints`
+    // response header is the modern one (Chrome 96+, Edge). We ship
+    // both so violations are visible everywhere.
     let csp = format!(
         "default-src 'self'; \
          script-src {script_src}; \
@@ -117,6 +146,7 @@ pub fn build_csp(template: &CspTemplate, nonce: Option<&str>) -> HeaderValue {
          img-src 'self' data: blob:; \
          font-src 'self'; \
          connect-src {connect_src}; \
+         frame-src 'none'; \
          frame-ancestors 'none'; \
          form-action 'self'; \
          base-uri 'none'; \
@@ -124,6 +154,7 @@ pub fn build_csp(template: &CspTemplate, nonce: Option<&str>) -> HeaderValue {
          worker-src 'self' blob:; \
          manifest-src 'self'; \
          {trusted_types}upgrade-insecure-requests; \
+         report-uri /csp-report; \
          report-to comic-csp",
         connect_src = template.connect_src,
     );
@@ -179,6 +210,11 @@ pub async fn set_headers(
         };
     }
     h.insert(HeaderName::from_static("content-security-policy"), csp);
+    // Wire the `report-to comic-csp` group named in the CSP above to
+    // the actual delivery endpoint. Without this header modern Chrome /
+    // Edge browsers drop reports on the floor. The bare relative path
+    // is fine — same-origin reporting is supported in CSP 3.
+    set!("reporting-endpoints", "comic-csp=\"/csp-report\"");
     set!(
         "strict-transport-security",
         "max-age=63072000; includeSubDomains"

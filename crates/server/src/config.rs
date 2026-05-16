@@ -356,6 +356,30 @@ impl Config {
         if !self.public_url.starts_with("http") {
             anyhow::bail!("COMIC_PUBLIC_URL must be an http(s) URL");
         }
+        // Loud WARN when a release build is fronted by `http://localhost`
+        // or `http://127.0.0.1` — the .env.example dev default. In prod
+        // this is almost always a misconfiguration: CSP `connect-src`
+        // gets the wrong WebSocket origin, `__Host-` cookies don't get
+        // `Secure` (browser rejects them), and OIDC redirect URIs build
+        // against the loopback. The original prod incident on
+        // 2026-05-16 hit all three because operators carried the dev
+        // value forward. Keep the WARN dev-friendly: in debug builds
+        // `localhost` is the correct value, so we only warn in release.
+        if !cfg!(debug_assertions) {
+            let is_loopback = self.public_url.starts_with("http://localhost")
+                || self.public_url.starts_with("http://127.")
+                || self.public_url.starts_with("http://[::1]")
+                || self.public_url.starts_with("http://0.0.0.0");
+            if is_loopback {
+                tracing::warn!(
+                    public_url = %self.public_url,
+                    "COMIC_PUBLIC_URL points at a loopback / dev address in a release build. \
+                     This breaks `__Host-` cookies (no Secure), CSP `connect-src` (wrong WS origin), \
+                     and OIDC redirect URIs. Set it to the actual public URL operators reach \
+                     the app at, e.g. https://comics.example.com."
+                );
+            }
+        }
         if self.oidc_trust_unverified_email {
             tracing::warn!("COMIC_OIDC_TRUST_UNVERIFIED_EMAIL=true — see §12.7 of the spec");
         }

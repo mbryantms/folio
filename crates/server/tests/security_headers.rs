@@ -22,6 +22,7 @@ const REQUIRED_HEADERS: &[&str] = &[
     "cross-origin-resource-policy",
     "permissions-policy",
     "x-frame-options",
+    "reporting-endpoints",
 ];
 
 #[tokio::test]
@@ -51,9 +52,26 @@ async fn healthz_carries_all_security_headers() {
         .to_str()
         .unwrap();
     assert!(csp.contains("default-src 'self'"));
+    assert!(csp.contains("frame-src 'none'"));
     assert!(csp.contains("frame-ancestors 'none'"));
     assert!(csp.contains("base-uri 'none'"));
     assert!(csp.contains("object-src 'none'"));
+    // Both reporting mechanisms wired: legacy `report-uri` for older
+    // browsers and modern `report-to comic-csp` + `Reporting-Endpoints`
+    // for current Chromium / Edge. Verifying both prevents an accidental
+    // drop of either path.
+    assert!(csp.contains("report-uri /csp-report"));
+    assert!(csp.contains("report-to comic-csp"));
+    let reporting = resp
+        .headers()
+        .get("reporting-endpoints")
+        .expect("reporting-endpoints header")
+        .to_str()
+        .unwrap();
+    assert!(
+        reporting.contains("comic-csp=") && reporting.contains("/csp-report"),
+        "reporting-endpoints malformed: {reporting}"
+    );
     // With the nonce middleware wired, every response carries a
     // per-request `'nonce-XXX'` plus `'strict-dynamic'`. `'unsafe-
     // inline'` falls away because nonced + strict-dynamic supersedes it

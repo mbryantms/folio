@@ -9,7 +9,7 @@ use crate::middleware::security_headers::{self, CspTemplate};
 use crate::observability::ObservabilityHandles;
 use crate::state::AppState;
 use axum::Router;
-use sea_orm::{ConnectOptions, Database};
+use sea_orm::{ColumnTrait, ConnectOptions, Database, EntityTrait, PaginatorTrait, QueryFilter};
 use std::sync::Arc;
 use std::time::Duration;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -400,6 +400,65 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     }
 
     let secrets = crate::secrets::Secrets::load(&cfg.data_path)?;
+
+    // Refuse to boot when a freshly-generated pepper or settings-
+    // encryption key would silently invalidate existing DB rows. The
+    // canonical trigger is `COMIC_DATA_PATH` pointing at a different
+    // directory than the one used in a prior deployment — the new
+    // secrets/ dir doesn't exist, so the loader generates a fresh
+    // pepper, every login fails with "invalid credentials", and
+    // every encrypted app_setting row throws AEAD seal/open errors.
+    // The operator-facing error message names the misconfiguration
+    // and the recovery paths instead of leaving them to discover the
+    // pepper regeneration via log spelunking.
+    if secrets.load_report.pepper_regenerated {
+        let count = entity::user::Entity::find()
+            .filter(entity::user::Column::PasswordHash.is_not_null())
+            .count(&db)
+            .await
+            .unwrap_or(0);
+        if count > 0 {
+            anyhow::bail!(
+                "refusing to boot: pepper at {dir}/secrets/pepper was freshly \
+                 generated, but the database has {count} user row(s) with \
+                 existing password_hash values. Every local login will fail \
+                 because the pepper is mixed into argon2 verification. This \
+                 almost always means COMIC_DATA_PATH ({dir:?}) points at the \
+                 wrong directory. Fix one of: \
+                 (1) point COMIC_DATA_PATH at the directory that owns the \
+                 original `secrets/` subdir (typically `/data` in the shipped \
+                 compose.prod.yml); \
+                 (2) restore secrets/ from backup; \
+                 (3) if this is a clean re-install and data loss is \
+                 acknowledged, DELETE FROM users; first.",
+                dir = cfg.data_path.display(),
+                count = count,
+            );
+        }
+    }
+    if secrets.load_report.settings_key_regenerated {
+        let count = entity::app_setting::Entity::find()
+            .filter(entity::app_setting::Column::IsSecret.eq(true))
+            .count(&db)
+            .await
+            .unwrap_or(0);
+        if count > 0 {
+            anyhow::bail!(
+                "refusing to boot: settings-encryption.key at \
+                 {dir}/secrets/settings-encryption.key was freshly generated, \
+                 but the database has {count} sealed-secret app_setting \
+                 row(s) (SMTP password, OIDC client_secret, etc.). Their \
+                 ciphertext cannot be decrypted with a new key. Same root \
+                 cause as the pepper case above — fix COMIC_DATA_PATH or \
+                 restore the original key. As a last resort: \
+                 DELETE FROM app_setting WHERE is_secret = true; \
+                 to clear the unreadable rows and re-enter the secrets via \
+                 /admin/email and /admin/auth.",
+                dir = cfg.data_path.display(),
+                count = count,
+            );
+        }
+    }
 
     // Capture the env-only Config before applying the DB overlay. The
     // baseline lives in AppState and powers the

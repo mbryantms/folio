@@ -512,6 +512,14 @@ pub async fn login(
         let dummy = password::dummy_hash(app.secrets.pepper.as_ref());
         let _ = password::verify(dummy, &req.password, app.secrets.pepper.as_ref());
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        // INFO-level reason so operators tailing logs can see WHY a
+        // login failed without having to deduce it from the response
+        // body. Today's prod incident (2026-05-16) took an extra hour
+        // because every reject path returned an opaque "invalid
+        // credentials". Email is intentionally NOT logged — the
+        // request body usually carries it in a higher-level access
+        // log, and duplicating it here would just bloat the entry.
+        tracing::info!(reason = "user_not_found", "login rejected");
         return fail(
             StatusCode::UNAUTHORIZED,
             "auth.invalid",
@@ -521,10 +529,12 @@ pub async fn login(
 
     if row.state == "disabled" {
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        tracing::info!(reason = "account_disabled", user_id = %row.id, "login rejected");
         return fail(StatusCode::FORBIDDEN, "auth.disabled", "account disabled");
     }
     if row.state == "pending_verification" {
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        tracing::info!(reason = "email_unverified", user_id = %row.id, "login rejected");
         return fail(
             StatusCode::FORBIDDEN,
             "auth.email_unverified",
@@ -533,6 +543,11 @@ pub async fn login(
     }
     let Some(stored) = row.password_hash.as_ref() else {
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        // Account has no local password set — usually an OIDC-only
+        // user trying the local form. Distinct from `wrong_password`
+        // so the operator can spot config drift (e.g. OIDC user with
+        // hash=NULL trying to sign in via the form).
+        tracing::info!(reason = "no_local_password", user_id = %row.id, "login rejected");
         return fail(
             StatusCode::UNAUTHORIZED,
             "auth.invalid",
@@ -542,6 +557,7 @@ pub async fn login(
     let ok = password::verify(stored, &req.password, app.secrets.pepper.as_ref()).unwrap_or(false);
     if !ok {
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        tracing::info!(reason = "wrong_password", user_id = %row.id, "login rejected");
         return fail(
             StatusCode::UNAUTHORIZED,
             "auth.invalid",

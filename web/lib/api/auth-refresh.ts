@@ -71,5 +71,19 @@ export async function apiFetch(
   if (path === "/auth/refresh") return res;
   const refreshed = await attemptRefresh();
   if (!refreshed) return res;
-  return fetch(url, opts);
+  // Re-read the CSRF cookie before the retry. `/api/auth/refresh` and
+  // any token_version-bumping mutation (password change, sign-out-
+  // everywhere) rotate `__Host-comic_csrf` in its Set-Cookie, so the
+  // original `init.headers['X-CSRF-Token']` is now stale. Retrying
+  // with the stale header sends the new cookie + old header → 403.
+  // Surfaced as the "CSRF token missing or mismatched" loop seen
+  // after a successful password change in the same session.
+  const retryOpts: RequestInit = { ...opts };
+  const csrf = getCsrfToken();
+  if (csrf) {
+    const headers = new Headers(opts.headers ?? {});
+    headers.set("X-CSRF-Token", csrf);
+    retryOpts.headers = headers;
+  }
+  return fetch(url, retryOpts);
 }

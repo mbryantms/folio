@@ -323,6 +323,19 @@ function SeriesOverridesCard() {
     return out;
   }, [overrides, queries]);
 
+  // Self-heal: once any 404s are confirmed, prune their localStorage keys
+  // so the next visit to this page (and the rest of the app) stops re-
+  // requesting series that no longer exist. A library re-scan or a manual
+  // series deletion can leave behind keys from the prior id; without this
+  // the user sees a 404 on every Settings → Reading load. Confirmed-404 is
+  // the only orphan signal; transient errors don't trigger pruning.
+  // `clearMany` calls `refresh()` which mutates `overrides`, recomputing
+  // `missingIds` to `[]` on the next render — the effect fires once.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (missingIds.length > 0) clearMany(missingIds);
+  }, [missingIds]);
+
   function clearMany(ids: readonly string[]) {
     if (typeof window === "undefined" || ids.length === 0) return;
     const targets = new Set(ids);
