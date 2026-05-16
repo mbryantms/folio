@@ -1507,3 +1507,93 @@ async fn v2_series_detail_carries_banner_metadata() {
     assert!(hrefs.contains(&format!("/issues/{issue_id}/pages/0/thumb").as_str()));
     assert!(hrefs.contains(&format!("/issues/{issue_id}/pages/0").as_str()));
 }
+
+// ─────────── M6 (opds-richer-feeds): catalog-level polish ───────────
+
+/// The OPDS 2.0 root carries top-level metadata (language + modified)
+/// per the catalog-freshness recipe. `modified` is RFC 3339 so capable
+/// clients can compare against an If-Modified-Since cache.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_root_carries_language_and_modified() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-root-meta@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["metadata"]["language"], "en");
+    let modified = body["metadata"]["modified"]
+        .as_str()
+        .expect("modified field present");
+    // RFC 3339 sanity: starts with `<year>-<month>-<day>T`.
+    let prefix = &modified[..modified.find('T').unwrap()];
+    assert!(
+        prefix.chars().filter(|c| *c == '-').count() == 2,
+        "modified must be RFC 3339, got {modified}"
+    );
+}
+
+/// The root carries a `groups[]` array bundling inlined previews of
+/// "Continue reading" + "New this month" + "All series" — capable
+/// OPDS 2.0 clients render this as a multi-section home in one
+/// round-trip. Each group carries a `rel=self` link pointing at the
+/// standalone paginated surface.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_root_emits_groups_with_inlined_previews() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-root-groups@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    // Seed a series so the "All series" group has content.
+    seed_series(&db, lib_id, "Shown").await;
+    // Seed an in-progress issue so "Continue reading" populates.
+    let series_id = seed_series(&db, lib_id, "WithProgress").await;
+    let issue_id =
+        seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("a.cbz"), b"a").await;
+    v2_seed_progress(&db, auth.user_id, &issue_id, 3, false).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2").await;
+    assert_eq!(status, StatusCode::OK);
+    let groups = body["groups"].as_array().expect("groups array");
+    let titles: Vec<&str> = groups
+        .iter()
+        .filter_map(|g| g["metadata"]["title"].as_str())
+        .collect();
+    // At minimum "Continue reading" and "All series" should populate
+    // given the seeding. "New this month" may or may not depending on
+    // backdating; this test asserts the schema not the count.
+    assert!(titles.contains(&"Continue reading"), "groups: {titles:?}");
+    assert!(titles.contains(&"All series"), "groups: {titles:?}");
+
+    // Each group MUST carry rel=self to the standalone paginated feed
+    // so tapping the section header drills into it.
+    let series_group = groups
+        .iter()
+        .find(|g| g["metadata"]["title"] == "All series")
+        .unwrap();
+    let self_href = series_group["links"]
+        .as_array()
+        .and_then(|l| l.iter().find(|x| x["rel"] == "self"))
+        .and_then(|x| x["href"].as_str())
+        .expect("rel=self on group");
+    assert_eq!(self_href, "/opds/v2/series");
+}
+
+/// Empty groups are omitted entirely — a fresh-install catalog with
+/// no content doesn't show three empty bands. Distinguishes "section
+/// missing" from "section is an empty list".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_root_omits_empty_groups() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-root-empty@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2").await;
+    assert_eq!(status, StatusCode::OK);
+    let groups = body["groups"].as_array().expect("groups array");
+    // Fresh install: no progress, no recent issues, no series. The
+    // array exists but is empty.
+    assert!(groups.is_empty(), "expected empty groups[], got {groups:?}");
+}

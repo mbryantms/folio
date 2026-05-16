@@ -97,10 +97,135 @@ pub fn routes() -> Router<AppState> {
 
 // ────────────── handlers — catalog ──────────────
 
-async fn root(State(_app): State<AppState>, _user: CurrentUser) -> Response {
+async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
+    use sea_orm::DbBackend;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // M6 of opds-richer-feeds — curated home layout for OPDS 2.0
+    // clients. `navigation[]` keeps the flat subsection list (older
+    // clients still render that); `groups[]` adds an inlined preview
+    // of the three highest-traffic surfaces so a capable client can
+    // render a multi-section home screen in a single round-trip.
+    //
+    // Each group carries a `links[]` with `rel=self` pointing at the
+    // standalone version of the section, so tapping the section header
+    // navigates into the paginated full surface.
+
+    // Group: Continue reading — same SQL as `continue_reading`
+    // handler, capped at 8 inline previews (full version at
+    // /opds/v2/continue paginates to LIMIT 24).
+    #[derive(FromQueryResult)]
+    struct ProgressRow {
+        issue_id: String,
+        library_id: Uuid,
+    }
+    let allowed = opds::allowed_libraries(&app, &user).await.ok().flatten();
+    let visible = access::for_user(&app, &user).await;
+    let continue_rows = ProgressRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        SELECT p.issue_id AS issue_id, i.library_id AS library_id
+        FROM progress_records p
+        JOIN issues i ON i.id = p.issue_id
+        LEFT JOIN rail_dismissals d
+          ON d.user_id = p.user_id
+         AND d.target_kind = 'issue'
+         AND d.target_id   = p.issue_id
+        WHERE p.user_id = $1 AND p.finished = false AND p.last_page > 0
+          AND i.state = 'active' AND i.removed_at IS NULL
+          AND (d.dismissed_at IS NULL OR p.updated_at > d.dismissed_at)
+        ORDER BY p.updated_at DESC
+        LIMIT 8
+        "#,
+        [user.id.into()],
+    ))
+    .all(&app.db)
+    .await
+    .unwrap_or_default();
+    let continue_ids: Vec<String> = match allowed.as_ref() {
+        None => continue_rows.into_iter().map(|r| r.issue_id).collect(),
+        Some(ids) => continue_rows
+            .into_iter()
+            .filter(|r| ids.contains(&r.library_id))
+            .map(|r| r.issue_id)
+            .collect(),
+    };
+    let continue_issues =
+        opds::fetch_visible_issues_preserving_order(&app, &continue_ids, &visible).await;
+    let continue_pubs = build_publications(&app, &user, &continue_issues).await;
+
+    // Group: New this month — last 30 days, top 8 by created_at.
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+    let mut new_sel = issue::Entity::find()
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::CreatedAt.gte(cutoff.fixed_offset()))
+        .order_by_desc(issue::Column::CreatedAt)
+        .limit(8);
+    if let Some(ids) = allowed.as_ref() {
+        new_sel = new_sel.filter(issue::Column::LibraryId.is_in(ids.clone()));
+    }
+    let new_rows = new_sel.all(&app.db).await.unwrap_or_default();
+    let new_pubs = build_publications(&app, &user, &new_rows).await;
+
+    // Group: Series — top 8 by name. Cover + facets share the same
+    // helpers as the main /opds/v2/series feed.
+    let mut series_sel = series::Entity::find()
+        .order_by_asc(series::Column::Name)
+        .limit(8);
+    if let Some(ids) = allowed.as_ref() {
+        series_sel = series_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    let series_rows = series_sel.all(&app.db).await.unwrap_or_default();
+    let series_ids: Vec<Uuid> = series_rows.iter().map(|s| s.id).collect();
+    let series_covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let series_facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let series_nav: Vec<Value> = series_rows
+        .iter()
+        .map(|s| {
+            series_nav_entry(
+                s,
+                series_covers.get(&s.id).map(String::as_str),
+                series_facets.get(&s.id),
+            )
+        })
+        .collect();
+
+    // Build the groups[] array — skip any that came back empty so
+    // a fresh-install root catalog doesn't show three empty bands.
+    let mut groups: Vec<Value> = Vec::new();
+    if !continue_pubs.is_empty() {
+        groups.push(json!({
+            "metadata": { "title": "Continue reading", "numberOfItems": continue_pubs.len() },
+            "links": [{ "rel": "self", "href": "/opds/v2/continue", "type": NAV_CT }],
+            "publications": continue_pubs,
+        }));
+    }
+    if !new_pubs.is_empty() {
+        groups.push(json!({
+            "metadata": { "title": "New this month", "numberOfItems": new_pubs.len() },
+            "links": [{ "rel": "self", "href": "/opds/v2/new-this-month", "type": NAV_CT }],
+            "publications": new_pubs,
+        }));
+    }
+    if !series_nav.is_empty() {
+        groups.push(json!({
+            "metadata": { "title": "All series", "numberOfItems": series_nav.len() },
+            "links": [{ "rel": "self", "href": "/opds/v2/series", "type": NAV_CT }],
+            "navigation": series_nav,
+        }));
+    }
+
     let body = json!({
         "metadata": {
             "title": "Folio OPDS 2.0",
+            // Catalog-level metadata (M6): `language` advertises the
+            // catalog's default content language (BCP-47); per-series
+            // entries can override via their own `metadata.language`.
+            // `modified` is the request timestamp so capable clients
+            // can detect when a cached catalog is stale.
+            "language": "en",
+            "modified": now,
         },
         "links": [
             { "rel": "self", "href": "/opds/v2", "type": NAV_CT },
@@ -122,6 +247,7 @@ async fn root(State(_app): State<AppState>, _user: CurrentUser) -> Response {
             { "title": "Saved views", "href": "/opds/v2/views", "type": NAV_CT },
             { "title": "My pages", "href": "/opds/v2/pages", "type": NAV_CT },
         ],
+        "groups": groups,
     });
     json_response(body)
 }
