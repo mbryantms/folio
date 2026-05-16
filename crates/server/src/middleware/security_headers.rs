@@ -146,14 +146,29 @@ fn path_needs_no_referrer(path: &str) -> bool {
     SUFFIXES.iter().any(|s| path == *s || path.ends_with(s))
 }
 
+/// CSP header value, stashed on the request extensions so inner
+/// consumers (notably [`crate::upstream::proxy`]) can forward the
+/// same value to Next.js. Next's app-render reads it via
+/// `headers['content-security-policy']` and extracts the per-request
+/// `'nonce-XXX'` substring to stamp onto its own framework-emitted
+/// `<script>` tags — see
+/// `node_modules/next/dist/server/app-render/get-script-nonce-from-header.js`.
+#[derive(Clone)]
+pub struct CspHeader(pub HeaderValue);
+
 pub async fn set_headers(
     State(template): State<Arc<CspTemplate>>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
     let needs_no_referrer = path_needs_no_referrer(req.uri().path());
     let nonce = req.extensions().get::<Nonce>().map(|n| n.0.clone());
     let csp = build_csp(&template, nonce.as_deref());
+
+    // Stash the built CSP on the request so the proxy fallback can
+    // forward it as a request header to Next.js. Build it once here so
+    // request + response always carry the same nonce.
+    req.extensions_mut().insert(CspHeader(csp.clone()));
 
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();

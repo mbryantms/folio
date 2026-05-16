@@ -430,11 +430,12 @@ async fn empty_upstream_url_returns_500_envelope() {
 }
 
 #[tokio::test]
-async fn forwards_x_csp_nonce_to_upstream() {
-    // `forward()` should set `x-csp-nonce` on the outbound request when
-    // the caller supplies the nonce (typically read from the
-    // per-request `Nonce` extension in `proxy()`). Next.js reads this
-    // header and stamps the value onto every framework-emitted
+async fn forwards_csp_to_upstream_as_request_header() {
+    // `forward()` should set `content-security-policy` on the outbound
+    // request when the caller supplies a CSP value (built per-request
+    // from the nonce middleware + `CspTemplate`). Next.js's app-render
+    // parses the `'nonce-XXX'` substring out of this request header
+    // and stamps the same value onto every framework-emitted
     // `<script nonce=…>` tag.
     let server = MockServer::start().await;
     let observed = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
@@ -445,7 +446,7 @@ async fn forwards_x_csp_nonce_to_upstream() {
             let mut o = captured.lock().unwrap();
             *o = req
                 .headers
-                .get("x-csp-nonce")
+                .get("content-security-policy")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_owned);
             ResponseTemplate::new(200)
@@ -453,27 +454,35 @@ async fn forwards_x_csp_nonce_to_upstream() {
         .mount(&server)
         .await;
 
+    let csp = HeaderValue::from_static(
+        "default-src 'self'; script-src 'self' 'nonce-rPRfMmebTC4PFD-fThYBVw' 'strict-dynamic'",
+    );
     let resp = upstream::forward(
         &proxy_client(),
         &server.uri(),
         req_get("/page"),
         Duration::from_secs(5),
         None,
-        Some("rPRfMmebTC4PFD-fThYBVw"),
+        Some(csp),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(
-        observed.lock().unwrap().as_deref(),
-        Some("rPRfMmebTC4PFD-fThYBVw"),
+    assert!(
+        observed
+            .lock()
+            .unwrap()
+            .as_deref()
+            .is_some_and(|s| s.contains("'nonce-rPRfMmebTC4PFD-fThYBVw'")),
+        "expected nonce to flow in the request CSP header",
     );
 }
 
 #[tokio::test]
-async fn strips_inbound_x_csp_nonce_from_client() {
-    // A malicious client must not be able to substitute their own
-    // nonce by sending the header — the only nonce upstream should see
-    // is the one the Rust nonce middleware generated.
+async fn strips_inbound_csp_header_from_client() {
+    // A malicious client must not be able to inject their own CSP via
+    // an inbound `content-security-policy` request header — Next.js
+    // would otherwise parse THEIR nonce instead of ours. forward()
+    // must drop the inbound value before optionally setting our own.
     let server = MockServer::start().await;
     let observed = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     let captured = observed.clone();
@@ -483,7 +492,7 @@ async fn strips_inbound_x_csp_nonce_from_client() {
             let mut o = captured.lock().unwrap();
             *o = req
                 .headers
-                .get("x-csp-nonce")
+                .get("content-security-policy")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_owned);
             ResponseTemplate::new(200)
@@ -491,15 +500,14 @@ async fn strips_inbound_x_csp_nonce_from_client() {
         .mount(&server)
         .await;
 
-    // Inbound request carries a forged x-csp-nonce; we pass `None` to
-    // forward() to simulate the case where the nonce middleware didn't
-    // run (e.g. wired wrong) — the upstream must not see the forged
-    // value.
+    // Inbound request carries a forged CSP; we pass `None` to forward()
+    // to simulate the case where the security-headers middleware
+    // didn't run — the upstream must not see the forged value.
     let req = Request::builder()
         .method(Method::GET)
         .uri("/page")
         .header(header::HOST, "folio.example.com")
-        .header("x-csp-nonce", "evil-nonce-from-attacker")
+        .header("content-security-policy", "script-src 'nonce-attacker'")
         .body(Body::empty())
         .unwrap();
     let resp = upstream::forward(
