@@ -26,6 +26,8 @@ use entity::{
     library,
     saved_view::ActiveModel as SavedViewAM,
     series::{ActiveModel as SeriesAM, normalize_name},
+    series_credit::ActiveModel as SeriesCreditAM,
+    series_genre::ActiveModel as SeriesGenreAM,
     user_view_pin::ActiveModel as UserViewPinAM,
 };
 use sea_orm::{
@@ -1557,4 +1559,173 @@ async fn series_cover_skips_removed_and_inactive_issues() {
         !body.contains(&format!("href=\"/issues/{inactive}/pages/0/thumb\"")),
         "non-active issue must not be picked"
     );
+}
+
+// ─────────────── M2 (opds-richer-feeds): series metadata ───────────────
+
+/// Patch the series row in-place to carry publisher/year/language —
+/// the dimensions M2 surfaces as `<dc:publisher>` / `<dc:issued>` /
+/// `<dc:language>` in OPDS output. `seed_series` defaults publisher
+/// to None and language to "en"; this lets tests override.
+async fn set_series_meta(
+    db: &DatabaseConnection,
+    series_id: Uuid,
+    publisher: Option<&str>,
+    year: Option<i32>,
+    language: Option<&str>,
+) {
+    use entity::series::Entity as SeriesEntity;
+    let row = SeriesEntity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::series::ActiveModel = row.into();
+    am.publisher = Set(publisher.map(str::to_owned));
+    am.year = Set(year);
+    if let Some(l) = language {
+        am.language_code = Set(l.to_owned());
+    }
+    am.update(db).await.unwrap();
+}
+
+async fn add_series_writer(db: &DatabaseConnection, series_id: Uuid, person: &str) {
+    SeriesCreditAM {
+        series_id: Set(series_id),
+        role: Set("writer".into()),
+        person: Set(person.into()),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+async fn add_series_genre(db: &DatabaseConnection, series_id: Uuid, genre: &str) {
+    SeriesGenreAM {
+        series_id: Set(series_id),
+        genre: Set(genre.into()),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+/// dc:publisher / dc:issued / dc:language land on the series entry
+/// when the corresponding columns are populated. The feed `<feed>`
+/// element MUST declare `xmlns:dc` or strict OPDS parsers reject
+/// the document — verify that too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_entry_carries_dublin_core_metadata() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "dc-meta@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Saga").await;
+    set_series_meta(&db, series_id, Some("Image Comics"), Some(2012), Some("en")).await;
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(
+        body.contains(r#"xmlns:dc="http://purl.org/dc/terms/""#),
+        "feed must declare the Dublin Core namespace: {body}"
+    );
+    assert!(body.contains("<dc:publisher>Image Comics</dc:publisher>"));
+    assert!(body.contains("<dc:issued>2012</dc:issued>"));
+    assert!(body.contains("<dc:language>en</dc:language>"));
+}
+
+/// When publisher/year are not set, the entry omits those elements
+/// rather than emitting empty tags. Empty `<dc:publisher/>` would
+/// break clients that treat it as a non-null string.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_entry_omits_unset_metadata() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "dc-empty@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Unset").await;
+    // Clear the seed defaults (publisher already None; year defaults to 2020).
+    set_series_meta(&db, series_id, None, None, Some("en")).await;
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(!body.contains("<dc:publisher>"));
+    assert!(!body.contains("<dc:issued>"));
+    // language always present (the column is non-nullable, defaults to "en").
+    assert!(body.contains("<dc:language>en</dc:language>"));
+}
+
+/// Series_credits role='writer' rows surface as one `<author>` per
+/// writer, ordered alphabetically for stable output. Series_genres
+/// rows surface as one `<category>` chip per genre, also sorted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_entry_emits_authors_and_categories() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "facets@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Paper Girls").await;
+    // Insert in non-alphabetical order to verify the helper sorts.
+    add_series_writer(&db, series_id, "Cliff Chiang").await;
+    add_series_writer(&db, series_id, "Brian K. Vaughan").await;
+    add_series_genre(&db, series_id, "Science Fiction").await;
+    add_series_genre(&db, series_id, "Coming of Age").await;
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("<author><name>Brian K. Vaughan</name></author>"));
+    assert!(body.contains("<author><name>Cliff Chiang</name></author>"));
+    let vaughan = body.find("Brian K. Vaughan").unwrap();
+    let chiang = body.find("Cliff Chiang").unwrap();
+    assert!(
+        vaughan < chiang,
+        "writers must be sorted alphabetically for stable output"
+    );
+    assert!(body.contains(r#"term="Science Fiction""#));
+    assert!(body.contains(r#"term="Coming of Age""#));
+    assert!(body.contains(r#"scheme="urn:folio:genre""#));
+}
+
+/// HTML-shaped summaries are emitted as `<content type="html">`;
+/// plaintext summaries stay as `<summary>`. Markdown emphasis
+/// markers also trigger the html branch (false positives are
+/// harmless — both elements XML-escape the body identically).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_entry_promotes_rich_summary_to_content_html() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "content-html@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let plain = seed_series(&db, lib_id, "Plain Description").await;
+    let rich = seed_series(&db, lib_id, "Rich Description").await;
+    // Both seeded with None summary by default — patch directly.
+    use entity::series::Entity as SeriesEntity;
+    for (id, body) in [
+        (plain, "A simple one-line description with no markup."),
+        (rich, "<p>A <strong>rich</strong> description.</p>"),
+    ] {
+        let row = SeriesEntity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut am: entity::series::ActiveModel = row.into();
+        am.summary = Set(Some(body.into()));
+        am.update(&db).await.unwrap();
+    }
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("<summary>A simple one-line description"));
+    assert!(body.contains(r#"<content type="html">"#));
+    assert!(body.contains("&lt;p&gt;A &lt;strong&gt;rich&lt;/strong&gt;"));
 }

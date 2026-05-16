@@ -30,7 +30,7 @@ use axum::{
 };
 use entity::{
     cbl_entry, cbl_list, collection_entry, issue, library_user_access, saved_view, series,
-    user_view_pin,
+    series_credit, series_genre, user_view_pin,
 };
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
@@ -271,16 +271,18 @@ async fn series_list(
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let facets = fetch_series_facets(&app.db, &series_ids).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
     for s in &rows {
         let cover = covers.get(&s.id).map(String::as_str);
-        entries.push_str(&render_series_subsection_entry(s, cover));
+        let f = facets.get(&s.id);
+        entries.push_str(&render_series_subsection_entry(s, cover, f));
     }
 
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
   <id>{base}/opds/v1/series?page={page}</id>
   <title>All series</title>
   <updated>{now}</updated>
@@ -422,16 +424,18 @@ async fn search(
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let facets = fetch_series_facets(&app.db, &series_ids).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
     for s in &rows {
         let cover = covers.get(&s.id).map(String::as_str);
-        entries.push_str(&render_series_subsection_entry(s, cover));
+        let f = facets.get(&s.id);
+        entries.push_str(&render_series_subsection_entry(s, cover, f));
     }
 
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
   <id>urn:search:{needle_escaped}</id>
   <title>Search — {needle_escaped}</title>
   <updated>{now}</updated>
@@ -740,7 +744,11 @@ fn render_pse_stream_link(i: &issue::Model, user_id: Uuid, key: &[u8]) -> String
 /// the series has no active issues (in-progress import, fully-
 /// removed library) — emit the entry without image links and let
 /// the client render its placeholder.
-fn render_series_subsection_entry(s: &series::Model, cover_issue_id: Option<&str>) -> String {
+fn render_series_subsection_entry(
+    s: &series::Model,
+    cover_issue_id: Option<&str>,
+    facets: Option<&SeriesFacets>,
+) -> String {
     let cover_links = match cover_issue_id {
         Some(id) => format!(
             r#"    <link rel="http://opds-spec.org/image/thumbnail" href="/issues/{id}/pages/0/thumb" type="image/webp"/>
@@ -755,20 +763,105 @@ fn render_series_subsection_entry(s: &series::Model, cover_issue_id: Option<&str
     <id>urn:series:{id}</id>
     <title>{name}</title>
     <updated>{updated}</updated>
-    {summary}
-{cover_links}    <link rel="subsection" href="/opds/v1/series/{id}" type="{acq}"/>
+{description}{metadata}{cover_links}    <link rel="subsection" href="/opds/v1/series/{id}" type="{acq}"/>
   </entry>
 "#,
         id = s.id,
         name = xml_escape(&s.name),
         updated = s.updated_at.to_rfc3339(),
-        summary = s
-            .summary
-            .as_ref()
-            .map(|s| format!("<summary>{}</summary>", xml_escape(s)))
-            .unwrap_or_default(),
+        description = render_series_description(s.summary.as_deref()),
+        metadata = entry_metadata_series(s, facets),
         acq = ACQ_CT,
     )
+}
+
+/// Render a series description as either `<summary>` (plain text) or
+/// `<content type="html">` (rich markup). The latter lets OPDS clients
+/// that support HTML render paragraphs / emphasis instead of jamming
+/// the markup into a plain text node. Detection is intentionally
+/// coarse: any leading angle-bracket tag *or* a recognisable Markdown
+/// emphasis marker triggers the html branch. False positives are
+/// cheap — `<content type="html">` requires the body be entity-
+/// escaped just like `<summary>`, so worst case is the same plain-
+/// text rendering with a different element name.
+fn render_series_description(summary: Option<&str>) -> String {
+    let Some(text) = summary.map(str::trim).filter(|s| !s.is_empty()) else {
+        return String::new();
+    };
+    let looks_rich = text.starts_with('<')
+        || text.contains("\n\n")
+        || text.contains("**")
+        || text.contains("__")
+        || text.contains("[](");
+    if looks_rich {
+        format!(
+            "    <content type=\"html\">{}</content>\n",
+            xml_escape(text)
+        )
+    } else {
+        format!("    <summary>{}</summary>\n", xml_escape(text))
+    }
+}
+
+/// Per-entry metadata block for series rows: Dublin Core publisher /
+/// issued / language, one `<author>` element per writer, one
+/// `<category>` element per genre. Mirrors the existing
+/// [`entry_metadata`] for issue rows; emits nothing when the source
+/// fields are all empty so clients that don't speak DC don't see
+/// noise.
+///
+/// **The feed containing series entries with this metadata MUST
+/// declare `xmlns:dc="http://purl.org/dc/terms/"` on its `<feed>`
+/// element.** Without that namespace the `<dc:*>` elements are not
+/// valid XML and strict clients (KOReader's libxml-based parser, in
+/// particular) will refuse the entire feed. Folio's series-emitting
+/// feeds were updated to declare it in the same change that added
+/// this function.
+///
+/// Output lines are 4-space-indented to nest cleanly inside `<entry>`.
+fn entry_metadata_series(s: &series::Model, facets: Option<&SeriesFacets>) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    if let Some(pub_) = s.publisher.as_deref().filter(|v| !v.is_empty()) {
+        let _ = writeln!(out, "    <dc:publisher>{}</dc:publisher>", xml_escape(pub_));
+    }
+    if let Some(year) = s.year {
+        let _ = writeln!(out, "    <dc:issued>{year}</dc:issued>");
+    }
+    if !s.language_code.is_empty() {
+        let _ = writeln!(
+            out,
+            "    <dc:language>{}</dc:language>",
+            xml_escape(&s.language_code)
+        );
+    }
+    if let Some(f) = facets {
+        // OPDS spec allows multiple `<author>` elements per entry;
+        // most clients display the first as the byline and surface
+        // the rest in detail views. Emit all writers we know about.
+        for person in &f.writers {
+            let _ = writeln!(
+                out,
+                "    <author><name>{}</name></author>",
+                xml_escape(person)
+            );
+        }
+        // Genres become Atom `<category>` chips. The `scheme` is
+        // Folio-namespaced rather than a generic vocabulary — the
+        // genre values come from the rolled-up scanner taxonomy
+        // (ComicInfo + user edits) and don't map cleanly to BISAC
+        // or any other industry list. Clients that don't recognise
+        // the scheme fall back to displaying the `term` as a chip,
+        // which is exactly what we want.
+        for genre in &f.genres {
+            let escaped = xml_escape(genre);
+            let _ = writeln!(
+                out,
+                "    <category term=\"{escaped}\" label=\"{escaped}\" scheme=\"urn:folio:genre\"/>",
+            );
+        }
+    }
+    out
 }
 
 /// Resolve a "cover issue" per series for OPDS feeds — the issue
@@ -827,6 +920,84 @@ pub(crate) async fn fetch_cover_issues(
             HashMap::new()
         }
     }
+}
+
+/// Per-series metadata that OPDS clients display alongside the
+/// cover art: writers (Atom `<author>`) and genres (Atom `<category>`).
+/// Populated by [`fetch_series_facets`]; consumed by
+/// [`entry_metadata_series`] when rendering series entries.
+///
+/// Both vectors are sorted alphabetically inside the helper so OPDS
+/// output is stable across renders.
+#[derive(Default, Debug, Clone)]
+pub(crate) struct SeriesFacets {
+    pub writers: Vec<String>,
+    pub genres: Vec<String>,
+}
+
+/// Resolve writer credits + genres for every series in `series_ids`
+/// with at most two DB round-trips total, regardless of feed size.
+/// Sources are the pre-rolled `series_credits` (role='writer') and
+/// `series_genres` tables — the scanner's metadata_rollup writes
+/// distinct values per series so we don't need to re-aggregate from
+/// issue rows here.
+///
+/// Empty inputs short-circuit. Lookup failures degrade gracefully —
+/// return an empty map and let the renderer omit the metadata
+/// rather than 500ing the feed.
+pub(crate) async fn fetch_series_facets(
+    db: &sea_orm::DatabaseConnection,
+    series_ids: &[Uuid],
+) -> HashMap<Uuid, SeriesFacets> {
+    if series_ids.is_empty() {
+        return HashMap::new();
+    }
+    let mut ids: Vec<Uuid> = series_ids.to_vec();
+    ids.sort();
+    ids.dedup();
+    let mut out: HashMap<Uuid, SeriesFacets> = HashMap::new();
+
+    let writer_rows = match series_credit::Entity::find()
+        .filter(series_credit::Column::SeriesId.is_in(ids.clone()))
+        .filter(series_credit::Column::Role.eq("writer"))
+        .all(db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "opds: writer-credit lookup failed");
+            Vec::new()
+        }
+    };
+    for c in writer_rows {
+        out.entry(c.series_id).or_default().writers.push(c.person);
+    }
+
+    let genre_rows = match series_genre::Entity::find()
+        .filter(series_genre::Column::SeriesId.is_in(ids))
+        .all(db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "opds: genre lookup failed");
+            Vec::new()
+        }
+    };
+    for g in genre_rows {
+        out.entry(g.series_id).or_default().genres.push(g.genre);
+    }
+
+    // Stable output across renders. Junction rows have no inherent
+    // order, so without this we'd churn the XML on every request and
+    // burn through any CDN cache that fronts the feed.
+    for f in out.values_mut() {
+        f.writers.sort();
+        f.writers.dedup();
+        f.genres.sort();
+        f.genres.dedup();
+    }
+    out
 }
 
 /// Bulk-fetch the slug for every distinct series referenced in `issues`.
@@ -1359,15 +1530,22 @@ async fn view_acq(
     }
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let facets = fetch_series_facets(&app.db, &series_ids).await;
     let entries: String = rows
         .iter()
-        .map(|s| render_series_subsection_entry(s, covers.get(&s.id).map(String::as_str)))
+        .map(|s| {
+            render_series_subsection_entry(
+                s,
+                covers.get(&s.id).map(String::as_str),
+                facets.get(&s.id),
+            )
+        })
         .collect();
     let self_href = format!("/opds/v1/views/{id}");
     let now = chrono::Utc::now().to_rfc3339();
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
   <id>urn:view:{id}</id>
   <title>{title}</title>
   <updated>{now}</updated>
@@ -1456,8 +1634,11 @@ async fn render_collection_acq(
     };
     // Per-series cover so series entries in mixed collection feeds
     // render with art instead of folder icons (M1 of opds-richer-feeds).
+    // Per-series facets so they also carry dc:publisher / author /
+    // category metadata (M2).
     let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
     let series_covers = fetch_cover_issues(&app.db, &collection_series_ids).await;
+    let series_facets = fetch_series_facets(&app.db, &collection_series_ids).await;
 
     let key = app.secrets.url_signing_key.as_ref();
     let mut entries = String::new();
@@ -1466,7 +1647,8 @@ async fn render_collection_acq(
             && let Some(s) = series_by_id.get(&sid)
         {
             let cover = series_covers.get(&s.id).map(String::as_str);
-            entries.push_str(&render_series_subsection_entry(s, cover));
+            let f = series_facets.get(&s.id);
+            entries.push_str(&render_series_subsection_entry(s, cover, f));
         } else if let Some(iid) = row.issue_id.as_deref()
             && let Some(i) = issue_by_id.get(iid)
         {

@@ -151,9 +151,10 @@ async fn series_list(
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
     let navigation: Vec<Value> = rows
         .iter()
-        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str)))
+        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
         .collect();
     let mut links = vec![json!({
         "rel": "self",
@@ -310,9 +311,10 @@ async fn search(
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
     let navigation: Vec<Value> = rows
         .iter()
-        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str)))
+        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
         .collect();
     let body = json!({
         "metadata": {
@@ -607,9 +609,10 @@ async fn view_acq(
     }
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
     let navigation: Vec<Value> = rows
         .iter()
-        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str)))
+        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
         .collect();
     let body = json!({
         "metadata": {
@@ -738,7 +741,11 @@ fn publication_for(
     })
 }
 
-fn series_nav_entry(s: &series::Model, cover_issue_id: Option<&str>) -> Value {
+fn series_nav_entry(
+    s: &series::Model,
+    cover_issue_id: Option<&str>,
+    facets: Option<&opds::SeriesFacets>,
+) -> Value {
     let mut metadata = serde_json::Map::new();
     metadata.insert(
         "identifier".into(),
@@ -747,6 +754,45 @@ fn series_nav_entry(s: &series::Model, cover_issue_id: Option<&str>) -> Value {
     metadata.insert("modified".into(), Value::from(s.updated_at.to_rfc3339()));
     if let Some(summary) = s.summary.as_deref().filter(|s| !s.is_empty()) {
         metadata.insert("description".into(), Value::from(summary));
+    }
+    // OPDS 2.0 metadata block (M2 of opds-richer-feeds-1.0). Field
+    // names follow the readium-org webpub-manifest profile that OPDS
+    // 2.0 inherits: `author` is an array of contributor objects,
+    // `subject` is an array of subject objects, `publisher` is a
+    // single contributor, `published` is an ISO date string,
+    // `language` is a BCP-47 code.
+    if let Some(pub_) = s.publisher.as_deref().filter(|v| !v.is_empty()) {
+        metadata.insert("publisher".into(), json!({ "name": pub_ }));
+    }
+    if let Some(year) = s.year {
+        metadata.insert("published".into(), Value::from(year.to_string()));
+    }
+    if !s.language_code.is_empty() {
+        metadata.insert("language".into(), Value::from(s.language_code.clone()));
+    }
+    if let Some(f) = facets {
+        if !f.writers.is_empty() {
+            metadata.insert(
+                "author".into(),
+                Value::Array(f.writers.iter().map(|w| json!({ "name": w })).collect()),
+            );
+        }
+        if !f.genres.is_empty() {
+            metadata.insert(
+                "subject".into(),
+                Value::Array(
+                    f.genres
+                        .iter()
+                        .map(|g| {
+                            json!({
+                                "name": g,
+                                "scheme": "urn:folio:genre",
+                            })
+                        })
+                        .collect(),
+                ),
+            );
+        }
     }
     let mut obj = serde_json::Map::new();
     obj.insert("title".into(), Value::from(s.name.clone()));
@@ -864,11 +910,13 @@ async fn render_collection_acq_v2(
         .map(|i| (i.id.clone(), i))
         .collect();
 
-    // Resolve per-series cover for the navigation entries (M1 of
-    // opds-richer-feeds-1.0). Without this, mixed collection feeds
-    // show folder icons for the series rows.
+    // Resolve per-series cover + metadata facets for the navigation
+    // entries. M1: cover replaces folder icon. M2: dc:publisher /
+    // dc:issued / author / subject lift series entries to the same
+    // metadata richness as issue entries.
     let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
     let series_covers = opds::fetch_cover_issues(&app.db, &collection_series_ids).await;
+    let series_facets = opds::fetch_series_facets(&app.db, &collection_series_ids).await;
 
     // Walk rows in position order so series + issues retain the
     // collection's logical sequence.
@@ -879,7 +927,8 @@ async fn render_collection_acq_v2(
             && let Some(s) = series_by_id.get(&sid)
         {
             let cover = series_covers.get(&s.id).map(String::as_str);
-            navigation.push(series_nav_entry(s, cover));
+            let f = series_facets.get(&s.id);
+            navigation.push(series_nav_entry(s, cover, f));
         } else if let Some(iid) = row.issue_id.as_deref()
             && let Some(i) = issue_by_id.get(iid)
         {

@@ -27,6 +27,8 @@ use entity::{
     library,
     saved_view::ActiveModel as SavedViewAM,
     series::{ActiveModel as SeriesAM, normalize_name},
+    series_credit::ActiveModel as SeriesCreditAM,
+    series_genre::ActiveModel as SeriesGenreAM,
     user_view_pin::ActiveModel as UserViewPinAM,
 };
 use sea_orm::{
@@ -934,4 +936,159 @@ async fn series_nav_omits_images_for_empty_series() {
         entry.get("images").is_none(),
         "empty series must not advertise images: {entry}"
     );
+}
+
+// ─────────── M2 (opds-richer-feeds): OPDS 2.0 metadata fields ───────────
+
+async fn v2_set_series_meta(
+    db: &DatabaseConnection,
+    series_id: Uuid,
+    publisher: Option<&str>,
+    year: Option<i32>,
+    language: Option<&str>,
+) {
+    use entity::series::Entity as SeriesEntity;
+    let row = SeriesEntity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::series::ActiveModel = row.into();
+    am.publisher = Set(publisher.map(str::to_owned));
+    am.year = Set(year);
+    if let Some(l) = language {
+        am.language_code = Set(l.to_owned());
+    }
+    am.update(db).await.unwrap();
+}
+
+async fn v2_add_writer(db: &DatabaseConnection, series_id: Uuid, person: &str) {
+    SeriesCreditAM {
+        series_id: Set(series_id),
+        role: Set("writer".into()),
+        person: Set(person.into()),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+async fn v2_add_genre(db: &DatabaseConnection, series_id: Uuid, genre: &str) {
+    SeriesGenreAM {
+        series_id: Set(series_id),
+        genre: Set(genre.into()),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+/// OPDS 2.0 series nav entries carry `metadata.publisher.name`,
+/// `metadata.published`, and `metadata.language` when those fields
+/// are populated on the row. Mirrors the v1 `<dc:*>` block but uses
+/// the readium-org webpub-manifest JSON shape that OPDS 2.0 extends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_nav_carries_publisher_published_language() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-pubmeta@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Watchmen").await;
+    v2_set_series_meta(&db, series_id, Some("DC Comics"), Some(1986), Some("en")).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/series?page=1").await;
+    assert_eq!(status, StatusCode::OK);
+    let entry = body["navigation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| {
+            n["href"]
+                .as_str()
+                .is_some_and(|h| h.ends_with(&series_id.to_string()))
+        })
+        .expect("entry present");
+    let m = &entry["metadata"];
+    assert_eq!(m["publisher"]["name"], "DC Comics");
+    assert_eq!(m["published"], "1986");
+    assert_eq!(m["language"], "en");
+}
+
+/// `metadata.author` is an array of contributor objects with a
+/// `name` field; `metadata.subject` is an array of subject objects
+/// with `name` + `scheme`. Sorted alphabetically inside the helper
+/// so JSON output is stable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_nav_carries_author_and_subject_arrays() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-author-subj@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Y The Last Man").await;
+    v2_add_writer(&db, series_id, "Pia Guerra").await;
+    v2_add_writer(&db, series_id, "Brian K. Vaughan").await;
+    v2_add_genre(&db, series_id, "Post-apocalyptic").await;
+    v2_add_genre(&db, series_id, "Drama").await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/series?page=1").await;
+    assert_eq!(status, StatusCode::OK);
+    let entry = body["navigation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| {
+            n["href"]
+                .as_str()
+                .is_some_and(|h| h.ends_with(&series_id.to_string()))
+        })
+        .expect("entry present");
+    let authors = entry["metadata"]["author"].as_array().unwrap();
+    assert_eq!(authors.len(), 2);
+    // Alphabetical: Brian < Pia.
+    assert_eq!(authors[0]["name"], "Brian K. Vaughan");
+    assert_eq!(authors[1]["name"], "Pia Guerra");
+    let subjects = entry["metadata"]["subject"].as_array().unwrap();
+    assert_eq!(subjects.len(), 2);
+    assert_eq!(subjects[0]["name"], "Drama");
+    assert_eq!(subjects[0]["scheme"], "urn:folio:genre");
+    assert_eq!(subjects[1]["name"], "Post-apocalyptic");
+}
+
+/// Empty metadata fields are omitted entirely — no `author`/`subject`
+/// keys when there are zero credits/genres. Lets clients distinguish
+/// "field missing" from "field is an empty array".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_nav_omits_empty_metadata_fields() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-omit-empty@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Bare Series").await;
+    v2_set_series_meta(&db, series_id, None, None, Some("en")).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/series?page=1").await;
+    assert_eq!(status, StatusCode::OK);
+    let entry = body["navigation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| {
+            n["href"]
+                .as_str()
+                .is_some_and(|h| h.ends_with(&series_id.to_string()))
+        })
+        .expect("entry present");
+    let m = entry["metadata"].as_object().unwrap();
+    assert!(!m.contains_key("publisher"));
+    assert!(!m.contains_key("published"));
+    assert!(!m.contains_key("author"));
+    assert!(!m.contains_key("subject"));
+    // language is always set (column non-nullable, defaults to "en").
+    assert_eq!(m.get("language").and_then(|v| v.as_str()), Some("en"));
 }
