@@ -2169,3 +2169,76 @@ async fn browse_unknown_status_is_ignored() {
         "unknown status should yield no filter: {body}"
     );
 }
+
+// ─── M4 follow-up: CBL/collection pins surface in /opds/v1/pages/{slug} ───
+
+async fn seed_cbl_saved_view(
+    db: &DatabaseConnection,
+    owner: Uuid,
+    name: &str,
+    cbl_list_id: Uuid,
+) -> Uuid {
+    let id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    SavedViewAM {
+        id: Set(id),
+        user_id: Set(Some(owner)),
+        kind: Set("cbl".into()),
+        system_key: Set(None),
+        name: Set(name.into()),
+        description: Set(None),
+        custom_year_start: Set(None),
+        custom_year_end: Set(None),
+        custom_tags: Set(Vec::new()),
+        match_mode: Set(None),
+        conditions: Set(None),
+        sort_field: Set(None),
+        sort_order: Set(None),
+        result_limit: Set(None),
+        cbl_list_id: Set(Some(cbl_list_id)),
+        auto_pin: Set(false),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+/// Pinning a CBL-kind saved-view onto a page surfaces it in the
+/// page's OPDS feed, drilling into the existing /opds/v1/lists/{id}
+/// handler. The bug: M3 only matched `KIND_FILTER_SERIES`; CBL +
+/// collection pins were silently dropped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_acq_surfaces_cbl_pins() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-cbl@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let page_id = seed_custom_page(&db, auth.user_id, "Reading", "reading", 1).await;
+    let cbl_id = seed_cbl_list(&db, Some(auth.user_id), "Civil War").await;
+    let view_id = seed_cbl_saved_view(&db, auth.user_id, "Civil War Reading Order", cbl_id).await;
+    pin_view_to_page(&db, auth.user_id, page_id, view_id, 0, true, false).await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/pages/reading",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("Civil War Reading Order"));
+    // CBL pin dispatches to /opds/v1/lists/{cbl_list_id}, not
+    // /opds/v1/views/{view_id}.
+    assert!(
+        body.contains(&format!(r#"href="/opds/v1/lists/{cbl_id}""#)),
+        "CBL pin must route to /opds/v1/lists/<cbl_id>: {body}"
+    );
+    assert!(
+        !body.contains(&format!(r#"href="/opds/v1/views/{view_id}""#)),
+        "CBL pin must NOT route to /opds/v1/views/<view_id>"
+    );
+    assert!(body.contains(&format!("urn:cbl:{cbl_id}")));
+}

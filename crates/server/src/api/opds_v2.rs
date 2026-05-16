@@ -46,7 +46,9 @@ use uuid::Uuid;
 
 use crate::api::collections::ensure_want_to_read_seeded;
 use crate::api::opds;
-use crate::api::saved_views::{KIND_COLLECTION, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ};
+use crate::api::saved_views::{
+    KIND_CBL, KIND_COLLECTION, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ,
+};
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::middleware::rate_limit;
@@ -935,7 +937,16 @@ async fn page_acq(
     let view_ids: Vec<Uuid> = visible_pins.iter().map(|p| p.view_id).collect();
     let view_rows = match saved_view::Entity::find()
         .filter(saved_view::Column::Id.is_in(view_ids.clone()))
-        .filter(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+        // M4 follow-up: three browseable kinds dispatch to three
+        // existing OPDS handlers (views / lists / collections);
+        // before this, CBL + collection pins were silently dropped
+        // from the page feed.
+        .filter(
+            Condition::any()
+                .add(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+                .add(saved_view::Column::Kind.eq(KIND_CBL))
+                .add(saved_view::Column::Kind.eq(KIND_COLLECTION)),
+        )
         .filter(
             Condition::any()
                 .add(saved_view::Column::UserId.is_null())
@@ -949,24 +960,41 @@ async fn page_acq(
     };
     let view_by_id: HashMap<Uuid, &saved_view::Model> =
         view_rows.iter().map(|v| (v.id, v)).collect();
-    // Walk pins in pin-position order so the OPDS surface mirrors
-    // the order the user sees in the web rail grid.
-    let navigation: Vec<Value> = visible_pins
-        .iter()
-        .filter_map(|pin| view_by_id.get(&pin.view_id))
-        .map(|v| {
-            json!({
-                "title": v.name,
-                "href": format!("/opds/v2/views/{}", v.id),
-                "type": NAV_CT,
-                "metadata": {
-                    "identifier": format!("urn:view:{}", v.id),
-                    "description": v.description,
-                    "modified": v.updated_at.to_rfc3339(),
-                },
-            })
-        })
-        .collect();
+    // Walk pins in pin-position order. Per-kind dispatch routes
+    // each pin to its appropriate v2 handler.
+    let mut navigation: Vec<Value> = Vec::new();
+    for pin in &visible_pins {
+        let Some(v) = view_by_id.get(&pin.view_id) else {
+            continue;
+        };
+        let (urn, href) = match v.kind.as_str() {
+            KIND_CBL => match v.cbl_list_id {
+                Some(list_id) => (
+                    format!("urn:cbl:{list_id}"),
+                    format!("/opds/v2/lists/{list_id}"),
+                ),
+                None => continue,
+            },
+            KIND_COLLECTION => (
+                format!("urn:collection:{}", v.id),
+                format!("/opds/v2/collections/{}", v.id),
+            ),
+            _ => (
+                format!("urn:view:{}", v.id),
+                format!("/opds/v2/views/{}", v.id),
+            ),
+        };
+        navigation.push(json!({
+            "title": v.name,
+            "href": href,
+            "type": NAV_CT,
+            "metadata": {
+                "identifier": urn,
+                "description": v.description,
+                "modified": v.updated_at.to_rfc3339(),
+            },
+        }));
+    }
     let body = json!({
         "metadata": {
             "title": page.name,

@@ -43,7 +43,9 @@ use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
 use crate::api::collections::ensure_want_to_read_seeded;
-use crate::api::saved_views::{KIND_COLLECTION, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ};
+use crate::api::saved_views::{
+    KIND_CBL, KIND_COLLECTION, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ,
+};
 use crate::audit::{self, AuditEntry};
 use crate::auth::{CurrentUser, RequireProgressScope};
 use crate::library::access;
@@ -1989,7 +1991,17 @@ async fn page_acq(
     let view_ids: Vec<Uuid> = visible_pins.iter().map(|p| p.view_id).collect();
     let view_rows = match saved_view::Entity::find()
         .filter(saved_view::Column::Id.is_in(view_ids.clone()))
-        .filter(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+        // Three browseable kinds — filter_series (series-list view),
+        // cbl (reading list), collection (mixed series+issue). Each
+        // dispatches to a different existing OPDS handler below.
+        // `system` kind is the built-in rails and isn't reachable as
+        // an OPDS feed; skip it.
+        .filter(
+            Condition::any()
+                .add(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+                .add(saved_view::Column::Kind.eq(KIND_CBL))
+                .add(saved_view::Column::Kind.eq(KIND_COLLECTION)),
+        )
         .filter(
             // Same belt-and-braces ownership check as `/opds/v1/views`.
             Condition::any()
@@ -2006,17 +2018,44 @@ async fn page_acq(
         view_rows.iter().map(|v| (v.id, v)).collect();
     // Walk pins in pin-position order so the OPDS surface mirrors
     // the order the user sees in the web sidebar / rail grid.
+    // Per-kind dispatch (M4 follow-up — CBL pins were silently
+    // dropped before): each pin's URL routes to the appropriate
+    // existing OPDS endpoint. The `<id>` urn is kind-specific so
+    // OPDS clients dedupe entries correctly.
     let mut entries = String::new();
     for pin in &visible_pins {
-        if let Some(v) = view_by_id.get(&pin.view_id) {
-            entries.push_str(&render_nav_entry(
-                &format!("urn:view:{}", v.id),
-                &v.name,
-                v.description.as_deref(),
-                &v.updated_at.to_rfc3339(),
-                &format!("/opds/v1/views/{}", v.id),
-            ));
-        }
+        let Some(v) = view_by_id.get(&pin.view_id) else {
+            continue;
+        };
+        let (urn, href) = match v.kind.as_str() {
+            KIND_CBL => match v.cbl_list_id {
+                Some(list_id) => (
+                    format!("urn:cbl:{list_id}"),
+                    format!("/opds/v1/lists/{list_id}"),
+                ),
+                // Malformed CBL view (kind=cbl but no list_id) — DB
+                // schema CHECK should make this unreachable, but skip
+                // rather than emit a broken link.
+                None => continue,
+            },
+            KIND_COLLECTION => (
+                format!("urn:collection:{}", v.id),
+                format!("/opds/v1/collections/{}", v.id),
+            ),
+            // Default branch covers KIND_FILTER_SERIES; anything else
+            // was filtered out by the SQL above.
+            _ => (
+                format!("urn:view:{}", v.id),
+                format!("/opds/v1/views/{}", v.id),
+            ),
+        };
+        entries.push_str(&render_nav_entry(
+            &urn,
+            &v.name,
+            v.description.as_deref(),
+            &v.updated_at.to_rfc3339(),
+            &href,
+        ));
     }
     atom(wrap_nav_feed(
         &format!("urn:page:{}", page.id),
