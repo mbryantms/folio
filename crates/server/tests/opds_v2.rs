@@ -1211,3 +1211,128 @@ async fn v2_page_acq_returns_404_for_other_users_page() {
     let (status, _) = get_json(&app, &intruder, "/opds/v2/pages/owned").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// ─────────────── M4 (opds-richer-feeds): faceted browse, v2 ───────────────
+
+async fn seed_series_full_v2(
+    db: &DatabaseConnection,
+    lib_id: Uuid,
+    name: &str,
+    status: &str,
+    publisher: Option<&str>,
+) -> Uuid {
+    let id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    SeriesAM {
+        id: Set(id),
+        library_id: Set(lib_id),
+        name: Set(name.into()),
+        normalized_name: Set(normalize_name(name)),
+        year: Set(Some(2020)),
+        volume: Set(None),
+        publisher: Set(publisher.map(str::to_owned)),
+        imprint: Set(None),
+        status: Set(status.into()),
+        total_issues: Set(None),
+        age_rating: Set(None),
+        summary: Set(None),
+        language_code: Set("en".into()),
+        comicvine_id: Set(None),
+        metron_id: Set(None),
+        gtin: Set(None),
+        series_group: Set(None),
+        slug: Set(id.to_string()),
+        alternate_names: Set(serde_json::json!([])),
+        created_at: Set(now),
+        updated_at: Set(now),
+        folder_path: Set(None),
+        last_scanned_at: Set(None),
+        match_key: Set(None),
+        removed_at: Set(None),
+        removal_confirmed_at: Set(None),
+        status_user_set_at: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+/// `/opds/v2/browse` returns OPDS 2.0 JSON with a top-level
+/// `facets[]` array carrying Status + Publisher groups. Each link
+/// carries `properties.numberOfItems` (count) and `properties.active`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_browse_advertises_facets_array() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-browse-shape@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full_v2(&db, lib_id, "Saga", "continuing", Some("Image Comics")).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/browse").await;
+    assert_eq!(status, StatusCode::OK);
+    let facets = body["facets"].as_array().expect("facets array");
+    assert_eq!(facets.len(), 2, "Status + Publisher groups");
+    let group_titles: Vec<&str> = facets
+        .iter()
+        .filter_map(|f| f["metadata"]["title"].as_str())
+        .collect();
+    assert!(group_titles.contains(&"Status"));
+    assert!(group_titles.contains(&"Publisher"));
+    // Each status value present with a link href.
+    let status_group = facets
+        .iter()
+        .find(|f| f["metadata"]["title"] == "Status")
+        .unwrap();
+    let status_links = status_group["links"].as_array().unwrap();
+    assert_eq!(status_links.len(), 4); // continuing, ended, hiatus, cancelled
+    let cont = status_links
+        .iter()
+        .find(|l| l["title"] == "Continuing")
+        .expect("Continuing link present");
+    assert_eq!(cont["href"], "/opds/v2/browse?status=continuing");
+    assert_eq!(cont["properties"]["active"], false);
+}
+
+/// Filtering `?status=ended` returns only ended series and marks the
+/// matching facet link `properties.active = true`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_browse_status_filter_marks_active() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-browse-status@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full_v2(&db, lib_id, "Live", "continuing", None).await;
+    let ended_id = seed_series_full_v2(&db, lib_id, "Dead", "ended", None).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/browse?status=ended").await;
+    assert_eq!(status, StatusCode::OK);
+    let nav = body["navigation"].as_array().unwrap();
+    assert_eq!(nav.len(), 1);
+    assert!(
+        nav[0]["href"]
+            .as_str()
+            .unwrap()
+            .ends_with(&ended_id.to_string()),
+        "only the ended series should surface"
+    );
+    let status_group = body["facets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["metadata"]["title"] == "Status")
+        .unwrap();
+    let ended_link = status_group["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["title"] == "Ended")
+        .unwrap();
+    assert_eq!(ended_link["properties"]["active"], true);
+    // Toggle: the active link href clears the filter.
+    assert_eq!(ended_link["href"], "/opds/v2/browse");
+}

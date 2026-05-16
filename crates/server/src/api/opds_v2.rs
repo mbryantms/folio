@@ -63,6 +63,8 @@ pub fn routes() -> Router<AppState> {
         .route("/opds/v2", get(root))
         .route("/opds/v2/series", get(series_list))
         .route("/opds/v2/series/{id}", get(series_one))
+        // M4 of opds-richer-feeds — faceted browse, v2 JSON mirror.
+        .route("/opds/v2/browse", get(browse))
         .route("/opds/v2/recent", get(recent))
         .route("/opds/v2/search", get(search))
         .route("/opds/v2/issues/{id}/file", get(super::opds::download))
@@ -104,6 +106,7 @@ async fn root(State(_app): State<AppState>, _user: CurrentUser) -> Response {
         ],
         "navigation": [
             { "title": "All series", "href": "/opds/v2/series", "type": NAV_CT },
+            { "title": "Browse", "href": "/opds/v2/browse", "type": NAV_CT },
             { "title": "Recently added", "href": "/opds/v2/recent", "type": NAV_CT },
             { "title": "Want to Read", "href": "/opds/v2/wtr", "type": NAV_CT },
             { "title": "Reading lists", "href": "/opds/v2/lists", "type": NAV_CT },
@@ -187,6 +190,207 @@ async fn series_list(
         "navigation": navigation,
     });
     json_response(body)
+}
+
+// ────────────── M4 of opds-richer-feeds — faceted browse, v2 ──────────────
+
+/// JSON mirror of [`super::opds::browse`]. OPDS 2.0 expresses facets
+/// as a top-level `facets[]` array — each element is one facet
+/// group with its own `metadata.title` and a `links[]` array; each
+/// link carries `properties.numberOfItems` (count) and
+/// `properties.active = true` on the currently-selected value.
+async fn browse(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<opds::BrowseQuery>,
+) -> Response {
+    let page = q.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * opds::PAGE_SIZE;
+    let status_filter = q
+        .status
+        .as_deref()
+        .filter(|s| opds::BROWSE_STATUSES.contains(s));
+
+    let allowed = match opds::allowed_libraries(&app, &user).await {
+        Ok(v) => v,
+        Err(e) => return server_error(e),
+    };
+    let allowed_vec = allowed.clone();
+
+    let mut count_sel = series::Entity::find();
+    if let Some(ids) = allowed.as_ref() {
+        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    if let Some(s) = status_filter {
+        count_sel = count_sel.filter(series::Column::Status.eq(s.to_owned()));
+    }
+    if let Some(p) = q.publisher.as_deref() {
+        count_sel = count_sel.filter(series::Column::Publisher.eq(p.to_owned()));
+    }
+    let total = match count_sel.count(&app.db).await {
+        Ok(n) => n,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
+
+    let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
+    if let Some(ids) = allowed.as_ref() {
+        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    if let Some(s) = status_filter {
+        sel = sel.filter(series::Column::Status.eq(s.to_owned()));
+    }
+    if let Some(p) = q.publisher.as_deref() {
+        sel = sel.filter(series::Column::Publisher.eq(p.to_owned()));
+    }
+    let rows = match sel.offset(offset).limit(opds::PAGE_SIZE).all(&app.db).await {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let navigation: Vec<Value> = rows
+        .iter()
+        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
+        .collect();
+
+    let status_counts = opds::compute_status_facets(&app, allowed_vec.as_ref()).await;
+    let publisher_counts = opds::compute_publisher_facets(&app, allowed_vec.as_ref()).await;
+    let v2_facets = build_v2_facets(&q, &status_counts, &publisher_counts);
+
+    let self_href = browse_href_v2(status_filter, q.publisher.as_deref(), Some(page));
+    let mut links = vec![json!({
+        "rel": "self",
+        "href": self_href,
+        "type": NAV_CT,
+    })];
+    // Pagination — preserve facet state across pages.
+    let base = browse_href_v2(status_filter, q.publisher.as_deref(), None);
+    paginate_links_query(&mut links, &base, page, total_pages);
+
+    let body = json!({
+        "metadata": {
+            "title": "Browse",
+            "itemsPerPage": opds::PAGE_SIZE,
+            "numberOfItems": total,
+            "currentPage": page,
+        },
+        "links": links,
+        "facets": v2_facets,
+        "navigation": navigation,
+    });
+    json_response(body)
+}
+
+/// Build OPDS 2.0 `facets[]` JSON: one element per facet group
+/// (Status, Publisher), each carrying its `links[]`.
+fn build_v2_facets(
+    q: &opds::BrowseQuery,
+    status_counts: &[(&str, u64)],
+    publisher_counts: &[(String, u64)],
+) -> Vec<Value> {
+    let status_active = q.status.as_deref();
+    let publisher_active = q.publisher.as_deref();
+
+    let status_links: Vec<Value> = status_counts
+        .iter()
+        .map(|(value, count)| {
+            let active = status_active == Some(*value);
+            let href = browse_href_v2(
+                if active { None } else { Some(*value) },
+                q.publisher.as_deref(),
+                None,
+            );
+            json!({
+                "title": capitalize(value),
+                "href": href,
+                "type": NAV_CT,
+                "properties": { "numberOfItems": *count, "active": active },
+            })
+        })
+        .collect();
+    let publisher_links: Vec<Value> = publisher_counts
+        .iter()
+        .map(|(value, count)| {
+            let active = publisher_active == Some(value.as_str());
+            let href = browse_href_v2(
+                q.status.as_deref(),
+                if active { None } else { Some(value.as_str()) },
+                None,
+            );
+            json!({
+                "title": value,
+                "href": href,
+                "type": NAV_CT,
+                "properties": { "numberOfItems": *count, "active": active },
+            })
+        })
+        .collect();
+
+    vec![
+        json!({
+            "metadata": { "title": "Status" },
+            "links": status_links,
+        }),
+        json!({
+            "metadata": { "title": "Publisher" },
+            "links": publisher_links,
+        }),
+    ]
+}
+
+fn browse_href_v2(status: Option<&str>, publisher: Option<&str>, page: Option<u64>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(s) = status {
+        parts.push(format!("status={}", urlencoding::encode(s)));
+    }
+    if let Some(p) = publisher {
+        parts.push(format!("publisher={}", urlencoding::encode(p)));
+    }
+    if let Some(p) = page
+        && p > 1
+    {
+        parts.push(format!("page={p}"));
+    }
+    if parts.is_empty() {
+        "/opds/v2/browse".into()
+    } else {
+        format!("/opds/v2/browse?{}", parts.join("&"))
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// Variant of [`paginate_links`] that handles base hrefs already
+/// carrying a query string. M4's browse feed needs to keep facet
+/// params across pages.
+fn paginate_links_query(links: &mut Vec<Value>, base_href: &str, page: u64, total_pages: u64) {
+    if total_pages <= 1 {
+        return;
+    }
+    let sep = if base_href.contains('?') { '&' } else { '?' };
+    let mut push = |rel: &str, p: u64| {
+        links.push(json!({
+            "rel": rel,
+            "href": format!("{base_href}{sep}page={p}"),
+            "type": NAV_CT,
+        }));
+    };
+    push("first", 1);
+    if page > 1 {
+        push("previous", page - 1);
+    }
+    if page < total_pages {
+        push("next", page + 1);
+    }
+    push("last", total_pages);
 }
 
 async fn series_one(

@@ -1960,3 +1960,212 @@ async fn page_acq_returns_404_for_other_users_page() {
     .await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+// ─────────────── M4 (opds-richer-feeds): faceted browse ───────────────
+
+/// Variant of [`seed_series`] that takes status + publisher so M4
+/// tests can build the matrix of facet combinations they need
+/// without patching each row after insert.
+async fn seed_series_full(
+    db: &DatabaseConnection,
+    lib_id: Uuid,
+    name: &str,
+    status: &str,
+    publisher: Option<&str>,
+) -> Uuid {
+    let id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    SeriesAM {
+        id: Set(id),
+        library_id: Set(lib_id),
+        name: Set(name.into()),
+        normalized_name: Set(normalize_name(name)),
+        year: Set(Some(2020)),
+        volume: Set(None),
+        publisher: Set(publisher.map(str::to_owned)),
+        imprint: Set(None),
+        status: Set(status.into()),
+        total_issues: Set(None),
+        age_rating: Set(None),
+        summary: Set(None),
+        language_code: Set("en".into()),
+        comicvine_id: Set(None),
+        metron_id: Set(None),
+        gtin: Set(None),
+        series_group: Set(None),
+        slug: Set(id.to_string()),
+        alternate_names: Set(serde_json::json!([])),
+        created_at: Set(now),
+        updated_at: Set(now),
+        folder_path: Set(None),
+        last_scanned_at: Set(None),
+        match_key: Set(None),
+        removed_at: Set(None),
+        removal_confirmed_at: Set(None),
+        status_user_set_at: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+/// Unfiltered `/opds/v1/browse` returns every series the user is
+/// allowed to see, advertises facet links for both groups (Status +
+/// Publisher), and declares the OPDS catalog namespace so the
+/// `opds:facetGroup` / `opds:activeFacet` attributes are valid XML.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browse_advertises_facet_groups() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "browse-facets@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full(&db, lib_id, "Marvel A", "continuing", Some("Marvel")).await;
+    seed_series_full(&db, lib_id, "Marvel B", "ended", Some("Marvel")).await;
+    seed_series_full(&db, lib_id, "DC A", "continuing", Some("DC Comics")).await;
+
+    let resp = get_with_auth(&app, "/opds/v1/browse", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    // Namespace declarations required for the facet attributes to
+    // parse as valid XML.
+    assert!(
+        body.contains(r#"xmlns:opds="http://opds-spec.org/2010/catalog""#),
+        "missing opds namespace: {body}"
+    );
+    // Status facet group surfaces with all four known values, none
+    // selected initially.
+    for status in ["continuing", "ended", "hiatus", "cancelled"] {
+        assert!(
+            body.contains(&format!(r#"href="/opds/v1/browse?status={status}""#)),
+            "missing facet link for status={status}: {body}"
+        );
+    }
+    assert!(body.contains(r#"opds:facetGroup="Status""#));
+    // Publisher facet group surfaces with each distinct value.
+    assert!(body.contains(r#"opds:facetGroup="Publisher""#));
+    assert!(body.contains(r#"title="Marvel""#));
+    assert!(body.contains(r#"title="DC Comics""#));
+    // All three seeded series appear when no filter is applied.
+    assert!(body.contains("Marvel A"));
+    assert!(body.contains("Marvel B"));
+    assert!(body.contains("DC A"));
+}
+
+/// `?status=continuing` returns only continuing series and marks
+/// that status facet as `opds:activeFacet="true"`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browse_status_facet_filters_and_marks_active() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "browse-status@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full(&db, lib_id, "Alive", "continuing", None).await;
+    seed_series_full(&db, lib_id, "Done", "ended", None).await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/browse?status=continuing",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("Alive"));
+    assert!(
+        !body.contains("Done"),
+        "ended series must be filtered out: {body}"
+    );
+    // The status=continuing link is marked active AND its href now
+    // clears the filter (toggle behaviour).
+    assert!(
+        body.contains(r#"href="/opds/v1/browse" title="Continuing" opds:facetGroup="Status" opds:activeFacet="true""#),
+        "continuing facet not marked active or toggle href wrong: {body}"
+    );
+}
+
+/// `?publisher=Marvel` filters to Marvel series only.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browse_publisher_facet_filters() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "browse-pub@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full(&db, lib_id, "Daredevil", "continuing", Some("Marvel")).await;
+    seed_series_full(&db, lib_id, "Batman", "continuing", Some("DC Comics")).await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/browse?publisher=Marvel",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("Daredevil"));
+    assert!(
+        !body.contains("Batman"),
+        "DC series must be filtered out: {body}"
+    );
+}
+
+/// Stacking `?status=continuing&publisher=Marvel` returns the
+/// intersection — series matching BOTH facets. Pagination links
+/// preserve the facet selection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browse_facets_stack_as_and_intersection() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "browse-stack@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full(&db, lib_id, "Match", "continuing", Some("Marvel")).await;
+    seed_series_full(&db, lib_id, "WrongPub", "continuing", Some("DC Comics")).await;
+    seed_series_full(&db, lib_id, "WrongStatus", "ended", Some("Marvel")).await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/browse?status=continuing&publisher=Marvel",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("Match"));
+    assert!(!body.contains("WrongPub"));
+    assert!(!body.contains("WrongStatus"));
+    // Both active facet links visible; toggling Marvel clears just
+    // that param, keeping status=continuing.
+    assert!(body.contains(r#"href="/opds/v1/browse?status=continuing" title="Marvel""#));
+}
+
+/// Unknown status values silently fall through to "no status filter"
+/// rather than 400. Lets stale facet hrefs from removed enum values
+/// degrade gracefully instead of breaking navigation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browse_unknown_status_is_ignored() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "browse-bogus@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full(&db, lib_id, "Anything", "continuing", None).await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/browse?status=bogus",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(
+        body.contains("Anything"),
+        "unknown status should yield no filter: {body}"
+    );
+}

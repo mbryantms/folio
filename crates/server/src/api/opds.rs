@@ -66,6 +66,10 @@ pub fn routes() -> Router<AppState> {
         .route("/opds/v1", get(root))
         .route("/opds/v1/series", get(series_list))
         .route("/opds/v1/series/{id}", get(series_one))
+        // M4 of opds-richer-feeds — faceted browse over the series
+        // list. Facet links materialise as `<link rel="opds-spec.org/
+        // facet">` elements that clients render as a filter sidebar.
+        .route("/opds/v1/browse", get(browse))
         .route("/opds/v1/recent", get(recent))
         .route("/opds/v1/search", get(search))
         .route("/opds/v1/search.xml", get(search_description))
@@ -187,6 +191,33 @@ pub struct SearchQuery {
     pub q: Option<String>,
 }
 
+/// Query parameters for `/opds/v1/browse` (M4 of opds-richer-feeds).
+/// Each field is an optional **single value**. Stacking happens
+/// through the AND-conjunction of multiple fields, not multi-value
+/// per field — keeps the URL space sane for facet-link generation
+/// (one `<link rel=facet>` per (group, value) pair, one active state
+/// per group). A user wanting multi-publisher OR-filtering can build
+/// that with the existing saved-views surface; the OPDS facet UI
+/// commits to single-select per group.
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct BrowseQuery {
+    pub status: Option<String>,
+    pub publisher: Option<String>,
+    pub page: Option<u64>,
+}
+
+/// Maximum number of distinct publishers surfaced in the publisher
+/// facet group. Keeps the facet sidebar bounded on libraries with a
+/// long tail of one-off publishers; users searching for a specific
+/// rarely-used publisher still reach it via the existing search
+/// surface.
+pub(crate) const BROWSE_PUBLISHER_FACET_LIMIT: u64 = 20;
+
+/// The fixed set of `series.status` values we'll surface as facet
+/// links. Matches `crate::api::series::VALID_STATUSES`. The order
+/// here drives the order the client renders the facet group in.
+pub(crate) const BROWSE_STATUSES: &[&str] = &["continuing", "ended", "hiatus", "cancelled"];
+
 async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
     let now = chrono::Utc::now().to_rfc3339();
     let body = format!(
@@ -203,6 +234,12 @@ async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
     <title>All series</title>
     <updated>{now}</updated>
     <link rel="subsection" href="/opds/v1/series" type="{acq}"/>
+  </entry>
+  <entry>
+    <id>{base}/opds/v1/browse</id>
+    <title>Browse</title>
+    <updated>{now}</updated>
+    <link rel="subsection" href="/opds/v1/browse" type="{acq}"/>
   </entry>
   <entry>
     <id>{base}/opds/v1/recent</id>
@@ -309,6 +346,276 @@ async fn series_list(
         nav = NAV_CT,
         pagination = paginate_links("/opds/v1/series", page, total_pages),
         page = page,
+    );
+    atom(body)
+}
+
+// ────────────── M4 of opds-richer-feeds — faceted browse ──────────────
+
+/// Compute the distinct publishers across the user's visible
+/// libraries, ranked by series count, truncated to
+/// [`BROWSE_PUBLISHER_FACET_LIMIT`]. Used to populate the publisher
+/// facet group. Returns `(value, count)` pairs sorted alphabetically
+/// AFTER truncation so the sidebar reads naturally even on libraries
+/// with hundreds of publishers.
+pub(crate) async fn compute_publisher_facets(
+    app: &AppState,
+    allowed: Option<&Vec<Uuid>>,
+) -> Vec<(String, u64)> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        publisher: String,
+        n: i64,
+    }
+    let (sql, params) = if let Some(ids) = allowed {
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
+        (
+            format!(
+                "SELECT publisher, COUNT(*)::bigint AS n FROM series \
+                 WHERE publisher IS NOT NULL AND publisher <> '' \
+                   AND library_id IN ({}) \
+                 GROUP BY publisher ORDER BY n DESC LIMIT {}",
+                placeholders.join(","),
+                BROWSE_PUBLISHER_FACET_LIMIT
+            ),
+            ids.iter().map(|id| (*id).into()).collect::<Vec<_>>(),
+        )
+    } else {
+        (
+            format!(
+                "SELECT publisher, COUNT(*)::bigint AS n FROM series \
+                 WHERE publisher IS NOT NULL AND publisher <> '' \
+                 GROUP BY publisher ORDER BY n DESC LIMIT {}",
+                BROWSE_PUBLISHER_FACET_LIMIT
+            ),
+            Vec::new(),
+        )
+    };
+    let stmt = Statement::from_sql_and_values(sea_orm::DatabaseBackend::Postgres, sql, params);
+    let rows = match Row::find_by_statement(stmt).all(&app.db).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "opds: publisher-facet lookup failed");
+            return Vec::new();
+        }
+    };
+    let mut out: Vec<(String, u64)> = rows
+        .into_iter()
+        .map(|r| (r.publisher, r.n.max(0) as u64))
+        .collect();
+    // Alphabetical AFTER the top-N truncation so order is stable
+    // regardless of count ties.
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Compute the count of series per status value within the user's
+/// allowed library set. Statuses with zero series are still emitted
+/// (count=0) so the facet group has a complete shape — clients can
+/// either hide zero-count facets or render them disabled.
+pub(crate) async fn compute_status_facets(
+    app: &AppState,
+    allowed: Option<&Vec<Uuid>>,
+) -> Vec<(&'static str, u64)> {
+    let mut out: Vec<(&'static str, u64)> = Vec::with_capacity(BROWSE_STATUSES.len());
+    for status in BROWSE_STATUSES {
+        let mut sel = series::Entity::find().filter(series::Column::Status.eq(*status));
+        if let Some(ids) = allowed {
+            sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+        }
+        let n = sel.count(&app.db).await.unwrap_or(0);
+        out.push((*status, n));
+    }
+    out
+}
+
+/// Render facet `<link>` blocks for an OPDS Atom feed. The
+/// `opds:facetGroup` attribute is what clients use to group
+/// links into "Status", "Publisher" sidebars; `opds:activeFacet`
+/// flags the currently-selected value so the client renders it
+/// as the chosen state.
+///
+/// Each link's href encodes the FULL post-toggle state: clicking
+/// "Status: continuing" while "Publisher: Marvel" is selected
+/// produces `?status=continuing&publisher=Marvel`. Clicking the
+/// already-active value cancels it (omitting the param entirely).
+fn render_browse_facets(
+    q: &BrowseQuery,
+    status_counts: &[(&str, u64)],
+    publisher_counts: &[(String, u64)],
+) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+
+    let status_active = q.status.as_deref();
+    for (value, count) in status_counts {
+        let active = status_active == Some(*value);
+        let href = browse_href(
+            // Toggle: if this value is already active, the link
+            // points at the "clear status" URL.
+            if active { None } else { Some(*value) },
+            q.publisher.as_deref(),
+        );
+        let _ = writeln!(
+            out,
+            r#"  <link rel="http://opds-spec.org/facet" href="{href}" title="{title}" opds:facetGroup="Status" opds:activeFacet="{active}" thr:count="{count}"/>"#,
+            href = xml_escape(&href),
+            title = xml_escape(&capitalize(value)),
+            active = active,
+        );
+    }
+
+    let publisher_active = q.publisher.as_deref();
+    for (value, count) in publisher_counts {
+        let active = publisher_active == Some(value.as_str());
+        let href = browse_href(
+            q.status.as_deref(),
+            if active { None } else { Some(value.as_str()) },
+        );
+        let _ = writeln!(
+            out,
+            r#"  <link rel="http://opds-spec.org/facet" href="{href}" title="{title}" opds:facetGroup="Publisher" opds:activeFacet="{active}" thr:count="{count}"/>"#,
+            href = xml_escape(&href),
+            title = xml_escape(value),
+            active = active,
+        );
+    }
+    out
+}
+
+/// Build a `/opds/v1/browse` URL with the given facet selection.
+/// Returns the bare path when no facets are selected so the
+/// "no facets active" facet links cleanly clear all filters.
+fn browse_href(status: Option<&str>, publisher: Option<&str>) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(2);
+    if let Some(s) = status {
+        parts.push(format!("status={}", url_escape(s)));
+    }
+    if let Some(p) = publisher {
+        parts.push(format!("publisher={}", url_escape(p)));
+    }
+    if parts.is_empty() {
+        "/opds/v1/browse".into()
+    } else {
+        format!("/opds/v1/browse?{}", parts.join("&"))
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+async fn browse(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<BrowseQuery>,
+) -> Response {
+    let page = q.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * PAGE_SIZE;
+
+    // Validate status if supplied — silently drop unknown values
+    // rather than 400ing so a stale facet link from a removed status
+    // doesn't break navigation. Equivalent of OPDS's "unknown facet
+    // value yields no facet applied" contract.
+    let status_filter = q.status.as_deref().filter(|s| BROWSE_STATUSES.contains(s));
+
+    let allowed = match allowed_libraries(&app, &user).await {
+        Ok(v) => v,
+        Err(e) => return server_error(e),
+    };
+    let allowed_vec = allowed.clone();
+
+    // Count + fetch the filtered series. Mirrors series_list's two-
+    // pass shape so total_pages / pagination linkery is identical.
+    let mut count_sel = series::Entity::find();
+    if let Some(ids) = allowed.as_ref() {
+        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    if let Some(s) = status_filter {
+        count_sel = count_sel.filter(series::Column::Status.eq(s.to_owned()));
+    }
+    if let Some(p) = q.publisher.as_deref() {
+        count_sel = count_sel.filter(series::Column::Publisher.eq(p.to_owned()));
+    }
+    let total = match count_sel.count(&app.db).await {
+        Ok(n) => n,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let total_pages = total.div_ceil(PAGE_SIZE).max(1);
+
+    let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
+    if let Some(ids) = allowed.as_ref() {
+        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    if let Some(s) = status_filter {
+        sel = sel.filter(series::Column::Status.eq(s.to_owned()));
+    }
+    if let Some(p) = q.publisher.as_deref() {
+        sel = sel.filter(series::Column::Publisher.eq(p.to_owned()));
+    }
+    let rows = match sel.offset(offset).limit(PAGE_SIZE).all(&app.db).await {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let series_facets = fetch_series_facets(&app.db, &series_ids).await;
+    let mut entries = String::new();
+    for s in &rows {
+        let cover = covers.get(&s.id).map(String::as_str);
+        let f = series_facets.get(&s.id);
+        entries.push_str(&render_series_subsection_entry(s, cover, f));
+    }
+
+    // Facet sidebar — same set on every page, computed against the
+    // FULL library scope (not the post-filter slice) so users can
+    // expand back out from a narrow filter without re-navigating to
+    // /opds/v1/browse.
+    let status_counts = compute_status_facets(&app, allowed_vec.as_ref()).await;
+    let publisher_counts = compute_publisher_facets(&app, allowed_vec.as_ref()).await;
+    let facet_links = render_browse_facets(&q, &status_counts, &publisher_counts);
+
+    // Self / pagination href reflects the current facet state so
+    // clients that bookmark a `<link rel=self>` land in the same
+    // filtered view.
+    let self_href = {
+        let mut h = browse_href(status_filter, q.publisher.as_deref());
+        if page > 1 {
+            if h.contains('?') {
+                h.push('&');
+            } else {
+                h.push('?');
+            }
+            h.push_str(&format!("page={page}"));
+        }
+        h
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:thr="http://purl.org/syndication/thread/1.0">
+  <id>urn:opds:browse</id>
+  <title>Browse</title>
+  <updated>{now}</updated>
+  <link rel="self" href="{self_href}" type="{acq}"/>
+  <link rel="up" href="/opds/v1" type="{nav}"/>
+{facet_links}{pagination}{entries}</feed>
+"#,
+        self_href = xml_escape(&self_href),
+        now = now,
+        acq = ACQ_CT,
+        nav = NAV_CT,
+        // Pagination URLs preserve the facet selection so paging
+        // through a filtered set stays filtered.
+        pagination = paginate_links(
+            &browse_href(status_filter, q.publisher.as_deref()),
+            page,
+            total_pages
+        ),
     );
     atom(body)
 }
@@ -1138,9 +1445,14 @@ pub(crate) fn iso_date_from_ymd(
 /// current page so clients don't follow a dangling `next` past the end.
 fn paginate_links(base_href: &str, page: u64, total_pages: u64) -> String {
     let mut out = String::new();
+    // Handle bases that already carry a query string (M4 browse
+    // feeds pass `/opds/v1/browse?status=continuing` to preserve
+    // the facet selection across pages). Append with `&` if a `?`
+    // is already present, `?` otherwise.
+    let sep = if base_href.contains('?') { '&' } else { '?' };
     let push = |out: &mut String, rel: &str, p: u64| {
         out.push_str(&format!(
-            "  <link rel=\"{rel}\" href=\"{base_href}?page={p}\" type=\"{ACQ_CT}\"/>\n",
+            "  <link rel=\"{rel}\" href=\"{base_href}{sep}page={p}\" type=\"{ACQ_CT}\"/>\n",
         ));
     };
     if total_pages > 1 {
