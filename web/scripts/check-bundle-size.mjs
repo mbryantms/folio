@@ -3,7 +3,7 @@
 /**
  * Reader bundle budget gate (§18.1).
  *
- * Phase 2 budget: `/[locale]/read/[id]` First Load JS ≤ 150 KB gzip.
+ * Phase 2 budget: `/[locale]/read/[seriesSlug]/[issueSlug]` First Load JS ≤ 150 KB gzip.
  * Excluded libraries (must NOT appear in the chunk graph for this route):
  *   - framer-motion
  *   - @tiptap/*
@@ -23,8 +23,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = resolve(__dirname, "..");
-const ROUTE_DIR = "[locale]/read/[id]";
-const ROUTE_LABEL = "/[locale]/read/[id]";
+const ROUTE_DIR = "[locale]/read/[seriesSlug]/[issueSlug]";
+const ROUTE_LABEL = "/[locale]/read/[seriesSlug]/[issueSlug]";
 const BUDGET_KB = 150;
 const FORBIDDEN = ["framer-motion", "@tiptap", "@dnd-kit"];
 

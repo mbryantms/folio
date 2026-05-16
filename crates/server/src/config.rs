@@ -714,7 +714,10 @@ mod tests {
         // Subprocess-bound fields are CBR/CB7-specific and keep the
         // archive crate's defaults; this is the contract.
         let defaults = archive::ArchiveLimits::default();
-        assert_eq!(limits.subprocess_wall_timeout, defaults.subprocess_wall_timeout);
+        assert_eq!(
+            limits.subprocess_wall_timeout,
+            defaults.subprocess_wall_timeout
+        );
         assert_eq!(limits.subprocess_rss_bytes, defaults.subprocess_rss_bytes);
     }
 

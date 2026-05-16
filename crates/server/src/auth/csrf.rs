@@ -196,4 +196,3 @@ fn csrf_error() -> Response {
     );
     resp
 }
-

@@ -532,7 +532,10 @@ async fn prev_up_skips_soft_deleted_issues() {
         None,
     )
     .await;
-    assert_eq!(body["target"]["id"], issue1_id, "soft-deleted issue2 skipped");
+    assert_eq!(
+        body["target"]["id"], issue1_id,
+        "soft-deleted issue2 skipped"
+    );
 }
 
 #[tokio::test]

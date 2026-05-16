@@ -353,7 +353,11 @@ pub(crate) async fn compute_on_deck(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "rails: on-deck series query failed");
-                return Err(error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"));
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal",
+                ));
             }
         };
 
@@ -361,11 +365,11 @@ pub(crate) async fn compute_on_deck(
         if !acl.contains(row.library_id) {
             continue;
         }
-        let next =
-            match crate::api::next_up::pick_next_in_series(app, user_id, row.series_id).await {
-                Ok(opt) => opt,
-                Err(resp) => return Err(resp),
-            };
+        let next = match crate::api::next_up::pick_next_in_series(app, user_id, row.series_id).await
+        {
+            Ok(opt) => opt,
+            Err(resp) => return Err(resp),
+        };
         let Some(issue_model) = next else { continue };
         // Resolve the slug now (the join column wasn't in our CTE).
         let series_row = match series::Entity::find_by_id(row.series_id).one(&app.db).await {
@@ -416,7 +420,11 @@ pub(crate) async fn compute_on_deck(
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(error = %e, "rails: on-deck saved-view lookup failed");
-                return Err(error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"));
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal",
+                ));
             }
         };
         let mut map = std::collections::HashMap::new();
@@ -463,23 +471,22 @@ pub(crate) async fn compute_on_deck(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "rails: on-deck cbl query failed");
-                return Err(error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"));
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal",
+                ));
             }
         };
 
     for cand in &cbl_candidates {
-        let next = match crate::api::next_up::pick_next_in_cbl(
-            app,
-            user_id,
-            cand.cbl_list_id,
-            acl,
-            None,
-        )
-        .await
-        {
-            Ok(opt) => opt,
-            Err(resp) => return Err(resp),
-        };
+        let next =
+            match crate::api::next_up::pick_next_in_cbl(app, user_id, cand.cbl_list_id, acl, None)
+                .await
+            {
+                Ok(opt) => opt,
+                Err(resp) => return Err(resp),
+            };
         let Some((issue_model, series_slug, series_name, position)) = next else {
             continue;
         };

@@ -17,12 +17,14 @@ allow = [
     "MIT",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "0BSD",                  # quoted_printable (lettre transitive); OSI zero-clause BSD
     "ISC",
     "Unicode-DFS-2016",
     "Unicode-3.0",
     "MPL-2.0",
     "Zlib",
     "CC0-1.0",
+    "CDLA-Permissive-2.0",   # webpki-roots (rustls cert store); LF permissive
     "AGPL-3.0",
     "AGPL-3.0-or-later",
 ]
@@ -31,6 +33,11 @@ confidence-threshold = 0.9
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Workspace path deps (`{ path = "../foo" }`) legitimately omit a
+# `version =` constraint; they're internal and resolved by the
+# workspace. Without this exemption cargo-deny flags every internal
+# crate dependency as a wildcard violation.
+allow-wildcard-paths = true
 deny = []
 
 [sources]

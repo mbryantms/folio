@@ -22,9 +22,9 @@ use axum::{
 use chrono::Utc;
 use common::TestApp;
 use entity::{
-    cbl_entry, cbl_list, saved_view,
+    cbl_entry, cbl_list,
     issue::ActiveModel as IssueAM,
-    library, library_user_access, progress_record,
+    library, library_user_access, progress_record, saved_view,
     series::{ActiveModel as SeriesAM, normalize_name},
     user::Entity as UserEntity,
 };
@@ -1158,7 +1158,8 @@ async fn on_deck_cbl_next_carries_saved_view_id_when_one_exists() {
         .expect("cbl_next card should exist");
     assert_eq!(cbl_card["cbl_list_id"], list_id.to_string());
     assert_eq!(
-        cbl_card["cbl_saved_view_id"], sv_id.to_string(),
+        cbl_card["cbl_saved_view_id"],
+        sv_id.to_string(),
         "saved-view id missing — web can't thread `?cbl=` without it"
     );
 }
@@ -1189,8 +1190,7 @@ async fn on_deck_cbl_next_omits_saved_view_id_when_no_view_wraps_the_list() {
         .find(|i| i["kind"] == "cbl_next")
         .expect("cbl_next card should exist");
     assert!(
-        cbl_card.get("cbl_saved_view_id").is_none()
-            || cbl_card["cbl_saved_view_id"].is_null(),
+        cbl_card.get("cbl_saved_view_id").is_none() || cbl_card["cbl_saved_view_id"].is_null(),
         "expected cbl_saved_view_id absent / null; got {:?}",
         cbl_card.get("cbl_saved_view_id")
     );
@@ -1225,7 +1225,8 @@ async fn on_deck_cbl_saved_view_tiebreak_prefers_user_owned() {
         .find(|i| i["kind"] == "cbl_next")
         .expect("cbl_next card should exist");
     assert_eq!(
-        cbl_card["cbl_saved_view_id"], user_sv.to_string(),
+        cbl_card["cbl_saved_view_id"],
+        user_sv.to_string(),
         "user-owned saved view must win the tiebreak over system-owned"
     );
 }

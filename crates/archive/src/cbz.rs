@@ -516,8 +516,7 @@ fn recover_zip_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
         }
         let fname_len = u16::from_le_bytes(bytes[p + 28..p + 30].try_into().ok()?) as usize;
         let extra_len = u16::from_le_bytes(bytes[p + 30..p + 32].try_into().ok()?) as usize;
-        let comment_len_entry =
-            u16::from_le_bytes(bytes[p + 32..p + 34].try_into().ok()?) as usize;
+        let comment_len_entry = u16::from_le_bytes(bytes[p + 32..p + 34].try_into().ok()?) as usize;
         let total_len = 46 + fname_len + extra_len + comment_len_entry;
         if p + total_len > bytes.len() {
             return None;
@@ -535,8 +534,7 @@ fn recover_zip_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
         cleaned_cd.extend_from_slice(&header);
         cleaned_cd.extend_from_slice(&bytes[p + 46..p + 46 + fname_len]);
         cleaned_cd.extend_from_slice(&cleaned_extra);
-        cleaned_cd
-            .extend_from_slice(&bytes[extra_end..extra_end + comment_len_entry]);
+        cleaned_cd.extend_from_slice(&bytes[extra_end..extra_end + comment_len_entry]);
 
         p += total_len;
     }
@@ -544,8 +542,7 @@ fn recover_zip_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
     // Compose the rewritten file: data prefix (verbatim) + cleaned CD +
     // patched EOCD (cd_size updated, cd_offset unchanged) + EOCD comment.
     let new_cd_size: u32 = cleaned_cd.len().try_into().ok()?;
-    let mut out =
-        Vec::with_capacity(cd_offset + cleaned_cd.len() + 22 + comment_len);
+    let mut out = Vec::with_capacity(cd_offset + cleaned_cd.len() + 22 + comment_len);
     out.extend_from_slice(&bytes[..cd_offset]);
     out.extend_from_slice(&cleaned_cd);
     let mut eocd = bytes[eocd_off..eocd_off + 22].to_vec();
@@ -834,12 +831,10 @@ mod tests {
         poisoned.extend_from_slice(&poison);
         poisoned.extend_from_slice(&bytes[inject_at..]);
         let new_extra_len = (extra_len + poison.len()) as u16;
-        poisoned[cd_offset + 30..cd_offset + 32]
-            .copy_from_slice(&new_extra_len.to_le_bytes());
+        poisoned[cd_offset + 30..cd_offset + 32].copy_from_slice(&new_extra_len.to_le_bytes());
         let new_eocd_off = eocd_off + poison.len();
         let new_cd_size = (cd_size + poison.len()) as u32;
-        poisoned[new_eocd_off + 12..new_eocd_off + 16]
-            .copy_from_slice(&new_cd_size.to_le_bytes());
+        poisoned[new_eocd_off + 12..new_eocd_off + 16].copy_from_slice(&new_cd_size.to_le_bytes());
 
         // Sanity: the standalone zip crate should now reject this file —
         // that's the symptom we're recovering from.
@@ -859,7 +854,9 @@ mod tests {
             .expect("recovery should make the archive openable");
         let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["page.png"]);
-        let ci = a.read_entry_bytes_by_name("ComicInfo.xml").expect("read ComicInfo");
+        let ci = a
+            .read_entry_bytes_by_name("ComicInfo.xml")
+            .expect("read ComicInfo");
         assert_eq!(ci, b"<ComicInfo/>");
     }
 

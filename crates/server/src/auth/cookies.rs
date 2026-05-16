@@ -115,4 +115,3 @@ pub fn sha256_hex(input: &str) -> String {
     h.update(input.as_bytes());
     format!("{:x}", h.finalize())
 }
-

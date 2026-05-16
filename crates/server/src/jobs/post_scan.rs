@@ -174,8 +174,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         Ok(permit) => {
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                let mut archive =
-                    archive::open(std::path::Path::new(&file_path), archive_limits)?;
+                let mut archive = archive::open(std::path::Path::new(&file_path), archive_limits)?;
                 match kind {
                     ThumbsJobKind::Cover => {
                         thumbnails::generate_with_quality(
