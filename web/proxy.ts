@@ -24,19 +24,33 @@ const intlMiddleware = createIntlMiddleware({
 
 export default function middleware(request: NextRequest) {
   const nonce = request.headers.get("x-csp-nonce");
+  // Defensively mutate `request.headers` so anything next-intl reads
+  // inside its middleware sees the same value (it doesn't today, but
+  // keeps the two views consistent).
   if (nonce) {
-    // Mutating `request.headers` directly is the documented Next 13+
-    // pattern for surfacing values to RSC via `headers()`. next-intl
-    // forwards the same headers through its internal rewrite, so the
-    // value reaches both the locale router and the App-Router layer.
     request.headers.set("x-nonce", nonce);
   }
   // Delegate to next-intl for locale resolution + cookie-driven
-  // rewrites. Returning its response unchanged preserves redirects
-  // and rewrites — we only need our header injection to land before
-  // next-intl runs.
-  const response = intlMiddleware(request);
-  return response ?? NextResponse.next();
+  // rewrites. It returns a NextResponse that may be a rewrite (locale
+  // routing), redirect, or pass-through.
+  const response = intlMiddleware(request) ?? NextResponse.next();
+  // Tell Next.js's internal router to forward `x-nonce` to the
+  // page/RSC handler. This is the underlying mechanism that
+  // `NextResponse.next({ request: { headers } })` uses; we apply it
+  // by hand because we need to stack the override on top of
+  // next-intl's response (which we can't replace without losing its
+  // rewrite/redirect). Without this, mutating `request.headers`
+  // above does NOT propagate past next-intl's rewrite — RSC's
+  // `headers()` call sees the original inbound headers and Next.js
+  // doesn't auto-stamp the nonce onto framework-emitted `<script>`
+  // tags, leaving `'strict-dynamic'` to block everything.
+  if (nonce) {
+    const existing = response.headers.get("x-middleware-override-headers");
+    const overrides = existing ? `${existing},x-nonce` : "x-nonce";
+    response.headers.set("x-middleware-override-headers", overrides);
+    response.headers.set("x-middleware-request-x-nonce", nonce);
+  }
+  return response;
 }
 
 export const config = {
