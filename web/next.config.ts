@@ -37,14 +37,32 @@ const config: NextConfig = {
     // inlined into the client bundle.
     const apiBase = process.env.API_PROXY_URL || "http://localhost:8080";
     return [
-      // Proxy API calls during dev to the Rust server. In prod, the Rust binary
-      // proxies HTML requests to Next instead, so this rewrite is dev-only.
+      // Proxy API calls to the Rust server. The `/api/` prefix is a
+      // Next-only namespace and is stripped before hitting the backend.
       // NB: Next dev's rewrite layer does NOT support WebSocket upgrades —
       // `/ws/*` cannot be proxied here. The WS client connects to the Rust
       // server directly; auth lands via the §9.6 ticket flow (carry-over).
       {
         source: "/api/:path*",
         destination: `${apiBase}/:path*`,
+      },
+      // Externally-addressable backend paths that *cannot* be `/api/`-
+      // prefixed: OPDS clients (Panels, KOReader, Chunky, etc.) hit
+      // `/opds/v1` directly, and OIDC IdPs redirect back to
+      // `/auth/oidc/callback`. Without these rewrites, when Next.js is
+      // the public origin those paths hit the i18n middleware, get
+      // rewritten to `/en/opds/...`, find no page, and 404 with HTML —
+      // which third-party clients see as "invalid server response".
+      // Harmless when the Rust binary is the public origin instead
+      // (the rewrite never fires because the request never reaches
+      // Next in the first place).
+      {
+        source: "/opds/:path*",
+        destination: `${apiBase}/opds/:path*`,
+      },
+      {
+        source: "/auth/oidc/:path*",
+        destination: `${apiBase}/auth/oidc/:path*`,
       },
     ];
   },
