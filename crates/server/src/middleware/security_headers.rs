@@ -100,19 +100,16 @@ pub fn build_csp(template: &CspTemplate, nonce: Option<&str>) -> HeaderValue {
     // not attributes). The script-src nonce is what restores defence-
     // in-depth against XSS, which is the dominant threat anyway.
     let style_src = "'self' 'unsafe-inline'";
-    // Trusted Types: only enforce in release builds + only when the
-    // nonce is wired. Dev `next dev` violates Trusted Types via React
-    // Refresh's Function-constructor patches; an unnonced caller
-    // (test-only) won't have nonced its inline scripts either, so the
-    // policy would block them. Cloudflare's "Email Address
-    // Obfuscation" must also be off — its `cdn-cgi/scripts/email-
-    // decode.min.js` writes through innerHTML and trips this. See
-    // docs/install/cloudflare.md.
-    let trusted_types = if cfg!(debug_assertions) || nonce.is_none() {
-        ""
-    } else {
-        "require-trusted-types-for 'script'; "
-    };
+    // Trusted Types stays off. The React 19 / Next 16 runtime emits
+    // chunks that call `Element.innerHTML = …` directly (observed in
+    // prod via the v0.3.2 console: "Sink type mismatch violation
+    // blocked by CSP" from `_next/static/chunks/...`). Until React
+    // ships first-class Trusted Types support, enforcing this
+    // directive breaks hydration entirely — page goes blank. Tracked
+    // for a future re-enable once upstream is ready; for now the
+    // script-src nonce + `'strict-dynamic'` is the meaningful XSS
+    // defence.
+    let trusted_types = "";
     let csp = format!(
         "default-src 'self'; \
          script-src {script_src}; \
