@@ -1,18 +1,31 @@
 # Production compose for Folio. Brings up four services:
 #
 #   app       — Rust axum server (image: folio).         Bound to 127.0.0.1:8080.
-#   web       — Next.js frontend  (image: folio-web).    Bound to 127.0.0.1:3000.
+#                                                        The single public-facing service.
+#   web       — Next.js SSR upstream (image: folio-web). Internal-only on the
+#                                                        compose bridge; reached by `app`
+#                                                        as its HTML fallback target.
 #   postgres  — schema + user data + auth.               Internal-only.
 #   redis     — apalis job queue + rate-limit counters.  Internal-only.
 #
-# TLS termination + path routing is the operator's responsibility (Caddy /
-# nginx / Traefik). By default the two app services bind to loopback so
-# they're not directly reachable from the network; only the reverse proxy
-# (or a tunnel daemon running inside the same host, e.g. cloudflared) is.
-# To expose the ports directly on the host's LAN interface — for a homelab
-# without a proxy, or alongside a tunnel — set `COMIC_APP_BIND=0.0.0.0`
-# and/or `COMIC_WEB_BIND=0.0.0.0` in `.env`. Do **not** set these on a
-# public-internet host; the API and Next process have no TLS of their own.
+# Topology (M5 of the rust-public-origin plan): the Rust binary is the
+# public origin. Your reverse proxy points at `app:8080` for everything
+# — `/api/*`, `/opds/*`, `/auth/*`, page bytes, WebSockets, AND HTML
+# pages. Rust handles its own routes directly and reverse-proxies the
+# rest to `web:3000` over the compose bridge via the
+# `COMIC_WEB_UPSTREAM_URL` env wired below. You no longer need
+# path-based routing in your reverse proxy. See
+# [`docs/install/caddy.md`](docs/install/caddy.md) for the simplified
+# template.
+#
+# TLS termination is the operator's responsibility (Caddy / nginx /
+# Traefik). `app` binds to loopback by default so it's not directly
+# reachable from the network; only the reverse proxy (or a tunnel
+# daemon running inside the same host, e.g. cloudflared) is. To expose
+# the port directly on the host's LAN interface — for a homelab without
+# a proxy, or alongside a tunnel — set `COMIC_APP_BIND=0.0.0.0` in
+# `.env`. Do **not** set this on a public-internet host; the binary has
+# no TLS of its own.
 #
 # Reverse-proxy templates live under `docs/install/`:
 #   - caddy.md   (default; auto Let's Encrypt)
@@ -28,7 +41,6 @@
 # Optional:
 #   TAG                       — image tag to pull (default: latest)
 #   COMIC_APP_BIND            — host interface for the API port (default: 127.0.0.1)
-#   COMIC_WEB_BIND            — host interface for the web port (default: 127.0.0.1)
 
 services:
   # One-shot: makes sure the `comic_data` volume is writable by the
@@ -61,6 +73,11 @@ services:
       # Internal service names — postgres/redis are on the same compose network.
       COMIC_DATABASE_URL: postgres://comic:${POSTGRES_PASSWORD:?required}@postgres:5432/comic_reader
       COMIC_REDIS_URL: redis://redis:6379
+      # SSR fallback upstream. The Rust binary reverse-proxies any path
+      # no explicit route handled (HTML pages, `/_next/*` assets, etc.)
+      # to Next.js over the compose bridge. `web` is the service name
+      # below; the URL is not user-visible.
+      COMIC_WEB_UPSTREAM_URL: http://web:3000
       # `COMIC_TRUSTED_PROXIES` lets the rate limiter trust X-Forwarded-For
       # from a reverse proxy on the docker bridge. Without this, every
       # request would appear to come from the gateway IP and the limiter
@@ -104,8 +121,12 @@ services:
       # this URL.
       COMIC_API_BASE: http://app:8080
       NODE_ENV: production
-    ports:
-      - "${COMIC_WEB_BIND:-127.0.0.1}:3000:3000"
+    # `web` is internal-only on the compose bridge — `app` reverse-
+    # proxies HTML requests here via `COMIC_WEB_UPSTREAM_URL`. There is
+    # no need (and as of M5, no supported configuration) to bind the
+    # Next port to the host.
+    expose:
+      - "3000"
     healthcheck:
       # distroless-nodejs has /nodejs/bin/node on PATH. A tiny inline GET to
       # `/` proves the Next process is serving HTML.

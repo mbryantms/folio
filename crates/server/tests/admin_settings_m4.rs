@@ -85,7 +85,7 @@ async fn patch_settings(app: &TestApp, auth: &Authed, body: Value) -> axum::http
         .oneshot(
             Request::builder()
                 .method(Method::PATCH)
-                .uri("/admin/settings")
+                .uri("/api/admin/settings")
                 .header(header::COOKIE, auth.cookie())
                 .header("x-csrf-token", &auth.csrf)
                 .header(header::CONTENT_TYPE, "application/json")

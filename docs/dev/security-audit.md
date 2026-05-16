@@ -100,6 +100,16 @@ no guardrails.
 `allow_origin` / no `allow_credentials` so any cross-origin preflight
 is rejected. Document why it's present.
 
+> **Updated 2026-05-16 (rust-public-origin v0.2 cutover):** the
+> attack surface here is narrower than the original write-up
+> suggested. With the Rust binary now the public origin and Next.js
+> behind it as an internal upstream, the entire app — HTML and API —
+> shares a single same-origin envelope at the public host. There is
+> no longer a class of "client app on origin A talking to API on
+> origin B" cross-origin flow we need a CORS policy to gate. The
+> recommendation stands as defense-in-depth + explicit-intent, but
+> downgrade urgency from Medium to Low when planning remediation.
+
 ### M-2. `GET /auth/config` exposes OIDC issuer URL to anonymous callers
 
 [crates/server/src/api/auth_config.rs](../../crates/server/src/api/auth_config.rs)

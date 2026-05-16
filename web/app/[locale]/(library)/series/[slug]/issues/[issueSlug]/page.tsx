@@ -166,7 +166,7 @@ export default async function IssuePage({
             <Cover
               src={
                 issue.state === "active"
-                  ? `/api/issues/${issue.id}/pages/0/thumb`
+                  ? `/issues/${issue.id}/pages/0/thumb`
                   : null
               }
               alt={heading}

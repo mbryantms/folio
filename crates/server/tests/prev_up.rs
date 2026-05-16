@@ -467,7 +467,7 @@ async fn prev_up_series_returns_immediately_prior_issue_in_sort_order() {
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue2_id}/prev-up"),
+        &format!("/api/issues/{issue2_id}/prev-up"),
         Some(&user),
         None,
     )
@@ -499,7 +499,7 @@ async fn prev_up_does_not_skip_finished_issues() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue3_id}/prev-up"),
+        &format!("/api/issues/{issue3_id}/prev-up"),
         Some(&user),
         None,
     )
@@ -527,7 +527,7 @@ async fn prev_up_skips_soft_deleted_issues() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue3_id}/prev-up"),
+        &format!("/api/issues/{issue3_id}/prev-up"),
         Some(&user),
         None,
     )
@@ -551,7 +551,7 @@ async fn prev_up_returns_none_when_at_first_issue() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/prev-up"),
+        &format!("/api/issues/{issue1_id}/prev-up"),
         Some(&user),
         None,
     )
@@ -587,7 +587,7 @@ async fn prev_up_cbl_takes_precedence_over_series() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue2_id}/prev-up?cbl={sv_id}"),
+        &format!("/api/issues/{issue2_id}/prev-up?cbl={sv_id}"),
         Some(&user),
         None,
     )
@@ -619,7 +619,7 @@ async fn prev_up_cbl_stale_param_falls_back_to_series() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue2_id}/prev-up?cbl={sv_id}"),
+        &format!("/api/issues/{issue2_id}/prev-up?cbl={sv_id}"),
         Some(&user),
         None,
     )
@@ -650,7 +650,7 @@ async fn prev_up_cbl_at_first_entry_falls_back_to_series() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue2_id}/prev-up?cbl={sv_id}"),
+        &format!("/api/issues/{issue2_id}/prev-up?cbl={sv_id}"),
         Some(&user),
         None,
     )
@@ -671,7 +671,7 @@ async fn prev_up_acl_returns_404_for_invisible_current_issue() {
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/prev-up"),
+        &format!("/api/issues/{issue1_id}/prev-up"),
         Some(&user),
         None,
     )

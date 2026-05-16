@@ -379,7 +379,7 @@ async fn seed_reading_session(app: &TestApp, auth: &Authed, issue_id: &str, tag:
         "end_page": 5,
     })
     .to_string();
-    let (s, _) = post(app, auth, "/me/reading-sessions", &body).await;
+    let (s, _) = post(app, auth, "/api/me/reading-sessions", &body).await;
     assert!(s.is_success(), "seed_reading_session: {s}");
 }
 
@@ -388,7 +388,7 @@ async fn rejects_non_admin() {
     let app = TestApp::spawn().await;
     let _admin = register(&app, "admin@example.com").await;
     let user = register(&app, "user@example.com").await;
-    let (s, _) = get(&app, &user, "/admin/activity").await;
+    let (s, _) = get(&app, &user, "/api/admin/activity").await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
 
@@ -405,7 +405,7 @@ async fn feed_includes_all_four_kinds() {
     seed_health_issue(&app, lib_id).await;
     seed_reading_session(&app, &user, &issue_id, "r1").await;
 
-    let (s, body) = get(&app, &admin, "/admin/activity").await;
+    let (s, body) = get(&app, &admin, "/api/admin/activity").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
     let entries = body["entries"].as_array().unwrap();
     let kinds: std::collections::HashSet<&str> = entries
@@ -438,11 +438,11 @@ async fn filter_chips_restrict_kinds() {
     seed_health_issue(&app, lib_id).await;
     seed_reading_session(&app, &user, &issue_id, "r1").await;
 
-    let (_, body) = get(&app, &admin, "/admin/activity?kinds=audit").await;
+    let (_, body) = get(&app, &admin, "/api/admin/activity?kinds=audit").await;
     let entries = body["entries"].as_array().unwrap();
     assert!(entries.iter().all(|e| e["kind"] == "audit"));
 
-    let (_, body) = get(&app, &admin, "/admin/activity?kinds=health,scan").await;
+    let (_, body) = get(&app, &admin, "/api/admin/activity?kinds=health,scan").await;
     let entries = body["entries"].as_array().unwrap();
     let kinds: std::collections::HashSet<&str> = entries
         .iter()
@@ -467,7 +467,7 @@ async fn cursor_pagination_works() {
     }
     seed_scan_run(&app, lib_id).await;
 
-    let (_, body) = get(&app, &admin, "/admin/activity?kinds=audit&limit=3").await;
+    let (_, body) = get(&app, &admin, "/api/admin/activity?kinds=audit&limit=3").await;
     let p1 = body["entries"].as_array().unwrap();
     assert_eq!(p1.len(), 3);
     let cursor = body["next_cursor"].as_str().unwrap().to_owned();
@@ -475,7 +475,7 @@ async fn cursor_pagination_works() {
     let (_, body) = get(
         &app,
         &admin,
-        &format!("/admin/activity?kinds=audit&limit=3&cursor={cursor}"),
+        &format!("/api/admin/activity?kinds=audit&limit=3&cursor={cursor}"),
     )
     .await;
     let p2 = body["entries"].as_array().unwrap();
@@ -495,7 +495,7 @@ async fn cursor_pagination_works() {
 async fn invalid_cursor_400s() {
     let app = TestApp::spawn().await;
     let admin = register(&app, "admin@example.com").await;
-    let (s, _) = get(&app, &admin, "/admin/activity?cursor=garbage!!").await;
+    let (s, _) = get(&app, &admin, "/api/admin/activity?cursor=garbage!!").await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
@@ -506,7 +506,7 @@ async fn unknown_kinds_returns_empty() {
     let (_lib_id, _series_id, _issue_id) = seed_one(&app, "demo").await;
     seed_audit(&app, admin.user_id).await;
 
-    let (s, body) = get(&app, &admin, "/admin/activity?kinds=nonsense").await;
+    let (s, body) = get(&app, &admin, "/api/admin/activity?kinds=nonsense").await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["entries"].as_array().unwrap().len(), 0);
 }

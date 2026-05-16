@@ -188,7 +188,14 @@ async fn default_layout_contains_builtins_and_libraries() {
     seed_library(&app, "Comics").await;
     seed_library(&app, "Manga").await;
 
-    let (status, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&admin), None).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&admin),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "json: {json:#?}");
     let entries = json["entries"].as_array().unwrap();
 
@@ -236,7 +243,14 @@ async fn non_admin_only_sees_granted_libraries() {
     let _lib_b = seed_library(&app, "B-lib").await;
     grant_library_access(&app, user.user_id, lib_a).await;
 
-    let (status, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&user), None).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&user),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let entries = json["entries"].as_array().unwrap();
     let lib_labels: Vec<String> = entries
@@ -268,7 +282,7 @@ async fn patch_overrides_visibility_and_position() {
     let (status, json) = http(
         &app,
         Method::PATCH,
-        "/me/sidebar-layout",
+        "/api/me/sidebar-layout",
         Some(&auth),
         Some(body),
     )
@@ -276,7 +290,14 @@ async fn patch_overrides_visibility_and_position() {
     assert_eq!(status, StatusCode::OK, "patch failed: {json:#?}");
 
     // Verify by reading back.
-    let (status, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let entries = json["entries"].as_array().unwrap();
 
@@ -318,7 +339,7 @@ async fn patch_empty_clears_overrides() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        "/me/sidebar-layout",
+        "/api/me/sidebar-layout",
         Some(&auth),
         Some(body),
     )
@@ -330,7 +351,7 @@ async fn patch_empty_clears_overrides() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        "/me/sidebar-layout",
+        "/api/me/sidebar-layout",
         Some(&auth),
         Some(body),
     )
@@ -338,7 +359,14 @@ async fn patch_empty_clears_overrides() {
     assert_eq!(status, StatusCode::OK);
 
     // GET should reflect defaults (bookmarks visible again).
-    let (_, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     let bookmarks = json["entries"]
         .as_array()
         .unwrap()
@@ -361,7 +389,7 @@ async fn patch_rejects_invalid_kind() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        "/me/sidebar-layout",
+        "/api/me/sidebar-layout",
         Some(&auth),
         Some(body),
     )
@@ -383,7 +411,7 @@ async fn patch_rejects_duplicate_ref() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        "/me/sidebar-layout",
+        "/api/me/sidebar-layout",
         Some(&auth),
         Some(body),
     )
@@ -399,7 +427,7 @@ async fn default_home_pin_order_is_curated() {
     // First touch seeds auto-pin system views into user_view_pins. The
     // top-down pin order is curated: Continue Reading → On Deck →
     // Recently Added → Recently Updated.
-    let (status, json) = http(&app, Method::GET, "/me/saved-views", Some(&auth), None).await;
+    let (status, json) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = json["items"].as_array().unwrap();
     let mut pinned: Vec<(i64, String)> = items
@@ -432,7 +460,7 @@ async fn create_page(app: &TestApp, auth: &Authed, name: &str) -> String {
     let (status, body) = http(
         app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(auth),
         Some(serde_json::json!({ "name": name })),
     )
@@ -449,7 +477,14 @@ async fn custom_pages_appear_after_libraries_by_default() {
     let indie = create_page(&app, &auth, "Indie").await;
     seed_library(&app, "Comics").await;
 
-    let (status, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let entries = json["entries"].as_array().unwrap();
     let by_kind_ref: Vec<(String, String)> = entries
@@ -482,7 +517,7 @@ async fn custom_pages_appear_after_libraries_by_default() {
         .iter()
         .find(|e| e["ref_id"].as_str() == Some(&marvel))
         .unwrap();
-    assert_eq!(marvel_entry["href"], "/pages/marvel");
+    assert_eq!(marvel_entry["href"], "/api/pages/marvel");
     assert_eq!(marvel_entry["icon"], "LayoutGrid");
     assert_eq!(marvel_entry["label"], "Marvel");
     assert_eq!(marvel_entry["visible"], true);
@@ -493,7 +528,7 @@ async fn home_label_reflects_renamed_system_page() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "home-rename@example.com").await;
 
-    let (_, pages) = http(&app, Method::GET, "/me/pages", Some(&auth), None).await;
+    let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&auth), None).await;
     let home_id = pages
         .as_array()
         .unwrap()
@@ -504,14 +539,21 @@ async fn home_label_reflects_renamed_system_page() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{home_id}"),
+        &format!("/api/me/pages/{home_id}"),
         Some(&auth),
         Some(serde_json::json!({ "name": "Library" })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, layout) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (_, layout) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     let entries = layout["entries"].as_array().unwrap();
     let home = entries
         .iter()
@@ -537,14 +579,21 @@ async fn patch_accepts_kind_page_override() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        "/me/sidebar-layout",
+        "/api/me/sidebar-layout",
         Some(&auth),
         Some(body),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, json) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     let entry = json["entries"]
         .as_array()
         .unwrap()
@@ -563,7 +612,14 @@ async fn deleted_page_drops_from_layout() {
     let page_id = create_page(&app, &auth, "ToDelete").await;
 
     // Confirm the page is in the layout.
-    let (_, before) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (_, before) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     assert!(
         before["entries"]
             .as_array()
@@ -577,14 +633,21 @@ async fn deleted_page_drops_from_layout() {
     let (status, _) = http(
         &app,
         Method::DELETE,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&auth),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (_, after) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (_, after) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     assert!(
         !after["entries"]
             .as_array()
@@ -603,7 +666,14 @@ async fn default_layout_includes_section_headers() {
     let auth = register(&app, "headers-default@example.com").await;
     seed_library(&app, "Comics").await;
 
-    let (_, layout) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (_, layout) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     let entries = layout["entries"].as_array().unwrap();
     let headers: Vec<(String, String)> = entries
         .iter()
@@ -654,14 +724,21 @@ async fn patch_accepts_custom_header_and_spacer() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        "/me/sidebar-layout",
+        "/api/me/sidebar-layout",
         Some(&auth),
         Some(body),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, layout) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (_, layout) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     let entries = layout["entries"].as_array().unwrap();
     let custom_header = entries
         .iter()
@@ -690,7 +767,7 @@ async fn patch_rejects_header_without_label() {
     let (status, json) = http(
         &app,
         Method::PATCH,
-        "/me/sidebar-layout",
+        "/api/me/sidebar-layout",
         Some(&auth),
         Some(body),
     )
@@ -719,14 +796,21 @@ async fn label_override_renames_default_entries() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        "/me/sidebar-layout",
+        "/api/me/sidebar-layout",
         Some(&auth),
         Some(body),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, layout) = http(&app, Method::GET, "/me/sidebar-layout", Some(&auth), None).await;
+    let (_, layout) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        None,
+    )
+    .await;
     let entry = layout["entries"]
         .as_array()
         .unwrap()

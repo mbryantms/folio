@@ -25,7 +25,7 @@ function issue(overrides: Partial<IssueSummaryView> = {}): IssueSummaryView {
     year: 2003,
     page_count: 22,
     state: "active",
-    cover_url: "/api/issues/i2/pages/0/thumb",
+    cover_url: "/issues/i2/pages/0/thumb",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,

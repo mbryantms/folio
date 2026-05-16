@@ -18,7 +18,10 @@ function getCsrfToken(): string | null {
 }
 
 const baseClient = createClient<Paths>({
-  baseUrl: typeof window === "undefined" ? "http://localhost:8080" : "/api",
+  // Browser: bare same-origin paths (Rust binary is the public origin
+  // as of v0.2). SSR: explicit Rust hostname so the request reaches
+  // the backend regardless of where Next is running.
+  baseUrl: typeof window === "undefined" ? "http://localhost:8080" : "",
   credentials: "include",
 });
 

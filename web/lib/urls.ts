@@ -121,17 +121,17 @@ export function readerUrl(
 
 /** Cover thumbnail URL for an issue. */
 export function coverThumbUrl(issueId: string): string {
-  return `/api/issues/${encodeURIComponent(issueId)}/pages/0/thumb`;
+  return `/issues/${encodeURIComponent(issueId)}/pages/0/thumb`;
 }
 
 /** Strip thumbnail URL for a specific page. */
 export function pageThumbUrl(issueId: string, page: number): string {
-  return `/api/issues/${encodeURIComponent(issueId)}/pages/${page}/thumb`;
+  return `/issues/${encodeURIComponent(issueId)}/pages/${page}/thumb`;
 }
 
 /** Full-resolution page bytes URL. */
 export function pageBytesUrl(issueId: string, page: number): string {
-  return `/api/issues/${encodeURIComponent(issueId)}/pages/${page}`;
+  return `/issues/${encodeURIComponent(issueId)}/pages/${page}`;
 }
 
 // ───── Helper exports for caller convenience ─────

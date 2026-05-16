@@ -80,6 +80,11 @@ pub struct SpawnOpts {
     /// — pass `Some(real_dir)` when the test needs the handler to read
     /// actual on-disk children.
     pub library_root: Option<PathBuf>,
+    /// Override the Next.js SSR upstream URL the `upstream::proxy`
+    /// fallback forwards to. Defaults to a guaranteed-dead address;
+    /// tests covering the fallback (see `tests/fallback_proxy.rs`)
+    /// point it at a wiremock instance.
+    pub web_upstream_url: Option<String>,
 }
 
 impl TestApp {
@@ -98,6 +103,16 @@ impl TestApp {
 
     pub async fn spawn() -> Self {
         Self::spawn_inner(SpawnOpts::default()).await
+    }
+
+    /// Spawn with the SSR fallback pointed at the given upstream URL
+    /// (typically a `wiremock::MockServer` for `tests/fallback_proxy.rs`).
+    pub async fn spawn_with_web_upstream(url: impl Into<String>) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            web_upstream_url: Some(url.into()),
+            ..SpawnOpts::default()
+        })
+        .await
     }
 
     /// Spawn with an explicit library-root path. Use for tests that
@@ -120,6 +135,7 @@ impl TestApp {
             oidc_issuer: Some(issuer.into()),
             oidc_trust_unverified_email: trust_unverified,
             library_root: None,
+            web_upstream_url: None,
         })
         .await
     }
@@ -177,6 +193,14 @@ impl TestApp {
             } else {
                 AuthMode::Local
             },
+            // Defaults to a guaranteed-dead address so any test that
+            // accidentally triggers the SSR fallback fails loudly. Real
+            // fallback coverage lives in `tests/fallback_proxy.rs`,
+            // which overrides via `SpawnOpts::web_upstream_url`.
+            web_upstream_url: opts
+                .web_upstream_url
+                .clone()
+                .unwrap_or_else(|| "http://127.0.0.1:0".into()),
             oidc_issuer: opts.oidc_issuer.clone(),
             oidc_client_id: opts
                 .oidc_issuer

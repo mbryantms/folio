@@ -132,17 +132,17 @@ function LinksCard() {
       <CardContent>
         <ul className="space-y-2 text-sm">
           <ProbeLink
-            href="/api/healthz"
+            href="/healthz"
             label="/healthz"
             hint="liveness probe"
           />
           <ProbeLink
-            href="/api/readyz"
+            href="/readyz"
             label="/readyz"
             hint="readiness probe"
           />
           <ProbeLink
-            href="/api/metrics"
+            href="/metrics"
             label="/metrics"
             hint="Prometheus exporter"
           />

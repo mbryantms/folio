@@ -104,7 +104,7 @@ async fn create_library(
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/libraries")
+                .uri("/api/libraries")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, auth.cookie())
                 .header("X-CSRF-Token", &auth.csrf)
@@ -125,7 +125,7 @@ async fn patch_library(app: &TestApp, auth: &Authed, id: &str, body: Value) -> (
         .oneshot(
             Request::builder()
                 .method(Method::PATCH)
-                .uri(format!("/libraries/{id}"))
+                .uri(format!("/api/libraries/{id}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, auth.cookie())
                 .header("X-CSRF-Token", &auth.csrf)

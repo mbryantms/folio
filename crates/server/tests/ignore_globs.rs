@@ -87,7 +87,7 @@ async fn create_library(app: &TestApp, auth: &Authed, root: &Path) -> (String, S
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/libraries")
+                .uri("/api/libraries")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(
                     header::COOKIE,
@@ -122,7 +122,7 @@ async fn patch_library(
         .oneshot(
             Request::builder()
                 .method(Method::PATCH)
-                .uri(format!("/libraries/{lib_id}"))
+                .uri(format!("/api/libraries/{lib_id}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(
                     header::COOKIE,

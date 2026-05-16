@@ -343,7 +343,7 @@ async fn patch_full_field_set_persists() {
     let (status, json) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
         body,
     )
     .await;
@@ -353,7 +353,7 @@ async fn patch_full_field_set_persists() {
     let (gs, gj) = get(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
     )
     .await;
     assert_eq!(gs, StatusCode::OK);
@@ -439,7 +439,7 @@ async fn patch_validation_rejects_bad_input() {
     let (s, _) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
         serde_json::json!({ "year": 1500 }),
     )
     .await;
@@ -449,7 +449,7 @@ async fn patch_validation_rejects_bad_input() {
     let (s, _) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
         serde_json::json!({ "month": 13 }),
     )
     .await;
@@ -459,7 +459,7 @@ async fn patch_validation_rejects_bad_input() {
     let (s, _) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
         serde_json::json!({ "manga": "Maybe" }),
     )
     .await;
@@ -502,7 +502,7 @@ async fn next_in_series_returns_upcoming_in_order() {
     let (status, json) = get(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-2/next?limit=5"),
+        &format!("/api/series/{series_slug}/issues/issue-2/next?limit=5"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {json}");
@@ -515,7 +515,7 @@ async fn next_in_series_returns_upcoming_in_order() {
     let (_, json) = get(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1/next?limit=2"),
+        &format!("/api/series/{series_slug}/issues/issue-1/next?limit=2"),
     )
     .await;
     let items = json["items"].as_array().unwrap();
@@ -527,7 +527,7 @@ async fn next_in_series_returns_upcoming_in_order() {
     let (_, json) = get(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-4/next"),
+        &format!("/api/series/{series_slug}/issues/issue-4/next"),
     )
     .await;
     assert!(json["items"].as_array().unwrap().is_empty());
@@ -551,7 +551,7 @@ async fn patch_external_ids_persist_and_round_trip() {
     let (status, _) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
         serde_json::json!({
             "comicvine_id": 381432,
             "metron_id": 12345,
@@ -563,7 +563,7 @@ async fn patch_external_ids_persist_and_round_trip() {
     let (_, json) = get(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
     )
     .await;
     assert_eq!(json["comicvine_id"], 381432);
@@ -581,7 +581,7 @@ async fn patch_external_ids_persist_and_round_trip() {
     let (status, _) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
         serde_json::json!({ "comicvine_id": null }),
     )
     .await;
@@ -589,7 +589,7 @@ async fn patch_external_ids_persist_and_round_trip() {
     let (_, json) = get(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
     )
     .await;
     assert!(json["comicvine_id"].is_null());
@@ -616,7 +616,7 @@ async fn series_status_and_external_ids_editable() {
     let (status, _) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}"),
+        &format!("/api/series/{series_slug}"),
         serde_json::json!({
             "status": "ended",
             "comicvine_id": 49901,
@@ -626,7 +626,7 @@ async fn series_status_and_external_ids_editable() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, json) = get(&app, &auth, &format!("/series/{series_slug}")).await;
+    let (_, json) = get(&app, &auth, &format!("/api/series/{series_slug}")).await;
     assert_eq!(json["status"], "ended");
     assert_eq!(json["comicvine_id"], 49901);
     assert_eq!(json["metron_id"], 1234);
@@ -635,7 +635,7 @@ async fn series_status_and_external_ids_editable() {
     let (status, _) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}"),
+        &format!("/api/series/{series_slug}"),
         serde_json::json!({ "status": "wat" }),
     )
     .await;
@@ -677,31 +677,31 @@ async fn series_summary_editable_via_patch() {
     am.update(&db).await.unwrap();
 
     // Series with no summary should surface the issue's summary on GET.
-    let (_, json) = get(&app, &auth, &format!("/series/{series_slug}")).await;
+    let (_, json) = get(&app, &auth, &format!("/api/series/{series_slug}")).await;
     assert_eq!(json["summary"], "Issue summary fallback");
 
     let (status, _) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}"),
+        &format!("/api/series/{series_slug}"),
         serde_json::json!({ "summary": "Series-level summary" }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, json) = get(&app, &auth, &format!("/series/{series_slug}")).await;
+    let (_, json) = get(&app, &auth, &format!("/api/series/{series_slug}")).await;
     assert_eq!(json["summary"], "Series-level summary");
 
     // Clearing summary lets the issue-fallback resurface.
     let (status, _) = patch(
         &app,
         &auth,
-        &format!("/series/{series_slug}"),
+        &format!("/api/series/{series_slug}"),
         serde_json::json!({ "summary": null }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (_, json) = get(&app, &auth, &format!("/series/{series_slug}")).await;
+    let (_, json) = get(&app, &auth, &format!("/api/series/{series_slug}")).await;
     assert_eq!(json["summary"], "Issue summary fallback");
 }
 
@@ -746,12 +746,12 @@ async fn series_and_issue_ratings_round_trip() {
     .await;
 
     // Initial GETs: no rating.
-    let (_, json) = get(&app, &auth, &format!("/series/{series_slug}")).await;
+    let (_, json) = get(&app, &auth, &format!("/api/series/{series_slug}")).await;
     assert!(json["user_rating"].is_null());
     let (_, json) = get(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
     )
     .await;
     assert!(json["user_rating"].is_null());
@@ -760,21 +760,21 @@ async fn series_and_issue_ratings_round_trip() {
     let (status, body) = put_json(
         &app,
         &auth,
-        &format!("/series/{series_slug}/rating"),
+        &format!("/api/series/{series_slug}/rating"),
         serde_json::json!({ "rating": 4.5 }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
     assert_eq!(body["rating"], 4.5);
 
-    let (_, json) = get(&app, &auth, &format!("/series/{series_slug}")).await;
+    let (_, json) = get(&app, &auth, &format!("/api/series/{series_slug}")).await;
     assert_eq!(json["user_rating"], 4.5);
 
     // Half-step precision is enforced.
     let (status, _) = put_json(
         &app,
         &auth,
-        &format!("/series/{series_slug}/rating"),
+        &format!("/api/series/{series_slug}/rating"),
         serde_json::json!({ "rating": 3.7 }),
     )
     .await;
@@ -784,7 +784,7 @@ async fn series_and_issue_ratings_round_trip() {
     let (status, _) = put_json(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1/rating"),
+        &format!("/api/series/{series_slug}/issues/issue-1/rating"),
         serde_json::json!({ "rating": 3.0 }),
     )
     .await;
@@ -792,7 +792,7 @@ async fn series_and_issue_ratings_round_trip() {
     let (_, json) = get(
         &app,
         &auth,
-        &format!("/series/{series_slug}/issues/issue-1"),
+        &format!("/api/series/{series_slug}/issues/issue-1"),
     )
     .await;
     assert_eq!(json["user_rating"], 3.0);
@@ -801,12 +801,12 @@ async fn series_and_issue_ratings_round_trip() {
     let (status, _) = put_json(
         &app,
         &auth,
-        &format!("/series/{series_slug}/rating"),
+        &format!("/api/series/{series_slug}/rating"),
         serde_json::json!({ "rating": null }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (_, json) = get(&app, &auth, &format!("/series/{series_slug}")).await;
+    let (_, json) = get(&app, &auth, &format!("/api/series/{series_slug}")).await;
     assert!(json["user_rating"].is_null());
 }
 
@@ -887,7 +887,7 @@ async fn series_view_includes_progress_summary_and_year_range() {
     .await
     .unwrap();
 
-    let (status, json) = get(&app, &auth, &format!("/series/{series_slug}")).await;
+    let (status, json) = get(&app, &auth, &format!("/api/series/{series_slug}")).await;
     assert_eq!(status, StatusCode::OK);
     let summary = &json["progress_summary"];
     assert_eq!(summary["total"], 3, "body: {json}");

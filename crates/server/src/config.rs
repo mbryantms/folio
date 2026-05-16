@@ -66,6 +66,19 @@ pub struct Config {
     #[serde(default = "default_auth_mode")]
     pub auth_mode: AuthMode,
 
+    /// Upstream URL of the Next.js standalone server. Used by the
+    /// `upstream::proxy` fallback to forward HTML/static requests that
+    /// no Rust route handled. Matches the design intent in
+    /// `web/next.config.ts:26,40-41` — Rust is the public origin,
+    /// Next is an internal SSR upstream. See
+    /// `~/.claude/plans/rust-public-origin-1.0.md` for the rollout.
+    ///
+    /// In dev (`just dev`), Next listens on `:3000` on localhost. In
+    /// the published compose file (post-cutover), this points at the
+    /// internal service hostname, e.g. `http://folio-web:3000`.
+    #[serde(default = "default_web_upstream_url")]
+    pub web_upstream_url: String,
+
     // OIDC
     #[serde(default)]
     pub oidc_issuer: Option<String>,
@@ -163,6 +176,9 @@ fn default_log_level() -> String {
 }
 fn default_auth_mode() -> AuthMode {
     AuthMode::Both
+}
+fn default_web_upstream_url() -> String {
+    "http://localhost:3000".into()
 }
 fn default_true() -> bool {
     true
@@ -737,6 +753,7 @@ mod tests {
             log_level: "info".into(),
             trusted_proxies: String::new(),
             auth_mode: AuthMode::Local,
+            web_upstream_url: "http://127.0.0.1:0".into(),
             oidc_issuer: None,
             oidc_client_id: None,
             oidc_client_secret: None,

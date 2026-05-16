@@ -254,7 +254,7 @@ async fn create_collection(app: &TestApp, auth: &Authed, name: &str) -> Uuid {
     let (status, v) = http(
         app,
         Method::POST,
-        "/me/collections",
+        "/api/me/collections",
         Some(auth),
         Some(serde_json::json!({ "name": name })),
     )
@@ -268,7 +268,7 @@ async fn list_seeds_want_to_read_idempotently() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "alice@example.com").await;
 
-    let (status, items) = http(&app, Method::GET, "/me/collections", Some(&auth), None).await;
+    let (status, items) = http(&app, Method::GET, "/api/me/collections", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let arr = items.as_array().unwrap();
     // Exactly one row on a fresh user — the seeded Want to Read.
@@ -283,7 +283,7 @@ async fn list_seeds_want_to_read_idempotently() {
     assert_eq!(arr[0]["show_in_sidebar"], false);
 
     // Second call doesn't duplicate it.
-    let (_, items2) = http(&app, Method::GET, "/me/collections", Some(&auth), None).await;
+    let (_, items2) = http(&app, Method::GET, "/api/me/collections", Some(&auth), None).await;
     let arr2 = items2.as_array().unwrap();
     assert_eq!(arr2.len(), 1);
     assert_eq!(arr2[0]["id"], arr[0]["id"]);
@@ -297,7 +297,7 @@ async fn create_patch_delete_round_trip() {
     let (status, view) = http(
         &app,
         Method::POST,
-        "/me/collections",
+        "/api/me/collections",
         Some(&auth),
         Some(serde_json::json!({ "name": "My Capes", "description": "Cape comics." })),
     )
@@ -310,7 +310,7 @@ async fn create_patch_delete_round_trip() {
 
     // PATCH name + clear description by sending empty string (codebase
     // convention — the trim/filter path turns "" into None).
-    let url = format!("/me/collections/{id}");
+    let url = format!("/api/me/collections/{id}");
     let (status, patched) = http(
         &app,
         Method::PATCH,
@@ -342,9 +342,9 @@ async fn want_to_read_cannot_be_deleted() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "claire@example.com").await;
     // Seed WTR.
-    let (_, items) = http(&app, Method::GET, "/me/collections", Some(&auth), None).await;
+    let (_, items) = http(&app, Method::GET, "/api/me/collections", Some(&auth), None).await;
     let wtr_id = items[0]["id"].as_str().unwrap().to_owned();
-    let url = format!("/me/collections/{wtr_id}");
+    let url = format!("/api/me/collections/{wtr_id}");
     let (status, body) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::CONFLICT, "body: {body:#?}");
     assert_eq!(body["error"]["code"], "want_to_read_undeletable");
@@ -358,7 +358,7 @@ async fn add_series_and_issue_entries_mixed() {
     let cid = create_collection(&app, &auth, "Pile").await;
 
     // Add a series entry.
-    let url = format!("/me/collections/{cid}/entries");
+    let url = format!("/api/me/collections/{cid}/entries");
     let (status, body) = http(
         &app,
         Method::POST,
@@ -404,7 +404,7 @@ async fn add_entry_idempotent_returns_409() {
     let auth = register(&app, "eve@example.com").await;
     let (_lib, series_id, _issue) = seed_series_with_issue(&app, "ipx").await;
     let cid = create_collection(&app, &auth, "Pile").await;
-    let url = format!("/me/collections/{cid}/entries");
+    let url = format!("/api/me/collections/{cid}/entries");
 
     let body = serde_json::json!({ "entry_kind": "series", "ref_id": series_id.to_string() });
     let (status, _) = http(&app, Method::POST, &url, Some(&auth), Some(body.clone())).await;
@@ -419,7 +419,7 @@ async fn add_entry_validation_errors() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "frank@example.com").await;
     let cid = create_collection(&app, &auth, "Pile").await;
-    let url = format!("/me/collections/{cid}/entries");
+    let url = format!("/api/me/collections/{cid}/entries");
 
     // Unknown entry_kind.
     let (status, _) = http(
@@ -461,7 +461,7 @@ async fn remove_entry_clears_row() {
     let auth = register(&app, "grace@example.com").await;
     let (_lib, series_id, _issue) = seed_series_with_issue(&app, "grace").await;
     let cid = create_collection(&app, &auth, "Pile").await;
-    let url = format!("/me/collections/{cid}/entries");
+    let url = format!("/api/me/collections/{cid}/entries");
 
     let (_, entry) = http(
         &app,
@@ -473,7 +473,7 @@ async fn remove_entry_clears_row() {
     .await;
     let entry_id = entry["id"].as_str().unwrap().to_owned();
 
-    let del = format!("/me/collections/{cid}/entries/{entry_id}");
+    let del = format!("/api/me/collections/{cid}/entries/{entry_id}");
     let (status, _) = http(&app, Method::DELETE, &del, Some(&auth), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
@@ -489,7 +489,7 @@ async fn reorder_rewrites_positions_in_tx() {
     let (_lib2, s2, _i2) = seed_series_with_issue(&app, "bravo").await;
     let (_lib3, s3, _i3) = seed_series_with_issue(&app, "charlie").await;
     let cid = create_collection(&app, &auth, "Reorder Me").await;
-    let entries_url = format!("/me/collections/{cid}/entries");
+    let entries_url = format!("/api/me/collections/{cid}/entries");
 
     let mut ids = Vec::new();
     for s in [s1, s2, s3] {
@@ -505,7 +505,7 @@ async fn reorder_rewrites_positions_in_tx() {
     }
 
     // Reverse the order.
-    let reorder_url = format!("/me/collections/{cid}/entries/reorder");
+    let reorder_url = format!("/api/me/collections/{cid}/entries/reorder");
     let reversed: Vec<String> = ids.iter().rev().cloned().collect();
     let (status, body) = http(
         &app,
@@ -545,7 +545,7 @@ async fn reorder_rejects_partial_lists() {
     let (_lib1, s1, _i1) = seed_series_with_issue(&app, "x1").await;
     let (_lib2, s2, _i2) = seed_series_with_issue(&app, "x2").await;
     let cid = create_collection(&app, &auth, "Reorder").await;
-    let entries_url = format!("/me/collections/{cid}/entries");
+    let entries_url = format!("/api/me/collections/{cid}/entries");
 
     let mut ids = Vec::new();
     for s in [s1, s2] {
@@ -560,7 +560,7 @@ async fn reorder_rejects_partial_lists() {
         ids.push(e["id"].as_str().unwrap().to_owned());
     }
 
-    let url = format!("/me/collections/{cid}/entries/reorder");
+    let url = format!("/api/me/collections/{cid}/entries/reorder");
     let (status, body) = http(
         &app,
         Method::POST,
@@ -580,12 +580,12 @@ async fn cross_user_collection_access_denied() {
     let cid = create_collection(&app, &alice, "Alice's pile").await;
 
     // Bob can't read alice's collection entries.
-    let url = format!("/me/collections/{cid}/entries");
+    let url = format!("/api/me/collections/{cid}/entries");
     let (status, body) = http(&app, Method::GET, &url, Some(&bob), None).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "body: {body:#?}");
 
     // Bob can't patch it.
-    let patch_url = format!("/me/collections/{cid}");
+    let patch_url = format!("/api/me/collections/{cid}");
     let (status, _) = http(
         &app,
         Method::PATCH,
@@ -608,7 +608,7 @@ async fn csrf_required_on_mutations() {
     // Cookie-bound POST without the X-CSRF-Token header is rejected.
     let req = Request::builder()
         .method(Method::POST)
-        .uri("/me/collections")
+        .uri("/api/me/collections")
         .header(
             header::COOKIE,
             format!(
@@ -628,7 +628,7 @@ async fn saved_views_results_returns_empty_stub_for_collections() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "lena@example.com").await;
     let cid = create_collection(&app, &auth, "Stub").await;
-    let url = format!("/me/saved-views/{cid}/results");
+    let url = format!("/api/me/saved-views/{cid}/results");
     let (status, body) = http(&app, Method::GET, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK, "body: {body:#?}");
     assert!(body["items"].as_array().unwrap().is_empty());

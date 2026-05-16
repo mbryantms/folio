@@ -90,11 +90,17 @@ And the Caddyfile:
 folio.lan {
     tls /certs/cert.pem /certs/key.pem
 
-    @api path /api/* /auth/* /ws/* /opds/* /healthz /readyz /metrics /csp-report
-    @api path /issues/* /pages/* /thumbnails/*
-    reverse_proxy @api app:8080
-
-    reverse_proxy web:3000
+    # Single upstream — the Rust binary handles everything, including
+    # reverse-proxying HTML to its internal Next.js SSR upstream over
+    # the compose bridge. See `caddy.md` for the production analog.
+    reverse_proxy app:8080 {
+        flush_interval -1
+        transport http {
+            read_timeout  10m
+            write_timeout 10m
+            keepalive 60s
+        }
+    }
 }
 ```
 

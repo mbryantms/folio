@@ -61,6 +61,7 @@ axum-extra = { version = "0.10", features = ["cookie", "cookie-private", "cookie
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip", "compression-zstd", "cors", "set-header", "request-id", "timeout"] }
 hyper = { version = "1.5", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 
 # OpenAPI
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
@@ -191,7 +192,7 @@ ipnet = "2.10"
 # Test
 testcontainers = { version = "0.23" }
 testcontainers-modules = { version = "0.11", features = ["postgres", "redis"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 insta = { version = "1.41", features = ["json"] }
 proptest = "1.5"
 

@@ -142,7 +142,7 @@ async fn upload_cbl(
 
     let req = Request::builder()
         .method(Method::POST)
-        .uri("/me/cbl-lists/upload")
+        .uri("/api/me/cbl-lists/upload")
         .header(
             header::CONTENT_TYPE,
             format!("multipart/form-data; boundary={boundary}"),
@@ -360,7 +360,7 @@ async fn manual_match_overrides_survive_refresh() {
         .expect("seeded Invincible #1 issue");
 
     let url = format!(
-        "/me/cbl-lists/{list_id}/entries/{entry_id}/match",
+        "/api/me/cbl-lists/{list_id}/entries/{entry_id}/match",
         entry_id = missing_entry.id
     );
     let body = serde_json::json!({ "issue_id": target_issue.id });
@@ -371,7 +371,7 @@ async fn manual_match_overrides_survive_refresh() {
     // raw_xml. Manual entry must not regress to `missing`. The refresh
     // path replaces entries (cheaper than per-row UPSERT); manual
     // overrides are preserved by composite-key lookup, not entry id.
-    let refresh_url = format!("/me/cbl-lists/{list_id}/refresh");
+    let refresh_url = format!("/api/me/cbl-lists/{list_id}/refresh");
     let (status, _summary) = http(&app, Method::POST, &refresh_url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -409,7 +409,7 @@ async fn clear_match_drops_status_to_missing() {
         .expect("at least one matched entry");
 
     let url = format!(
-        "/me/cbl-lists/{list_id}/entries/{entry_id}/clear-match",
+        "/api/me/cbl-lists/{list_id}/entries/{entry_id}/clear-match",
         entry_id = matched.id
     );
     let (status, _) = http(&app, Method::POST, &url, Some(&auth), None).await;
@@ -441,7 +441,7 @@ async fn delete_cascades_entries_and_refresh_log() {
         .unwrap();
     assert!(entry_count > 0);
 
-    let url = format!("/me/cbl-lists/{list_id}");
+    let url = format!("/api/me/cbl-lists/{list_id}");
     let (status, _) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
@@ -492,7 +492,7 @@ async fn delete_cascades_linked_cbl_saved_view() {
     let (status, view_body) = http(
         &app,
         Method::POST,
-        "/me/saved-views",
+        "/api/me/saved-views",
         Some(&auth),
         Some(body),
     )
@@ -504,7 +504,7 @@ async fn delete_cascades_linked_cbl_saved_view() {
     );
     let saved_view_id = view_body["id"].as_str().unwrap().to_owned();
 
-    let url = format!("/me/cbl-lists/{list_id}");
+    let url = format!("/api/me/cbl-lists/{list_id}");
     let (status, body) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
     assert_eq!(
         status,
@@ -540,7 +540,7 @@ async fn non_owner_cannot_access_other_users_list() {
     let list_id = view["id"].as_str().unwrap();
 
     let other = register(&app, "other@example.com").await;
-    let url = format!("/me/cbl-lists/{list_id}");
+    let url = format!("/api/me/cbl-lists/{list_id}");
     let (status, _) = http(&app, Method::GET, &url, Some(&other), None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
@@ -553,7 +553,7 @@ async fn issues_endpoint_returns_matched_issues_in_position_order() {
     let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
     let list_id = view["id"].as_str().unwrap();
 
-    let url = format!("/me/cbl-lists/{list_id}/issues");
+    let url = format!("/api/me/cbl-lists/{list_id}/issues");
     let (status, body) = http(&app, Method::GET, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().unwrap();
@@ -577,7 +577,7 @@ async fn list_endpoint_returns_user_owned_lists_with_stats() {
     let _lib = seed_matchable_issues(&app).await;
     let _ = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
 
-    let (status, body) = http(&app, Method::GET, "/me/cbl-lists", Some(&auth), None).await;
+    let (status, body) = http(&app, Method::GET, "/api/me/cbl-lists", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 1);
@@ -596,7 +596,7 @@ async fn export_returns_raw_xml_with_filename() {
     // Hit the export endpoint and inspect headers + body.
     let req = Request::builder()
         .method(Method::GET)
-        .uri(format!("/me/cbl-lists/{list_id}/export"))
+        .uri(format!("/api/me/cbl-lists/{list_id}/export"))
         .header(
             header::COOKIE,
             format!(
@@ -641,7 +641,7 @@ async fn export_rejected_for_other_users_lists() {
     let (status, _body) = http(
         &app,
         Method::GET,
-        &format!("/me/cbl-lists/{list_id}/export"),
+        &format!("/api/me/cbl-lists/{list_id}/export"),
         Some(&intruder),
         None,
     )
@@ -653,7 +653,7 @@ async fn export_rejected_for_other_users_lists() {
 async fn catalog_sources_lists_seeded_dieseltech() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "grace@example.com").await;
-    let (status, body) = http(&app, Method::GET, "/catalog/sources", Some(&auth), None).await;
+    let (status, body) = http(&app, Method::GET, "/api/catalog/sources", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().unwrap();
     assert!(items.iter().any(|s| s["github_owner"] == "DieselTech"));
@@ -671,7 +671,7 @@ async fn patch_refresh_schedule_null_clears_column() {
     let _lib = seed_matchable_issues(&app).await;
     let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
     let list_id = view["id"].as_str().unwrap().to_owned();
-    let url = format!("/me/cbl-lists/{list_id}");
+    let url = format!("/api/me/cbl-lists/{list_id}");
 
     let (status, body) = http(
         &app,
@@ -714,7 +714,7 @@ async fn entries_endpoint_paginates_via_cursor_and_returns_total_on_first_page()
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/me/cbl-lists/{list_id}/entries"),
+        &format!("/api/me/cbl-lists/{list_id}/entries"),
         Some(&auth),
         None,
     )
@@ -735,7 +735,7 @@ async fn entries_endpoint_paginates_via_cursor_and_returns_total_on_first_page()
         let (status, body) = http(
             &app,
             Method::GET,
-            &format!("/me/cbl-lists/{list_id}/entries?cursor={c}"),
+            &format!("/api/me/cbl-lists/{list_id}/entries?cursor={c}"),
             Some(&auth),
             None,
         )
@@ -769,7 +769,7 @@ async fn entries_status_filter_narrows_results() {
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/me/cbl-lists/{list_id}/entries?status=matched"),
+        &format!("/api/me/cbl-lists/{list_id}/entries?status=matched"),
         Some(&auth),
         None,
     )
@@ -789,7 +789,7 @@ async fn entries_status_filter_narrows_results() {
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/me/cbl-lists/{list_id}/entries?status=ambiguous,missing"),
+        &format!("/api/me/cbl-lists/{list_id}/entries?status=ambiguous,missing"),
         Some(&auth),
         None,
     )
@@ -810,7 +810,7 @@ async fn entries_rejects_invalid_status_and_cursor() {
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/me/cbl-lists/{list_id}/entries?status=bogus"),
+        &format!("/api/me/cbl-lists/{list_id}/entries?status=bogus"),
         Some(&auth),
         None,
     )
@@ -821,7 +821,7 @@ async fn entries_rejects_invalid_status_and_cursor() {
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/me/cbl-lists/{list_id}/entries?cursor=not-base64-or-malformed"),
+        &format!("/api/me/cbl-lists/{list_id}/entries?cursor=not-base64-or-malformed"),
         Some(&auth),
         None,
     )
@@ -842,7 +842,7 @@ async fn entries_endpoint_rejects_non_owner() {
     let (status, _) = http(
         &app,
         Method::GET,
-        &format!("/me/cbl-lists/{list_id}/entries"),
+        &format!("/api/me/cbl-lists/{list_id}/entries"),
         Some(&other),
         None,
     )
@@ -861,7 +861,7 @@ async fn detail_endpoint_no_longer_embeds_entries() {
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/me/cbl-lists/{list_id}"),
+        &format!("/api/me/cbl-lists/{list_id}"),
         Some(&auth),
         None,
     )
@@ -896,7 +896,7 @@ async fn cbl_saved_view_auto_seeds_year_range_from_entries() {
     let (status, view) = http(
         &app,
         Method::POST,
-        "/me/saved-views",
+        "/api/me/saved-views",
         Some(&auth),
         Some(body),
     )
@@ -925,7 +925,7 @@ async fn cbl_saved_view_respects_explicit_year_overrides() {
     let (status, view) = http(
         &app,
         Method::POST,
-        "/me/saved-views",
+        "/api/me/saved-views",
         Some(&auth),
         Some(body),
     )

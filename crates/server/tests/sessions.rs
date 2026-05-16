@@ -95,7 +95,7 @@ async fn list_sessions(app: &TestApp, auth: &Auth) -> Response<Body> {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri("/me/sessions")
+                .uri("/api/me/sessions")
                 .header(header::COOKIE, auth.cookie_header())
                 .body(Body::empty())
                 .unwrap(),
@@ -110,7 +110,7 @@ async fn revoke_session(app: &TestApp, auth: &Auth, id: &str) -> Response<Body> 
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/me/sessions/{id}"))
+                .uri(format!("/api/me/sessions/{id}"))
                 .header(header::COOKIE, auth.cookie_header())
                 .header("x-csrf-token", &auth.csrf)
                 .body(Body::empty())
@@ -126,7 +126,7 @@ async fn revoke_all(app: &TestApp, auth: &Auth) -> Response<Body> {
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/me/sessions/revoke-all")
+                .uri("/api/me/sessions/revoke-all")
                 .header(header::COOKIE, auth.cookie_header())
                 .header("x-csrf-token", &auth.csrf)
                 .body(Body::empty())

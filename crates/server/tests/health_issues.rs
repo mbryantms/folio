@@ -129,7 +129,7 @@ async fn list_health(app: &TestApp, auth: &Authed, lib_id: Uuid, query: &str) ->
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri(format!("/libraries/{lib_id}/health-issues?{query}"))
+                .uri(format!("/api/libraries/{lib_id}/health-issues?{query}"))
                 .header(
                     header::COOKIE,
                     format!("__Host-comic_session={}", auth.session),
@@ -304,7 +304,7 @@ async fn dismiss_hides_issue() {
             Request::builder()
                 .method(Method::POST)
                 .uri(format!(
-                    "/libraries/{lib_id}/health-issues/{issue_id}/dismiss"
+                    "/api/libraries/{lib_id}/health-issues/{issue_id}/dismiss"
                 ))
                 .header(
                     header::COOKIE,

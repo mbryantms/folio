@@ -476,7 +476,7 @@ async fn next_up_series_returns_next_issue_in_sort_order() {
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/next-up"),
+        &format!("/api/issues/{issue1_id}/next-up"),
         Some(&user),
         None,
     )
@@ -507,7 +507,7 @@ async fn next_up_series_skips_finished_and_soft_deleted_issues() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/next-up"),
+        &format!("/api/issues/{issue1_id}/next-up"),
         Some(&user),
         None,
     )
@@ -534,7 +534,7 @@ async fn next_up_series_returns_none_when_caught_up() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue2_id}/next-up"),
+        &format!("/api/issues/{issue2_id}/next-up"),
         Some(&user),
         None,
     )
@@ -619,7 +619,7 @@ async fn next_up_caught_up_populates_fallback_suggestion_when_user_has_on_deck()
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue_a2}/next-up"),
+        &format!("/api/issues/{issue_a2}/next-up"),
         Some(&user),
         None,
     )
@@ -661,7 +661,7 @@ async fn next_up_caught_up_excludes_current_issue_from_fallback() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/next-up"),
+        &format!("/api/issues/{issue1_id}/next-up"),
         Some(&user),
         None,
     )
@@ -698,7 +698,7 @@ async fn next_up_cbl_takes_precedence_over_series() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/next-up?cbl={sv_id}"),
+        &format!("/api/issues/{issue1_id}/next-up?cbl={sv_id}"),
         Some(&user),
         None,
     )
@@ -737,7 +737,7 @@ async fn next_up_cbl_stale_param_falls_back_to_series() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/next-up?cbl={sv_id}"),
+        &format!("/api/issues/{issue1_id}/next-up?cbl={sv_id}"),
         Some(&user),
         None,
     )
@@ -771,7 +771,7 @@ async fn next_up_cbl_no_match_does_not_set_stale_flag() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/next-up?cbl={phantom_sv}"),
+        &format!("/api/issues/{issue1_id}/next-up?cbl={phantom_sv}"),
         Some(&user),
         None,
     )
@@ -808,7 +808,7 @@ async fn next_up_cbl_exhausted_falls_back_to_series() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/next-up?cbl={sv_id}"),
+        &format!("/api/issues/{issue1_id}/next-up?cbl={sv_id}"),
         Some(&user),
         None,
     )
@@ -835,7 +835,7 @@ async fn next_up_acl_returns_404_for_invisible_current_issue() {
     let (status, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/next-up"),
+        &format!("/api/issues/{issue1_id}/next-up"),
         Some(&user),
         None,
     )
@@ -865,7 +865,7 @@ async fn next_up_cbl_belonging_to_other_user_is_silently_ignored() {
     let (_, body) = http(
         &app,
         Method::GET,
-        &format!("/issues/{issue1_id}/next-up?cbl={sv_id}"),
+        &format!("/api/issues/{issue1_id}/next-up?cbl={sv_id}"),
         Some(&alice),
         None,
     )

@@ -23,60 +23,21 @@ const config: NextConfig = {
     "172.16.0.0/12",
     "*.local",
   ],
-  // The Rust server reverse-proxies us, so we don't bind directly to a public host.
-  // Headers (CSP, COOP, COEP, etc.) are set by the Rust security_headers middleware
-  // on every response, including HTML proxied through from Next.
-  async rewrites() {
-    // `API_PROXY_URL` is read at *build* time — Next freezes the rewrites
-    // array into `.next/routes-manifest.json` and the runtime server never
-    // re-evaluates it. The prod Dockerfile bakes the compose-internal
-    // value `http://app:8080` via an ARG; dev (`pnpm dev`) falls through
-    // to localhost. Setting it via runtime env on a published image has no
-    // effect — rebuild the image to change it. Intentionally NOT prefixed
-    // with `NEXT_PUBLIC_`: this hostname is server-only and must not be
-    // inlined into the client bundle.
-    const apiBase = process.env.API_PROXY_URL || "http://localhost:8080";
-    return [
-      // Proxy API calls to the Rust server. The `/api/` prefix is a
-      // Next-only namespace and is stripped before hitting the backend.
-      // NB: Next dev's rewrite layer does NOT support WebSocket upgrades —
-      // `/ws/*` cannot be proxied here. The WS client connects to the Rust
-      // server directly; auth lands via the §9.6 ticket flow (carry-over).
-      {
-        source: "/api/:path*",
-        destination: `${apiBase}/:path*`,
-      },
-      // Externally-addressable backend paths that *cannot* be `/api/`-
-      // prefixed: OPDS clients (Panels, KOReader, Chunky, etc.) hit
-      // `/opds/v1` directly, and OIDC IdPs redirect back to
-      // `/auth/oidc/callback`. Without these rewrites, when Next.js is
-      // the public origin those paths hit the i18n middleware, get
-      // rewritten to `/en/opds/...`, find no page, and 404 with HTML —
-      // which third-party clients see as "invalid server response".
-      // Harmless when the Rust binary is the public origin instead
-      // (the rewrite never fires because the request never reaches
-      // Next in the first place).
-      {
-        source: "/opds/:path*",
-        destination: `${apiBase}/opds/:path*`,
-      },
-      {
-        source: "/auth/oidc/:path*",
-        destination: `${apiBase}/auth/oidc/:path*`,
-      },
-      // OPDS feeds reference cover thumbnails + full page bytes at
-      // `/issues/{id}/pages/{n}[/thumb]` — see `opds.rs` `<link
-      // rel="http://opds-spec.org/image[/thumbnail]">`. External clients
-      // (Panels, KOReader) fetch these directly without an `/api/`
-      // prefix, so they need their own rewrite to reach the Rust
-      // server. The web app continues to hit `/api/issues/...` for
-      // the same handlers; both URLs land at the same Rust route.
-      {
-        source: "/issues/:path*",
-        destination: `${apiBase}/issues/:path*`,
-      },
-    ];
-  },
+  // As of v0.2 (rust-public-origin plan, M4 follow-up), the Rust binary
+  // is the public origin and reverse-proxies HTML/RSC/`/_next/*` here.
+  // The web app fetches backend paths directly (`fetch("/series/...")`)
+  // — there is no Next-side `/api/*` rewrite alias any more. Security
+  // headers (CSP, COOP, COEP, etc.) are set by the Rust
+  // `security_headers` middleware on every response, including HTML
+  // proxied back from Next.
+  //
+  // DO NOT add rewrites here for backend paths. With Rust as the
+  // public origin, every path the Rust router owns (or that its
+  // fallback proxy forwards back to here) is reachable directly. The
+  // v0.1.15-17 rewrites for `/opds/*`, `/auth/oidc/*`, `/issues/*`,
+  // and the v0.2-transient `/api/:path*` alias are all gone — they
+  // were workarounds for the old Next-as-front topology and no longer
+  // apply.
 };
 
 export default withNextIntl(config);

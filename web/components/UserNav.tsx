@@ -9,7 +9,7 @@ export function UserNav() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/auth/me", { credentials: "include" })
+    void fetch("/auth/me", { credentials: "include" })
       .then((r) => (r.ok ? (r.json() as Promise<MeView>) : null))
       .then((v) => {
         if (!cancelled) setMe(v);

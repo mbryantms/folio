@@ -311,7 +311,7 @@ async fn dedupes_across_tables_and_aggregates_roles() {
     let i1 = seed_issue(&app, lib, s1, 1).await;
     add_issue_credit(&app, i1.clone(), "editor", "Brian K. Vaughan").await;
 
-    let (status, json) = http(&app, Method::GET, "/people?q=Vaughan", Some(&auth)).await;
+    let (status, json) = http(&app, Method::GET, "/api/people?q=Vaughan", Some(&auth)).await;
     assert_eq!(status, StatusCode::OK, "json: {json:#?}");
     let items = json["items"].as_array().unwrap();
     let row = items
@@ -343,7 +343,7 @@ async fn trigram_fuzzy_substring() {
     add_series_credit(&app, s, "penciller", "Gary Frank").await;
 
     // Exact substring works.
-    let (_, json) = http(&app, Method::GET, "/people?q=Geoff", Some(&auth)).await;
+    let (_, json) = http(&app, Method::GET, "/api/people?q=Geoff", Some(&auth)).await;
     let people: Vec<String> = json["items"]
         .as_array()
         .unwrap()
@@ -354,7 +354,7 @@ async fn trigram_fuzzy_substring() {
 
     // Fuzzy: "geof" (one missing 'f') still finds the row via trigram
     // similarity since the lowercase ILIKE branch matches too.
-    let (_, json) = http(&app, Method::GET, "/people?q=geof", Some(&auth)).await;
+    let (_, json) = http(&app, Method::GET, "/api/people?q=geof", Some(&auth)).await;
     let people: Vec<String> = json["items"]
         .as_array()
         .unwrap()
@@ -370,7 +370,7 @@ async fn empty_query_returns_empty() {
     let auth = register(&app, "u@example.com").await;
     promote_to_admin(&app, auth.user_id).await;
 
-    let (status, json) = http(&app, Method::GET, "/people", Some(&auth)).await;
+    let (status, json) = http(&app, Method::GET, "/api/people", Some(&auth)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["items"].as_array().unwrap().len(), 0);
 }
@@ -380,7 +380,7 @@ async fn oversized_query_rejected() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "u@example.com").await;
     let q = "a".repeat(201);
-    let uri = format!("/people?q={q}");
+    let uri = format!("/api/people?q={q}");
     let (status, _json) = http(&app, Method::GET, &uri, Some(&auth)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }

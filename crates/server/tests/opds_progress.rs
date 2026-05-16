@@ -104,7 +104,7 @@ async fn mint_token(app: &TestApp, auth: &Authed, label: &str, scope: Option<&st
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/me/app-passwords")
+                .uri("/api/me/app-passwords")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, auth.cookies())
                 .header("x-csrf-token", &auth.csrf)
@@ -375,7 +375,7 @@ async fn read_progress_scope_token_writes_progress() {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri("/progress")
+                .uri("/api/progress")
                 .header(header::COOKIE, auth.cookies())
                 .body(Body::empty())
                 .unwrap(),

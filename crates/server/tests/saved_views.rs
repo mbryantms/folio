@@ -317,7 +317,7 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "first@example.com").await;
 
-    let (status, json) = http(&app, Method::GET, "/me/saved-views", Some(&auth), None).await;
+    let (status, json) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = json["items"].as_array().unwrap();
     let names: Vec<String> = items
@@ -396,7 +396,7 @@ async fn create_filter_view_and_run_results() {
     let (status, view) = http(
         &app,
         Method::POST,
-        "/me/saved-views",
+        "/api/me/saved-views",
         Some(&auth),
         Some(body),
     )
@@ -404,7 +404,7 @@ async fn create_filter_view_and_run_results() {
     assert_eq!(status, StatusCode::CREATED, "view: {view:#?}");
     let view_id = view["id"].as_str().unwrap();
 
-    let url = format!("/me/saved-views/{view_id}/results");
+    let url = format!("/api/me/saved-views/{view_id}/results");
     let (status, results) = http(&app, Method::GET, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK, "results: {results:#?}");
     let items = results["items"].as_array().unwrap();
@@ -438,7 +438,7 @@ async fn create_rejects_invalid_filter() {
     let (status, body) = http(
         &app,
         Method::POST,
-        "/me/saved-views",
+        "/api/me/saved-views",
         Some(&auth),
         Some(body),
     )
@@ -452,7 +452,7 @@ async fn pin_cap_enforced() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "cap@example.com").await;
     // Trigger the lazy seed so the 4 auto-pinned system views land first.
-    let _ = http(&app, Method::GET, "/me/saved-views", Some(&auth), None).await;
+    let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     // 12 - 4 (auto-pinned system rails) = 8 user pins reach the cap.
     for i in 0..8 {
         let body = serde_json::json!({
@@ -466,14 +466,14 @@ async fn pin_cap_enforced() {
         let (status, view) = http(
             &app,
             Method::POST,
-            "/me/saved-views",
+            "/api/me/saved-views",
             Some(&auth),
             Some(body),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "i={i} view={view:#?}");
         let view_id = view["id"].as_str().unwrap();
-        let pin_url = format!("/me/saved-views/{view_id}/pin");
+        let pin_url = format!("/api/me/saved-views/{view_id}/pin");
         let (status, _) = http(&app, Method::POST, &pin_url, Some(&auth), None).await;
         assert_eq!(status, StatusCode::OK, "pin {i}");
     }
@@ -489,13 +489,13 @@ async fn pin_cap_enforced() {
     let (_, overflow) = http(
         &app,
         Method::POST,
-        "/me/saved-views",
+        "/api/me/saved-views",
         Some(&auth),
         Some(body),
     )
     .await;
     let view_id = overflow["id"].as_str().unwrap();
-    let pin_url = format!("/me/saved-views/{view_id}/pin");
+    let pin_url = format!("/api/me/saved-views/{view_id}/pin");
     let (status, body) = http(&app, Method::POST, &pin_url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::CONFLICT, "body: {body:#?}");
     assert_eq!(body["error"]["code"], "pin_cap_reached");
@@ -506,7 +506,7 @@ async fn reorder_rewrites_positions() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "reorder@example.com").await;
     // Trigger the lazy seed.
-    let _ = http(&app, Method::GET, "/me/saved-views", Some(&auth), None).await;
+    let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
 
     // Create two more, pin them.
     let mut new_ids = Vec::new();
@@ -522,14 +522,14 @@ async fn reorder_rewrites_positions() {
         let (_, v) = http(
             &app,
             Method::POST,
-            "/me/saved-views",
+            "/api/me/saved-views",
             Some(&auth),
             Some(body),
         )
         .await;
         let id = v["id"].as_str().unwrap().to_owned();
         new_ids.push(id.clone());
-        let pin_url = format!("/me/saved-views/{id}/pin");
+        let pin_url = format!("/api/me/saved-views/{id}/pin");
         http(&app, Method::POST, &pin_url, Some(&auth), None).await;
     }
 
@@ -537,7 +537,7 @@ async fn reorder_rewrites_positions() {
     let (_, before) = http(
         &app,
         Method::GET,
-        "/me/saved-views?pinned=true",
+        "/api/me/saved-views?pinned=true",
         Some(&auth),
         None,
     )
@@ -555,7 +555,7 @@ async fn reorder_rewrites_positions() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/saved-views/reorder",
+        "/api/me/saved-views/reorder",
         Some(&auth),
         Some(body),
     )
@@ -565,7 +565,7 @@ async fn reorder_rewrites_positions() {
     let (_, after) = http(
         &app,
         Method::GET,
-        "/me/saved-views?pinned=true",
+        "/api/me/saved-views?pinned=true",
         Some(&auth),
         None,
     )
@@ -589,7 +589,7 @@ async fn reorder_rewrites_positions() {
 async fn user_cannot_delete_system_view() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "user@example.com").await;
-    let (_, list) = http(&app, Method::GET, "/me/saved-views", Some(&auth), None).await;
+    let (_, list) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     let system_id = list["items"]
         .as_array()
         .unwrap()
@@ -599,7 +599,7 @@ async fn user_cannot_delete_system_view() {
         .as_str()
         .unwrap()
         .to_owned();
-    let url = format!("/me/saved-views/{system_id}");
+    let url = format!("/api/me/saved-views/{system_id}");
     let (status, _) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
@@ -626,7 +626,7 @@ async fn admin_can_create_system_view() {
     let (status, view) = http(
         &app,
         Method::POST,
-        "/admin/saved-views",
+        "/api/admin/saved-views",
         Some(&admin),
         Some(body),
     )
@@ -665,7 +665,7 @@ async fn regular_user_cannot_admin_create() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/admin/saved-views",
+        "/api/admin/saved-views",
         Some(&auth),
         Some(body),
     )
@@ -694,7 +694,7 @@ async fn preview_runs_dsl_without_persisting() {
     let (status, results) = http(
         &app,
         Method::POST,
-        "/me/saved-views/preview",
+        "/api/me/saved-views/preview",
         Some(&auth),
         Some(body),
     )
@@ -723,7 +723,7 @@ async fn sidebar_toggle_round_trips_independently_of_pin() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "sidebar@example.com").await;
     // Trigger seed; pin the Recently Added system view comes auto-pinned.
-    let (_, list) = http(&app, Method::GET, "/me/saved-views", Some(&auth), None).await;
+    let (_, list) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     let recently_added = list["items"]
         .as_array()
         .unwrap()
@@ -735,7 +735,7 @@ async fn sidebar_toggle_round_trips_independently_of_pin() {
     let view_id = recently_added["id"].as_str().unwrap().to_owned();
 
     // Add to sidebar without changing pin state.
-    let url = format!("/me/saved-views/{view_id}/sidebar");
+    let url = format!("/api/me/saved-views/{view_id}/sidebar");
     let (status, _) = http(&app, Method::POST, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
@@ -743,7 +743,7 @@ async fn sidebar_toggle_round_trips_independently_of_pin() {
     let (_, after) = http(
         &app,
         Method::GET,
-        "/me/saved-views?show_in_sidebar=true",
+        "/api/me/saved-views?show_in_sidebar=true",
         Some(&auth),
         None,
     )
@@ -755,11 +755,11 @@ async fn sidebar_toggle_round_trips_independently_of_pin() {
     assert_eq!(items[0]["show_in_sidebar"].as_bool(), Some(true));
 
     // Removing from sidebar (?show=false) flips just that flag.
-    let off_url = format!("/me/saved-views/{view_id}/sidebar?show=false");
+    let off_url = format!("/api/me/saved-views/{view_id}/sidebar?show=false");
     let (status, _) = http(&app, Method::POST, &off_url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (_, all) = http(&app, Method::GET, "/me/saved-views", Some(&auth), None).await;
+    let (_, all) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     let after = all["items"]
         .as_array()
         .unwrap()
@@ -775,7 +775,7 @@ async fn sidebar_only_view_doesnt_consume_pin_cap() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "side-only@example.com").await;
     // Trigger seed.
-    let _ = http(&app, Method::GET, "/me/saved-views", Some(&auth), None).await;
+    let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
 
     // Create a user view, add to sidebar without pinning, verify it
     // doesn't show under pinned filter and doesn't bump the cap counter.
@@ -790,7 +790,7 @@ async fn sidebar_only_view_doesnt_consume_pin_cap() {
     let (_, v) = http(
         &app,
         Method::POST,
-        "/me/saved-views",
+        "/api/me/saved-views",
         Some(&auth),
         Some(body),
     )
@@ -798,7 +798,7 @@ async fn sidebar_only_view_doesnt_consume_pin_cap() {
     let id = v["id"].as_str().unwrap().to_owned();
 
     // Sidebar without pin.
-    let url = format!("/me/saved-views/{id}/sidebar");
+    let url = format!("/api/me/saved-views/{id}/sidebar");
     let (status, _) = http(&app, Method::POST, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
@@ -806,7 +806,7 @@ async fn sidebar_only_view_doesnt_consume_pin_cap() {
     let (_, pinned) = http(
         &app,
         Method::GET,
-        "/me/saved-views?pinned=true",
+        "/api/me/saved-views?pinned=true",
         Some(&auth),
         None,
     )
@@ -824,7 +824,7 @@ async fn sidebar_only_view_doesnt_consume_pin_cap() {
     let (_, in_sidebar) = http(
         &app,
         Method::GET,
-        "/me/saved-views?show_in_sidebar=true",
+        "/api/me/saved-views?show_in_sidebar=true",
         Some(&auth),
         None,
     )
@@ -851,7 +851,14 @@ async fn make_filter_view(app: &TestApp, auth: &Authed, name: &str) -> String {
         "sort_order": "desc",
         "result_limit": 12,
     });
-    let (status, v) = http(app, Method::POST, "/me/saved-views", Some(auth), Some(body)).await;
+    let (status, v) = http(
+        app,
+        Method::POST,
+        "/api/me/saved-views",
+        Some(auth),
+        Some(body),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "create view {name}: {v:#?}");
     v["id"].as_str().unwrap().to_owned()
 }
@@ -861,7 +868,7 @@ async fn make_page(app: &TestApp, auth: &Authed, name: &str) -> String {
     let (status, p) = http(
         app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(auth),
         Some(serde_json::json!({ "name": name })),
     )
@@ -871,7 +878,7 @@ async fn make_page(app: &TestApp, auth: &Authed, name: &str) -> String {
 }
 
 async fn system_page_id_for(app: &TestApp, auth: &Authed) -> String {
-    let (_, pages) = http(app, Method::GET, "/me/pages", Some(auth), None).await;
+    let (_, pages) = http(app, Method::GET, "/api/me/pages", Some(auth), None).await;
     pages
         .as_array()
         .unwrap()
@@ -893,7 +900,7 @@ async fn pin_to_multiple_pages_creates_independent_rows() {
     let (status, resp) = http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{view_id}/pin"),
+        &format!("/api/me/saved-views/{view_id}/pin"),
         Some(&auth),
         Some(serde_json::json!({ "page_ids": [page_a, page_b] })),
     )
@@ -921,7 +928,7 @@ async fn pin_unknown_page_returns_404() {
     let (status, body) = http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{view_id}/pin"),
+        &format!("/api/me/saved-views/{view_id}/pin"),
         Some(&auth),
         Some(serde_json::json!({ "page_ids": [stranger] })),
     )
@@ -941,7 +948,7 @@ async fn pin_other_users_page_returns_404() {
     let (status, _) = http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{bob_view}/pin"),
+        &format!("/api/me/saved-views/{bob_view}/pin"),
         Some(&bob),
         Some(serde_json::json!({ "page_ids": [alice_page] })),
     )
@@ -964,7 +971,7 @@ async fn per_page_cap_is_independent() {
         let (status, _) = http(
             &app,
             Method::POST,
-            &format!("/me/saved-views/{id}/pin"),
+            &format!("/api/me/saved-views/{id}/pin"),
             Some(&auth),
             Some(serde_json::json!({ "page_ids": [page_a] })),
         )
@@ -977,7 +984,7 @@ async fn per_page_cap_is_independent() {
     let (status, body) = http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{extra}/pin"),
+        &format!("/api/me/saved-views/{extra}/pin"),
         Some(&auth),
         Some(serde_json::json!({ "page_ids": [page_a] })),
     )
@@ -989,7 +996,7 @@ async fn per_page_cap_is_independent() {
     let (status, _) = http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{extra}/pin"),
+        &format!("/api/me/saved-views/{extra}/pin"),
         Some(&auth),
         Some(serde_json::json!({ "page_ids": [page_b] })),
     )
@@ -1008,7 +1015,7 @@ async fn unpin_one_page_leaves_other_intact() {
     http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{view_id}/pin"),
+        &format!("/api/me/saved-views/{view_id}/pin"),
         Some(&auth),
         Some(serde_json::json!({ "page_ids": [page_a, page_b] })),
     )
@@ -1018,7 +1025,7 @@ async fn unpin_one_page_leaves_other_intact() {
     let (status, _) = http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{view_id}/unpin"),
+        &format!("/api/me/saved-views/{view_id}/unpin"),
         Some(&auth),
         Some(serde_json::json!({ "page_id": page_a })),
     )
@@ -1029,7 +1036,7 @@ async fn unpin_one_page_leaves_other_intact() {
     let (_, b_list) = http(
         &app,
         Method::GET,
-        &format!("/me/saved-views?pinned_on={page_b}"),
+        &format!("/api/me/saved-views?pinned_on={page_b}"),
         Some(&auth),
         None,
     )
@@ -1046,7 +1053,7 @@ async fn unpin_one_page_leaves_other_intact() {
     let (_, a_list) = http(
         &app,
         Method::GET,
-        &format!("/me/saved-views?pinned_on={page_a}"),
+        &format!("/api/me/saved-views?pinned_on={page_a}"),
         Some(&auth),
         None,
     )
@@ -1076,7 +1083,7 @@ async fn reorder_scoped_to_explicit_page() {
         http(
             &app,
             Method::POST,
-            &format!("/me/saved-views/{id}/pin"),
+            &format!("/api/me/saved-views/{id}/pin"),
             Some(&auth),
             Some(serde_json::json!({ "page_ids": [page_a] })),
         )
@@ -1085,7 +1092,7 @@ async fn reorder_scoped_to_explicit_page() {
     http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{v3}/pin"),
+        &format!("/api/me/saved-views/{v3}/pin"),
         Some(&auth),
         Some(serde_json::json!({ "page_ids": [page_b] })),
     )
@@ -1095,7 +1102,7 @@ async fn reorder_scoped_to_explicit_page() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/saved-views/reorder",
+        "/api/me/saved-views/reorder",
         Some(&auth),
         Some(serde_json::json!({ "page_id": page_a, "view_ids": [v2, v1] })),
     )
@@ -1106,7 +1113,7 @@ async fn reorder_scoped_to_explicit_page() {
     let (_, a_list) = http(
         &app,
         Method::GET,
-        &format!("/me/saved-views?pinned_on={page_a}"),
+        &format!("/api/me/saved-views?pinned_on={page_a}"),
         Some(&auth),
         None,
     )
@@ -1123,7 +1130,7 @@ async fn reorder_scoped_to_explicit_page() {
     let (_, b_list) = http(
         &app,
         Method::GET,
-        &format!("/me/saved-views?pinned_on={page_b}"),
+        &format!("/api/me/saved-views?pinned_on={page_b}"),
         Some(&auth),
         None,
     )
@@ -1151,7 +1158,7 @@ async fn legacy_pin_with_content_type_and_empty_body_succeeds() {
 
     let req = Request::builder()
         .method(Method::POST)
-        .uri(format!("/me/saved-views/{view_id}/pin"))
+        .uri(format!("/api/me/saved-views/{view_id}/pin"))
         .header(
             header::COOKIE,
             format!(
@@ -1179,7 +1186,7 @@ async fn pinned_true_is_alias_for_system_page() {
     http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{view_id}/pin"),
+        &format!("/api/me/saved-views/{view_id}/pin"),
         Some(&auth),
         Some(serde_json::json!({ "page_ids": [custom] })),
     )
@@ -1190,7 +1197,7 @@ async fn pinned_true_is_alias_for_system_page() {
     let (_, home_list) = http(
         &app,
         Method::GET,
-        "/me/saved-views?pinned=true",
+        "/api/me/saved-views?pinned=true",
         Some(&auth),
         None,
     )
@@ -1208,7 +1215,7 @@ async fn pinned_true_is_alias_for_system_page() {
     let (status, _) = http(
         &app,
         Method::POST,
-        &format!("/me/saved-views/{view_id}/pin"),
+        &format!("/api/me/saved-views/{view_id}/pin"),
         Some(&auth),
         Some(serde_json::json!({ "page_ids": [sys] })),
     )
@@ -1218,7 +1225,7 @@ async fn pinned_true_is_alias_for_system_page() {
     let (_, home_list) = http(
         &app,
         Method::GET,
-        "/me/saved-views?pinned=true",
+        "/api/me/saved-views?pinned=true",
         Some(&auth),
         None,
     )

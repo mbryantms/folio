@@ -310,7 +310,7 @@ async fn overview_returns_admin_only_payload() {
     let _user = register(&app, "user@example.com").await;
     seed_one(&app, "demo").await;
 
-    let (s, body) = get(&app, &admin, "/admin/stats/overview").await;
+    let (s, body) = get(&app, &admin, "/api/admin/stats/overview").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
     assert!(body["totals"]["libraries"].as_i64().unwrap() >= 1);
     assert!(body["totals"]["series"].as_i64().unwrap() >= 1);
@@ -327,7 +327,7 @@ async fn overview_rejects_non_admin() {
     let app = TestApp::spawn().await;
     let _admin = register(&app, "admin@example.com").await;
     let user = register(&app, "user@example.com").await;
-    let (s, _) = get(&app, &user, "/admin/stats/overview").await;
+    let (s, _) = get(&app, &user, "/api/admin/stats/overview").await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
 
@@ -352,14 +352,14 @@ async fn user_reading_stats_audits_each_access() {
         "end_page": 5,
     })
     .to_string();
-    let (s, _) = post(&app, &user, "/me/reading-sessions", &body).await;
+    let (s, _) = post(&app, &user, "/api/me/reading-sessions", &body).await;
     assert!(s.is_success());
 
     let target = user.user_id.to_string();
     let (s, body) = get(
         &app,
         &admin,
-        &format!("/admin/users/{target}/reading-stats?range=30d"),
+        &format!("/api/admin/users/{target}/reading-stats?range=30d"),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "body={body}");
@@ -387,7 +387,7 @@ async fn user_reading_stats_404_on_missing_user() {
     let (s, _) = get(
         &app,
         &admin,
-        &format!("/admin/users/{phantom}/reading-stats"),
+        &format!("/api/admin/users/{phantom}/reading-stats"),
     )
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -410,7 +410,7 @@ async fn user_reading_stats_rejects_non_admin() {
     let (s, _) = get(
         &app,
         &user,
-        &format!("/admin/users/{}/reading-stats", user.user_id),
+        &format!("/api/admin/users/{}/reading-stats", user.user_id),
     )
     .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
@@ -420,7 +420,7 @@ async fn user_reading_stats_rejects_non_admin() {
 async fn server_info_reports_pings_and_uptime() {
     let app = TestApp::spawn().await;
     let admin = register(&app, "admin@example.com").await;
-    let (s, body) = get(&app, &admin, "/admin/server/info").await;
+    let (s, body) = get(&app, &admin, "/api/admin/server/info").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
     assert!(body["postgres_ok"].as_bool().unwrap());
     assert!(body["redis_ok"].as_bool().unwrap());
@@ -434,6 +434,6 @@ async fn server_info_rejects_non_admin() {
     let app = TestApp::spawn().await;
     let _admin = register(&app, "admin@example.com").await;
     let user = register(&app, "user@example.com").await;
-    let (s, _) = get(&app, &user, "/admin/server/info").await;
+    let (s, _) = get(&app, &user, "/api/admin/server/info").await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }

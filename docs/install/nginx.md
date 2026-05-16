@@ -40,8 +40,13 @@ it's the proxy's call.
 
 ```nginx
 # /etc/nginx/sites-available/folio
+#
+# Single upstream — the Rust binary is the public origin. It handles
+# its own routes (/api, /opds, /auth, page bytes, /ws/*) directly and
+# reverse-proxies HTML + /_next/* assets to its internal Next.js SSR
+# upstream over the compose bridge. nginx does not talk to `web`
+# directly.
 upstream folio_app { server 127.0.0.1:8080; keepalive 16; }
-upstream folio_web { server 127.0.0.1:3000; keepalive 16; }
 
 # HTTP → HTTPS redirect (Let's Encrypt HTTP-01 challenge handled by certbot).
 server {
@@ -77,39 +82,34 @@ server {
     proxy_set_header X-Forwarded-Host  $host;
     proxy_http_version 1.1;
 
-    # WebSocket: scan progress and other realtime channels.
-    location /ws {
-        proxy_pass http://folio_app;
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
-    }
+    # WebSocket upgrade headers — apply to every upstream conn since
+    # `/ws/*` and the Next SSR proxy both need them. nginx leaves them
+    # alone for non-upgrade requests.
+    proxy_set_header Upgrade    $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
 
-    # OPDS — Page-Streaming endpoint streams image bytes; don't buffer.
-    location /opds {
-        proxy_pass http://folio_app;
-        proxy_buffering off;
-        proxy_request_buffering off;
-    }
+    # No response buffering — Folio streams page bytes + OPDS PSE
+    # bodies, and buffering would break Range request UX and bloat
+    # nginx's RSS on large reads. Safe everywhere because HTML
+    # responses are small enough that streaming costs nothing.
+    proxy_buffering off;
+    proxy_request_buffering off;
 
-    # Raw page bytes for the in-app reader — also streamed.
-    location ~ ^/(issues|pages|thumbnails)/ {
-        proxy_pass http://folio_app;
-        proxy_buffering off;
-        proxy_request_buffering off;
-    }
-
-    # Everything else under the API surface goes to the Rust app.
-    location ~ ^/(api|auth|healthz|readyz|metrics|csp-report)(/|$) {
-        proxy_pass http://folio_app;
-    }
-
-    # The Next frontend handles the rest (HTML, RSC, _next/* assets, etc.).
     location / {
-        proxy_pass http://folio_web;
+        proxy_pass http://folio_app;
     }
 }
+
+# nginx needs this map for the WebSocket Connection header to flip
+# correctly between `upgrade` (when Upgrade is set) and empty (when
+# it's a normal request). Drop it in `/etc/nginx/conf.d/`.
+#
+#   map $http_upgrade $connection_upgrade {
+#       default upgrade;
+#       ''      close;
+#   }
 ```
 
 ## Verifying the wiring

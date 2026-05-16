@@ -148,7 +148,7 @@ async fn switching_to_oidc_without_creds_rejected_pre_write() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({ "auth.mode": "oidc" })),
     )
     .await;
@@ -184,7 +184,7 @@ async fn switching_to_oidc_with_all_creds_succeeds() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({
             "auth.mode": "both",
             "auth.oidc.issuer": "https://idp.example.test",
@@ -206,7 +206,7 @@ async fn switching_to_oidc_with_all_creds_succeeds() {
     );
 
     // Public /auth/config reflects oidc_enabled=true.
-    let resp = get_anon(&app, "/auth/config").await;
+    let resp = get_anon(&app, "/api/auth/config").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["auth_mode"], "both");
@@ -223,7 +223,7 @@ async fn oidc_client_secret_redacted_in_get() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({
             "auth.mode": "both",
             "auth.oidc.issuer": "https://idp.example.test",
@@ -234,7 +234,7 @@ async fn oidc_client_secret_redacted_in_get() {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let resp = get(&app, &admin, "/admin/settings").await;
+    let resp = get(&app, &admin, "/api/admin/settings").await;
     let body = body_json(resp.into_body()).await;
     let values = body["values"].as_array().unwrap();
     let secret = values
@@ -258,7 +258,7 @@ async fn toggling_registration_and_trust_persist() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({
             "auth.local.registration_open": false,
             "auth.oidc.trust_unverified_email": true,
@@ -283,7 +283,7 @@ async fn discover_probe_rejects_bad_url() {
         &app,
         &admin,
         Method::POST,
-        "/admin/auth/oidc/discover",
+        "/api/admin/auth/oidc/discover",
         Some(json!({ "issuer": "not-a-url" })),
     )
     .await;
@@ -303,7 +303,7 @@ async fn discover_probe_502s_when_unreachable() {
         &app,
         &admin,
         Method::POST,
-        "/admin/auth/oidc/discover",
+        "/api/admin/auth/oidc/discover",
         Some(json!({ "issuer": "http://127.0.0.1:1" })),
     )
     .await;
@@ -337,7 +337,7 @@ async fn discover_probe_parses_endpoints_from_mock_op() {
         &app,
         &admin,
         Method::POST,
-        "/admin/auth/oidc/discover",
+        "/api/admin/auth/oidc/discover",
         Some(json!({ "issuer": issuer.clone() })),
     )
     .await;
@@ -366,7 +366,7 @@ async fn discover_probe_requires_admin() {
         &app,
         &user,
         Method::POST,
-        "/admin/auth/oidc/discover",
+        "/api/admin/auth/oidc/discover",
         Some(json!({ "issuer": "https://idp.example.test" })),
     )
     .await;
@@ -386,7 +386,7 @@ async fn admin_auth_config_reflects_db_overrides() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({
             "auth.mode": "both",
             "auth.oidc.issuer": "https://idp.example.test",
@@ -398,7 +398,7 @@ async fn admin_auth_config_reflects_db_overrides() {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let resp = get(&app, &admin, "/admin/auth/config").await;
+    let resp = get(&app, &admin, "/api/admin/auth/config").await;
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["auth_mode"], "both");
     assert_eq!(body["oidc"]["configured"], true);

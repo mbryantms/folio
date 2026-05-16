@@ -97,7 +97,7 @@ async fn rejects_non_admin() {
     let app = TestApp::spawn().await;
     let _admin = register(&app, "admin@example.com").await;
     let user = register(&app, "user@example.com").await;
-    let (s, _) = get(&app, &user, "/admin/auth/config").await;
+    let (s, _) = get(&app, &user, "/api/admin/auth/config").await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
 
@@ -107,7 +107,7 @@ async fn returns_local_mode_with_open_registration() {
     let app = TestApp::spawn().await;
     let admin = register(&app, "admin@example.com").await;
 
-    let (s, body) = get(&app, &admin, "/admin/auth/config").await;
+    let (s, body) = get(&app, &admin, "/api/admin/auth/config").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
     assert_eq!(body["auth_mode"], "local");
     assert_eq!(body["local"]["enabled"], true);

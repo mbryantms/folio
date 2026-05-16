@@ -17,14 +17,20 @@ just migrate          # apply SeaORM migrations
 just dev              # run server + web with hot reload
 ```
 
-Then open <http://localhost:3000> and log in. The first user becomes admin (§12.8 of the spec).
+Then open <http://localhost:8080> and log in. The first user becomes admin (§12.8 of the spec).
+
+`:8080` is the Rust binary; it serves API routes itself and reverse-proxies HTML / RSC / `/_next/*` assets (including the HMR WebSocket) to the Next dev server at `:3000` internally. Hitting `:3000` directly works for raw Next debugging but bypasses the Rust auth/CSRF/security-headers stack, so it isn't the supported entry point.
+
+HMR smoke test: load <http://localhost:8080>, then edit any file under `web/app/` or `web/components/` and watch the browser update without a manual reload. The HMR signal flows over WebSocket through the same proxy path the v0.2 cutover added (`upstream::proxy_websocket`); a broken HMR usually means the Next dev server isn't running or `:3000` is bound to a different process.
 
 ## Quick start (operators)
 
 You need a Linux host with Docker (Compose v2) and an outbound HTTPS path.
-The compose stack runs four services: the Rust API (`app`), the Next.js
-frontend (`web`), Postgres, and Redis. Both `app` and `web` bind to
-loopback only — you put your own reverse proxy in front for TLS.
+The compose stack runs four services:
+
+- **`app`** — Rust binary. The public-facing service: serves the API, OPDS, WebSockets, page bytes, and reverse-proxies HTML + RSC + `/_next/*` assets to the internal Next.js upstream. Bound to `127.0.0.1:8080` by default; put your reverse proxy in front for TLS.
+- **`web`** — Next.js SSR upstream, internal-only on the compose bridge. Not published to the host.
+- **`postgres`** + **`redis`** — also internal-only.
 
 ```bash
 # 1. Pick a host directory to hold compose + .env + persistent volumes.
@@ -41,7 +47,9 @@ $EDITOR .env
 # 4. Start the stack. First boot runs migrations + generates server secrets.
 docker compose -f compose.prod.yml up -d
 
-# 5. Front the loopback ports with TLS. Pick one:
+# 5. Front `app:8080` with TLS. Single upstream — the reverse proxy
+#    does NOT need path-based routing; it just forwards everything
+#    to the Rust binary. Templates:
 #    - Caddy:    docs/install/caddy.md         (auto Let's Encrypt)
 #    - nginx:    docs/install/nginx.md
 #    - Traefik:  docs/install/traefik.md
@@ -50,8 +58,9 @@ docker compose -f compose.prod.yml up -d
 
 Open the URL from `COMIC_PUBLIC_URL` and register — the first user becomes admin.
 
-For upgrades, backups, and the rest of the operator lifecycle, see
-[`docs/install/`](./docs/install/).
+**Upgrading from v0.1.x?** Read [`docs/install/upgrades.md#v020--rust-binary-becomes-the-public-origin`](./docs/install/upgrades.md) first — your reverse-proxy config needs a one-time simplification (drop the path-routing rules) and the `web` container loses its host port binding.
+
+For backups, scaling, and the rest of the operator lifecycle, see [`docs/install/`](./docs/install/).
 
 ## Docs
 

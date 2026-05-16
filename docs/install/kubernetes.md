@@ -12,24 +12,34 @@ easier; see [`README.md`](../../README.md#quick-start-operators).
 
 ## Topology
 
-Two Deployments, four Services, two PersistentVolumeClaims, plus
-managed Postgres + Redis (operator's choice — cloud-managed, or
+Two Deployments + two ClusterIP Services, two PersistentVolumeClaims,
+plus managed Postgres + Redis (operator's choice — cloud-managed, or
 in-cluster via Bitnami / CloudNative-PG / etc.).
 
 ```
 Ingress (your choice)
-  ├── /api, /auth, /ws, /opds, /healthz, /readyz  → Service "folio-app"   :8080
-  └── /                                            → Service "folio-web"  :3000
+  └── (all paths)  → Service "folio-app" :8080      [the public origin]
 
 Deployment "folio-app"
   └── 1+ replicas; readinessProbe on /readyz; livenessProbe on /healthz
+      Env: COMIC_WEB_UPSTREAM_URL=http://folio-web:3000
       Mounts: PVC "folio-data" at /data, PV/PVC for library at /library (ro)
+
+Service "folio-web" (ClusterIP, NOT exposed to Ingress)
+  └── reached by folio-app's SSR fallback over the cluster network
 
 Deployment "folio-web"
   └── 1+ replicas; no PVCs; readinessProbe on /
 
 Postgres + Redis: operator-owned (use whatever your cluster has).
 ```
+
+**Note:** as of M5 of the rust-public-origin rollout, `folio-app` is
+the single Ingress target. It reverse-proxies HTML, RSC, and
+`/_next/*` requests to `folio-web` internally over the cluster DNS.
+You should NOT route any Ingress path to `folio-web` directly — earlier
+versions of these docs documented a split (`/api,/auth,...` to app, `/`
+to web); that's no longer the supported topology.
 
 ## Migrations
 
@@ -116,6 +126,10 @@ spec:
               value: https://comics.example.com
             - name: COMIC_TRUSTED_PROXIES
               value: 10.0.0.0/8
+            # SSR fallback upstream. Resolved via cluster DNS to the
+            # `folio-web` Service. See the topology diagram above.
+            - name: COMIC_WEB_UPSTREAM_URL
+              value: http://folio-web:3000
           volumeMounts:
             - { name: data,    mountPath: /data }
             - { name: library, mountPath: /library, readOnly: true }

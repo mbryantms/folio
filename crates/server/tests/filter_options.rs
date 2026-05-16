@@ -323,7 +323,7 @@ async fn genres_returns_distinct_values_across_visible_libraries() {
     )
     .await;
 
-    let (status, json) = http(&app, Method::GET, "/filter-options/genres", Some(&auth)).await;
+    let (status, json) = http(&app, Method::GET, "/api/filter-options/genres", Some(&auth)).await;
     assert_eq!(status, StatusCode::OK, "json: {json:#?}");
     let values: Vec<String> = json["values"]
         .as_array()
@@ -365,7 +365,7 @@ async fn library_scope_restricts_options() {
     )
     .await;
 
-    let url = format!("/filter-options/genres?library={horror_lib}");
+    let url = format!("/api/filter-options/genres?library={horror_lib}");
     let (status, json) = http(&app, Method::GET, &url, Some(&auth)).await;
     assert_eq!(status, StatusCode::OK);
     let values: Vec<String> = json["values"]
@@ -393,7 +393,13 @@ async fn prefix_filter_narrows_results() {
     )
     .await;
 
-    let (status, json) = http(&app, Method::GET, "/filter-options/tags?q=de", Some(&auth)).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/filter-options/tags?q=de",
+        Some(&auth),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let values: Vec<String> = json["values"]
         .as_array()
@@ -423,7 +429,7 @@ async fn credits_endpoint_filters_by_role() {
     let (status, json) = http(
         &app,
         Method::GET,
-        "/filter-options/credits/writer",
+        "/api/filter-options/credits/writer",
         Some(&auth),
     )
     .await;
@@ -443,7 +449,7 @@ async fn credits_endpoint_filters_by_role() {
     let (status, _body) = http(
         &app,
         Method::GET,
-        "/filter-options/credits/bogus",
+        "/api/filter-options/credits/bogus",
         Some(&auth),
     )
     .await;
@@ -545,7 +551,13 @@ async fn publishers_returns_distinct_non_null_values() {
     )
     .await;
 
-    let (status, json) = http(&app, Method::GET, "/filter-options/publishers", Some(&auth)).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/filter-options/publishers",
+        Some(&auth),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "json: {json:#?}");
     let values: Vec<String> = json["values"]
         .as_array()
@@ -629,7 +641,7 @@ async fn series_filter_status_narrows_results() {
     seed_one_series(&app, lib, "Ended One", "ended", None, None, &[]).await;
     seed_one_series(&app, lib, "Cancelled One", "cancelled", None, None, &[]).await;
 
-    let (status, json) = http(&app, Method::GET, "/series?status=ended", Some(&auth)).await;
+    let (status, json) = http(&app, Method::GET, "/api/series?status=ended", Some(&auth)).await;
     assert_eq!(status, StatusCode::OK);
     let names: Vec<String> = json["items"]
         .as_array()
@@ -640,7 +652,7 @@ async fn series_filter_status_narrows_results() {
     assert_eq!(names, vec!["Ended One".to_owned()]);
 
     // Unknown enum is a 400, not silently empty.
-    let (status, _) = http(&app, Method::GET, "/series?status=bogus", Some(&auth)).await;
+    let (status, _) = http(&app, Method::GET, "/api/series?status=bogus", Some(&auth)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -658,7 +670,7 @@ async fn series_filter_year_range_inclusive_bounds() {
     let (status, json) = http(
         &app,
         Method::GET,
-        "/series?year_from=2019&year_to=2022",
+        "/api/series?year_from=2019&year_to=2022",
         Some(&auth),
     )
     .await;
@@ -691,7 +703,13 @@ async fn series_filter_publisher_csv_includes_any() {
     .await;
     seed_one_series(&app, lib, "DC A", "continuing", None, Some("DC"), &[]).await;
 
-    let (status, json) = http(&app, Method::GET, "/series?publisher=Image,DC", Some(&auth)).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/series?publisher=Image,DC",
+        Some(&auth),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let mut names: Vec<String> = json["items"]
         .as_array()
@@ -743,7 +761,7 @@ async fn series_filter_genres_csv_includes_any() {
     let (status, json) = http(
         &app,
         Method::GET,
-        "/series?genres=Horror,Drama",
+        "/api/series?genres=Horror,Drama",
         Some(&auth),
     )
     .await;
@@ -846,7 +864,7 @@ async fn series_filter_language_csv() {
     seed_series_full(&app, lib, "FR One", "fr", None, &[], None).await;
     seed_series_full(&app, lib, "JA One", "ja", None, &[], None).await;
 
-    let (status, json) = http(&app, Method::GET, "/series?language=en,fr", Some(&auth)).await;
+    let (status, json) = http(&app, Method::GET, "/api/series?language=en,fr", Some(&auth)).await;
     assert_eq!(status, StatusCode::OK);
     let mut names: Vec<String> = json["items"]
         .as_array()
@@ -899,7 +917,7 @@ async fn series_filter_credits_writers_includes_any() {
     let (status, json) = http(
         &app,
         Method::GET,
-        "/series?writers=Brian%20K.%20Vaughan,Jonathan%20Hickman",
+        "/api/series?writers=Brian%20K.%20Vaughan,Jonathan%20Hickman",
         Some(&auth),
     )
     .await;
@@ -948,7 +966,7 @@ async fn series_filter_user_rating_excludes_unrated_when_bounds_set() {
     let (status, json) = http(
         &app,
         Method::GET,
-        "/series?user_rating_min=4&user_rating_max=5",
+        "/api/series?user_rating_min=4&user_rating_max=5",
         Some(&auth),
     )
     .await;
@@ -965,13 +983,19 @@ async fn series_filter_user_rating_excludes_unrated_when_bounds_set() {
     let (status, _) = http(
         &app,
         Method::GET,
-        "/series?user_rating_min=4&user_rating_max=2",
+        "/api/series?user_rating_min=4&user_rating_max=2",
         Some(&auth),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     // Bad input: out-of-range.
-    let (status, _) = http(&app, Method::GET, "/series?user_rating_min=-1", Some(&auth)).await;
+    let (status, _) = http(
+        &app,
+        Method::GET,
+        "/api/series?user_rating_min=-1",
+        Some(&auth),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -985,7 +1009,13 @@ async fn languages_options_endpoint() {
     seed_series_full(&app, lib, "S2", "fr", None, &[], None).await;
     seed_series_full(&app, lib, "S3", "en", None, &[], None).await;
 
-    let (status, json) = http(&app, Method::GET, "/filter-options/languages", Some(&auth)).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/filter-options/languages",
+        Some(&auth),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let values: Vec<String> = json["values"]
         .as_array()
@@ -1010,7 +1040,7 @@ async fn age_ratings_options_endpoint_excludes_null_and_empty() {
     let (status, json) = http(
         &app,
         Method::GET,
-        "/filter-options/age_ratings",
+        "/api/filter-options/age_ratings",
         Some(&auth),
     )
     .await;
@@ -1176,7 +1206,7 @@ async fn series_filter_characters_includes_any_case_insensitive() {
     let (status, json) = http(
         &app,
         Method::GET,
-        "/series?characters=spider-man,Iron%20Man",
+        "/api/series?characters=spider-man,Iron%20Man",
         Some(&auth),
     )
     .await;
@@ -1203,7 +1233,13 @@ async fn characters_options_endpoint_dedupes_and_sorts() {
     seed_series_with_issue_csv(&app, lib, "S1", Some("Spider-Man, Mary Jane"), None, None).await;
     seed_series_with_issue_csv(&app, lib, "S2", Some("spider-man;Aunt May"), None, None).await;
 
-    let (status, json) = http(&app, Method::GET, "/filter-options/characters", Some(&auth)).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/filter-options/characters",
+        Some(&auth),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let values: Vec<String> = json["values"]
         .as_array()
@@ -1234,7 +1270,13 @@ async fn locations_options_endpoint_excludes_empty() {
     seed_series_with_issue_csv(&app, lib, "S2", None, None, Some("")).await;
     seed_series_with_issue_csv(&app, lib, "S3", None, None, None).await;
 
-    let (status, json) = http(&app, Method::GET, "/filter-options/locations", Some(&auth)).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/filter-options/locations",
+        Some(&auth),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let values: Vec<String> = json["values"]
         .as_array()
@@ -1254,7 +1296,7 @@ async fn publishers_scoped_to_library_when_query_param_set() {
     let img_lib = seed_library_with_publishers(&app, "img", &[Some("Image")]).await;
     let _marvel_lib = seed_library_with_publishers(&app, "marvel", &[Some("Marvel")]).await;
 
-    let url = format!("/filter-options/publishers?library={img_lib}");
+    let url = format!("/api/filter-options/publishers?library={img_lib}");
     let (status, json) = http(&app, Method::GET, &url, Some(&auth)).await;
     assert_eq!(status, StatusCode::OK);
     let values: Vec<String> = json["values"]
@@ -1277,7 +1319,7 @@ async fn series_sort_by_year_descending() {
     seed_one_series(&app, lib, "New", "continuing", Some(2024), None, &[]).await;
     seed_one_series(&app, lib, "Undated", "continuing", None, None, &[]).await;
 
-    let (status, json) = http(&app, Method::GET, "/series?sort=year", Some(&auth)).await;
+    let (status, json) = http(&app, Method::GET, "/api/series?sort=year", Some(&auth)).await;
     assert_eq!(status, StatusCode::OK);
     let names: Vec<String> = json["items"]
         .as_array()
@@ -1311,7 +1353,7 @@ async fn issues_cross_library_filter_by_writer() {
     let (status, json) = http(
         &app,
         Method::GET,
-        "/issues?writers=Brian%20K.%20Vaughan",
+        "/api/issues?writers=Brian%20K.%20Vaughan",
         Some(&auth),
     )
     .await;
@@ -1333,7 +1375,7 @@ async fn issues_cross_library_sort_by_year_then_page_count() {
     seed_issue_in_year(&app, lib, s1, "New", Some(2024), Some(30)).await;
 
     // Year DESC default.
-    let (status, json) = http(&app, Method::GET, "/issues?sort=year", Some(&auth)).await;
+    let (status, json) = http(&app, Method::GET, "/api/issues?sort=year", Some(&auth)).await;
     assert_eq!(status, StatusCode::OK);
     let titles: Vec<String> = json["items"]
         .as_array()
@@ -1347,7 +1389,13 @@ async fn issues_cross_library_sort_by_year_then_page_count() {
     );
 
     // page_count DESC: 50 > 30 > 20.
-    let (status, json) = http(&app, Method::GET, "/issues?sort=page_count", Some(&auth)).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/issues?sort=page_count",
+        Some(&auth),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let titles: Vec<String> = json["items"]
         .as_array()
@@ -1377,7 +1425,7 @@ async fn issues_cross_library_user_rating_filter_excludes_unrated() {
     let (status, json) = http(
         &app,
         Method::GET,
-        "/issues?user_rating_min=4&user_rating_max=5",
+        "/api/issues?user_rating_min=4&user_rating_max=5",
         Some(&auth),
     )
     .await;

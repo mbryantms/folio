@@ -98,7 +98,7 @@ async fn patch_account(
         .oneshot(
             Request::builder()
                 .method(Method::PATCH)
-                .uri("/me/account")
+                .uri("/api/me/account")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(
                     header::COOKIE,

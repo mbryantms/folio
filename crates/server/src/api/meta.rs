@@ -1,4 +1,11 @@
-//! Meta endpoints: `/`, `/openapi.json`, `/metrics` (Prometheus).
+//! Meta endpoints: `/openapi.json`, `/metrics` (Prometheus).
+//!
+//! Pre-v0.2 this module also owned `GET /` and returned a metadata
+//! JSON blob. That route was removed when the Rust binary became the
+//! public origin (rust-public-origin plan, M2): `/` must fall through
+//! the `Router::fallback` to the Next SSR upstream so the browser
+//! lands on the actual homepage. The same liveness info is still
+//! reachable from `/healthz`.
 
 use axum::{
     Json, Router,
@@ -7,32 +14,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use serde::Serialize;
 
 use crate::state::AppState;
 
-#[derive(Serialize)]
-pub struct Hello {
-    pub app: &'static str,
-    pub version: &'static str,
-    pub auth_mode: String,
-    pub docs: &'static str,
-}
-
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/", get(hello))
         .route("/openapi.json", get(openapi_json))
         .route("/metrics", get(metrics))
-}
-
-async fn hello(State(state): State<AppState>) -> impl IntoResponse {
-    Json(Hello {
-        app: "comic-reader",
-        version: env!("CARGO_PKG_VERSION"),
-        auth_mode: state.cfg().auth_mode.to_string(),
-        docs: "/openapi.json",
-    })
 }
 
 async fn openapi_json() -> impl IntoResponse {

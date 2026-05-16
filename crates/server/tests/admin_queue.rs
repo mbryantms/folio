@@ -109,7 +109,7 @@ async fn clear_queue_writes_audit_row() {
         &app,
         &admin,
         Method::POST,
-        "/admin/queue/clear",
+        "/api/admin/queue/clear",
         Some(json!({ "target": "all" })),
     )
     .await;
@@ -165,7 +165,7 @@ async fn clear_queue_audit_uses_target_tag_from_request() {
             &app,
             &admin,
             Method::POST,
-            "/admin/queue/clear",
+            "/api/admin/queue/clear",
             Some(json!({ "target": target })),
         )
         .await;
@@ -204,7 +204,7 @@ async fn clear_queue_requires_admin() {
         &app,
         &user,
         Method::POST,
-        "/admin/queue/clear",
+        "/api/admin/queue/clear",
         Some(json!({ "target": "all" })),
     )
     .await;

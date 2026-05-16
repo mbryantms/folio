@@ -304,7 +304,7 @@ async fn public_auth_config_advertises_oidc_when_configured() {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri("/auth/config")
+                .uri("/api/auth/config")
                 .body(Body::empty())
                 .unwrap(),
         )

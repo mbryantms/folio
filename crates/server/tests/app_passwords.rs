@@ -78,7 +78,7 @@ async fn create_password(app: &TestApp, auth: &Auth, label: &str) -> Response<Bo
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/me/app-passwords")
+                .uri("/api/me/app-passwords")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, auth.cookies())
                 .header("x-csrf-token", &auth.csrf)
@@ -96,7 +96,7 @@ async fn list_passwords(app: &TestApp, auth: &Auth) -> serde_json::Value {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri("/me/app-passwords")
+                .uri("/api/me/app-passwords")
                 .header(header::COOKIE, auth.cookies())
                 .body(Body::empty())
                 .unwrap(),
@@ -185,7 +185,7 @@ async fn revoked_password_rejects_bearer_auth() {
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/me/app-passwords/{id}"))
+                .uri(format!("/api/me/app-passwords/{id}"))
                 .header(header::COOKIE, auth.cookies())
                 .header("x-csrf-token", &auth.csrf)
                 .body(Body::empty())
@@ -223,7 +223,7 @@ async fn cannot_revoke_other_users_password() {
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/me/app-passwords/{other_id}"))
+                .uri(format!("/api/me/app-passwords/{other_id}"))
                 .header(header::COOKIE, attacker_auth.cookies())
                 .header("x-csrf-token", &attacker_auth.csrf)
                 .body(Body::empty())

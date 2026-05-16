@@ -100,7 +100,7 @@ async fn require_admin_rejects_non_admin() {
     let user = register(&app, "user@example.com", "agent/user").await;
     // /admin/auth/config is the smallest admin-only handler that uses the new
     // extractor (no other side effects, no path params).
-    let status = admin_get(&app, &user, "/admin/auth/config").await;
+    let status = admin_get(&app, &user, "/api/admin/auth/config").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
@@ -108,7 +108,7 @@ async fn require_admin_rejects_non_admin() {
 async fn require_admin_accepts_admin() {
     let app = TestApp::spawn().await;
     let admin = register(&app, "admin@example.com", "agent/admin").await;
-    let status = admin_get(&app, &admin, "/admin/auth/config").await;
+    let status = admin_get(&app, &admin, "/api/admin/auth/config").await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -124,7 +124,7 @@ async fn require_admin_returns_envelope() {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri("/admin/auth/config")
+                .uri("/api/admin/auth/config")
                 .header(
                     header::COOKIE,
                     format!(

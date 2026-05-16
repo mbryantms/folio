@@ -77,7 +77,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch("/api/auth/local/reset-password", {
+      const res = await fetch("/auth/local/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -115,7 +115,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         <Form {...form}>
           {/*
             Progressive enhancement — see SignInClient.LoginForm. The
-            handler at `/api/auth/local/reset-password` accepts both JSON
+            handler at `/auth/local/reset-password` accepts both JSON
             (XHR happy path) and form-encoded (no-JS fallback) bodies; on
             the form path it 303s to `/sign-in?reset=1` on success or back
             to this page with `?token=…&error=…` on failure.
@@ -123,7 +123,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
           <form
             onSubmit={onSubmit}
             method="POST"
-            action="/api/auth/local/reset-password"
+            action="/auth/local/reset-password"
             className="space-y-4"
           >
             <input type="hidden" name="token" value={token} />

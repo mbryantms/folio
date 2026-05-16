@@ -122,7 +122,7 @@ async fn mint_app_password(app: &TestApp, auth: &Authed, label: &str) -> String 
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/me/app-passwords")
+                .uri("/api/me/app-passwords")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, auth.cookies())
                 .header("x-csrf-token", &auth.csrf)
@@ -770,7 +770,7 @@ async fn metadata_enrichment_present() {
     assert!(body.contains(r#"rel="http://opds-spec.org/image/thumbnail""#));
     assert!(body.contains(r#"rel="http://opds-spec.org/image" href="/issues/"#));
     // Deep-link back into the JSON API.
-    assert!(body.contains(r#"rel="related" href="/series/"#));
+    assert!(body.contains(r#"rel="related" href="/api/series/"#));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

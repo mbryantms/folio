@@ -1,8 +1,12 @@
 //! Security-headers middleware (§17.4).
 //!
-//! Sets CSP + companion headers on every response. CSP for the JSON/bytes API surface
-//! uses a strict default-src 'self' policy; HTML responses come from the Next.js layer
-//! which injects per-request nonces in its own middleware.
+//! Sets CSP + companion headers on every response. As of v0.2 (rust-
+//! public-origin), the Rust binary is the public origin for both API
+//! and HTML responses — Next.js is an internal SSR upstream behind
+//! the `upstream::proxy` fallback. The CSP below is built for prod
+//! HTML (Next 16 emits hashed external script tags, no inline scripts)
+//! and dev `next dev` (which uses `eval()` for source maps + inline
+//! scripts for HMR — relaxed via `debug_assertions` below).
 
 use crate::config::Config;
 use axum::{
@@ -31,21 +35,50 @@ impl SecurityHeaders {
             .trim_start_matches("https://")
             .trim_start_matches("http://")
             .trim_end_matches('/');
-        let connect_src = if oidc_origin.is_empty() {
-            format!("'self' wss://{}", public_host)
+        // WS scheme has to match the page scheme — `'self'` does not
+        // cover the ws/wss-shaped origin in CSP. In dev that means
+        // `ws://localhost:8080`; in prod `wss://comics.example.com`.
+        let ws_scheme = if cfg.public_url.starts_with("https://") {
+            "wss"
         } else {
-            format!("'self' {} wss://{}", oidc_origin, public_host)
+            "ws"
+        };
+        let connect_src = if oidc_origin.is_empty() {
+            format!("'self' {ws_scheme}://{public_host}")
+        } else {
+            format!("'self' {oidc_origin} {ws_scheme}://{public_host}")
+        };
+        // Script + style source lists differ between debug and release
+        // builds. `cargo run` (debug) hits this with `next dev` behind
+        // the proxy, which needs `'unsafe-eval'` for React Refresh
+        // source maps + `'unsafe-inline'` for HMR boot scripts. Release
+        // builds front the standalone Next bundle, which emits hashed
+        // external scripts only and runs cleanly under the strict
+        // policy.
+        //
+        // `require-trusted-types-for 'script'` is dropped in dev too:
+        // Next dev's React Refresh patches `Function` and `eval` paths
+        // that violate Trusted-Types enforcement.
+        let (script_src, style_src, trusted_types) = if cfg!(debug_assertions) {
+            (
+                "'self' 'unsafe-eval' 'unsafe-inline'",
+                "'self' 'unsafe-inline'",
+                "",
+            )
+        } else {
+            ("'self'", "'self'", "require-trusted-types-for 'script'; ")
         };
         // M3 tightening: `'strict-dynamic'` removed. The previous policy
         // included it without a per-response nonce, which modern browsers
         // interpret as "ignore 'self' and require a nonce or hash" — i.e.
         // it effectively disabled script-src for any non-nonced load. Next
         // 16 emits hashed external script tags only (no inline scripts),
-        // so `'self'` is strict enough and actually enforces what we want.
+        // so `'self'` is strict enough and actually enforces what we want
+        // for release builds.
         let csp = format!(
             "default-src 'self'; \
-             script-src 'self'; \
-             style-src 'self'; \
+             script-src {script_src}; \
+             style-src {style_src}; \
              img-src 'self' data: blob:; \
              font-src 'self'; \
              connect-src {connect_src}; \
@@ -55,8 +88,7 @@ impl SecurityHeaders {
              object-src 'none'; \
              worker-src 'self' blob:; \
              manifest-src 'self'; \
-             require-trusted-types-for 'script'; \
-             upgrade-insecure-requests; \
+             {trusted_types}upgrade-insecure-requests; \
              report-to comic-csp"
         );
         Self {

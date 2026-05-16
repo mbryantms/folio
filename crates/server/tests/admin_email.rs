@@ -120,7 +120,7 @@ async fn status_reports_unconfigured_when_smtp_off() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
-    let resp = get(&app, &admin, "/admin/email/status").await;
+    let resp = get(&app, &admin, "/api/admin/email/status").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     // `MockSender` is_configured()=true so this would normally be true,
@@ -137,7 +137,7 @@ async fn status_requires_admin() {
     let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
 
-    let resp = get(&app, &user, "/admin/email/status").await;
+    let resp = get(&app, &user, "/api/admin/email/status").await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -148,7 +148,7 @@ async fn test_send_delivers_via_mock() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
-    let resp = send_authed(&app, &admin, Method::POST, "/admin/email/test", None).await;
+    let resp = send_authed(&app, &admin, Method::POST, "/api/admin/email/test", None).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["delivered"], true);
@@ -164,10 +164,10 @@ async fn test_send_updates_status() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
-    let resp = send_authed(&app, &admin, Method::POST, "/admin/email/test", None).await;
+    let resp = send_authed(&app, &admin, Method::POST, "/api/admin/email/test", None).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let resp = get(&app, &admin, "/admin/email/status").await;
+    let resp = get(&app, &admin, "/api/admin/email/status").await;
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["last_send_ok"], true);
     assert!(body["last_send_at"].is_string());
@@ -179,7 +179,7 @@ async fn test_send_audit_logs() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
-    let resp = send_authed(&app, &admin, Method::POST, "/admin/email/test", None).await;
+    let resp = send_authed(&app, &admin, Method::POST, "/api/admin/email/test", None).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     use entity::audit_log;
@@ -206,7 +206,7 @@ async fn patch_smtp_host_triggers_email_rebuild() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({
             "smtp.host": "mail.example.test",
             "smtp.from": "noreply@example.test",
@@ -233,7 +233,7 @@ async fn patch_smtp_password_is_redacted_in_get() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({ "smtp.password": "super-secret-relay-password" })),
     )
     .await;
@@ -273,7 +273,7 @@ async fn patch_invalid_smtp_port_rejected() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({ "smtp.port": "not-a-number" })),
     )
     .await;
@@ -292,7 +292,7 @@ async fn delete_smtp_host_via_null_clears_field() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({ "smtp.host": "mail.example.test" })),
     )
     .await;
@@ -307,7 +307,7 @@ async fn delete_smtp_host_via_null_clears_field() {
         &app,
         &admin,
         Method::PATCH,
-        "/admin/settings",
+        "/api/admin/settings",
         Some(json!({ "smtp.host": null })),
     )
     .await;

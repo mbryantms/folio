@@ -2,7 +2,11 @@
  * Server-side fetch helper used by RSC pages. Forwards the user's cookies to
  * the Rust API so per-user filtering (library ACLs) applies.
  *
- * Client-side code uses `lib/api/client.ts` instead.
+ * Client-side code uses `lib/api/client.ts` (or `apiFetch` in
+ * `auth-refresh.ts`) instead. All three helpers route through the
+ * Rust binary's `/api/` namespace so they don't collide with HTML
+ * page paths — callers pass the bare backend path here and the
+ * helper prepends `/api`.
  */
 import { cookies } from "next/headers";
 
@@ -13,7 +17,7 @@ const API_BASE =
 
 export async function apiGet<T>(path: string): Promise<T> {
   const cookieHeader = (await cookies()).toString();
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${API_BASE}/api${path}`, {
     headers: {
       Accept: "application/json",
       Cookie: cookieHeader,

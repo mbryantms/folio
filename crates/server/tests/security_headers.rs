@@ -52,9 +52,14 @@ async fn healthz_carries_all_security_headers() {
         .unwrap();
     assert!(csp.contains("default-src 'self'"));
     assert!(csp.contains("frame-ancestors 'none'"));
-    assert!(csp.contains("require-trusted-types-for 'script'"));
     assert!(csp.contains("base-uri 'none'"));
     assert!(csp.contains("object-src 'none'"));
+    // `require-trusted-types-for 'script'` is dropped in debug builds
+    // because `next dev`'s React Refresh violates Trusted-Types
+    // enforcement. Release builds keep it.
+    if !cfg!(debug_assertions) {
+        assert!(csp.contains("require-trusted-types-for 'script'"));
+    }
     // M3 (audit S-8): `'strict-dynamic'` without a per-request nonce is
     // either a no-op or actively disables script-src on modern browsers.
     // We dropped it in favor of strict `'self'`. Guard against regression.
@@ -96,17 +101,27 @@ async fn csp_report_endpoint_accepts_violation() {
 }
 
 #[tokio::test]
-async fn root_returns_hello_with_headers() {
+async fn healthz_returns_required_headers() {
+    // Post v0.2 (rust-public-origin) `/` no longer has a Rust handler
+    // — it falls through to the SSR proxy. `/healthz` is the simplest
+    // remaining Rust-owned route to assert the security-headers
+    // middleware wraps; the middleware is the same one wrapping the
+    // fallback, so this is sufficient coverage for the layer itself.
     let app = TestApp::spawn().await;
     let resp = app
         .router
         .clone()
-        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     for h in REQUIRED_HEADERS {
-        assert!(resp.headers().get(*h).is_some(), "missing on /: {h}");
+        assert!(resp.headers().get(*h).is_some(), "missing on /healthz: {h}");
     }
 }

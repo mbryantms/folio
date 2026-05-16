@@ -139,7 +139,7 @@ async fn post_scan(app: &TestApp, auth: &Authed, lib_id: &str) -> (StatusCode, s
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri(format!("/libraries/{lib_id}/scan"))
+                .uri(format!("/api/libraries/{lib_id}/scan"))
                 .header(
                     header::COOKIE,
                     format!(

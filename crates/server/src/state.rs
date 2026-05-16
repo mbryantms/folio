@@ -59,6 +59,14 @@ pub struct Inner {
     /// on every successful or failed [`AppState::send_email`] call.
     pub email_status: Arc<RwLock<EmailStatus>>,
     pub events: Broadcaster,
+    /// Shared `reqwest::Client` used by `upstream::proxy` to forward
+    /// requests to the Next.js SSR server. Built once at startup so
+    /// connection pooling kicks in; the per-request timeout is set on
+    /// each call rather than baked into the client. Redirects are
+    /// *not* followed — the proxy passes redirects through to the
+    /// originating client verbatim. See
+    /// `~/.claude/plans/rust-public-origin-1.0.md` for context.
+    pub web_proxy_client: reqwest::Client,
     /// Global cap on concurrent on-demand thumbnail generations. The
     /// post-scan worker pre-generates everything for already-scanned
     /// libraries; this semaphore only kicks in when the HTTP handler hits a
@@ -109,6 +117,16 @@ impl AppState {
         let scheduler = Arc::new(Mutex::new(None));
         let library_scan_job_ids = Arc::new(Mutex::new(HashMap::new()));
         let initial_status = EmailStatus::from_sender(email.as_ref());
+        // Build the proxy client once. `redirect::Policy::none()` so a 3xx
+        // from Next is forwarded to the originating client unchanged.
+        // `pool_idle_timeout` keeps keepalive connections warm for
+        // chained SSR requests (Next's RSC pipeline often emits several
+        // sub-requests for a single page load).
+        let web_proxy_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .build()
+            .expect("build proxy client");
         Self(Arc::new(Inner {
             cfg: ArcSwap::from_pointee(cfg),
             cfg_baseline: Arc::new(baseline),
@@ -123,6 +141,7 @@ impl AppState {
             email: std::sync::Mutex::new(email),
             email_status: Arc::new(RwLock::new(initial_status)),
             events: Broadcaster::new(),
+            web_proxy_client,
             thumb_inline_semaphore,
             thumb_job_inflight,
             thumb_path_cache,

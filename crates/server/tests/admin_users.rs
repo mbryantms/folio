@@ -142,7 +142,7 @@ async fn create_library(app: &TestApp, admin: &Authed, name: &str, root: &str) -
         app,
         admin,
         Method::POST,
-        "/libraries",
+        "/api/libraries",
         Some(serde_json::json!({ "name": name, "root_path": root })),
     )
     .await;
@@ -157,7 +157,7 @@ async fn list_users_requires_admin() {
     let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
 
-    let resp = admin_get(&app, &user, "/admin/users").await;
+    let resp = admin_get(&app, &user, "/api/admin/users").await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -173,7 +173,7 @@ async fn list_users_returns_paginated_set() {
         )
         .await;
     }
-    let resp = admin_get(&app, &admin, "/admin/users").await;
+    let resp = admin_get(&app, &admin, "/api/admin/users").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     let items = body["items"].as_array().unwrap();
@@ -190,7 +190,7 @@ async fn list_users_filters_role() {
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let _ = register(&app, "regular@example.com", "correctly-horse-battery").await;
 
-    let resp = admin_get(&app, &admin, "/admin/users?role=admin").await;
+    let resp = admin_get(&app, &admin, "/api/admin/users?role=admin").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     let items = body["items"].as_array().unwrap();
@@ -211,7 +211,7 @@ async fn list_users_pagination_cursor_works() {
         .await;
     }
 
-    let resp = admin_get(&app, &admin, "/admin/users?limit=2").await;
+    let resp = admin_get(&app, &admin, "/api/admin/users?limit=2").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     let cursor = body["next_cursor"].as_str().expect("cursor present");
@@ -220,7 +220,7 @@ async fn list_users_pagination_cursor_works() {
     let resp = admin_get(
         &app,
         &admin,
-        &format!("/admin/users?limit=2&cursor={cursor}"),
+        &format!("/api/admin/users?limit=2&cursor={cursor}"),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
@@ -235,7 +235,7 @@ async fn admin_promotes_user_then_audit_row_recorded() {
     let _ = register(&app, "target@example.com", "correctly-horse-battery").await;
 
     // Find target
-    let resp = admin_get(&app, &admin, "/admin/users").await;
+    let resp = admin_get(&app, &admin, "/api/admin/users").await;
     let body = body_json(resp.into_body()).await;
     let target = body["items"]
         .as_array()
@@ -250,7 +250,7 @@ async fn admin_promotes_user_then_audit_row_recorded() {
         &app,
         &admin,
         Method::PATCH,
-        &format!("/admin/users/{target_id}"),
+        &format!("/api/admin/users/{target_id}"),
         Some(serde_json::json!({ "role": "admin" })),
     )
     .await;
@@ -259,7 +259,7 @@ async fn admin_promotes_user_then_audit_row_recorded() {
     assert_eq!(body["role"], "admin");
 
     // Audit log shows the promotion, with actor + target resolved to labels.
-    let resp = admin_get(&app, &admin, "/admin/audit?action=admin.user.update").await;
+    let resp = admin_get(&app, &admin, "/api/admin/audit?action=admin.user.update").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     let items = body["items"].as_array().unwrap();
@@ -294,7 +294,7 @@ async fn admin_cannot_demote_self() {
         &app,
         &admin,
         Method::PATCH,
-        &format!("/admin/users/{admin_id}"),
+        &format!("/api/admin/users/{admin_id}"),
         Some(serde_json::json!({ "role": "user" })),
     )
     .await;
@@ -309,7 +309,7 @@ async fn disable_then_enable_round_trip() {
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let _ = register(&app, "target@example.com", "correctly-horse-battery").await;
 
-    let resp = admin_get(&app, &admin, "/admin/users?role=user").await;
+    let resp = admin_get(&app, &admin, "/api/admin/users?role=user").await;
     let body = body_json(resp.into_body()).await;
     let target_id = body["items"][0]["id"].as_str().unwrap().to_owned();
 
@@ -317,7 +317,7 @@ async fn disable_then_enable_round_trip() {
         &app,
         &admin,
         Method::POST,
-        &format!("/admin/users/{target_id}/disable"),
+        &format!("/api/admin/users/{target_id}/disable"),
         None,
     )
     .await;
@@ -330,7 +330,7 @@ async fn disable_then_enable_round_trip() {
         &app,
         &admin,
         Method::POST,
-        &format!("/admin/users/{target_id}/enable"),
+        &format!("/api/admin/users/{target_id}/enable"),
         None,
     )
     .await;
@@ -350,7 +350,7 @@ async fn cannot_disable_self() {
         &app,
         &admin,
         Method::POST,
-        &format!("/admin/users/{admin_id}/disable"),
+        &format!("/api/admin/users/{admin_id}/disable"),
         None,
     )
     .await;
@@ -366,7 +366,7 @@ async fn library_access_replace_works() {
     let lib_a = create_library(&app, &admin, "Lib A", "/tmp/lib-a-m3").await;
     let lib_b = create_library(&app, &admin, "Lib B", "/tmp/lib-b-m3").await;
 
-    let resp = admin_get(&app, &admin, "/admin/users?role=user").await;
+    let resp = admin_get(&app, &admin, "/api/admin/users?role=user").await;
     let body = body_json(resp.into_body()).await;
     let target_id = body["items"][0]["id"].as_str().unwrap().to_owned();
 
@@ -375,7 +375,7 @@ async fn library_access_replace_works() {
         &app,
         &admin,
         Method::POST,
-        &format!("/admin/users/{target_id}/library-access"),
+        &format!("/api/admin/users/{target_id}/library-access"),
         Some(serde_json::json!({ "library_ids": [lib_a, lib_b] })),
     )
     .await;
@@ -389,7 +389,7 @@ async fn library_access_replace_works() {
         &app,
         &admin,
         Method::POST,
-        &format!("/admin/users/{target_id}/library-access"),
+        &format!("/api/admin/users/{target_id}/library-access"),
         Some(serde_json::json!({ "library_ids": [lib_a] })),
     )
     .await;
@@ -402,7 +402,7 @@ async fn library_access_replace_works() {
     let resp = admin_get(
         &app,
         &admin,
-        "/admin/audit?action=admin.user.library_access.set",
+        "/api/admin/audit?action=admin.user.library_access.set",
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
@@ -416,7 +416,7 @@ async fn library_access_rejects_unknown_library() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let _ = register(&app, "target@example.com", "correctly-horse-battery").await;
-    let resp = admin_get(&app, &admin, "/admin/users?role=user").await;
+    let resp = admin_get(&app, &admin, "/api/admin/users?role=user").await;
     let body = body_json(resp.into_body()).await;
     let target_id = body["items"][0]["id"].as_str().unwrap().to_owned();
 
@@ -425,7 +425,7 @@ async fn library_access_rejects_unknown_library() {
         &app,
         &admin,
         Method::POST,
-        &format!("/admin/users/{target_id}/library-access"),
+        &format!("/api/admin/users/{target_id}/library-access"),
         Some(serde_json::json!({ "library_ids": [bogus] })),
     )
     .await;
@@ -437,14 +437,14 @@ async fn audit_log_filters_by_action_prefix() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let _ = register(&app, "target@example.com", "correctly-horse-battery").await;
-    let resp = admin_get(&app, &admin, "/admin/users?role=user").await;
+    let resp = admin_get(&app, &admin, "/api/admin/users?role=user").await;
     let body = body_json(resp.into_body()).await;
     let target_id = body["items"][0]["id"].as_str().unwrap().to_owned();
     let _ = admin_send(
         &app,
         &admin,
         Method::POST,
-        &format!("/admin/users/{target_id}/disable"),
+        &format!("/api/admin/users/{target_id}/disable"),
         None,
     )
     .await;
@@ -452,12 +452,12 @@ async fn audit_log_filters_by_action_prefix() {
         &app,
         &admin,
         Method::POST,
-        &format!("/admin/users/{target_id}/enable"),
+        &format!("/api/admin/users/{target_id}/enable"),
         None,
     )
     .await;
 
-    let resp = admin_get(&app, &admin, "/admin/audit?action=admin.user.*").await;
+    let resp = admin_get(&app, &admin, "/api/admin/audit?action=admin.user.*").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     let items = body["items"].as_array().unwrap();
@@ -473,6 +473,6 @@ async fn audit_log_requires_admin() {
     let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
 
-    let resp = admin_get(&app, &user, "/admin/audit").await;
+    let resp = admin_get(&app, &user, "/api/admin/audit").await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

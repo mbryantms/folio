@@ -64,24 +64,25 @@ just run-server        # server only
 just run-web           # web only
 ```
 
-Server: `:8080` · Web: `:3000` · Web's `/api/*` is proxied to the server.
+Browser entry: **`http://localhost:8080`** (the Rust binary). Rust handles its own routes and reverse-proxies HTML / RSC / `/_next/*` (including HMR over WebSockets) to the Next dev server at `:3000` internally. The Next port is still bound to loopback by `pnpm dev`, so hitting `:3000` directly works for raw Next debugging — but it bypasses the Rust middleware stack (auth, CSRF, security headers, rate limits), so it's not the supported entry point.
 
 ### Access the web app via `localhost` (not your LAN IP)
 
-Open `http://localhost:3000`, **not** `http://192.168.x.x:3000` or
-`http://devbox.lan:3000`. Auth cookies are minted with the `Secure` flag and the
-`__Host-` / `__Secure-` prefixes (per the spec's auth model). Browsers only
-accept these cookies when the URL's origin is a **secure context** — that means
-HTTPS, OR plain HTTP to `localhost` / `127.0.0.1`. Any other hostname (including
-a LAN IP or `.local` name) silently drops the cookies and you'll bounce back to
-the sign-in page after every login.
+Open `http://localhost:8080`, **not** `http://192.168.x.x:8080` or
+`http://devbox.lan:8080`. Auth cookies are minted with the `Secure` flag and
+the `__Host-` / `__Secure-` prefixes (per the spec's auth model). Browsers
+only accept these cookies when the URL's origin is a **secure context** —
+that means HTTPS, OR plain HTTP to `localhost` / `127.0.0.1`. Any other
+hostname (including a LAN IP or `.local` name) silently drops the cookies
+and you'll bounce back to the sign-in page after every login.
 
 If you need to test from a different machine, the cleanest options are:
 
 ```sh
-# A. SSH tunnel to the dev box (recommended)
-ssh -L 3000:localhost:3000 -L 8080:localhost:8080 user@devbox
-# Then open http://localhost:3000 in the local browser.
+# A. SSH tunnel to the dev box (recommended). Only the Rust port needs
+#    forwarding — Next isn't a separate browser entry point any more.
+ssh -L 8080:localhost:8080 user@devbox
+# Then open http://localhost:8080 in the local browser.
 
 # B. Use a real cert + HTTPS (e.g. via mkcert + Caddy in front).
 #    Reuse docs/install/caddy.md as a starting point.
@@ -134,7 +135,7 @@ just dev                 # in one terminal
 just seed-fixtures
 ```
 
-Open <http://localhost:3000>.
+Open <http://localhost:8080>.
 
 ## Auth modes for dev
 

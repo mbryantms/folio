@@ -692,7 +692,7 @@ fn render_issue_acq_entry(
         metadata = entry_metadata(i),
         related = series_slug
             .map(|s| format!(
-                "    <link rel=\"related\" href=\"/series/{}\" type=\"application/json\"/>\n",
+                "    <link rel=\"related\" href=\"/api/series/{}\" type=\"application/json\"/>\n",
                 xml_escape(s),
             ))
             .unwrap_or_default(),

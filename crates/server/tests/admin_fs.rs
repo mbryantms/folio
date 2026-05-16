@@ -114,7 +114,7 @@ async fn rejects_non_admin() {
     let _admin = register(&app, "admin@example.com").await;
     let user = register(&app, "user@example.com").await;
     demote_to_user(&app, user.user_id).await;
-    let (s, _) = get(&app, &user, "/admin/fs/list").await;
+    let (s, _) = get(&app, &user, "/api/admin/fs/list").await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
 
@@ -129,7 +129,7 @@ async fn lists_root_when_path_omitted() {
     let app = TestApp::spawn_with_library_root(tmp.path().to_path_buf()).await;
     let admin = register(&app, "admin@example.com").await;
 
-    let (s, body) = get(&app, &admin, "/admin/fs/list").await;
+    let (s, body) = get(&app, &admin, "/api/admin/fs/list").await;
     assert_eq!(s, StatusCode::OK);
 
     let names: Vec<&str> = body["entries"]
@@ -164,7 +164,7 @@ async fn drills_into_a_subdirectory() {
     let admin = register(&app, "admin@example.com").await;
 
     let uri = format!(
-        "/admin/fs/list?path={}",
+        "/api/admin/fs/list?path={}",
         urlencoding::encode(&series.to_string_lossy())
     );
     let (s, body) = get(&app, &admin, &uri).await;
@@ -186,7 +186,7 @@ async fn rejects_path_outside_root() {
     let admin = register(&app, "admin@example.com").await;
 
     let uri = format!(
-        "/admin/fs/list?path={}",
+        "/api/admin/fs/list?path={}",
         urlencoding::encode(&outside.path().to_string_lossy())
     );
     let (s, body) = get(&app, &admin, &uri).await;
@@ -207,7 +207,7 @@ async fn rejects_parent_dir_segment() {
     // Even a `..` inside what would canonicalise to a valid path is
     // rejected early on the validation pass — defence in depth.
     let uri = format!(
-        "/admin/fs/list?path={}",
+        "/api/admin/fs/list?path={}",
         urlencoding::encode(&format!(
             "{}/../{}",
             tmp.path().display(),
@@ -227,7 +227,7 @@ async fn missing_path_returns_404() {
 
     let nonexistent = tmp.path().join("does-not-exist");
     let uri = format!(
-        "/admin/fs/list?path={}",
+        "/api/admin/fs/list?path={}",
         urlencoding::encode(&nonexistent.to_string_lossy())
     );
     let (s, body) = get(&app, &admin, &uri).await;

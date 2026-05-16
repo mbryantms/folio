@@ -295,7 +295,7 @@ export function PageStrip({
                   {shouldLoad ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
-                      src={`/api/issues/${issueId}/pages/${i}/thumb?variant=strip`}
+                      src={`/issues/${issueId}/pages/${i}/thumb?variant=strip`}
                       alt=""
                       loading="lazy"
                       decoding="async"

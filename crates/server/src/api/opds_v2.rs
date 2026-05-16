@@ -686,7 +686,7 @@ fn publication_for(
     if let Some(slug) = series_slug {
         links.push(json!({
             "rel": "related",
-            "href": format!("/series/{slug}"),
+            "href": format!("/api/series/{slug}"),
             "type": "application/json",
         }));
     }

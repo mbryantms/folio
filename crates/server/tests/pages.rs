@@ -121,7 +121,7 @@ async fn list_includes_system_home_for_fresh_user() {
     let app = TestApp::spawn().await;
     let user = register(&app, "list-home@example.com").await;
 
-    let (status, body) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (status, body) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().unwrap();
     assert_eq!(
@@ -143,7 +143,7 @@ async fn create_then_list_returns_both() {
     let (status, body) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Marvel" })),
     )
@@ -153,7 +153,7 @@ async fn create_then_list_returns_both() {
     assert_eq!(body["is_system"], false);
     assert_eq!(body["pin_count"], 0);
 
-    let (status, body) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (status, body) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().unwrap();
     assert_eq!(arr.len(), 2);
@@ -171,7 +171,7 @@ async fn create_rejects_empty_and_long_names() {
     let (status, body) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "   " })),
     )
@@ -183,7 +183,7 @@ async fn create_rejects_empty_and_long_names() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": too_long })),
     )
@@ -199,7 +199,7 @@ async fn create_disambiguates_collision_slug() {
     let (_, a) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Marvel" })),
     )
@@ -209,7 +209,7 @@ async fn create_disambiguates_collision_slug() {
     let (_, b) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Marvel" })),
     )
@@ -219,7 +219,7 @@ async fn create_disambiguates_collision_slug() {
     let (_, c) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Marvel" })),
     )
@@ -236,7 +236,7 @@ async fn create_enforces_twenty_custom_page_cap() {
         let (status, _) = http(
             &app,
             Method::POST,
-            "/me/pages",
+            "/api/me/pages",
             Some(&user),
             Some(serde_json::json!({ "name": format!("Page {i}") })),
         )
@@ -246,7 +246,7 @@ async fn create_enforces_twenty_custom_page_cap() {
     let (status, body) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Overflow" })),
     )
@@ -263,7 +263,7 @@ async fn rename_regenerates_slug() {
     let (_, created) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Marvel" })),
     )
@@ -273,7 +273,7 @@ async fn rename_regenerates_slug() {
     let (status, body) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         Some(serde_json::json!({ "name": "Indie Comics" })),
     )
@@ -288,7 +288,7 @@ async fn rename_system_page_keeps_home_slug() {
     let app = TestApp::spawn().await;
     let user = register(&app, "system-rename@example.com").await;
 
-    let (_, pages) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     let home = pages.as_array().unwrap()[0].clone();
     assert_eq!(home["is_system"], true);
     let home_id = id(&home);
@@ -296,7 +296,7 @@ async fn rename_system_page_keeps_home_slug() {
     let (status, body) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{home_id}"),
+        &format!("/api/me/pages/{home_id}"),
         Some(&user),
         Some(serde_json::json!({ "name": "Library" })),
     )
@@ -312,13 +312,13 @@ async fn delete_system_page_returns_409() {
     let app = TestApp::spawn().await;
     let user = register(&app, "system-delete@example.com").await;
 
-    let (_, pages) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     let home_id = id(&pages.as_array().unwrap()[0]);
 
     let (status, body) = http(
         &app,
         Method::DELETE,
-        &format!("/me/pages/{home_id}"),
+        &format!("/api/me/pages/{home_id}"),
         Some(&user),
         None,
     )
@@ -327,7 +327,7 @@ async fn delete_system_page_returns_409() {
     assert_eq!(body["error"]["code"], "system_page");
 
     // Still there.
-    let (_, after) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (_, after) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     assert_eq!(after.as_array().unwrap().len(), 1);
 }
 
@@ -340,7 +340,7 @@ async fn delete_custom_page_cascades_pin_rows() {
     let (_, created) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Marvel" })),
     )
@@ -398,7 +398,7 @@ async fn delete_custom_page_cascades_pin_rows() {
     let (status, _) = http(
         &app,
         Method::DELETE,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         None,
     )
@@ -428,7 +428,7 @@ async fn reorder_rewrites_positions() {
     let (_, a) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Alpha" })),
     )
@@ -436,7 +436,7 @@ async fn reorder_rewrites_positions() {
     let (_, b) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Bravo" })),
     )
@@ -444,7 +444,7 @@ async fn reorder_rewrites_positions() {
     let (_, c) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Charlie" })),
     )
@@ -454,7 +454,7 @@ async fn reorder_rewrites_positions() {
     let c_id = id(&c);
 
     // Fetch the system page id too — reorder must list every owned page.
-    let (_, pages) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     let home_id = id(pages
         .as_array()
         .unwrap()
@@ -466,7 +466,7 @@ async fn reorder_rewrites_positions() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/pages/reorder",
+        "/api/me/pages/reorder",
         Some(&user),
         Some(serde_json::json!({
             "page_ids": [home_id, c_id, b_id, a_id],
@@ -475,7 +475,7 @@ async fn reorder_rewrites_positions() {
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (_, after) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (_, after) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     let ordered_ids: Vec<String> = after
         .as_array()
         .unwrap()
@@ -500,7 +500,7 @@ async fn reorder_rejects_partial_or_duplicate_set() {
     let (_, a) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "A" })),
     )
@@ -511,7 +511,7 @@ async fn reorder_rejects_partial_or_duplicate_set() {
     let (status, body) = http(
         &app,
         Method::POST,
-        "/me/pages/reorder",
+        "/api/me/pages/reorder",
         Some(&user),
         Some(serde_json::json!({ "page_ids": [a_id] })),
     )
@@ -523,7 +523,7 @@ async fn reorder_rejects_partial_or_duplicate_set() {
     let (status, body) = http(
         &app,
         Method::POST,
-        "/me/pages/reorder",
+        "/api/me/pages/reorder",
         Some(&user),
         Some(serde_json::json!({ "page_ids": [a_id, a_id] })),
     )
@@ -541,7 +541,7 @@ async fn cross_user_isolation() {
     let (_, page) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&alice),
         Some(serde_json::json!({ "name": "Alice page" })),
     )
@@ -549,7 +549,7 @@ async fn cross_user_isolation() {
     let alice_page_id = id(&page);
 
     // Bob cannot see Alice's page in his list.
-    let (_, bob_pages) = http(&app, Method::GET, "/me/pages", Some(&bob), None).await;
+    let (_, bob_pages) = http(&app, Method::GET, "/api/me/pages", Some(&bob), None).await;
     let bob_arr = bob_pages.as_array().unwrap();
     assert_eq!(bob_arr.len(), 1, "Bob only sees his own Home page");
     assert!(bob_arr.iter().all(|p| p["id"] != alice_page_id.to_string()));
@@ -558,7 +558,7 @@ async fn cross_user_isolation() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{alice_page_id}"),
+        &format!("/api/me/pages/{alice_page_id}"),
         Some(&bob),
         Some(serde_json::json!({ "name": "Hijacked" })),
     )
@@ -569,7 +569,7 @@ async fn cross_user_isolation() {
     let (status, _) = http(
         &app,
         Method::DELETE,
-        &format!("/me/pages/{alice_page_id}"),
+        &format!("/api/me/pages/{alice_page_id}"),
         Some(&bob),
         None,
     )
@@ -586,7 +586,7 @@ async fn rename_to_same_name_is_noop() {
     let (_, created) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Stable" })),
     )
@@ -597,7 +597,7 @@ async fn rename_to_same_name_is_noop() {
     let (status, body) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         Some(serde_json::json!({ "name": "Stable" })),
     )
@@ -613,7 +613,7 @@ async fn description_round_trips_via_patch() {
     let (_, created) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Marvel" })),
     )
@@ -626,7 +626,7 @@ async fn description_round_trips_via_patch() {
     let (status, body) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         Some(serde_json::json!({ "description": "Hickman + Hickman + Hickman" })),
     )
@@ -638,7 +638,7 @@ async fn description_round_trips_via_patch() {
     let (_, body) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         Some(serde_json::json!({ "description": "   " })),
     )
@@ -651,7 +651,7 @@ async fn description_round_trips_via_patch() {
     http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         Some(serde_json::json!({ "description": "Back again" })),
     )
@@ -659,7 +659,7 @@ async fn description_round_trips_via_patch() {
     let (_, body) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         Some(serde_json::json!({ "description": "" })),
     )
@@ -670,7 +670,7 @@ async fn description_round_trips_via_patch() {
     http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         Some(serde_json::json!({ "description": "Persistent" })),
     )
@@ -678,7 +678,7 @@ async fn description_round_trips_via_patch() {
     let (_, body) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         Some(serde_json::json!({ "description": null })),
     )
@@ -690,7 +690,7 @@ async fn description_round_trips_via_patch() {
     let (status, body) = http(
         &app,
         Method::PATCH,
-        &format!("/me/pages/{page_id}"),
+        &format!("/api/me/pages/{page_id}"),
         Some(&user),
         Some(serde_json::json!({ "description": long })),
     )
@@ -706,7 +706,7 @@ async fn sidebar_toggle_hides_and_shows_page() {
     let (_, created) = http(
         &app,
         Method::POST,
-        "/me/pages",
+        "/api/me/pages",
         Some(&user),
         Some(serde_json::json!({ "name": "Marvel" })),
     )
@@ -719,13 +719,13 @@ async fn sidebar_toggle_hides_and_shows_page() {
     let (status, _) = http(
         &app,
         Method::POST,
-        &format!("/me/pages/{page_id}/sidebar?show=false"),
+        &format!("/api/me/pages/{page_id}/sidebar?show=false"),
         Some(&user),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let (_, pages) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     let row = pages
         .as_array()
         .unwrap()
@@ -735,7 +735,14 @@ async fn sidebar_toggle_hides_and_shows_page() {
     assert_eq!(row["show_in_sidebar"], false);
 
     // Sidebar layout drops the page entry.
-    let (_, layout) = http(&app, Method::GET, "/me/sidebar-layout", Some(&user), None).await;
+    let (_, layout) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&user),
+        None,
+    )
+    .await;
     let entry = layout["entries"]
         .as_array()
         .unwrap()
@@ -749,13 +756,13 @@ async fn sidebar_toggle_hides_and_shows_page() {
     let (status, _) = http(
         &app,
         Method::POST,
-        &format!("/me/pages/{page_id}/sidebar?show=true"),
+        &format!("/api/me/pages/{page_id}/sidebar?show=true"),
         Some(&user),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let (_, pages) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     let row = pages
         .as_array()
         .unwrap()
@@ -769,7 +776,7 @@ async fn sidebar_toggle_hides_and_shows_page() {
 async fn sidebar_toggle_on_system_page_returns_409() {
     let app = TestApp::spawn().await;
     let user = register(&app, "sys-toggle@example.com").await;
-    let (_, pages) = http(&app, Method::GET, "/me/pages", Some(&user), None).await;
+    let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     let home_id = id(pages
         .as_array()
         .unwrap()
@@ -779,7 +786,7 @@ async fn sidebar_toggle_on_system_page_returns_409() {
     let (status, body) = http(
         &app,
         Method::POST,
-        &format!("/me/pages/{home_id}/sidebar?show=false"),
+        &format!("/api/me/pages/{home_id}/sidebar?show=false"),
         Some(&user),
         None,
     )

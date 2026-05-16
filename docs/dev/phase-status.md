@@ -3,7 +3,7 @@
 Snapshot of what has actually shipped vs what's deferred. Source of truth for
 what to expect when running locally; read alongside [comic-reader-spec.md §19](../../comic-reader-spec.md).
 
-Updated 2026-05-03 (Phase 3 shipped).
+Updated 2026-05-16 (rust-public-origin v0.2 cutover).
 
 ---
 
@@ -269,6 +269,63 @@ Deferred to follow-ups:
 - Page-level layout modes (no grid view; only rail mode).
 - Cross-page pin sync ("always pin to all my pages").
 - Page templates / cloning.
+
+---
+
+## v0.2 — Architectural normalization: Rust binary becomes the public origin ✅
+
+Cross-cutting shipment 2026-05-16, threaded between the regular phase
+work. Plan at `~/.claude/plans/rust-public-origin-1.0.md`. Triggered
+by three patch releases (v0.1.15–v0.1.17) that each fixed a different
+external-client path the Next.js front-end wasn't forwarding — a clear
+sign the topology had drifted from the design intent stated in
+[`web/next.config.ts`](../../web/next.config.ts).
+
+The Rust binary now owns the public origin in prod. It handles its own
+routes (`/api/*`, `/opds/*`, `/auth/*`, page bytes, `/ws/*`) directly
+and reverse-proxies HTML / RSC / `/_next/*` to Next.js as an internal
+upstream over the compose bridge. Single Ingress / single reverse-proxy
+upstream — operators no longer need path-based routing rules. Concrete
+pieces:
+
+- New `crates/server/src/upstream/` module: streaming HTTP/1.1
+  reverse proxy + raw byte-level WebSocket-upgrade passthrough;
+  XFF chain preservation; standard error-envelope on upstream
+  failures. Test coverage: 6 unit, 15 lightweight wiremock, and
+  5 end-to-end (`TestApp` + `axum::serve`) tests, including a
+  WS byte-bridge round-trip.
+- `Router::fallback(upstream::proxy)` in [`crates/server/src/app.rs`](../../crates/server/src/app.rs)
+  catches anything no explicit route claimed.
+- `compose.prod.yml`: `app` is the only host-published service; `web`
+  switched from `ports:` to `expose:` (internal-only). New env
+  `COMIC_WEB_UPSTREAM_URL` wires the proxy.
+- Install templates (`caddy.md`, `nginx.md`, `traefik.md`,
+  `kubernetes.md`, `lan-https-mkcert.md`) collapsed from path-routed
+  configs to single-upstream — see the `## Breaking changes by
+  version` section in [upgrades.md](../install/upgrades.md) for the
+  operator migration.
+- The v0.1.15–v0.1.17 Next-side rewrite/matcher-exclusion patches
+  for `/opds/*`, `/auth/oidc/*`, `/issues/*` removed.
+- Web app drops the `/api/` fetch prefix entirely (one central change
+  in `web/lib/api/auth-refresh.ts`; ~17 inline-fetch + form-action +
+  download-href sites updated to match). Cuts the previous web → API
+  ping-pong (browser → Rust → Next rewrite → Rust) down to one hop.
+- Dev workflow: browser entry flipped from `localhost:3000` to
+  `localhost:8080`. Next HMR rides the same proxy WebSocket path the
+  byte-bridge tests already cover.
+
+Sidelined: a Rust-side `/api/` strip middleware was prototyped and
+deferred. `axum::Router::layer` applies layers per-matched-route +
+fallback rather than before route matching, so the strip would have
+needed bind-site `tower::ServiceBuilder` wiring plus a refactor of
+every test that uses `app.router.clone().oneshot(...)`. Not load-
+bearing once the web app drops the prefix; the option remains open if
+a future client needs the alias.
+
+Security-audit follow-up: M-1 (no explicit `CorsLayer`) downgrades
+from Medium to Low — with HTML + API now on a single origin, the
+attack surface a CORS policy would gate is gone. Annotation added
+inline in [`docs/dev/security-audit.md`](./security-audit.md).
 
 ---
 

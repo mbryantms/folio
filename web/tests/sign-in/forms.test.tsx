@@ -76,22 +76,22 @@ describe("credential forms — progressive enhancement", () => {
         errorMessage: null,
       }),
     );
-    assertPostFormPresent(html, "/api/auth/local/login");
-    assertPostFormPresent(html, "/api/auth/local/register");
+    assertPostFormPresent(html, "/auth/local/login");
+    assertPostFormPresent(html, "/auth/local/register");
   });
 
   it("forgot-password ships method=POST + real action", () => {
     const html = renderToStaticMarkup(
       React.createElement(ForgotPasswordForm),
     );
-    assertPostFormPresent(html, "/api/auth/local/request-password-reset");
+    assertPostFormPresent(html, "/auth/local/request-password-reset");
   });
 
   it("reset-password ships method=POST + real action + hidden token", () => {
     const html = renderToStaticMarkup(
       React.createElement(ResetPasswordForm, { token: "abc.def.ghi" }),
     );
-    assertPostFormPresent(html, "/api/auth/local/reset-password");
+    assertPostFormPresent(html, "/auth/local/reset-password");
     expect(
       /<input[^>]*\btype="hidden"[^>]*\bname="token"[^>]*\bvalue="abc\.def\.ghi"/i.test(
         html,

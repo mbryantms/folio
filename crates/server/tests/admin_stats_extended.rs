@@ -340,7 +340,7 @@ async fn users_list_returns_aggregates_for_each_user() {
     )
     .await;
 
-    let (s, body) = get(&app, &admin, "/admin/stats/users").await;
+    let (s, body) = get(&app, &admin, "/api/admin/stats/users").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
     let users = body["users"].as_array().expect("users array");
     // 2 users registered.
@@ -361,7 +361,7 @@ async fn users_list_forbidden_for_non_admin() {
     let app = TestApp::spawn().await;
     let _admin = register(&app, "admin@example.com").await;
     let user = register(&app, "user@example.com").await;
-    let (s, _) = get(&app, &user, "/admin/stats/users").await;
+    let (s, _) = get(&app, &user, "/api/admin/stats/users").await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
 
@@ -398,7 +398,7 @@ async fn engagement_returns_90_day_series_and_devices() {
     )
     .await;
 
-    let (s, body) = get(&app, &admin, "/admin/stats/engagement").await;
+    let (s, body) = get(&app, &admin, "/api/admin/stats/engagement").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
     let series_arr = body["series"].as_array().expect("series array");
     assert_eq!(series_arr.len(), 90, "90 daily samples");
@@ -437,13 +437,13 @@ async fn engagement_respects_exclude_flag() {
     .await;
 
     // Baseline: reader is counted.
-    let (_, before) = get(&app, &admin, "/admin/stats/engagement").await;
+    let (_, before) = get(&app, &admin, "/api/admin/stats/engagement").await;
     let last_before = before["series"].as_array().unwrap().last().unwrap().clone();
     assert!(last_before["dau"].as_i64().unwrap() >= 1);
 
     // Opt out.
     set_exclude(&app, reader.user_id, true).await;
-    let (_, after) = get(&app, &admin, "/admin/stats/engagement").await;
+    let (_, after) = get(&app, &admin, "/api/admin/stats/engagement").await;
     let last_after = after["series"].as_array().unwrap().last().unwrap().clone();
     assert_eq!(last_after["dau"], 0);
 }
@@ -478,7 +478,7 @@ async fn content_endpoint_returns_dead_stock_abandoned_funnel() {
         .await;
     }
 
-    let (s, body) = get(&app, &admin, "/admin/stats/content").await;
+    let (s, body) = get(&app, &admin, "/api/admin/stats/content").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
 
     let dead = body["dead_stock"].as_array().expect("dead_stock");
@@ -531,7 +531,7 @@ async fn quality_endpoint_reports_long_sessions_and_metadata() {
     )
     .await;
 
-    let (s, body) = get(&app, &admin, "/admin/stats/quality").await;
+    let (s, body) = get(&app, &admin, "/api/admin/stats/quality").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
     assert!(body["long_sessions"].as_i64().unwrap() >= 1);
     assert_eq!(body["orphan_sessions"], 0);

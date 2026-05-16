@@ -37,27 +37,25 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
-      # API + WebSocket + healthcheck + OPDS — anything served by the Rust binary.
-      - traefik.http.routers.folio-app.rule=Host(`comics.example.com`) && (PathPrefix(`/api`) || PathPrefix(`/auth`) || PathPrefix(`/ws`) || PathPrefix(`/opds`) || PathPrefix(`/healthz`) || PathPrefix(`/readyz`) || PathPrefix(`/metrics`) || PathPrefix(`/csp-report`) || PathPrefix(`/issues`) || PathPrefix(`/pages`) || PathPrefix(`/thumbnails`))
-      - traefik.http.routers.folio-app.entrypoints=websecure
-      - traefik.http.routers.folio-app.tls.certresolver=le
-      - traefik.http.routers.folio-app.priority=10
-      - traefik.http.services.folio-app.loadbalancer.server.port=8080
-      # Streaming-friendly: page-bytes + OPDS PSE must not be buffered.
-      - traefik.http.services.folio-app.loadbalancer.responseforwarding.flushInterval=100ms
+      # Single router — the Rust binary handles every path, including
+      # reverse-proxying HTML to its internal Next.js SSR upstream over
+      # the compose bridge. WebSockets, OPDS, page bytes, HTML — all
+      # one upstream.
+      - traefik.http.routers.folio.rule=Host(`comics.example.com`)
+      - traefik.http.routers.folio.entrypoints=websecure
+      - traefik.http.routers.folio.tls.certresolver=le
+      - traefik.http.services.folio.loadbalancer.server.port=8080
+      # Streaming-friendly: page-bytes + OPDS PSE bodies must not be
+      # buffered. Safe to apply globally since HTML responses are
+      # small.
+      - traefik.http.services.folio.loadbalancer.responseforwarding.flushInterval=100ms
 
   web:
-    networks: [default, proxy]
-    ports: !reset []
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=proxy
-      # Catch-all: anything not claimed by the app router lands on Next.
-      - traefik.http.routers.folio-web.rule=Host(`comics.example.com`)
-      - traefik.http.routers.folio-web.entrypoints=websecure
-      - traefik.http.routers.folio-web.tls.certresolver=le
-      - traefik.http.routers.folio-web.priority=1
-      - traefik.http.services.folio-web.loadbalancer.server.port=3000
+    networks: [default]
+    # `web` is internal-only on the compose bridge; the Rust binary
+    # reaches it via `COMIC_WEB_UPSTREAM_URL=http://web:3000`. There
+    # is no Traefik router for `web` — your external proxy never
+    # talks to it directly.
 ```
 
 Bring it up:
@@ -84,11 +82,10 @@ http:
         stsPreload: false   # set to true only after submitting to the preload list
 ```
 
-Then attach it to both routers via labels:
+Then attach it to the router via labels:
 
 ```yaml
-- traefik.http.routers.folio-app.middlewares=folio-hsts@file
-- traefik.http.routers.folio-web.middlewares=folio-hsts@file
+- traefik.http.routers.folio.middlewares=folio-hsts@file
 ```
 
 ## Cookies
@@ -116,13 +113,15 @@ wscat -c wss://comics.example.com/ws/scan -H "Cookie: __Host-comic_session=..."
 
 ## Common pitfalls
 
-- **Forgetting `priority`**. Without it, the `folio-app` router (with
-  the more specific PathPrefix) may lose to the catch-all `folio-web`.
-  Set `app=10`, `web=1`.
 - **Letting Traefik buffer the OPDS Page-Streaming endpoint.** The
   `flushInterval=100ms` label above keeps the stream flowing — without
   it, OPDS readers see a stuttering progress bar.
 - **Duplicating security headers.** Folio's Rust middleware already
   sets CSP, COOP, COEP, X-Frame-Options, X-Content-Type-Options,
-  Referrer-Policy. HSTS belongs at the proxy (above). The rest don't
-  need to be duplicated.
+  Referrer-Policy on every response (including HTML it reverse-proxies
+  from Next). HSTS belongs at the proxy (above); the rest don't need
+  to be duplicated.
+- **Exposing `web` externally.** As of M5 of the rust-public-origin
+  rollout, `web` is internal-only on the compose bridge. If you had a
+  Traefik router pointed at `folio-web:3000` from a previous version,
+  remove it — the Rust binary now reverse-proxies HTML internally.

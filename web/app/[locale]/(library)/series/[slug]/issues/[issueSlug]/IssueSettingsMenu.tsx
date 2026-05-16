@@ -304,7 +304,7 @@ export function IssueSettingsMenu({
           </DropdownMenuItem>
           {canRead && (
             <DropdownMenuItem asChild>
-              <a href={`/api/opds/v1/issues/${issue.id}/file`} download>
+              <a href={`/opds/v1/issues/${issue.id}/file`} download>
                 <Download className="mr-2 h-4 w-4" />
                 Download
               </a>

@@ -56,7 +56,7 @@ export function ForgotPasswordForm({
     try {
       // Always treat the request as accepted — the server returns 204
       // whether or not the email maps to a real account (no enumeration).
-      await fetch("/api/auth/local/request-password-reset", {
+      await fetch("/auth/local/request-password-reset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -123,7 +123,7 @@ export function ForgotPasswordForm({
           <form
             onSubmit={onSubmit}
             method="POST"
-            action="/api/auth/local/request-password-reset"
+            action="/auth/local/request-password-reset"
             className="space-y-4"
           >
             <FormField

@@ -296,7 +296,7 @@ async fn create_each_kind_and_list_per_issue() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&auth),
         Some(bookmark),
     )
@@ -309,7 +309,14 @@ async fn create_each_kind_and_list_per_issue() {
         "kind": "note",
         "body": "Great panel.",
     });
-    let (status, _) = http(&app, Method::POST, "/me/markers", Some(&auth), Some(note)).await;
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(note),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
 
     // Starred bookmark — favorite is now a flag on any kind, not its
@@ -323,7 +330,7 @@ async fn create_each_kind_and_list_per_issue() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&auth),
         Some(starred),
     )
@@ -339,14 +346,14 @@ async fn create_each_kind_and_list_per_issue() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&auth),
         Some(highlight),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let url = format!("/me/issues/{issue_id}/markers");
+    let url = format!("/api/me/issues/{issue_id}/markers");
     let (status, list) = http(&app, Method::GET, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = list["items"].as_array().unwrap();
@@ -379,7 +386,14 @@ async fn create_validates_shape() {
         "page_index": 0,
         "kind": "note",
     });
-    let (status, body) = http(&app, Method::POST, "/me/markers", Some(&auth), Some(bad)).await;
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(bad),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body: {body:#?}");
     assert_eq!(body["error"]["code"], "validation");
 
@@ -389,7 +403,14 @@ async fn create_validates_shape() {
         "page_index": 0,
         "kind": "highlight",
     });
-    let (status, _) = http(&app, Method::POST, "/me/markers", Some(&auth), Some(bad)).await;
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(bad),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Unknown kind → 400.
@@ -398,7 +419,14 @@ async fn create_validates_shape() {
         "page_index": 0,
         "kind": "scribble",
     });
-    let (status, _) = http(&app, Method::POST, "/me/markers", Some(&auth), Some(bad)).await;
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(bad),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // page_index beyond page_count (20) → 422.
@@ -407,7 +435,14 @@ async fn create_validates_shape() {
         "page_index": 21,
         "kind": "bookmark",
     });
-    let (status, _) = http(&app, Method::POST, "/me/markers", Some(&auth), Some(bad)).await;
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(bad),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
@@ -425,7 +460,14 @@ async fn region_clamping_keeps_values_in_range() {
         "kind": "highlight",
         "region": { "x": -5, "y": 50, "w": 200, "h": 10, "shape": "rect" },
     });
-    let (status, marker) = http(&app, Method::POST, "/me/markers", Some(&auth), Some(body)).await;
+    let (status, marker) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "marker: {marker:#?}");
     assert_eq!(marker["region"]["x"], 0.0);
     assert_eq!(marker["region"]["w"], 100.0);
@@ -444,7 +486,7 @@ async fn update_partial_diffs_preserve_invariants() {
     let (_, m) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&auth),
         Some(serde_json::json!({
             "issue_id": issue_id,
@@ -455,7 +497,7 @@ async fn update_partial_diffs_preserve_invariants() {
     )
     .await;
     let id = m["id"].as_str().unwrap().to_owned();
-    let url = format!("/me/markers/{id}");
+    let url = format!("/api/me/markers/{id}");
 
     // Edit body.
     let (status, updated) = http(
@@ -505,7 +547,7 @@ async fn list_filters_by_kind_q_and_cursor() {
         http(
             &app,
             Method::POST,
-            "/me/markers",
+            "/api/me/markers",
             Some(&auth),
             Some(serde_json::json!({
                 "issue_id": issue_id,
@@ -519,7 +561,7 @@ async fn list_filters_by_kind_q_and_cursor() {
         http(
             &app,
             Method::POST,
-            "/me/markers",
+            "/api/me/markers",
             Some(&auth),
             Some(serde_json::json!({
                 "issue_id": issue_id,
@@ -535,7 +577,7 @@ async fn list_filters_by_kind_q_and_cursor() {
     let (_, list) = http(
         &app,
         Method::GET,
-        "/me/markers?kind=note",
+        "/api/me/markers?kind=note",
         Some(&auth),
         None,
     )
@@ -543,16 +585,30 @@ async fn list_filters_by_kind_q_and_cursor() {
     assert_eq!(list["items"].as_array().unwrap().len(), 2);
 
     // Free-text search across body.
-    let (_, list) = http(&app, Method::GET, "/me/markers?q=lasers", Some(&auth), None).await;
+    let (_, list) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers?q=lasers",
+        Some(&auth),
+        None,
+    )
+    .await;
     let items = list["items"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert!(items[0]["body"].as_str().unwrap().contains("lasers"));
 
     // Pagination: small limit returns a next_cursor; second page fills.
-    let (_, page1) = http(&app, Method::GET, "/me/markers?limit=2", Some(&auth), None).await;
+    let (_, page1) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers?limit=2",
+        Some(&auth),
+        None,
+    )
+    .await;
     let cursor = page1["next_cursor"].as_str().unwrap().to_owned();
     assert_eq!(page1["items"].as_array().unwrap().len(), 2);
-    let url = format!("/me/markers?limit=2&cursor={cursor}");
+    let url = format!("/api/me/markers?limit=2&cursor={cursor}");
     let (_, page2) = http(&app, Method::GET, &url, Some(&auth), None).await;
     assert!(!page2["items"].as_array().unwrap().is_empty());
 }
@@ -569,7 +625,7 @@ async fn cross_user_isolation() {
     let (_, m) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&alice),
         Some(serde_json::json!({
             "issue_id": issue_id,
@@ -581,13 +637,13 @@ async fn cross_user_isolation() {
     let id = m["id"].as_str().unwrap().to_owned();
 
     // Bob can see his own (empty) feed but not alice's marker.
-    let url = format!("/me/issues/{issue_id}/markers");
+    let url = format!("/api/me/issues/{issue_id}/markers");
     let (status, list) = http(&app, Method::GET, &url, Some(&bob), None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(list["items"].as_array().unwrap().is_empty());
 
     // Bob can't patch alice's marker by id either.
-    let url = format!("/me/markers/{id}");
+    let url = format!("/api/me/markers/{id}");
     let (status, _) = http(
         &app,
         Method::PATCH,
@@ -612,7 +668,7 @@ async fn per_issue_endpoint_acl_blocks_unauthorized_user() {
     let (_lib, _series, issue_id) = seed_issue(&app, "private").await;
     // outsider is a non-admin without an explicit grant for this lib.
 
-    let url = format!("/me/issues/{issue_id}/markers");
+    let url = format!("/api/me/issues/{issue_id}/markers");
     let (status, _) = http(&app, Method::GET, &url, Some(&outsider), None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
@@ -626,7 +682,7 @@ async fn csrf_required_on_mutations() {
 
     let req = Request::builder()
         .method(Method::POST)
-        .uri("/me/markers")
+        .uri("/api/me/markers")
         .header(
             header::COOKIE,
             format!(
@@ -662,7 +718,7 @@ async fn list_hydrates_series_and_issue_fields() {
     let (status, created) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&auth),
         Some(serde_json::json!({
             "issue_id": issue_id,
@@ -676,7 +732,7 @@ async fn list_hydrates_series_and_issue_fields() {
     assert!(created.get("series_name").is_none());
     assert!(created.get("series_slug").is_none());
 
-    let (status, list) = http(&app, Method::GET, "/me/markers", Some(&auth), None).await;
+    let (status, list) = http(&app, Method::GET, "/api/me/markers", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = list["items"].as_array().unwrap();
     assert_eq!(items.len(), 1);
@@ -686,7 +742,7 @@ async fn list_hydrates_series_and_issue_fields() {
     assert_eq!(m["issue_slug"], "hydra-series-1");
     assert_eq!(m["issue_number"], "1");
 
-    let per_issue_url = format!("/me/issues/{issue_id}/markers");
+    let per_issue_url = format!("/api/me/issues/{issue_id}/markers");
     let (status, per_issue) = http(&app, Method::GET, &per_issue_url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     // Per-issue endpoint: hydrated fields omitted.
@@ -706,7 +762,7 @@ async fn favorite_flag_round_trips_and_filters() {
     let (_, plain) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&auth),
         Some(serde_json::json!({
             "issue_id": issue_id, "page_index": 0, "kind": "bookmark",
@@ -718,7 +774,7 @@ async fn favorite_flag_round_trips_and_filters() {
     let (_, starred) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&auth),
         Some(serde_json::json!({
             "issue_id": issue_id, "page_index": 1, "kind": "bookmark",
@@ -733,7 +789,7 @@ async fn favorite_flag_round_trips_and_filters() {
     let (_, list) = http(
         &app,
         Method::GET,
-        "/me/markers?is_favorite=true",
+        "/api/me/markers?is_favorite=true",
         Some(&auth),
         None,
     )
@@ -743,7 +799,7 @@ async fn favorite_flag_round_trips_and_filters() {
     assert_eq!(items[0]["id"], starred_id);
 
     // PATCH toggles the flag off; subsequent filter returns empty.
-    let url = format!("/me/markers/{starred_id}");
+    let url = format!("/api/me/markers/{starred_id}");
     let (status, after) = http(
         &app,
         Method::PATCH,
@@ -758,7 +814,7 @@ async fn favorite_flag_round_trips_and_filters() {
     let (_, list) = http(
         &app,
         Method::GET,
-        "/me/markers?is_favorite=true",
+        "/api/me/markers?is_favorite=true",
         Some(&auth),
         None,
     )
@@ -769,7 +825,7 @@ async fn favorite_flag_round_trips_and_filters() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&auth),
         Some(serde_json::json!({
             "issue_id": issue_id, "page_index": 2, "kind": "favorite",
@@ -798,7 +854,7 @@ async fn tags_round_trip_and_filter_by_all_any() {
         http(
             &app,
             Method::POST,
-            "/me/markers",
+            "/api/me/markers",
             Some(&auth),
             Some(serde_json::json!({
                 "issue_id": issue_id,
@@ -812,7 +868,7 @@ async fn tags_round_trip_and_filter_by_all_any() {
 
     // Server normalizes (lowercase + dedupe), so the tag index sees
     // exactly three distinct tags across all three rows.
-    let (status, tags) = http(&app, Method::GET, "/me/markers/tags", Some(&auth), None).await;
+    let (status, tags) = http(&app, Method::GET, "/api/me/markers/tags", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = tags["items"].as_array().unwrap();
     let names: Vec<&str> = items.iter().map(|t| t["tag"].as_str().unwrap()).collect();
@@ -824,7 +880,7 @@ async fn tags_round_trip_and_filter_by_all_any() {
     let (_, list) = http(
         &app,
         Method::GET,
-        "/me/markers?tags=funny,panel-art",
+        "/api/me/markers?tags=funny,panel-art",
         Some(&auth),
         None,
     )
@@ -841,7 +897,7 @@ async fn tags_round_trip_and_filter_by_all_any() {
     let (_, list) = http(
         &app,
         Method::GET,
-        "/me/markers?tags=funny,panel-art&tag_match=any",
+        "/api/me/markers?tags=funny,panel-art&tag_match=any",
         Some(&auth),
         None,
     )
@@ -853,7 +909,7 @@ async fn tags_round_trip_and_filter_by_all_any() {
     let (status, _) = http(
         &app,
         Method::GET,
-        "/me/markers?tags=funny&tag_match=somehow",
+        "/api/me/markers?tags=funny&tag_match=somehow",
         Some(&auth),
         None,
     )
@@ -872,7 +928,14 @@ async fn count_returns_per_user_total() {
     promote_to_admin(&app, bob.user_id).await;
     let (_lib, _series, issue_id) = seed_issue(&app, "count-lib").await;
 
-    let (status, count) = http(&app, Method::GET, "/me/markers/count", Some(&alice), None).await;
+    let (status, count) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers/count",
+        Some(&alice),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(count["total"], 0);
 
@@ -880,7 +943,7 @@ async fn count_returns_per_user_total() {
         http(
             &app,
             Method::POST,
-            "/me/markers",
+            "/api/me/markers",
             Some(&alice),
             Some(serde_json::json!({
                 "issue_id": issue_id,
@@ -891,11 +954,18 @@ async fn count_returns_per_user_total() {
         .await;
     }
 
-    let (_, count) = http(&app, Method::GET, "/me/markers/count", Some(&alice), None).await;
+    let (_, count) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers/count",
+        Some(&alice),
+        None,
+    )
+    .await;
     assert_eq!(count["total"], 3);
 
     // Bob's count is isolated from alice's.
-    let (_, count) = http(&app, Method::GET, "/me/markers/count", Some(&bob), None).await;
+    let (_, count) = http(&app, Method::GET, "/api/me/markers/count", Some(&bob), None).await;
     assert_eq!(count["total"], 0);
 }
 
@@ -909,7 +979,7 @@ async fn delete_removes_marker() {
     let (_, m) = http(
         &app,
         Method::POST,
-        "/me/markers",
+        "/api/me/markers",
         Some(&auth),
         Some(serde_json::json!({
             "issue_id": issue_id,
@@ -920,7 +990,7 @@ async fn delete_removes_marker() {
     .await;
     let id = m["id"].as_str().unwrap().to_owned();
 
-    let url = format!("/me/markers/{id}");
+    let url = format!("/api/me/markers/{id}");
     let (status, _) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 

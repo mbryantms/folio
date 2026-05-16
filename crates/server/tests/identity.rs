@@ -310,7 +310,7 @@ async fn match_key_patch_persists_and_is_sticky() {
         .oneshot(
             Request::builder()
                 .method(Method::PATCH)
-                .uri(format!("/series/{series_slug}"))
+                .uri(format!("/api/series/{series_slug}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(
                     header::COOKIE,
@@ -344,7 +344,7 @@ async fn match_key_patch_persists_and_is_sticky() {
         .oneshot(
             Request::builder()
                 .method(Method::PATCH)
-                .uri(format!("/series/{series_slug}"))
+                .uri(format!("/api/series/{series_slug}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(
                     header::COOKIE,

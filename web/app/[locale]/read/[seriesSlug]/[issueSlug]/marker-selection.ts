@@ -39,7 +39,7 @@ async function cropToCanvas(
   input: CropInput,
   scale = 1,
 ): Promise<HTMLCanvasElement> {
-  const src = `/api/issues/${input.issueId}/pages/${input.pageIndex}`;
+  const src = `/issues/${input.issueId}/pages/${input.pageIndex}`;
   const img = await loadImage(src);
   const w = input.naturalSize.width;
   const h = input.naturalSize.height;

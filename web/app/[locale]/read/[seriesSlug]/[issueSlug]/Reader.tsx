@@ -747,7 +747,7 @@ export function Reader({
         if (!grp) break;
         for (const p of grp) {
           const img = new Image();
-          img.src = `/api/issues/${issueId}/pages/${p}`;
+          img.src = `/issues/${issueId}/pages/${p}`;
         }
       }
       return;
@@ -756,7 +756,7 @@ export function Reader({
       const next = currentPage + i;
       if (next >= totalPages) break;
       const img = new Image();
-      img.src = `/api/issues/${issueId}/pages/${next}`;
+      img.src = `/issues/${issueId}/pages/${next}`;
     }
   }, [currentPage, currentGroupIdx, groups, issueId, totalPages, viewMode]);
 
@@ -973,7 +973,7 @@ function SinglePageView({
       <div ref={wrapperRef} className="relative w-full">
         <PageImage
           key={`${issueId}-${currentPage}`}
-          src={`/api/issues/${issueId}/pages/${currentPage}`}
+          src={`/issues/${issueId}/pages/${currentPage}`}
           alt={`Page ${currentPage + 1}`}
           fitClass={fitClass}
           onNaturalSize={onNaturalSize(currentPage)}
@@ -1091,7 +1091,7 @@ function DoublePagePane({
       className={`relative align-top ${paneClass}`}
     >
       <PageImage
-        src={`/api/issues/${issueId}/pages/${page}`}
+        src={`/issues/${issueId}/pages/${page}`}
         alt={`Page ${page + 1}`}
         fitClass={fitClass}
         onNaturalSize={onNaturalSize}
@@ -1192,7 +1192,7 @@ function WebtoonView({
       {Array.from({ length: totalPages }, (_, i) => (
         <div key={`${issueId}-${i}`} data-page-idx={i}>
           <PageImage
-            src={`/api/issues/${issueId}/pages/${i}`}
+            src={`/issues/${issueId}/pages/${i}`}
             alt={`Page ${i + 1}`}
             fitClass={fitClass}
             loading={i < 3 ? "eager" : "lazy"}

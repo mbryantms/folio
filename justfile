@@ -56,7 +56,7 @@ dev-services-reset:
 dev-fresh: dev-stop dev-services-reset dev-services-up migrate
     @echo "==> Fresh dev environment ready"
     @echo "    Start the app with: just dev"
-    @echo "    Then clear browser site data for localhost:3000 or use a private window."
+    @echo "    Then clear browser site data for localhost:8080 or use a private window."
 
 dev-services-logs:
     docker compose -f compose.dev.yml logs -f

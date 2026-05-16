@@ -23,19 +23,21 @@ export default createMiddleware({
 });
 
 export const config = {
-  // Exclude backend-owned paths from the next-intl rewrite. With
-  // `localePrefix: "never"`, this middleware internally rewrites every
+  // With `localePrefix: "never"`, next-intl internally rewrites every
   // matched request to `/{locale}/{path}` so the file-system router can
-  // resolve `app/[locale]/...` pages. That rewrite fires *before* the
-  // `next.config.ts` rewrites, so any path that's supposed to forward
-  // to the Rust backend has to be excluded here, otherwise it gets
-  // rewritten to `/en/...`, no page matches, and Next returns its 404
-  // HTML. The list mirrors the unprefixed route prefixes registered by
-  // the Rust router that are also referenced *directly* from clients
-  // outside our control (OPDS feed entries, OIDC IdP redirects):
-  //   - `/opds/*`      — OPDS catalog itself
-  //   - `/auth/oidc/*` — IdP-initiated callback
-  //   - `/issues/*`    — page bytes + thumbnails referenced from OPDS
-  //                      `<link rel=".../image">` entries (see opds.rs)
-  matcher: ["/((?!api|_next|opds|auth/oidc|issues|.*\\..*).*)"],
+  // resolve `app/[locale]/...` pages. We only need to exclude paths
+  // that aren't HTML routes Next owns:
+  //
+  //   - `/_next/*` — Next's own static-asset namespace; never rewritten.
+  //   - `*.ext`   — files; HTML routing doesn't apply.
+  //
+  // As of v0.2 (rust-public-origin), the Rust binary is the public
+  // origin in prod and reverse-proxies HTML/RSC requests to Next via
+  // an internal upstream. Backend paths the Rust router owns
+  // (`/api/*`, `/opds/*`, `/auth/*`, `/issues/*`, etc.) never reach
+  // Next.js at all — there is no need (and no reason) to list them
+  // here. The earlier per-prefix exclusions for `opds`, `auth/oidc`,
+  // and `issues` were workarounds for the previous Next-as-front
+  // topology and have been removed. Do not re-add them.
+  matcher: ["/((?!_next|.*\\..*).*)"],
 };

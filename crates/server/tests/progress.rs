@@ -86,7 +86,7 @@ async fn post_progress(
 ) -> (StatusCode, serde_json::Value) {
     let req = Request::builder()
         .method(Method::POST)
-        .uri("/progress")
+        .uri("/api/progress")
         .header(header::CONTENT_TYPE, "application/json")
         .header(
             header::COOKIE,

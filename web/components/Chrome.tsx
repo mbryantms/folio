@@ -33,7 +33,7 @@ function HeaderSignOut() {
 
   async function signOut() {
     const csrf = readCsrfCookie();
-    const ok = await fetch("/api/auth/logout", {
+    const ok = await fetch("/auth/logout", {
       method: "POST",
       credentials: "include",
       headers: csrf ? { "X-CSRF-Token": csrf } : undefined,

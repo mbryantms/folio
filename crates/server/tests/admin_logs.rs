@@ -111,7 +111,7 @@ async fn rejects_non_admin() {
     let app = TestApp::spawn().await;
     let _admin = register(&app, "admin@example.com").await;
     let user = register(&app, "user@example.com").await;
-    let (s, _) = get(&app, &user, "/admin/logs").await;
+    let (s, _) = get(&app, &user, "/api/admin/logs").await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
 
@@ -125,7 +125,7 @@ async fn lists_recent_entries_oldest_first() {
     buf.push(seed_entry("warn", "server::api::progress", "retry"));
     buf.push(seed_entry("error", "server::api::scan", "boom"));
 
-    let (s, body) = get(&app, &admin, "/admin/logs").await;
+    let (s, body) = get(&app, &admin, "/api/admin/logs").await;
     assert_eq!(s, StatusCode::OK);
     let entries = body["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 3);
@@ -145,7 +145,7 @@ async fn level_filter_drops_lower_severity() {
     buf.push(seed_entry("info", "t", "info msg"));
     buf.push(seed_entry("error", "t", "error msg"));
 
-    let (_, body) = get(&app, &admin, "/admin/logs?level=info").await;
+    let (_, body) = get(&app, &admin, "/api/admin/logs?level=info").await;
     let messages: Vec<&str> = body["entries"]
         .as_array()
         .unwrap()
@@ -154,7 +154,7 @@ async fn level_filter_drops_lower_severity() {
         .collect();
     assert_eq!(messages, vec!["info msg", "error msg"]);
 
-    let (s, _) = get(&app, &admin, "/admin/logs?level=garbage").await;
+    let (s, _) = get(&app, &admin, "/api/admin/logs?level=garbage").await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
@@ -167,9 +167,9 @@ async fn since_filter_returns_only_newer() {
     for n in 0..5 {
         buf.push(seed_entry("info", "t", &format!("msg{n}")));
     }
-    let (_, body_all) = get(&app, &admin, "/admin/logs").await;
+    let (_, body_all) = get(&app, &admin, "/api/admin/logs").await;
     let mid = body_all["entries"][2]["id"].as_u64().unwrap();
-    let (_, body_after) = get(&app, &admin, &format!("/admin/logs?since={mid}")).await;
+    let (_, body_after) = get(&app, &admin, &format!("/api/admin/logs?since={mid}")).await;
     let after = body_after["entries"].as_array().unwrap();
     assert_eq!(after.len(), 2);
     assert_eq!(after[0]["message"], "msg3");
@@ -190,7 +190,7 @@ async fn q_substring_matches_target_or_message() {
     ));
     buf.push(seed_entry("info", "server::thumbs", "thumb generated"));
 
-    let (_, body) = get(&app, &admin, "/admin/logs?q=scan").await;
+    let (_, body) = get(&app, &admin, "/api/admin/logs?q=scan").await;
     let entries = body["entries"].as_array().unwrap();
     // 'scan' matches the first (target server::scan) and the message "ScanComplete!"
     assert_eq!(entries.len(), 1);

@@ -610,8 +610,7 @@ impl IssueSummaryView {
     /// (which has the series row in scope). `From` is removed because the
     /// slug isn't on the issue::Model itself.
     pub fn from_model(m: issue::Model, series_slug: &str) -> Self {
-        let cover_url =
-            (m.state == "active").then(|| format!("/api/issues/{}/pages/0/thumb", m.id));
+        let cover_url = (m.state == "active").then(|| format!("/issues/{}/pages/0/thumb", m.id));
         Self {
             id: m.id,
             slug: m.slug,
@@ -1328,7 +1327,7 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
             v.issue_count = counts.get(&series_id).copied();
             v.cover_url = covers
                 .get(&series_id)
-                .map(|id| format!("/api/issues/{id}/pages/0/thumb"));
+                .map(|id| format!("/issues/{id}/pages/0/thumb"));
             v
         })
         .collect()
@@ -1614,7 +1613,7 @@ pub async fn get_one(
             .find_map(|r| r.summary.clone().filter(|s| !s.trim().is_empty()));
     }
     v.issue_count = count.map(|c| c as i64);
-    v.cover_url = cover_issue.map(|i| format!("/api/issues/{}/pages/0/thumb", i.id));
+    v.cover_url = cover_issue.map(|i| format!("/issues/{}/pages/0/thumb", i.id));
     v.writers = metadata_facets.credits_for("writer");
     v.pencillers = metadata_facets.credits_for("penciller");
     v.inkers = metadata_facets.credits_for("inker");

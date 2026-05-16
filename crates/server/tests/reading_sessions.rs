@@ -351,7 +351,7 @@ async fn upsert_creates_then_updates_idempotent() {
     let (status, body) = post(
         &app,
         &auth,
-        "/me/reading-sessions",
+        "/api/me/reading-sessions",
         &upsert_body("c1", &issue_id, &started),
     )
     .await;
@@ -375,7 +375,7 @@ async fn upsert_creates_then_updates_idempotent() {
         "end_page": 9,
     })
     .to_string();
-    let (status, body) = post(&app, &auth, "/me/reading-sessions", &body2).await;
+    let (status, body) = post(&app, &auth, "/api/me/reading-sessions", &body2).await;
     assert_eq!(status, StatusCode::OK, "body={body}");
     assert_eq!(body["id"].as_str().unwrap(), session_id_1, "same row");
     assert_eq!(body["active_ms"], 90_000);
@@ -395,7 +395,7 @@ async fn upsert_creates_then_updates_idempotent() {
         "end_page": 4,
     })
     .to_string();
-    let (status, body) = post(&app, &auth, "/me/reading-sessions", &body3).await;
+    let (status, body) = post(&app, &auth, "/api/me/reading-sessions", &body3).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["active_ms"], 90_000, "max wins");
     assert_eq!(body["distinct_pages_read"], 9);
@@ -423,7 +423,7 @@ async fn final_flush_below_threshold_is_discarded() {
         "end_page": 0,
     })
     .to_string();
-    let (status, _) = post(&app, &auth, "/me/reading-sessions", &body).await;
+    let (status, _) = post(&app, &auth, "/api/me/reading-sessions", &body).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     // No row was persisted.
@@ -456,7 +456,7 @@ async fn opt_out_silently_discards() {
     let (status, _) = post(
         &app,
         &auth,
-        "/me/reading-sessions",
+        "/api/me/reading-sessions",
         &upsert_body("c-optout", &issue_id, &started),
     )
     .await;
@@ -477,7 +477,7 @@ async fn rejects_clock_skew_and_invalid_inputs() {
     let (s, _) = post(
         &app,
         &auth,
-        "/me/reading-sessions",
+        "/api/me/reading-sessions",
         &upsert_body("c-future", &issue_id, &future),
     )
     .await;
@@ -487,7 +487,7 @@ async fn rejects_clock_skew_and_invalid_inputs() {
     let (s, _) = post(
         &app,
         &auth,
-        "/me/reading-sessions",
+        "/api/me/reading-sessions",
         &upsert_body("c-old", &issue_id, &too_old),
     )
     .await;
@@ -498,7 +498,7 @@ async fn rejects_clock_skew_and_invalid_inputs() {
     let (s, _) = post(
         &app,
         &auth,
-        "/me/reading-sessions",
+        "/api/me/reading-sessions",
         &upsert_body("", &issue_id, &started),
     )
     .await;
@@ -516,7 +516,7 @@ async fn rejects_clock_skew_and_invalid_inputs() {
         "end_page": 5,
     })
     .to_string();
-    let (s, _) = post(&app, &auth, "/me/reading-sessions", &body).await;
+    let (s, _) = post(&app, &auth, "/api/me/reading-sessions", &body).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
@@ -529,7 +529,7 @@ async fn unknown_issue_returns_404() {
     let (s, _) = post(
         &app,
         &auth,
-        "/me/reading-sessions",
+        "/api/me/reading-sessions",
         &upsert_body("c-bogus", &bogus, &started),
     )
     .await;
@@ -555,13 +555,13 @@ async fn list_enriches_sessions_with_issue_and_series_labels() {
     let (s, _) = post(
         &app,
         &auth,
-        "/me/reading-sessions",
+        "/api/me/reading-sessions",
         &upsert_body("c-label", &issue_id, &started),
     )
     .await;
     assert!(s.is_success());
 
-    let (s, body) = get(&app, &auth, "/me/reading-sessions").await;
+    let (s, body) = get(&app, &auth, "/api/me/reading-sessions").await;
     assert_eq!(s, StatusCode::OK);
     let row = &body["records"][0];
     assert_eq!(row["issue_title"].as_str().unwrap(), "The Will");
@@ -586,21 +586,21 @@ async fn list_filters_by_series() {
         let (s, _) = post(
             &app,
             &auth,
-            "/me/reading-sessions",
+            "/api/me/reading-sessions",
             &upsert_body(cs, iss, &started),
         )
         .await;
         assert!(s.is_success());
     }
 
-    let (s, body) = get(&app, &auth, "/me/reading-sessions").await;
+    let (s, body) = get(&app, &auth, "/api/me/reading-sessions").await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["records"].as_array().unwrap().len(), 3);
 
     let (s, body) = get(
         &app,
         &auth,
-        &format!("/me/reading-sessions?series_id={series_a}"),
+        &format!("/api/me/reading-sessions?series_id={series_a}"),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -609,7 +609,7 @@ async fn list_filters_by_series() {
     let (s, body) = get(
         &app,
         &auth,
-        &format!("/me/reading-sessions?series_id={series_b}"),
+        &format!("/api/me/reading-sessions?series_id={series_b}"),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -627,14 +627,14 @@ async fn list_paginates_via_cursor() {
         let (s, _) = post(
             &app,
             &auth,
-            "/me/reading-sessions",
+            "/api/me/reading-sessions",
             &upsert_body(&format!("p{i}"), &issue_id, &started),
         )
         .await;
         assert!(s.is_success());
     }
 
-    let (_, body) = get(&app, &auth, "/me/reading-sessions?limit=2").await;
+    let (_, body) = get(&app, &auth, "/api/me/reading-sessions?limit=2").await;
     let records = body["records"].as_array().unwrap();
     assert_eq!(records.len(), 2);
     let cursor = body["next_cursor"].as_str().unwrap().to_owned();
@@ -642,7 +642,7 @@ async fn list_paginates_via_cursor() {
     let (_, body) = get(
         &app,
         &auth,
-        &format!("/me/reading-sessions?limit=2&cursor={cursor}"),
+        &format!("/api/me/reading-sessions?limit=2&cursor={cursor}"),
     )
     .await;
     assert_eq!(body["records"].as_array().unwrap().len(), 2);
@@ -658,7 +658,7 @@ async fn stats_aggregates_totals_per_day_and_streak() {
     let (_, _) = post(
         &app,
         &auth,
-        "/me/reading-sessions",
+        "/api/me/reading-sessions",
         &upsert_body("h1", &issue_id, &started),
     )
     .await;
@@ -673,7 +673,7 @@ async fn stats_aggregates_totals_per_day_and_streak() {
         "end_page": 12,
     })
     .to_string();
-    let (_, _) = post(&app, &auth, "/me/reading-sessions", &body2).await;
+    let (_, _) = post(&app, &auth, "/api/me/reading-sessions", &body2).await;
 
     let (s, body) = get(&app, &auth, "/me/reading-stats?range=30d").await;
     assert_eq!(s, StatusCode::OK);
@@ -737,7 +737,7 @@ async fn stats_top_n_rankings() {
         "end_page": 19,
     })
     .to_string();
-    let (s, _) = post(&app, &auth, "/me/reading-sessions", &body_a).await;
+    let (s, _) = post(&app, &auth, "/api/me/reading-sessions", &body_a).await;
     assert!(s.is_success());
     let body_b = serde_json::json!({
         "client_session_id": "k-b",
@@ -750,7 +750,7 @@ async fn stats_top_n_rankings() {
         "end_page": 5,
     })
     .to_string();
-    let (s, _) = post(&app, &auth, "/me/reading-sessions", &body_b).await;
+    let (s, _) = post(&app, &auth, "/api/me/reading-sessions", &body_b).await;
     assert!(s.is_success());
 
     let (s, body) = get(&app, &auth, "/me/reading-stats?range=30d").await;
@@ -821,7 +821,7 @@ async fn dangling_session_sweeper_closes_stale_rows() {
     let (_, body) = post(
         &app,
         &auth,
-        "/me/reading-sessions",
+        "/api/me/reading-sessions",
         &upsert_body("i1", &issue_id, &started),
     )
     .await;

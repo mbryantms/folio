@@ -568,7 +568,7 @@ async fn clear_history_deletes_sessions_and_audits() {
     )
     .await;
 
-    let (s, body) = post(&app, &auth, "/me/reading-sessions/clear", "{}").await;
+    let (s, body) = post(&app, &auth, "/api/me/reading-sessions/clear", "{}").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
     assert_eq!(body["deleted"], 1);
 

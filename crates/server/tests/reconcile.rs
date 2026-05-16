@@ -157,7 +157,7 @@ async fn delete_then_rescan_soft_deletes() {
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri(format!("/libraries/{lib_id}/removed"))
+                .uri(format!("/api/libraries/{lib_id}/removed"))
                 .header(
                     header::COOKIE,
                     format!("__Host-comic_session={}", auth.session),
@@ -231,7 +231,9 @@ async fn restore_endpoint_requires_file_back() {
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri(format!("/series/{series_slug}/issues/{issue_slug}/restore"))
+                .uri(format!(
+                    "/api/series/{series_slug}/issues/{issue_slug}/restore"
+                ))
                 .header(
                     header::COOKIE,
                     format!(
@@ -257,7 +259,9 @@ async fn restore_endpoint_requires_file_back() {
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri(format!("/series/{series_slug}/issues/{issue_slug}/restore"))
+                .uri(format!(
+                    "/api/series/{series_slug}/issues/{issue_slug}/restore"
+                ))
                 .header(
                     header::COOKIE,
                     format!(

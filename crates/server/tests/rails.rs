@@ -492,7 +492,7 @@ async fn system_rails_seeded_and_immutable() {
     let (status, body) = http(
         &app,
         Method::GET,
-        "/me/saved-views?pinned=true",
+        "/api/me/saved-views?pinned=true",
         Some(&user),
         None,
     )
@@ -522,7 +522,7 @@ async fn system_rails_seeded_and_immutable() {
     let (status, _) = http(
         &app,
         Method::PATCH,
-        &format!("/admin/saved-views/{cr_id}"),
+        &format!("/api/admin/saved-views/{cr_id}"),
         Some(&user),
         Some(json!({"name": "renamed"})),
     )
@@ -536,7 +536,7 @@ async fn system_rails_seeded_and_immutable() {
     let (status, _) = http(
         &app,
         Method::DELETE,
-        &format!("/admin/saved-views/{cr_id}"),
+        &format!("/api/admin/saved-views/{cr_id}"),
         Some(&user),
         None,
     )
@@ -558,7 +558,14 @@ async fn continue_reading_includes_only_in_progress_issues() {
     grant_access(&app, user.user_id, lib_id).await;
 
     // Empty rail initially.
-    let (status, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["items"].as_array().unwrap().len(), 0);
 
@@ -566,7 +573,14 @@ async fn continue_reading_includes_only_in_progress_issues() {
     let t0 = Utc::now().fixed_offset();
     write_progress(&app, user.user_id, &issue_id, 5, false, t0).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 1, "in-progress issue should appear");
     assert_eq!(items[0]["issue"]["id"], issue_id);
@@ -575,7 +589,14 @@ async fn continue_reading_includes_only_in_progress_issues() {
 
     // Mark finished — should drop out.
     write_progress(&app, user.user_id, &issue_id, 19, true, t0).await;
-    let (_, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         0,
@@ -584,7 +605,14 @@ async fn continue_reading_includes_only_in_progress_issues() {
 
     // Re-open (back to in-progress) — should re-appear.
     write_progress(&app, user.user_id, &issue_id, 3, false, t0).await;
-    let (_, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         1,
@@ -604,7 +632,14 @@ async fn continue_reading_skips_invisible_libraries() {
     let t0 = Utc::now().fixed_offset();
     write_progress(&app, user.user_id, &issue_id, 4, false, t0).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         0,
@@ -628,7 +663,14 @@ async fn continue_reading_orders_by_most_recent_activity() {
     write_progress(&app, user.user_id, &issue_a, 4, false, old).await;
     write_progress(&app, user.user_id, &issue_b, 2, false, new).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 2);
     assert_eq!(
@@ -651,21 +693,35 @@ async fn dismissal_hides_and_auto_restores() {
     write_progress(&app, user.user_id, &issue_id, 5, false, t0).await;
 
     // Visible to start.
-    let (_, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     assert_eq!(body["items"].as_array().unwrap().len(), 1);
 
     // Dismiss.
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/rail-dismissals",
+        "/api/me/rail-dismissals",
         Some(&user),
         Some(json!({"target_kind": "issue", "target_id": issue_id})),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (_, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         0,
@@ -676,7 +732,14 @@ async fn dismissal_hides_and_auto_restores() {
     let t_new = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue_id, 7, false, t_new).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         1,
@@ -699,7 +762,7 @@ async fn dismissal_delete_explicitly_restores() {
     http(
         &app,
         Method::POST,
-        "/me/rail-dismissals",
+        "/api/me/rail-dismissals",
         Some(&user),
         Some(json!({"target_kind": "issue", "target_id": issue_id})),
     )
@@ -710,21 +773,28 @@ async fn dismissal_delete_explicitly_restores() {
     let (status, _) = http(
         &app,
         Method::DELETE,
-        &format!("/me/rail-dismissals/issue/{issue_id}"),
+        &format!("/api/me/rail-dismissals/issue/{issue_id}"),
         Some(&user),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (_, body) = http(&app, Method::GET, "/me/continue-reading", Some(&user), None).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
     assert_eq!(body["items"].as_array().unwrap().len(), 1);
 
     // Re-deleting the same dismissal returns 404 (nothing to remove).
     let (status, _) = http(
         &app,
         Method::DELETE,
-        &format!("/me/rail-dismissals/issue/{issue_id}"),
+        &format!("/api/me/rail-dismissals/issue/{issue_id}"),
         Some(&user),
         None,
     )
@@ -742,7 +812,7 @@ async fn dismissal_validation_rejects_bad_input() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/rail-dismissals",
+        "/api/me/rail-dismissals",
         Some(&user),
         Some(json!({"target_kind": "garbage", "target_id": "x"})),
     )
@@ -753,7 +823,7 @@ async fn dismissal_validation_rejects_bad_input() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/rail-dismissals",
+        "/api/me/rail-dismissals",
         Some(&user),
         Some(json!({"target_kind": "issue", "target_id": ""})),
     )
@@ -764,7 +834,7 @@ async fn dismissal_validation_rejects_bad_input() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/rail-dismissals",
+        "/api/me/rail-dismissals",
         Some(&user),
         Some(json!({"target_kind": "issue", "target_id": "missing-issue-id"})),
     )
@@ -775,7 +845,7 @@ async fn dismissal_validation_rejects_bad_input() {
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/rail-dismissals",
+        "/api/me/rail-dismissals",
         Some(&user),
         Some(json!({"target_kind": "series", "target_id": "not-a-uuid"})),
     )
@@ -799,7 +869,7 @@ async fn on_deck_series_next_after_finishing_an_issue() {
     // Finish issue 1. Issue 2 (unread) is now what's "on deck".
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
 
-    let (status, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (status, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 1, "exactly one series_next card");
@@ -822,7 +892,7 @@ async fn on_deck_excludes_series_with_in_progress_issue() {
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 5, false, t0).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         0,
@@ -852,7 +922,7 @@ async fn on_deck_cbl_next_picks_lowest_unfinished_position() {
     // Finish entry 0 — so entry 1 is next.
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     let items = body["items"].as_array().unwrap();
     let cbl_card = items
         .iter()
@@ -892,7 +962,7 @@ async fn on_deck_cbl_wins_when_issue_overlaps_series_next() {
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     let items = body["items"].as_array().unwrap();
 
     // Exactly one card referencing issue2, and it must be the CBL framing.
@@ -941,7 +1011,7 @@ async fn on_deck_excludes_caught_up_cbls() {
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
     write_progress(&app, user.user_id, &issue2_id, 19, true, t0).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     let cbl_cards: Vec<_> = body["items"]
         .as_array()
         .unwrap()
@@ -974,21 +1044,21 @@ async fn on_deck_dismissal_hides_series_and_auto_restores() {
     write_progress(&app, user.user_id, &issue1_id, 19, true, t_old).await;
 
     // Card appears initially.
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     assert_eq!(body["items"].as_array().unwrap().len(), 1);
 
     // Dismiss the series.
     let (status, _) = http(
         &app,
         Method::POST,
-        "/me/rail-dismissals",
+        "/api/me/rail-dismissals",
         Some(&user),
         Some(json!({"target_kind": "series", "target_id": series_id.to_string()})),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     assert_eq!(body["items"].as_array().unwrap().len(), 0, "dismissed");
 
     // New activity in the future → auto-restore. Re-save issue1's
@@ -998,7 +1068,7 @@ async fn on_deck_dismissal_hides_series_and_auto_restores() {
     // an activity signal.
     let t_new = chrono::DateTime::parse_from_rfc3339("2031-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t_new).await;
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         1,
@@ -1024,7 +1094,7 @@ async fn on_deck_excludes_fully_unread_series() {
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
 
     // Baseline: card present after finishing issue 1.
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     assert_eq!(body["items"].as_array().unwrap().len(), 1);
     assert_eq!(body["items"][0]["kind"], "series_next");
     let _ = series_id;
@@ -1034,7 +1104,7 @@ async fn on_deck_excludes_fully_unread_series() {
     let t1 = chrono::DateTime::parse_from_rfc3339("2030-02-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 0, false, t1).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         0,
@@ -1068,7 +1138,7 @@ async fn on_deck_cbl_carve_out_for_fully_unread_series() {
     let t1 = chrono::DateTime::parse_from_rfc3339("2030-02-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 0, false, t1).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     let items = body["items"].as_array().unwrap();
     let cbl_cards: Vec<_> = items.iter().filter(|i| i["kind"] == "cbl_next").collect();
     let series_cards: Vec<_> = items
@@ -1149,7 +1219,7 @@ async fn on_deck_cbl_next_carries_saved_view_id_when_one_exists() {
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     let cbl_card = body["items"]
         .as_array()
         .unwrap()
@@ -1182,7 +1252,7 @@ async fn on_deck_cbl_next_omits_saved_view_id_when_no_view_wraps_the_list() {
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     let cbl_card = body["items"]
         .as_array()
         .unwrap()
@@ -1217,7 +1287,7 @@ async fn on_deck_cbl_saved_view_tiebreak_prefers_user_owned() {
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
 
-    let (_, body) = http(&app, Method::GET, "/me/on-deck", Some(&user), None).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     let cbl_card = body["items"]
         .as_array()
         .unwrap()

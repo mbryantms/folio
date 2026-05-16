@@ -270,8 +270,8 @@ function Banner({
 
 function SsoButton({ next }: { next: string | null }) {
   const href = next
-    ? `/api/auth/oidc/start?redirect_after=${encodeURIComponent(next)}`
-    : `/api/auth/oidc/start`;
+    ? `/auth/oidc/start?redirect_after=${encodeURIComponent(next)}`
+    : `/auth/oidc/start`;
   return (
     <Button asChild variant="outline" className="w-full">
       <Link href={href}>
@@ -300,7 +300,7 @@ function LoginForm({ next }: { next: string | null }) {
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch("/api/auth/local/login", {
+      const res = await fetch("/auth/local/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -326,14 +326,14 @@ function LoginForm({ next }: { next: string | null }) {
         Pre-M9 this form had neither — pressing Enter before hydration
         completed fell through to the browser's default GET handler and
         leaked `?email=&password=` into the URL bar, history, Referer,
-        and the server access log. The handler at `/api/auth/local/login`
+        and the server access log. The handler at `/auth/local/login`
         accepts both JSON (XHR happy path below) and form-encoded
         (no-JS fallback) bodies and returns a 303 on the form path.
       */}
       <form
         onSubmit={onSubmit}
         method="POST"
-        action="/api/auth/local/login"
+        action="/auth/local/login"
         className="space-y-4"
       >
         {next ? <input type="hidden" name="next" value={next} /> : null}
@@ -383,7 +383,7 @@ function RegisterForm({
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch("/api/auth/local/register", {
+      const res = await fetch("/auth/local/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -411,7 +411,7 @@ function RegisterForm({
       <form
         onSubmit={onSubmit}
         method="POST"
-        action="/api/auth/local/register"
+        action="/auth/local/register"
         className="space-y-4"
       >
         {next ? <input type="hidden" name="next" value={next} /> : null}
@@ -494,7 +494,7 @@ function PendingVerificationView({
     setError(null);
     setResending(true);
     try {
-      await fetch("/api/auth/local/resend-verification", {
+      await fetch("/auth/local/resend-verification", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

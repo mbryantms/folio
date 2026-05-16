@@ -557,14 +557,49 @@ pub fn router(state: AppState) -> Router {
     let sec_headers = Arc::new(SecurityHeaders::new(&cfg));
     let trusted_proxies = TrustedProxies::from_config(&cfg.trusted_proxies);
 
-    Router::new()
+    // Routing groups (v0.2.1 — follows the rust-public-origin plan's M2
+    // fallback wiring, but splits the API surface out of bare paths to
+    // avoid colliding with Next.js HTML routes):
+    //
+    //   `bare`  — routes external clients hit directly: operator/CI
+    //             healthchecks, browser form-action POSTs (Next sign-in
+    //             form posts to `/auth/local/login`), OIDC IdP
+    //             callbacks, OPDS clients, WebSocket upgrade endpoints,
+    //             image-byte streams referenced from OPDS feeds and
+    //             API responses. None of these share path shapes with
+    //             Next pages, so they don't conflict.
+    //
+    //   `api`   — every JSON route the web app reaches via `apiFetch`
+    //             (which prepends `/api/`). Mounted via
+    //             `Router::nest("/api", api)`. Browser navigations to
+    //             bare paths like `/admin/users` or `/series/{slug}`
+    //             now fall through to the SSR proxy instead of hitting
+    //             the Rust JSON handler.
+    //
+    // `auth::local::routes()` lives in BOTH because it mixes form
+    // actions (`/auth/local/login` — bare) and cookie-API endpoints
+    // (`/auth/refresh`, `/auth/me`, `/auth/logout`, `/me/preferences` —
+    // also reachable as `/api/auth/refresh` etc. for the web app).
+    // Duplicate registration is harmless; the only real cost is a
+    // separate rate-limit-bucket instance per path, and the
+    // failed-auth Redis lockout is shared across them anyway.
+    let bare = Router::<AppState>::new()
         .merge(api::health::routes())
         .merge(api::csp::routes())
         .merge(api::meta::routes())
         .merge(auth::local::routes())
-        .merge(api::account::routes())
         .merge(auth::oidc::routes())
         .merge(auth::ws_ticket::routes())
+        .merge(api::ws_scan_events::routes())
+        .merge(api::page_bytes::routes())
+        .merge(api::thumbnails::routes())
+        .merge(api::opds::routes())
+        .merge(api::opds_v2::routes());
+
+    let api = Router::<AppState>::new()
+        .merge(auth::local::routes())
+        .merge(auth::ws_ticket::routes())
+        .merge(api::account::routes())
         .merge(api::libraries::routes())
         .merge(api::health_issues::routes())
         .merge(api::reconcile::routes())
@@ -574,11 +609,8 @@ pub fn router(state: AppState) -> Router {
         .merge(api::admin_users::routes())
         .merge(api::audit::routes())
         .merge(api::series::routes())
-        .merge(api::ws_scan_events::routes())
         .merge(api::issues::routes())
         .merge(api::people::routes())
-        .merge(api::page_bytes::routes())
-        .merge(api::thumbnails::routes())
         .merge(api::progress::routes())
         .merge(api::rails::routes())
         .merge(api::next_up::routes())
@@ -600,9 +632,15 @@ pub fn router(state: AppState) -> Router {
         .merge(api::sessions::routes())
         .merge(api::app_passwords::routes())
         .merge(api::admin_settings::routes())
-        .merge(api::admin_email::routes())
-        .merge(api::opds::routes())
-        .merge(api::opds_v2::routes())
+        .merge(api::admin_email::routes());
+
+    bare.nest("/api", api)
+        // Catch-all fallback: anything no explicit route matched is
+        // forwarded to the configured Next.js SSR upstream. Layers
+        // below wrap the fallback the same way they wrap any explicit
+        // route, so security_headers / set_context / TraceLayer / CSRF
+        // all run on proxied requests too.
+        .fallback(crate::upstream::proxy)
         .layer(axum::middleware::from_fn(auth::csrf::require_csrf))
         // Order matters: outermost wraps innermost. `set_context` needs to run
         // before handlers so `Request::extensions::get::<RequestContext>()`

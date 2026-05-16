@@ -20,6 +20,14 @@ just openapi           # regenerate web/lib/api/openapi.json from utoipa
 just test              # cargo test --workspace + pnpm test
 ```
 
+**Browser entry point: `http://localhost:8080`** (the Rust binary).
+The Rust server reverse-proxies HTML / `/_next/*` / static-asset
+requests to the Next dev server at `http://localhost:3000` via the
+upstream-fallback wired in M2 of the rust-public-origin plan. Hitting
+`:3000` directly works for raw Next dev (useful when debugging the
+client bundle) but bypasses the Rust middleware stack — auth, CSRF,
+security headers — so it's not what `just dev` is set up for.
+
 Web dev defaults to **webpack** (`next dev --webpack`), not turbopack. Turbopack
 has an open dev-server leak — `RangeError: Map maximum size exceeded` from
 `hot-reloader-turbopack.js` after extended sessions — that kills the dev process.
@@ -72,6 +80,40 @@ Default admin (first registered user becomes admin):
 
 ## Conventions to preserve
 
+- **Routing precedence (rust-public-origin v0.2)**: every request hits
+  the Rust router first. The router is split into two groups in
+  [`app.rs::router()`](crates/server/src/app.rs):
+  - `bare` routes — what external clients hit directly without a
+    prefix: `/health*`, `/auth/*`, OIDC callbacks, `/opds/*`, page
+    bytes (`/issues/{id}/pages/{n}` and `…/thumb`), `/ws/*` upgrade
+    endpoints, plus the `auth::local` form-action POSTs the Next
+    sign-in form submits to.
+  - `api` routes — every JSON endpoint the web app reaches via
+    `apiFetch` (which prepends `/api/`). Mounted as
+    `Router::nest("/api", api)`. The `/api/` prefix is back as of
+    v0.2.1 because many JSON endpoints share path shapes with Next
+    pages (`/admin/users`, `/series/{slug}`, `/audit`, …) and would
+    otherwise collide with HTML routes.
+  - Anything no explicit route claimed falls through
+    `Router::fallback(crate::upstream::proxy)`, which streams the
+    request to the Next.js SSR upstream at `cfg.web_upstream_url`
+    (env: `COMIC_WEB_UPSTREAM_URL`, default `http://localhost:3000`).
+    The fallback is wrapped by the same middleware stack as every
+    other route — `set_context` / `security_headers` / CSRF /
+    TraceLayer all run on proxied requests. WebSocket upgrades for
+    fallback paths get raw byte-level passthrough; `/ws/*` is still
+    owned by explicit Rust handlers.
+
+  **Adding a new route, decide first which group it lives in.**
+  External-client/browser-form/streaming-bytes surface → `bare`.
+  Web-app JSON the browser fetches via `apiFetch` → `api`. If both,
+  register the same `routes()` in both routers (`auth::local::routes()`
+  already does this for the dual form-action + cookie-API split). Do
+  not re-introduce per-prefix rewrites or matcher exclusions in
+  `web/next.config.ts` / `web/proxy.ts` — those v0.1.15-17
+  workarounds were retired by the migration. See
+  [crates/server/src/upstream/mod.rs](crates/server/src/upstream/mod.rs)
+  and the plan at `~/.claude/plans/rust-public-origin-1.0.md`.
 - **Error envelope**: every server error is `{"error": {"code": "...", "message": "..."}}`.
   See `error()` helper in [crates/server/src/api/libraries.rs](crates/server/src/api/libraries.rs).
 - **Admin guard**: inline `if user.role != "admin" { return error(...) }`. No

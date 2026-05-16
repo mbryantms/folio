@@ -126,7 +126,7 @@ async fn settings_get_requires_admin() {
     let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
 
-    let resp = get(&app, &user, "/admin/settings").await;
+    let resp = get(&app, &user, "/api/admin/settings").await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -135,7 +135,7 @@ async fn settings_get_returns_registry_and_no_values_on_fresh_install() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
-    let resp = get(&app, &admin, "/admin/settings").await;
+    let resp = get(&app, &admin, "/api/admin/settings").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
 
@@ -172,7 +172,7 @@ async fn settings_patch_rejects_unknown_key() {
     let resp = patch_json(
         &app,
         &admin,
-        "/admin/settings",
+        "/api/admin/settings",
         serde_json::json!({ "bogus.future.key": "value" }),
     )
     .await;
@@ -190,7 +190,7 @@ async fn settings_patch_rejects_non_admin() {
     let resp = patch_json(
         &app,
         &user,
-        "/admin/settings",
+        "/api/admin/settings",
         serde_json::json!({ "bogus.future.key": "value" }),
     )
     .await;
@@ -265,7 +265,7 @@ async fn get_redacts_secret_rows() {
         .await
         .expect("insert");
 
-    let resp = get(&app, &admin, "/admin/settings").await;
+    let resp = get(&app, &admin, "/api/admin/settings").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     let values = body["values"].as_array().expect("values");

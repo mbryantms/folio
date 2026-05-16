@@ -1,10 +1,13 @@
 # Caddy reverse proxy
 
-Folio runs as two services behind a TLS-terminating proxy
-(`compose.prod.yml`):
+Folio runs as a single public-facing service behind a TLS-terminating
+proxy (`compose.prod.yml`):
 
-- `app:8080` — Rust API + WebSocket + OPDS + healthz + page bytes
-- `web:3000` — Next.js HTML + RSC + static assets
+- `app:8080` — Rust binary. Owns `/api/*`, `/opds/*`, `/auth/*`,
+  page bytes, WebSockets, _and_ HTML pages. It reverse-proxies
+  HTML/RSC/`/_next/*` requests to the Next.js SSR upstream (`web:3000`)
+  internally over the compose bridge — your proxy never talks to
+  `web` directly.
 
 Caddy is the recommended first-time setup because it handles Let's
 Encrypt automatically and HTTP/3 is free. Drop the Caddyfile below into
@@ -15,9 +18,10 @@ restart Caddy.
 > `security_headers` middleware already sets `Content-Security-Policy`,
 > `Cross-Origin-{Opener,Embedder,Resource}-Policy`, `X-Frame-Options`,
 > `X-Content-Type-Options`, `Referrer-Policy`, and `Permissions-Policy`
-> on every response. The Caddyfile below only adds **HSTS**, which the
-> app can't set (it doesn't know whether the cert is real). Don't add
-> a `Content-Security-Policy` line in Caddy — you'd override the
+> on every response (including HTML pages it proxies from Next). The
+> Caddyfile below only adds **HSTS**, which the app can't set (it
+> doesn't know whether the cert is real). Don't add a
+> `Content-Security-Policy` line in Caddy — you'd override the
 > nonce-bearing one the app emits.
 
 ```caddyfile
@@ -39,52 +43,37 @@ comics.example.com {
         -Server
     }
 
-    # WebSocket — scan progress + reading-presence channels.
-    @ws path /ws*
-    reverse_proxy @ws app:8080 {
+    # Single upstream — Rust handles every path, proxying HTML to its
+    # internal Next.js upstream as needed. WebSockets, streamed OPDS/PSE
+    # bodies, page bytes, and HTML are all served through this one
+    # `reverse_proxy` directive.
+    reverse_proxy app:8080 {
+        # Disable response buffering. Folio streams page bytes + OPDS
+        # PSE bodies; buffering would break Range request UX and bloat
+        # Caddy's RSS on large reads.
+        flush_interval -1
         transport http {
+            # Long-lived for WebSocket upgrades (scan progress, presence).
             read_timeout  10m
             write_timeout 10m
             keepalive 60s
         }
     }
-
-    # OPDS — Page-Streaming endpoints must not be buffered.
-    @opds path /opds/*
-    reverse_proxy @opds app:8080 {
-        transport http {
-            response_header_timeout 30s
-            read_timeout  5m
-        }
-        flush_interval -1
-    }
-
-    # Raw page bytes for the in-app reader — also streamed.
-    @bytes path_regexp bytes ^/(issues|pages|thumbnails)/
-    reverse_proxy @bytes app:8080 {
-        flush_interval -1
-    }
-
-    # Everything else under the API surface goes to the Rust app.
-    @api path /api/* /auth/* /healthz /readyz /metrics /csp-report
-    reverse_proxy @api app:8080
-
-    # Everything else (HTML, RSC, _next/* assets) goes to the Next frontend.
-    reverse_proxy web:3000
 }
 ```
 
 ## Compose docker network
 
-For the proxy to reach `app:8080` and `web:3000` by name, Caddy and the
-Folio services need to share a docker network. The simplest layout is
-to add Caddy as a service to your existing compose project; it joins
-the default network automatically and can resolve sibling services.
+For Caddy to reach `app:8080` by name, Caddy and the Folio services
+need to share a docker network. The simplest layout is to add Caddy as
+a service to your existing compose project; it joins the default
+network automatically and can resolve sibling services.
 
 If you prefer to run Caddy on the host instead of in compose, change
-the `reverse_proxy app:8080` lines to `reverse_proxy 127.0.0.1:8080`
-(and `web:3000` → `127.0.0.1:3000`) — the default `compose.prod.yml`
-binds both to loopback.
+the `reverse_proxy app:8080` line to `reverse_proxy 127.0.0.1:8080` —
+the default `compose.prod.yml` binds `app` to loopback. (`web` is no
+longer published to the host at all; its port lives only on the
+compose bridge.)
 
 ## Required `COMIC_TRUSTED_PROXIES`
 

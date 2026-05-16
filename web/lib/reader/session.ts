@@ -263,7 +263,7 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
       const blob = new Blob([JSON.stringify(payload)], {
         type: "application/json",
       });
-      navigator.sendBeacon("/api/me/reading-sessions", blob);
+      navigator.sendBeacon("/me/reading-sessions", blob);
     }
   }, [buildPayload, minActiveMs, minPages]);
 

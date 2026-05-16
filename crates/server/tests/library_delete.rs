@@ -303,7 +303,7 @@ async fn delete_library(
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/libraries/{lib_id}"))
+                .uri(format!("/api/libraries/{lib_id}"))
                 .header(
                     header::COOKIE,
                     format!(

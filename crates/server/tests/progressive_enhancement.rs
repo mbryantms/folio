@@ -361,7 +361,7 @@ async fn csrf_middleware_accepts_hidden_form_field() {
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/me/account")
+                .uri("/api/me/account")
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(header::COOKIE, cookie_header)
                 .body(Body::from(body_str))
@@ -422,7 +422,7 @@ async fn csrf_middleware_rejects_form_field_mismatch() {
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/me/account")
+                .uri("/api/me/account")
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(header::COOKIE, cookie_header)
                 .body(Body::from(body_str))

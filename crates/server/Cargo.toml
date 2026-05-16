@@ -18,6 +18,7 @@ tower-http = { workspace = true }
 tower_governor = { workspace = true }
 governor = { workspace = true }
 hyper = { workspace = true }
+hyper-util = { workspace = true }
 
 # Async / concurrency
 tokio = { workspace = true }

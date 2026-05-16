@@ -70,8 +70,8 @@ curl -fsS http://127.0.0.1:8080/healthz | jq '.version, .build_sha'
 # 2. Both deps are reachable.
 curl -fsS http://127.0.0.1:8080/readyz | jq
 
-# 3. Web is serving HTML.
-curl -fsS http://127.0.0.1:3000/sign-in | grep -o '<title>.*</title>'
+# 3. Web is serving HTML through the Rust binary's SSR fallback.
+curl -fsS http://127.0.0.1:8080/sign-in | grep -o '<title>.*</title>'
 ```
 
 If any of these fail, see the **Rollback** section below.
@@ -115,3 +115,45 @@ docker compose -f compose.prod.yml up -d --no-deps app
 ```
 
 See [`scaling.md`](./scaling.md) for the full multi-replica posture.
+
+## Breaking changes by version
+
+### v0.2.0 — Rust binary becomes the public origin
+
+Before v0.2.0, `compose.prod.yml` published both `app:8080` and
+`web:3000` to the host so your reverse proxy could route by path
+(`/api`, `/opds` → `app`; everything else → `web`). As of v0.2.0, the
+Rust binary handles every request: it serves its own routes (`/api`,
+`/opds`, `/auth`, page bytes, WebSockets) directly and reverse-proxies
+HTML/RSC/`/_next/*` to the Next.js container internally.
+
+**Pull the new compose and `.env.example` and reconcile your local
+copies if you customized them.** Two concrete things change:
+
+1. **Drop path-routing from your reverse proxy.** Whether you run
+   Caddy, nginx, Traefik, or Kubernetes Ingress, the new template is
+   a single upstream pointed at `app:8080`. The path-split rules
+   you copied from older versions of `docs/install/*.md` will now
+   double-proxy in a confusing way. See the updated templates:
+   [caddy](./caddy.md) / [nginx](./nginx.md) / [traefik](./traefik.md)
+   / [kubernetes](./kubernetes.md) / [lan-https-mkcert](./lan-https-mkcert.md).
+
+2. **The `COMIC_WEB_BIND` env is no longer honored.** `web` is
+   internal-only on the compose bridge. The shipped compose uses
+   `expose: ["3000"]` instead of `ports: ["…:3000"]`, so the Next
+   port is no longer reachable from the host. If you have something
+   on the host that was directly hitting Next (a debugger, a tool
+   like `next-devtools`), it now has to go through `app:8080`. You
+   can delete the `COMIC_WEB_BIND=…` line from `.env`.
+
+The new `COMIC_WEB_UPSTREAM_URL` env (default `http://web:3000`) is
+how the Rust binary finds Next. The shipped compose sets it for you;
+override only if you renamed the `web` service.
+
+**Why this changed:** external clients (OPDS readers, OIDC IdP
+callbacks, anything not under `/api`) were repeatedly broken because
+Next.js was answering for them before the rewrites/middleware were
+correctly extended. Making Rust the public origin eliminates that
+entire class of routing bug. See
+`docs/dev/phase-status.md` and the plan at
+`~/.claude/plans/rust-public-origin-1.0.md` for the full background.

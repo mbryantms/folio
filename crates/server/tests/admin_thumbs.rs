@@ -286,7 +286,7 @@ async fn status_counts_match_seeded_state() {
     let (status, body) = get(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails-status"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails-status"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -344,7 +344,7 @@ async fn status_requires_admin() {
             Request::builder()
                 .method(Method::GET)
                 .uri(format!(
-                    "/admin/libraries/{}/thumbnails-status",
+                    "/api/admin/libraries/{}/thumbnails-status",
                     Uuid::nil()
                 ))
                 .header(header::COOKIE, format!("__Host-comic_session={session}"))
@@ -366,7 +366,7 @@ async fn force_recreate_clears_state_and_reports_count() {
     let (status, body) = post_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails/force-recreate"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails/force-recreate"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -410,7 +410,7 @@ async fn generate_missing_reenqueues_outdated_versions() {
     let (status, body) = post_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails/generate-missing"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails/generate-missing"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -427,7 +427,7 @@ async fn generate_missing_skips_disabled_library() {
     let resp = patch_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails-settings"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails-settings"),
         serde_json::json!({ "enabled": false }),
     )
     .await;
@@ -438,7 +438,7 @@ async fn generate_missing_skips_disabled_library() {
     let (status, _) = post_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails/generate-missing"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails/generate-missing"),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -453,7 +453,7 @@ async fn generate_page_map_enqueues_strip_jobs_for_active_issues() {
     let (status, body) = post_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails/generate-page-map"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails/generate-page-map"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -469,7 +469,7 @@ async fn generate_page_map_skips_disabled_library() {
     let resp = patch_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails-settings"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails-settings"),
         serde_json::json!({ "enabled": false }),
     )
     .await;
@@ -478,7 +478,7 @@ async fn generate_page_map_skips_disabled_library() {
     let (status, _) = post_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails/generate-page-map"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails/generate-page-map"),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -493,7 +493,7 @@ async fn update_settings_rejects_unknown_format() {
     let (status, _) = patch_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails-settings"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails-settings"),
         serde_json::json!({ "format": "tiff" }),
     )
     .await;
@@ -509,7 +509,7 @@ async fn update_settings_accepts_separate_quality_values() {
     let (status, body) = patch_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails-settings"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails-settings"),
         serde_json::json!({ "cover_quality": 92, "page_quality": 35 }),
     )
     .await;
@@ -520,7 +520,7 @@ async fn update_settings_accepts_separate_quality_values() {
     let (status, body) = get(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails-settings"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails-settings"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -537,7 +537,7 @@ async fn update_settings_rejects_quality_outside_slider_range() {
     let (status, _) = patch_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails-settings"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails-settings"),
         serde_json::json!({ "cover_quality": 101 }),
     )
     .await;
@@ -554,7 +554,7 @@ async fn delete_all_clears_state() {
     let (status, body) = delete_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -591,7 +591,7 @@ async fn regenerate_issue_cover_returns_200_and_clears_state() {
     let (status, body) = post_json(
         &app,
         &auth,
-        &format!("/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/regenerate-cover"),
+        &format!("/api/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/regenerate-cover"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -632,7 +632,7 @@ async fn regenerate_issue_cover_preserves_strip_dir() {
         &app,
         &auth,
         &format!(
-            "/admin/series/{}/issues/{}/thumbnails/regenerate-cover",
+            "/api/admin/series/{}/issues/{}/thumbnails/regenerate-cover",
             issue.series_id, issue.slug
         ),
     )
@@ -650,7 +650,7 @@ async fn regenerate_issue_cover_404_for_unknown() {
     let s = post(
         &app,
         &auth,
-        "/admin/series/no-such-series/issues/no-such-issue/thumbnails/regenerate-cover",
+        "/api/admin/series/no-such-series/issues/no-such-issue/thumbnails/regenerate-cover",
     )
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -671,7 +671,7 @@ async fn generate_issue_page_map_enqueues_strip_job() {
         &app,
         &auth,
         &format!(
-            "/admin/series/{}/issues/{}/thumbnails/generate-page-map",
+            "/api/admin/series/{}/issues/{}/thumbnails/generate-page-map",
             issue.series_id, issue.slug
         ),
     )
@@ -685,7 +685,7 @@ async fn generate_issue_page_map_enqueues_strip_job() {
         &app,
         &auth,
         &format!(
-            "/admin/series/{}/issues/{}/thumbnails/generate-page-map",
+            "/api/admin/series/{}/issues/{}/thumbnails/generate-page-map",
             issue.series_id, issue.slug
         ),
     )
@@ -719,7 +719,7 @@ async fn force_recreate_issue_page_map_wipes_strips_only() {
         &app,
         &auth,
         &format!(
-            "/admin/series/{}/issues/{}/thumbnails/force-recreate-page-map",
+            "/api/admin/series/{}/issues/{}/thumbnails/force-recreate-page-map",
             issue.series_id, issue.slug
         ),
     )
@@ -748,7 +748,7 @@ async fn regenerate_series_cover_clears_state_for_all_issues() {
     let (status, body) = post_json(
         &app,
         &auth,
-        &format!("/admin/series/{series_slug}/thumbnails/regenerate-cover"),
+        &format!("/api/admin/series/{series_slug}/thumbnails/regenerate-cover"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -782,7 +782,7 @@ async fn generate_series_page_map_enqueues_strip_jobs() {
     let (status, body) = post_json(
         &app,
         &auth,
-        &format!("/admin/series/{series_slug}/thumbnails/generate-page-map"),
+        &format!("/api/admin/series/{series_slug}/thumbnails/generate-page-map"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -817,7 +817,7 @@ async fn force_recreate_series_page_map_wipes_strips_only() {
     let (status, body) = post_json(
         &app,
         &auth,
-        &format!("/admin/series/{series_slug}/thumbnails/force-recreate-page-map"),
+        &format!("/api/admin/series/{series_slug}/thumbnails/force-recreate-page-map"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -849,20 +849,20 @@ async fn targeted_thumb_endpoints_skip_disabled_library() {
     let resp = patch_json(
         &app,
         &auth,
-        &format!("/admin/libraries/{lib_id}/thumbnails-settings"),
+        &format!("/api/admin/libraries/{lib_id}/thumbnails-settings"),
         serde_json::json!({ "enabled": false }),
     )
     .await;
     assert_eq!(resp.0, StatusCode::OK);
 
     let routes = [
-        format!("/admin/series/{series_slug}/thumbnails/regenerate-cover"),
-        format!("/admin/series/{series_slug}/thumbnails/generate-page-map"),
-        format!("/admin/series/{series_slug}/thumbnails/force-recreate-page-map"),
-        format!("/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/regenerate-cover"),
-        format!("/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/generate-page-map"),
+        format!("/api/admin/series/{series_slug}/thumbnails/regenerate-cover"),
+        format!("/api/admin/series/{series_slug}/thumbnails/generate-page-map"),
+        format!("/api/admin/series/{series_slug}/thumbnails/force-recreate-page-map"),
+        format!("/api/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/regenerate-cover"),
+        format!("/api/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/generate-page-map"),
         format!(
-            "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/force-recreate-page-map"
+            "/api/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/force-recreate-page-map"
         ),
     ];
     for route in routes {
