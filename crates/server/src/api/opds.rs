@@ -1317,6 +1317,7 @@ fn render_issue_acq_entry(
 {metadata}    <link rel="http://opds-spec.org/image/thumbnail" href="/issues/{id}/pages/0/thumb" type="image/webp"/>
     <link rel="http://opds-spec.org/image" href="/issues/{id}/pages/0" type="image/jpeg"/>
 {related}    <link rel="http://opds-spec.org/acquisition" href="/opds/v1/issues/{id}/file" type="{mime}"/>
+    <link rel="alternate" href="/api/issues/{id}" type="application/json"/>
 {pse}  </entry>
 "#,
         id = i.id,
@@ -1392,9 +1393,11 @@ fn render_series_subsection_entry(
     <title>{name}</title>
     <updated>{updated}</updated>
 {description}{metadata}{cover_links}    <link rel="subsection" href="/opds/v1/series/{id}" type="{acq}"/>
+    <link rel="alternate" href="/api/series/{slug}" type="application/json"/>
   </entry>
 "#,
         id = s.id,
+        slug = xml_escape(&s.slug),
         name = xml_escape(&s.name),
         updated = s.updated_at.to_rfc3339(),
         description = render_series_description(s.summary.as_deref()),

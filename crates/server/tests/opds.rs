@@ -2473,3 +2473,54 @@ async fn series_detail_feed_carries_banner_metadata() {
     assert!(header.contains(&format!(r#"href="/issues/{issue_id}/pages/0/thumb""#)));
     assert!(header.contains(&format!(r#"href="/issues/{issue_id}/pages/0""#)));
 }
+
+// ─── M7 (opds-richer-feeds): rel=alternate JSON pointers ───
+
+/// Series subsection entries carry a `rel=alternate` link to the
+/// canonical JSON representation at `/api/series/{slug}`. Capable
+/// OPDS clients fetch this to render rich detail views (full
+/// credits, per-series stats, etc.) without a discovery round-trip.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_entry_carries_rel_alternate_json() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "alt-series@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Sandman").await;
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(
+        body.contains(&format!(
+            r#"<link rel="alternate" href="/api/series/{series_id}" type="application/json"/>"#
+        )),
+        "missing rel=alternate JSON link for series: {body}"
+    );
+}
+
+/// Issue acquisition entries carry a `rel=alternate` link to the
+/// canonical issue JSON at `/api/issues/{id}`. Distinct from the
+/// existing `rel=related` link pointing at the parent series.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_entry_carries_rel_alternate_json() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "alt-issue@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Pride").await;
+    let issue_id =
+        seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("p.cbz"), b"p").await;
+
+    let resp = get_with_auth(&app, "/opds/v1/recent", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(
+        body.contains(&format!(
+            r#"<link rel="alternate" href="/api/issues/{issue_id}" type="application/json"/>"#
+        )),
+        "missing rel=alternate JSON link for issue: {body}"
+    );
+}

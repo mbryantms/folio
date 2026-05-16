@@ -1456,6 +1456,15 @@ fn publication_for(
         "href": format!("/opds/v1/issues/{}/file", i.id),
         "type": super::opds::mime_for(&i.file_path),
     })];
+    // `rel=alternate` carries the canonical JSON representation of
+    // this issue — capable clients use it to fetch the rich JSON
+    // form for detail views without a second round-trip discovery.
+    // M7 of opds-richer-feeds.
+    links.push(json!({
+        "rel": "alternate",
+        "href": format!("/api/issues/{}", i.id),
+        "type": "application/json",
+    }));
     if let Some(slug) = series_slug {
         links.push(json!({
             "rel": "related",
@@ -1557,6 +1566,18 @@ fn series_nav_entry(
     );
     obj.insert("type".into(), Value::from(NAV_CT));
     obj.insert("metadata".into(), Value::Object(metadata));
+    // `rel=alternate` to the canonical JSON for this series — capable
+    // OPDS 2.0 clients can fetch the rich web-API representation for
+    // detail views (per-series stats, full credits, etc.). M7 of
+    // opds-richer-feeds.
+    obj.insert(
+        "links".into(),
+        json!([{
+            "rel": "alternate",
+            "href": format!("/api/series/{}", s.slug),
+            "type": "application/json",
+        }]),
+    );
     // OPDS 2.0 `images` array — clients pick the best fit for their
     // surface (thumbnail for browse, full-size for cover detail).
     // Mirrors v1's image rels; without these clients render a generic

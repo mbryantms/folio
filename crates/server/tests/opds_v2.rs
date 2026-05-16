@@ -1597,3 +1597,69 @@ async fn v2_root_omits_empty_groups() {
     // array exists but is empty.
     assert!(groups.is_empty(), "expected empty groups[], got {groups:?}");
 }
+
+// ─── M7 (opds-richer-feeds): rel=alternate JSON pointers, v2 ───
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_series_entry_carries_alternate_json_link() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-alt-series@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Watchmen").await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/series?page=1").await;
+    assert_eq!(status, StatusCode::OK);
+    let entry = body["navigation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| {
+            n["href"]
+                .as_str()
+                .is_some_and(|h| h.ends_with(&series_id.to_string()))
+        })
+        .expect("entry present");
+    let links = entry["links"].as_array().expect("entry-level links[]");
+    let alt = links
+        .iter()
+        .find(|l| l["rel"] == "alternate")
+        .expect("rel=alternate present");
+    assert_eq!(alt["href"], format!("/api/series/{series_id}"));
+    assert_eq!(alt["type"], "application/json");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_publication_carries_alternate_json_link() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-alt-issue@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Series").await;
+    let issue_id =
+        seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("a.cbz"), b"a").await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/recent").await;
+    assert_eq!(status, StatusCode::OK);
+    let pubs = body["publications"].as_array().unwrap();
+    let pub_ = pubs
+        .iter()
+        .find(|p| {
+            p["metadata"]["identifier"]
+                .as_str()
+                .is_some_and(|i| i.ends_with(&issue_id))
+        })
+        .expect("publication present");
+    let alt = pub_["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["rel"] == "alternate")
+        .expect("rel=alternate present");
+    assert_eq!(alt["href"], format!("/api/issues/{issue_id}"));
+    assert_eq!(alt["type"], "application/json");
+}
