@@ -68,6 +68,10 @@ pub fn routes() -> Router<AppState> {
         // M4 of opds-richer-feeds — faceted browse, v2 JSON mirror.
         .route("/opds/v2/browse", get(browse))
         .route("/opds/v2/recent", get(recent))
+        // M5 of opds-richer-feeds — aggregation feeds, v2 mirrors.
+        .route("/opds/v2/continue", get(continue_reading))
+        .route("/opds/v2/new-this-month", get(new_this_month))
+        .route("/opds/v2/by-creator/{writer}", get(by_creator))
         .route("/opds/v2/search", get(search))
         .route("/opds/v2/issues/{id}/file", get(super::opds::download))
         // Personal surfaces (M4 parity)
@@ -110,6 +114,8 @@ async fn root(State(_app): State<AppState>, _user: CurrentUser) -> Response {
             { "title": "All series", "href": "/opds/v2/series", "type": NAV_CT },
             { "title": "Browse", "href": "/opds/v2/browse", "type": NAV_CT },
             { "title": "Recently added", "href": "/opds/v2/recent", "type": NAV_CT },
+            { "title": "Continue reading", "href": "/opds/v2/continue", "type": NAV_CT },
+            { "title": "New this month", "href": "/opds/v2/new-this-month", "type": NAV_CT },
             { "title": "Want to Read", "href": "/opds/v2/wtr", "type": NAV_CT },
             { "title": "Reading lists", "href": "/opds/v2/lists", "type": NAV_CT },
             { "title": "Collections", "href": "/opds/v2/collections", "type": NAV_CT },
@@ -440,16 +446,65 @@ async fn series_one(
     })];
     paginate_links(&mut links, &self_href, page, total_pages, opds::PAGE_SIZE);
 
-    let body = json!({
-        "metadata": {
-            "title": format!("Series — {}", s.name),
-            "itemsPerPage": opds::PAGE_SIZE,
-            "numberOfItems": total,
-            "currentPage": page,
-        },
-        "links": links,
-        "publications": publications,
+    // Series-level metadata at the feed root. Mirrors what v1
+    // exposes in the `<feed>` element so clients render a series
+    // banner (cover + author byline + publisher + year + genre
+    // chips) instead of just the title and the issue grid.
+    let series_facets = opds::fetch_series_facets(&app.db, &[s.id]).await;
+    let cover_map = opds::fetch_cover_issues(&app.db, &[s.id]).await;
+    let cover_id = cover_map.get(&s.id).map(String::as_str);
+    let mut metadata = serde_json::Map::new();
+    metadata.insert("title".into(), Value::from(s.name.clone()));
+    metadata.insert("identifier".into(), Value::from(format!("urn:series:{id}")));
+    metadata.insert("itemsPerPage".into(), Value::from(opds::PAGE_SIZE));
+    metadata.insert("numberOfItems".into(), Value::from(total));
+    metadata.insert("currentPage".into(), Value::from(page));
+    if let Some(summary) = s.summary.as_deref().filter(|x| !x.is_empty()) {
+        metadata.insert("description".into(), Value::from(summary));
+    }
+    if let Some(pub_) = s.publisher.as_deref().filter(|x| !x.is_empty()) {
+        metadata.insert("publisher".into(), json!({ "name": pub_ }));
+    }
+    if let Some(year) = s.year {
+        metadata.insert("published".into(), Value::from(year.to_string()));
+    }
+    if !s.language_code.is_empty() {
+        metadata.insert("language".into(), Value::from(s.language_code.clone()));
+    }
+    if let Some(f) = series_facets.get(&s.id) {
+        if !f.writers.is_empty() {
+            metadata.insert(
+                "author".into(),
+                Value::Array(f.writers.iter().map(|w| json!({ "name": w })).collect()),
+            );
+        }
+        if !f.genres.is_empty() {
+            metadata.insert(
+                "subject".into(),
+                Value::Array(
+                    f.genres
+                        .iter()
+                        .map(|g| json!({ "name": g, "scheme": "urn:folio:genre" }))
+                        .collect(),
+                ),
+            );
+        }
+    }
+    let images = cover_id.map(|cid| {
+        json!([
+            { "href": format!("/issues/{cid}/pages/0/thumb"), "type": "image/webp" },
+            { "href": format!("/issues/{cid}/pages/0"),       "type": "image/jpeg" },
+        ])
     });
+
+    let mut body = serde_json::Map::new();
+    body.insert("metadata".into(), Value::Object(metadata));
+    body.insert("links".into(), Value::Array(links));
+    if let Some(imgs) = images {
+        body.insert("images".into(), imgs);
+    }
+    body.insert("publications".into(), Value::Array(publications));
+    let body = Value::Object(body);
     json_response(body)
 }
 
@@ -478,6 +533,203 @@ async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
             { "rel": "self", "href": "/opds/v2/recent", "type": NAV_CT },
         ],
         "publications": publications,
+    });
+    json_response(body)
+}
+
+// ──────────── M5 of opds-richer-feeds — aggregation feeds, v2 ────────────
+
+/// `/opds/v2/continue` — JSON mirror of [`super::opds::continue_reading`].
+/// Same SQL, same LIMIT 24, same ACL — formatted as OPDS 2.0
+/// publications so clients can resume reading directly from the
+/// `acquisition` link without an extra round-trip.
+async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Response {
+    use sea_orm::DbBackend;
+    let allowed = match opds::allowed_libraries(&app, &user).await {
+        Ok(v) => v,
+        Err(e) => return server_error(e),
+    };
+    #[derive(FromQueryResult)]
+    struct Row {
+        issue_id: String,
+        library_id: Uuid,
+    }
+    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        SELECT p.issue_id AS issue_id, i.library_id AS library_id
+        FROM progress_records p
+        JOIN issues i ON i.id = p.issue_id
+        LEFT JOIN rail_dismissals d
+          ON d.user_id = p.user_id
+         AND d.target_kind = 'issue'
+         AND d.target_id   = p.issue_id
+        WHERE p.user_id  = $1 AND p.finished = false AND p.last_page > 0
+          AND i.state = 'active' AND i.removed_at IS NULL
+          AND (d.dismissed_at IS NULL OR p.updated_at > d.dismissed_at)
+        ORDER BY p.updated_at DESC
+        LIMIT 24
+        "#,
+        [user.id.into()],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let filtered_ids: Vec<String> = match allowed.as_ref() {
+        None => rows.into_iter().map(|r| r.issue_id).collect(),
+        Some(visible) => rows
+            .into_iter()
+            .filter(|r| visible.contains(&r.library_id))
+            .map(|r| r.issue_id)
+            .collect(),
+    };
+    let visible = access::for_user(&app, &user).await;
+    let issues = opds::fetch_visible_issues_preserving_order(&app, &filtered_ids, &visible).await;
+    let publications = build_publications(&app, &user, &issues).await;
+    let body = json!({
+        "metadata": {
+            "title": "Continue reading",
+            "numberOfItems": publications.len(),
+        },
+        "links": [
+            { "rel": "self", "href": "/opds/v2/continue", "type": NAV_CT },
+        ],
+        "publications": publications,
+    });
+    json_response(body)
+}
+
+/// `/opds/v2/new-this-month` — issues created in the last 30 days,
+/// newest first, scoped to the user's visible libraries.
+async fn new_this_month(State(app): State<AppState>, user: CurrentUser) -> Response {
+    let allowed = match opds::allowed_libraries(&app, &user).await {
+        Ok(v) => v,
+        Err(e) => return server_error(e),
+    };
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+    let mut sel = issue::Entity::find()
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::CreatedAt.gte(cutoff.fixed_offset()))
+        .order_by_desc(issue::Column::CreatedAt)
+        .limit(50);
+    if let Some(ids) = allowed.as_ref() {
+        sel = sel.filter(issue::Column::LibraryId.is_in(ids.clone()));
+    }
+    let rows = match sel.all(&app.db).await {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let publications = build_publications(&app, &user, &rows).await;
+    let body = json!({
+        "metadata": {
+            "title": "New this month",
+            "numberOfItems": publications.len(),
+        },
+        "links": [
+            { "rel": "self", "href": "/opds/v2/new-this-month", "type": NAV_CT },
+        ],
+        "publications": publications,
+    });
+    json_response(body)
+}
+
+/// `/opds/v2/by-creator/{writer}` — series where any writer credit
+/// matches. JSON mirror of the v1 handler.
+async fn by_creator(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(writer): AxPath<String>,
+    Query(q): Query<PageQuery>,
+) -> Response {
+    use entity::series_credit;
+    let writer = urlencoding::decode(&writer)
+        .map(|s| s.into_owned())
+        .unwrap_or(writer);
+    let page = q.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * opds::PAGE_SIZE;
+    let allowed = match opds::allowed_libraries(&app, &user).await {
+        Ok(v) => v,
+        Err(e) => return server_error(e),
+    };
+
+    let credit_rows = match series_credit::Entity::find()
+        .filter(series_credit::Column::Role.eq("writer"))
+        .filter(series_credit::Column::Person.eq(writer.clone()))
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let series_ids: Vec<Uuid> = credit_rows.iter().map(|c| c.series_id).collect();
+
+    let self_href = if page > 1 {
+        format!(
+            "/opds/v2/by-creator/{}?page={page}",
+            urlencoding::encode(&writer)
+        )
+    } else {
+        format!("/opds/v2/by-creator/{}", urlencoding::encode(&writer))
+    };
+
+    if series_ids.is_empty() {
+        let body = json!({
+            "metadata": { "title": format!("By {writer}"), "numberOfItems": 0 },
+            "links": [{ "rel": "self", "href": self_href, "type": NAV_CT }],
+            "navigation": [],
+        });
+        return json_response(body);
+    }
+
+    let mut count_sel = series::Entity::find().filter(series::Column::Id.is_in(series_ids.clone()));
+    if let Some(ids) = allowed.as_ref() {
+        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    let total = match count_sel.count(&app.db).await {
+        Ok(n) => n,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
+
+    let mut sel = series::Entity::find()
+        .filter(series::Column::Id.is_in(series_ids))
+        .order_by_asc(series::Column::Name);
+    if let Some(ids) = allowed.as_ref() {
+        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    let rows = match sel.offset(offset).limit(opds::PAGE_SIZE).all(&app.db).await {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let result_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = opds::fetch_cover_issues(&app.db, &result_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &result_ids).await;
+    let navigation: Vec<Value> = rows
+        .iter()
+        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
+        .collect();
+
+    let mut links = vec![json!({
+        "rel": "self",
+        "href": self_href,
+        "type": NAV_CT,
+    })];
+    let base_href = format!("/opds/v2/by-creator/{}", urlencoding::encode(&writer));
+    paginate_links(&mut links, &base_href, page, total_pages, opds::PAGE_SIZE);
+
+    let body = json!({
+        "metadata": {
+            "title": format!("By {writer}"),
+            "itemsPerPage": opds::PAGE_SIZE,
+            "numberOfItems": total,
+            "currentPage": page,
+        },
+        "links": links,
+        "navigation": navigation,
     });
     json_response(body)
 }

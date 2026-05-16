@@ -1680,8 +1680,9 @@ async fn series_entry_emits_authors_and_categories() {
 
     let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
     let body = body_text(resp.into_body()).await;
-    assert!(body.contains("<author><name>Brian K. Vaughan</name></author>"));
-    assert!(body.contains("<author><name>Cliff Chiang</name></author>"));
+    // M5 also adds a `<uri>` drill-in link inside `<author>`.
+    assert!(body.contains("<author><name>Brian K. Vaughan</name>"));
+    assert!(body.contains("<author><name>Cliff Chiang</name>"));
     let vaughan = body.find("Brian K. Vaughan").unwrap();
     let chiang = body.find("Cliff Chiang").unwrap();
     assert!(
@@ -2241,4 +2242,234 @@ async fn page_acq_surfaces_cbl_pins() {
         "CBL pin must NOT route to /opds/v1/views/<view_id>"
     );
     assert!(body.contains(&format!("urn:cbl:{cbl_id}")));
+}
+
+// ─────────── M5 (opds-richer-feeds): aggregation feeds ───────────
+
+async fn seed_progress(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    issue_id: &str,
+    last_page: i32,
+    finished: bool,
+) {
+    use entity::progress_record::ActiveModel as ProgressAM;
+    let now = Utc::now().fixed_offset();
+    ProgressAM {
+        user_id: Set(user_id),
+        issue_id: Set(issue_id.into()),
+        last_page: Set(last_page),
+        percent: Set(if finished { 100.0 } else { 50.0 }),
+        finished: Set(finished),
+        updated_at: Set(now),
+        device: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+/// `/opds/v1/continue` returns issues the user has progress on with
+/// `finished = false`. Finished or zero-progress issues are excluded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn continue_feed_returns_in_progress_issues_only() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "continue@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Test").await;
+    let mid = seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("a.cbz"), b"a").await;
+    let done = seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("b.cbz"), b"b").await;
+    let _unread =
+        seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("c.cbz"), b"c").await;
+    seed_progress(&db, auth.user_id, &mid, 5, false).await;
+    seed_progress(&db, auth.user_id, &done, 20, true).await;
+
+    let resp = get_with_auth(&app, "/opds/v1/continue", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains(&format!("urn:issue:{mid}")));
+    assert!(
+        !body.contains(&format!("urn:issue:{done}")),
+        "finished issue must not appear in Continue reading"
+    );
+    assert!(body.contains("<title>Continue reading</title>"));
+}
+
+/// `/opds/v1/new-this-month` returns issues created in the last 30
+/// days. Older issues are excluded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_this_month_filters_by_created_at() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "new-month@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Recent").await;
+    let recent_id = seed_issue_with_file(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("recent.cbz"),
+        b"new",
+    )
+    .await;
+    let old_id =
+        seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("old.cbz"), b"old").await;
+    // Backdate one issue to 60 days ago so it falls outside the
+    // 30-day window.
+    use entity::issue::Entity as IssueEntity;
+    let row = IssueEntity::find_by_id(old_id.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    let sixty = (Utc::now() - chrono::Duration::days(60)).fixed_offset();
+    am.created_at = Set(sixty);
+    am.update(&db).await.unwrap();
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/new-this-month",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains(&format!("urn:issue:{recent_id}")));
+    assert!(
+        !body.contains(&format!("urn:issue:{old_id}")),
+        "issue older than 30 days must be excluded: {body}"
+    );
+}
+
+/// `/opds/v1/by-creator/{writer}` returns every series that has the
+/// writer in its `series_credits`. URL-encoded writer names round-
+/// trip via the path segment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn by_creator_returns_writers_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "by-creator@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let s_match_1 = seed_series(&db, lib_id, "Saga").await;
+    let s_match_2 = seed_series(&db, lib_id, "Y The Last Man").await;
+    let s_other = seed_series(&db, lib_id, "Hawkeye").await;
+    add_series_writer(&db, s_match_1, "Brian K. Vaughan").await;
+    add_series_writer(&db, s_match_2, "Brian K. Vaughan").await;
+    add_series_writer(&db, s_other, "Matt Fraction").await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/by-creator/Brian%20K.%20Vaughan",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("<title>By Brian K. Vaughan</title>"));
+    assert!(body.contains(&format!("urn:series:{s_match_1}")));
+    assert!(body.contains(&format!("urn:series:{s_match_2}")));
+    assert!(
+        !body.contains(&format!("urn:series:{s_other}")),
+        "non-matching series must not appear: {body}"
+    );
+}
+
+/// Unknown writer name → empty feed (200 OK, zero entries), not 404.
+/// Lets the M2 author drill-in link always click through coherently.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn by_creator_empty_feed_for_unknown_writer() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "by-creator-empty@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/by-creator/Nobody",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains("<title>By Nobody</title>"));
+    assert!(!body.contains("<entry>"));
+}
+
+/// M5 drill-in plumbing: when a series has writer credits, its
+/// `<author>` element carries a `<uri>` pointing at /opds/v1/by-
+/// creator/{name}. The URI is URL-encoded so writer names with
+/// spaces don't produce broken hrefs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_author_links_to_by_creator_feed() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "author-drill@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Pride of Baghdad").await;
+    add_series_writer(&db, series_id, "Brian K. Vaughan").await;
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(body.contains(
+        "<author><name>Brian K. Vaughan</name><uri>/opds/v1/by-creator/Brian%20K.%20Vaughan</uri></author>"
+    ));
+}
+
+/// M5 follow-up: per-series feed at `/opds/v1/series/{id}` carries
+/// the series metadata at the FEED root (Panels and other OPDS
+/// clients display this as a header banner). The all-series list
+/// already had this metadata on each entry from M2; without it on
+/// the per-series feed too, the detail screen shows only "title +
+/// issue grid" — observed in Panels on 2026-05-16.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_detail_feed_carries_banner_metadata() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-banner@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Saga").await;
+    set_series_meta(&db, series_id, Some("Image Comics"), Some(2012), Some("en")).await;
+    add_series_writer(&db, series_id, "Brian K. Vaughan").await;
+    add_series_genre(&db, series_id, "Science Fiction").await;
+    let issue_id = seed_issue_with_file(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("saga-1.cbz"),
+        b"first",
+    )
+    .await;
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/series/{series_id}"),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    let body = body_text(resp.into_body()).await;
+    // Feed-root metadata block — before any `<entry>`.
+    let first_entry = body.find("<entry>").unwrap_or(body.len());
+    let header = &body[..first_entry];
+    assert!(
+        header.contains("xmlns:dc="),
+        "dc namespace required: {header}"
+    );
+    assert!(header.contains("<dc:publisher>Image Comics</dc:publisher>"));
+    assert!(header.contains("<dc:issued>2012</dc:issued>"));
+    assert!(header.contains("<dc:language>en</dc:language>"));
+    assert!(header.contains("<author><name>Brian K. Vaughan</name>"));
+    assert!(header.contains(r#"term="Science Fiction""#));
+    // Cover image rels at the feed root drive the banner cover.
+    assert!(header.contains(&format!(r#"href="/issues/{issue_id}/pages/0/thumb""#)));
+    assert!(header.contains(&format!(r#"href="/issues/{issue_id}/pages/0""#)));
 }

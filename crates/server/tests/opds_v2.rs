@@ -1336,3 +1336,174 @@ async fn v2_browse_status_filter_marks_active() {
     // Toggle: the active link href clears the filter.
     assert_eq!(ended_link["href"], "/opds/v2/browse");
 }
+
+// ─────────── M5 (opds-richer-feeds): aggregation feeds, v2 ───────────
+
+async fn v2_seed_progress(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    issue_id: &str,
+    last_page: i32,
+    finished: bool,
+) {
+    use entity::progress_record::ActiveModel as ProgressAM;
+    let now = Utc::now().fixed_offset();
+    ProgressAM {
+        user_id: Set(user_id),
+        issue_id: Set(issue_id.into()),
+        last_page: Set(last_page),
+        percent: Set(if finished { 100.0 } else { 50.0 }),
+        finished: Set(finished),
+        updated_at: Set(now),
+        device: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+async fn v2_add_writer_to_series(db: &DatabaseConnection, series_id: Uuid, person: &str) {
+    SeriesCreditAM {
+        series_id: Set(series_id),
+        role: Set("writer".into()),
+        person: Set(person.into()),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_continue_feed_excludes_finished_issues() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-continue@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Series").await;
+    let mid = seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("a.cbz"), b"a").await;
+    let done = seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("b.cbz"), b"b").await;
+    v2_seed_progress(&db, auth.user_id, &mid, 3, false).await;
+    v2_seed_progress(&db, auth.user_id, &done, 20, true).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/continue").await;
+    assert_eq!(status, StatusCode::OK);
+    let pubs = body["publications"].as_array().unwrap();
+    let identifiers: Vec<&str> = pubs
+        .iter()
+        .filter_map(|p| p["metadata"]["identifier"].as_str())
+        .collect();
+    assert!(identifiers.iter().any(|s| s.ends_with(&mid)));
+    assert!(!identifiers.iter().any(|s| s.ends_with(&done)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_new_this_month_filters_old_issues() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-new-month@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Recent").await;
+    let recent_id =
+        seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("r.cbz"), b"new").await;
+    let old_id =
+        seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("o.cbz"), b"old").await;
+    use entity::issue::Entity as IssueEntity;
+    let row = IssueEntity::find_by_id(old_id.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.created_at = Set((Utc::now() - chrono::Duration::days(60)).fixed_offset());
+    am.update(&db).await.unwrap();
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/new-this-month").await;
+    assert_eq!(status, StatusCode::OK);
+    let pubs = body["publications"].as_array().unwrap();
+    let ids: Vec<&str> = pubs
+        .iter()
+        .filter_map(|p| p["metadata"]["identifier"].as_str())
+        .collect();
+    assert!(ids.iter().any(|s| s.ends_with(&recent_id)));
+    assert!(!ids.iter().any(|s| s.ends_with(&old_id)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_by_creator_returns_writers_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-by-creator@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let s1 = seed_series(&db, lib_id, "Sandman").await;
+    let s2 = seed_series(&db, lib_id, "American Gods").await;
+    v2_add_writer_to_series(&db, s1, "Neil Gaiman").await;
+    v2_add_writer_to_series(&db, s2, "Neil Gaiman").await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/by-creator/Neil%20Gaiman").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["metadata"]["title"], "By Neil Gaiman");
+    let nav = body["navigation"].as_array().unwrap();
+    assert_eq!(nav.len(), 2);
+    let titles: Vec<&str> = nav.iter().filter_map(|n| n["title"].as_str()).collect();
+    assert!(titles.contains(&"Sandman"));
+    assert!(titles.contains(&"American Gods"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_by_creator_empty_for_unknown_writer() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-by-creator-empty@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/by-creator/Nobody").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["navigation"].as_array().unwrap().len(), 0);
+}
+
+/// v2 mirror of the series-banner regression: /opds/v2/series/{id}
+/// carries metadata.author/subject/publisher/published/language and
+/// a top-level images[] array so OPDS 2.0 clients render the banner.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_series_detail_carries_banner_metadata() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-banner@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Saga").await;
+    v2_set_series_meta(&db, series_id, Some("Image Comics"), Some(2012), Some("en")).await;
+    v2_add_writer(&db, series_id, "Brian K. Vaughan").await;
+    v2_add_genre(&db, series_id, "Science Fiction").await;
+    let issue_id = seed_issue_with_file(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("saga.cbz"),
+        b"banner",
+    )
+    .await;
+
+    let (status, body) = get_json(&app, &auth, &format!("/opds/v2/series/{series_id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    let m = &body["metadata"];
+    assert_eq!(m["title"], "Saga");
+    assert_eq!(m["publisher"]["name"], "Image Comics");
+    assert_eq!(m["published"], "2012");
+    assert_eq!(m["language"], "en");
+    assert_eq!(m["author"][0]["name"], "Brian K. Vaughan");
+    assert_eq!(m["subject"][0]["name"], "Science Fiction");
+    assert_eq!(m["subject"][0]["scheme"], "urn:folio:genre");
+    let images = body["images"]
+        .as_array()
+        .expect("images array at feed root");
+    let hrefs: Vec<&str> = images.iter().filter_map(|i| i["href"].as_str()).collect();
+    assert!(hrefs.contains(&format!("/issues/{issue_id}/pages/0/thumb").as_str()));
+    assert!(hrefs.contains(&format!("/issues/{issue_id}/pages/0").as_str()));
+}

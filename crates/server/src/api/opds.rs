@@ -73,6 +73,14 @@ pub fn routes() -> Router<AppState> {
         // facet">` elements that clients render as a filter sidebar.
         .route("/opds/v1/browse", get(browse))
         .route("/opds/v1/recent", get(recent))
+        // M5 of opds-richer-feeds — aggregation feeds. Three pre-built
+        // surfaces expressing common reader intents (resume a series in
+        // progress, see what's new, drill into a creator's catalog).
+        // Each reuses the same render path as the corresponding generic
+        // feed so cover/metadata/PSE links stay consistent.
+        .route("/opds/v1/continue", get(continue_reading))
+        .route("/opds/v1/new-this-month", get(new_this_month))
+        .route("/opds/v1/by-creator/{writer}", get(by_creator))
         .route("/opds/v1/search", get(search))
         .route("/opds/v1/search.xml", get(search_description))
         .route("/opds/v1/issues/{id}/file", get(download))
@@ -248,6 +256,18 @@ async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
     <title>Recently added</title>
     <updated>{now}</updated>
     <link rel="http://opds-spec.org/sort/new" href="/opds/v1/recent" type="{acq}"/>
+  </entry>
+  <entry>
+    <id>{base}/opds/v1/continue</id>
+    <title>Continue reading</title>
+    <updated>{now}</updated>
+    <link rel="subsection" href="/opds/v1/continue" type="{acq}"/>
+  </entry>
+  <entry>
+    <id>{base}/opds/v1/new-this-month</id>
+    <title>New this month</title>
+    <updated>{now}</updated>
+    <link rel="http://opds-spec.org/sort/new" href="/opds/v1/new-this-month" type="{acq}"/>
   </entry>
   <entry>
     <id>{base}/opds/v1/wtr</id>
@@ -659,16 +679,61 @@ async fn series_one(
         Err(e) => return server_error(e.to_string()),
     };
     let self_href = format!("/opds/v1/series/{id}");
-    let body = build_acquisition_feed(
-        &app,
-        &format!("urn:series:{id}"),
-        &format!("Series — {}", s.name),
-        &format!("{self_href}?page={page}"),
-        &issues,
-        &paginate_links(&self_href, page, total_pages),
-        user.id,
-    )
-    .await;
+    // Build the per-series feed inline (rather than via
+    // `build_acquisition_feed`) so series-level metadata can sit
+    // at the `<feed>` root. Panels and most OPDS clients render
+    // feed-root metadata as a header banner (cover + author byline
+    // + publisher + year + genre chips); the per-entry metadata we
+    // emit on the all-series LIST feed doesn't surface in the
+    // series-detail screen, so without this banner the screen
+    // shows just the title and the issue grid. M5 follow-up to
+    // close that gap (observed in Panels on 2026-05-16).
+    let slugs = fetch_series_slugs(&app.db, &issues).await;
+    let series_facets = fetch_series_facets(&app.db, &[s.id]).await;
+    let cover_map = fetch_cover_issues(&app.db, &[s.id]).await;
+    let cover = cover_map.get(&s.id).map(String::as_str);
+    let key = app.secrets.url_signing_key.as_ref();
+    let mut entries = String::new();
+    for i in &issues {
+        let series_slug = slugs.get(&i.series_id).map(String::as_str);
+        entries.push_str(&render_issue_acq_entry(
+            i,
+            series_slug,
+            Some((user.id, key)),
+        ));
+    }
+    let series_description = render_series_description(s.summary.as_deref());
+    let series_metadata = entry_metadata_series(&s, series_facets.get(&s.id));
+    let cover_links = match cover {
+        Some(cid) => format!(
+            r#"  <link rel="http://opds-spec.org/image/thumbnail" href="/issues/{cid}/pages/0/thumb" type="image/webp"/>
+  <link rel="http://opds-spec.org/image" href="/issues/{cid}/pages/0" type="image/jpeg"/>
+"#,
+            cid = xml_escape(cid),
+        ),
+        None => String::new(),
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:pse="http://vaemendis.net/opds-pse/ns">
+  <id>urn:series:{id}</id>
+  <title>{title}</title>
+  <updated>{now}</updated>
+{description}{metadata}{cover_links}  <link rel="self" href="{self_href}?page={page}" type="{acq}"/>
+  <link rel="up" href="/opds/v1" type="{nav}"/>
+{pagination}{entries}</feed>
+"#,
+        id = id,
+        title = xml_escape(&s.name),
+        now = now,
+        description = series_description,
+        metadata = series_metadata,
+        self_href = xml_escape(&self_href),
+        acq = ACQ_CT,
+        nav = NAV_CT,
+        pagination = paginate_links(&self_href, page, total_pages),
+    );
     atom(body)
 }
 
@@ -697,6 +762,247 @@ async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
         user.id,
     )
     .await;
+    atom(body)
+}
+
+// ──────────── M5 of opds-richer-feeds — aggregation feeds ────────────
+
+/// `/opds/v1/continue` — the user's in-progress issues, newest
+/// progress-update first. Mirrors the shape `api::rails::
+/// continue_reading` returns to the web app but emits OPDS
+/// acquisition entries instead of `IssueSummaryView` JSON. The
+/// query is identical (same join, same filters, same LIMIT 24) so
+/// the two surfaces stay consistent.
+///
+/// Rendered as an acquisition feed — clients open the issue file
+/// directly and resume reading where progress left off. The `<id>`
+/// is the per-issue urn so OPDS clients dedupe entries even when
+/// the same issue surfaces elsewhere (e.g. its series's per-series
+/// feed).
+async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Response {
+    use sea_orm::DbBackend;
+    let allowed = match allowed_libraries(&app, &user).await {
+        Ok(v) => v,
+        Err(e) => return server_error(e),
+    };
+
+    #[derive(FromQueryResult)]
+    struct Row {
+        issue_id: String,
+        library_id: Uuid,
+    }
+
+    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        SELECT
+            p.issue_id    AS issue_id,
+            i.library_id  AS library_id
+        FROM progress_records p
+        JOIN issues i ON i.id = p.issue_id
+        LEFT JOIN rail_dismissals d
+          ON d.user_id = p.user_id
+         AND d.target_kind = 'issue'
+         AND d.target_id   = p.issue_id
+        WHERE p.user_id  = $1
+          AND p.finished = false
+          AND p.last_page > 0
+          AND i.state    = 'active'
+          AND i.removed_at IS NULL
+          AND (d.dismissed_at IS NULL OR p.updated_at > d.dismissed_at)
+        ORDER BY p.updated_at DESC
+        LIMIT 24
+        "#,
+        [user.id.into()],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+
+    // Apply library ACL in Rust (same pattern as the rail handler).
+    let filtered_ids: Vec<String> = match allowed.as_ref() {
+        None => rows.into_iter().map(|r| r.issue_id).collect(),
+        Some(visible) => rows
+            .into_iter()
+            .filter(|r| visible.contains(&r.library_id))
+            .map(|r| r.issue_id)
+            .collect(),
+    };
+
+    // Hydrate full issue::Model rows preserving the
+    // most-recent-progress-first order from the SQL above. Otherwise
+    // `IN (...)` returns whatever ordering Postgres feels like, and
+    // "Continue reading" feeds out of order are confusing.
+    let visible = access::for_user(&app, &user).await;
+    let issues = fetch_visible_issues_preserving_order(&app, &filtered_ids, &visible).await;
+
+    let body = build_acquisition_feed(
+        &app,
+        "urn:opds:continue",
+        "Continue reading",
+        "/opds/v1/continue",
+        &issues,
+        "",
+        user.id,
+    )
+    .await;
+    atom(body)
+}
+
+/// `/opds/v1/new-this-month` — issues added in the last 30 days,
+/// newest-`created_at` first. Distinct from `/opds/v1/recent`
+/// (which returns the 50 newest regardless of age): on a stale
+/// library "Recently added" still surfaces a year-old set, while
+/// "New this month" goes empty.
+async fn new_this_month(State(app): State<AppState>, user: CurrentUser) -> Response {
+    let allowed = match allowed_libraries(&app, &user).await {
+        Ok(v) => v,
+        Err(e) => return server_error(e),
+    };
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+    let mut sel = issue::Entity::find()
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::CreatedAt.gte(cutoff.fixed_offset()))
+        .order_by_desc(issue::Column::CreatedAt)
+        .limit(50);
+    if let Some(ids) = allowed.as_ref() {
+        sel = sel.filter(issue::Column::LibraryId.is_in(ids.clone()));
+    }
+    let rows = match sel.all(&app.db).await {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let body = build_acquisition_feed(
+        &app,
+        "urn:opds:new-this-month",
+        "New this month",
+        "/opds/v1/new-this-month",
+        &rows,
+        "",
+        user.id,
+    )
+    .await;
+    atom(body)
+}
+
+/// `/opds/v1/by-creator/{writer}` — every series where the writer
+/// credit matches the path segment. The author drill-in link from
+/// M2's `<author><uri>` element lands here so a user can drill from
+/// "X wrote this" → "everything by X". URL-decode the slug because
+/// writer names contain spaces, periods, and other URL-unsafe chars
+/// (e.g. "Brian K. Vaughan").
+async fn by_creator(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(writer): AxPath<String>,
+    Query(q): Query<PageQuery>,
+) -> Response {
+    let writer = urlencoding::decode(&writer)
+        .map(|s| s.into_owned())
+        .unwrap_or(writer);
+    let page = q.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * PAGE_SIZE;
+
+    let allowed = match allowed_libraries(&app, &user).await {
+        Ok(v) => v,
+        Err(e) => return server_error(e),
+    };
+
+    // Two-step query — first the matching series IDs from credits,
+    // then the series rows in name order. Doing it as one SQL
+    // JOIN would force the ORM into raw mode for the
+    // count-then-paginate dance we already do in series_list.
+    let credit_rows = match series_credit::Entity::find()
+        .filter(series_credit::Column::Role.eq("writer"))
+        .filter(series_credit::Column::Person.eq(writer.clone()))
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let series_ids: Vec<Uuid> = credit_rows.iter().map(|c| c.series_id).collect();
+    if series_ids.is_empty() {
+        // Still emit a coherent empty feed rather than 404 — the M2
+        // author drill-in link should always render *something* so
+        // the user knows the click registered.
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
+  <id>urn:opds:by-creator:{w}</id>
+  <title>By {w}</title>
+  <updated>{now}</updated>
+  <link rel="self" href="/opds/v1/by-creator/{w_url}" type="{acq}"/>
+  <link rel="up" href="/opds/v1" type="{nav}"/>
+</feed>
+"#,
+            w = xml_escape(&writer),
+            w_url = url_escape(&writer),
+            now = chrono::Utc::now().to_rfc3339(),
+            acq = ACQ_CT,
+            nav = NAV_CT,
+        );
+        return atom(body);
+    }
+
+    let mut count_sel = series::Entity::find().filter(series::Column::Id.is_in(series_ids.clone()));
+    if let Some(ids) = allowed.as_ref() {
+        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    let total = match count_sel.count(&app.db).await {
+        Ok(n) => n,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let total_pages = total.div_ceil(PAGE_SIZE).max(1);
+
+    let mut sel = series::Entity::find()
+        .filter(series::Column::Id.is_in(series_ids))
+        .order_by_asc(series::Column::Name);
+    if let Some(ids) = allowed.as_ref() {
+        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    let rows = match sel.offset(offset).limit(PAGE_SIZE).all(&app.db).await {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+
+    let result_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = fetch_cover_issues(&app.db, &result_ids).await;
+    let facets = fetch_series_facets(&app.db, &result_ids).await;
+    let mut entries = String::new();
+    for s in &rows {
+        let cover = covers.get(&s.id).map(String::as_str);
+        let f = facets.get(&s.id);
+        entries.push_str(&render_series_subsection_entry(s, cover, f));
+    }
+    let base_href = format!("/opds/v1/by-creator/{}", url_escape(&writer));
+    let self_href = if page > 1 {
+        format!("{base_href}?page={page}")
+    } else {
+        base_href.clone()
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
+  <id>urn:opds:by-creator:{w}</id>
+  <title>By {w}</title>
+  <updated>{now}</updated>
+  <link rel="self" href="{self_href}" type="{acq}"/>
+  <link rel="up" href="/opds/v1" type="{nav}"/>
+{pagination}{entries}</feed>
+"#,
+        w = xml_escape(&writer),
+        now = now,
+        self_href = xml_escape(&self_href),
+        acq = ACQ_CT,
+        nav = NAV_CT,
+        pagination = paginate_links(&base_href, page, total_pages),
+    );
     atom(body)
 }
 
@@ -1161,11 +1467,16 @@ fn entry_metadata_series(s: &series::Model, facets: Option<&SeriesFacets>) -> St
         // OPDS spec allows multiple `<author>` elements per entry;
         // most clients display the first as the byline and surface
         // the rest in detail views. Emit all writers we know about.
+        // `<uri>` makes the author clickable — it routes to
+        // `/opds/v1/by-creator/{name}` so a user can drill from
+        // "X wrote this" to "everything by X" without leaving the
+        // OPDS client. M5 of opds-richer-feeds.
         for person in &f.writers {
             let _ = writeln!(
                 out,
-                "    <author><name>{}</name></author>",
-                xml_escape(person)
+                "    <author><name>{name}</name><uri>/opds/v1/by-creator/{name_url}</uri></author>",
+                name = xml_escape(person),
+                name_url = url_escape(person),
             );
         }
         // Genres become Atom `<category>` chips. The `scheme` is
