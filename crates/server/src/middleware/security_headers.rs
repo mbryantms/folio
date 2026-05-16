@@ -48,33 +48,27 @@ impl SecurityHeaders {
         } else {
             format!("'self' {oidc_origin} {ws_scheme}://{public_host}")
         };
-        // Script + style source lists differ between debug and release
-        // builds. `cargo run` (debug) hits this with `next dev` behind
-        // the proxy, which needs `'unsafe-eval'` for React Refresh
-        // source maps + `'unsafe-inline'` for HMR boot scripts. Release
-        // builds front the standalone Next bundle, which emits hashed
-        // external scripts only and runs cleanly under the strict
-        // policy.
+        // Script + style source lists. Dev (`cargo run` + `next dev`)
+        // needs `'unsafe-eval'` for React Refresh source maps; both dev
+        // and release need `'unsafe-inline'` because Next emits inline
+        // hydration `<script>` tags and framework-sprinkled
+        // `style="…"` attributes in the SSR HTML, neither of which our
+        // proxy can hash or nonce yet. The proper fix is a per-request
+        // nonce threaded from Rust through the SSR proxy to Next so the
+        // policy can return to `'self' 'nonce-…' 'strict-dynamic'`;
+        // tracked separately.
         //
-        // `require-trusted-types-for 'script'` is dropped in dev too:
-        // Next dev's React Refresh patches `Function` and `eval` paths
-        // that violate Trusted-Types enforcement.
-        let (script_src, style_src, trusted_types) = if cfg!(debug_assertions) {
-            (
-                "'self' 'unsafe-eval' 'unsafe-inline'",
-                "'self' 'unsafe-inline'",
-                "",
-            )
+        // `require-trusted-types-for 'script'` is similarly dropped:
+        // Next's hydration runtime + Cloudflare email-decode injection
+        // patch `innerHTML` paths that violate Trusted-Types enforcement
+        // before any app code runs. Re-enable alongside the nonce work.
+        let script_src = if cfg!(debug_assertions) {
+            "'self' 'unsafe-eval' 'unsafe-inline'"
         } else {
-            ("'self'", "'self'", "require-trusted-types-for 'script'; ")
+            "'self' 'unsafe-inline'"
         };
-        // M3 tightening: `'strict-dynamic'` removed. The previous policy
-        // included it without a per-response nonce, which modern browsers
-        // interpret as "ignore 'self' and require a nonce or hash" — i.e.
-        // it effectively disabled script-src for any non-nonced load. Next
-        // 16 emits hashed external script tags only (no inline scripts),
-        // so `'self'` is strict enough and actually enforces what we want
-        // for release builds.
+        let style_src = "'self' 'unsafe-inline'";
+        let trusted_types = "";
         let csp = format!(
             "default-src 'self'; \
              script-src {script_src}; \

@@ -54,20 +54,24 @@ async fn healthz_carries_all_security_headers() {
     assert!(csp.contains("frame-ancestors 'none'"));
     assert!(csp.contains("base-uri 'none'"));
     assert!(csp.contains("object-src 'none'"));
-    // `require-trusted-types-for 'script'` is dropped in debug builds
-    // because `next dev`'s React Refresh violates Trusted-Types
-    // enforcement. Release builds keep it.
-    if !cfg!(debug_assertions) {
-        assert!(csp.contains("require-trusted-types-for 'script'"));
-    }
-    // M3 (audit S-8): `'strict-dynamic'` without a per-request nonce is
-    // either a no-op or actively disables script-src on modern browsers.
-    // We dropped it in favor of strict `'self'`. Guard against regression.
+    // `require-trusted-types-for 'script'` is dropped pending the
+    // per-request nonce work: Next's hydration runtime + Cloudflare's
+    // email-decode injection both patch innerHTML paths that violate
+    // Trusted-Types enforcement before app code runs.
+    assert!(!csp.contains("require-trusted-types-for"));
+    // `'strict-dynamic'` only works alongside a per-request nonce. We
+    // dropped it in M3 (audit S-8) and haven't re-introduced it yet.
     assert!(
         !csp.contains("'strict-dynamic'"),
         "CSP must not contain 'strict-dynamic' without nonce wiring: {csp}"
     );
+    // `'unsafe-inline'` is required on both directives until nonces
+    // land: Next's hydration scripts + framework-sprinkled style
+    // attributes are neither hashable nor nonceable today. Dev also
+    // adds `'unsafe-eval'` to script-src for React Refresh.
+    assert!(csp.contains("'unsafe-inline'"));
     assert!(csp.contains("script-src 'self'"));
+    assert!(csp.contains("style-src 'self' 'unsafe-inline'"));
 }
 
 #[tokio::test]
