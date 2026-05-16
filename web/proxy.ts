@@ -23,5 +23,14 @@ export default createMiddleware({
 });
 
 export const config = {
-  matcher: ["/((?!api|_next|.*\\..*).*)"],
+  // Exclude backend-owned paths from the next-intl rewrite. With
+  // `localePrefix: "never"`, this middleware internally rewrites every
+  // matched request to `/{locale}/{path}` so the file-system router can
+  // resolve `app/[locale]/...` pages. That rewrite fires *before* the
+  // `next.config.ts` rewrites, so any path that's supposed to forward
+  // to the Rust backend — `/api/*`, `/opds/*`, `/auth/oidc/*` — has to
+  // be excluded here, otherwise it gets rewritten to `/en/opds/...`,
+  // no page matches, and Next returns its 404 HTML (which OPDS clients
+  // reject as "invalid server response", Panels error 9).
+  matcher: ["/((?!api|_next|opds|auth/oidc|.*\\..*).*)"],
 };
