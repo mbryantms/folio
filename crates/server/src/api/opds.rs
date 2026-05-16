@@ -269,10 +269,13 @@ async fn series_list(
         Err(e) => return server_error(e.to_string()),
     };
 
+    let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = fetch_cover_issues(&app.db, &series_ids).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
     for s in &rows {
-        entries.push_str(&render_series_subsection_entry(s));
+        let cover = covers.get(&s.id).map(String::as_str);
+        entries.push_str(&render_series_subsection_entry(s, cover));
     }
 
     let body = format!(
@@ -417,10 +420,13 @@ async fn search(
         Err(e) => return server_error(e.to_string()),
     };
 
+    let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = fetch_cover_issues(&app.db, &series_ids).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
     for s in &rows {
-        entries.push_str(&render_series_subsection_entry(s));
+        let cover = covers.get(&s.id).map(String::as_str);
+        entries.push_str(&render_series_subsection_entry(s, cover));
     }
 
     let body = format!(
@@ -725,14 +731,32 @@ fn render_pse_stream_link(i: &issue::Model, user_id: Uuid, key: &[u8]) -> String
 /// Render a single series `<entry>` whose acquisition is "drill into the
 /// per-series feed" (subsection link). Shared by `series_list`, mixed
 /// collection feeds, and saved-view filter feeds.
-fn render_series_subsection_entry(s: &series::Model) -> String {
+///
+/// `cover_issue_id`: when `Some`, emit OPDS `image/thumbnail` +
+/// `image` rels pointing at that issue's page-0 art. Clients use
+/// these to display series cover art in browse views; without them
+/// they fall back to a generic folder icon. Resolved in bulk via
+/// [`fetch_cover_issues`] one query per feed render. `None` means
+/// the series has no active issues (in-progress import, fully-
+/// removed library) — emit the entry without image links and let
+/// the client render its placeholder.
+fn render_series_subsection_entry(s: &series::Model, cover_issue_id: Option<&str>) -> String {
+    let cover_links = match cover_issue_id {
+        Some(id) => format!(
+            r#"    <link rel="http://opds-spec.org/image/thumbnail" href="/issues/{id}/pages/0/thumb" type="image/webp"/>
+    <link rel="http://opds-spec.org/image" href="/issues/{id}/pages/0" type="image/jpeg"/>
+"#,
+            id = xml_escape(id),
+        ),
+        None => String::new(),
+    };
     format!(
         r#"  <entry>
     <id>urn:series:{id}</id>
     <title>{name}</title>
     <updated>{updated}</updated>
     {summary}
-    <link rel="subsection" href="/opds/v1/series/{id}" type="{acq}"/>
+{cover_links}    <link rel="subsection" href="/opds/v1/series/{id}" type="{acq}"/>
   </entry>
 "#,
         id = s.id,
@@ -745,6 +769,64 @@ fn render_series_subsection_entry(s: &series::Model) -> String {
             .unwrap_or_default(),
         acq = ACQ_CT,
     )
+}
+
+/// Resolve a "cover issue" per series for OPDS feeds — the issue
+/// whose page-0 thumbnail should represent the series in clients
+/// like Panels, Chunky, KOReader. Without this, OPDS clients fall
+/// back to a generic folder icon for every series entry.
+///
+/// Pick rule (M1 of opds-richer-feeds): first active, non-removed
+/// issue ordered by `sort_number ASC, file_path ASC` — mirrors what
+/// the web `api::series::get_one` handler already does for the
+/// detail page's hero cover, so OPDS and web see the same image.
+///
+/// One DB round-trip regardless of input length via Postgres'
+/// `DISTINCT ON`. Empty inputs short-circuit. Failures degrade
+/// gracefully — return an empty map and let the renderer emit a
+/// folder-icon fallback rather than 500ing the whole feed.
+pub(crate) async fn fetch_cover_issues(
+    db: &sea_orm::DatabaseConnection,
+    series_ids: &[Uuid],
+) -> HashMap<Uuid, String> {
+    if series_ids.is_empty() {
+        return HashMap::new();
+    }
+    let mut ids: Vec<Uuid> = series_ids.to_vec();
+    ids.sort();
+    ids.dedup();
+    #[derive(FromQueryResult)]
+    struct Row {
+        series_id: Uuid,
+        id: String,
+    }
+    // Postgres `DISTINCT ON (series_id)` keeps the first row per
+    // group as ordered by the outer ORDER BY clause. sea-orm doesn't
+    // model this directly so we drop to a raw statement; the
+    // alternative (a LATERAL join or a window function) is more
+    // code for the same plan.
+    let stmt = Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        r#"
+        SELECT DISTINCT ON (series_id) series_id, id
+        FROM issues
+        WHERE series_id = ANY($1)
+          AND state = 'active'
+          AND removed_at IS NULL
+        ORDER BY series_id, sort_number ASC NULLS LAST, file_path ASC
+        "#,
+        [ids.into()],
+    );
+    match Row::find_by_statement(stmt).all(db).await {
+        Ok(rows) => rows.into_iter().map(|r| (r.series_id, r.id)).collect(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "opds: cover-issue lookup failed; series entries will fall back to folder icons"
+            );
+            HashMap::new()
+        }
+    }
 }
 
 /// Bulk-fetch the slug for every distinct series referenced in `issues`.
@@ -1275,7 +1357,12 @@ async fn view_acq(
     if rows.len() as u64 > view_limit {
         rows.truncate(view_limit as usize);
     }
-    let entries: String = rows.iter().map(render_series_subsection_entry).collect();
+    let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let entries: String = rows
+        .iter()
+        .map(|s| render_series_subsection_entry(s, covers.get(&s.id).map(String::as_str)))
+        .collect();
     let self_href = format!("/opds/v1/views/{id}");
     let now = chrono::Utc::now().to_rfc3339();
     let body = format!(
@@ -1367,6 +1454,10 @@ async fn render_collection_acq(
             .map(|s| (s.id, s.slug))
             .collect()
     };
+    // Per-series cover so series entries in mixed collection feeds
+    // render with art instead of folder icons (M1 of opds-richer-feeds).
+    let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
+    let series_covers = fetch_cover_issues(&app.db, &collection_series_ids).await;
 
     let key = app.secrets.url_signing_key.as_ref();
     let mut entries = String::new();
@@ -1374,7 +1465,8 @@ async fn render_collection_acq(
         if let Some(sid) = row.series_id
             && let Some(s) = series_by_id.get(&sid)
         {
-            entries.push_str(&render_series_subsection_entry(s));
+            let cover = series_covers.get(&s.id).map(String::as_str);
+            entries.push_str(&render_series_subsection_entry(s, cover));
         } else if let Some(iid) = row.issue_id.as_deref()
             && let Some(i) = issue_by_id.get(iid)
         {

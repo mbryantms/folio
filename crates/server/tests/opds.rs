@@ -316,6 +316,99 @@ async fn seed_issue_with_file(
     hash
 }
 
+/// Variant of [`seed_issue_with_file`] that exposes `sort_number` and
+/// `state`/`removed_at`. The cover-resolution tests need to control
+/// these to verify that the first-by-sort issue wins and that
+/// removed/inactive issues are skipped. The 8-arg signature is
+/// intentional — packaging this into a builder for a four-test
+/// helper would be more code, not less.
+#[allow(clippy::too_many_arguments)]
+async fn seed_issue_full(
+    db: &DatabaseConnection,
+    lib_id: Uuid,
+    series_id: Uuid,
+    file_path: &std::path::Path,
+    payload: &[u8],
+    sort_number: f64,
+    state: &str,
+    removed: bool,
+) -> String {
+    std::fs::write(file_path, payload).unwrap();
+    let bytes = std::fs::read(file_path).unwrap();
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let now = Utc::now().fixed_offset();
+    IssueAM {
+        id: Set(hash.clone()),
+        library_id: Set(lib_id),
+        series_id: Set(series_id),
+        slug: Set(Uuid::now_v7().to_string()),
+        file_path: Set(file_path.to_string_lossy().into_owned()),
+        file_size: Set(std::fs::metadata(file_path).unwrap().len() as i64),
+        file_mtime: Set(now),
+        state: Set(state.into()),
+        content_hash: Set(hash.clone()),
+        title: Set(Some("Issue".into())),
+        sort_number: Set(Some(sort_number)),
+        number_raw: Set(Some(format!("{sort_number}"))),
+        volume: Set(None),
+        year: Set(None),
+        month: Set(None),
+        day: Set(None),
+        summary: Set(None),
+        notes: Set(None),
+        language_code: Set(None),
+        format: Set(None),
+        black_and_white: Set(None),
+        manga: Set(None),
+        age_rating: Set(None),
+        page_count: Set(Some(1)),
+        pages: Set(serde_json::json!([])),
+        comic_info_raw: Set(serde_json::json!({})),
+        alternate_series: Set(None),
+        story_arc: Set(None),
+        story_arc_number: Set(None),
+        characters: Set(None),
+        teams: Set(None),
+        locations: Set(None),
+        tags: Set(None),
+        genre: Set(None),
+        writer: Set(None),
+        penciller: Set(None),
+        inker: Set(None),
+        colorist: Set(None),
+        letterer: Set(None),
+        cover_artist: Set(None),
+        editor: Set(None),
+        translator: Set(None),
+        publisher: Set(None),
+        imprint: Set(None),
+        scan_information: Set(None),
+        community_rating: Set(None),
+        review: Set(None),
+        web_url: Set(None),
+        comicvine_id: Set(None),
+        metron_id: Set(None),
+        gtin: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        removed_at: Set(if removed { Some(now) } else { None }),
+        removal_confirmed_at: Set(None),
+        superseded_by: Set(None),
+        special_type: Set(None),
+        hash_algorithm: Set(1),
+        thumbnails_generated_at: Set(None),
+        thumbnail_version: Set(0),
+        thumbnails_error: Set(None),
+        additional_links: Set(serde_json::json!([])),
+        user_edited: Set(serde_json::json!([])),
+        comicinfo_count: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    hash
+}
+
 // ─────────────────────────── tests ───────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1271,4 +1364,197 @@ async fn view_acq_rejects_non_filter_kind() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// ─────────────── M1 (opds-richer-feeds): series covers ───────────────
+
+/// `series_list` emits a series with at least one active issue with
+/// the OPDS image rels pointing at that issue's page-0 thumbnail.
+/// Without these rels every client falls back to a folder icon.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_list_emits_cover_rels_for_series_with_active_issue() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "covers@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "With Cover").await;
+    let issue_id = seed_issue_with_file(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("a.cbz"),
+        b"cbz-stub-a",
+    )
+    .await;
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    let thumb_rel = format!(
+        r#"rel="http://opds-spec.org/image/thumbnail" href="/issues/{issue_id}/pages/0/thumb""#
+    );
+    let full_rel = format!(r#"rel="http://opds-spec.org/image" href="/issues/{issue_id}/pages/0""#);
+    assert!(
+        body.contains(&thumb_rel),
+        "missing thumbnail rel in feed: {body}"
+    );
+    assert!(body.contains(&full_rel), "missing image rel: {body}");
+}
+
+/// A series with zero active issues (empty library or all-removed)
+/// degrades gracefully: the entry is still emitted but with NO image
+/// rels — better than a 500 or omitting the series entirely. Client
+/// renders its placeholder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_list_omits_cover_rels_for_empty_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "emptyseries@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "No Issues Yet").await;
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    // Series entry IS emitted...
+    assert!(body.contains(&format!("urn:series:{series_id}")));
+    assert!(body.contains("No Issues Yet"));
+    // ...but no image rels for it.
+    assert!(
+        !body.contains("opds-spec.org/image"),
+        "no issues = no image rels: {body}"
+    );
+}
+
+/// The cover-issue selection follows `sort_number ASC` — the
+/// canonical "first issue" of the series. With three issues at sort
+/// 1.0 / 2.0 / 3.0, the cover must be issue-1.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_cover_picks_lowest_sort_number() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "sortcover@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Three Issues").await;
+    // Seed in reverse order to make sure the cover query — not insert
+    // order — drives the pick.
+    let issue_3 = seed_issue_full(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("c.cbz"),
+        b"three",
+        3.0,
+        "active",
+        false,
+    )
+    .await;
+    let issue_1 = seed_issue_full(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("a.cbz"),
+        b"one",
+        1.0,
+        "active",
+        false,
+    )
+    .await;
+    let issue_2 = seed_issue_full(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("b.cbz"),
+        b"two",
+        2.0,
+        "active",
+        false,
+    )
+    .await;
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    // Cover should be issue_1 (lowest sort_number).
+    assert!(
+        body.contains(&format!("href=\"/issues/{issue_1}/pages/0/thumb\"")),
+        "expected issue_1 as cover, got: {body}"
+    );
+    assert!(
+        !body.contains(&format!("href=\"/issues/{issue_2}/pages/0/thumb\"")),
+        "issue_2 should not be the cover"
+    );
+    assert!(
+        !body.contains(&format!("href=\"/issues/{issue_3}/pages/0/thumb\"")),
+        "issue_3 should not be the cover"
+    );
+}
+
+/// Removed or non-active issues are excluded from cover selection
+/// even when they have the lowest sort_number. Otherwise a deleted
+/// issue would keep haunting the series's cover slot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_cover_skips_removed_and_inactive_issues() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "skipremoved@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "With Removed").await;
+    // Lowest sort_number is removed; next is non-active state; only
+    // the third should be eligible as cover.
+    let removed = seed_issue_full(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("rm.cbz"),
+        b"removed",
+        1.0,
+        "active",
+        true,
+    )
+    .await;
+    let inactive = seed_issue_full(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("inactive.cbz"),
+        b"inactive",
+        2.0,
+        "removed",
+        false,
+    )
+    .await;
+    let visible = seed_issue_full(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("ok.cbz"),
+        b"visible",
+        3.0,
+        "active",
+        false,
+    )
+    .await;
+
+    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
+    let body = body_text(resp.into_body()).await;
+    assert!(
+        body.contains(&format!("href=\"/issues/{visible}/pages/0/thumb\"")),
+        "expected visible issue as cover"
+    );
+    assert!(
+        !body.contains(&format!("href=\"/issues/{removed}/pages/0/thumb\"")),
+        "removed issue must not be picked"
+    );
+    assert!(
+        !body.contains(&format!("href=\"/issues/{inactive}/pages/0/thumb\"")),
+        "non-active issue must not be picked"
+    );
 }

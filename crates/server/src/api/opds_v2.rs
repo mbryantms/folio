@@ -149,7 +149,12 @@ async fn series_list(
         Err(e) => return server_error(e.to_string()),
     };
 
-    let navigation: Vec<Value> = rows.iter().map(series_nav_entry).collect();
+    let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let navigation: Vec<Value> = rows
+        .iter()
+        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str)))
+        .collect();
     let mut links = vec![json!({
         "rel": "self",
         "href": format!("/opds/v2/series?page={page}"),
@@ -303,7 +308,12 @@ async fn search(
         Ok(r) => r,
         Err(e) => return server_error(e.to_string()),
     };
-    let navigation: Vec<Value> = rows.iter().map(series_nav_entry).collect();
+    let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let navigation: Vec<Value> = rows
+        .iter()
+        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str)))
+        .collect();
     let body = json!({
         "metadata": {
             "title": format!("Search — {needle}"),
@@ -595,7 +605,12 @@ async fn view_acq(
     if rows.len() as u64 > view_limit {
         rows.truncate(view_limit as usize);
     }
-    let navigation: Vec<Value> = rows.iter().map(series_nav_entry).collect();
+    let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
+    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let navigation: Vec<Value> = rows
+        .iter()
+        .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str)))
+        .collect();
     let body = json!({
         "metadata": {
             "title": view.name,
@@ -723,7 +738,7 @@ fn publication_for(
     })
 }
 
-fn series_nav_entry(s: &series::Model) -> Value {
+fn series_nav_entry(s: &series::Model, cover_issue_id: Option<&str>) -> Value {
     let mut metadata = serde_json::Map::new();
     metadata.insert(
         "identifier".into(),
@@ -733,12 +748,34 @@ fn series_nav_entry(s: &series::Model) -> Value {
     if let Some(summary) = s.summary.as_deref().filter(|s| !s.is_empty()) {
         metadata.insert("description".into(), Value::from(summary));
     }
-    json!({
-        "title": s.name,
-        "href": format!("/opds/v2/series/{}", s.id),
-        "type": NAV_CT,
-        "metadata": Value::Object(metadata),
-    })
+    let mut obj = serde_json::Map::new();
+    obj.insert("title".into(), Value::from(s.name.clone()));
+    obj.insert(
+        "href".into(),
+        Value::from(format!("/opds/v2/series/{}", s.id)),
+    );
+    obj.insert("type".into(), Value::from(NAV_CT));
+    obj.insert("metadata".into(), Value::Object(metadata));
+    // OPDS 2.0 `images` array — clients pick the best fit for their
+    // surface (thumbnail for browse, full-size for cover detail).
+    // Mirrors v1's image rels; without these clients render a generic
+    // folder icon for the series. M1 of opds-richer-feeds-1.0.
+    if let Some(id) = cover_issue_id {
+        obj.insert(
+            "images".into(),
+            json!([
+                {
+                    "href": format!("/issues/{id}/pages/0/thumb"),
+                    "type": "image/webp",
+                },
+                {
+                    "href": format!("/issues/{id}/pages/0"),
+                    "type": "image/jpeg",
+                },
+            ]),
+        );
+    }
+    Value::Object(obj)
 }
 
 fn paginate_links(
@@ -827,6 +864,12 @@ async fn render_collection_acq_v2(
         .map(|i| (i.id.clone(), i))
         .collect();
 
+    // Resolve per-series cover for the navigation entries (M1 of
+    // opds-richer-feeds-1.0). Without this, mixed collection feeds
+    // show folder icons for the series rows.
+    let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
+    let series_covers = opds::fetch_cover_issues(&app.db, &collection_series_ids).await;
+
     // Walk rows in position order so series + issues retain the
     // collection's logical sequence.
     let mut navigation: Vec<Value> = Vec::new();
@@ -835,7 +878,8 @@ async fn render_collection_acq_v2(
         if let Some(sid) = row.series_id
             && let Some(s) = series_by_id.get(&sid)
         {
-            navigation.push(series_nav_entry(s));
+            let cover = series_covers.get(&s.id).map(String::as_str);
+            navigation.push(series_nav_entry(s, cover));
         } else if let Some(iid) = row.issue_id.as_deref()
             && let Some(i) = issue_by_id.get(iid)
         {

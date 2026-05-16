@@ -843,3 +843,95 @@ async fn content_type_is_opds_json() {
         "got {ct:?}"
     );
 }
+
+// ─────────── M1 (opds-richer-feeds): series cover images ───────────
+
+/// OPDS 2.0 series nav entries carry an `images[]` array pointing at
+/// the cover issue's page-0 thumbnail + full image. Without these,
+/// clients fall back to a folder icon — the visual regression the
+/// opds-richer-feeds plan was started to fix.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_nav_carries_images_array() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2covers@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Series With Cover").await;
+    let issue_id = seed_issue_with_file(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("v2-cover.cbz"),
+        b"v2-cbz-stub",
+    )
+    .await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/series?page=1").await;
+    assert_eq!(status, StatusCode::OK);
+    let nav = body
+        .get("navigation")
+        .and_then(|v| v.as_array())
+        .expect("navigation array");
+    let entry = nav
+        .iter()
+        .find(|n| {
+            n.get("href")
+                .and_then(|h| h.as_str())
+                .is_some_and(|h| h.ends_with(&series_id.to_string()))
+        })
+        .expect("entry for seeded series");
+    let images = entry
+        .get("images")
+        .and_then(|v| v.as_array())
+        .expect("entry must carry images[]");
+    assert_eq!(images.len(), 2, "thumbnail + full-size");
+    let hrefs: Vec<&str> = images
+        .iter()
+        .filter_map(|i| i.get("href").and_then(|h| h.as_str()))
+        .collect();
+    assert!(
+        hrefs.contains(&format!("/issues/{issue_id}/pages/0/thumb").as_str()),
+        "missing thumbnail href in {hrefs:?}",
+    );
+    assert!(
+        hrefs.contains(&format!("/issues/{issue_id}/pages/0").as_str()),
+        "missing full-size href in {hrefs:?}",
+    );
+    let types: Vec<&str> = images
+        .iter()
+        .filter_map(|i| i.get("type").and_then(|h| h.as_str()))
+        .collect();
+    assert!(types.contains(&"image/webp"), "missing webp type");
+    assert!(types.contains(&"image/jpeg"), "missing jpeg type");
+}
+
+/// Series with zero active issues degrades cleanly — entry rendered,
+/// no `images[]` field, client picks its placeholder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_nav_omits_images_for_empty_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-empty@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Empty Series").await;
+
+    let (status, body) = get_json(&app, &auth, "/opds/v2/series?page=1").await;
+    assert_eq!(status, StatusCode::OK);
+    let nav = body["navigation"].as_array().unwrap();
+    let entry = nav
+        .iter()
+        .find(|n| {
+            n.get("href")
+                .and_then(|h| h.as_str())
+                .is_some_and(|h| h.ends_with(&series_id.to_string()))
+        })
+        .expect("entry present");
+    assert!(
+        entry.get("images").is_none(),
+        "empty series must not advertise images: {entry}"
+    );
+}
