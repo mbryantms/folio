@@ -28,10 +28,12 @@
 # no TLS of its own.
 #
 # Reverse-proxy templates live under `docs/install/`:
-#   - caddy.md   (default; auto Let's Encrypt)
+#   - caddy.md       (default; auto Let's Encrypt)
 #   - nginx.md
 #   - traefik.md
 #   - lan-https-mkcert.md   (homelab without a public domain)
+#   - cloudflare.md  (read this if Cloudflare fronts your origin — there
+#                     is one required Scrape-Shield toggle to flip)
 #
 # Required env (typically via .env file alongside this compose):
 #   REPO_OWNER                — GitHub user/org that owns the GHCR image

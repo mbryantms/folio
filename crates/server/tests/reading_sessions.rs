@@ -675,7 +675,7 @@ async fn stats_aggregates_totals_per_day_and_streak() {
     .to_string();
     let (_, _) = post(&app, &auth, "/api/me/reading-sessions", &body2).await;
 
-    let (s, body) = get(&app, &auth, "/me/reading-stats?range=30d").await;
+    let (s, body) = get(&app, &auth, "/api/me/reading-stats?range=30d").await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["range"], "30d");
     assert_eq!(body["totals"]["sessions"], 2);
@@ -689,7 +689,7 @@ async fn stats_aggregates_totals_per_day_and_streak() {
     assert_eq!(per_day.len(), 1, "single day bucket");
 
     // Bad range → 400.
-    let (s, _) = get(&app, &auth, "/me/reading-stats?range=bogus").await;
+    let (s, _) = get(&app, &auth, "/api/me/reading-stats?range=bogus").await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
@@ -753,7 +753,7 @@ async fn stats_top_n_rankings() {
     let (s, _) = post(&app, &auth, "/api/me/reading-sessions", &body_b).await;
     assert!(s.is_success());
 
-    let (s, body) = get(&app, &auth, "/me/reading-stats?range=30d").await;
+    let (s, body) = get(&app, &auth, "/api/me/reading-stats?range=30d").await;
     assert_eq!(s, StatusCode::OK);
 
     let top_series = body["top_series"].as_array().unwrap();
@@ -785,7 +785,7 @@ async fn stats_top_n_rankings() {
     let (_, body_issue) = get(
         &app,
         &auth,
-        &format!("/me/reading-stats?range=30d&issue_id={issue_a}"),
+        &format!("/api/me/reading-stats?range=30d&issue_id={issue_a}"),
     )
     .await;
     assert_eq!(body_issue["top_series"].as_array().unwrap().len(), 0);
@@ -800,7 +800,7 @@ async fn stats_top_n_rankings() {
     let (_, body_series) = get(
         &app,
         &auth,
-        &format!("/me/reading-stats?range=30d&series_id={series_a}"),
+        &format!("/api/me/reading-stats?range=30d&series_id={series_a}"),
     )
     .await;
     assert_eq!(body_series["top_series"].as_array().unwrap().len(), 0);

@@ -3,8 +3,9 @@
 use crate::api;
 use crate::auth;
 use crate::config::Config;
+use crate::middleware::nonce;
 use crate::middleware::request_context::{self, TrustedProxies};
-use crate::middleware::security_headers::{self, SecurityHeaders};
+use crate::middleware::security_headers::{self, CspTemplate};
 use crate::observability::ObservabilityHandles;
 use crate::state::AppState;
 use axum::Router;
@@ -549,12 +550,14 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
 
 pub fn router(state: AppState) -> Router {
     let request_id_header = axum::http::HeaderName::from_static("x-request-id");
-    // Snapshot config at router-build time: SecurityHeaders + TrustedProxies
+    // Snapshot config at router-build time: CspTemplate + TrustedProxies
     // are built once and live for the lifetime of the process. They don't
     // hot-reload yet (deferred to a later milestone of the
-    // runtime-config-admin plan).
+    // runtime-config-admin plan). The CSP itself is templated per-request
+    // by `security_headers::set_headers` so the per-request nonce can be
+    // slotted in.
     let cfg = state.cfg();
-    let sec_headers = Arc::new(SecurityHeaders::new(&cfg));
+    let csp_template = Arc::new(CspTemplate::new(&cfg));
     let trusted_proxies = TrustedProxies::from_config(&cfg.trusted_proxies);
 
     // Routing groups (v0.2.1 — follows the rust-public-origin plan's M2
@@ -650,9 +653,16 @@ pub fn router(state: AppState) -> Router {
             request_context::set_context,
         ))
         .layer(axum::middleware::from_fn_with_state(
-            sec_headers,
+            csp_template,
             security_headers::set_headers,
         ))
+        // Nonce runs outside `security_headers` so the CSP builder can
+        // read the per-request nonce from the request extensions, and
+        // outside the `upstream::proxy` fallback so the proxy can
+        // forward the nonce to Next.js as `x-csp-nonce`. Stays inside
+        // `TraceLayer` because trace spans don't need it and including
+        // it would put a fresh random in every log line.
+        .layer(axum::middleware::from_fn(nonce::set_nonce))
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(SetRequestIdLayer::new(
             request_id_header.clone(),

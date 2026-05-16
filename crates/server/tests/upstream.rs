@@ -43,7 +43,7 @@ async fn forward_anon(
     req: Request<Body>,
     timeout: Duration,
 ) -> axum::response::Response {
-    upstream::forward(client, upstream_url, req, timeout, None).await
+    upstream::forward(client, upstream_url, req, timeout, None, None).await
 }
 
 #[tokio::test]
@@ -240,6 +240,7 @@ async fn appends_client_ip_to_x_forwarded_for_chain() {
         req,
         Duration::from_secs(5),
         Some(client_ip),
+        None,
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
@@ -268,6 +269,7 @@ async fn sets_x_forwarded_for_when_no_inbound_chain() {
         req_get("/x"),
         Duration::from_secs(5),
         Some(client_ip),
+        None,
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
@@ -425,4 +427,90 @@ async fn empty_upstream_url_returns_500_envelope() {
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["error"]["code"], "upstream_url_invalid");
+}
+
+#[tokio::test]
+async fn forwards_x_csp_nonce_to_upstream() {
+    // `forward()` should set `x-csp-nonce` on the outbound request when
+    // the caller supplies the nonce (typically read from the
+    // per-request `Nonce` extension in `proxy()`). Next.js reads this
+    // header and stamps the value onto every framework-emitted
+    // `<script nonce=…>` tag.
+    let server = MockServer::start().await;
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let captured = observed.clone();
+    Mock::given(method("GET"))
+        .and(path("/page"))
+        .respond_with(move |req: &WmRequest| {
+            let mut o = captured.lock().unwrap();
+            *o = req
+                .headers
+                .get("x-csp-nonce")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            ResponseTemplate::new(200)
+        })
+        .mount(&server)
+        .await;
+
+    let resp = upstream::forward(
+        &proxy_client(),
+        &server.uri(),
+        req_get("/page"),
+        Duration::from_secs(5),
+        None,
+        Some("rPRfMmebTC4PFD-fThYBVw"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        observed.lock().unwrap().as_deref(),
+        Some("rPRfMmebTC4PFD-fThYBVw"),
+    );
+}
+
+#[tokio::test]
+async fn strips_inbound_x_csp_nonce_from_client() {
+    // A malicious client must not be able to substitute their own
+    // nonce by sending the header — the only nonce upstream should see
+    // is the one the Rust nonce middleware generated.
+    let server = MockServer::start().await;
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let captured = observed.clone();
+    Mock::given(method("GET"))
+        .and(path("/page"))
+        .respond_with(move |req: &WmRequest| {
+            let mut o = captured.lock().unwrap();
+            *o = req
+                .headers
+                .get("x-csp-nonce")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            ResponseTemplate::new(200)
+        })
+        .mount(&server)
+        .await;
+
+    // Inbound request carries a forged x-csp-nonce; we pass `None` to
+    // forward() to simulate the case where the nonce middleware didn't
+    // run (e.g. wired wrong) — the upstream must not see the forged
+    // value.
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/page")
+        .header(header::HOST, "folio.example.com")
+        .header("x-csp-nonce", "evil-nonce-from-attacker")
+        .body(Body::empty())
+        .unwrap();
+    let resp = upstream::forward(
+        &proxy_client(),
+        &server.uri(),
+        req,
+        Duration::from_secs(5),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(observed.lock().unwrap().as_deref(), None);
 }

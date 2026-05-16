@@ -3,12 +3,26 @@
 //! Sets CSP + companion headers on every response. As of v0.2 (rust-
 //! public-origin), the Rust binary is the public origin for both API
 //! and HTML responses — Next.js is an internal SSR upstream behind
-//! the `upstream::proxy` fallback. The CSP below is built for prod
-//! HTML (Next 16 emits hashed external script tags, no inline scripts)
-//! and dev `next dev` (which uses `eval()` for source maps + inline
-//! scripts for HMR — relaxed via `debug_assertions` below).
+//! the `upstream::proxy` fallback.
+//!
+//! CSP construction is per-request: a [`CspTemplate`] holds the
+//! request-invariant bits (connect-src, frame-ancestors, etc.) and
+//! [`build_csp`] slots in the per-request nonce from the [`Nonce`]
+//! request extension. When the nonce is present (every request that
+//! came through the [`nonce::set_nonce`](super::nonce::set_nonce)
+//! middleware), `script-src` and `style-src` emit
+//! `'self' 'nonce-XXX' 'strict-dynamic'`, which restores defence-in-
+//! depth while still allowing the inline `<script>` tags Next.js
+//! emits during SSR hydration (Next reads the same nonce from the
+//! `x-csp-nonce` proxy header — see `web/proxy.ts`).
+//!
+//! Fallback when no nonce is present (e.g. a unit test that calls
+//! `set_headers` directly without wiring `set_nonce`): emit the v0.2.1
+//! relaxed policy with `'unsafe-inline'`. Dev builds keep
+//! `'unsafe-eval'` for React Refresh source maps.
 
 use crate::config::Config;
+use crate::middleware::nonce::Nonce;
 use axum::{
     extract::{Request, State},
     http::{HeaderName, HeaderValue},
@@ -17,12 +31,14 @@ use axum::{
 };
 use std::sync::Arc;
 
+/// Request-invariant CSP scaffolding. Built once at boot from
+/// [`Config`]; combined with the per-request nonce in [`build_csp`].
 #[derive(Clone)]
-pub struct SecurityHeaders {
-    csp: HeaderValue,
+pub struct CspTemplate {
+    connect_src: String,
 }
 
-impl SecurityHeaders {
+impl CspTemplate {
     pub fn new(cfg: &Config) -> Self {
         let oidc_origin = cfg
             .oidc_issuer
@@ -48,47 +64,74 @@ impl SecurityHeaders {
         } else {
             format!("'self' {oidc_origin} {ws_scheme}://{public_host}")
         };
-        // Script + style source lists. Dev (`cargo run` + `next dev`)
-        // needs `'unsafe-eval'` for React Refresh source maps; both dev
-        // and release need `'unsafe-inline'` because Next emits inline
-        // hydration `<script>` tags and framework-sprinkled
-        // `style="…"` attributes in the SSR HTML, neither of which our
-        // proxy can hash or nonce yet. The proper fix is a per-request
-        // nonce threaded from Rust through the SSR proxy to Next so the
-        // policy can return to `'self' 'nonce-…' 'strict-dynamic'`;
-        // tracked separately.
-        //
-        // `require-trusted-types-for 'script'` is similarly dropped:
-        // Next's hydration runtime + Cloudflare email-decode injection
-        // patch `innerHTML` paths that violate Trusted-Types enforcement
-        // before any app code runs. Re-enable alongside the nonce work.
-        let script_src = if cfg!(debug_assertions) {
-            "'self' 'unsafe-eval' 'unsafe-inline'"
-        } else {
-            "'self' 'unsafe-inline'"
-        };
-        let style_src = "'self' 'unsafe-inline'";
-        let trusted_types = "";
-        let csp = format!(
-            "default-src 'self'; \
-             script-src {script_src}; \
-             style-src {style_src}; \
-             img-src 'self' data: blob:; \
-             font-src 'self'; \
-             connect-src {connect_src}; \
-             frame-ancestors 'none'; \
-             form-action 'self'; \
-             base-uri 'none'; \
-             object-src 'none'; \
-             worker-src 'self' blob:; \
-             manifest-src 'self'; \
-             {trusted_types}upgrade-insecure-requests; \
-             report-to comic-csp"
-        );
-        Self {
-            csp: HeaderValue::from_str(&csp).expect("valid csp"),
-        }
+        Self { connect_src }
     }
+}
+
+/// Render the CSP header value for a single request. If `nonce` is
+/// `Some`, the policy uses `'nonce-XXX' 'strict-dynamic'`; otherwise
+/// it falls back to the v0.2.1 `'unsafe-inline'` policy so requests
+/// that bypass `set_nonce` still get a coherent header.
+pub fn build_csp(template: &CspTemplate, nonce: Option<&str>) -> HeaderValue {
+    // Dev (`cargo run` + `next dev`) needs `'unsafe-eval'` for React
+    // Refresh source maps. Release builds run the standalone bundle
+    // and never need it.
+    let unsafe_eval = if cfg!(debug_assertions) {
+        " 'unsafe-eval'"
+    } else {
+        ""
+    };
+    let script_src = match nonce {
+        Some(n) => {
+            // `'strict-dynamic'` makes scripts loaded by the nonced
+            // bootstrap inherit trust without each needing `'self'` or
+            // a nonce of their own — the canonical CSP3 posture. In
+            // dev we still bolt on `'unsafe-eval'` for React Refresh.
+            format!("'self' 'nonce-{n}' 'strict-dynamic'{unsafe_eval}")
+        }
+        // No nonce wired (test-only path or any future caller that
+        // bypasses `set_nonce`). Match v0.2.1 hotfix posture.
+        None => format!("'self' 'unsafe-inline'{unsafe_eval}"),
+    };
+    // Style-src stays `'unsafe-inline'` regardless of nonce: Next.js
+    // does not currently propagate nonces to `<style>` tags, and most
+    // of the style violations come from inline `style="…"` attributes
+    // which can't carry a nonce at all (CSP nonces are for elements,
+    // not attributes). The script-src nonce is what restores defence-
+    // in-depth against XSS, which is the dominant threat anyway.
+    let style_src = "'self' 'unsafe-inline'";
+    // Trusted Types: only enforce in release builds + only when the
+    // nonce is wired. Dev `next dev` violates Trusted Types via React
+    // Refresh's Function-constructor patches; an unnonced caller
+    // (test-only) won't have nonced its inline scripts either, so the
+    // policy would block them. Cloudflare's "Email Address
+    // Obfuscation" must also be off — its `cdn-cgi/scripts/email-
+    // decode.min.js` writes through innerHTML and trips this. See
+    // docs/install/cloudflare.md.
+    let trusted_types = if cfg!(debug_assertions) || nonce.is_none() {
+        ""
+    } else {
+        "require-trusted-types-for 'script'; "
+    };
+    let csp = format!(
+        "default-src 'self'; \
+         script-src {script_src}; \
+         style-src {style_src}; \
+         img-src 'self' data: blob:; \
+         font-src 'self'; \
+         connect-src {connect_src}; \
+         frame-ancestors 'none'; \
+         form-action 'self'; \
+         base-uri 'none'; \
+         object-src 'none'; \
+         worker-src 'self' blob:; \
+         manifest-src 'self'; \
+         {trusted_types}upgrade-insecure-requests; \
+         report-to comic-csp",
+        connect_src = template.connect_src,
+    );
+    // `from_maybe_shared` accepts a `String` without re-allocating.
+    HeaderValue::from_str(&csp).expect("valid csp")
 }
 
 /// Page paths (locale-aware) that must use a stricter Referrer-Policy: never
@@ -104,11 +147,14 @@ fn path_needs_no_referrer(path: &str) -> bool {
 }
 
 pub async fn set_headers(
-    State(state): State<Arc<SecurityHeaders>>,
+    State(template): State<Arc<CspTemplate>>,
     req: Request,
     next: Next,
 ) -> Response {
     let needs_no_referrer = path_needs_no_referrer(req.uri().path());
+    let nonce = req.extensions().get::<Nonce>().map(|n| n.0.clone());
+    let csp = build_csp(&template, nonce.as_deref());
+
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
 
@@ -120,10 +166,7 @@ pub async fn set_headers(
             );
         };
     }
-    h.insert(
-        HeaderName::from_static("content-security-policy"),
-        state.csp.clone(),
-    );
+    h.insert(HeaderName::from_static("content-security-policy"), csp);
     set!(
         "strict-transport-security",
         "max-age=63072000; includeSubDomains"

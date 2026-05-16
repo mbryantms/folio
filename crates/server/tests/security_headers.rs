@@ -54,24 +54,34 @@ async fn healthz_carries_all_security_headers() {
     assert!(csp.contains("frame-ancestors 'none'"));
     assert!(csp.contains("base-uri 'none'"));
     assert!(csp.contains("object-src 'none'"));
-    // `require-trusted-types-for 'script'` is dropped pending the
-    // per-request nonce work: Next's hydration runtime + Cloudflare's
-    // email-decode injection both patch innerHTML paths that violate
-    // Trusted-Types enforcement before app code runs.
-    assert!(!csp.contains("require-trusted-types-for"));
-    // `'strict-dynamic'` only works alongside a per-request nonce. We
-    // dropped it in M3 (audit S-8) and haven't re-introduced it yet.
+    // With the nonce middleware wired, every response carries a
+    // per-request `'nonce-XXX'` plus `'strict-dynamic'`. `'unsafe-
+    // inline'` falls away because nonced + strict-dynamic supersedes it
+    // (modern browsers ignore `'unsafe-inline'` once strict-dynamic is
+    // present, anyway).
     assert!(
-        !csp.contains("'strict-dynamic'"),
-        "CSP must not contain 'strict-dynamic' without nonce wiring: {csp}"
+        csp.contains("'strict-dynamic'"),
+        "CSP missing 'strict-dynamic': {csp}"
     );
-    // `'unsafe-inline'` is required on both directives until nonces
-    // land: Next's hydration scripts + framework-sprinkled style
-    // attributes are neither hashable nor nonceable today. Dev also
-    // adds `'unsafe-eval'` to script-src for React Refresh.
-    assert!(csp.contains("'unsafe-inline'"));
-    assert!(csp.contains("script-src 'self'"));
-    assert!(csp.contains("style-src 'self' 'unsafe-inline'"));
+    let nonce_idx = csp
+        .find("'nonce-")
+        .unwrap_or_else(|| panic!("CSP missing per-request nonce: {csp}"));
+    // Nonce shape: 22 base64url chars between `'nonce-` and the closing
+    // `'`. Just spot-check the delimiter; full alphabet check lives in
+    // the middleware::nonce unit tests.
+    let after = &csp[nonce_idx + "'nonce-".len()..];
+    let close = after.find('\'').expect("nonce closing quote");
+    assert_eq!(close, 22, "nonce length {close} != 22 in {csp}");
+    // script-src no longer needs `'unsafe-inline'` (nonce supersedes
+    // it). style-src does — Next.js doesn't propagate nonces to
+    // `<style>` tags and CSS attribute selectors can't carry a nonce.
+    assert!(
+        csp.contains("style-src 'self' 'unsafe-inline'"),
+        "style-src must keep 'unsafe-inline': {csp}"
+    );
+    // `require-trusted-types-for 'script'` is still off — see M6 of the
+    // csp-nonce plan. Re-add this assertion when M6 lands.
+    assert!(!csp.contains("require-trusted-types-for"));
 }
 
 #[tokio::test]

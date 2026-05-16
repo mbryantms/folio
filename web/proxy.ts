@@ -1,4 +1,5 @@
-import createMiddleware from "next-intl/middleware";
+import createIntlMiddleware from "next-intl/middleware";
+import { NextResponse, type NextRequest } from "next/server";
 
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./i18n/request";
 
@@ -7,20 +8,36 @@ import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./i18n/request";
 // to read the locale from the cookie / `Accept-Language` instead of the
 // path segment. Routes live directly under `web/app/...`, no `[locale]/`.
 //
-// Note on `?next=` redirect preservation: protected-layout guards
-// (admin, library, settings) redirect to `/sign-in` without a
-// `?next=` parameter today — Next 16's RSC layouts can't read the
-// request URL without a documented proxy hack, and the proxy
-// approaches we tried (header injection, response augmentation) all
-// either lost next-intl's locale routing or didn't propagate to RSC.
-// The sign-in page DOES honor an explicit `?next=` when the user
-// (or a client-side caller like the OIDC start link) puts one on the
-// URL. Layout-driven redirects currently land at `/` after auth.
-export default createMiddleware({
+// CSP nonce (csp-nonce-1.0 plan, M4): the Rust origin generates a
+// per-request nonce in `crates/server/src/middleware/nonce.rs` and
+// forwards it to us via `x-csp-nonce`. We republish it as `x-nonce`
+// on the inbound request so Next.js auto-stamps the value onto every
+// framework-emitted `<script>` tag in the SSR HTML — see Next's
+// [CSP guide](https://nextjs.org/docs/app/guides/content-security-policy).
+// RSC server components that need to nonce their own `<Script>` can
+// read it via `(await headers()).get('x-nonce')`.
+const intlMiddleware = createIntlMiddleware({
   locales: SUPPORTED_LOCALES as unknown as string[],
   defaultLocale: DEFAULT_LOCALE,
   localePrefix: "never",
 });
+
+export default function middleware(request: NextRequest) {
+  const nonce = request.headers.get("x-csp-nonce");
+  if (nonce) {
+    // Mutating `request.headers` directly is the documented Next 13+
+    // pattern for surfacing values to RSC via `headers()`. next-intl
+    // forwards the same headers through its internal rewrite, so the
+    // value reaches both the locale router and the App-Router layer.
+    request.headers.set("x-nonce", nonce);
+  }
+  // Delegate to next-intl for locale resolution + cookie-driven
+  // rewrites. Returning its response unchanged preserves redirects
+  // and rewrites — we only need our header injection to land before
+  // next-intl runs.
+  const response = intlMiddleware(request);
+  return response ?? NextResponse.next();
+}
 
 export const config = {
   // With `localePrefix: "never"`, next-intl internally rewrites every
