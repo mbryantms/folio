@@ -28,9 +28,14 @@ export const config = {
   // matched request to `/{locale}/{path}` so the file-system router can
   // resolve `app/[locale]/...` pages. That rewrite fires *before* the
   // `next.config.ts` rewrites, so any path that's supposed to forward
-  // to the Rust backend — `/api/*`, `/opds/*`, `/auth/oidc/*` — has to
-  // be excluded here, otherwise it gets rewritten to `/en/opds/...`,
-  // no page matches, and Next returns its 404 HTML (which OPDS clients
-  // reject as "invalid server response", Panels error 9).
-  matcher: ["/((?!api|_next|opds|auth/oidc|.*\\..*).*)"],
+  // to the Rust backend has to be excluded here, otherwise it gets
+  // rewritten to `/en/...`, no page matches, and Next returns its 404
+  // HTML. The list mirrors the unprefixed route prefixes registered by
+  // the Rust router that are also referenced *directly* from clients
+  // outside our control (OPDS feed entries, OIDC IdP redirects):
+  //   - `/opds/*`      — OPDS catalog itself
+  //   - `/auth/oidc/*` — IdP-initiated callback
+  //   - `/issues/*`    — page bytes + thumbnails referenced from OPDS
+  //                      `<link rel=".../image">` entries (see opds.rs)
+  matcher: ["/((?!api|_next|opds|auth/oidc|issues|.*\\..*).*)"],
 };

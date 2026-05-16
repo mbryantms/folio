@@ -64,6 +64,17 @@ const config: NextConfig = {
         source: "/auth/oidc/:path*",
         destination: `${apiBase}/auth/oidc/:path*`,
       },
+      // OPDS feeds reference cover thumbnails + full page bytes at
+      // `/issues/{id}/pages/{n}[/thumb]` — see `opds.rs` `<link
+      // rel="http://opds-spec.org/image[/thumbnail]">`. External clients
+      // (Panels, KOReader) fetch these directly without an `/api/`
+      // prefix, so they need their own rewrite to reach the Rust
+      // server. The web app continues to hit `/api/issues/...` for
+      // the same handlers; both URLs land at the same Rust route.
+      {
+        source: "/issues/:path*",
+        destination: `${apiBase}/issues/:path*`,
+      },
     ];
   },
 };
