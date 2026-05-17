@@ -79,10 +79,19 @@ owns the interaction there).
 | Gesture                   | Action                                               |
 |---------------------------|------------------------------------------------------|
 | Swipe left / right        | Next / previous page (direction-aware)               |
-| Pinch out / in            | Cycle fit mode                                       |
+| Pinch out / in            | Native browser zoom (reads small letterer text)      |
+| Double-tap                | Native browser zoom toggle                           |
 
 Threshold for swipe = 30 px horizontal movement. The `prefers-reduced-motion`
 media query disables gesture rubber-banding (still discrete page changes).
+
+**Pinch behavior change (v0.3.21+):** pinch used to cycle fit modes;
+it now defers to native browser pinch-to-zoom so users can zoom in
+on small text. The fit-mode cycle stays bound to the `f` key and
+the chrome toggle button. While the page is zoomed
+(`visualViewport.scale > 1`) the swipe-to-turn handler is
+suppressed so single-finger pans go to the browser viewport
+instead of accidentally turning pages.
 
 ## Tap zones
 

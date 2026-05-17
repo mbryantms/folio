@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { cookies } from "next/headers";
@@ -22,6 +22,25 @@ import "@/styles/globals.css";
 export const metadata: Metadata = {
   title: "Comic Reader",
   description: "Self-hostable comic reading platform",
+};
+
+/**
+ * Explicit viewport with pinch-zoom enabled. Without this, Next's
+ * default omits `maximum-scale` / `userScalable`, but some embeds
+ * and some PWA installs still end up at scale=1 only. Pinning the
+ * values explicitly guarantees mobile users can pinch-zoom anywhere
+ * in the app to read small text on series/issue cards, the admin
+ * tables, and OPDS pages. The reader (Reader.tsx) opts back into
+ * native pinch-zoom by setting `touch-action: pan-y pinch-zoom`
+ * on its container — its drag handler ignores the swipe when
+ * `visualViewport.scale > 1` so panning a zoomed page doesn't
+ * accidentally turn the page.
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
 };
 
 // Post-Human-URLs M3: locale is no longer a route param. Read it via

@@ -801,16 +801,23 @@ export function Reader({
   const doublePaneClass =
     fitMode === "width" ? "flex-1 min-w-0" : "inline-block";
 
-  // Gestures: drag (swipe) for page nav; pinch to cycle fit modes.
-  // Webtoon mode skips swipe — vertical scroll is the native interaction there.
+  // Gestures: horizontal drag (swipe) for page nav. Pinch is left
+  // to the browser as native pinch-to-zoom so mobile users can
+  // zoom into small letterer text. Pinch used to cycle fit modes
+  // (v0.3.x and earlier), but a discoverable hidden gesture isn't
+  // worth blocking the platform zoom — fit-mode toggling stays on
+  // the `f` key and the chrome toggle button.
+  //
+  // Webtoon mode skips swipe — vertical scroll is the native
+  // interaction there.
   const gestureRef = useRef<HTMLDivElement>(null);
-  // Disable swipe/pinch while the user is drawing a highlight or has a
-  // pending marker editor open: `@use-gesture/react` attaches native
-  // pointer listeners on this container that fire BEFORE React's
-  // synthetic handlers on the SVG overlay, so a horizontal drag in
-  // highlight mode was being interpreted as a page-flip swipe.
-  // Switching off the gesture entirely is cleaner than racing
-  // `stopPropagation` on the native handlers.
+  // Disable swipe while the user is drawing a highlight or has a
+  // pending marker editor open: `@use-gesture/react` attaches
+  // native pointer listeners on this container that fire BEFORE
+  // React's synthetic handlers on the SVG overlay, so a horizontal
+  // drag in highlight mode was being interpreted as a page-flip
+  // swipe. Switching off the gesture entirely is cleaner than
+  // racing `stopPropagation` on the native handlers.
   const gesturesEnabled =
     markerModeForKeybinds === "idle" && pendingMarkerForKeybinds === null;
   useGesture(
@@ -820,19 +827,19 @@ export function Reader({
           cancel();
           return;
         }
+        // When the user has pinch-zoomed in, single-finger drags
+        // are panning the visual viewport — don't also turn the
+        // page or they'll lose their place every time they try to
+        // read across a zoomed-in panel.
+        if (typeof window !== "undefined") {
+          const scale = window.visualViewport?.scale ?? 1;
+          if (scale > 1.05) return;
+        }
         if (Math.abs(mx) < SWIPE_THRESHOLD_PX) return;
         // Swipe-right (positive mx) → previous page in LTR, next in RTL.
         const swipeIsForward = direction === "rtl" ? mx > 0 : mx < 0;
         if (swipeIsForward) goNext();
         else goPrev();
-      },
-      onPinchEnd: ({ movement: [mScale], cancel }) => {
-        if (viewMode === "webtoon") {
-          cancel();
-          return;
-        }
-        if (Math.abs(mScale) < 0.05) return;
-        cycleFitMode();
       },
     },
     {
@@ -843,7 +850,6 @@ export function Reader({
         threshold: 10,
         enabled: gesturesEnabled,
       },
-      pinch: { enabled: gesturesEnabled },
       eventOptions: { passive: false },
     },
   );
@@ -851,7 +857,11 @@ export function Reader({
   return (
     <div
       ref={gestureRef}
-      className="min-h-screen touch-pan-y bg-black text-neutral-200"
+      // `touch-action: pan-y pinch-zoom` keeps native vertical
+      // scroll AND native pinch-zoom, while leaving the horizontal
+      // axis available for the JS swipe-to-turn handler above.
+      style={{ touchAction: "pan-y pinch-zoom" }}
+      className="min-h-screen bg-black text-neutral-200"
     >
       <ReaderChrome
         seriesId={seriesId}
