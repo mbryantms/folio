@@ -13,6 +13,7 @@ export type IconName =
   | "BookOpen"
   | "Cog"
   | "FileClock"
+  | "FileText"
   | "Gauge"
   | "Key"
   | "KeyRound"
@@ -75,6 +76,7 @@ export function adminNav(localePrefix: string): NavSection[] {
         { href: p("/auth"), label: "Auth config", icon: "Shield" },
         { href: p("/email"), label: "Email", icon: "Mail" },
         { href: p("/logs"), label: "Logs", icon: "ListChecks" },
+        { href: p("/api-docs"), label: "API reference", icon: "FileText" },
       ],
     },
   ];

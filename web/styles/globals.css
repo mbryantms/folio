@@ -184,13 +184,50 @@
 
 }
 
-/* Multi-select toolbar mount + unmount animation (v0.3.19).
- * Activated via `.selection-toolbar-anim[data-state="open"|"closed"]`
- * — the public `<SelectionToolbar>` wrapper toggles `data-state`
+/* Multi-select toolbar mount + unmount animation (v0.3.19+).
+ *
+ * Two layers compose into one motion:
+ *   1. `.selection-toolbar-wrap` is a grid container whose row
+ *      track animates between `0fr` (closed) and `1fr` (open).
+ *      This collapses the height the toolbar occupies — content
+ *      below the toolbar slides down/up smoothly instead of
+ *      jumping when the toolbar mounts or unmounts.
+ *   2. `.selection-toolbar-anim` inside still runs the fade +
+ *      translate keyframes so the toolbar body itself slides
+ *      into / out of view.
+ *
+ * The public `<SelectionToolbar>` wrapper toggles `data-state`
  * around a delayed unmount so the slide-up plays in full. Keep
  * `EXIT_ANIMATION_MS` in
  * `web/components/library/SelectionToolbar.tsx` in sync with the
  * out-keyframe duration. */
+.selection-toolbar-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.selection-toolbar-wrap[data-state="open"] {
+  grid-template-rows: 1fr;
+}
+
+.selection-toolbar-wrap[data-state="closed"] {
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.7, 0, 0.84, 0);
+}
+
+.selection-toolbar-wrap-inner {
+  /* Required so the child's content is clipped during the height
+   * transition — otherwise the body's `sticky` positioning would
+   * spill outside the collapsed track. */
+  overflow: hidden;
+  /* Re-establish stickiness on the inner wrapper since the outer
+   * grid container resets the toolbar body's `top: 0`. */
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
 .selection-toolbar-anim[data-state="open"] {
   animation: selection-toolbar-in 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -223,6 +260,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .selection-toolbar-wrap {
+    transition: none;
+  }
   .selection-toolbar-anim[data-state="open"],
   .selection-toolbar-anim[data-state="closed"] {
     animation: none;

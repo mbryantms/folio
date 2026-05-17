@@ -112,7 +112,19 @@ export function SelectionToolbar({
 
   if (!shouldRender) return null;
 
-  return <SelectionToolbarBody {...body} dataState={phase} />;
+  // Outer wrapper handles the height collapse via the modern
+  // `grid-template-rows: 0fr ↔ 1fr` trick so content below the
+  // toolbar slides down/up smoothly instead of jumping when the
+  // toolbar mounts/unmounts. The inner body still owns the
+  // fade + translate via its keyframes; together they read as a
+  // single coordinated motion.
+  return (
+    <div data-state={phase} className="selection-toolbar-wrap">
+      <div className="selection-toolbar-wrap-inner">
+        <SelectionToolbarBody {...body} dataState={phase} />
+      </div>
+    </div>
+  );
 }
 
 /**
