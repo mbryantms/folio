@@ -125,54 +125,53 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
         }
       />
 
-      {selection.selectMode && (
-        <SelectionToolbar
-          count={selection.count}
-          total={items.length}
-          primary={[
-            {
-              id: "mark-read",
-              label: "Mark read",
-              icon: BookOpenCheck,
-              onClick: () => {
-                const series_ids = Array.from(selection.selected);
-                if (series_ids.length === 0) return;
-                bulkMark.mutate(
-                  { series_ids, finished: true },
-                  { onSuccess: () => selection.exit() },
-                );
-              },
-              disabled: bulkMark.isPending || selection.count === 0,
+      <SelectionToolbar
+        open={selection.selectMode}
+        count={selection.count}
+        total={items.length}
+        primary={[
+          {
+            id: "mark-read",
+            label: "Mark read",
+            icon: BookOpenCheck,
+            onClick: () => {
+              const series_ids = Array.from(selection.selected);
+              if (series_ids.length === 0) return;
+              bulkMark.mutate(
+                { series_ids, finished: true },
+                { onSuccess: () => selection.exit() },
+              );
             },
-            {
-              id: "mark-unread",
-              label: "Mark unread",
-              icon: BookOpen,
-              onClick: () => {
-                const series_ids = Array.from(selection.selected);
-                if (series_ids.length === 0) return;
-                bulkMark.mutate(
-                  { series_ids, finished: false },
-                  { onSuccess: () => selection.exit() },
-                );
-              },
-              disabled: bulkMark.isPending || selection.count === 0,
+            disabled: bulkMark.isPending || selection.count === 0,
+          },
+          {
+            id: "mark-unread",
+            label: "Mark unread",
+            icon: BookOpen,
+            onClick: () => {
+              const series_ids = Array.from(selection.selected);
+              if (series_ids.length === 0) return;
+              bulkMark.mutate(
+                { series_ids, finished: false },
+                { onSuccess: () => selection.exit() },
+              );
             },
-          ]}
-          overflow={[
-            {
-              id: "add-to-collection",
-              label: "Add to collection…",
-              icon: FolderPlus,
-              onClick: () => setPickerOpen(true),
-              disabled: selection.count === 0,
-            },
-          ]}
-          onDone={() => selection.exit()}
-          onClear={() => selection.clear()}
-          onSelectAll={() => selection.selectAll()}
-        />
-      )}
+            disabled: bulkMark.isPending || selection.count === 0,
+          },
+        ]}
+        overflow={[
+          {
+            id: "add-to-collection",
+            label: "Add to collection…",
+            icon: FolderPlus,
+            onClick: () => setPickerOpen(true),
+            disabled: selection.count === 0,
+          },
+        ]}
+        onDone={() => selection.exit()}
+        onClear={() => selection.clear()}
+        onSelectAll={() => selection.selectAll()}
+      />
 
       {isInitialLoading ? (
         <SeriesGridSkeleton style={gridStyle} />

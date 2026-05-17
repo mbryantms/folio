@@ -34,6 +34,13 @@ import { cn } from "@/lib/utils";
  * into a `MoreHorizontal` dropdown at `sm-` so the toolbar still
  * fits a 375 px viewport.
  *
+ * **Mount/unmount animation (v0.3.19+):** the public `SelectionToolbar`
+ * owns an `open` prop; when `open` flips false the toolbar plays an
+ * exit animation, *then* unmounts. The pure markup lives in
+ * `<SelectionToolbarBody>` (exported for unit tests) and the
+ * presence-aware wrapper drives `data-state="open" | "closed"` for
+ * the keyframes in `web/styles/globals.css`.
+ *
  * Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M1).
  */
 export type SelectionAction = {
@@ -45,16 +52,7 @@ export type SelectionAction = {
   destructive?: boolean;
 };
 
-export function SelectionToolbar({
-  count,
-  total,
-  primary,
-  overflow,
-  onDone,
-  onClear,
-  onSelectAll,
-  isPending,
-}: {
+export type SelectionToolbarProps = {
   count: number;
   total: number;
   primary: SelectionAction[];
@@ -66,18 +64,90 @@ export function SelectionToolbar({
    *  Lets the toolbar prevent double-firing while a bulk request
    *  is in-flight. */
   isPending?: boolean;
-}) {
+};
+
+/** Length of the exit keyframe in `globals.css`. Bump in lockstep
+ *  with the `selection-toolbar-out` duration there — we wait this
+ *  long before unmounting so the slide-up plays in full. */
+const EXIT_ANIMATION_MS = 220;
+
+/**
+ * Presence wrapper: keeps the toolbar mounted just long enough to
+ * play the slide-out keyframe after `open` flips to `false`.
+ *
+ * Pass `open={selection.selectMode}` from each list page — the
+ * surrounding `&& <Toolbar />` guards that v0.3.18 used are no
+ * longer necessary (and break the exit animation since they unmount
+ * before the keyframe can run).
+ */
+export function SelectionToolbar({
+  open = true,
+  ...body
+}: SelectionToolbarProps & { open?: boolean }) {
+  const [shouldRender, setShouldRender] = React.useState(open);
+  const [phase, setPhase] = React.useState<"open" | "closed">(
+    open ? "open" : "closed",
+  );
+
+  React.useEffect(() => {
+    if (open) {
+      setShouldRender(true);
+      // Two RAFs so the browser paints the closed state first; without
+      // this, mounting with `data-state="open"` from a clean tree
+      // skips the in-animation because the keyframe's `from` frame
+      // never gets a layout pass.
+      let inner = 0;
+      const outer = requestAnimationFrame(() => {
+        inner = requestAnimationFrame(() => setPhase("open"));
+      });
+      return () => {
+        cancelAnimationFrame(outer);
+        if (inner) cancelAnimationFrame(inner);
+      };
+    }
+    setPhase("closed");
+    const t = setTimeout(() => setShouldRender(false), EXIT_ANIMATION_MS);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  if (!shouldRender) return null;
+
+  return <SelectionToolbarBody {...body} dataState={phase} />;
+}
+
+/**
+ * Pure-render body. Exported separately so unit tests can call it
+ * as a plain function (vitest node-env can't call hooks). The
+ * `dataState` prop is wired by `<SelectionToolbar>`; callers should
+ * generally use the presence wrapper, not this directly.
+ */
+export function SelectionToolbarBody({
+  count,
+  total,
+  primary,
+  overflow,
+  onDone,
+  onClear,
+  onSelectAll,
+  isPending,
+  dataState = "open",
+}: SelectionToolbarProps & { dataState?: "open" | "closed" }) {
   const allSelected = count === total && total > 0;
   const overflowItems = overflow ?? [];
 
   return (
     <div
       role="toolbar"
+      data-state={dataState}
       aria-label={`${count} item${count === 1 ? "" : "s"} selected`}
       aria-live="polite"
       className={cn(
         "bg-background/95 border-border sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b py-2 backdrop-blur",
         "sm:flex-nowrap",
+        // Mount + unmount animation: keyframes selection-toolbar-in
+        // / -out in `web/styles/globals.css`. Toggled via the
+        // `data-state` attribute the presence wrapper sets.
+        "selection-toolbar-anim",
       )}
     >
       <Button

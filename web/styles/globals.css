@@ -181,4 +181,50 @@
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
+
+}
+
+/* Multi-select toolbar mount + unmount animation (v0.3.19).
+ * Activated via `.selection-toolbar-anim[data-state="open"|"closed"]`
+ * — the public `<SelectionToolbar>` wrapper toggles `data-state`
+ * around a delayed unmount so the slide-up plays in full. Keep
+ * `EXIT_ANIMATION_MS` in
+ * `web/components/library/SelectionToolbar.tsx` in sync with the
+ * out-keyframe duration. */
+.selection-toolbar-anim[data-state="open"] {
+  animation: selection-toolbar-in 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.selection-toolbar-anim[data-state="closed"] {
+  animation: selection-toolbar-out 220ms cubic-bezier(0.7, 0, 0.84, 0) both;
+  pointer-events: none;
+}
+
+@keyframes selection-toolbar-in {
+  from {
+    opacity: 0;
+    transform: translateY(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes selection-toolbar-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-18px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selection-toolbar-anim[data-state="open"],
+  .selection-toolbar-anim[data-state="closed"] {
+    animation: none;
+  }
 }

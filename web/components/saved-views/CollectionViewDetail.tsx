@@ -242,6 +242,13 @@ export function CollectionViewDetail({
     );
   };
 
+  // Gate: DnD is off while pagination is unresolved (a reorder
+  // would clip the unloaded tail) and while in select mode (so the
+  // drag-vs-toggle gesture stays unambiguous). Threaded into each
+  // `<SortableEntry>`'s `useSortable({ disabled })` so sensors
+  // stay armed but the items themselves don't respond.
+  const dndDisabled = entriesQ.hasNextPage || selection.selectMode;
+
   function handleDragEnd(ev: DragEndEvent) {
     const { active, over } = ev;
     if (!over || active.id === over.id) return;
@@ -305,45 +312,44 @@ export function CollectionViewDetail({
         }
       />
 
-      {selection.selectMode && (
-        <SelectionToolbar
-          count={selection.count}
-          total={orderedEntries.length}
-          primary={[
-            {
-              id: "mark-read",
-              label: "Mark read",
-              icon: Check,
-              onClick: () => runBulkMark(true),
-            },
-            {
-              id: "mark-unread",
-              label: "Mark unread",
-              icon: Circle,
-              onClick: () => runBulkMark(false),
-            },
-          ]}
-          overflow={[
-            {
-              id: "add-to-collection",
-              label: "Add to collection…",
-              icon: FolderPlus,
-              onClick: () => setPickerOpen(true),
-            },
-            {
-              id: "remove",
-              label: "Remove from this collection",
-              icon: Trash2,
-              onClick: () => setConfirmRemove(true),
-              destructive: true,
-            },
-          ]}
-          onDone={() => selection.exit()}
-          onClear={() => selection.clear()}
-          onSelectAll={() => selection.selectAll()}
-          isPending={bulkMark.isPending || bulkRemove.isPending}
-        />
-      )}
+      <SelectionToolbar
+        open={selection.selectMode}
+        count={selection.count}
+        total={orderedEntries.length}
+        primary={[
+          {
+            id: "mark-read",
+            label: "Mark read",
+            icon: Check,
+            onClick: () => runBulkMark(true),
+          },
+          {
+            id: "mark-unread",
+            label: "Mark unread",
+            icon: Circle,
+            onClick: () => runBulkMark(false),
+          },
+        ]}
+        overflow={[
+          {
+            id: "add-to-collection",
+            label: "Add to collection…",
+            icon: FolderPlus,
+            onClick: () => setPickerOpen(true),
+          },
+          {
+            id: "remove",
+            label: "Remove from this collection",
+            icon: Trash2,
+            onClick: () => setConfirmRemove(true),
+            destructive: true,
+          },
+        ]}
+        onDone={() => selection.exit()}
+        onClear={() => selection.clear()}
+        onSelectAll={() => selection.selectAll()}
+        isPending={bulkMark.isPending || bulkRemove.isPending}
+      />
 
       {entriesQ.isLoading ? (
         <div className="text-muted-foreground py-12 text-sm">Loading…</div>
@@ -356,16 +362,18 @@ export function CollectionViewDetail({
       ) : (
         <>
           {/* Reorder needs the *full* id list — `useReorderCollectionEntries`
-              wipes anything not in `entry_ids`. Hide the DnD sensors until
-              pagination drains so a mid-load drag can't truncate the tail.
-              Also disable DnD while in select mode so the drag-vs-toggle
-              gesture stays unambiguous. */}
+              wipes anything not in `entry_ids`. Disable DnD until
+              pagination drains so a mid-load drag can't truncate the
+              tail, and while in select mode so the drag-vs-toggle
+              gesture stays unambiguous. The `sensors` prop must keep
+              a stable size between renders (React useEffect-deps
+              invariant inside dnd-kit's `useSensorSetup`), so we
+              gate via per-item `disabled` + a guarded `onDragEnd`
+              rather than swapping the sensors array. */}
           <DndContext
-            sensors={
-              entriesQ.hasNextPage || selection.selectMode ? [] : sensors
-            }
+            sensors={sensors}
             collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
+            onDragEnd={dndDisabled ? undefined : handleDragEnd}
           >
             <SortableContext items={renderIds} strategy={rectSortingStrategy}>
               <ul role="list" className="grid gap-3" style={gridStyle}>
@@ -374,6 +382,7 @@ export function CollectionViewDetail({
                     key={entry.id}
                     entry={entry}
                     onRemove={() => remove.mutate({ entryId: entry.id })}
+                    dndDisabled={dndDisabled}
                     selectMode={
                       selection.selectMode
                         ? {
@@ -493,11 +502,16 @@ function EmptyState({ isWantToRead }: { isWantToRead: boolean }) {
 function SortableEntry({
   entry,
   onRemove,
+  dndDisabled,
   selectMode,
   onEnterSelectMode,
 }: {
   entry: CollectionEntryView;
   onRemove: () => void;
+  /** When true, the item is mounted in the sortable context but
+   *  doesn't respond to drag — preserves a stable sensors-array
+   *  size across renders (the dnd-kit warning we were tripping). */
+  dndDisabled?: boolean;
   selectMode?: {
     isActive: boolean;
     isSelected: boolean;
@@ -514,7 +528,7 @@ function SortableEntry({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: entry.id });
+  } = useSortable({ id: entry.id, disabled: dndDisabled });
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,

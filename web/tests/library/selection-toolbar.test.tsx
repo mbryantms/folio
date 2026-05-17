@@ -17,7 +17,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  SelectionToolbar,
+  SelectionToolbarBody as SelectionToolbar,
   type SelectionAction,
 } from "@/components/library/SelectionToolbar";
 

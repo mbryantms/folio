@@ -371,7 +371,7 @@ export function useBulkRemoveFromCollection(collectionId: string) {
  * and silently producing stale UI (which was the original v0.3.18-pre
  * bug user-reported on the collection-detail bulk-remove flow).
  */
-function invalidateCollectionEntries(
+export function invalidateCollectionEntries(
   qc: ReturnType<typeof useQueryClient>,
   collectionId: string,
 ) {

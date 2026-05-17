@@ -325,30 +325,29 @@ function CblViewDetailInner({
         <CblInfoRow list={list} />
       </div>
 
-      {selection.selectMode && (
-        <SelectionToolbar
-          count={selection.count}
-          total={loadedEntries.length}
-          primary={[
-            {
-              id: "mark-read",
-              label: "Mark read",
-              icon: Check,
-              onClick: () => runBulkMark(true),
-            },
-            {
-              id: "mark-unread",
-              label: "Mark unread",
-              icon: Circle,
-              onClick: () => runBulkMark(false),
-            },
-          ]}
-          onDone={() => selection.exit()}
-          onClear={() => selection.clear()}
-          onSelectAll={() => selection.selectAll()}
-          isPending={bulkMark.isPending}
-        />
-      )}
+      <SelectionToolbar
+        open={selection.selectMode}
+        count={selection.count}
+        total={loadedEntries.length}
+        primary={[
+          {
+            id: "mark-read",
+            label: "Mark read",
+            icon: Check,
+            onClick: () => runBulkMark(true),
+          },
+          {
+            id: "mark-unread",
+            label: "Mark unread",
+            icon: Circle,
+            onClick: () => runBulkMark(false),
+          },
+        ]}
+        onDone={() => selection.exit()}
+        onClear={() => selection.clear()}
+        onSelectAll={() => selection.selectAll()}
+        isPending={bulkMark.isPending}
+      />
 
       {entriesQuery.isLoading ? (
         <div className="text-muted-foreground py-12 text-sm">

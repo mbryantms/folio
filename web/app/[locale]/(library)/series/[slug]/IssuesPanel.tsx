@@ -237,38 +237,37 @@ export function IssuesPanel({
         </div>
       </div>
 
-      {selection.selectMode && (
-        <SelectionToolbar
-          count={selection.count}
-          total={items.length}
-          primary={[
-            {
-              id: "mark-read",
-              label: "Mark read",
-              icon: Check,
-              onClick: () => runBulk(true),
-            },
-            {
-              id: "mark-unread",
-              label: "Mark unread",
-              icon: Circle,
-              onClick: () => runBulk(false),
-            },
-          ]}
-          overflow={[
-            {
-              id: "add-to-collection",
-              label: "Add to collection…",
-              icon: FolderPlus,
-              onClick: () => setPickerOpen(true),
-            },
-          ]}
-          onDone={() => selection.exit()}
-          onClear={() => selection.clear()}
-          onSelectAll={() => selection.selectAll()}
-          isPending={bulkMark.isPending}
-        />
-      )}
+      <SelectionToolbar
+        open={selection.selectMode}
+        count={selection.count}
+        total={items.length}
+        primary={[
+          {
+            id: "mark-read",
+            label: "Mark read",
+            icon: Check,
+            onClick: () => runBulk(true),
+          },
+          {
+            id: "mark-unread",
+            label: "Mark unread",
+            icon: Circle,
+            onClick: () => runBulk(false),
+          },
+        ]}
+        overflow={[
+          {
+            id: "add-to-collection",
+            label: "Add to collection…",
+            icon: FolderPlus,
+            onClick: () => setPickerOpen(true),
+          },
+        ]}
+        onDone={() => selection.exit()}
+        onClear={() => selection.clear()}
+        onSelectAll={() => selection.selectAll()}
+        isPending={bulkMark.isPending}
+      />
       <BulkAddToCollectionDialog
         open={pickerOpen}
         onOpenChange={(next) => {
