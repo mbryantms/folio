@@ -10596,9 +10596,9 @@
       },
       "ScanMode": {
         "type": "string",
+        "description": "Library scan modes. Maps directly onto the scanner engine's\n`force` boolean: `Normal` runs the fast paths (folder + per-file\nmtime gates), `ContentVerify` bypasses them and re-hashes +\nre-parses every file. The third mode — `MetadataRefresh` — was\ndropped on 2026-05-17 because it produced identical scanner\nbehavior to `ContentVerify` (both set `force=true` and the\nscanner library doesn't branch on the mode discriminant). Users\nwho want page-byte decode validation use the separate\n`POST /libraries/{slug}/validate-deeply` endpoint instead.",
         "enum": [
           "normal",
-          "metadata_refresh",
           "content_verify"
         ]
       },

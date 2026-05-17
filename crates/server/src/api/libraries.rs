@@ -200,12 +200,20 @@ pub struct ScanResp {
     pub issue_id: Option<String>,
 }
 
+/// Library scan modes. Maps directly onto the scanner engine's
+/// `force` boolean: `Normal` runs the fast paths (folder + per-file
+/// mtime gates), `ContentVerify` bypasses them and re-hashes +
+/// re-parses every file. The third mode — `MetadataRefresh` — was
+/// dropped on 2026-05-17 because it produced identical scanner
+/// behavior to `ContentVerify` (both set `force=true` and the
+/// scanner library doesn't branch on the mode discriminant). Users
+/// who want page-byte decode validation use the separate
+/// `POST /libraries/{slug}/validate-deeply` endpoint instead.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanMode {
     #[default]
     Normal,
-    MetadataRefresh,
     ContentVerify,
 }
 
@@ -213,7 +221,6 @@ impl ScanMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::MetadataRefresh => "metadata_refresh",
             Self::ContentVerify => "content_verify",
         }
     }
@@ -225,9 +232,6 @@ impl ScanMode {
     pub fn reason(self) -> &'static str {
         match self {
             Self::Normal => "Uses folder and file fast paths; best for routine scans.",
-            Self::MetadataRefresh => {
-                "Re-parses metadata for matching files while preserving thumbnail work unless bytes changed."
-            }
             Self::ContentVerify => {
                 "Bypasses scanner fast paths to verify archive content; slowest option."
             }

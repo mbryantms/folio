@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Gauge, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { ChevronDown, Gauge, Play, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -29,18 +29,11 @@ const MODES: {
     icon: Play,
   },
   {
-    mode: "metadata_refresh",
-    label: "Metadata refresh",
-    cost: "Medium cost",
-    description:
-      "Refresh sidecar and archive metadata without full content checks.",
-    icon: RefreshCw,
-  },
-  {
     mode: "content_verify",
     label: "Content verify",
     cost: "High cost",
-    description: "Re-read archive content when file identity may be stale.",
+    description:
+      "Re-hash + re-parse every file. Use when picking up new parser fields without touching mtimes, or when content drift is suspected.",
     icon: ShieldCheck,
   },
 ];

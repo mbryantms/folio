@@ -1063,7 +1063,7 @@ export type HealthIssueView = {
 };
 
 export type ScanRunKind = "library" | "series" | "issue";
-export type ScanMode = "normal" | "metadata_refresh" | "content_verify";
+export type ScanMode = "normal" | "content_verify";
 
 export type ScanRunView = {
   id: string;

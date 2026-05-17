@@ -232,9 +232,7 @@ export function useTriggerScan(libraryId: string) {
           input?.mode ?? (input?.force ? "content_verify" : "normal");
         return mode === "content_verify"
           ? "Content verification queued"
-          : mode === "metadata_refresh"
-            ? "Metadata refresh queued"
-            : "Scan library queued";
+          : "Scan library queued";
       },
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.scanRunsAll(libraryId) });

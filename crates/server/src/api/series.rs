@@ -134,7 +134,7 @@ pub async fn scan_series(
         }
     };
     let mode = if q.force {
-        ScanMode::MetadataRefresh
+        ScanMode::ContentVerify
     } else {
         ScanMode::Normal
     };
