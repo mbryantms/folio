@@ -20,10 +20,19 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Trash2 } from "lucide-react";
+import {
+  Check,
+  Circle,
+  FolderPlus,
+  GripVertical,
+  ListChecks,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
+import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import { IssueCard } from "@/components/library/IssueCard";
+import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,11 +61,16 @@ import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
 import { useCollectionEntriesInfinite } from "@/lib/api/queries";
 import {
+  useBulkAddToCollection,
+  useBulkMarkProgress,
+  useBulkRemoveFromCollection,
   useDeleteCollection,
   useRemoveCollectionEntry,
   useReorderCollectionEntries,
   useUpdateCollection,
 } from "@/lib/api/mutations";
+import { shouldSkipHotkey } from "@/lib/reader/keybinds";
+import { useSelection } from "@/lib/selection/use-selection";
 import { TOAST } from "@/lib/api/toast-strings";
 import { cn } from "@/lib/utils";
 import type { CollectionEntryView, SavedViewView } from "@/lib/api/types";
@@ -96,6 +110,17 @@ export function CollectionViewDetail({
   const remove = useRemoveCollectionEntry(savedView.id);
   const update = useUpdateCollection(savedView.id);
   const del = useDeleteCollection(savedView.id);
+  // Multi-select bulk actions on the collection detail page.
+  // Selection tracks `collection_entries.id` (the row PK) so we can
+  // resolve each selected entry to its `(entry_kind, ref_id)` pair
+  // when firing the bulk endpoints. Mixed-kind selections fire two
+  // calls (one for series targets, one for issue targets) for the
+  // mark-read/unread action; the bulk-add and bulk-remove endpoints
+  // accept the mixed shape natively.
+  const bulkMark = useBulkMarkProgress();
+  const bulkRemove = useBulkRemoveFromCollection(savedView.id);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [confirmRemove, setConfirmRemove] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
 
@@ -137,6 +162,85 @@ export function CollectionViewDetail({
   const orderedEntries = renderIds
     .map((id) => entryById.get(id))
     .filter((e): e is CollectionEntryView => e !== undefined);
+
+  const selection = useSelection(orderedEntries);
+  // Helper: resolve a selected entry.id → its (entry_kind, ref_id).
+  // Used by all three bulk actions on this surface.
+  const selectedTargets = React.useMemo(() => {
+    const out: { entry_kind: "issue" | "series"; ref_id: string }[] = [];
+    for (const id of selection.selected) {
+      const entry = entryById.get(id);
+      if (!entry) continue;
+      if (entry.entry_kind === "issue" && entry.issue) {
+        out.push({ entry_kind: "issue", ref_id: entry.issue.id });
+      } else if (entry.entry_kind === "series" && entry.series) {
+        out.push({ entry_kind: "series", ref_id: entry.series.id });
+      }
+    }
+    return out;
+  }, [selection.selected, entryById]);
+  // Issue-only target subset — bulk-mark-progress only acts on issues.
+  // Series cards in the selection are silently skipped (a toast tells
+  // the user how many fired vs. skipped).
+  const selectedIssueIds = React.useMemo(
+    () =>
+      selectedTargets
+        .filter((t) => t.entry_kind === "issue")
+        .map((t) => t.ref_id),
+    [selectedTargets],
+  );
+
+  // Esc exits select mode; Cmd/Ctrl+A selects every loaded entry.
+  // Both gated on `selectMode` so other handlers are free when the
+  // toolbar isn't up. `shouldSkipHotkey` keeps the bindings dormant
+  // while focus is in a form field.
+  const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
+  const wasSelectModeRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!selection.selectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (shouldSkipHotkey(e)) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        selection.exit();
+      } else if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        selection.selectAll();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection]);
+  // Restore focus to the Select trigger after leaving select mode.
+  React.useEffect(() => {
+    if (wasSelectModeRef.current && !selection.selectMode) {
+      selectButtonRef.current?.focus();
+    }
+    wasSelectModeRef.current = selection.selectMode;
+  }, [selection.selectMode]);
+
+  const runBulkMark = (finished: boolean) => {
+    if (selectedIssueIds.length === 0) {
+      toast.info("Mark read / unread applies to issues; series cards skipped");
+      return;
+    }
+    bulkMark.mutate(
+      { issue_ids: selectedIssueIds, finished },
+      { onSuccess: () => selection.clear() },
+    );
+  };
+  const runBulkRemove = () => {
+    if (selectedTargets.length === 0) return;
+    bulkRemove.mutate(
+      { members: selectedTargets },
+      {
+        onSuccess: () => {
+          selection.exit();
+          setConfirmRemove(false);
+        },
+      },
+    );
+  };
 
   function handleDragEnd(ev: DragEndEvent) {
     const { active, over } = ev;
@@ -185,9 +289,61 @@ export function CollectionViewDetail({
               step={CARD_SIZE_STEP}
               defaultSize={CARD_SIZE_DEFAULT}
             />
+            {!selection.selectMode && orderedEntries.length > 0 && (
+              <Button
+                ref={selectButtonRef}
+                variant="outline"
+                size="sm"
+                onClick={() => selection.enter()}
+                aria-label="Enter select mode"
+              >
+                <ListChecks className="mr-1.5 h-4 w-4" />
+                Select
+              </Button>
+            )}
           </>
         }
       />
+
+      {selection.selectMode && (
+        <SelectionToolbar
+          count={selection.count}
+          total={orderedEntries.length}
+          primary={[
+            {
+              id: "mark-read",
+              label: "Mark read",
+              icon: Check,
+              onClick: () => runBulkMark(true),
+            },
+            {
+              id: "mark-unread",
+              label: "Mark unread",
+              icon: Circle,
+              onClick: () => runBulkMark(false),
+            },
+          ]}
+          overflow={[
+            {
+              id: "add-to-collection",
+              label: "Add to collection…",
+              icon: FolderPlus,
+              onClick: () => setPickerOpen(true),
+            },
+            {
+              id: "remove",
+              label: "Remove from this collection",
+              icon: Trash2,
+              onClick: () => setConfirmRemove(true),
+              destructive: true,
+            },
+          ]}
+          onDone={() => selection.exit()}
+          onClear={() => selection.clear()}
+          onSelectAll={() => selection.selectAll()}
+          isPending={bulkMark.isPending || bulkRemove.isPending}
+        />
+      )}
 
       {entriesQ.isLoading ? (
         <div className="text-muted-foreground py-12 text-sm">Loading…</div>
@@ -201,9 +357,13 @@ export function CollectionViewDetail({
         <>
           {/* Reorder needs the *full* id list — `useReorderCollectionEntries`
               wipes anything not in `entry_ids`. Hide the DnD sensors until
-              pagination drains so a mid-load drag can't truncate the tail. */}
+              pagination drains so a mid-load drag can't truncate the tail.
+              Also disable DnD while in select mode so the drag-vs-toggle
+              gesture stays unambiguous. */}
           <DndContext
-            sensors={entriesQ.hasNextPage ? [] : sensors}
+            sensors={
+              entriesQ.hasNextPage || selection.selectMode ? [] : sensors
+            }
             collisionDetection={closestCenter}
             onDragEnd={handleDragEnd}
           >
@@ -214,6 +374,16 @@ export function CollectionViewDetail({
                     key={entry.id}
                     entry={entry}
                     onRemove={() => remove.mutate({ entryId: entry.id })}
+                    selectMode={
+                      selection.selectMode
+                        ? {
+                            isActive: true,
+                            isSelected: selection.isSelected(entry.id),
+                            onToggle: (ev) => selection.toggle(entry.id, ev),
+                          }
+                        : undefined
+                    }
+                    onEnterSelectMode={() => selection.toggle(entry.id)}
                   />
                 ))}
               </ul>
@@ -269,6 +439,43 @@ export function CollectionViewDetail({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Bulk-remove confirmation — destructive multi-select action.
+       *  The cards stay in the library; only the collection-membership
+       *  rows are removed. */}
+      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {selectedTargets.length} item
+              {selectedTargets.length === 1 ? "" : "s"} from this
+              collection?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The items stay in your library; only their membership in
+              &ldquo;{savedView.name}&rdquo; is removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={runBulkRemove}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <BulkAddToCollectionDialog
+        open={pickerOpen}
+        onOpenChange={(next) => {
+          setPickerOpen(next);
+          if (!next) selection.clear();
+        }}
+        targets={selectedTargets}
+      />
     </div>
   );
 }
@@ -286,9 +493,19 @@ function EmptyState({ isWantToRead }: { isWantToRead: boolean }) {
 function SortableEntry({
   entry,
   onRemove,
+  selectMode,
+  onEnterSelectMode,
 }: {
   entry: CollectionEntryView;
   onRemove: () => void;
+  selectMode?: {
+    isActive: boolean;
+    isSelected: boolean;
+    onToggle: (ev?: React.MouseEvent) => void;
+  };
+  /** M6 long-press-sheet "Select" entry callback. Forwarded to
+   *  whichever card type renders for this entry. */
+  onEnterSelectMode?: (entryId: string) => void;
 }) {
   const {
     attributes,
@@ -319,15 +536,30 @@ function SortableEntry({
       style={style}
       className={cn("group relative", isDragging && "opacity-70")}
     >
-      <DragHandle attributes={attributes} listeners={listeners} />
+      {/* Drag handle hidden while in select mode — the handle's
+       *  drag gesture would conflict with tap-to-toggle. */}
+      {!selectMode?.isActive && (
+        <DragHandle attributes={attributes} listeners={listeners} />
+      )}
       {entry.series ? (
         <SeriesCard
           series={entry.series}
           size="md"
           extraActions={[removeAction]}
+          selectMode={selectMode}
+          onEnterSelectMode={
+            onEnterSelectMode ? () => onEnterSelectMode(entry.id) : undefined
+          }
         />
       ) : entry.issue ? (
-        <IssueCard issue={entry.issue} extraActions={[removeAction]} />
+        <IssueCard
+          issue={entry.issue}
+          extraActions={[removeAction]}
+          selectMode={selectMode}
+          onEnterSelectMode={
+            onEnterSelectMode ? () => onEnterSelectMode(entry.id) : undefined
+          }
+        />
       ) : (
         <MissingEntry onRemove={onRemove} />
       )}

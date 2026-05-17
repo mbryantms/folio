@@ -322,6 +322,13 @@ export const queryKeys = {
   collection: (id: string) => ["collections", "detail", id] as const,
   collectionEntries: (id: string, opts?: { cursor?: string; limit?: number }) =>
     ["collections", "entries", id, opts ?? {}] as const,
+  /** Infinite-scroll variant of `collectionEntries`. Distinct key
+   *  because TanStack's prefix-match doesn't traverse from `entries`
+   *  to `entries-infinite`. Mutations that change collection
+   *  membership must invalidate BOTH so paginated + infinite
+   *  consumers stay in sync. */
+  collectionEntriesInfinite: (id: string) =>
+    ["collections", "entries-infinite", id] as const,
   /** Markers + Collections M5 — global feed for `/bookmarks` index. */
   markers: (filters: MarkerListFilters = {}) =>
     ["markers", "list", filters] as const,
@@ -1338,7 +1345,7 @@ export function useCollectionEntries(
  *  the tail. */
 export function useCollectionEntriesInfinite(id: string) {
   return useInfiniteQuery({
-    queryKey: ["collections", "entries-infinite", id] as const,
+    queryKey: queryKeys.collectionEntriesInfinite(id),
     enabled: !!id,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>

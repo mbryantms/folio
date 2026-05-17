@@ -1,13 +1,23 @@
 "use client";
 
 import * as React from "react";
-import { Check, Download, EyeOff, Loader2, RefreshCw } from "lucide-react";
+import {
+  Check,
+  Circle,
+  Download,
+  EyeOff,
+  ListChecks,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
 import { CblStatsPills } from "@/components/cbl/CblStatsPills";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
+import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { PopoverPortalContainer } from "@/components/ui/popover";
 import {
@@ -24,7 +34,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useCblList, useCblListEntriesInfinite } from "@/lib/api/queries";
-import { useRefreshCblList } from "@/lib/api/mutations";
+import {
+  useBulkMarkProgress,
+  useRefreshCblList,
+} from "@/lib/api/mutations";
+import { shouldSkipHotkey } from "@/lib/reader/keybinds";
+import { useSelection } from "@/lib/selection/use-selection";
 import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
 import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 
@@ -109,6 +124,55 @@ function CblViewDetailInner({
     return () => obs.disconnect();
   }, [entriesQuery]);
 
+  // Hooks must run unconditionally — keep them above the early
+  // returns and use empty arrays for selection-relevant state while
+  // the detail/entries queries are still loading. Below the early
+  // returns we only do plain JSX / derived values.
+  const loadedEntries: CblEntryHydratedView[] =
+    entriesQuery.data?.pages.flatMap((p) => p.items) ?? [];
+
+  // Multi-select on the CBL detail page (M6 extension per user
+  // request). Mark-read/unread only — Add-to-collection / Remove
+  // are not surfaced here. Selectable entries are matched entries
+  // with a resolved issue; placeholder / missing entries can be
+  // selected but contribute no targets to the mutation.
+  const selection = useSelection(loadedEntries);
+  const bulkMark = useBulkMarkProgress();
+  const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
+  const wasSelectModeRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!selection.selectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (shouldSkipHotkey(e)) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        selection.exit();
+      } else if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        selection.selectAll();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection]);
+  React.useEffect(() => {
+    if (wasSelectModeRef.current && !selection.selectMode) {
+      selectButtonRef.current?.focus();
+    }
+    wasSelectModeRef.current = selection.selectMode;
+  }, [selection.selectMode]);
+  // Resolve selected entry.id → issue.id, dropping unmatched ones
+  // (placeholder cards in CBLs reference a series + issue number
+  // but have no resolved issue row).
+  const selectedIssueIds = React.useMemo(() => {
+    const out: string[] = [];
+    for (const entry of loadedEntries) {
+      if (!selection.isSelected(entry.id)) continue;
+      if (entry.issue) out.push(entry.issue.id);
+    }
+    return out;
+  }, [loadedEntries, selection]);
+
   if (detail.isLoading) {
     return (
       <div className="text-muted-foreground py-12 text-sm">Loading view…</div>
@@ -123,11 +187,16 @@ function CblViewDetailInner({
   }
 
   const list = detail.data;
-  const loadedEntries: CblEntryHydratedView[] =
-    entriesQuery.data?.pages.flatMap((p) => p.items) ?? [];
   const filterTotal = entriesQuery.data?.pages[0]?.total ?? null;
   const missingCount = list.stats.missing;
   const canRefresh = list.source_kind !== "upload";
+  const runBulkMark = (finished: boolean) => {
+    if (selectedIssueIds.length === 0) return;
+    bulkMark.mutate(
+      { issue_ids: selectedIssueIds, finished },
+      { onSuccess: () => selection.clear() },
+    );
+  };
   const gridStyle: React.CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   };
@@ -186,6 +255,18 @@ function CblViewDetailInner({
               step={CARD_SIZE_STEP}
               defaultSize={CARD_SIZE_DEFAULT}
             />
+            {!selection.selectMode && loadedEntries.length > 0 && (
+              <Button
+                ref={selectButtonRef}
+                variant="outline"
+                size="sm"
+                onClick={() => selection.enter()}
+                aria-label="Enter select mode"
+              >
+                <ListChecks className="mr-1.5 h-4 w-4" />
+                Select
+              </Button>
+            )}
           </>
         }
         extraMenuItems={
@@ -243,6 +324,32 @@ function CblViewDetailInner({
       <div className="hidden md:block">
         <CblInfoRow list={list} />
       </div>
+
+      {selection.selectMode && (
+        <SelectionToolbar
+          count={selection.count}
+          total={loadedEntries.length}
+          primary={[
+            {
+              id: "mark-read",
+              label: "Mark read",
+              icon: Check,
+              onClick: () => runBulkMark(true),
+            },
+            {
+              id: "mark-unread",
+              label: "Mark unread",
+              icon: Circle,
+              onClick: () => runBulkMark(false),
+            },
+          ]}
+          onDone={() => selection.exit()}
+          onClear={() => selection.clear()}
+          onSelectAll={() => selection.selectAll()}
+          isPending={bulkMark.isPending}
+        />
+      )}
+
       {entriesQuery.isLoading ? (
         <div className="text-muted-foreground py-12 text-sm">
           Loading entries…
@@ -266,6 +373,17 @@ function CblViewDetailInner({
                     entry={item.entry}
                     issue={item.entry.issue ?? undefined}
                     cblSavedViewId={savedView.id}
+                    selectMode={
+                      selection.selectMode
+                        ? {
+                            isActive: true,
+                            isSelected: selection.isSelected(item.entry.id),
+                            onToggle: (ev) =>
+                              selection.toggle(item.entry.id, ev),
+                          }
+                        : undefined
+                    }
+                    onEnterSelectMode={() => selection.toggle(item.entry.id)}
                   />
                 </li>
               ) : (

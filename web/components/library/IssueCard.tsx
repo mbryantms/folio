@@ -12,6 +12,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { useUserProgress } from "@/lib/api/queries";
@@ -24,6 +25,8 @@ export function IssueCard({
   issue,
   className,
   extraActions,
+  selectMode,
+  onEnterSelectMode,
 }: {
   issue: IssueSummaryView;
   className?: string;
@@ -31,6 +34,27 @@ export function IssueCard({
    *  surface-specific affordances (e.g. "Remove from this collection"
    *  on the collection detail page). */
   extraActions?: CoverMenuAction[];
+  /** When the parent surface is in multi-select mode. When set:
+   *  - The outer `<Link>` becomes a `<button>` and clicking
+   *    toggles selection instead of navigating.
+   *  - `useCoverLongPressActions`'s `wrapperProps` are NOT spread
+   *    onto the cover, so long-press doesn't open the existing
+   *    actions sheet inside select mode.
+   *  - A `<SelectionCheckbox>` is rendered as an overlay.
+   *
+   *  Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M1).
+   */
+  selectMode?: {
+    isActive: boolean;
+    isSelected: boolean;
+    onToggle: (ev?: React.MouseEvent) => void;
+  };
+  /** Optional callback for the long-press sheet's "Select" entry.
+   *  When set, the long-press menu gets an action that enters the
+   *  parent's select mode and pre-selects this card. When unset
+   *  (e.g. on home rails that don't support multi-select), the
+   *  entry isn't rendered. Plan: M6. */
+  onEnterSelectMode?: (id: string) => void;
 }) {
   const numberLabel = issue.number ? `#${issue.number}` : "—";
   const heading = formatIssueHeading(issue);
@@ -80,6 +104,22 @@ export function IssueCard({
           ...(extraActions ?? []),
         ]
       : [];
+  // Long-press sheet's actions = the desktop kebab's actions + an
+  // optional leading "Select" entry. The Select entry only appears
+  // when the parent surface wired `onEnterSelectMode` AND we're not
+  // already in select mode (in which case the long-press handler
+  // is suppressed entirely, see below). Placed first so it's
+  // visible without scrolling on touch sheets.
+  const sheetActions: CoverMenuAction[] =
+    onEnterSelectMode && !selectMode?.isActive
+      ? [
+          {
+            label: "Select",
+            onSelect: () => onEnterSelectMode(issue.id),
+          },
+          ...menuActions,
+        ]
+      : menuActions;
   const longPress = useCoverLongPressActions({
     primary:
       issue.state === "active"
@@ -88,7 +128,7 @@ export function IssueCard({
             onSelect: () => router.push(readerUrl(issue)),
           }
         : undefined,
-    actions: menuActions,
+    actions: sheetActions,
     label: heading,
   });
   // State badge moves out of the top-left corner when the kebab is
@@ -99,78 +139,116 @@ export function IssueCard({
   // not a child: React synthetic events bubble through the React tree
   // even across portals, so a click inside the dialog would otherwise
   // propagate to the Link's onClick and route the user away.
+  //
+  // When `selectMode.isActive` is true the outer element is rendered
+  // as a `<button>` and the long-press wrapper props are not spread
+  // onto the cover — the gesture stays dormant so taps toggle
+  // selection instead of opening the existing actions sheet.
+  const inSelectMode = selectMode?.isActive ?? false;
+  const cardOuterProps = inSelectMode
+    ? {
+        type: "button" as const,
+        onClick: (ev: React.MouseEvent) => {
+          ev.preventDefault();
+          selectMode?.onToggle(ev);
+        },
+        "aria-pressed": selectMode?.isSelected ?? false,
+      }
+    : null;
+  const coverWrapperProps = inSelectMode ? {} : longPress.wrapperProps;
+  const cardClassName = cn(
+    "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
+    inSelectMode && "text-left w-full cursor-pointer",
+    inSelectMode &&
+      selectMode?.isSelected &&
+      "bg-primary/5 ring-2 ring-primary/40",
+    className,
+  );
+  const innerCard = (
+    <>
+      <div className="relative" {...coverWrapperProps}>
+        {selectMode && (
+          <SelectionCheckbox
+            isSelected={selectMode.isSelected}
+            selectMode={selectMode.isActive}
+            onToggle={selectMode.onToggle}
+            label={heading}
+          />
+        )}
+        <Cover
+          src={issue.cover_url}
+          alt={heading}
+          fallback={numberLabel}
+          className="w-full transition group-hover:brightness-110"
+        />
+        {issue.state !== "active" && (
+          <Badge
+            variant="destructive"
+            className="bg-background/80 absolute top-2 right-2 backdrop-blur"
+          >
+            {issue.state}
+          </Badge>
+        )}
+        {/* Read state — bottom-left mirrors `CollectionDot` on series
+         *  cards (one "status indicator" slot per card type). No
+         *  cover dimming on browse surfaces: the library/home rails
+         *  want covers to stay vibrant. */}
+        {issue.state === "active" && finished && (
+          <span
+            aria-label="Read"
+            title="Read"
+            className="bg-primary/90 text-primary-foreground absolute bottom-2 left-2 inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 shadow-sm ring-black/10 backdrop-blur dark:ring-white/10"
+          >
+            <Check aria-hidden="true" className="h-3.5 w-3.5" />
+          </span>
+        )}
+        {issue.state === "active" && inProgress && (
+          <div
+            className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
+            aria-hidden="true"
+          >
+            <div
+              className="bg-primary h-full transition-[width]"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+        )}
+        {issue.state === "active" && !inSelectMode && (
+          <>
+            <CoverMenuButton
+              label={`Actions for ${heading}`}
+              actions={menuActions}
+            />
+            <QuickReadOverlay
+              readerHref={readerUrl(issue)}
+              label={`Read ${heading}`}
+            />
+          </>
+        )}
+      </div>
+      <div className="min-w-0 px-1">
+        <div className="text-muted-foreground text-xs font-medium">
+          {numberLabel}
+        </div>
+        <div className="truncate text-sm font-medium" title={heading}>
+          {heading}
+        </div>
+      </div>
+    </>
+  );
   return (
     <>
-      <Link
-        href={issueUrl(issue)}
-        className={cn(
-          "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
-          className,
-        )}
-      >
-        <div className="relative" {...longPress.wrapperProps}>
-          <Cover
-            src={issue.cover_url}
-            alt={heading}
-            fallback={numberLabel}
-            className="w-full transition group-hover:brightness-110"
-          />
-          {issue.state !== "active" && (
-            <Badge
-              variant="destructive"
-              className="bg-background/80 absolute top-2 right-2 backdrop-blur"
-            >
-              {issue.state}
-            </Badge>
-          )}
-          {/* Read state — bottom-left mirrors `CollectionDot` on series
-           *  cards (one "status indicator" slot per card type). No
-           *  cover dimming on browse surfaces: the library/home rails
-           *  want covers to stay vibrant. */}
-          {issue.state === "active" && finished && (
-            <span
-              aria-label="Read"
-              title="Read"
-              className="bg-primary/90 text-primary-foreground absolute bottom-2 left-2 inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 shadow-sm ring-black/10 backdrop-blur dark:ring-white/10"
-            >
-              <Check aria-hidden="true" className="h-3.5 w-3.5" />
-            </span>
-          )}
-          {issue.state === "active" && inProgress && (
-            <div
-              className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
-              aria-hidden="true"
-            >
-              <div
-                className="bg-primary h-full transition-[width]"
-                style={{ width: `${percent}%` }}
-              />
-            </div>
-          )}
-          {issue.state === "active" && (
-            <>
-              <CoverMenuButton
-                label={`Actions for ${heading}`}
-                actions={menuActions}
-              />
-              <QuickReadOverlay
-                readerHref={readerUrl(issue)}
-                label={`Read ${heading}`}
-              />
-            </>
-          )}
-        </div>
-        <div className="min-w-0 px-1">
-          <div className="text-muted-foreground text-xs font-medium">
-            {numberLabel}
-          </div>
-          <div className="truncate text-sm font-medium" title={heading}>
-            {heading}
-          </div>
-        </div>
-      </Link>
+      {cardOuterProps ? (
+        <button className={cardClassName} {...cardOuterProps}>
+          {innerCard}
+        </button>
+      ) : (
+        <Link href={issueUrl(issue)} className={cardClassName}>
+          {innerCard}
+        </Link>
+      )}
       {collectionActions.dialog}
-      {longPress.sheet}
+      {!inSelectMode && longPress.sheet}
     </>
   );
 }

@@ -62,6 +62,14 @@ pub fn routes() -> Router<AppState> {
             "/me/collections/{id}/entries/reorder",
             post(reorder_entries),
         )
+        .route(
+            "/me/collections/{id}/members/bulk-add",
+            post(bulk_add_members),
+        )
+        .route(
+            "/me/collections/{id}/members/bulk-remove",
+            post(bulk_remove_members),
+        )
 }
 
 // ───── wire types ─────
@@ -118,6 +126,63 @@ pub struct AddEntryReq {
     /// Series UUID or issue id (TEXT). Validated against the
     /// declared `entry_kind`.
     pub ref_id: String,
+}
+
+/// Body for `POST /me/collections/{id}/members/bulk-add`. Each
+/// member follows the same `(entry_kind, ref_id)` shape as the
+/// single-add endpoint. Multi-select toolbar (`<SelectionToolbar>`'s
+/// "Add to collection…" action) builds this from the user's
+/// `selectedIds` set.
+///
+/// Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M3).
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BulkAddMembersReq {
+    pub members: Vec<AddEntryReq>,
+}
+
+/// Response counts for the bulk-add endpoint. Lets the toast surface
+/// "N added; M already in this collection; X skipped" without the
+/// caller doing per-member round-trips.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkAddMembersResp {
+    /// New rows landed in the collection.
+    pub added: u32,
+    /// Members that were already in the collection — the partial
+    /// unique fired, no row written. Idempotent from the user's
+    /// perspective.
+    pub already_present: u32,
+    /// Members whose ref_id didn't resolve to a real series or issue.
+    /// Silent skip; surfaced in the response counts so an
+    /// admin debugging "Add did nothing" can see the filter fired.
+    pub not_found: u32,
+    /// Members whose `entry_kind` / `ref_id` shape was malformed
+    /// (bad UUID, empty id, etc.). Same silent-skip semantics.
+    pub invalid: u32,
+}
+
+/// Body for `POST /me/collections/{id}/members/bulk-remove`. Identifies
+/// each member by its `(entry_kind, ref_id)` pair — the same shape the
+/// bulk-add endpoint accepts — so the UI doesn't have to round-trip
+/// to look up the `collection_entries.id` PK for each row.
+///
+/// Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M4).
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BulkRemoveMembersReq {
+    pub members: Vec<AddEntryReq>,
+}
+
+/// Response counts for the bulk-remove endpoint.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkRemoveMembersResp {
+    /// Rows removed from the collection.
+    pub removed: u32,
+    /// Members that weren't in the collection. Silent skip from the
+    /// user's perspective; surfaced here so the toast can say "5
+    /// removed (3 weren't in the collection anyway)" if it wants.
+    pub not_present: u32,
+    /// Malformed `(entry_kind, ref_id)` pairs. Same silent-skip
+    /// semantics as bulk-add.
+    pub invalid: u32,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -745,6 +810,291 @@ pub async fn add_entry(
         issue: None,
     });
     (StatusCode::CREATED, Json(first)).into_response()
+}
+
+#[utoipa::path(
+    post,
+    path = "/me/collections/{id}/members/bulk-add",
+    params(("id" = String, Path,)),
+    request_body = BulkAddMembersReq,
+    responses(
+        (status = 200, body = BulkAddMembersResp),
+        (status = 403, description = "not owner"),
+        (status = 404, description = "collection not found"),
+    )
+)]
+/// Multi-select Tranche M3: append many (entry_kind, ref_id) members
+/// to a collection in one round-trip. Per-row insert semantics
+/// match `add_entry` — including the partial-unique idempotent skip,
+/// which the response surfaces as `already_present`. Each member
+/// gets its own light validation + existence check so a single
+/// bad id in the batch can't poison the rest.
+///
+/// Position counter walks forward from the collection's current max,
+/// incrementing per accepted insert; concurrent bulk-add races have
+/// the same theoretical position-collision risk as the single-add
+/// endpoint (none enforced at the schema level today), so callers
+/// shouldn't fire two bulk-adds against the same collection in
+/// parallel.
+pub async fn bulk_add_members(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+    Json(req): Json<BulkAddMembersReq>,
+) -> impl IntoResponse {
+    const MAX_MEMBERS: usize = 500;
+    if req.members.len() > MAX_MEMBERS {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            &format!("members cap is {MAX_MEMBERS}"),
+        );
+    }
+    if let Err(resp) = fetch_owned(&app.db, user.id, id).await {
+        return resp;
+    }
+    if req.members.is_empty() {
+        return (
+            StatusCode::OK,
+            Json(BulkAddMembersResp {
+                added: 0,
+                already_present: 0,
+                not_found: 0,
+                invalid: 0,
+            }),
+        )
+            .into_response();
+    }
+
+    // Seed the position counter from the collection's current max.
+    // Increment as each insert lands so members keep their submitted
+    // order in the collection.
+    let mut next_pos = match collection_entry::Entity::find()
+        .filter(collection_entry::Column::SavedViewId.eq(id))
+        .order_by_desc(collection_entry::Column::Position)
+        .one(&app.db)
+        .await
+    {
+        Ok(Some(m)) => m.position + 1,
+        Ok(None) => 0,
+        Err(e) => {
+            tracing::error!(error = %e, "collections: bulk-add max-position lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let mut added: u32 = 0;
+    let mut already_present: u32 = 0;
+    let mut not_found: u32 = 0;
+    let mut invalid: u32 = 0;
+    let now = Utc::now().fixed_offset();
+
+    for member in req.members {
+        let (series_id, issue_id) = match member.entry_kind.as_str() {
+            ENTRY_KIND_SERIES => match Uuid::parse_str(&member.ref_id) {
+                Ok(uid) => (Some(uid), None),
+                Err(_) => {
+                    invalid += 1;
+                    continue;
+                }
+            },
+            ENTRY_KIND_ISSUE => {
+                if member.ref_id.is_empty() || member.ref_id.len() > 128 {
+                    invalid += 1;
+                    continue;
+                }
+                (None, Some(member.ref_id.clone()))
+            }
+            _ => {
+                invalid += 1;
+                continue;
+            }
+        };
+
+        // Existence check before the insert — gives `not_found`
+        // separation from the partial-unique `already_present` case
+        // below.
+        if let Some(sid) = series_id {
+            let exists = series::Entity::find_by_id(sid)
+                .count(&app.db)
+                .await
+                .unwrap_or(0);
+            if exists == 0 {
+                not_found += 1;
+                continue;
+            }
+        }
+        if let Some(iid) = issue_id.as_deref() {
+            let exists = issue::Entity::find_by_id(iid.to_owned())
+                .count(&app.db)
+                .await
+                .unwrap_or(0);
+            if exists == 0 {
+                not_found += 1;
+                continue;
+            }
+        }
+
+        let insert = collection_entry::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            saved_view_id: Set(id),
+            position: Set(next_pos),
+            entry_kind: Set(member.entry_kind.clone()),
+            series_id: Set(series_id),
+            issue_id: Set(issue_id.clone()),
+            added_at: Set(now),
+        }
+        .insert(&app.db)
+        .await;
+        match insert {
+            Ok(_) => {
+                added += 1;
+                next_pos += 1;
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("collection_entries_series_uniq")
+                    || msg.contains("collection_entries_issue_uniq")
+                {
+                    already_present += 1;
+                } else {
+                    tracing::warn!(error = %e, collection = %id, "bulk-add insert failed");
+                    // Treat unknown errors as `invalid` to keep the
+                    // contract simple — the caller doesn't get to
+                    // distinguish "DB hiccup" from "bad ref_id".
+                    invalid += 1;
+                }
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(BulkAddMembersResp {
+            added,
+            already_present,
+            not_found,
+            invalid,
+        }),
+    )
+        .into_response()
+}
+
+#[utoipa::path(
+    post,
+    path = "/me/collections/{id}/members/bulk-remove",
+    params(("id" = String, Path,)),
+    request_body = BulkRemoveMembersReq,
+    responses(
+        (status = 200, body = BulkRemoveMembersResp),
+        (status = 403, description = "not owner"),
+        (status = 404, description = "collection not found"),
+    )
+)]
+/// Multi-select Tranche M4: drop many `(entry_kind, ref_id)` members
+/// from a collection in one round-trip. Per-row delete; partial
+/// success preserved. Members not in the collection are silently
+/// counted as `not_present`. The underlying series / issues are NOT
+/// touched — only the collection-membership row.
+pub async fn bulk_remove_members(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+    Json(req): Json<BulkRemoveMembersReq>,
+) -> impl IntoResponse {
+    const MAX_MEMBERS: usize = 500;
+    if req.members.len() > MAX_MEMBERS {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            &format!("members cap is {MAX_MEMBERS}"),
+        );
+    }
+    if let Err(resp) = fetch_owned(&app.db, user.id, id).await {
+        return resp;
+    }
+    if req.members.is_empty() {
+        return (
+            StatusCode::OK,
+            Json(BulkRemoveMembersResp {
+                removed: 0,
+                not_present: 0,
+                invalid: 0,
+            }),
+        )
+            .into_response();
+    }
+
+    // Partition the input into series UUIDs + issue id strings, dropping
+    // anything malformed into the `invalid` bucket. A single batched
+    // DELETE per kind beats N round-trips; the `not_present` count is
+    // derived as (requested - removed) after the deletes execute.
+    let mut series_ids: Vec<Uuid> = Vec::new();
+    let mut issue_ids: Vec<String> = Vec::new();
+    let mut invalid: u32 = 0;
+
+    for member in req.members {
+        match member.entry_kind.as_str() {
+            ENTRY_KIND_SERIES => match Uuid::parse_str(&member.ref_id) {
+                Ok(uid) => series_ids.push(uid),
+                Err(_) => invalid += 1,
+            },
+            ENTRY_KIND_ISSUE => {
+                if member.ref_id.is_empty() || member.ref_id.len() > 128 {
+                    invalid += 1;
+                } else {
+                    issue_ids.push(member.ref_id);
+                }
+            }
+            _ => invalid += 1,
+        }
+    }
+
+    let requested = series_ids.len() + issue_ids.len();
+    let mut removed: u32 = 0;
+
+    if !series_ids.is_empty() {
+        let r = collection_entry::Entity::delete_many()
+            .filter(collection_entry::Column::SavedViewId.eq(id))
+            .filter(collection_entry::Column::EntryKind.eq(ENTRY_KIND_SERIES))
+            .filter(collection_entry::Column::SeriesId.is_in(series_ids))
+            .exec(&app.db)
+            .await;
+        match r {
+            Ok(res) => removed += res.rows_affected as u32,
+            Err(e) => {
+                tracing::error!(error = %e, "collections: bulk-remove series failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    }
+    if !issue_ids.is_empty() {
+        let r = collection_entry::Entity::delete_many()
+            .filter(collection_entry::Column::SavedViewId.eq(id))
+            .filter(collection_entry::Column::EntryKind.eq(ENTRY_KIND_ISSUE))
+            .filter(collection_entry::Column::IssueId.is_in(issue_ids))
+            .exec(&app.db)
+            .await;
+        match r {
+            Ok(res) => removed += res.rows_affected as u32,
+            Err(e) => {
+                tracing::error!(error = %e, "collections: bulk-remove issue failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    }
+
+    let not_present = (requested as u32).saturating_sub(removed);
+
+    (
+        StatusCode::OK,
+        Json(BulkRemoveMembersResp {
+            removed,
+            not_present,
+            invalid,
+        }),
+    )
+        .into_response()
 }
 
 #[utoipa::path(

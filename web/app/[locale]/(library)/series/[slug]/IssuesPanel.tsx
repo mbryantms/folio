@@ -1,11 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, Circle, FolderPlus, ListChecks } from "lucide-react";
 
+import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
+import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Input } from "@/components/ui/input";
+import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,7 +21,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { useBulkMarkProgress } from "@/lib/api/mutations";
 import { useSeriesIssuesInfinite } from "@/lib/api/queries";
+import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -77,6 +83,32 @@ export function IssuesPanel({
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
+  // Multi-select state — first surface to land for the
+  // multi-select-bulk-actions plan. M1 wires Mark read / Mark
+  // unread; M3 adds Add-to-collection; M4 will append Remove etc.
+  const selection = useSelection(items);
+  const bulkMark = useBulkMarkProgress();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const runBulk = useCallback(
+    (finished: boolean) => {
+      const ids = Array.from(selection.selected);
+      if (ids.length === 0) return;
+      bulkMark.mutate(
+        { issue_ids: ids, finished },
+        {
+          onSuccess: () => {
+            selection.clear();
+          },
+        },
+      );
+    },
+    [bulkMark, selection],
+  );
+  const selectedTargets = Array.from(selection.selected).map((id) => ({
+    entry_kind: "issue" as const,
+    ref_id: id,
+  }));
+
   // Auto-fetch the next page when the sentinel scrolls into view.
   useEffect(() => {
     const el = sentinelRef.current;
@@ -94,6 +126,37 @@ export function IssuesPanel({
     obs.observe(el);
     return () => obs.disconnect();
   }, [query]);
+
+  // Esc exits select mode entirely; Cmd/Ctrl+A selects every loaded
+  // card. Both gated on `selectMode` so other handlers stay free
+  // when the toolbar isn't up. `shouldSkipHotkey` keeps these from
+  // firing while the user is typing in the search input.
+  const selectButtonRef = useRef<HTMLButtonElement | null>(null);
+  const wasSelectModeRef = useRef(false);
+  useEffect(() => {
+    if (!selection.selectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (shouldSkipHotkey(e)) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        selection.exit();
+      } else if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        selection.selectAll();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection]);
+  // Restore focus to the trigger button when leaving select mode so
+  // keyboard users land back where they were. Skips the initial
+  // mount (no toolbar → no transition).
+  useEffect(() => {
+    if (wasSelectModeRef.current && !selection.selectMode) {
+      selectButtonRef.current?.focus();
+    }
+    wasSelectModeRef.current = selection.selectMode;
+  }, [selection.selectMode]);
 
   // CSS custom property drives the grid's `minmax`. Falling back to the
   // default px value keeps the grid sane during initial paint before the
@@ -159,8 +222,61 @@ export function IssuesPanel({
             step={CARD_SIZE_STEP}
             defaultSize={CARD_SIZE_DEFAULT}
           />
+          {!selection.selectMode && (
+            <Button
+              ref={selectButtonRef}
+              variant="outline"
+              size="sm"
+              onClick={() => selection.enter()}
+              aria-label="Enter select mode"
+            >
+              <ListChecks className="mr-1.5 h-4 w-4" />
+              Select
+            </Button>
+          )}
         </div>
       </div>
+
+      {selection.selectMode && (
+        <SelectionToolbar
+          count={selection.count}
+          total={items.length}
+          primary={[
+            {
+              id: "mark-read",
+              label: "Mark read",
+              icon: Check,
+              onClick: () => runBulk(true),
+            },
+            {
+              id: "mark-unread",
+              label: "Mark unread",
+              icon: Circle,
+              onClick: () => runBulk(false),
+            },
+          ]}
+          overflow={[
+            {
+              id: "add-to-collection",
+              label: "Add to collection…",
+              icon: FolderPlus,
+              onClick: () => setPickerOpen(true),
+            },
+          ]}
+          onDone={() => selection.exit()}
+          onClear={() => selection.clear()}
+          onSelectAll={() => selection.selectAll()}
+          isPending={bulkMark.isPending}
+        />
+      )}
+      <BulkAddToCollectionDialog
+        open={pickerOpen}
+        onOpenChange={(next) => {
+          setPickerOpen(next);
+          if (!next) selection.clear();
+        }}
+        targets={selectedTargets}
+      />
 
       {query.isError && (
         <p className="text-destructive text-sm">
@@ -178,7 +294,23 @@ export function IssuesPanel({
         <ul role="list" className="grid gap-4" style={gridStyle}>
           {items.map((iss) => (
             <li key={iss.id}>
-              <IssueCard issue={iss} />
+              <IssueCard
+                issue={iss}
+                selectMode={
+                  selection.selectMode
+                    ? {
+                        isActive: true,
+                        isSelected: selection.isSelected(iss.id),
+                        onToggle: (ev) => selection.toggle(iss.id, ev),
+                      }
+                    : undefined
+                }
+                onEnterSelectMode={(id) => {
+                  // Long-press → sheet → "Select": enter select
+                  // mode AND pre-select the long-pressed card.
+                  selection.toggle(id);
+                }}
+              />
             </li>
           ))}
         </ul>

@@ -11,6 +11,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { SeriesPlayOverlay } from "@/components/QuickReadOverlay";
+import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { jsonFetch } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";
@@ -42,6 +43,8 @@ export function SeriesCard({
   href,
   className,
   extraActions,
+  selectMode,
+  onEnterSelectMode,
 }: {
   series: SeriesView;
   size?: Size;
@@ -51,6 +54,23 @@ export function SeriesCard({
    *  add-to-collection). Use for surface-specific affordances like
    *  "Remove from this collection" on the collection detail page. */
   extraActions?: CoverMenuAction[];
+  /** Multi-select mode toggle. Same shape as `<IssueCard>`'s
+   *  `selectMode`: when set, the card click toggles selection
+   *  instead of navigating; the long-press sheet stays dormant; a
+   *  `<SelectionCheckbox>` overlay renders.
+   *
+   *  Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md`
+   *  (M1 introduced the prop on IssueCard; M4 brings it to
+   *  SeriesCard for collection-detail bulk-remove). */
+  selectMode?: {
+    isActive: boolean;
+    isSelected: boolean;
+    onToggle: (ev?: React.MouseEvent) => void;
+  };
+  /** Optional callback for the long-press sheet's "Select" entry.
+   *  When set, mobile users get a second entry-point into select
+   *  mode (besides the page-chrome "Select" button). Plan: M6. */
+  onEnterSelectMode?: (id: string) => void;
 }) {
   const c = sizeClasses[size];
   const status = formatPublicationStatus(series.status);
@@ -75,6 +95,21 @@ export function SeriesCard({
     ...collectionActions.actions,
     ...(extraActions ?? []),
   ];
+  // Prepend "Select" to the long-press sheet when the parent
+  // surface supports multi-select. Mirrors the IssueCard pattern;
+  // gated by both `onEnterSelectMode` being set AND not already
+  // being in select mode (the long-press handler is suppressed in
+  // that case anyway).
+  const sheetActions: CoverMenuAction[] =
+    onEnterSelectMode && !selectMode?.isActive
+      ? [
+          {
+            label: "Select",
+            onSelect: () => onEnterSelectMode(series.id),
+          },
+          ...menuActions,
+        ]
+      : menuActions;
   const longPress = useCoverLongPressActions({
     primary: {
       label: `Read ${series.name}`,
@@ -96,7 +131,7 @@ export function SeriesCard({
         }
       },
     },
-    actions: menuActions,
+    actions: sheetActions,
     label: series.name,
   });
   // The "Add to Collection…" dialog must render as a *sibling* of the
@@ -105,64 +140,105 @@ export function SeriesCard({
   // would otherwise propagate to the Link's onClick and trigger
   // navigation. Hoisting the dialog out fixes the "modal flashes then
   // routes to the issue page" bug seen on every cover-menu card.
+  //
+  // When `selectMode.isActive` is true the outer becomes a `<button>`
+  // and the long-press wrapper props stay dormant — taps toggle
+  // selection instead of opening the existing actions sheet.
+  const inSelectMode = selectMode?.isActive ?? false;
+  const cardOuterProps = inSelectMode
+    ? {
+        type: "button" as const,
+        onClick: (ev: React.MouseEvent) => {
+          ev.preventDefault();
+          selectMode?.onToggle(ev);
+        },
+        "aria-pressed": selectMode?.isSelected ?? false,
+      }
+    : null;
+  const coverWrapperProps = inSelectMode ? {} : longPress.wrapperProps;
+  const cardClassName = cn(
+    "group hover:bg-accent/40 focus-visible:ring-ring flex shrink-0 flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
+    c.wrap,
+    inSelectMode && "text-left w-full cursor-pointer",
+    inSelectMode &&
+      selectMode?.isSelected &&
+      "bg-primary/5 ring-2 ring-primary/40",
+    className,
+  );
+  const innerCard = (
+    <>
+      <div className="relative" {...coverWrapperProps}>
+        {selectMode && (
+          <SelectionCheckbox
+            isSelected={selectMode.isSelected}
+            selectMode={selectMode.isActive}
+            onToggle={selectMode.onToggle}
+            label={series.name}
+          />
+        )}
+        <Cover
+          src={series.cover_url}
+          alt={series.name}
+          fallback={series.publisher ?? series.name}
+          className="w-full transition group-hover:brightness-110"
+        />
+        {/* Status badge moved to top-right so the kebab affordance can
+         *  live at the canonical top-left across all card types. */}
+        {status && status !== "Active" && (
+          <Badge
+            variant="secondary"
+            className="bg-background/80 absolute top-2 right-2 backdrop-blur"
+          >
+            {status}
+          </Badge>
+        )}
+        <CollectionDot series={series} />
+        {!inSelectMode && (
+          <>
+            <CoverMenuButton
+              label={`Actions for ${series.name}`}
+              actions={menuActions}
+            />
+            <SeriesPlayOverlay
+              seriesSlug={series.slug}
+              seriesName={series.name}
+            />
+          </>
+        )}
+      </div>
+      <div className="min-w-0 px-1">
+        <div
+          className={cn("truncate font-medium", c.title)}
+          title={series.name}
+        >
+          {series.name}
+        </div>
+        <div className={c.meta}>
+          {[
+            series.year,
+            issueCount != null
+              ? `${issueCount} issue${issueCount === 1 ? "" : "s"}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" • ") || " "}
+        </div>
+      </div>
+    </>
+  );
   return (
     <>
-      <Link
-        href={link}
-        className={cn(
-          "group hover:bg-accent/40 focus-visible:ring-ring flex shrink-0 flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
-          c.wrap,
-          className,
-        )}
-      >
-        <div className="relative" {...longPress.wrapperProps}>
-          <Cover
-            src={series.cover_url}
-            alt={series.name}
-            fallback={series.publisher ?? series.name}
-            className="w-full transition group-hover:brightness-110"
-          />
-          {/* Status badge moved to top-right so the kebab affordance can
-           *  live at the canonical top-left across all card types. */}
-          {status && status !== "Active" && (
-            <Badge
-              variant="secondary"
-              className="bg-background/80 absolute top-2 right-2 backdrop-blur"
-            >
-              {status}
-            </Badge>
-          )}
-          <CollectionDot series={series} />
-          <CoverMenuButton
-            label={`Actions for ${series.name}`}
-            actions={menuActions}
-          />
-          <SeriesPlayOverlay
-            seriesSlug={series.slug}
-            seriesName={series.name}
-          />
-        </div>
-        <div className="min-w-0 px-1">
-          <div
-            className={cn("truncate font-medium", c.title)}
-            title={series.name}
-          >
-            {series.name}
-          </div>
-          <div className={c.meta}>
-            {[
-              series.year,
-              issueCount != null
-                ? `${issueCount} issue${issueCount === 1 ? "" : "s"}`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(" • ") || " "}
-          </div>
-        </div>
-      </Link>
+      {cardOuterProps ? (
+        <button className={cardClassName} {...cardOuterProps}>
+          {innerCard}
+        </button>
+      ) : (
+        <Link href={link} className={cardClassName}>
+          {innerCard}
+        </Link>
+      )}
       {collectionActions.dialog}
-      {longPress.sheet}
+      {!inSelectMode && longPress.sheet}
     </>
   );
 }

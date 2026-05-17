@@ -38,6 +38,8 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/progress", post(upsert).get(list))
         .route("/series/{slug}/progress", post(upsert_series))
+        .route("/me/progress/bulk", post(upsert_bulk))
+        .route("/me/progress/series-bulk", post(upsert_series_bulk))
 }
 
 #[derive(Debug, Deserialize)]
@@ -347,6 +349,422 @@ pub async fn upsert_series(
     versioned(
         StatusCode::OK,
         Json(UpsertSeriesResp { updated, skipped }).into_response(),
+    )
+}
+
+/// Body for `POST /me/progress/bulk` — bulk read/unread for an
+/// arbitrary list of issue ids. Used by the multi-select toolbar
+/// across the series / collection / view / CBL list pages. See
+/// `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M2).
+///
+/// Differs from `upsert_series` in two ways: (1) the caller supplies
+/// the explicit issue-id list rather than "every active issue in
+/// series X"; (2) ACL filtering walks each issue's library_id and
+/// drops anything the caller can't see. The response counts skipped
+/// rows separately so the toast can surface "N marked read, M
+/// already read."
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpsertBulkReq {
+    pub issue_ids: Vec<String>,
+    pub finished: bool,
+    #[serde(default)]
+    pub device: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct UpsertBulkResp {
+    /// Issues whose progress row was created or updated.
+    pub updated: u32,
+    /// Issues already in the target state (no DB write — cheap re-click).
+    pub skipped: u32,
+    /// Issues the caller doesn't have library access to read. Silent
+    /// from the user's perspective; surfaced here so an admin
+    /// debugging a "mark read did nothing" report can see the
+    /// filter fired.
+    pub forbidden: u32,
+    /// Issues whose id didn't resolve to a row (removed / never
+    /// existed / typo). Treated the same as forbidden — the caller
+    /// doesn't get to distinguish a missing row from one they're
+    /// not allowed to see.
+    pub not_found: u32,
+}
+
+#[utoipa::path(
+    post,
+    path = "/me/progress/bulk",
+    request_body = UpsertBulkReq,
+    responses(
+        (status = 200, body = UpsertBulkResp),
+        (status = 400, description = "validation"),
+    )
+)]
+pub async fn upsert_bulk(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<UpsertBulkReq>,
+) -> Response {
+    // Cap the per-request id list to keep the loop bounded — a malicious
+    // client could otherwise enqueue thousands of round-trips inside
+    // one request. 500 covers any realistic multi-select session;
+    // larger batches should be done via the per-series endpoint.
+    const MAX_IDS: usize = 500;
+    if req.issue_ids.len() > MAX_IDS {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            &format!("issue_ids cap is {MAX_IDS}"),
+        );
+    }
+    // Empty list is a 200 OK with all-zero counts — easier on clients
+    // that compute their selection list dynamically.
+    if req.issue_ids.is_empty() {
+        return versioned(
+            StatusCode::OK,
+            Json(UpsertBulkResp {
+                updated: 0,
+                skipped: 0,
+                forbidden: 0,
+                not_found: 0,
+            })
+            .into_response(),
+        );
+    }
+    // Dedup ids — a client that double-checks the same card shouldn't
+    // get a 2x cost. Preserves order for predictable iteration.
+    let mut seen = std::collections::HashSet::with_capacity(req.issue_ids.len());
+    let ids: Vec<String> = req
+        .issue_ids
+        .into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect();
+
+    let rows = match issue::Entity::find()
+        .filter(issue::Column::Id.is_in(ids.clone()))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "bulk-progress issue lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let found_ids: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    let not_found = ids
+        .iter()
+        .filter(|id| !found_ids.contains(id.as_str()))
+        .count() as u32;
+
+    // Pre-fetch the library-access set for non-admin users in one
+    // query, so the per-issue ACL check is a HashSet hit rather than
+    // a SELECT per row.
+    let allowed_libraries: Option<std::collections::HashSet<uuid::Uuid>> = if user.role == "admin" {
+        None
+    } else {
+        match library_user_access::Entity::find()
+            .filter(library_user_access::Column::UserId.eq(user.id))
+            .all(&app.db)
+            .await
+        {
+            Ok(v) => Some(v.into_iter().map(|r| r.library_id).collect()),
+            Err(e) => {
+                tracing::warn!(error = %e, "bulk-progress acl lookup failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    };
+
+    let now = Utc::now().fixed_offset();
+    let mut updated: u32 = 0;
+    let mut skipped: u32 = 0;
+    let mut forbidden: u32 = 0;
+
+    for iss in rows {
+        if let Some(allowed) = &allowed_libraries
+            && !allowed.contains(&iss.library_id)
+        {
+            forbidden += 1;
+            continue;
+        }
+        let target_page = if req.finished {
+            iss.page_count.unwrap_or(1).max(1) - 1
+        } else {
+            0
+        };
+        let target_percent = if req.finished { 1.0 } else { 0.0 };
+
+        let existing = match ProgressEntity::find_by_id((user.id, iss.id.clone()))
+            .one(&app.db)
+            .await
+        {
+            Ok(opt) => opt,
+            Err(e) => {
+                tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress lookup failed");
+                continue;
+            }
+        };
+
+        match existing {
+            Some(row) if row.finished == req.finished && row.last_page == target_page => {
+                skipped += 1;
+            }
+            Some(_) => {
+                let am = ProgressAM {
+                    user_id: Unchanged(user.id),
+                    issue_id: Unchanged(iss.id.clone()),
+                    last_page: Set(target_page),
+                    percent: Set(target_percent),
+                    finished: Set(req.finished),
+                    updated_at: Set(now),
+                    device: Set(req.device.clone()),
+                };
+                if let Err(e) = am.update(&app.db).await {
+                    tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress update failed");
+                    continue;
+                }
+                updated += 1;
+            }
+            None => {
+                let am = ProgressAM {
+                    user_id: Set(user.id),
+                    issue_id: Set(iss.id.clone()),
+                    last_page: Set(target_page),
+                    percent: Set(target_percent),
+                    finished: Set(req.finished),
+                    updated_at: Set(now),
+                    device: Set(req.device.clone()),
+                };
+                if let Err(e) = am.insert(&app.db).await {
+                    tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress insert failed");
+                    continue;
+                }
+                updated += 1;
+            }
+        }
+    }
+
+    versioned(
+        StatusCode::OK,
+        Json(UpsertBulkResp {
+            updated,
+            skipped,
+            forbidden,
+            not_found,
+        })
+        .into_response(),
+    )
+}
+
+/// Body for `POST /me/progress/series-bulk` — bulk read/unread
+/// applied across every active issue of an arbitrary list of
+/// series. Sister endpoint to `upsert_bulk` (which takes
+/// issue_ids); used by the multi-select toolbar on filter views
+/// where the cards are series. Each series in `series_ids` is
+/// expanded server-side to its active issues, then walked through
+/// the same `upsert_for` helper.
+///
+/// Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md`
+/// (M6 extension per user request 2026-05-17 — filter views
+/// originally weren't going to support mark-read since they're
+/// series-only, but operating per-series-then-per-issue is the
+/// natural semantics).
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpsertSeriesBulkReq {
+    pub series_ids: Vec<uuid::Uuid>,
+    pub finished: bool,
+    #[serde(default)]
+    pub device: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct UpsertSeriesBulkResp {
+    /// Issue rows that received a new or updated progress record.
+    pub updated: u32,
+    /// Issues already in the target state.
+    pub skipped: u32,
+    /// Series the caller can't see (library access denied).
+    pub forbidden_series: u32,
+    /// Series whose id didn't resolve.
+    pub not_found_series: u32,
+}
+
+#[utoipa::path(
+    post,
+    path = "/me/progress/series-bulk",
+    request_body = UpsertSeriesBulkReq,
+    responses(
+        (status = 200, body = UpsertSeriesBulkResp),
+        (status = 400, description = "validation"),
+    )
+)]
+pub async fn upsert_series_bulk(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<UpsertSeriesBulkReq>,
+) -> Response {
+    // 100-series cap so a runaway client can't kick off a O(N*M)
+    // walk across a library's whole index. With ~50 issues per
+    // series typical, 100 series → ~5k progress writes max.
+    const MAX_SERIES: usize = 100;
+    if req.series_ids.len() > MAX_SERIES {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            &format!("series_ids cap is {MAX_SERIES}"),
+        );
+    }
+    if req.series_ids.is_empty() {
+        return versioned(
+            StatusCode::OK,
+            Json(UpsertSeriesBulkResp {
+                updated: 0,
+                skipped: 0,
+                forbidden_series: 0,
+                not_found_series: 0,
+            })
+            .into_response(),
+        );
+    }
+    // Dedup series ids.
+    let mut seen = std::collections::HashSet::with_capacity(req.series_ids.len());
+    let series_ids: Vec<uuid::Uuid> = req
+        .series_ids
+        .into_iter()
+        .filter(|id| seen.insert(*id))
+        .collect();
+
+    // Pre-fetch series rows (need library_id for ACL).
+    let series_rows = match entity::series::Entity::find()
+        .filter(entity::series::Column::Id.is_in(series_ids.clone()))
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "series-bulk-progress series lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let found_ids: std::collections::HashSet<uuid::Uuid> =
+        series_rows.iter().map(|r| r.id).collect();
+    let not_found_series = series_ids
+        .iter()
+        .filter(|id| !found_ids.contains(id))
+        .count() as u32;
+
+    // Pre-fetch library-access set for non-admins.
+    let allowed_libraries: Option<std::collections::HashSet<uuid::Uuid>> = if user.role == "admin" {
+        None
+    } else {
+        match library_user_access::Entity::find()
+            .filter(library_user_access::Column::UserId.eq(user.id))
+            .all(&app.db)
+            .await
+        {
+            Ok(v) => Some(v.into_iter().map(|r| r.library_id).collect()),
+            Err(e) => {
+                tracing::warn!(error = %e, "series-bulk-progress acl lookup failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    };
+
+    let now = chrono::Utc::now().fixed_offset();
+    let mut updated: u32 = 0;
+    let mut skipped: u32 = 0;
+    let mut forbidden_series: u32 = 0;
+
+    for srow in series_rows {
+        if let Some(allowed) = &allowed_libraries
+            && !allowed.contains(&srow.library_id)
+        {
+            forbidden_series += 1;
+            continue;
+        }
+        // Pull every active, on-disk issue for the series in one
+        // query. Mirrors `upsert_series`'s filter.
+        let issues = match issue::Entity::find()
+            .filter(issue::Column::SeriesId.eq(srow.id))
+            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::RemovedAt.is_null())
+            .all(&app.db)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, series_id = %srow.id, "series-bulk issue lookup failed");
+                continue;
+            }
+        };
+        for iss in issues {
+            let target_page = if req.finished {
+                iss.page_count.unwrap_or(1).max(1) - 1
+            } else {
+                0
+            };
+            let target_percent = if req.finished { 1.0 } else { 0.0 };
+            let existing = match ProgressEntity::find_by_id((user.id, iss.id.clone()))
+                .one(&app.db)
+                .await
+            {
+                Ok(opt) => opt,
+                Err(e) => {
+                    tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk lookup failed");
+                    continue;
+                }
+            };
+            match existing {
+                Some(row) if row.finished == req.finished && row.last_page == target_page => {
+                    skipped += 1;
+                }
+                Some(_) => {
+                    let am = ProgressAM {
+                        user_id: Unchanged(user.id),
+                        issue_id: Unchanged(iss.id.clone()),
+                        last_page: Set(target_page),
+                        percent: Set(target_percent),
+                        finished: Set(req.finished),
+                        updated_at: Set(now),
+                        device: Set(req.device.clone()),
+                    };
+                    if let Err(e) = am.update(&app.db).await {
+                        tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk update failed");
+                        continue;
+                    }
+                    updated += 1;
+                }
+                None => {
+                    let am = ProgressAM {
+                        user_id: Set(user.id),
+                        issue_id: Set(iss.id.clone()),
+                        last_page: Set(target_page),
+                        percent: Set(target_percent),
+                        finished: Set(req.finished),
+                        updated_at: Set(now),
+                        device: Set(req.device.clone()),
+                    };
+                    if let Err(e) = am.insert(&app.db).await {
+                        tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk insert failed");
+                        continue;
+                    }
+                    updated += 1;
+                }
+            }
+        }
+    }
+
+    versioned(
+        StatusCode::OK,
+        Json(UpsertSeriesBulkResp {
+            updated,
+            skipped,
+            forbidden_series,
+            not_found_series,
+        })
+        .into_response(),
     )
 }
 

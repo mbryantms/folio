@@ -634,3 +634,296 @@ async fn saved_views_results_returns_empty_stub_for_collections() {
     assert!(body["items"].as_array().unwrap().is_empty());
     assert_eq!(body["total"], 0);
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Multi-select Tranche M3 — `POST /me/collections/{id}/members/bulk-add`
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_add_counts_added_and_already_present_and_not_found() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk@example.com").await;
+    let (_lib1, series_a, issue_a) = seed_series_with_issue(&app, "series-a").await;
+    let (_lib2, _series_b, issue_b) = seed_series_with_issue(&app, "series-b").await;
+    let cid = create_collection(&app, &auth, "Bulk Pile").await;
+    let single_url = format!("/api/me/collections/{cid}/entries");
+
+    // Pre-add issue_a so the bulk call should mark it `already_present`.
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &single_url,
+        Some(&auth),
+        Some(serde_json::json!({"entry_kind": "issue", "ref_id": &issue_a})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let url = format!("/api/me/collections/{cid}/members/bulk-add");
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&auth),
+        Some(serde_json::json!({
+            "members": [
+                { "entry_kind": "issue",  "ref_id": &issue_a },
+                { "entry_kind": "issue",  "ref_id": &issue_b },
+                { "entry_kind": "series", "ref_id": series_a.to_string() },
+                { "entry_kind": "issue",  "ref_id": "does-not-exist" },
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["added"].as_u64(), Some(2));
+    assert_eq!(body["already_present"].as_u64(), Some(1));
+    assert_eq!(body["not_found"].as_u64(), Some(1));
+    assert_eq!(body["invalid"].as_u64(), Some(0));
+
+    // Confirm the position counter advanced — entries should be at
+    // 0 (pre-added issue_a) and 1, 2 (the two new adds).
+    let list_url = format!("/api/me/collections/{cid}/entries");
+    let (status, list) = http(&app, Method::GET, &list_url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let items = list["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_add_with_invalid_kind_or_ref_counts_invalid() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-bad@example.com").await;
+    let (_lib, _series_id, issue_id) = seed_series_with_issue(&app, "invalid-bag").await;
+    let cid = create_collection(&app, &auth, "Bag").await;
+    let url = format!("/api/me/collections/{cid}/members/bulk-add");
+
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&auth),
+        Some(serde_json::json!({
+            "members": [
+                { "entry_kind": "issue",  "ref_id": &issue_id },
+                { "entry_kind": "junk",   "ref_id": "x" },           // bad kind
+                { "entry_kind": "series", "ref_id": "not-a-uuid" }, // bad ref_id for series
+                { "entry_kind": "issue",  "ref_id": "" },           // empty
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["added"].as_u64(), Some(1));
+    assert_eq!(body["invalid"].as_u64(), Some(3));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_add_rejects_over_cap() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-cap@example.com").await;
+    let cid = create_collection(&app, &auth, "Cap").await;
+    let url = format!("/api/me/collections/{cid}/members/bulk-add");
+    let members: Vec<_> = (0..501)
+        .map(|i| serde_json::json!({"entry_kind": "issue", "ref_id": format!("id-{i}")}))
+        .collect();
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&auth),
+        Some(serde_json::json!({"members": members})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_add_empty_list_returns_zero_counts() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-empty@example.com").await;
+    let cid = create_collection(&app, &auth, "Empty").await;
+    let url = format!("/api/me/collections/{cid}/members/bulk-add");
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&auth),
+        Some(serde_json::json!({"members": []})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["added"].as_u64(), Some(0));
+    assert_eq!(body["already_present"].as_u64(), Some(0));
+    assert_eq!(body["not_found"].as_u64(), Some(0));
+    assert_eq!(body["invalid"].as_u64(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_add_rejects_non_owner() {
+    let app = TestApp::spawn().await;
+    let owner = register(&app, "owner@example.com").await;
+    let intruder = register(&app, "intruder@example.com").await;
+    let cid = create_collection(&app, &owner, "Mine").await;
+    let url = format!("/api/me/collections/{cid}/members/bulk-add");
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&intruder),
+        Some(serde_json::json!({"members": [{"entry_kind": "issue", "ref_id": "x"}]})),
+    )
+    .await;
+    // `fetch_owned` returns FORBIDDEN when the user isn't the
+    // collection's owner (the row exists, just isn't theirs). 404
+    // only fires when the collection id doesn't resolve at all.
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Multi-select Tranche M4 — `POST /me/collections/{id}/members/bulk-remove`
+// ─────────────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_remove_drops_matching_members_and_counts_not_present() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-remove@example.com").await;
+    let (_lib, series_id, issue_id) = seed_series_with_issue(&app, "rm-series").await;
+    let cid = create_collection(&app, &auth, "RM Pile").await;
+    let single_url = format!("/api/me/collections/{cid}/entries");
+
+    // Seed the collection: one series + one issue.
+    for body in [
+        serde_json::json!({"entry_kind": "series", "ref_id": series_id.to_string()}),
+        serde_json::json!({"entry_kind": "issue",  "ref_id": &issue_id}),
+    ] {
+        let (status, _) = http(&app, Method::POST, &single_url, Some(&auth), Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    // Bulk-remove the series + a never-added id. The series row should
+    // be removed; the missing issue id should count as `not_present`.
+    let url = format!("/api/me/collections/{cid}/members/bulk-remove");
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&auth),
+        Some(serde_json::json!({
+            "members": [
+                { "entry_kind": "series", "ref_id": series_id.to_string() },
+                { "entry_kind": "issue",  "ref_id": "never-added" },
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["removed"].as_u64(), Some(1));
+    assert_eq!(body["not_present"].as_u64(), Some(1));
+    assert_eq!(body["invalid"].as_u64(), Some(0));
+
+    // The issue row should still be there — only the series row was
+    // requested for removal.
+    let list_url = format!("/api/me/collections/{cid}/entries");
+    let (_, list) = http(&app, Method::GET, &list_url, Some(&auth), None).await;
+    let items = list["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["entry_kind"], "issue");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_remove_counts_invalid_kinds_and_refs() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-rm-bad@example.com").await;
+    let (_lib, _series_id, issue_id) = seed_series_with_issue(&app, "rm-bad").await;
+    let cid = create_collection(&app, &auth, "Bag").await;
+    // Seed one issue so we can prove the valid removal still lands.
+    let single_url = format!("/api/me/collections/{cid}/entries");
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &single_url,
+        Some(&auth),
+        Some(serde_json::json!({"entry_kind": "issue", "ref_id": &issue_id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let url = format!("/api/me/collections/{cid}/members/bulk-remove");
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&auth),
+        Some(serde_json::json!({
+            "members": [
+                { "entry_kind": "issue",  "ref_id": &issue_id },
+                { "entry_kind": "junk",   "ref_id": "x" },           // bad kind
+                { "entry_kind": "series", "ref_id": "not-a-uuid" }, // bad ref_id
+                { "entry_kind": "issue",  "ref_id": "" },           // empty
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["removed"].as_u64(), Some(1));
+    assert_eq!(body["invalid"].as_u64(), Some(3));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_remove_empty_list_returns_zero_counts() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-rm-empty@example.com").await;
+    let cid = create_collection(&app, &auth, "Empty").await;
+    let url = format!("/api/me/collections/{cid}/members/bulk-remove");
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&auth),
+        Some(serde_json::json!({"members": []})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["removed"].as_u64(), Some(0));
+    assert_eq!(body["not_present"].as_u64(), Some(0));
+    assert_eq!(body["invalid"].as_u64(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_remove_rejects_over_cap() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-rm-cap@example.com").await;
+    let cid = create_collection(&app, &auth, "Cap").await;
+    let url = format!("/api/me/collections/{cid}/members/bulk-remove");
+    let members: Vec<_> = (0..501)
+        .map(|i| serde_json::json!({"entry_kind": "issue", "ref_id": format!("id-{i}")}))
+        .collect();
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&auth),
+        Some(serde_json::json!({"members": members})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_remove_rejects_non_owner() {
+    let app = TestApp::spawn().await;
+    let owner = register(&app, "rm-owner@example.com").await;
+    let intruder = register(&app, "rm-intruder@example.com").await;
+    let cid = create_collection(&app, &owner, "Mine").await;
+    let url = format!("/api/me/collections/{cid}/members/bulk-remove");
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&intruder),
+        Some(serde_json::json!({"members": [{"entry_kind": "issue", "ref_id": "x"}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

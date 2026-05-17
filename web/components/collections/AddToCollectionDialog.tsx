@@ -274,8 +274,16 @@ function CreateForm({
           ref_id: target.ref_id,
         } satisfies AddEntryReq,
       });
+      // Paginated + infinite-scroll variants live under distinct keys;
+      // invalidate both so collection-detail pages refresh without a
+      // manual reload (the same fix landed in `mutations.ts`'s
+      // `invalidateCollectionEntries` helper — duplicated inline here
+      // because the create-then-add flow bypasses the hook wrappers).
       qc.invalidateQueries({
         queryKey: ["collections", "entries", created.id],
+      });
+      qc.invalidateQueries({
+        queryKey: queryKeys.collectionEntriesInfinite(created.id),
       });
       qc.invalidateQueries({ queryKey: queryKeys.collections });
       // Undo discards the whole collection (not just the entry) since

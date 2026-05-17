@@ -3915,6 +3915,101 @@
         }
       }
     },
+    "/me/collections/{id}/members/bulk-add": {
+      "post": {
+        "tags": [
+          "api::collections"
+        ],
+        "summary": "Multi-select Tranche M3: append many (entry_kind, ref_id) members\nto a collection in one round-trip. Per-row insert semantics\nmatch `add_entry` — including the partial-unique idempotent skip,\nwhich the response surfaces as `already_present`. Each member\ngets its own light validation + existence check so a single\nbad id in the batch can't poison the rest.",
+        "description": "Position counter walks forward from the collection's current max,\nincrementing per accepted insert; concurrent bulk-add races have\nthe same theoretical position-collision risk as the single-add\nendpoint (none enforced at the schema level today), so callers\nshouldn't fire two bulk-adds against the same collection in\nparallel.",
+        "operationId": "bulk_add_members",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkAddMembersReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkAddMembersResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not owner"
+          },
+          "404": {
+            "description": "collection not found"
+          }
+        }
+      }
+    },
+    "/me/collections/{id}/members/bulk-remove": {
+      "post": {
+        "tags": [
+          "api::collections"
+        ],
+        "summary": "Multi-select Tranche M4: drop many `(entry_kind, ref_id)` members\nfrom a collection in one round-trip. Per-row delete; partial\nsuccess preserved. Members not in the collection are silently\ncounted as `not_present`. The underlying series / issues are NOT\ntouched — only the collection-membership row.",
+        "operationId": "bulk_remove_members",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkRemoveMembersReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkRemoveMembersResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not owner"
+          },
+          "404": {
+            "description": "collection not found"
+          }
+        }
+      }
+    },
     "/me/continue-reading": {
       "get": {
         "tags": [
@@ -4404,6 +4499,72 @@
           },
           "401": {
             "description": "not authenticated"
+          }
+        }
+      }
+    },
+    "/me/progress/bulk": {
+      "post": {
+        "tags": [
+          "api::progress"
+        ],
+        "operationId": "upsert_bulk",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertBulkReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpsertBulkResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation"
+          }
+        }
+      }
+    },
+    "/me/progress/series-bulk": {
+      "post": {
+        "tags": [
+          "api::progress"
+        ],
+        "operationId": "upsert_series_bulk",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertSeriesBulkReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpsertSeriesBulkResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation"
           }
         }
       }
@@ -6374,6 +6535,101 @@
           },
           "oidc": {
             "$ref": "#/components/schemas/OidcConfigView"
+          }
+        }
+      },
+      "BulkAddMembersReq": {
+        "type": "object",
+        "description": "Body for `POST /me/collections/{id}/members/bulk-add`. Each\nmember follows the same `(entry_kind, ref_id)` shape as the\nsingle-add endpoint. Multi-select toolbar (`<SelectionToolbar>`'s\n\"Add to collection…\" action) builds this from the user's\n`selectedIds` set.\n\nPlan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M3).",
+        "required": [
+          "members"
+        ],
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddEntryReq"
+            }
+          }
+        }
+      },
+      "BulkAddMembersResp": {
+        "type": "object",
+        "description": "Response counts for the bulk-add endpoint. Lets the toast surface\n\"N added; M already in this collection; X skipped\" without the\ncaller doing per-member round-trips.",
+        "required": [
+          "added",
+          "already_present",
+          "not_found",
+          "invalid"
+        ],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int32",
+            "description": "New rows landed in the collection.",
+            "minimum": 0
+          },
+          "already_present": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Members that were already in the collection — the partial\nunique fired, no row written. Idempotent from the user's\nperspective.",
+            "minimum": 0
+          },
+          "invalid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Members whose `entry_kind` / `ref_id` shape was malformed\n(bad UUID, empty id, etc.). Same silent-skip semantics.",
+            "minimum": 0
+          },
+          "not_found": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Members whose ref_id didn't resolve to a real series or issue.\nSilent skip; surfaced in the response counts so an\nadmin debugging \"Add did nothing\" can see the filter fired.",
+            "minimum": 0
+          }
+        }
+      },
+      "BulkRemoveMembersReq": {
+        "type": "object",
+        "description": "Body for `POST /me/collections/{id}/members/bulk-remove`. Identifies\neach member by its `(entry_kind, ref_id)` pair — the same shape the\nbulk-add endpoint accepts — so the UI doesn't have to round-trip\nto look up the `collection_entries.id` PK for each row.\n\nPlan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M4).",
+        "required": [
+          "members"
+        ],
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddEntryReq"
+            }
+          }
+        }
+      },
+      "BulkRemoveMembersResp": {
+        "type": "object",
+        "description": "Response counts for the bulk-remove endpoint.",
+        "required": [
+          "removed",
+          "not_present",
+          "invalid"
+        ],
+        "properties": {
+          "invalid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Malformed `(entry_kind, ref_id)` pairs. Same silent-skip\nsemantics as bulk-add.",
+            "minimum": 0
+          },
+          "not_present": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Members that weren't in the collection. Silent skip from the\nuser's perspective; surfaced here so the toast can say \"5\nremoved (3 weren't in the collection anyway)\" if it wants.",
+            "minimum": 0
+          },
+          "removed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows removed from the collection.",
+            "minimum": 0
           }
         }
       },
@@ -12361,6 +12617,66 @@
           }
         }
       },
+      "UpsertBulkReq": {
+        "type": "object",
+        "description": "Body for `POST /me/progress/bulk` — bulk read/unread for an\narbitrary list of issue ids. Used by the multi-select toolbar\nacross the series / collection / view / CBL list pages. See\n`~/.claude/plans/multi-select-bulk-actions-1.0.md` (M2).\n\nDiffers from `upsert_series` in two ways: (1) the caller supplies\nthe explicit issue-id list rather than \"every active issue in\nseries X\"; (2) ACL filtering walks each issue's library_id and\ndrops anything the caller can't see. The response counts skipped\nrows separately so the toast can surface \"N marked read, M\nalready read.\"",
+        "required": [
+          "issue_ids",
+          "finished"
+        ],
+        "properties": {
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished": {
+            "type": "boolean"
+          },
+          "issue_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UpsertBulkResp": {
+        "type": "object",
+        "required": [
+          "updated",
+          "skipped",
+          "forbidden",
+          "not_found"
+        ],
+        "properties": {
+          "forbidden": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues the caller doesn't have library access to read. Silent\nfrom the user's perspective; surfaced here so an admin\ndebugging a \"mark read did nothing\" report can see the\nfilter fired.",
+            "minimum": 0
+          },
+          "not_found": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues whose id didn't resolve to a row (removed / never\nexisted / typo). Treated the same as forbidden — the caller\ndoesn't get to distinguish a missing row from one they're\nnot allowed to see.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues already in the target state (no DB write — cheap re-click).",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues whose progress row was created or updated.",
+            "minimum": 0
+          }
+        }
+      },
       "UpsertReq": {
         "type": "object",
         "required": [
@@ -12425,6 +12741,67 @@
               "null"
             ],
             "description": "`'single' | 'double' | 'webtoon'` or null."
+          }
+        }
+      },
+      "UpsertSeriesBulkReq": {
+        "type": "object",
+        "description": "Body for `POST /me/progress/series-bulk` — bulk read/unread\napplied across every active issue of an arbitrary list of\nseries. Sister endpoint to `upsert_bulk` (which takes\nissue_ids); used by the multi-select toolbar on filter views\nwhere the cards are series. Each series in `series_ids` is\nexpanded server-side to its active issues, then walked through\nthe same `upsert_for` helper.\n\nPlan: `~/.claude/plans/multi-select-bulk-actions-1.0.md`\n(M6 extension per user request 2026-05-17 — filter views\noriginally weren't going to support mark-read since they're\nseries-only, but operating per-series-then-per-issue is the\nnatural semantics).",
+        "required": [
+          "series_ids",
+          "finished"
+        ],
+        "properties": {
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished": {
+            "type": "boolean"
+          },
+          "series_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "UpsertSeriesBulkResp": {
+        "type": "object",
+        "required": [
+          "updated",
+          "skipped",
+          "forbidden_series",
+          "not_found_series"
+        ],
+        "properties": {
+          "forbidden_series": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Series the caller can't see (library access denied).",
+            "minimum": 0
+          },
+          "not_found_series": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Series whose id didn't resolve.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues already in the target state.",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issue rows that received a new or updated progress record.",
+            "minimum": 0
           }
         }
       },

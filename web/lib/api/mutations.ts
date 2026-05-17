@@ -242,6 +242,250 @@ export function useTriggerScan(libraryId: string) {
   );
 }
 
+/** Response shape of `POST /me/progress/bulk`. Surfaces enough
+ *  granularity that the toast can say "N marked read; M were
+ *  already read" instead of an unhelpful "done". */
+export type BulkProgressResp = {
+  updated: number;
+  skipped: number;
+  forbidden: number;
+  not_found: number;
+};
+
+/** Response shape of `POST /me/progress/series-bulk`. `updated` /
+ *  `skipped` count individual issues (a series of 20 fully unread
+ *  issues yields `updated: 20`); `forbidden_series` / `not_found_series`
+ *  count series-level filter drops. */
+export type BulkSeriesProgressResp = {
+  updated: number;
+  skipped: number;
+  forbidden_series: number;
+  not_found_series: number;
+};
+
+/** Pure summary builder for `useBulkMarkProgress` toasts. Extracted
+ *  so the messaging logic is unit-testable without spinning up
+ *  TanStack Query. Exported for tests. */
+export function summarizeBulkProgress(
+  data: BulkProgressResp | null | undefined,
+  finished: boolean,
+): string {
+  if (!data) return finished ? "Marked read" : "Marked unread";
+  const { updated, skipped, forbidden, not_found } = data;
+  const verb = finished ? "marked read" : "marked unread";
+  const parts: string[] = [];
+  if (updated > 0) parts.push(`${updated} ${verb}`);
+  if (skipped > 0) {
+    parts.push(`${skipped} already ${finished ? "read" : "unread"}`);
+  }
+  const lost = forbidden + not_found;
+  if (lost > 0) parts.push(`${lost} skipped`);
+  return parts.length > 0 ? parts.join("; ") : "No changes";
+}
+
+/** Pure summary builder for `useBulkMarkSeriesProgress` toasts.
+ *  Differs from `summarizeBulkProgress` only in the "series skipped"
+ *  trailer wording — `updated` / `skipped` are still issue counts. */
+export function summarizeBulkSeriesProgress(
+  data: BulkSeriesProgressResp | null | undefined,
+  finished: boolean,
+): string {
+  if (!data) return finished ? "Marked read" : "Marked unread";
+  const { updated, skipped, forbidden_series, not_found_series } = data;
+  const verb = finished ? "marked read" : "marked unread";
+  const parts: string[] = [];
+  if (updated > 0) parts.push(`${updated} ${verb}`);
+  if (skipped > 0) {
+    parts.push(`${skipped} already ${finished ? "read" : "unread"}`);
+  }
+  const lost = forbidden_series + not_found_series;
+  if (lost > 0) parts.push(`${lost} series skipped`);
+  return parts.length > 0 ? parts.join("; ") : "No changes";
+}
+
+/** Response shape of `POST /me/collections/{id}/members/bulk-add`. */
+export type BulkAddMembersResp = {
+  added: number;
+  already_present: number;
+  not_found: number;
+  invalid: number;
+};
+
+/** Response shape of `POST /me/collections/{id}/members/bulk-remove`. */
+export type BulkRemoveMembersResp = {
+  removed: number;
+  not_present: number;
+  invalid: number;
+};
+
+/**
+ * Multi-select M4: bulk-remove an array of `(entry_kind, ref_id)`
+ * pairs from a single collection. Underlying series / issues are
+ * NOT deleted — only the collection-membership rows.
+ *
+ * Members not currently in the collection are silently counted as
+ * `not_present` (idempotent from the user's perspective).
+ *
+ * Invalidates the collection's entries cache (both paginated and
+ * infinite-scroll variants — they have distinct keys) plus the
+ * collections list so the home rail's saved-view counts refresh.
+ *
+ * Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M4).
+ */
+export function useBulkRemoveFromCollection(collectionId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<
+    BulkRemoveMembersResp,
+    { members: { entry_kind: "issue" | "series"; ref_id: string }[] }
+  >(
+    (input) => ({
+      path: `/me/collections/${collectionId}/members/bulk-remove`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: (data) => {
+        if (!data) return "Removed from collection";
+        const { removed, not_present, invalid } = data;
+        const parts: string[] = [];
+        if (removed > 0) parts.push(`${removed} removed`);
+        if (not_present > 0)
+          parts.push(`${not_present} weren't in the collection`);
+        if (invalid > 0) parts.push(`${invalid} skipped`);
+        return parts.length > 0 ? parts.join("; ") : "No changes";
+      },
+      onSuccess: () => {
+        invalidateCollectionEntries(qc, collectionId);
+      },
+    },
+  );
+}
+
+/**
+ * Common cache-invalidation surface for any mutation that changes
+ * a collection's membership. The paginated `useCollectionEntries`
+ * and the infinite-scroll `useCollectionEntriesInfinite` live under
+ * distinct query keys (`entries` vs. `entries-infinite`), and
+ * TanStack's prefix-match doesn't bridge them. Centralizing the
+ * invalidation here prevents one mutation forgetting one variant
+ * and silently producing stale UI (which was the original v0.3.18-pre
+ * bug user-reported on the collection-detail bulk-remove flow).
+ */
+function invalidateCollectionEntries(
+  qc: ReturnType<typeof useQueryClient>,
+  collectionId: string,
+) {
+  qc.invalidateQueries({ queryKey: queryKeys.collections });
+  qc.invalidateQueries({ queryKey: queryKeys.collection(collectionId) });
+  qc.invalidateQueries({
+    queryKey: queryKeys.collectionEntriesInfinite(collectionId),
+  });
+  // Paginated entries — prefix-match covers every `{cursor, limit}`
+  // combination cached against the same collection id.
+  qc.invalidateQueries({
+    queryKey: ["collections", "entries", collectionId],
+  });
+}
+
+/**
+ * Multi-select M3: bulk-add an array of `(entry_kind, ref_id)` pairs
+ * to a single collection. Server-side `bulk_add_members` handles
+ * partial-unique idempotency (counted as `already_present`) and
+ * ref_id existence checks (counted as `not_found`). The toast
+ * surfaces all four buckets so the user knows exactly what landed.
+ *
+ * Invalidates the collection's entries cache + the collections
+ * list so the home rail's saved-view counts refresh.
+ *
+ * Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M3).
+ */
+export function useBulkAddToCollection(collectionId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<
+    BulkAddMembersResp,
+    { members: { entry_kind: "issue" | "series"; ref_id: string }[] }
+  >(
+    (input) => ({
+      path: `/me/collections/${collectionId}/members/bulk-add`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: (data) => {
+        if (!data) return "Added to collection";
+        const { added, already_present, not_found, invalid } = data;
+        const parts: string[] = [];
+        if (added > 0) parts.push(`${added} added`);
+        if (already_present > 0) parts.push(`${already_present} already present`);
+        const lost = not_found + invalid;
+        if (lost > 0) parts.push(`${lost} skipped`);
+        return parts.length > 0 ? parts.join("; ") : "No changes";
+      },
+      onSuccess: () => {
+        invalidateCollectionEntries(qc, collectionId);
+      },
+    },
+  );
+}
+
+/**
+ * Multi-select M1 + M2: bulk-mark `issue_ids` as read or unread in
+ * one round-trip. Drives the "Mark read" / "Mark unread" actions in
+ * the `<SelectionToolbar>`. Backend de-duplicates and caps the
+ * issue_ids list at 500.
+ *
+ * Invalidates the per-user progress cache so the issue-card
+ * finished badge updates without a manual refresh.
+ *
+ * Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M1).
+ */
+export function useBulkMarkProgress() {
+  const qc = useQueryClient();
+  return useApiMutation<
+    BulkProgressResp,
+    { issue_ids: string[]; finished: boolean }
+  >(
+    (input) => ({
+      path: `/me/progress/bulk`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: (data, input) =>
+        summarizeBulkProgress(data, input.finished),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+      },
+    },
+  );
+}
+
+/** Multi-select mark-read/unread for filter views, which are
+ *  series-only surfaces. Each selected series id expands server-side
+ *  to its active issues, then walks the same `upsert_for` helper
+ *  `useBulkMarkProgress` does — so the toast summary still reads in
+ *  issue counts. */
+export function useBulkMarkSeriesProgress() {
+  const qc = useQueryClient();
+  return useApiMutation<
+    BulkSeriesProgressResp,
+    { series_ids: string[]; finished: boolean }
+  >(
+    (input) => ({
+      path: `/me/progress/series-bulk`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: (data, input) =>
+        summarizeBulkSeriesProgress(data, input.finished),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+      },
+    },
+  );
+}
+
 /**
  * Tranche C of recovery-visibility — admin-only `POST
  * /libraries/{slug}/validate-deeply`. Fires off a background task
@@ -1489,10 +1733,7 @@ export function useAddCollectionEntry(collectionId: string) {
     }),
     {
       onSuccess: () => {
-        qc.invalidateQueries({
-          queryKey: ["collections", "entries", collectionId],
-        });
-        qc.invalidateQueries({ queryKey: queryKeys.collections });
+        invalidateCollectionEntries(qc, collectionId);
       },
     },
   );
@@ -1509,10 +1750,7 @@ export function useRemoveCollectionEntry(collectionId: string) {
     {
       successMessage: "Removed",
       onSuccess: () => {
-        qc.invalidateQueries({
-          queryKey: ["collections", "entries", collectionId],
-        });
-        qc.invalidateQueries({ queryKey: queryKeys.collections });
+        invalidateCollectionEntries(qc, collectionId);
       },
     },
   );
@@ -1619,9 +1857,7 @@ export function useReorderCollectionEntries(collectionId: string) {
     }),
     {
       onSuccess: () => {
-        qc.invalidateQueries({
-          queryKey: ["collections", "entries", collectionId],
-        });
+        invalidateCollectionEntries(qc, collectionId);
       },
     },
   );

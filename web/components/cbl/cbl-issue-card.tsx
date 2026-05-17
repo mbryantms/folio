@@ -11,6 +11,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,8 @@ export function CblIssueCard({
   issue,
   cblSavedViewId,
   className,
+  selectMode,
+  onEnterSelectMode,
 }: {
   entry: CblEntryView;
   /** Hydrated issue when `entry.matched_issue_id` resolves to a row in
@@ -36,6 +39,16 @@ export function CblIssueCard({
    *  the next list entry instead of the next series issue. */
   cblSavedViewId: string;
   className?: string;
+  /** Multi-select mode (M6 extension). Mirrors `<IssueCard>`'s shape.
+   *  Only meaningful when `issue` is set — placeholder cards (missing
+   *  / ambiguous match) aren't selectable. */
+  selectMode?: {
+    isActive: boolean;
+    isSelected: boolean;
+    onToggle: (ev?: React.MouseEvent) => void;
+  };
+  /** Long-press sheet "Select" entry callback. */
+  onEnterSelectMode?: (id: string) => void;
 }) {
   const positionLabel = `#${entry.position + 1}`;
   const numberLabel = entry.issue_number ? `#${entry.issue_number}` : "—";
@@ -73,6 +86,17 @@ export function CblIssueCard({
       : [];
   // Hook is always called (rules-of-hooks); when there's no resolved
   // issue the sheet renders nothing useful, which is fine.
+  const inSelectMode = selectMode?.isActive ?? false;
+  const sheetActions: CoverMenuAction[] =
+    onEnterSelectMode && !inSelectMode && issue
+      ? [
+          {
+            label: "Select",
+            onSelect: () => onEnterSelectMode(issue.id),
+          },
+          ...menuActions,
+        ]
+      : menuActions;
   const longPress = useCoverLongPressActions({
     primary:
       issue && issue.state === "active"
@@ -82,12 +106,25 @@ export function CblIssueCard({
               router.push(readerUrl(issue, { cbl: cblSavedViewId })),
           }
         : undefined,
-    actions: menuActions,
+    actions: sheetActions,
     label: `${positionLabel} · ${heading}`,
   });
 
+  // When in select mode, the long-press wrapper is suppressed and
+  // taps toggle selection instead of navigating — same pattern as
+  // `<IssueCard>` / `<SeriesCard>`.
+  const coverWrapperProps = inSelectMode ? {} : longPress.wrapperProps;
+
   const cover = (showActions: boolean) => (
-    <div className="relative" {...longPress.wrapperProps}>
+    <div className="relative" {...coverWrapperProps}>
+      {selectMode && (
+        <SelectionCheckbox
+          isSelected={selectMode.isSelected}
+          selectMode={selectMode.isActive}
+          onToggle={selectMode.onToggle}
+          label={heading}
+        />
+      )}
       <Cover
         src={issue?.cover_url}
         alt={heading}
@@ -114,7 +151,7 @@ export function CblIssueCard({
           {entry.match_status}
         </Badge>
       )}
-      {showActions && issue && (
+      {showActions && issue && !inSelectMode && (
         <>
           <CoverMenuButton
             label={`Actions for ${heading}`}
@@ -141,6 +178,10 @@ export function CblIssueCard({
   );
   const wrapClass = cn(
     "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
+    inSelectMode && "text-left w-full cursor-pointer",
+    inSelectMode &&
+      selectMode?.isSelected &&
+      "bg-primary/5 ring-2 ring-primary/40",
     className,
   );
   // Dialog must render outside <Link> — see SeriesCard for the bubble
@@ -149,15 +190,30 @@ export function CblIssueCard({
   if (issue) {
     return (
       <>
-        <Link
-          href={issueUrl(issue, { cbl: cblSavedViewId })}
-          className={wrapClass}
-        >
-          {cover(issue.state === "active")}
-          {meta}
-        </Link>
+        {inSelectMode ? (
+          <button
+            type="button"
+            onClick={(ev) => {
+              ev.preventDefault();
+              selectMode?.onToggle(ev);
+            }}
+            aria-pressed={selectMode?.isSelected ?? false}
+            className={wrapClass}
+          >
+            {cover(issue.state === "active")}
+            {meta}
+          </button>
+        ) : (
+          <Link
+            href={issueUrl(issue, { cbl: cblSavedViewId })}
+            className={wrapClass}
+          >
+            {cover(issue.state === "active")}
+            {meta}
+          </Link>
+        )}
         {collectionActions.dialog}
-        {longPress.sheet}
+        {!inSelectMode && longPress.sheet}
       </>
     );
   }

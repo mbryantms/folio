@@ -168,12 +168,17 @@ async fn seed_issue(app: &TestApp) -> String {
     .unwrap();
 
     let issue_id = format!("{:0>64}", series_id.simple());
+    // Per-issue uniqueness — file_path + slug both have UNIQUE
+    // constraints, so tests that call `seed_issue` repeatedly
+    // (multi-select bulk tests, especially) must vary them by id.
+    let slug = format!("issue-{}", &issue_id[..8]);
+    let file_path = format!("/tmp/{issue_id}.cbz");
     IssueAM {
         id: Set(issue_id.clone()),
         library_id: Set(lib_id),
         series_id: Set(series_id),
-        slug: Set("issue-1".into()),
-        file_path: Set("/tmp/issue-1.cbz".into()),
+        slug: Set(slug),
+        file_path: Set(file_path),
         file_size: Set(1),
         file_mtime: Set(now),
         state: Set("active".into()),
@@ -337,4 +342,532 @@ async fn first_write_with_no_finished_defaults_to_false() {
     assert_eq!(status, StatusCode::OK, "json: {json:#?}");
     assert_eq!(json["finished"].as_bool(), Some(false));
     assert_eq!(json["page"].as_i64(), Some(5));
+}
+
+/// Multi-select bulk-mark M2:
+/// `POST /me/progress/bulk` upserts progress rows for an array of
+/// issue ids. Mirrors `upsert_series` but for arbitrary cross-series
+/// selection. Bucket counts (updated / skipped / forbidden / not_found)
+/// let the toast surface "N marked, M were already marked".
+async fn post_bulk(
+    app: &TestApp,
+    auth: &Authed,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/me/progress/bulk")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &auth.csrf)
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_mark_read_updates_each_id_and_counts_skipped() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-mark@example.com").await;
+    let issue_a = seed_issue(&app).await;
+    let issue_b = seed_issue(&app).await;
+    let issue_c = seed_issue(&app).await;
+
+    // Pre-mark issue_a as read so the bulk call should `skipped += 1`.
+    let (status, _) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({
+            "issue_id": issue_a,
+            "page": 19,
+            "finished": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Bulk-mark all three read.
+    let (status, json) = post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "issue_ids": [&issue_a, &issue_b, &issue_c],
+            "finished": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    assert_eq!(json["updated"].as_u64(), Some(2));
+    assert_eq!(json["skipped"].as_u64(), Some(1));
+    assert_eq!(json["forbidden"].as_u64(), Some(0));
+    assert_eq!(json["not_found"].as_u64(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_mark_unread_resets_to_page_zero() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-unread@example.com").await;
+    let issue_a = seed_issue(&app).await;
+
+    // Pre-mark as read.
+    let (_, _) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_a, "page": 19, "finished": true}),
+    )
+    .await;
+
+    let (status, json) = post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "issue_ids": [&issue_a],
+            "finished": false,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["updated"].as_u64(), Some(1));
+
+    // Verify via the progress sync-delta endpoint — the bulk-mark
+    // call is the only mutation in scope, so the only row should
+    // reflect the unread state.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/progress")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", auth.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp.into_body()).await;
+    let records = body["records"].as_array().expect("records array");
+    let row = records
+        .iter()
+        .find(|r| r["issue_id"].as_str() == Some(issue_a.as_str()))
+        .expect("progress row");
+    assert_eq!(row["page"].as_i64(), Some(0));
+    assert_eq!(row["finished"].as_bool(), Some(false));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_mark_with_nonexistent_id_counts_not_found_silently() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-missing@example.com").await;
+    let issue_a = seed_issue(&app).await;
+
+    let (status, json) = post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "issue_ids": [&issue_a, "this-id-does-not-exist"],
+            "finished": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["updated"].as_u64(), Some(1));
+    assert_eq!(json["not_found"].as_u64(), Some(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_mark_empty_list_returns_zero_counts() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-empty@example.com").await;
+    let (status, json) = post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({"issue_ids": [], "finished": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["updated"].as_u64(), Some(0));
+    assert_eq!(json["skipped"].as_u64(), Some(0));
+    assert_eq!(json["forbidden"].as_u64(), Some(0));
+    assert_eq!(json["not_found"].as_u64(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_mark_over_cap_rejects() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-cap@example.com").await;
+    let ids: Vec<String> = (0..501).map(|i| format!("id-{i}")).collect();
+    let (status, _) = post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({"issue_ids": ids, "finished": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_mark_dedupes_ids() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-dedupe@example.com").await;
+    let issue_a = seed_issue(&app).await;
+
+    // The same id submitted three times should mark once, count once.
+    let (status, json) = post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "issue_ids": [&issue_a, &issue_a, &issue_a],
+            "finished": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["updated"].as_u64(), Some(1));
+    assert_eq!(json["skipped"].as_u64(), Some(0));
+}
+
+/// M6 extension: series-bulk endpoint backs filter views, where each
+/// card is a series rather than an issue. Each series id expands
+/// server-side to its active issues, then walks through `upsert_for`.
+async fn post_series_bulk(
+    app: &TestApp,
+    auth: &Authed,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/me/progress/series-bulk")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &auth.csrf)
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+/// Seeds a single series with `n_issues` active issues and returns the
+/// series_id along with the issue ids. Sister to `seed_issue` which
+/// makes one series per issue — series-bulk tests need to verify that
+/// every issue under a single series gets marked.
+async fn seed_series_with_issues(app: &TestApp, n_issues: usize) -> (Uuid, Vec<String>) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    let lib_id = Uuid::now_v7();
+    library::ActiveModel {
+        id: Set(lib_id),
+        name: Set("Lib".into()),
+        root_path: Set(format!("/tmp/{lib_id}")),
+        default_language: Set("en".into()),
+        default_reading_direction: Set("ltr".into()),
+        dedupe_by_content: Set(true),
+        slug: Set(lib_id.to_string()),
+        scan_schedule_cron: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        last_scan_at: Set(None),
+        ignore_globs: Set(serde_json::json!([])),
+        report_missing_comicinfo: Set(false),
+        file_watch_enabled: Set(true),
+        soft_delete_days: Set(30),
+        thumbnails_enabled: Set(true),
+        thumbnail_format: Set("webp".to_owned()),
+        thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
+        thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
+        generate_page_thumbs_on_scan: Set(false),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let series_id = Uuid::now_v7();
+    SeriesAM {
+        id: Set(series_id),
+        library_id: Set(lib_id),
+        name: Set("Test Series".into()),
+        normalized_name: Set(normalize_name("Test Series")),
+        year: Set(Some(2020)),
+        volume: Set(None),
+        publisher: Set(None),
+        imprint: Set(None),
+        status: Set("continuing".into()),
+        total_issues: Set(None),
+        age_rating: Set(None),
+        summary: Set(None),
+        language_code: Set("en".into()),
+        comicvine_id: Set(None),
+        metron_id: Set(None),
+        gtin: Set(None),
+        series_group: Set(None),
+        slug: Set(format!("ts-{series_id}")),
+        alternate_names: Set(serde_json::json!([])),
+        created_at: Set(now),
+        updated_at: Set(now),
+        folder_path: Set(None),
+        last_scanned_at: Set(None),
+        match_key: Set(None),
+        removed_at: Set(None),
+        removal_confirmed_at: Set(None),
+        status_user_set_at: Set(None),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let mut issue_ids = Vec::with_capacity(n_issues);
+    for i in 0..n_issues {
+        // Per-issue uniqueness — file_path + slug + content_hash all
+        // need to be distinct.
+        let unique = Uuid::now_v7();
+        let issue_id = format!("{:0>64}", unique.simple());
+        let slug = format!("issue-{}-{}", series_id.simple(), i);
+        let file_path = format!("/tmp/{}-{}.cbz", series_id, i);
+        IssueAM {
+            id: Set(issue_id.clone()),
+            library_id: Set(lib_id),
+            series_id: Set(series_id),
+            slug: Set(slug),
+            file_path: Set(file_path),
+            file_size: Set(1),
+            file_mtime: Set(now),
+            state: Set("active".into()),
+            content_hash: Set(issue_id.clone()),
+            title: Set(None),
+            sort_number: Set(Some((i + 1) as f64)),
+            number_raw: Set(Some(format!("{}", i + 1))),
+            volume: Set(None),
+            year: Set(Some(2020)),
+            month: Set(None),
+            day: Set(None),
+            summary: Set(None),
+            notes: Set(None),
+            language_code: Set(None),
+            format: Set(None),
+            black_and_white: Set(None),
+            manga: Set(None),
+            age_rating: Set(None),
+            page_count: Set(Some(20)),
+            pages: Set(serde_json::json!([])),
+            comic_info_raw: Set(serde_json::json!({})),
+            alternate_series: Set(None),
+            story_arc: Set(None),
+            story_arc_number: Set(None),
+            characters: Set(None),
+            teams: Set(None),
+            locations: Set(None),
+            tags: Set(None),
+            genre: Set(None),
+            writer: Set(None),
+            penciller: Set(None),
+            inker: Set(None),
+            colorist: Set(None),
+            letterer: Set(None),
+            cover_artist: Set(None),
+            editor: Set(None),
+            translator: Set(None),
+            publisher: Set(None),
+            imprint: Set(None),
+            scan_information: Set(None),
+            community_rating: Set(None),
+            review: Set(None),
+            web_url: Set(None),
+            comicvine_id: Set(None),
+            metron_id: Set(None),
+            gtin: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+            removed_at: Set(None),
+            removal_confirmed_at: Set(None),
+            superseded_by: Set(None),
+            special_type: Set(None),
+            hash_algorithm: Set(1),
+            thumbnails_generated_at: Set(None),
+            thumbnail_version: Set(0),
+            thumbnails_error: Set(None),
+            additional_links: Set(serde_json::json!([])),
+            user_edited: Set(serde_json::json!([])),
+            comicinfo_count: Set(None),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        issue_ids.push(issue_id);
+    }
+    (series_id, issue_ids)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_bulk_marks_every_active_issue_read() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-bulk-read@example.com").await;
+    let (series_id, _issues) = seed_series_with_issues(&app, 3).await;
+
+    let (status, json) = post_series_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "series_ids": [series_id.to_string()],
+            "finished": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    assert_eq!(json["updated"].as_u64(), Some(3));
+    assert_eq!(json["skipped"].as_u64(), Some(0));
+    assert_eq!(json["forbidden_series"].as_u64(), Some(0));
+    assert_eq!(json["not_found_series"].as_u64(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_bulk_counts_already_read_as_skipped() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-bulk-skip@example.com").await;
+    let (series_id, issues) = seed_series_with_issues(&app, 2).await;
+
+    // Pre-mark the first issue as read.
+    let (status, _) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": &issues[0], "page": 19, "finished": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, json) = post_series_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "series_ids": [series_id.to_string()],
+            "finished": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    assert_eq!(json["updated"].as_u64(), Some(1));
+    assert_eq!(json["skipped"].as_u64(), Some(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_bulk_unread_resets_every_issue() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-bulk-unread@example.com").await;
+    let (series_id, issues) = seed_series_with_issues(&app, 2).await;
+
+    // Pre-mark both as read.
+    for id in &issues {
+        let (_, _) = post_progress(
+            &app,
+            &auth,
+            serde_json::json!({"issue_id": id, "page": 19, "finished": true}),
+        )
+        .await;
+    }
+
+    let (status, json) = post_series_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "series_ids": [series_id.to_string()],
+            "finished": false,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    assert_eq!(json["updated"].as_u64(), Some(2));
+    assert_eq!(json["skipped"].as_u64(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_bulk_empty_list_returns_zero_counts() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-bulk-empty@example.com").await;
+    let (status, json) = post_series_bulk(
+        &app,
+        &auth,
+        serde_json::json!({"series_ids": [], "finished": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["updated"].as_u64(), Some(0));
+    assert_eq!(json["skipped"].as_u64(), Some(0));
+    assert_eq!(json["forbidden_series"].as_u64(), Some(0));
+    assert_eq!(json["not_found_series"].as_u64(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_bulk_over_cap_rejects() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-bulk-cap@example.com").await;
+    let ids: Vec<String> = (0..101).map(|_| Uuid::now_v7().to_string()).collect();
+    let (status, _) = post_series_bulk(
+        &app,
+        &auth,
+        serde_json::json!({"series_ids": ids, "finished": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_bulk_missing_series_counts_not_found() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-bulk-missing@example.com").await;
+    let (series_id, _) = seed_series_with_issues(&app, 1).await;
+    let nonexistent = Uuid::now_v7();
+
+    let (status, json) = post_series_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "series_ids": [series_id.to_string(), nonexistent.to_string()],
+            "finished": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    assert_eq!(json["updated"].as_u64(), Some(1));
+    assert_eq!(json["not_found_series"].as_u64(), Some(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_bulk_dedupes_series_ids() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-bulk-dedupe@example.com").await;
+    let (series_id, _) = seed_series_with_issues(&app, 1).await;
+
+    let (status, json) = post_series_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "series_ids": [
+                series_id.to_string(),
+                series_id.to_string(),
+                series_id.to_string(),
+            ],
+            "finished": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // 1 issue × dedup means a single update.
+    assert_eq!(json["updated"].as_u64(), Some(1));
 }
