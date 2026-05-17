@@ -82,7 +82,7 @@ trait ZipFileLike: Read {
     fn entry_compression(&self) -> zip::CompressionMethod;
 }
 
-impl ZipFileLike for ZipFile<'_> {
+impl<R: Read> ZipFileLike for ZipFile<'_, R> {
     fn entry_size(&self) -> u64 {
         self.size()
     }
@@ -154,27 +154,43 @@ impl Cbz {
             if encrypted {
                 return Err(ArchiveError::Encrypted);
             }
+
+            // Directory placeholders carry no data — skip them BEFORE the
+            // cap checks because some packagers stamp a bogus uncompressed
+            // size on directory entries (observed in the wild: a
+            // 264KB-claimed `Suiperman 082/` entry whose compressed_size
+            // is 0). The compression-ratio check below would otherwise
+            // reject the whole archive on the `cmp == 0 && unc > 0`
+            // branch.
+            if is_dir {
+                continue;
+            }
+
             if unc > limits.max_entry_bytes {
                 return Err(ArchiveError::CapExceeded("single entry uncompressed bytes"));
             }
-            // Compression-ratio bomb: cmp == 0 with unc > 0 = trivially infinite ratio.
-            if cmp == 0 && unc > 0 {
-                return Err(ArchiveError::CapExceeded("compression ratio (cmp=0)"));
-            }
-            if cmp > 0 {
-                let ratio = unc / cmp;
-                if ratio > limits.max_compression_ratio as u64 {
-                    return Err(ArchiveError::CapExceeded("compression ratio"));
-                }
+            // Compression-ratio defense — soft. If a single entry's
+            // claimed uncompressed bytes blow past the ratio cap, we drop
+            // it from the index rather than failing the whole archive.
+            // The cap exists to keep us from being tricked into
+            // decompressing a logic bomb; skipping the entry means no
+            // page-byte handler can ever request its bytes, so the bomb
+            // stays unread. The hard `max_total_bytes` check still
+            // catches a genuine whole-archive expansion attack.
+            let ratio_suspect = (cmp == 0 && unc > 0)
+                || (cmp > 0 && unc / cmp > limits.max_compression_ratio as u64);
+            if ratio_suspect {
+                tracing::warn!(
+                    path = %path.display(),
+                    entry = %name,
+                    unc, cmp,
+                    "cbz: skipping entry with suspicious compression ratio",
+                );
+                continue;
             }
             total_uncompressed = total_uncompressed.saturating_add(unc);
             if total_uncompressed > limits.max_total_bytes {
                 return Err(ArchiveError::CapExceeded("total uncompressed bytes"));
-            }
-
-            // Skip directory placeholders (zero-length, name ending in '/').
-            if is_dir {
-                continue;
             }
 
             let safe = entry_name::validate(&name)?;
@@ -420,10 +436,9 @@ impl Cbz {
     }
 }
 
-/// Try the happy-path File-backed open first. If it fails with the
-/// "Could not find EOCD" / "No CDFH found" symptom — the surface error
-/// for malformed Info-ZIP Unicode Path extras (`0x7075`) whose stored
-/// CRC32 doesn't match the CDFH's CP437 filename — fall back to a
+/// Try the happy-path File-backed open first. If it fails with a symptom
+/// of a malformed Info-ZIP Unicode Path extra (`0x7075`) whose stored
+/// CRC32 doesn't match the CDFH's CP437 filename, fall back to a
 /// memory-backed read of the file with every `0x7075` extra stripped
 /// from the central directory. Observed on the Araña Heart of the
 /// Spider (2005) CBZs in production 2026-05-14: the publisher's tool
@@ -431,12 +446,21 @@ impl Cbz {
 /// crate computes the CRC against the raw CP437 file_name field, so
 /// they never match. `unzip` ignores the mismatch; we have to rewrite
 /// the bytes.
+///
+/// Three error surfaces trigger recovery:
+///   - `"CRC32 checksum failed on Unicode extra field"` — zip 3+'s
+///     precise diagnosis; this is the canonical signature.
+///   - `"Could not find EOCD"` and `"No CDFH found"` — zip 2.x
+///     surfaces when the CRC failure aborted the CD walk mid-way.
+///     Retained so a future downgrade or fork still trips recovery.
 fn open_zip_with_recovery(path: &Path) -> Result<OpenedZip, ArchiveError> {
     let f = File::open(path)?;
     match ZipArchive::new(f) {
         Ok(a) => Ok(OpenedZip::File(a)),
         Err(zip::result::ZipError::InvalidArchive(msg))
-            if msg.contains("Could not find EOCD") || msg.contains("No CDFH found") =>
+            if msg.contains("CRC32 checksum failed on Unicode extra field")
+                || msg.contains("Could not find EOCD")
+                || msg.contains("No CDFH found") =>
         {
             let bytes = std::fs::read(path)?;
             let recovered = recover_zip_bytes(&bytes).ok_or_else(|| {
@@ -687,12 +711,81 @@ mod tests {
     }
 
     #[test]
-    fn compression_ratio_cap() {
-        // 1 MiB of zeros compresses to ~1 KiB → ratio ~1000:1, exceeding 200.
+    fn compression_ratio_cap_skips_entry_not_archive() {
+        // 1 MiB of zeros compresses to ~1 KiB → ratio ~1000:1, exceeding
+        // the default 200x cap. Soft behavior: the bomb entry drops out
+        // of `pages()` but the archive otherwise opens cleanly. The
+        // hard `max_total_bytes` check still defends against
+        // whole-archive expansion attacks.
         let bomb = vec![0u8; 1024 * 1024];
         let cbz = build_cbz(&[("bomb.png", &bomb)]);
-        let err = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap_err();
-        assert!(matches!(err, ArchiveError::CapExceeded(_)), "got: {err:?}");
+        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).expect("open");
+        assert!(a.pages().is_empty(), "bomb entry must be dropped");
+    }
+
+    #[test]
+    fn high_ratio_entry_doesnt_block_other_entries() {
+        // Regression for the Swamp Thing v2 trade: 215 entries, one of
+        // which is a near-blank credits page that compresses ~276x. The
+        // old hard-fail rule rejected the whole archive on that single
+        // entry. The new soft-skip rule drops only the offending entry
+        // and keeps every other page available.
+        let png = one_pixel_png();
+        let bomb = vec![0u8; 1024 * 1024]; // ratio ~1000:1
+        let cbz = build_cbz(&[
+            ("01.png", &png),
+            ("bomb.png", &bomb),
+            ("02.png", &png),
+            ("03.png", &png),
+        ]);
+        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).expect("open");
+        let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(pages, vec!["01.png", "02.png", "03.png"]);
+    }
+
+    /// Regression for the Superman V1939 082 case: the publisher's CBZ
+    /// contains a directory entry (`Suiperman 082/`) whose central
+    /// directory header carries a bogus `uncompressed_size > 0` with
+    /// `compressed_size = 0`. The old order — cap checks before the
+    /// is_dir skip — fired the "compression ratio (cmp=0)" branch on
+    /// that entry and aborted the whole open. The fix moves `is_dir`
+    /// above every cap check.
+    #[test]
+    fn directory_entry_with_bogus_size_doesnt_fail_open() {
+        // Build a CBZ with a directory entry sitting alongside a real
+        // page, then hand-patch the CDFH for the directory entry to
+        // claim a non-zero uncompressed size (and a zero compressed
+        // size, which the standard already produces for directories).
+        let png = one_pixel_png();
+        let scratch = tempfile::Builder::new().suffix(".cbz").tempfile().unwrap();
+        {
+            let mut zw = zip::ZipWriter::new(scratch.reopen().unwrap());
+            let opts =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            zw.add_directory("subdir/", opts).unwrap();
+            zw.start_file("subdir/page.png", opts).unwrap();
+            zw.write_all(&png).unwrap();
+            zw.finish().unwrap();
+        }
+
+        let mut bytes = std::fs::read(scratch.path()).unwrap();
+        let eocd_off = bytes
+            .windows(4)
+            .rposition(|w| w == [0x50, 0x4b, 0x05, 0x06])
+            .expect("EOCD");
+        let cd_offset =
+            u32::from_le_bytes(bytes[eocd_off + 16..eocd_off + 20].try_into().unwrap()) as usize;
+        assert_eq!(&bytes[cd_offset..cd_offset + 4], b"PK\x01\x02");
+        // Patch the first CDFH's uncompressed_size (bytes 24..28) to a
+        // bogus 264148 — the exact pathology observed in the wild.
+        let bogus_unc: u32 = 264_148;
+        bytes[cd_offset + 24..cd_offset + 28].copy_from_slice(&bogus_unc.to_le_bytes());
+        std::fs::write(scratch.path(), &bytes).unwrap();
+
+        let a = Cbz::open(scratch.path(), ArchiveLimits::default())
+            .expect("open should survive bogus dir-entry size");
+        let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(pages, vec!["subdir/page.png"]);
     }
 
     #[test]

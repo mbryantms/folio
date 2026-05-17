@@ -25,7 +25,8 @@ use parsers::{
     series_json::SeriesMetadata,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Set, Statement,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set,
+    Statement,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -340,15 +341,23 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     let issue_id = hash.clone(); // dedupe_by_content default
 
     // Dedupe-by-content: when the file_path lookup misses but a row already
-    // exists with this hash as its id, treat it as a move if the old path is
-    // gone; otherwise surface a duplicate warning instead of rolling back the
-    // chunk on a primary-key conflict.
+    // tracks this file's bytes, treat it as a move if the old path is gone;
+    // otherwise surface a duplicate warning instead of rolling back the
+    // chunk on a primary-key conflict. Filter by `content_hash` rather than
+    // `id` so retagged rows (where `id` is the historical first-insert hash
+    // and diverges from the live `content_hash`) are still detected as the
+    // same logical issue. `order_by_asc(Id)` keeps the choice deterministic
+    // if two rows share a hash transiently.
     if existing.is_none() {
-        let prior = IssueEntity::find_by_id(issue_id.clone()).one(db).await?;
+        let prior = IssueEntity::find()
+            .filter(issue::Column::ContentHash.eq(issue_id.clone()))
+            .order_by_asc(issue::Column::Id)
+            .one(db)
+            .await?;
         if let Some(prior) = prior {
             let previous_path = std::path::Path::new(&prior.file_path);
             if prior.file_path != path_str && !previous_path.exists() {
-                remember_moved_issue_path(db, &issue_id, &prior.file_path, &path_str).await?;
+                remember_moved_issue_path(db, &prior.id, &prior.file_path, &path_str).await?;
                 existing = Some(prior);
             } else {
                 health.emit(IssueKind::DuplicateContent {
@@ -378,8 +387,12 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // pages haven't changed. Decided here so the conditional below
         // doesn't have to inspect the active model.
         let content_changed = !row_matches_file(&row, size, mtime);
+        // `row.id` is the stable identifier set at first insert. Keep it
+        // pinned — never `Set(...)` it — so when bytes change (retag with
+        // ComicTagger, etc.) the UPDATE's WHERE clause still matches.
+        // `content_hash` carries the live fingerprint instead.
+        let row_id = row.id.clone();
         let mut am: IssueAM = row.into();
-        am.id = Set(issue_id.clone());
         am.library_id = Set(lib.id);
         am.series_id = Set(series_id);
         am.file_path = Set(path_str.clone());
@@ -457,8 +470,12 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             am.thumbnail_version = Set(0);
             am.thumbnails_error = Set(None);
         }
+        // Thumbnails live under the stable `row_id` directory so they
+        // survive content-hash drift (retags don't change which row the
+        // thumbs belong to). The post-scan worker will re-encode pages
+        // when `thumbnails_generated_at` is cleared above.
         let strip_dir =
-            crate::library::thumbnails::issue_thumbs_dir(&state.cfg().data_path, &issue_id);
+            crate::library::thumbnails::issue_thumbs_dir(&state.cfg().data_path, &row_id);
         if content_changed && strip_dir.exists() {
             // Best-effort — a leftover stale dir isn't fatal, the worker
             // will overwrite individual files. But we want to drop pages
@@ -468,7 +485,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             }
         }
         let updated = am.update(db).await?;
-        remember_primary_issue_path(db, &issue_id, &path_str).await?;
+        remember_primary_issue_path(db, &row_id, &path_str).await?;
         // F-1: pass the just-updated model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &updated).await?;
         stats.files_updated += 1;

@@ -595,6 +595,52 @@ waiting for the scheduled refresh window.
 
 Existing `comic_zip_lru_*` metrics from Phase 2 still apply.
 
+### Recovering rows stuck before the 2026-05-16 retag fix
+
+Before `~/.claude/plans/scanner-content-hash-1.0.md` shipped, the
+scanner would silently roll back any rescan that found a tracked
+file's bytes had changed (typical cause: a ComicTagger retag wrote
+a fresh `ComicInfo.xml`). The row keeps its old, sparse metadata
+forever — there's no health-issue, just a `WARN scan: ingest failed
+(batch will roll back)` line and `files_updated < files_seen` in
+the stats.
+
+After deploying the fix, every retagged file will pick up its
+metadata on the next normal scan. But a row that was stuck for
+weeks may have non-trivial state attached (a user's progress,
+markers, a saved-view CBL slot). Two recovery paths:
+
+1. **Force-scan the library** post-deploy. The `force=true`
+   library scan re-reads every file regardless of mtime, so any
+   row whose on-disk bytes have changed gets fully refreshed in
+   one pass. Preferred — no SQL needed:
+
+   ```sh
+   curl -X POST $HOST/admin/libraries/$LIBRARY_ID/scan?force=true
+   ```
+
+2. **Manual delete + rescan** for individually broken rows where
+   you can confirm no user state is attached (no progress, no
+   markers). Identifies the row by its stale `id` (the historical
+   content hash from first insert) — the row's editorial fields
+   will all be NULL despite an on-disk `ComicInfo.xml`:
+
+   ```sql
+   -- inspect first
+   SELECT id, file_path, writer, publisher, updated_at
+     FROM issues
+     WHERE file_path LIKE '%suspect-file%';
+
+   -- then delete, scoped to the stale row only
+   DELETE FROM issues
+     WHERE id = '<hash>'
+       AND writer IS NULL
+       AND publisher IS NULL;
+   ```
+
+   The next scan re-inserts the file through the normal insert
+   path with its ComicInfo populated.
+
 ## Carry-over (deferred from v1, tracked for follow-up)
 
 - **Wire the four stub health-issue variants** (`FolderNameMismatch`,
@@ -624,8 +670,19 @@ Existing `comic_zip_lru_*` metrics from Phase 2 still apply.
     [`process.rs::ingest_one`](../../crates/server/src/library/scanner/process.rs).
   - The library row's `dedupe_by_content` boolean is exposed via the
     API and stored, but **the scanner ignores it** — every library
-    behaves as if the flag were `true`, because `issue.id` is hard-coded
-    to the content hash and a hash can map to only one row.
+    behaves as if the flag were `true`, because the dedupe-by-content
+    path always flags a new file whose hash matches an existing row.
+  - **`issues.id` is the stable identifier; `issues.content_hash` is
+    the live fingerprint.** At first insert the two are set to the
+    same BLAKE3 hash. On rescan after a retag (ComicTagger writes a
+    `ComicInfo.xml`, bytes change) the scanner refreshes
+    `content_hash` but leaves `id` pinned, so `progress_records`,
+    `markers`, on-disk thumbs, and every other FK survive the
+    retag. The dedupe-by-content lookup filters by `content_hash`
+    so a moved + retagged file still resolves to the same row.
+    The conflated-PK model that pre-dated 2026-05-16 silently
+    discarded retag metadata via `RecordNotUpdated`; see
+    `~/.claude/plans/scanner-content-hash-1.0.md`.
   Remaining follow-up:
 
   1. **Alias-aware reconcile** — soft-delete an issue only

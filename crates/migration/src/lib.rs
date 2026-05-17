@@ -22,6 +22,7 @@ mod m20260515_000001_user_pages;
 mod m20260515_000002_sidebar_entries_page_kind;
 mod m20260515_000003_user_page_description;
 mod m20260515_000004_sidebar_headers_spacers;
+mod m20260516_000001_issues_content_hash_idx;
 mod m20260601_000001_user_reading_direction;
 mod m20260801_000001_scanner_v1;
 mod m20260901_000001_user_preferences;
@@ -120,6 +121,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260515_000002_sidebar_entries_page_kind::Migration),
             Box::new(m20260515_000003_user_page_description::Migration),
             Box::new(m20260515_000004_sidebar_headers_spacers::Migration),
+            Box::new(m20260516_000001_issues_content_hash_idx::Migration),
         ]
     }
 }

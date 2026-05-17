@@ -3,12 +3,20 @@
 //! Rules (rejection):
 //!   - absolute paths
 //!   - path components equal to `..`
-//!   - NUL or any C0 control character (`\x00`–`\x1F`, `\x7F`)
+//!   - NUL bytes (C-string truncation footgun on every downstream filesystem
+//!     API; legitimate filenames never contain `\0`)
 //!   - backslash separators (DOS-style — accept by translating to `/`? **no, reject**)
 //!   - empty components produced by leading/trailing/duplicate slashes
 //!   - explicit symlink-like or device-like markers (most ZIP impls don't support
 //!     symlinks anyway; we reject if the unix mode bits indicate symlink/device,
 //!     which the caller must check separately).
+//!
+//! Other C0/DEL control characters (`\x01`–`\x1F` except `\0`, plus `\x7F`)
+//! are **allowed**: they don't enable path traversal — at worst they produce
+//! a visually-weird filename — and rejecting them broke real publisher
+//! archives that contain valid JPGs with stray control bytes in the
+//! basename (observed: `CaptainAtom_7_TheGroup_001\x7f2.jpg` in a
+//! Marvel-published CBZ).
 //!
 //! Valid input → returns the canonical lowercased path with forward slashes,
 //! suitable for path-match and ordering. The original case is *also* returned
@@ -32,12 +40,11 @@ pub fn validate(name: &str) -> Result<SafeEntryName, ArchiveError> {
     if name.starts_with('/') {
         return Err(ArchiveError::UnsafeEntry(format!("absolute path: {name}")));
     }
-    for ch in name.chars() {
-        if ch == '\0' || (ch.is_ascii_control() && ch != '\n' && ch != '\r' && ch != '\t') {
-            return Err(ArchiveError::UnsafeEntry(format!(
-                "control char in: {name:?}"
-            )));
-        }
+    // Only NUL is a genuine traversal/security issue (C-string truncation
+    // on every fs API downstream). DEL and the rest of the C0 range are
+    // weird-looking but harmless — see the module doc-comment.
+    if name.contains('\0') {
+        return Err(ArchiveError::UnsafeEntry(format!("NUL in: {name:?}")));
     }
     let mut depth: i32 = 0;
     for component in name.split('/') {
@@ -102,6 +109,26 @@ mod tests {
     #[test]
     fn nul_rejected() {
         assert!(validate("page\0.jpg").is_err());
+    }
+
+    /// Real-world regression: a Captain Atom CBZ shipped from the
+    /// publisher contained `CaptainAtom_7_TheGroup_001\x7f2.jpg` — a
+    /// legitimate page with a stray DEL byte in the basename. The
+    /// historical "any control char rejects the whole archive" rule
+    /// blocked the file from scanning at all. DEL doesn't enable
+    /// path traversal (it's not a separator, doesn't truncate, doesn't
+    /// escape), so it must be allowed through.
+    #[test]
+    fn del_and_other_c0_controls_allowed() {
+        // DEL in the middle of a basename (the wild case).
+        let safe = validate("CaptainAtom_7_TheGroup_001\u{7f}2.jpg").expect("DEL ok");
+        assert!(safe.display.contains('\u{7f}'));
+        // Other C0 bytes: tab/newline/cr were already allowed; the
+        // others (0x01-0x1F minus \0) are now permitted too.
+        for ch in ['\u{01}', '\u{0b}', '\u{1f}'] {
+            let s = format!("pages/file{ch}.jpg");
+            validate(&s).unwrap_or_else(|e| panic!("control U+{:04X}: {e}", ch as u32));
+        }
     }
 
     #[test]
