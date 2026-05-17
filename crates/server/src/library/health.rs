@@ -70,6 +70,43 @@ pub enum IssueKind {
         path: PathBuf,
         ext: String,
     },
+    /// Archive opened only because a recovery branch in the archive
+    /// crate had to repair the file's central directory bytes (e.g.,
+    /// stripping malformed Unicode-Path extras, rebuilding CDFH
+    /// offsets after publisher-tool drift). The archive reads
+    /// normally afterwards — this is informational visibility, not a
+    /// user-facing error. `technique` is a static tag from
+    /// `archive::recovery::*`.
+    ///
+    /// See `~/.claude/plans/recovery-visibility-1.0.md` Tranche A.
+    RecoveredArchive {
+        path: PathBuf,
+        technique: String,
+    },
+    /// One or more entries inside the archive were dropped from the
+    /// page index because a soft defense rejected them (today: the
+    /// compression-ratio cap rejects entries that claim a >200x
+    /// expansion ratio). The archive opens; the user sees `dropped`
+    /// fewer pages than the archive claims. Surfaces as a warning
+    /// so operators can decide whether to repack the file.
+    SkippedArchiveEntries {
+        path: PathBuf,
+        dropped: u32,
+        total: u32,
+        reason: String,
+    },
+    /// A specific page inside an otherwise-OK archive can't be decoded
+    /// as an image. The LFH/CDFH is intact (the file scans), but the
+    /// compressed data is truncated or corrupt past the image header.
+    /// Surfaces only when the admin-triggered deep-validate job runs;
+    /// the regular scan never decodes page bytes for performance.
+    ///
+    /// Tranche C of `~/.claude/plans/recovery-visibility-1.0.md`.
+    UnreadablePage {
+        path: PathBuf,
+        page_index: u32,
+        error: String,
+    },
 }
 
 impl IssueKind {
@@ -89,6 +126,9 @@ impl IssueKind {
             Self::DuplicateContent { .. } => "DuplicateContent",
             Self::OrphanedSeriesJson { .. } => "OrphanedSeriesJson",
             Self::UnsupportedArchiveFormat { .. } => "UnsupportedArchiveFormat",
+            Self::RecoveredArchive { .. } => "RecoveredArchive",
+            Self::SkippedArchiveEntries { .. } => "SkippedArchiveEntries",
+            Self::UnreadablePage { .. } => "UnreadablePage",
         }
     }
 
@@ -105,9 +145,11 @@ impl IssueKind {
             | Self::AmbiguousVolume { .. }
             | Self::DuplicateContent { .. }
             | Self::OrphanedSeriesJson { .. }
-            | Self::UnsupportedArchiveFormat { .. } => Severity::Warning,
+            | Self::UnsupportedArchiveFormat { .. }
+            | Self::SkippedArchiveEntries { .. }
+            | Self::UnreadablePage { .. } => Severity::Warning,
 
-            Self::MissingComicInfo { .. } => Severity::Info,
+            Self::MissingComicInfo { .. } | Self::RecoveredArchive { .. } => Severity::Info,
         }
     }
 
@@ -145,6 +187,28 @@ impl IssueKind {
             Self::UnsupportedArchiveFormat { path, ext } => {
                 format!("UnsupportedArchiveFormat:{}:{ext}", path.display())
             }
+            Self::RecoveredArchive { path, technique } => {
+                format!("RecoveredArchive:{}:{technique}", path.display())
+            }
+            Self::SkippedArchiveEntries { path, reason, .. } => {
+                // `reason` partitions the fingerprint so the same file
+                // hitting two different soft defenses gets two rows. The
+                // `dropped`/`total` counts intentionally aren't in the
+                // key — re-emissions with shifting counts (e.g., a file
+                // got repacked between scans) should UPDATE the existing
+                // row, not duplicate it.
+                format!("SkippedArchiveEntries:{}:{reason}", path.display())
+            }
+            Self::UnreadablePage {
+                path, page_index, ..
+            } => {
+                // One fingerprint per (file, page_index) so re-running
+                // deep-validate updates existing rows instead of
+                // duplicating. The error message intentionally isn't
+                // in the key — image-crate error text drifts across
+                // releases and shouldn't churn the fingerprint.
+                format!("UnreadablePage:{}:{page_index}", path.display())
+            }
         };
         // Hash the key so the column stays a fixed length and doesn't leak
         // the full path through the unique index.
@@ -166,9 +230,10 @@ impl IssueKind {
             | Self::MissingComicInfo { path }
             | Self::MalformedComicInfo { path, .. }
             | Self::AmbiguousVolume { path, .. }
-            | Self::UnsupportedArchiveFormat { path, .. } => {
-                Some(path.to_string_lossy().into_owned())
-            }
+            | Self::UnsupportedArchiveFormat { path, .. }
+            | Self::RecoveredArchive { path, .. }
+            | Self::SkippedArchiveEntries { path, .. }
+            | Self::UnreadablePage { path, .. } => Some(path.to_string_lossy().into_owned()),
             Self::FolderNameMismatch { folder, .. } => Some(folder.clone()),
             Self::MixedSeriesInFolder { folder, .. } | Self::OrphanedSeriesJson { folder } => {
                 Some(folder.to_string_lossy().into_owned())

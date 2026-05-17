@@ -83,6 +83,8 @@ use utoipa::OpenApi;
         api::issues::update,
         api::issues::scan_issue,
         api::issues::next_in_series,
+        api::issues::list_issue_health,
+        api::libraries::validate_deeply,
         api::series::resume,
         api::issues::search,
         api::issues::list,

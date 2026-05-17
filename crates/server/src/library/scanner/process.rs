@@ -117,6 +117,27 @@ struct ArchiveTiming {
     page_probe_ms: u64,
 }
 
+/// Side-channel data the archive crate produces alongside parse
+/// outcomes. Empty in the happy path; populated when the archive
+/// crate had to repair the file or drop entries during open. The
+/// scanner translates these into `RecoveredArchive` /
+/// `SkippedArchiveEntries` health-issues so users see them in the
+/// admin Health tab.
+///
+/// See `~/.claude/plans/recovery-visibility-1.0.md` Tranche A.
+#[derive(Debug, Default)]
+struct ArchiveDiagnostics {
+    /// `Some(tag)` if a recovery branch fired during open. Tag values
+    /// are static strings from `archive::recovery`.
+    recovery: Option<&'static str>,
+    /// Entries dropped from the page index by a soft defense.
+    skipped: Vec<archive::SkippedEntry>,
+    /// Total entries the archive crate saw (kept + dropped). Used to
+    /// render "X of Y dropped" in the health-issue payload so the
+    /// operator has both the count and the ratio.
+    total_entries: u32,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn ingest_one<C: ConnectionTrait>(
     state: &AppState,
@@ -221,7 +242,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     // `ArchiveLimits` is `Copy`; capture once before spawn_blocking so
     // a `COMIC_ARCHIVE_MAX_*` env override flows into the parse path.
     let archive_limits = state.cfg().archive_limits();
-    let (hash, archive_outcome, timing) = {
+    let (hash, archive_outcome, timing, diagnostics) = {
         let _archive_permit = state
             .archive_work_semaphore
             .clone()
@@ -233,14 +254,45 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             let hash =
                 crate::library::hash::blake3_file_with_buffer(&path_for_blocking, hash_buffer_kb)?;
             let hash_ms = hash_started.elapsed().as_millis() as u64;
-            let (archive_outcome, mut timing) =
+            let (archive_outcome, mut timing, diagnostics) =
                 parse_archive_timed(&path_for_blocking, archive_limits);
             timing.hash_ms = hash_ms;
-            Ok::<_, anyhow::Error>((hash, archive_outcome, timing))
+            Ok::<_, anyhow::Error>((hash, archive_outcome, timing, diagnostics))
         })
         .await
         .map_err(|e| anyhow::anyhow!("archive parse task failed: {e}"))??
     };
+
+    // Translate archive-crate diagnostics into structured health-
+    // issues. Both run independently of the ComicInfo outcome —
+    // a file can need recovery AND have a clean ComicInfo, or be
+    // partially-skipped AND have rich metadata. See Tranche A of
+    // `~/.claude/plans/recovery-visibility-1.0.md`.
+    if let Some(technique) = diagnostics.recovery {
+        health.emit(IssueKind::RecoveredArchive {
+            path: path.to_path_buf(),
+            technique: technique.to_string(),
+        });
+    }
+    if !diagnostics.skipped.is_empty() {
+        // Group by reason so a future file that trips multiple soft
+        // defenses gets one row per defense. Today only the
+        // compression-ratio cap can fire, so the loop typically runs
+        // once.
+        let mut by_reason: std::collections::HashMap<&'static str, u32> =
+            std::collections::HashMap::new();
+        for s in &diagnostics.skipped {
+            *by_reason.entry(s.reason).or_default() += 1;
+        }
+        for (reason, dropped) in by_reason {
+            health.emit(IssueKind::SkippedArchiveEntries {
+                path: path.to_path_buf(),
+                dropped,
+                total: diagnostics.total_entries,
+                reason: reason.to_string(),
+            });
+        }
+    }
     stats.record_phase_parallel("hash", std::time::Duration::from_millis(timing.hash_ms));
     stats.record_phase_parallel(
         "archive_parse",
@@ -677,7 +729,10 @@ fn parse_archive_with(path: &Path, mode: ParseMode, limits: ArchiveLimits) -> Ar
     parse_archive_timed_with(path, mode, limits).0
 }
 
-fn parse_archive_timed(path: &Path, limits: ArchiveLimits) -> (ArchiveOutcome, ArchiveTiming) {
+fn parse_archive_timed(
+    path: &Path,
+    limits: ArchiveLimits,
+) -> (ArchiveOutcome, ArchiveTiming, ArchiveDiagnostics) {
     parse_archive_timed_with(path, ParseMode::FullIngest, limits)
 }
 
@@ -685,14 +740,42 @@ fn parse_archive_timed_with(
     path: &Path,
     mode: ParseMode,
     limits: ArchiveLimits,
-) -> (ArchiveOutcome, ArchiveTiming) {
+) -> (ArchiveOutcome, ArchiveTiming, ArchiveDiagnostics) {
     let parse_started = Instant::now();
     let mut timing = ArchiveTiming::default();
     let mut archive = match archive::open(path, limits) {
         Ok(c) => c,
-        Err(ArchiveError::Encrypted) => return (ArchiveOutcome::Encrypted, timing),
-        Err(ArchiveError::Io(s)) => return (ArchiveOutcome::Unreadable(s), timing),
-        Err(other) => return (ArchiveOutcome::Malformed(other.to_string()), timing),
+        Err(ArchiveError::Encrypted) => {
+            return (
+                ArchiveOutcome::Encrypted,
+                timing,
+                ArchiveDiagnostics::default(),
+            );
+        }
+        Err(ArchiveError::Io(s)) => {
+            return (
+                ArchiveOutcome::Unreadable(s),
+                timing,
+                ArchiveDiagnostics::default(),
+            );
+        }
+        Err(other) => {
+            return (
+                ArchiveOutcome::Malformed(other.to_string()),
+                timing,
+                ArchiveDiagnostics::default(),
+            );
+        }
+    };
+
+    // Capture archive-crate diagnostics now while the box is in
+    // scope — these signals describe what `open()` had to do to make
+    // the file readable, independent of any later ComicInfo parsing
+    // outcome. Cloned to detach from the archive's borrow.
+    let diagnostics = ArchiveDiagnostics {
+        recovery: archive.recovery_used(),
+        skipped: archive.entries_skipped().to_vec(),
+        total_entries: (archive.entries().len() + archive.entries_skipped().len()) as u32,
     };
 
     // Count image entries in the archive so missing/partial ComicInfo page
@@ -777,7 +860,7 @@ fn parse_archive_timed_with(
             ArchiveOutcome::MissingComicInfo { info, actual_pages }
         }
     };
-    (outcome, timing)
+    (outcome, timing, diagnostics)
 }
 
 fn comicinfo_needs_dimension_probe(info: &ComicInfo, actual_pages: u32) -> bool {

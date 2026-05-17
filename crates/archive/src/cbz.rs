@@ -11,7 +11,7 @@
 //! decompressing — so a 42 KB → 4 GiB bomb is rejected without allocation.
 
 use crate::entry_name;
-use crate::{ArchiveEntry, ArchiveError, ArchiveLimits};
+use crate::{ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, recovery};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Cursor, Read};
@@ -53,6 +53,16 @@ pub struct Cbz {
     entries: Vec<ArchiveEntry>,
     /// canonical (lowercased) name → entry index
     by_canonical: HashMap<String, usize>,
+    /// `Some(tag)` when `open_zip_with_recovery` had to repair the file
+    /// to make it openable. Exposed via [`Cbz::recovery_used`] so the
+    /// scanner can emit a `RecoveredArchive` health-issue. See
+    /// [`crate::recovery`] for the tag constants.
+    recovery: Option<&'static str>,
+    /// Entries the open path dropped from the page index because a soft
+    /// defense fired (compression-ratio cap, today). Exposed via
+    /// [`Cbz::entries_skipped`] so the scanner can emit a
+    /// `SkippedArchiveEntries` health-issue. Empty in the happy path.
+    skipped: Vec<SkippedEntry>,
 }
 
 /// Backing reader for the inner `ZipArchive`. Two flavors share Cbz so the
@@ -103,8 +113,22 @@ impl std::fmt::Debug for Cbz {
 impl Cbz {
     pub fn open(path: impl AsRef<Path>, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
         let path = path.as_ref().to_path_buf();
-        let archive = open_zip_with_recovery(&path)?;
-        Self::finish(path, limits, archive)
+        let (archive, recovery) = open_zip_with_recovery(&path)?;
+        Self::finish(path, limits, archive, recovery)
+    }
+
+    /// Returns the recovery technique tag if `open_zip_with_recovery` had
+    /// to repair the file to open it; `None` for the happy path. The
+    /// scanner reads this to emit `RecoveredArchive` health-issues.
+    pub fn recovery_used(&self) -> Option<&'static str> {
+        self.recovery
+    }
+
+    /// Entries dropped from the page index by a soft defense at open
+    /// time. The scanner reads this to emit `SkippedArchiveEntries`
+    /// health-issues. Empty in the happy path.
+    pub fn entries_skipped(&self) -> &[SkippedEntry] {
+        &self.skipped
     }
 
     /// Build the index/entry tables. Shared between the happy-path (File)
@@ -113,6 +137,7 @@ impl Cbz {
         path: PathBuf,
         limits: ArchiveLimits,
         mut archive: OpenedZip,
+        recovery: Option<&'static str>,
     ) -> Result<Self, ArchiveError> {
         let n = archive.len();
         if n as u64 > limits.max_entries {
@@ -121,6 +146,7 @@ impl Cbz {
 
         let mut entries: Vec<ArchiveEntry> = Vec::with_capacity(n);
         let mut by_canonical: HashMap<String, usize> = HashMap::with_capacity(n);
+        let mut skipped: Vec<SkippedEntry> = Vec::new();
         let mut total_uncompressed: u64 = 0;
 
         for i in 0..n {
@@ -186,6 +212,12 @@ impl Cbz {
                     unc, cmp,
                     "cbz: skipping entry with suspicious compression ratio",
                 );
+                skipped.push(SkippedEntry {
+                    name: name.clone(),
+                    uncompressed_size: unc,
+                    compressed_size: cmp,
+                    reason: "compression ratio cap",
+                });
                 continue;
             }
             total_uncompressed = total_uncompressed.saturating_add(unc);
@@ -224,6 +256,8 @@ impl Cbz {
             archive,
             entries,
             by_canonical,
+            recovery,
+            skipped,
         })
     }
 
@@ -462,7 +496,7 @@ impl Cbz {
 ///     publisher's packing tool didn't account for). The recovery
 ///     walks the file forward, finds each entry's actual LFH by
 ///     filename match, and rewrites the CD with corrected offsets.
-fn open_zip_with_recovery(path: &Path) -> Result<OpenedZip, ArchiveError> {
+fn open_zip_with_recovery(path: &Path) -> Result<(OpenedZip, Option<&'static str>), ArchiveError> {
     let f = File::open(path)?;
     let opened = match ZipArchive::new(f) {
         Ok(a) => OpenedZip::File(a),
@@ -488,7 +522,10 @@ fn open_zip_with_recovery(path: &Path) -> Result<OpenedZip, ArchiveError> {
                 path = %path.display(),
                 "cbz: recovered from malformed Unicode-Path CRC by stripping 0x7075 extras",
             );
-            return Ok(OpenedZip::Mem(archive));
+            return Ok((
+                OpenedZip::Mem(archive),
+                Some(recovery::UNICODE_PATH_CRC_STRIP),
+            ));
         }
         Err(e) => return Err(map_zip_err(e)),
     };
@@ -536,13 +573,13 @@ fn open_zip_with_recovery(path: &Path) -> Result<OpenedZip, ArchiveError> {
                 failed_at = idx,
                 "cbz: recovered from per-entry CDFH-offset drift via LFH-scan rebuild",
             );
-            return Ok(OpenedZip::Mem(archive));
+            return Ok((OpenedZip::Mem(archive), Some(recovery::CDFH_OFFSET_REBUILD)));
         }
         // Surface non-recoverable per-entry errors as-is.
         return Err(map_zip_err(err));
     }
 
-    Ok(opened)
+    Ok((opened, None))
 }
 
 /// Rewrite the in-memory byte buffer to strip the Info-ZIP Unicode Path

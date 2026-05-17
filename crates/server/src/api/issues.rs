@@ -12,10 +12,10 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use entity::{issue, library_user_access, series};
+use entity::{issue, library_health_issue, library_user_access, series};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, Value,
-    sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    Set, Statement, Value, sea_query::Expr,
 };
 
 use crate::library::access;
@@ -46,6 +46,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/series/{series_slug}/issues/{issue_slug}/next",
             get(next_in_series),
+        )
+        .route(
+            "/series/{series_slug}/issues/{issue_slug}/health-issues",
+            get(list_issue_health),
         )
 }
 
@@ -720,6 +724,77 @@ pub async fn next_in_series(
         .map(|m| IssueSummaryView::from_model(m, &series_slug))
         .collect();
     Json(NextInSeriesView { items }).into_response()
+}
+
+// ───── GET /series/{series_slug}/issues/{issue_slug}/health-issues ─────
+
+/// Tranche B of recovery-visibility (`~/.claude/plans/recovery-visibility-1.0.md`).
+/// Returns the open `library_health_issues` rows whose payload `path`
+/// matches this issue's file. The issue detail page renders a small
+/// badge when this list is non-empty, and the reader fires a one-time
+/// toast on issue open. Resolved + dismissed rows are excluded — the
+/// badge represents "things you can still act on right now."
+///
+/// Auth: regular `CurrentUser` (NOT admin-only). Any user with library
+/// access can see whether the file they're about to read is partial /
+/// recovered. The admin Health tab is still the place to dismiss or
+/// triage.
+#[utoipa::path(
+    get,
+    path = "/series/{series_slug}/issues/{issue_slug}/health-issues",
+    params(
+        ("series_slug" = String, Path,),
+        ("issue_slug" = String, Path,),
+    ),
+    responses(
+        (status = 200, body = Vec<crate::api::health_issues::HealthIssueView>),
+        (status = 404, description = "issue not found"),
+    )
+)]
+pub async fn list_issue_health(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath((series_slug, issue_slug)): AxPath<(String, String)>,
+) -> impl IntoResponse {
+    let row = match find_by_slugs(&app.db, &series_slug, &issue_slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if !visible_in_library(&app, &user, row.library_id).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    }
+
+    // Health-issue payloads carry the issue's file path under
+    // `data.path` (per `IssueKind`'s serde tag/content layout). Match
+    // on that JSON expression. Postgres-only; the workspace targets
+    // Postgres so no portability concern.
+    let rows = match library_health_issue::Entity::find()
+        .from_raw_sql(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"SELECT * FROM library_health_issues
+                WHERE library_id = $1
+                  AND resolved_at IS NULL
+                  AND dismissed_at IS NULL
+                  AND payload->'data'->>'path' = $2
+                ORDER BY severity DESC, last_seen_at DESC"#,
+            [row.library_id.into(), row.file_path.clone().into()],
+        ))
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "list issue health failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    Json(
+        rows.into_iter()
+            .map(crate::api::health_issues::HealthIssueView::from)
+            .collect::<Vec<_>>(),
+    )
+    .into_response()
 }
 
 // ───── GET /issues/search ─────

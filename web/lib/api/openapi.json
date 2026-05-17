@@ -3013,6 +3013,44 @@
         }
       }
     },
+    "/libraries/{slug}/validate-deeply": {
+      "post": {
+        "tags": [
+          "api::libraries"
+        ],
+        "summary": "Tranche C of recovery-visibility — admin-triggered deep page-\ndecode validation. Walks every active issue in the library,\nreads every page entry, runs each through the `image` crate's\ndecoder, and emits `UnreadablePage` health-issues for failures.",
+        "description": "Returns immediately. The job runs in a `tokio::spawn` background\ntask without apalis-style persistence; a server restart abandons\nthe in-flight run and the operator can re-trigger.\n\n**Cost.** Image-decoding every page in a 20K-issue library can\ntake 1-2 hours of single-core CPU. Operator-only; never\nautomatic.",
+        "operationId": "validate_deeply",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeepValidateResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      }
+    },
     "/me/account": {
       "patch": {
         "tags": [
@@ -5311,6 +5349,52 @@
         }
       }
     },
+    "/series/{series_slug}/issues/{issue_slug}/health-issues": {
+      "get": {
+        "tags": [
+          "api::issues"
+        ],
+        "summary": "Tranche B of recovery-visibility (`~/.claude/plans/recovery-visibility-1.0.md`).\nReturns the open `library_health_issues` rows whose payload `path`\nmatches this issue's file. The issue detail page renders a small\nbadge when this list is non-empty, and the reader fires a one-time\ntoast on issue open. Resolved + dismissed rows are excluded — the\nbadge represents \"things you can still act on right now.\"",
+        "description": "Auth: regular `CurrentUser` (NOT admin-only). Any user with library\naccess can see whether the file they're about to read is partial /\nrecovered. The admin Health tab is still the place to dismiss or\ntriage.",
+        "operationId": "list_issue_health",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HealthIssueView"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
     "/series/{series_slug}/issues/{issue_slug}/next": {
       "get": {
         "tags": [
@@ -7378,6 +7462,22 @@
             ]
           },
           "series_id": {
+            "type": "string"
+          }
+        }
+      },
+      "DeepValidateResp": {
+        "type": "object",
+        "description": "Response for `POST /libraries/{slug}/validate-deeply`. Returns\nimmediately with `202 Accepted`; the deep-validate runs in a\n`tokio::spawn` task and emits per-page health-issues as it goes.",
+        "required": [
+          "library_id",
+          "state"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string"
+          },
+          "state": {
             "type": "string"
           }
         }

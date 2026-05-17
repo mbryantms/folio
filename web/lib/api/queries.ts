@@ -213,6 +213,8 @@ export const queryKeys = {
   libraries: ["libraries"] as const,
   library: (id: string) => ["libraries", id] as const,
   health: (libraryId: string) => ["libraries", libraryId, "health"] as const,
+  issueHealth: (seriesSlug: string, issueSlug: string) =>
+    ["issues", seriesSlug, issueSlug, "health"] as const,
   scanRuns: (libraryId: string, kind?: string) =>
     ["libraries", libraryId, "scan-runs", kind ?? "all"] as const,
   /** Prefix that matches every `scanRuns(libraryId, *)` variant — used by
@@ -469,6 +471,24 @@ export function useHealthIssues(libraryId: string) {
     queryFn: () =>
       jsonFetch<HealthIssueView[]>(`/libraries/${libraryId}/health-issues`),
     enabled: !!libraryId,
+  });
+}
+
+/**
+ * Per-issue health-issue list — open rows whose file_path matches this
+ * issue's file. Tranche B of recovery-visibility surfaces these as a
+ * badge on the issue detail page and as a one-time toast on reader
+ * open. Returns `[]` when the file is clean; consumers can `.length`
+ * to gate the UI.
+ */
+export function useIssueHealth(seriesSlug: string, issueSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.issueHealth(seriesSlug, issueSlug),
+    queryFn: () =>
+      jsonFetch<HealthIssueView[]>(
+        `/series/${seriesSlug}/issues/${issueSlug}/health-issues`,
+      ),
+    enabled: !!seriesSlug && !!issueSlug,
   });
 }
 

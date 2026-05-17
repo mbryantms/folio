@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { Reader } from "./Reader";
+import { ReaderHealthToast } from "./ReaderHealthToast";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { IssueDetailView, MeView } from "@/lib/api/types";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
@@ -141,7 +142,9 @@ export default async function ReadPage({
   }
 
   return (
-    <Reader
+    <>
+      <ReaderHealthToast seriesSlug={seriesSlug} issueSlug={issueSlug} />
+      <Reader
       issueId={issue.id}
       seriesId={issue.series_id}
       cblSavedViewId={cblSavedViewId}
@@ -162,6 +165,7 @@ export default async function ReadPage({
       readingMinPages={readingMinPages}
       readingIdleMs={readingIdleMs}
     />
+    </>
   );
 }
 

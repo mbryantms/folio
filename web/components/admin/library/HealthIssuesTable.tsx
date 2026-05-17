@@ -9,7 +9,10 @@ import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHealthIssues } from "@/lib/api/queries";
-import { useDismissHealthIssue } from "@/lib/api/mutations";
+import {
+  useDismissHealthIssue,
+  useTriggerDeepValidate,
+} from "@/lib/api/mutations";
 import type { HealthIssueView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -20,9 +23,33 @@ function severityVariant(s: string): "secondary" | "destructive" {
   return s === "error" ? "destructive" : "secondary";
 }
 
-function payloadSummary(p: unknown): string {
+function payloadSummary(kind: string, p: unknown): string {
   if (!p || typeof p !== "object") return "";
   const obj = p as Record<string, unknown>;
+  const path =
+    typeof obj.path === "string"
+      ? obj.path
+      : typeof obj.file_path === "string"
+        ? obj.file_path
+        : "";
+
+  // Tranche A of recovery-visibility — render the structured fields
+  // these new kinds carry so the operator sees the count + cause
+  // inline rather than having to expand the payload.
+  if (kind === "RecoveredArchive") {
+    const technique =
+      typeof obj.technique === "string" ? obj.technique : "unknown";
+    return path ? `${path} — recovered (${technique})` : `recovered (${technique})`;
+  }
+  if (kind === "SkippedArchiveEntries") {
+    const dropped = typeof obj.dropped === "number" ? obj.dropped : "?";
+    const total = typeof obj.total === "number" ? obj.total : "?";
+    const reason =
+      typeof obj.reason === "string" ? obj.reason : "soft defense";
+    const suffix = `${dropped} of ${total} entries dropped (${reason})`;
+    return path ? `${path} — ${suffix}` : suffix;
+  }
+
   const keys = [
     "path",
     "file_path",
@@ -41,6 +68,7 @@ function payloadSummary(p: unknown): string {
 export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
   const { data, isLoading, error } = useHealthIssues(libraryId);
   const dismiss = useDismissHealthIssue(libraryId);
+  const deepValidate = useTriggerDeepValidate(libraryId);
   const [filter, setFilter] = React.useState<Filter>("open");
   const [severity, setSeverity] = React.useState<Severity>("all");
   const [focusedKind, setFocusedKind] = React.useState<string | null>(null);
@@ -131,7 +159,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
         header: "Summary",
         cell: ({ row }) => (
           <span className="text-muted-foreground block text-xs leading-relaxed [overflow-wrap:anywhere] whitespace-normal">
-            {payloadSummary(row.original.payload)}
+            {payloadSummary(row.original.kind, row.original.payload)}
           </span>
         ),
       },
@@ -199,6 +227,32 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-muted-foreground max-w-prose text-xs">
+          Page-decode failures don&apos;t surface during normal scans
+          (they only read headers). Run a deep validate to walk every
+          active page through the image decoder — slow, opt-in, and
+          one library at a time. Findings appear as{" "}
+          <span className="font-mono">UnreadablePage</span> rows below
+          as the run progresses.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            if (
+              window.confirm(
+                "Deep validate decodes every page in every issue. On a 20K-issue library this can take 1–2 hours of CPU. Continue?",
+              )
+            ) {
+              deepValidate.mutate();
+            }
+          }}
+          disabled={deepValidate.isPending}
+        >
+          Validate page integrity
+        </Button>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         {(["open", "resolved", "dismissed", "all"] as Filter[]).map((f) => (
           <button

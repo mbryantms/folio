@@ -71,6 +71,12 @@ impl ComicArchive for cbz::Cbz {
     fn path(&self) -> &Path {
         self.path()
     }
+    fn recovery_used(&self) -> Option<&'static str> {
+        self.recovery_used()
+    }
+    fn entries_skipped(&self) -> &[SkippedEntry] {
+        self.entries_skipped()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -129,4 +135,40 @@ pub struct ArchiveEntry {
     pub name: String,
     pub uncompressed_size: u64,
     pub compressed_size: u64,
+}
+
+/// An entry the archive crate dropped from the page index because a
+/// soft defense fired (today: the compression-ratio cap in
+/// [`cbz::Cbz`]). Surfaced via [`ComicArchive::entries_skipped`] so the
+/// scanner can emit a structured health-issue instead of users
+/// discovering "wait, where are pages 47 and 48?" months later.
+#[derive(Debug, Clone)]
+pub struct SkippedEntry {
+    /// Entry name as recorded by the zip CD. May contain weird bytes;
+    /// callers must defensively render.
+    pub name: String,
+    pub uncompressed_size: u64,
+    pub compressed_size: u64,
+    /// Static reason string — match-on safely. Today's universe:
+    /// `"compression ratio cap"`. New reasons should be added near
+    /// the code that emits them so they stay grep-able.
+    pub reason: &'static str,
+}
+
+/// Recovery-flavor tag attached to an opened archive when one of the
+/// recovery branches in [`cbz::open_zip_with_recovery`] fired. The
+/// archive opens and reads normally; this tells the scanner that the
+/// underlying file was structurally non-standard so it can emit a
+/// `RecoveredArchive` health-issue. Static strings to keep them
+/// grep-able.
+pub mod recovery {
+    /// The Info-ZIP Unicode-Path extra (`0x7075`) had a stored CRC32
+    /// that didn't match the CDFH filename's CP437 bytes — pre-2026
+    /// publisher tool bug. Recovery stripped every `0x7075` extra.
+    pub const UNICODE_PATH_CRC_STRIP: &str = "unicode-path-crc-strip";
+    /// One or more CDFH `local_header_offset` fields pointed at
+    /// garbage. Recovery scanned the data area forward, matched each
+    /// entry's actual LFH by filename, and rewrote the CD with
+    /// corrected offsets.
+    pub const CDFH_OFFSET_REBUILD: &str = "cdfh-offset-rebuild";
 }

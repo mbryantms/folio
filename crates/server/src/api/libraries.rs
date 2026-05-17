@@ -38,6 +38,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/libraries/{slug}/scan", post(scan))
         .route("/libraries/{slug}/scan-preview", get(scan_preview))
+        .route("/libraries/{slug}/validate-deeply", post(validate_deeply))
 }
 
 /// Look up a library row by its URL slug. Used by every `/libraries/{slug}`
@@ -588,6 +589,67 @@ pub async fn scan(
             )
         }
     }
+}
+
+/// Response for `POST /libraries/{slug}/validate-deeply`. Returns
+/// immediately with `202 Accepted`; the deep-validate runs in a
+/// `tokio::spawn` task and emits per-page health-issues as it goes.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeepValidateResp {
+    pub library_id: String,
+    pub state: &'static str,
+}
+
+#[utoipa::path(
+    post,
+    path = "/libraries/{slug}/validate-deeply",
+    params(("slug" = String, Path,)),
+    responses(
+        (status = 202, body = DeepValidateResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "library not found"),
+    )
+)]
+/// Tranche C of recovery-visibility — admin-triggered deep page-
+/// decode validation. Walks every active issue in the library,
+/// reads every page entry, runs each through the `image` crate's
+/// decoder, and emits `UnreadablePage` health-issues for failures.
+///
+/// Returns immediately. The job runs in a `tokio::spawn` background
+/// task without apalis-style persistence; a server restart abandons
+/// the in-flight run and the operator can re-trigger.
+///
+/// **Cost.** Image-decoding every page in a 20K-issue library can
+/// take 1-2 hours of single-core CPU. Operator-only; never
+/// automatic.
+pub async fn validate_deeply(
+    State(app): State<AppState>,
+    _admin: RequireAdmin,
+    AxPath(slug): AxPath<String>,
+) -> impl IntoResponse {
+    let row = match find_by_slug(&app.db, &slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    let library_id = row.id;
+    let state = app.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::library::deep_validate::run(&state, library_id).await {
+            tracing::error!(
+                error = %e,
+                library_id = %library_id,
+                "deep-validate task failed",
+            );
+        }
+    });
+    (
+        StatusCode::ACCEPTED,
+        Json(DeepValidateResp {
+            library_id: library_id.to_string(),
+            state: "started",
+        }),
+    )
+        .into_response()
 }
 
 #[utoipa::path(

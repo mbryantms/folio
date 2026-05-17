@@ -12,7 +12,7 @@
 //! Page-byte streaming for `.cbr`/`.cb7`/`.cbt` is therefore deferred; the
 //! reader UI today handles `.cbz` only via [`crate::cbz::Cbz`]'s richer API.
 
-use crate::{ArchiveEntry, ArchiveError};
+use crate::{ArchiveEntry, ArchiveError, SkippedEntry};
 use std::path::Path;
 
 /// Common surface for the scan pipeline. Any format we recognize implements
@@ -38,4 +38,21 @@ pub trait ComicArchive: Send {
         Ok(bytes)
     }
     fn path(&self) -> &Path;
+
+    /// If a recovery branch fired during open, returns a static tag
+    /// naming the technique (see [`crate::recovery`]); otherwise `None`.
+    /// Defaulted to `None` so non-zip readers (CBR/CB7/CBT) inherit
+    /// without changes. The scanner surfaces a `RecoveredArchive`
+    /// health-issue when this is `Some`.
+    fn recovery_used(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Entries the archive dropped from the page index because a soft
+    /// defense fired during open (today: `Cbz`'s compression-ratio cap).
+    /// Defaulted to empty so non-zip readers inherit; the scanner
+    /// surfaces a `SkippedArchiveEntries` health-issue when non-empty.
+    fn entries_skipped(&self) -> &[SkippedEntry] {
+        &[]
+    }
 }

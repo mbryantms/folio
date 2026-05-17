@@ -15,6 +15,7 @@ import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
 import { Description } from "@/components/library/Description";
+import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
 import { UserRating } from "@/components/library/UserRating";
@@ -239,6 +240,10 @@ export default async function IssuePage({
               {issue.state !== "active" && (
                 <Badge variant="destructive">{issue.state}</Badge>
               )}
+              <IssueHealthBadge
+                seriesSlug={seriesSlug}
+                issueSlug={issueSlug}
+              />
               <UserRating
                 scope="issue"
                 seriesSlug={issue.series_slug}

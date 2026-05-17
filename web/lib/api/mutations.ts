@@ -244,6 +244,27 @@ export function useTriggerScan(libraryId: string) {
   );
 }
 
+/**
+ * Tranche C of recovery-visibility — admin-only `POST
+ * /libraries/{slug}/validate-deeply`. Fires off a background task
+ * that walks every active issue's pages through the image decoder
+ * and emits `UnreadablePage` health-issues for failures. Returns
+ * `202 Accepted` immediately; results land in the Health tab as the
+ * job progresses.
+ */
+export function useTriggerDeepValidate(libraryId: string) {
+  return useApiMutation<{ library_id: string; state: string }, void>(
+    () => ({
+      path: `/libraries/${libraryId}/validate-deeply`,
+      method: "POST",
+    }),
+    {
+      successMessage:
+        "Deep validation started — page-decode failures will surface in this Health tab as the run progresses",
+    },
+  );
+}
+
 export function useTriggerSeriesScan(seriesId: string, libraryId?: string) {
   const qc = useQueryClient();
   // Defaults to force=true; "Scan series" is an explicit user action and

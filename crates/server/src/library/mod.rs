@@ -2,6 +2,7 @@
 //! dedupe, file-watch (Phase 1a + 1b).
 
 pub mod access;
+pub mod deep_validate;
 pub mod events;
 pub mod hash;
 pub mod health;
