@@ -447,16 +447,25 @@ impl Cbz {
 /// they never match. `unzip` ignores the mismatch; we have to rewrite
 /// the bytes.
 ///
-/// Three error surfaces trigger recovery:
+/// Three error surfaces trigger Unicode-Path recovery:
 ///   - `"CRC32 checksum failed on Unicode extra field"` — zip 3+'s
 ///     precise diagnosis; this is the canonical signature.
 ///   - `"Could not find EOCD"` and `"No CDFH found"` — zip 2.x
 ///     surfaces when the CRC failure aborted the CD walk mid-way.
 ///     Retained so a future downgrade or fork still trips recovery.
+///
+/// A fourth surface triggers LFH-scan rebuild (M2 of
+/// `~/.claude/plans/zip-scan-forward-recovery-1.0.md`):
+///   - `"Invalid local file header"` — fires when a CDFH's
+///     `local_header_offset` field is wrong (e.g., Action Comics
+///     V2016 1084: trailing bytes between entries that the
+///     publisher's packing tool didn't account for). The recovery
+///     walks the file forward, finds each entry's actual LFH by
+///     filename match, and rewrites the CD with corrected offsets.
 fn open_zip_with_recovery(path: &Path) -> Result<OpenedZip, ArchiveError> {
     let f = File::open(path)?;
-    match ZipArchive::new(f) {
-        Ok(a) => Ok(OpenedZip::File(a)),
+    let opened = match ZipArchive::new(f) {
+        Ok(a) => OpenedZip::File(a),
         Err(zip::result::ZipError::InvalidArchive(msg))
             if msg.contains("CRC32 checksum failed on Unicode extra field")
                 || msg.contains("Could not find EOCD")
@@ -479,10 +488,61 @@ fn open_zip_with_recovery(path: &Path) -> Result<OpenedZip, ArchiveError> {
                 path = %path.display(),
                 "cbz: recovered from malformed Unicode-Path CRC by stripping 0x7075 extras",
             );
-            Ok(OpenedZip::Mem(archive))
+            return Ok(OpenedZip::Mem(archive));
         }
-        Err(e) => Err(map_zip_err(e)),
+        Err(e) => return Err(map_zip_err(e)),
+    };
+
+    // Per-entry validation: `ZipArchive::new` only parses the CD, so
+    // a file with valid CD bytes but broken `local_header_offset`
+    // values (Action Comics V2016 1084 — packing-tool bug, see
+    // `~/.claude/plans/zip-scan-forward-recovery-1.0.md`) opens
+    // cleanly here and then fails on the first per-entry read in
+    // `Cbz::finish`. Probe `by_index_raw` for each entry now so we
+    // can fall through to LFH-scan rebuild before returning to the
+    // caller. Probing only walks LFH headers, not entry data —
+    // cheap compared to the value of a working archive.
+    let probe_err = match &opened {
+        OpenedZip::File(a) => {
+            // SAFETY: cloning the archive's `len()` is fine; we
+            // re-open the file for the probe so the original `a`
+            // isn't moved/dropped.
+            let n = a.len();
+            let mut probed = ZipArchive::new(File::open(path)?).map_err(map_zip_err)?;
+            (0..n).find_map(|i| probed.by_index_raw(i).err().map(|e| (i, e)))
+        }
+        OpenedZip::Mem(_) => None, // recovered archives are pre-validated
+    };
+    if let Some((idx, err)) = probe_err {
+        let msg = format!("{err}");
+        if msg.contains("Invalid local file header") {
+            let bytes = std::fs::read(path)?;
+            let recovered = rebuild_cd_from_lfh_scan(&bytes).ok_or_else(|| {
+                ArchiveError::Malformed(format!(
+                    "Invalid local file header at entry {idx} (LFH-scan rebuild failed)"
+                ))
+            })?;
+            let archive = ZipArchive::new(Cursor::new(recovered)).map_err(|e| {
+                let err = map_zip_err(e);
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "cbz: LFH-scan rebuild produced an archive the zip crate still rejects",
+                );
+                err
+            })?;
+            tracing::info!(
+                path = %path.display(),
+                failed_at = idx,
+                "cbz: recovered from per-entry CDFH-offset drift via LFH-scan rebuild",
+            );
+            return Ok(OpenedZip::Mem(archive));
+        }
+        // Surface non-recoverable per-entry errors as-is.
+        return Err(map_zip_err(err));
     }
+
+    Ok(opened)
 }
 
 /// Rewrite the in-memory byte buffer to strip the Info-ZIP Unicode Path
@@ -576,6 +636,189 @@ fn recover_zip_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Rebuild the central directory by scanning the file forward for LFH
+/// signatures and matching each found LFH to its CDFH counterpart by
+/// filename. Returns a rewritten file whose CDFH `local_header_offset`
+/// fields point at the actual LFH positions instead of the broken
+/// declared positions.
+///
+/// **Corruption class handled:** per-entry CDFH-offset drift. The CD
+/// itself is parseable (EOCD is fine, CDFH bytes are intact), but the
+/// `local_header_offset` field of one or more CDFHs points at garbage
+/// (a packing-tool bug that didn't recompute offsets when trailing
+/// bytes were appended to an entry's data block). Observed in
+/// production on Action Comics V2016 1084 (May 2025).cbz, 2026-05-16.
+///
+/// **Algorithm:**
+///   1. Parse EOCD + walk every CDFH to collect each entry's
+///      filename and original CDFH bytes.
+///   2. Scan the data area (bytes before the first CDFH) forward,
+///      looking for each entry's LFH by filename match. Phantom
+///      `PK\x03\x04` hits inside compressed data don't match a
+///      filename, so they're skipped.
+///   3. Rewrite a fresh CD where every CDFH is byte-identical to
+///      the original EXCEPT the `local_header_offset` field, which
+///      now holds the actual LFH position we found.
+///   4. Append a fresh EOCD pointing at the new CD.
+///
+/// Data bytes are preserved verbatim — the recovery only rewrites
+/// the CD + EOCD. Any inter-entry padding stays in place, harmlessly,
+/// because the zip crate only reads bytes via CDFH-directed offsets.
+///
+/// Returns `None` if the recovery can't run (no EOCD found,
+/// CDFH bytes malformed, any entry's filename can't be located in
+/// the data area). Opportunistic — the caller falls back to the
+/// original error in that case.
+fn rebuild_cd_from_lfh_scan(bytes: &[u8]) -> Option<Vec<u8>> {
+    const EOCD_SIG: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+    const CDFH_SIG: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
+    const LFH_SIG: [u8; 4] = [0x50, 0x4b, 0x03, 0x04];
+    const SCAN_BYTES: usize = 65_557;
+
+    if bytes.len() < 22 {
+        return None;
+    }
+
+    // Locate EOCD via the same backward-scan window as the
+    // Unicode-Path recovery path.
+    let scan_start = bytes.len().saturating_sub(SCAN_BYTES);
+    let mut eocd_off = None;
+    for i in (scan_start..bytes.len().saturating_sub(3)).rev() {
+        if bytes[i..i + 4] == EOCD_SIG {
+            eocd_off = Some(i);
+            break;
+        }
+    }
+    let eocd_off = eocd_off?;
+    let body = &bytes[eocd_off + 4..eocd_off + 22];
+    let n_files = u16::from_le_bytes(body[6..8].try_into().ok()?) as usize;
+    let cd_size = u32::from_le_bytes(body[8..12].try_into().ok()?) as usize;
+    let cd_offset = u32::from_le_bytes(body[12..16].try_into().ok()?) as usize;
+    let comment_len = u16::from_le_bytes(body[16..18].try_into().ok()?) as usize;
+
+    if cd_offset.checked_add(cd_size)? > bytes.len() {
+        return None;
+    }
+    if eocd_off + 22 + comment_len > bytes.len() {
+        return None;
+    }
+
+    // Parse each CDFH — keep its filename and a full byte copy. We'll
+    // patch only the local_header_offset field (bytes 42..46) before
+    // emitting the rewritten CD.
+    struct CdfhRecord {
+        fname: Vec<u8>,
+        original_bytes: Vec<u8>,
+    }
+    let mut cdfhs: Vec<CdfhRecord> = Vec::with_capacity(n_files);
+    let mut p = cd_offset;
+    for _ in 0..n_files {
+        if p + 46 > bytes.len() || bytes[p..p + 4] != CDFH_SIG {
+            return None;
+        }
+        let fname_len = u16::from_le_bytes(bytes[p + 28..p + 30].try_into().ok()?) as usize;
+        let extra_len = u16::from_le_bytes(bytes[p + 30..p + 32].try_into().ok()?) as usize;
+        let comment_len_entry = u16::from_le_bytes(bytes[p + 32..p + 34].try_into().ok()?) as usize;
+        let total = 46 + fname_len + extra_len + comment_len_entry;
+        if p + total > bytes.len() {
+            return None;
+        }
+        let fname = bytes[p + 46..p + 46 + fname_len].to_vec();
+        cdfhs.push(CdfhRecord {
+            fname,
+            original_bytes: bytes[p..p + total].to_vec(),
+        });
+        p += total;
+    }
+
+    // Walk the data area (bytes[0..cd_offset]) forward, finding each
+    // entry's LFH in CDFH order. A "valid" LFH is one whose
+    // declared filename matches the CDFH we're looking for — that
+    // filter rejects phantom `PK\x03\x04` hits inside compressed
+    // data, since arbitrary 4-byte windows in JPG/PNG bytes won't be
+    // followed by a sensible LFH layout with a matching name.
+    let mut new_offsets: Vec<u32> = Vec::with_capacity(n_files);
+    let mut cursor: usize = 0;
+    for cdfh in &cdfhs {
+        let pos = scan_for_named_lfh(bytes, cursor, cd_offset, &cdfh.fname, &LFH_SIG)?;
+        new_offsets.push(pos as u32);
+
+        // Advance the cursor past this entry. We don't trust the
+        // CDFH csize alone (some files have csize drift too), so
+        // step forward by 30 + fname_len + extra_len + 1 — just
+        // enough to skip past this LFH's header. The next iteration
+        // will scan-forward from there for the next entry's
+        // filename, walking through whatever data + padding sits
+        // between them.
+        let fname_len = u16::from_le_bytes(bytes[pos + 26..pos + 28].try_into().ok()?) as usize;
+        let extra_len = u16::from_le_bytes(bytes[pos + 28..pos + 30].try_into().ok()?) as usize;
+        cursor = pos + 30 + fname_len + extra_len;
+        if cursor > cd_offset {
+            return None;
+        }
+    }
+
+    // Compose the rewritten file: data area verbatim, fresh CD with
+    // patched offsets, fresh EOCD.
+    let mut new_cd: Vec<u8> = Vec::with_capacity(cd_size);
+    for (cdfh, new_off) in cdfhs.iter().zip(new_offsets.iter()) {
+        let mut buf = cdfh.original_bytes.clone();
+        buf[42..46].copy_from_slice(&new_off.to_le_bytes());
+        new_cd.extend_from_slice(&buf);
+    }
+    let new_cd_size: u32 = new_cd.len().try_into().ok()?;
+
+    let mut out = Vec::with_capacity(cd_offset + new_cd.len() + 22 + comment_len);
+    out.extend_from_slice(&bytes[..cd_offset]);
+    let new_cd_offset: u32 = out.len().try_into().ok()?;
+    out.extend_from_slice(&new_cd);
+
+    // EOCD: copy the original (preserves entry counts + comment),
+    // patch only cd_size + cd_offset. Entry counts haven't changed,
+    // so leave bytes 8..12 (n_disk + n_total) alone.
+    let mut eocd = bytes[eocd_off..eocd_off + 22].to_vec();
+    eocd[12..16].copy_from_slice(&new_cd_size.to_le_bytes());
+    eocd[16..20].copy_from_slice(&new_cd_offset.to_le_bytes());
+    out.extend_from_slice(&eocd);
+    out.extend_from_slice(&bytes[eocd_off + 22..eocd_off + 22 + comment_len]);
+
+    Some(out)
+}
+
+/// Scan `bytes[start..end]` for a `PK\x03\x04` signature whose LFH
+/// declares the given filename. Returns the absolute byte offset of
+/// the matching signature, or `None` if no LFH within range names
+/// `expected_fname`. Used by `rebuild_cd_from_lfh_scan` to locate
+/// each entry's actual position; the filename match is what rejects
+/// phantom signature hits inside compressed data.
+fn scan_for_named_lfh(
+    bytes: &[u8],
+    start: usize,
+    end: usize,
+    expected_fname: &[u8],
+    sig: &[u8; 4],
+) -> Option<usize> {
+    let mut i = start;
+    while i + 30 <= end {
+        if bytes[i..i + 4] != *sig {
+            i += 1;
+            continue;
+        }
+        let fname_len = u16::from_le_bytes(bytes[i + 26..i + 28].try_into().ok()?) as usize;
+        let extra_len = u16::from_le_bytes(bytes[i + 28..i + 30].try_into().ok()?) as usize;
+        if i + 30 + fname_len + extra_len > end {
+            i += 1;
+            continue;
+        }
+        let candidate_fname = &bytes[i + 30..i + 30 + fname_len];
+        if candidate_fname == expected_fname {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Walk a CDFH/LFH extra-field block and return a copy with every entry
 /// whose tag matches `drop_tag` removed. Returns `None` if the structure
 /// is malformed (a length runs past the end of the block).
@@ -661,6 +904,290 @@ mod tests {
             0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
         ]
     }
+
+    // -----------------------------------------------------------------
+    // Scan-forward recovery — M1 fixtures
+    //
+    // Each helper builds a CBZ that exercises one specific zip-layout
+    // pathology. Paired sanity tests document what the bare zip crate
+    // (`zip::ZipArchive`) does with each pathology today — the answer
+    // determines which recovery tiers we actually need in M2/M2.5.
+    //
+    // These fixtures are intentionally hand-crafted byte rewrites. The
+    // zip crate's own writer can't produce these pathologies, and
+    // mocking them at the API level wouldn't exercise the same code
+    // paths that the bare opener takes against a real file on disk.
+    //
+    // Plan: ~/.claude/plans/zip-scan-forward-recovery-1.0.md.
+    // -----------------------------------------------------------------
+
+    /// Locate the last EOCD signature in the file (it's the only one
+    /// for well-formed files; for our drift fixtures the LFH/CDFH
+    /// signatures appear earlier in the file but the EOCD is unique
+    /// at the tail).
+    fn find_eocd(bytes: &[u8]) -> usize {
+        bytes
+            .windows(4)
+            .rposition(|w| w == [0x50, 0x4b, 0x05, 0x06])
+            .expect("EOCD")
+    }
+
+    /// **Fixture A — per-entry drifting offsets.**
+    ///
+    /// Models the Action Comics V2016 1084 layout: entry 0's data
+    /// block is followed by K bytes of "padding" (trailing bytes the
+    /// publisher's packing tool didn't account for), so every CDFH
+    /// `local_header_offset` for entries 1+ is wrong by K. The CDFH
+    /// offsets are NOT updated; only the EOCD's `cd_offset` is shifted
+    /// so the bare zip crate can find the central directory at all.
+    ///
+    /// Expected bare-crate symptom (zip v8): `ZipArchive::new` opens
+    /// (CD is findable), `by_index_raw(0)` succeeds (LFH#0 still at
+    /// offset 0), `by_index_raw(1)` fails with "Invalid local file
+    /// header" because CDFH#1's declared offset points at the K bytes
+    /// of garbage instead of the actual LFH#1.
+    fn build_drifting_offset_cbz() -> tempfile::NamedTempFile {
+        const DRIFT: usize = 128;
+        let png = one_pixel_png();
+        // Stored compression keeps data sizes predictable so we can
+        // navigate to entry 1's LFH by following csize.
+        let base = build_cbz_with(
+            &[
+                ("page1.png", &png),
+                ("page2.png", &png),
+                ("page3.png", &png),
+            ],
+            true,
+        );
+        let bytes = std::fs::read(base.path()).unwrap();
+
+        // Walk LFH#0's local header to find where entry 0's data ends
+        // and entry 1's LFH should start.
+        assert_eq!(
+            &bytes[0..4],
+            b"PK\x03\x04",
+            "fixture invariant: file starts with LFH#0"
+        );
+        let csize0 = u32::from_le_bytes(bytes[18..22].try_into().unwrap()) as usize;
+        let fname_len0 = u16::from_le_bytes(bytes[26..28].try_into().unwrap()) as usize;
+        let extra_len0 = u16::from_le_bytes(bytes[28..30].try_into().unwrap()) as usize;
+        let lfh1_off = 30 + fname_len0 + extra_len0 + csize0;
+        assert_eq!(
+            &bytes[lfh1_off..lfh1_off + 4],
+            b"PK\x03\x04",
+            "fixture invariant: LFH#1 should immediately follow entry 0's data",
+        );
+
+        // Insert DRIFT bytes of garbage between entry 0's data and
+        // LFH#1. Everything from `lfh1_off` onward — including the
+        // central directory and EOCD — slides forward by DRIFT.
+        let mut out = Vec::with_capacity(bytes.len() + DRIFT);
+        out.extend_from_slice(&bytes[..lfh1_off]);
+        out.extend(std::iter::repeat_n(0xCDu8, DRIFT));
+        out.extend_from_slice(&bytes[lfh1_off..]);
+
+        // Patch the EOCD's `cd_offset` field so the bare crate can
+        // still find the central directory. CDFH `lfh_offset` fields
+        // are left UN-patched — that's the corruption we want.
+        let eocd_off = find_eocd(&out);
+        let old_cd_offset =
+            u32::from_le_bytes(out[eocd_off + 16..eocd_off + 20].try_into().unwrap());
+        let new_cd_offset = old_cd_offset + DRIFT as u32;
+        out[eocd_off + 16..eocd_off + 20].copy_from_slice(&new_cd_offset.to_le_bytes());
+
+        let tmp = tempfile::Builder::new().suffix(".cbz").tempfile().unwrap();
+        std::fs::write(tmp.path(), &out).unwrap();
+        tmp
+    }
+
+    /// **Fixture B — `csize=0` in LFH (GP bit 3 not set).**
+    ///
+    /// Models the Action Comics entries 2-5 pattern: the LFH's
+    /// `compressed_size` field is zero (which would normally mean
+    /// "see the data descriptor"), but GP bit 3 (data-descriptor-
+    /// present) is NOT set. The CDFH carries the real `csize`. A
+    /// strict reader has no way to determine where the entry's data
+    /// ends without scanning forward to the next signature.
+    ///
+    /// Bare-crate symptom is open question for the M1 sanity test
+    /// to answer: v8 may use the CDFH `csize` as the source of truth
+    /// (in which case Tier 2's csize=0 fallback is unnecessary), or
+    /// it may strictly trust the LFH and fail. We measure rather
+    /// than assume.
+    fn build_csize_zero_lfh_cbz() -> tempfile::NamedTempFile {
+        let png = one_pixel_png();
+        let base = build_cbz_with(&[("page1.png", &png), ("page2.png", &png)], true);
+        let mut bytes = std::fs::read(base.path()).unwrap();
+
+        let csize0 = u32::from_le_bytes(bytes[18..22].try_into().unwrap()) as usize;
+        let fname_len0 = u16::from_le_bytes(bytes[26..28].try_into().unwrap()) as usize;
+        let extra_len0 = u16::from_le_bytes(bytes[28..30].try_into().unwrap()) as usize;
+        let lfh1_off = 30 + fname_len0 + extra_len0 + csize0;
+        assert_eq!(&bytes[lfh1_off..lfh1_off + 4], b"PK\x03\x04");
+
+        // GP bit 3 (0x08) must NOT be set — otherwise this is a
+        // legitimate data-descriptor entry, not the malformation we
+        // want to model.
+        let gp_flags = u16::from_le_bytes(bytes[lfh1_off + 6..lfh1_off + 8].try_into().unwrap());
+        assert_eq!(
+            gp_flags & 0x08,
+            0,
+            "fixture invariant: GP bit 3 must not be set on the patched entry",
+        );
+
+        // Patch LFH#1's compressed_size (bytes 18..22 within the LFH)
+        // to 0. The CDFH for entry 1 still carries the real csize.
+        bytes[lfh1_off + 18..lfh1_off + 22].copy_from_slice(&0u32.to_le_bytes());
+
+        let tmp = tempfile::Builder::new().suffix(".cbz").tempfile().unwrap();
+        std::fs::write(tmp.path(), &bytes).unwrap();
+        tmp
+    }
+
+    /// **Fixture C — constant-delta drift (self-extracting prefix).**
+    ///
+    /// Models the canonical "self-extracting prefix" case: every byte
+    /// of the original zip is shifted forward by PREFIX, including
+    /// the EOCD. CDFH `lfh_offset` fields, EOCD `cd_offset` — none of
+    /// them are patched. The reader must *detect* the global shift.
+    ///
+    /// `zip = "8"` defaults to `Config { archive_offset:
+    /// ArchiveOffset::Detect }`, which is specifically designed for
+    /// this case. The sanity test confirms whether v8 actually does
+    /// auto-detect this delta — if yes, M2's Tier-1 constant-delta
+    /// repair is redundant with the zip crate's built-in handling
+    /// and we can drop it from the recovery scope.
+    fn build_constant_delta_cbz() -> tempfile::NamedTempFile {
+        const PREFIX: usize = 128;
+        let png = one_pixel_png();
+        let base = build_cbz_with(&[("page1.png", &png), ("page2.png", &png)], true);
+        let bytes = std::fs::read(base.path()).unwrap();
+
+        // Prepend PREFIX bytes of garbage. Everything (LFHs, CDFHs,
+        // EOCD) slides forward by PREFIX. NOTHING else is patched.
+        // EOCD's `cd_offset` field still names the pre-shift CD
+        // position — `ArchiveOffset::Detect` is meant to notice this
+        // and apply the delta globally.
+        let mut out = Vec::with_capacity(bytes.len() + PREFIX);
+        out.extend(std::iter::repeat_n(0xABu8, PREFIX));
+        out.extend_from_slice(&bytes);
+
+        let tmp = tempfile::Builder::new().suffix(".cbz").tempfile().unwrap();
+        std::fs::write(tmp.path(), &out).unwrap();
+        tmp
+    }
+
+    /// M3: end-to-end recovery test. Cbz::open's recovery path
+    /// catches `Invalid local file header` and dispatches to
+    /// `rebuild_cd_from_lfh_scan`, which finds each entry's actual
+    /// LFH by filename match and rewrites the CD. The recovered
+    /// archive should list every page in the original order.
+    ///
+    /// Pre-fix this would surface as `MalformedComicInfo` and the
+    /// scanner would skip the file.
+    #[test]
+    fn rebuild_cd_recovers_drifting_offset_fixture() {
+        let cbz = build_drifting_offset_cbz();
+        let mut a =
+            Cbz::open(cbz.path(), ArchiveLimits::default()).expect("recovery should succeed");
+        let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(pages, vec!["page1.png", "page2.png", "page3.png"]);
+        // Confirm we can actually read entry 1's bytes through the
+        // recovered archive (the entry whose CDFH offset was wrong).
+        let entry1 = a.pages().get(1).cloned().cloned().unwrap();
+        let bytes = a
+            .read_entry_bytes(&entry1)
+            .expect("read entry 1 after recovery");
+        assert_eq!(bytes, one_pixel_png());
+    }
+
+    /// M1 sanity: Fixture A's CD is findable, entry 0 reads, entry 1
+    /// fails when consumed by the bare zip crate (no recovery).
+    /// Documents the symptom we recover from in
+    /// `rebuild_cd_from_lfh_scan`.
+    #[test]
+    fn fixture_a_drifting_offset_breaks_bare_zip_crate() {
+        let cbz = build_drifting_offset_cbz();
+        let f = File::open(cbz.path()).unwrap();
+        let mut a = ZipArchive::new(f).expect("CD reads cleanly via patched EOCD offset");
+        assert_eq!(a.len(), 3, "all three CDFH entries are parsed");
+
+        a.by_index_raw(0)
+            .expect("entry 0 LFH at offset 0 is untouched");
+
+        let err = a
+            .by_index_raw(1)
+            .expect_err("entry 1's CDFH offset points at our 0xCD garbage");
+        let msg = format!("{err}");
+        // The error string is coupled to zip v8 — if it drifts in a
+        // future bump, update both this assertion and the recovery
+        // branch's match in `open_zip_with_recovery`.
+        assert!(
+            msg.to_lowercase().contains("local file header"),
+            "expected LFH-related error, got: {msg}",
+        );
+    }
+
+    /// Regression guard: zip v8 must continue to handle the
+    /// isolated `csize=0` LFH case (it falls back to CDFH csize when
+    /// the LFH field is zero, even with GP bit 3 NOT set). M1's
+    /// empirical finding lets us *skip* the csize=0 fallback in
+    /// `rebuild_cd_from_lfh_scan` for this isolated case.
+    ///
+    /// If this assertion ever flips to "fails", revisit the
+    /// recovery: Action Comics-style files with compound corruption
+    /// (drift + csize=0) would start exercising a code path the
+    /// rebuild doesn't currently exercise in isolation.
+    #[test]
+    fn fixture_b_csize_zero_lfh_handled_by_zip_v8() {
+        let cbz = build_csize_zero_lfh_cbz();
+        let f = File::open(cbz.path()).unwrap();
+        let result = ZipArchive::new(f).and_then(|mut a| {
+            for i in 0..a.len() {
+                a.by_index_raw(i)?;
+            }
+            Ok(a.len())
+        });
+        let entries = result.expect(
+            "zip v8 should tolerate LFH csize=0 with CDFH carrying the correct csize \
+             (M1 finding 2026-05-16). If this assertion fires, the bundled zip crate \
+             regressed and `rebuild_cd_from_lfh_scan` needs a csize=0 fallback branch.",
+        );
+        assert_eq!(entries, 2);
+    }
+
+    /// Regression guard: zip v8's `ArchiveOffset::Detect` (the
+    /// `Config::default()` setting) must continue to auto-handle a
+    /// self-extracting-prefix layout (every LFH/CDFH/EOCD offset
+    /// shifted by a constant K). M1's empirical finding lets us
+    /// skip a `-F`-style constant-delta repair tier in the recovery.
+    ///
+    /// If this assertion ever flips to "fails", revisit the recovery:
+    /// constant-delta corruption would start landing in
+    /// `rebuild_cd_from_lfh_scan` (which would still handle it, just
+    /// less efficiently than a dedicated delta-repair path).
+    #[test]
+    fn fixture_c_constant_delta_handled_by_zip_v8() {
+        let cbz = build_constant_delta_cbz();
+        let f = File::open(cbz.path()).unwrap();
+        let result = ZipArchive::new(f).and_then(|mut a| {
+            for i in 0..a.len() {
+                a.by_index_raw(i)?;
+            }
+            Ok(a.len())
+        });
+        let entries = result.expect(
+            "zip v8's ArchiveOffset::Detect should auto-handle a self-extracting prefix \
+             layout (M1 finding 2026-05-16). If this assertion fires, the bundled zip \
+             crate regressed and Tier-1 constant-delta repair needs to land in \
+             `open_zip_with_recovery`.",
+        );
+        assert_eq!(entries, 2);
+    }
+
+    // -----------------------------------------------------------------
+    // End of scan-forward recovery — M1 fixtures
+    // -----------------------------------------------------------------
 
     #[test]
     fn opens_basic_cbz_and_lists_pages() {
