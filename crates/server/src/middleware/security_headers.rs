@@ -241,3 +241,120 @@ pub async fn set_headers(
 
     resp
 }
+
+#[cfg(test)]
+mod tests {
+    //! M2 backfill tests for `build_csp` (csp-nonce 1.0). Anchored
+    //! at the unit level because the function is pure: given a
+    //! `CspTemplate` + `Option<nonce>` it returns a deterministic
+    //! `HeaderValue`. Integration coverage of the per-request
+    //! variability lives in `tests/security_headers.rs`.
+    use super::*;
+
+    fn template() -> CspTemplate {
+        CspTemplate {
+            connect_src: "'self' ws://example.com".to_owned(),
+        }
+    }
+
+    fn csp_str(nonce: Option<&str>) -> String {
+        build_csp(&template(), nonce).to_str().unwrap().to_owned()
+    }
+
+    #[test]
+    fn build_csp_with_nonce_includes_nonce_and_strict_dynamic() {
+        let csp = csp_str(Some("abc123XYZ_-rstuvwxyz0"));
+        assert!(csp.contains("'nonce-abc123XYZ_-rstuvwxyz0'"));
+        assert!(csp.contains("'strict-dynamic'"));
+        // `'self'` is intentionally omitted from script-src when
+        // strict-dynamic is present (browsers ignore it + warn).
+        // The CSP must still carry `default-src 'self'` though.
+        assert!(csp.contains("default-src 'self'"));
+    }
+
+    #[test]
+    fn build_csp_without_nonce_falls_back_to_unsafe_inline() {
+        let csp = csp_str(None);
+        // Fallback policy: matches v0.2.1 hotfix. The script-src
+        // section uses `'self' 'unsafe-inline'`; verify both tokens
+        // land in the script-src directive (not somewhere else in
+        // the CSP).
+        let script_src_start = csp.find("script-src ").expect("script-src in CSP");
+        let script_src_end = csp[script_src_start..]
+            .find(';')
+            .map(|i| script_src_start + i)
+            .unwrap_or(csp.len());
+        let script_src = &csp[script_src_start..script_src_end];
+        assert!(
+            script_src.contains("'self'") && script_src.contains("'unsafe-inline'"),
+            "fallback script-src missing tokens: {script_src}"
+        );
+        assert!(
+            !script_src.contains("'strict-dynamic'"),
+            "fallback should not enable strict-dynamic: {script_src}"
+        );
+    }
+
+    #[test]
+    fn build_csp_style_src_keeps_unsafe_inline_regardless_of_nonce() {
+        // Style-src cannot use a nonce while Next.js emits inline
+        // `style="…"` attributes (CSP nonces are element-only).
+        // This invariant holds in both branches.
+        for nonce in [Some("anonce20charsbase64url"), None] {
+            let csp = csp_str(nonce);
+            assert!(
+                csp.contains("style-src 'self' 'unsafe-inline'"),
+                "style-src missing unsafe-inline (nonce={nonce:?}): {csp}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_csp_carries_static_directives() {
+        let csp = csp_str(Some("anonce"));
+        for directive in [
+            "default-src 'self'",
+            "img-src 'self' data: blob:",
+            "font-src 'self'",
+            "frame-src 'none'",
+            "frame-ancestors 'none'",
+            "form-action 'self'",
+            "base-uri 'none'",
+            "object-src 'none'",
+            "worker-src 'self' blob:",
+            "manifest-src 'self'",
+            "upgrade-insecure-requests",
+            "report-uri /csp-report",
+            "report-to comic-csp",
+        ] {
+            assert!(
+                csp.contains(directive),
+                "CSP missing static directive `{directive}`: {csp}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_csp_uses_template_connect_src() {
+        // The pre-built connect-src on the template flows verbatim
+        // into the policy — verifies the template/build_csp seam.
+        let custom = CspTemplate {
+            connect_src: "'self' https://idp.example.com wss://comics.example.com".to_owned(),
+        };
+        let csp = build_csp(&custom, Some("n")).to_str().unwrap().to_owned();
+        assert!(
+            csp.contains("connect-src 'self' https://idp.example.com wss://comics.example.com"),
+            "template connect_src not honored: {csp}"
+        );
+    }
+
+    // Trusted Types stays off (M6 deferred — React 19 / Next 16
+    // emit chunks that call `innerHTML = …` directly). Re-flip when
+    // upstream stops needing the bare DOM API.
+    #[test]
+    fn build_csp_omits_trusted_types_for_now() {
+        let csp = csp_str(Some("n"));
+        assert!(!csp.contains("require-trusted-types-for"));
+        assert!(!csp.contains("trusted-types "));
+    }
+}

@@ -25,10 +25,38 @@ pub fn routes() -> Router<AppState> {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ServerInfoView {
-    /// `CARGO_PKG_VERSION` baked in at build time.
+    /// Human-readable build version. `git describe --tags --always --dirty`
+    /// at build time, falling back to `"dev"` when the build script
+    /// couldn't shell to git (e.g. inside Docker without `.git`). Common
+    /// shapes:
+    ///   - `"v0.1.8"`             — clean checkout on a release tag
+    ///   - `"v0.1.8-3-gabcd1234"` — 3 commits past v0.1.8
+    ///   - `"v0.1.8-dirty"`       — release tag with uncommitted changes
+    ///   - `"abcd1234"`           — no tags exist (bare SHA fallback)
+    ///   - `"dev"`                — build script couldn't reach git
+    ///
+    /// UI links this to the GitHub release page when it starts with `v`
+    /// and has no `-` suffix (i.e. a clean tag), and renders verbatim
+    /// otherwise.
     pub version: &'static str,
-    /// Optional `BUILD_SHA` env var captured at build time, else `"dev"`.
+    /// 12-char short SHA for display. Read from `COMIC_BUILD_SHA`
+    /// (env override or build.rs `git rev-parse HEAD`). Falls back
+    /// to `"unknown"`.
     pub build_sha: &'static str,
+    /// 40-char full SHA used to construct stable commit URLs. Falls
+    /// back to `"unknown"` when the build script couldn't reach git.
+    pub build_sha_full: &'static str,
+    /// Browse URL for the repo this binary was built from. Auto-detected
+    /// from `git config --get remote.origin.url` at build time and
+    /// normalized to `https://host/owner/repo` (strips `.git`, converts
+    /// SSH → HTTPS). CI passes `COMIC_BUILD_REPO_URL` directly so Docker
+    /// builds without `.git` still get the link. `None` when no remote
+    /// was detected and no override was passed.
+    pub repo_url: Option<&'static str>,
+    /// Unix-seconds at build time (UTC). UI renders as
+    /// `Built — N hours ago`. `None` when the build script couldn't
+    /// resolve the system clock (shouldn't happen in practice).
+    pub build_epoch: Option<i64>,
     /// Seconds since `AppState` was constructed (process start).
     pub uptime_secs: i64,
     pub postgres_ok: bool,
@@ -53,8 +81,21 @@ pub struct ServerInfoView {
     )
 )]
 pub async fn info(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
-    let version: &'static str = env!("CARGO_PKG_VERSION");
-    let build_sha: &'static str = option_env!("BUILD_SHA").unwrap_or("dev");
+    // `Cargo.toml` declares `version = "0.0.0"` and the release ritual
+    // uses git tags only. The displayed version comes from
+    // `git describe --tags --always --dirty` captured by build.rs into
+    // `COMIC_BUILD_TAG`. Falls back to `"dev"` for builds where the
+    // build script couldn't reach git (e.g. Docker without `.git`).
+    let version: &'static str = option_env!("COMIC_BUILD_TAG").unwrap_or("dev");
+    let build_sha: &'static str = option_env!("COMIC_BUILD_SHA").unwrap_or("unknown");
+    let build_sha_full: &'static str = option_env!("COMIC_BUILD_SHA_FULL").unwrap_or("unknown");
+    // `COMIC_BUILD_REPO_URL` is the empty string when no remote was
+    // detected and no env override was passed. Surface that as `None`
+    // so the UI doesn't render a broken link.
+    let repo_url: Option<&'static str> =
+        option_env!("COMIC_BUILD_REPO_URL").filter(|s| !s.is_empty());
+    let build_epoch: Option<i64> =
+        option_env!("COMIC_BUILD_EPOCH").and_then(|s| s.parse::<i64>().ok());
     let uptime_secs = (chrono::Utc::now() - app.started_at).num_seconds().max(0);
 
     // Postgres: a trivial round-trip is cheaper than `pg_isready` and gives
@@ -88,6 +129,9 @@ pub async fn info(State(app): State<AppState>, _admin: RequireAdmin) -> Response
     Json(ServerInfoView {
         version,
         build_sha,
+        build_sha_full,
+        repo_url,
+        build_epoch,
         uptime_secs,
         postgres_ok,
         redis_ok,

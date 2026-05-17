@@ -429,6 +429,64 @@ async fn server_info_reports_pings_and_uptime() {
     assert!(!body["version"].as_str().unwrap().is_empty());
 }
 
+/// server-info-github-link M1: confirms the build-time fingerprint
+/// fields are all present + populated. Anchors the contract so a
+/// build.rs refactor can't silently regress to the v0.3.20 state where
+/// `option_env!("BUILD_SHA")` never matched build.rs's
+/// `COMIC_BUILD_SHA` and the UI always showed "dev".
+#[tokio::test]
+async fn server_info_carries_build_fingerprint_fields() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let (s, body) = get(&app, &admin, "/api/admin/server/info").await;
+    assert_eq!(s, StatusCode::OK, "body={body}");
+
+    // version, build_sha, build_sha_full are required `string` fields.
+    // Their values depend on the build environment (CI vs. local
+    // checkout vs. Docker), but they must always be non-empty strings
+    // — the fallbacks (`"dev"` / `"unknown"`) are themselves valid.
+    let version = body["version"].as_str().expect("version is a string");
+    assert!(!version.is_empty(), "version must be non-empty");
+
+    let sha = body["build_sha"].as_str().expect("build_sha is a string");
+    assert!(!sha.is_empty(), "build_sha must be non-empty");
+
+    let sha_full = body["build_sha_full"]
+        .as_str()
+        .expect("build_sha_full is a string");
+    assert!(!sha_full.is_empty(), "build_sha_full must be non-empty");
+
+    // build_sha is either the prefix of build_sha_full, or both are
+    // the "unknown" fallback. (build.rs derives short from full when
+    // no explicit override is passed.)
+    if sha != "unknown" && sha_full != "unknown" {
+        assert!(
+            sha_full.starts_with(sha),
+            "short SHA {sha} should be a prefix of full SHA {sha_full}"
+        );
+    }
+
+    // repo_url and build_epoch are optional fields — either populated
+    // or null. When present, they must be the right shape.
+    if !body["repo_url"].is_null() {
+        let url = body["repo_url"].as_str().expect("repo_url is a string");
+        assert!(
+            url.starts_with("https://") || url.starts_with("http://"),
+            "repo_url should be HTTP(S): {url}"
+        );
+    }
+    if !body["build_epoch"].is_null() {
+        let epoch = body["build_epoch"]
+            .as_i64()
+            .expect("build_epoch is an integer");
+        // Unix seconds for any plausible build time in this decade.
+        assert!(
+            epoch > 1_700_000_000,
+            "build_epoch looks too small: {epoch}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn server_info_rejects_non_admin() {
     let app = TestApp::spawn().await;

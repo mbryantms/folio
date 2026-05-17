@@ -30,6 +30,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN cargo install cargo-chef --locked
 COPY --from=planner /work/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json --bin server --bin migration
+
+# Build-time fingerprints. The `.git` directory is NOT in the Docker
+# context, so crates/server/build.rs can't shell out to git from inside
+# the container. CI passes these values as --build-arg; the build script
+# picks them up via env. See `.github/workflows/release.yml` for the
+# producer side. Defaults keep local `docker build` runnable without
+# args (image identifies as "dev").
+ARG COMIC_BUILD_TAG=dev
+ARG COMIC_BUILD_SHA=unknown
+ARG COMIC_BUILD_SHA_FULL=unknown
+ARG COMIC_BUILD_REPO_URL=
+ENV COMIC_BUILD_TAG=$COMIC_BUILD_TAG \
+    COMIC_BUILD_SHA=$COMIC_BUILD_SHA \
+    COMIC_BUILD_SHA_FULL=$COMIC_BUILD_SHA_FULL \
+    COMIC_BUILD_REPO_URL=$COMIC_BUILD_REPO_URL
+
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 RUN cargo build --release --bin server --bin migration \
@@ -47,12 +63,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 WORKDIR /app
 
+# Re-declare build-time args in the final stage so the LABEL block below
+# can interpolate them. Docker scopes ARGs per-stage; values come from
+# the same `--build-arg` flags CI passes for the rust-builder stage.
+ARG COMIC_BUILD_TAG=dev
+ARG COMIC_BUILD_SHA_FULL=unknown
+ARG COMIC_BUILD_REPO_URL=https://github.com/mbryantms/folio
+
 # OCI labels — `org.opencontainers.image.source` is what GHCR uses to link
-# the image package back to the repo; the rest is informational metadata
-# surfaced by `docker inspect`.
+# the image package back to the repo; `.version` + `.revision` make the
+# image self-describing for `docker inspect` and supply-chain scanners.
 LABEL org.opencontainers.image.title="Folio" \
       org.opencontainers.image.description="Self-hostable comic reader (Rust server)" \
-      org.opencontainers.image.source="https://github.com/mtbry/folio" \
+      org.opencontainers.image.source="${COMIC_BUILD_REPO_URL}" \
+      org.opencontainers.image.version="${COMIC_BUILD_TAG}" \
+      org.opencontainers.image.revision="${COMIC_BUILD_SHA_FULL}" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
 # Binaries

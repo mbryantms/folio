@@ -26,6 +26,7 @@ import {
   useUpdateMarker,
 } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
+import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import { toast } from "sonner";
 import {
   DropdownMenu,
@@ -304,6 +305,7 @@ function BookmarkToggleButton({
       del.mutate(undefined, {
         onSuccess: () =>
           toast.success("Bookmark removed", {
+            duration: UNDO_TOAST_DURATION_MS,
             action: {
               label: "Undo",
               onClick: () => create.mutate(markerToCreateReq(snapshot)),
@@ -374,6 +376,7 @@ function FavoriteToggleButton({
           del.mutate(undefined, {
             onSuccess: () =>
               toast.success("Star removed", {
+                duration: UNDO_TOAST_DURATION_MS,
                 action: {
                   label: "Undo",
                   onClick: () => create.mutate(markerToCreateReq(snapshot)),

@@ -171,6 +171,23 @@ Default admin (first registered user becomes admin):
   drag-reorder (collections) auto-walk all pages before enabling
   the DnD sensors so the reorder mutation sees the full list.
 
+  **Reviewer heuristic — reject PRs that:**
+  - Add `useQuery<...>` on a response with a `next_cursor` field
+    (that's an infinite query in disguise; use `useInfiniteQuery`).
+  - Pass a hardcoded high `limit:` (200+) to a list-fetching hook —
+    "high enough for now" is exactly how the CBL >500 bug shipped.
+    If the endpoint is genuinely unbounded, use cursor pagination;
+    if it's bounded by domain (`/me/sessions`), leave it `limit:`-less.
+  - Add a `.filter(...)` over the data returned by a list-fetch hook
+    where the filter could be a server query param. Filtering an
+    already-truncated parent set silently drops data once the parent
+    hits its cap. The CBL Resolution tab was the canonical case.
+
+  See [`docs/dev plans`](../../../.claude/plans/list-pagination-completeness-1.0.md) for the full rationale; regression guards
+  in `crates/server/tests/cbl_lists.rs::entries_endpoint_walks_past_old_500_cap`
+  and `web/tests/api/cbl-entries-next-page.test.ts` anchor the
+  invariant — keep those passing.
+
 ## Editing rules
 
 - Server tests must hit a real DB via `TestApp::spawn()`; never mock sea-orm.

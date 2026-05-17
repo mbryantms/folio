@@ -24,7 +24,7 @@ import {
   useCreateCollection,
   type BulkAddMembersResp,
 } from "@/lib/api/mutations";
-import { TOAST } from "@/lib/api/toast-strings";
+import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import { cn } from "@/lib/utils";
 import type {
   CollectionEntryKind,
@@ -262,6 +262,7 @@ function BulkCreateForm({
 
       const addedCount = summary?.added ?? targets.length;
       toast.success(`${addedCount} added to ${trimmed}`, {
+        duration: UNDO_TOAST_DURATION_MS,
         // Undo discards the whole collection — the user's intent was
         // "add to a new place"; leaving an empty collection isn't
         // what they asked for. Mirrors single-item CreateForm.

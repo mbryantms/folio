@@ -30,3 +30,21 @@ export const TOAST = {
   PAGE_DELETED: "Page deleted",
   PAGE_UPDATED: "Page updated",
 } as const;
+
+/**
+ * Duration for toasts that carry an Undo action (marker delete,
+ * add-to-collection, etc.). 8 s gives the user time to register the
+ * change, decide to undo, and reach the action before the toast
+ * expires. Sonner's global default (`<Toaster duration={4000}>`) is
+ * fine for plain success messages but too short when the user might
+ * need a beat before clicking Undo. Gmail uses 8 s for its parallel
+ * "Message sent — Undo" affordance; we match.
+ *
+ * Apply via:
+ *   `toast.success(msg, { duration: UNDO_TOAST_DURATION_MS, action: { ... } })`
+ *
+ * The `<Toaster closeButton>` config in `web/components/ui/sonner.tsx`
+ * also lets users dismiss a lingering Undo toast manually if they
+ * decide they don't need it.
+ */
+export const UNDO_TOAST_DURATION_MS = 8000;

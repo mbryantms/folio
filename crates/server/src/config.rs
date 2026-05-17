@@ -101,6 +101,14 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub rate_limit_enabled: bool,
 
+    /// When `true`, the `/admin/server/latest-release` endpoint fetches
+    /// the latest GitHub release once an hour so the admin UI can surface
+    /// "v0.1.9 available" when there's a newer build. Default ON; air-
+    /// gapped or privacy-conscious deployments flip it off via
+    /// `/admin/server` (DB key `updates.check_upstream_releases`).
+    #[serde(default = "default_true")]
+    pub check_upstream_releases: bool,
+
     #[serde(default)]
     pub otlp_endpoint: Option<String>,
 
@@ -676,6 +684,19 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             }
             None => bad_type(&row.key, "bool", &row.value),
         },
+        "updates.check_upstream_releases" => match row.value.as_bool() {
+            Some(b) => {
+                if cfg.check_upstream_releases != b {
+                    tracing::debug!(
+                        env = cfg.check_upstream_releases,
+                        db = b,
+                        "updates.check_upstream_releases overridden by DB"
+                    );
+                }
+                cfg.check_upstream_releases = b;
+            }
+            None => bad_type(&row.key, "bool", &row.value),
+        },
         "observability.log_level" => match row.value.as_str() {
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.log_level.as_str()), s);
@@ -786,6 +807,7 @@ mod tests {
             jwt_access_ttl: "24h".into(),
             jwt_refresh_ttl: "30d".into(),
             rate_limit_enabled: true,
+            check_upstream_releases: true,
             otlp_endpoint: None,
             auto_migrate: false,
             zip_lru_capacity: 16,

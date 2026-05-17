@@ -23,7 +23,7 @@ import {
   useCreateCollection,
   useRemoveCollectionEntry,
 } from "@/lib/api/mutations";
-import { TOAST } from "@/lib/api/toast-strings";
+import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import { cn } from "@/lib/utils";
 import type {
   AddEntryReq,
@@ -206,6 +206,7 @@ function PickRow({
                 return;
               }
               toast.success(`Added to ${collection.name}`, {
+                duration: UNDO_TOAST_DURATION_MS,
                 action: {
                   label: "Undo",
                   onClick: () => remove.mutate({ entryId: entry.id }, {}),
@@ -292,6 +293,7 @@ function CreateForm({
       // directly because `useDeleteCollection(id)` binds at hook-call
       // time and we don't know the id until create resolves.
       toast.success(`Added to ${trimmed}`, {
+        duration: UNDO_TOAST_DURATION_MS,
         action: {
           label: "Undo",
           onClick: async () => {

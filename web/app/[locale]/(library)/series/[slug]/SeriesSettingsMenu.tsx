@@ -44,7 +44,7 @@ import {
   useUpsertSeriesProgress,
 } from "@/lib/api/mutations";
 import { useCollections, useMe } from "@/lib/api/queries";
-import { TOAST } from "@/lib/api/toast-strings";
+import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 
 const WANT_TO_READ_KEY = "want_to_read";
 
@@ -111,6 +111,7 @@ export function SeriesSettingsMenu({
             return;
           }
           toast.success(`Added "${seriesName}" to Want to Read`, {
+            duration: UNDO_TOAST_DURATION_MS,
             action: {
               label: "Undo",
               onClick: () => removeFromWtr.mutate({ entryId: entry.id }, {}),

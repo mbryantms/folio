@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { useMarkerTags } from "@/lib/api/queries";
+import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import {
   useCreateMarker,
   useDeleteMarker,
@@ -196,6 +197,7 @@ export function MarkerEditor({
     del.mutate(undefined, {
       onSuccess: () => {
         toast.success("Removed", {
+          duration: UNDO_TOAST_DURATION_MS,
           action: {
             label: "Undo",
             onClick: () => create.mutate(snapshot),

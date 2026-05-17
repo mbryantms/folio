@@ -937,3 +937,149 @@ async fn cbl_saved_view_respects_explicit_year_overrides() {
         "explicit override skips auto-seed: {view:#?}",
     );
 }
+
+// ───── Regression guard: list-pagination-completeness 1.0 ─────
+//
+// The original bug (2026-05-14) silently truncated CBL lists at 500
+// entries because `GET /me/cbl-lists/{id}` defaulted `limit.unwrap_or(500)`
+// and the UI passed no override. The fix moved entries to a paginated
+// `/me/cbl-lists/{id}/entries` endpoint; this test directly anchors
+// the invariant by synthesizing a 600-entry list (well past the old
+// 500 cap) and walking the cursor end-to-end. Failure mode this
+// catches: a future refactor that re-introduces ANY hidden cap below
+// the entry count silently drops rows past the cap.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entries_endpoint_walks_past_old_500_cap() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "regression-walker@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    // Look up the just-registered user — register() doesn't return the
+    // id, and we need it as the cbl_list's `owner_user_id` so the
+    // /me/cbl-lists endpoint's ownership check passes.
+    let user = entity::user::Entity::find()
+        .filter(entity::user::Column::Email.eq("regression-walker@example.com"))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("user row");
+
+    let now = Utc::now().fixed_offset();
+    let list_id = Uuid::now_v7();
+    cbl_list::ActiveModel {
+        id: Set(list_id),
+        owner_user_id: Set(Some(user.id)),
+        source_kind: Set("upload".into()),
+        source_url: Set(None),
+        catalog_source_id: Set(None),
+        catalog_path: Set(None),
+        github_blob_sha: Set(None),
+        source_etag: Set(None),
+        source_last_modified: Set(None),
+        raw_sha256: Set(vec![0u8; 32]),
+        raw_xml: Set("<ReadingList/>".into()),
+        parsed_name: Set("600-entry stress list".into()),
+        parsed_matchers_present: Set(false),
+        num_issues_declared: Set(Some(600)),
+        description: Set(None),
+        imported_at: Set(now),
+        last_refreshed_at: Set(None),
+        last_match_run_at: Set(None),
+        refresh_schedule: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    // Insert 600 entries directly — no need to actually parse a
+    // 600-issue CBL file; we just need the row count past the old
+    // cap. Match-status varies so a future filter-aware regression
+    // wouldn't accidentally pass by walking only matched rows.
+    const N: i32 = 600;
+    for pos in 0..N {
+        let status = match pos % 3 {
+            0 => "matched",
+            1 => "ambiguous",
+            _ => "missing",
+        };
+        cbl_entry::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            cbl_list_id: Set(list_id),
+            position: Set(pos),
+            series_name: Set(format!("Series {pos}")),
+            issue_number: Set(format!("{pos}")),
+            volume: Set(None),
+            year: Set(None),
+            cv_series_id: Set(None),
+            cv_issue_id: Set(None),
+            metron_series_id: Set(None),
+            metron_issue_id: Set(None),
+            matched_issue_id: Set(None),
+            match_status: Set(status.into()),
+            match_method: Set(None),
+            match_confidence: Set(None),
+            ambiguous_candidates: Set(None),
+            matched_at: Set(None),
+            user_resolved_at: Set(None),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+
+    // Walk the cursor end-to-end. Bug-class regression: any silent
+    // truncation will surface as `seen < 600`.
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/entries"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["total"].as_i64(),
+        Some(N as i64),
+        "total on first page"
+    );
+
+    let mut positions: Vec<i64> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["position"].as_i64().unwrap())
+        .collect();
+    let mut cursor = body["next_cursor"].as_str().map(str::to_owned);
+    let mut page_count = 1;
+    while let Some(c) = cursor {
+        let (status, body) = http(
+            &app,
+            Method::GET,
+            &format!("/api/me/cbl-lists/{list_id}/entries?cursor={c}"),
+            Some(&auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        for it in body["items"].as_array().unwrap() {
+            positions.push(it["position"].as_i64().unwrap());
+        }
+        cursor = body["next_cursor"].as_str().map(str::to_owned);
+        page_count += 1;
+        // Safety net: stop after 50 pages so a runaway loop fails fast.
+        assert!(page_count < 50, "infinite loop guard tripped");
+    }
+    assert_eq!(positions.len(), N as usize, "every position is reachable");
+    let dedup: std::collections::HashSet<_> = positions.iter().collect();
+    assert_eq!(dedup.len(), N as usize, "no position returned twice");
+
+    // Sanity: positions cover the full 0..N range with no gaps.
+    let mut sorted = positions.clone();
+    sorted.sort_unstable();
+    assert_eq!(sorted.first().copied(), Some(0));
+    assert_eq!(sorted.last().copied(), Some((N - 1) as i64));
+}

@@ -3,6 +3,7 @@
  * later milestones (M2 dismiss/restore, M3 user updates, M4 preferences,
  * M5 password issuance) only need to declare the endpoint shape.
  */
+import * as React from "react";
 import {
   useMutation,
   useQueryClient,
@@ -80,6 +81,37 @@ export type ApiMutationInput = {
   body?: unknown;
 };
 
+/**
+ * Structured error thrown by `apiMutate`. Carries the HTTP status (or
+ * `"network"` when the request never reached the server) so callers
+ * can branch on transience. `useApiMutation`'s `onError` reads
+ * `.transient` to decide whether to attach a Retry action to the
+ * error toast.
+ */
+export class ApiMutationError extends Error {
+  readonly status: number | "network";
+
+  constructor(message: string, status: number | "network") {
+    super(message);
+    this.name = "ApiMutationError";
+    this.status = status;
+  }
+
+  /**
+   * `true` for failures the user can plausibly retry by clicking
+   * a button: network errors (offline / DNS / TLS hiccup) and 5xx
+   * server errors (transient backend issue, restart in progress).
+   * `false` for 4xx — those are validation / auth / permission
+   * problems where retrying without changing input won't help.
+   */
+  get transient(): boolean {
+    return (
+      this.status === "network" ||
+      (typeof this.status === "number" && this.status >= 500)
+    );
+  }
+}
+
 export async function apiMutate<T>({
   path,
   method,
@@ -93,15 +125,24 @@ export async function apiMutate<T>({
   // empty — biting the legacy "Pin to home" pill on /settings/views
   // which posts no body to /me/saved-views/{id}/pin.
   const hasBody = body !== undefined;
-  const res = await apiFetch(path, {
-    method,
-    headers: {
-      Accept: "application/json",
-      ...(hasBody ? { "Content-Type": "application/json" } : {}),
-      ...(csrf ? { "X-CSRF-Token": csrf } : {}),
-    },
-    body: hasBody ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await apiFetch(path, {
+      method,
+      headers: {
+        Accept: "application/json",
+        ...(hasBody ? { "Content-Type": "application/json" } : {}),
+        ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+      },
+      body: hasBody ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    // `fetch` rejects on network errors (offline, DNS, TLS, CORS
+    // preflight refusal). Promote to a typed retryable error so the
+    // toast can offer a Retry action.
+    const msg = e instanceof Error ? e.message : "Network error";
+    throw new ApiMutationError(msg, "network");
+  }
   if (!res.ok) {
     let detail = "";
     try {
@@ -109,7 +150,7 @@ export async function apiMutate<T>({
     } catch {
       detail = `${res.status}`;
     }
-    throw new Error(detail);
+    throw new ApiMutationError(detail, res.status);
   }
   if (res.status === 204) return null;
   const text = await res.text();
@@ -123,10 +164,25 @@ export function useApiMutation<TData, TInput>(
     "mutationFn"
   > & {
     successMessage?: string | ((data: TData | null, input: TInput) => string);
+    /**
+     * Stable sonner toast `id`. When set, rapid-fire calls to the
+     * same mutation (e.g. bulk progress flipping read/unread back
+     * and forth) collapse into a single toast that updates in place
+     * rather than stacking N toasts. Use for bulk operations and
+     * autosave-like surfaces where each click is one logical event,
+     * not N. Sonner reuses the same toast element when an id repeats.
+     */
+    toastId?: string;
   },
 ) {
-  const { successMessage, onSuccess, onError, ...rest } = options ?? {};
-  return useMutation<TData | null, Error, TInput>({
+  const { successMessage, toastId, onSuccess, onError, ...rest } = options ?? {};
+  // Ref to the mutation's `mutate` so the error-toast Retry action
+  // can re-fire the same request without forcing every call site to
+  // wire up its own onError handler. The ref is populated after the
+  // `useMutation` call below; by the time onError fires (network
+  // round-trip later), the ref is set.
+  const mutateRef = React.useRef<((input: TInput) => void) | null>(null);
+  const mutation = useMutation<TData | null, Error, TInput>({
     mutationFn: (input) => apiMutate<TData>(build(input)),
     onSuccess: (data, input, ctx) => {
       if (successMessage) {
@@ -134,16 +190,37 @@ export function useApiMutation<TData, TInput>(
           typeof successMessage === "function"
             ? successMessage(data, input)
             : successMessage;
-        toast.success(msg);
+        toast.success(msg, toastId ? { id: toastId } : undefined);
       }
       onSuccess?.(data, input, ctx);
     },
     onError: (err, input, ctx) => {
-      toast.error(err.message);
+      // Attach Retry only for transient failures (5xx + network).
+      // 4xx errors are user-facing validation/auth/permission issues
+      // that retrying without changing input won't fix.
+      const transient = err instanceof ApiMutationError && err.transient;
+      toast.error(err.message, {
+        ...(toastId ? { id: toastId } : {}),
+        ...(transient && {
+          action: {
+            label: "Retry",
+            onClick: () => mutateRef.current?.(input),
+          },
+        }),
+      });
       onError?.(err, input, ctx);
     },
     ...rest,
   });
+  // Populate the ref out-of-render so React 19's strict-mode lint
+  // (no `.current` writes during render) stays happy. `mutation.mutate`
+  // is stable across renders, so the effect fires once per hook
+  // instance; by the time onError can fire (network round-trip
+  // later), the ref is set.
+  React.useEffect(() => {
+    mutateRef.current = mutation.mutate;
+  }, [mutation.mutate]);
+  return mutation;
 }
 
 // ---------- Library Scanner v1 mutations ----------
@@ -354,6 +431,11 @@ export function useBulkRemoveFromCollection(collectionId: string) {
         if (invalid > 0) parts.push(`${invalid} skipped`);
         return parts.length > 0 ? parts.join("; ") : "No changes";
       },
+      // Bulk add → remove → add flips share one collapsing toast
+      // instead of stacking. Scoped per-collection so concurrent
+      // mutations on different collections still each get their own
+      // toast.
+      toastId: `bulk-remove-${collectionId}`,
       onSuccess: () => {
         invalidateCollectionEntries(qc, collectionId);
       },
@@ -421,6 +503,8 @@ export function useBulkAddToCollection(collectionId: string) {
         if (lost > 0) parts.push(`${lost} skipped`);
         return parts.length > 0 ? parts.join("; ") : "No changes";
       },
+      // Scoped per-collection — see `useBulkRemoveFromCollection`.
+      toastId: `bulk-add-${collectionId}`,
       onSuccess: () => {
         invalidateCollectionEntries(qc, collectionId);
       },
@@ -453,6 +537,10 @@ export function useBulkMarkProgress() {
     {
       successMessage: (data, input) =>
         summarizeBulkProgress(data, input.finished),
+      // Stable id so rapid mark-read → mark-unread toggles update the
+      // same toast in place instead of stacking. Sonner reuses the
+      // element when the id repeats.
+      toastId: "bulk-progress",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
       },
@@ -479,6 +567,7 @@ export function useBulkMarkSeriesProgress() {
     {
       successMessage: (data, input) =>
         summarizeBulkSeriesProgress(data, input.finished),
+      toastId: "bulk-series-progress",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
       },

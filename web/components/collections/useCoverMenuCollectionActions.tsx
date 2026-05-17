@@ -9,7 +9,7 @@ import {
   useAddCollectionEntry,
   useRemoveCollectionEntry,
 } from "@/lib/api/mutations";
-import { TOAST } from "@/lib/api/toast-strings";
+import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { CollectionEntryKind } from "@/lib/api/types";
 
 import {
@@ -71,6 +71,7 @@ export function useCoverMenuCollectionActions(opts: {
                 return;
               }
               toast.success(`Added "${label}" to Want to Read`, {
+                duration: UNDO_TOAST_DURATION_MS,
                 action: {
                   label: "Undo",
                   onClick: () =>

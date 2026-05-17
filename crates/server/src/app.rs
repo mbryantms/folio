@@ -185,6 +185,7 @@ use utoipa::OpenApi;
         api::auth_config::get_public_config,
         api::auth_config::probe_discovery,
         api::server_info::info,
+        api::server_releases::latest_release,
         api::sessions::list,
         api::sessions::revoke_one,
         api::sessions::revoke_all,
@@ -372,6 +373,7 @@ use utoipa::OpenApi;
         api::auth_config::OidcDiscoverReq,
         api::auth_config::OidcDiscoverResp,
         api::server_info::ServerInfoView,
+        api::server_releases::LatestReleaseView,
         api::sessions::SessionView,
         api::sessions::SessionListView,
         api::sessions::RevokeAllResp,
@@ -701,6 +703,7 @@ pub fn router(state: AppState) -> Router {
         .merge(api::admin_activity::routes())
         .merge(api::auth_config::routes())
         .merge(api::server_info::routes())
+        .merge(api::server_releases::routes())
         .merge(api::sessions::routes())
         .merge(api::app_passwords::routes())
         .merge(api::admin_settings::routes())

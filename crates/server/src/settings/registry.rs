@@ -168,6 +168,15 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Uint,
         is_secret: false,
     },
+    // ───────── Update check (server-info-github-link M4) ─────────
+    SettingDef {
+        // When `false`, `/admin/server/latest-release` returns 204 (no
+        // content) instead of fetching from GitHub. Default ON; air-
+        // gapped / privacy-conscious operators flip it off.
+        key: "updates.check_upstream_releases",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

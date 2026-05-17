@@ -215,6 +215,7 @@ impl TestApp {
             jwt_access_ttl: "15m".into(),
             jwt_refresh_ttl: "30d".into(),
             rate_limit_enabled: true,
+            check_upstream_releases: true,
             otlp_endpoint: None,
             auto_migrate: false,
             smtp_host: if opts.smtp_on {

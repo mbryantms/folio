@@ -132,6 +132,98 @@ async fn csp_report_endpoint_accepts_violation() {
     assert!(resp.headers().get("content-security-policy").is_some());
 }
 
+/// csp-nonce 1.0 M2: two requests must carry two different nonces.
+/// Anchors the per-request invariant — `build_csp` reads from the
+/// `Nonce` request extension which `set_nonce` generates fresh on
+/// each request. A regression that caches the CSP across requests
+/// (e.g. by precomputing it once at boot) would fail here.
+#[tokio::test]
+async fn nonce_varies_across_requests() {
+    let app = TestApp::spawn().await;
+    let mut nonces = std::collections::HashSet::new();
+    for _ in 0..3 {
+        let resp = app
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let csp = resp
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let nonce_idx = csp.find("'nonce-").expect("CSP must carry nonce");
+        let after = &csp[nonce_idx + "'nonce-".len()..];
+        let close = after.find('\'').expect("nonce closing quote");
+        nonces.insert(after[..close].to_owned());
+    }
+    assert_eq!(
+        nonces.len(),
+        3,
+        "expected 3 distinct nonces across 3 requests, got: {nonces:?}"
+    );
+}
+
+/// csp-nonce 1.0 M7 (cargo-scope variant): the HTML scrape guard the
+/// plan asked for (rendered-HTML scan for non-nonced `<script>` tags)
+/// requires running the Next.js upstream, which `TestApp` doesn't.
+/// The equivalent regression check at the Rust layer is "every
+/// response (including the fallback path through `upstream::proxy`)
+/// carries a CSP header with a strict-dynamic nonce" — which the two
+/// tests above already enforce for the routes `TestApp` can hit.
+///
+/// The remaining HTML-scrape coverage lives in the Playwright suite
+/// (`web/tests/e2e/`), which CAN run the full stack. Marked here for
+/// discoverability so a future contributor knows where to look.
+#[tokio::test]
+async fn nonce_in_csp_is_strict_dynamic_eligible_shape() {
+    // 22-char base64url, kebab-quote-wrapped, no `'self'` peer
+    // (browsers warn when `'self'` sits next to `'strict-dynamic'`).
+    let app = TestApp::spawn().await;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let csp = resp
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    // Pull the script-src directive out of the full CSP for narrow
+    // assertions.
+    let script_src_start = csp.find("script-src ").expect("script-src present");
+    let script_src_end = csp[script_src_start..]
+        .find(';')
+        .map(|i| script_src_start + i)
+        .unwrap_or(csp.len());
+    let script_src = &csp[script_src_start..script_src_end];
+    assert!(script_src.contains("'strict-dynamic'"));
+    assert!(script_src.contains("'nonce-"));
+    // `'self'` is intentionally NOT in script-src once strict-dynamic
+    // is enabled — browsers warn otherwise. (Other directives like
+    // `default-src` still carry `'self'`, but not script-src.)
+    assert!(
+        !script_src.contains("'self'"),
+        "script-src must NOT pair 'self' with 'strict-dynamic': {script_src}"
+    );
+}
+
 #[tokio::test]
 async fn healthz_returns_required_headers() {
     // Post v0.2 (rust-public-origin) `/` no longer has a Rust handler

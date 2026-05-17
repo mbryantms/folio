@@ -31,6 +31,7 @@ import {
   useUpdateMarker,
 } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
+import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { PageInfo } from "@/lib/api/types";
 import { EndOfIssueCard } from "./EndOfIssueCard";
 import { MarkerEditor } from "./MarkerEditor";
@@ -256,6 +257,7 @@ export function Reader({
       deleteExistingBookmark.mutate(undefined, {
         onSuccess: () =>
           toast.success(`Removed bookmark on page ${currentPage + 1}`, {
+            duration: UNDO_TOAST_DURATION_MS,
             action: {
               label: "Undo",
               onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
@@ -304,6 +306,7 @@ export function Reader({
           deleteFavoriteMarker.mutate(undefined, {
             onSuccess: () =>
               toast.success(`Unstarred page ${currentPage + 1}`, {
+                duration: UNDO_TOAST_DURATION_MS,
                 action: {
                   label: "Undo",
                   onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),

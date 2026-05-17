@@ -96,24 +96,32 @@ Each of these should be a single shared helper or constant.
 
 ### F-3 — Silent success on user-initiated actions that need feedback
 
-Hooks with no `successMessage` where the user **clicked something** and would benefit from acknowledgement:
+**Verified 2026-05-17 (cleanup M0 finalization):** the original table below was stale. Cleanup M0 + M3 + M3.5 (commits 2026-05-14) brought toast coverage in line with the audit's intent. The corrected matrix:
 
-| Hook | Surfaces it fires from | Feedback today |
+| Hook | Status today | Notes |
 |---|---|---|
-| `usePinSavedView` | `/settings/views` switch, `/settings/navigation`, view detail header, rail kebab | Switch flip is the only confirmation. On the catalog, that switch is small + sometimes off-screen. |
-| `useSidebarSavedView` | Same as above | Same |
-| `useReorderSavedViews` | `/settings/navigation` drag | Position settles into place visually — sufficient |
-| `useDeleteSavedView` | `/settings/views` (parent dialog) | AlertDialog confirms; row disappears |
-| `useDeleteCblList` | View settings | Row disappears; no toast |
-| `useDeleteCollection` | Collections index | Row disappears; no toast |
-| `useDeleteMarker` | Marker editor + bookmarks list | **No toast — silent removal** |
-| `useRemoveEntryFromCollection` | Cover menu | Item disappears; no toast |
-| `useReorderMarkers` | Marker list drag | Position settles — sufficient |
-| `useSendTestEmail` | Admin → Email | **No toast — silent success on a button labelled "Send test email"** |
-| `useDiscoverOidc` | Admin → Auth | Discovery result lands inline — sufficient |
-| `useClearMatchEntry` | Manual-match popover | No toast |
+| `usePinSavedView` | ✅ toasts `"Pinned to home"` / `"Unpinned from home"` | Already toasted at audit time; original table was wrong |
+| `useSidebarSavedView` | ✅ toasts `"Added to sidebar"` / `"Removed from sidebar"` | Already toasted at audit time |
+| `useReorderSavedViews` | Silent (intentional) | Drag settles visually |
+| `useUpdateSavedView` | ✅ toasts `"Saved"` | Already toasted at audit time |
+| `useDeleteSavedView` | ✅ toasts `"View deleted"` | Already toasted at audit time |
+| `useDeleteCblList` | ✅ toasts `"List deleted"` | Already toasted at audit time |
+| `useUpdateCblList` | ✅ toasts `"Saved"` | Already toasted at audit time |
+| `useDeleteCollection` | ✅ toasts `"Collection deleted"` | Already toasted at audit time |
+| `useUpdateCollection` | ✅ toasts `"Saved"` | Already toasted at audit time |
+| `useDeleteMarker` | ✅ toasts `"Removed"` (with Undo via call-site `silent: true` opt-in) | Cleanup M3.5: 8 call sites now capture the marker state and offer an 8 s Undo |
+| `useRemoveCollectionEntry` | ✅ toasts `"Removed"` | Already toasted at audit time |
+| `useClearMatchEntry` | ✅ toasts `"Match cleared"` | Already toasted at audit time |
+| `useReorderMarkers` | Silent (intentional) | Drag settles visually |
+| `useSendTestEmail` | ✅ toasts `"Test email sent"` | Cleanup M3: silent → success |
+| `useRevokeAllSessions` | ✅ toasts `"All sessions revoked"` | Cleanup M3: silent → success |
+| `useCreateCollection` | ✅ toasts `Collection "<name>" created` (with `silent: true` opt-in for chained add-to-X flows) | Cleanup M3: silent → success with name |
+| `useProbeOidcDiscovery` | Silent (intentional) | Discovery result lands inline |
 
-The hooks where the result is *visible without a toast* (reorder, dialog-confirmed delete, drag-and-drop) are correctly silent. The ones where **clicking is the only signal** — pin/sidebar toggles on the catalog, marker delete from a list, "Send test email" — should announce themselves.
+Intentionally silent (the surface communicates without a toast):
+`useCreateSavedView` / `useCreateCblList` (route change is the signal), `useCreateMarker` / `useUpdateMarker` (reader keybinds wrap with marker-kind-specific toasts), `useReorderSavedViews` / `useReorderCollectionEntries` / `useUpdateSidebarLayout` (drag settles visibly), `useSetSeriesRating` / `useSetIssueRating` / `useSetSavedViewIcon` (UI updates inline), `useCreateAppPassword` (modal shows the generated password).
+
+§5 Recommendation 4 (originally "switch usePinSavedView/useSidebarSavedView from silent") is obsolete — those hooks already toasted at audit time. Recommendation 4 is now covered by cleanup M3 (sendTestEmail / revokeAllSessions / createCollection).
 
 ### F-4 — Sign-out is silent on every path
 
@@ -248,6 +256,8 @@ Apply this rubric to every mutation:
    - **Silent:** drag-reorder, AlertDialog-confirmed delete, OAuth/session reads, autosave, progress writes, sidebar toggle (the actual sidebar redraw is the signal)
    - **Toasted:** pin/unpin (the rail change happens off-screen), delete from a list without confirm (marker, collection entry), "send test email" (one-shot async with no visible outcome), revoke session, generate app password
    Recommendation: switch `useDeleteMarker`, `useSendTestEmail`, `useRevokeAllSessions`, `usePinSavedView`, `useSidebarSavedView` from silent to `successMessage`-bearing.
+
+   **Verified 2026-05-17:** all five hooks now toast (see corrected F-3 matrix above). `usePinSavedView` / `useSidebarSavedView` already toasted at audit time — they were flagged in error. `useSendTestEmail` / `useRevokeAllSessions` flipped in cleanup M3. `useDeleteMarker` kept its toast and added an Undo affordance in M3.5.
 
 5. **Destructive-action confirmation matrix.** Every irreversible mutation gets a confirm at the call site. Add `AlertDialog` wrappers to the current unconfirmed callers in [§F-8](#f-8--destructive-operations-without-explicit-confirmation-at-the-mutation-site).
 

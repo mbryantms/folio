@@ -12,6 +12,7 @@ import {
 import { useIssueMarkers, useMe } from "@/lib/api/queries";
 import type { IssueDetailView } from "@/lib/api/types";
 import { markerToCreateReq } from "@/lib/markers/recreate";
+import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { readerUrl } from "@/lib/urls";
 
@@ -96,6 +97,7 @@ export function useIssueShortcuts(
             deleteMarker.mutate(undefined, {
               onSuccess: () =>
                 toast.success("Bookmark removed", {
+                  duration: UNDO_TOAST_DURATION_MS,
                   action: {
                     label: "Undo",
                     onClick: () =>

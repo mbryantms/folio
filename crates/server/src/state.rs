@@ -88,6 +88,13 @@ pub struct Inner {
     /// changes can register/replace scan jobs without a server restart.
     pub scheduler: Arc<Mutex<Option<JobScheduler>>>,
     pub library_scan_job_ids: Arc<Mutex<HashMap<uuid::Uuid, uuid::Uuid>>>,
+    /// Server-side cache for `GET /admin/server/latest-release`. Single
+    /// in-flight fetch + 1-hour TTL so N admins polling don't each
+    /// trigger a GitHub API call. `None` slot before the first fetch;
+    /// `Some((when, payload))` afterwards where `payload` may itself
+    /// be `None` (last fetch errored). See
+    /// [`crate::api::server_releases`].
+    pub latest_release_cache: Arc<Mutex<crate::api::server_releases::ReleaseCache>>,
 }
 
 impl AppState {
@@ -148,6 +155,9 @@ impl AppState {
             archive_work_semaphore,
             scheduler,
             library_scan_job_ids,
+            latest_release_cache: Arc::new(Mutex::new(
+                crate::api::server_releases::ReleaseCache::default(),
+            )),
         }))
     }
 

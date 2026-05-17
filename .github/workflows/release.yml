@@ -81,6 +81,24 @@ jobs:
             org.opencontainers.image.licenses=AGPL-3.0-or-later
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
+      - name: Resolve build-time fingerprints
+        id: fingerprint
+        # CI bakes the human-readable tag + commit + repo URL into the
+        # binary so `/admin/server` renders linkable values even though
+        # the .git directory isn't in the Docker context. On tag pushes
+        # `ref_name` is the tag itself ("v0.1.8"); on branch / dispatch
+        # runs `git describe` is the closest we can get.
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG=$(git describe --tags --always --dirty)
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "sha_full=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "sha_short=${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          echo "repo_url=https://github.com/${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+
       - name: Build & push
         id: build
         uses: docker/build-push-action@v6
@@ -91,6 +109,14 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The COMIC_BUILD_* args are consumed only by the Rust
+          # Dockerfile (folio image); they're harmless on the web image
+          # since web/Dockerfile doesn't declare them.
+          build-args: |
+            COMIC_BUILD_TAG=${{ steps.fingerprint.outputs.tag }}
+            COMIC_BUILD_SHA=${{ steps.fingerprint.outputs.sha_short }}
+            COMIC_BUILD_SHA_FULL=${{ steps.fingerprint.outputs.sha_full }}
+            COMIC_BUILD_REPO_URL=${{ steps.fingerprint.outputs.repo_url }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           provenance: true

@@ -91,6 +91,14 @@ export function SelectionToolbar({
 
   React.useEffect(() => {
     if (open) {
+      // The cascading-render warning from react-hooks/set-state-in-effect
+      // is the desired behavior here: we need `shouldRender=true` to
+      // commit BEFORE the rAF-gated `setPhase("open")` runs, so the
+      // browser paints the closed state (data-state="closed") on the
+      // first commit and transitions to open on the second. Without
+      // the synchronous setState, the toolbar mounts directly into
+      // the open state and skips the entrance keyframe.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setShouldRender(true);
       // Two RAFs so the browser paints the closed state first; without
       // this, mounting with `data-state="open"` from a clean tree

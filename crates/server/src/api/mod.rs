@@ -38,6 +38,7 @@ pub mod saved_views;
 pub mod scan_runs;
 pub mod series;
 pub mod server_info;
+pub mod server_releases;
 pub mod sessions;
 pub mod sidebar_layout;
 pub mod thumbnails;

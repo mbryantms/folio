@@ -75,6 +75,7 @@ import type {
   SeriesListView,
   SeriesSort,
   SeriesView,
+  LatestReleaseView,
   ServerInfoView,
   SessionListView,
   SortOrder,
@@ -264,6 +265,7 @@ export const queryKeys = {
     ["admin", "users", userId, "reading-stats", range] as const,
   /** Server info — version, uptime, redis/postgres pings. */
   serverInfo: ["admin", "server-info"] as const,
+  latestRelease: ["admin", "latest-release"] as const,
   /** In-process log ring buffer. Tail filter is part of the key so the
    *  follow-tail toggle never collides with a paused snapshot. */
   adminLogs: (filters: AdminLogFilters) => ["admin", "logs", filters] as const,
@@ -795,6 +797,35 @@ export function useServerInfo(opts?: {
   });
 }
 
+/** Latest GitHub release for the repo this server was built from.
+ *  Server-side cache TTL is 1 hour, so polling more often than that
+ *  yields the same value. Returns `null` (mapped from HTTP 204) when
+ *  the update check is disabled, the repo isn't on GitHub, or the
+ *  last fetch errored. UI hides its "update available" line on null. */
+export function useLatestRelease(opts?: { enabled?: boolean }) {
+  const { enabled = true } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.latestRelease,
+    queryFn: async (): Promise<LatestReleaseView | null> => {
+      const res = await apiFetch("/admin/server/latest-release", {
+        headers: { Accept: "application/json" },
+      });
+      if (res.status === 204) return null;
+      if (!res.ok) {
+        // Non-2xx other than 204 — treat as no-data rather than
+        // surfacing an error toast for a non-essential probe.
+        return null;
+      }
+      return (await res.json()) as LatestReleaseView;
+    },
+    enabled,
+    // Match the server's 1-hour TTL so we don't spin extra requests
+    // when the answer can't change anyway.
+    staleTime: 3_600_000,
+    // No refetch interval — only fetched on mount of the build card.
+  });
+}
+
 /**
  * In-process log ring buffer. The follow-tail toggle is implemented at the
  * page level by polling with `?since=<watermark>` — pass `intervalMs` to
@@ -1139,8 +1170,21 @@ export function useCblListEntriesInfinite(
       jsonFetch<CblEntryListView>(
         `/me/cbl-lists/${id}/entries${buildQuery({ ...params, cursor: pageParam })}`,
       ),
-    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    getNextPageParam: cblEntriesNextPage,
   });
+}
+
+/** Pure `getNextPageParam` callback for `useCblListEntriesInfinite`.
+ *  Extracted so the cursor contract is unit-testable — a refactor
+ *  that accidentally drops the null-check (the original
+ *  list-pagination-completeness bug-class) is caught by
+ *  `web/tests/api/cbl-entries-next-page.test.ts` rather than
+ *  shipping. The shape returned here flows directly into TanStack's
+ *  page-walking loop: `undefined` ⇒ "no more pages, stop". */
+export function cblEntriesNextPage(
+  last: CblEntryListView,
+): string | undefined {
+  return last.next_cursor ?? undefined;
 }
 
 /** Matched issues from a CBL list in `position` order. Backed by

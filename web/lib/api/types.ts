@@ -771,9 +771,39 @@ export type DataQualityView = {
   metadata: MetadataCoverageView;
 };
 
+/** Result of the server-side GitHub release lookup. `null` from the
+ *  hook means the endpoint returned 204 — either the runtime setting
+ *  `updates.check_upstream_releases` is off, the repo isn't on GitHub,
+ *  or the last fetch errored (cached for 1 hour to avoid hammering). */
+export type LatestReleaseView = {
+  /** Release tag, e.g. `"v0.1.9"`. */
+  tag: string;
+  /** Browse URL on the host's release page. */
+  html_url: string;
+  /** Publication timestamp (RFC 3339). */
+  published_at: string;
+};
+
 export type ServerInfoView = {
+  /** `git describe --tags --always --dirty`. Linkable to a GitHub
+   *  release page when it starts with `v` and has no `-` suffix
+   *  (clean tag); rendered verbatim otherwise. `"dev"` when the
+   *  build script couldn't reach git. */
   version: string;
+  /** 12-char short SHA, for display. `"unknown"` when git wasn't
+   *  reachable. */
   build_sha: string;
+  /** 40-char full SHA, for stable commit URLs. `"unknown"` when git
+   *  wasn't reachable. */
+  build_sha_full: string;
+  /** Auto-detected `https://host/owner/repo` from
+   *  `git config --get remote.origin.url`. `null` when no remote was
+   *  detected and no override was passed at build time. */
+  repo_url: string | null;
+  /** Unix-seconds at build time (UTC). Drives the "Built — N hours
+   *  ago" UI row. `null` only if the build script couldn't resolve
+   *  the system clock. */
+  build_epoch: number | null;
   uptime_secs: number;
   postgres_ok: boolean;
   redis_ok: boolean;

@@ -11357,6 +11357,7 @@
         "required": [
           "version",
           "build_sha",
+          "build_sha_full",
           "uptime_secs",
           "postgres_ok",
           "redis_ok",
@@ -11364,15 +11365,34 @@
           "watchers_enabled"
         ],
         "properties": {
+          "build_epoch": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix-seconds at build time (UTC). UI renders as\n`Built — N hours ago`. `None` when the build script couldn't\nresolve the system clock (shouldn't happen in practice)."
+          },
           "build_sha": {
             "type": "string",
-            "description": "Optional `BUILD_SHA` env var captured at build time, else `\"dev\"`."
+            "description": "12-char short SHA for display. Read from `COMIC_BUILD_SHA`\n(env override or build.rs `git rev-parse HEAD`). Falls back\nto `\"unknown\"`."
+          },
+          "build_sha_full": {
+            "type": "string",
+            "description": "40-char full SHA used to construct stable commit URLs. Falls\nback to `\"unknown\"` when the build script couldn't reach git."
           },
           "postgres_ok": {
             "type": "boolean"
           },
           "redis_ok": {
             "type": "boolean"
+          },
+          "repo_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Browse URL for the repo this binary was built from. Auto-detected\nfrom `git config --get remote.origin.url` at build time and\nnormalized to `https://host/owner/repo` (strips `.git`, converts\nSSH → HTTPS). CI passes `COMIC_BUILD_REPO_URL` directly so Docker\nbuilds without `.git` still get the link. `None` when no remote\nwas detected and no override was passed."
           },
           "scheduler_running": {
             "type": "boolean",
@@ -11385,7 +11405,7 @@
           },
           "version": {
             "type": "string",
-            "description": "`CARGO_PKG_VERSION` baked in at build time."
+            "description": "Human-readable build version. `git describe --tags --always --dirty`\nat build time, falling back to `\"dev\"` when the build script\ncouldn't shell to git (e.g. inside Docker without `.git`). Common\nshapes:\n  - `\"v0.1.8\"`             — clean checkout on a release tag\n  - `\"v0.1.8-3-gabcd1234\"` — 3 commits past v0.1.8\n  - `\"v0.1.8-dirty\"`       — release tag with uncommitted changes\n  - `\"abcd1234\"`           — no tags exist (bare SHA fallback)\n  - `\"dev\"`                — build script couldn't reach git\n\nUI links this to the GitHub release page when it starts with `v`\nand has no `-` suffix (i.e. a clean tag), and renders verbatim\notherwise."
           },
           "watchers_enabled": {
             "type": "integer",

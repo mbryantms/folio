@@ -28,6 +28,7 @@ import {
   useUpdateMarker,
 } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
+import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type {
   MarkerKind,
   MarkerRegion,
@@ -680,6 +681,7 @@ function MarkerCard({
         del.mutate(undefined, {
           onSuccess: () =>
             toast.success("Removed", {
+              duration: UNDO_TOAST_DURATION_MS,
               action: {
                 label: "Undo",
                 onClick: () => create.mutate(markerToCreateReq(snapshot)),

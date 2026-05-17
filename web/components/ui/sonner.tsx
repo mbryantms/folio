@@ -11,11 +11,23 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme={theme as ToasterProps["theme"]}
-      // Sonner's default is `["altKey", "KeyT"]`; making it explicit so
-      // the keyboard-shortcuts sheet has a documented contract to point
-      // at, and so a future change is a one-line edit here rather than
-      // a silent default-shift on the library upgrade path.
+      // All Sonner props below are pinned to current defaults rather
+      // than left implicit. The point isn't to change behavior — it's
+      // to make a sonner upgrade safe (no silent default-shift) and to
+      // give product a single one-line edit when they want to retune.
+      // Notifications cleanup M0 finalization.
       hotkey={["altKey", "KeyT"]}
+      position="bottom-right"
+      duration={4000}
+      expand={false}
+      // Cap queue depth so a scan-completion burst (10+ thumbnail
+      // updates) can't stack toasts past the visible viewport. Older
+      // toasts fall off the bottom; the most recent 3 stay visible.
+      visibleToasts={3}
+      // Adds the X icon for manual dismiss. Important for the longer
+      // error / Undo toasts (8 s) where the user may want to dismiss
+      // before the timeout.
+      closeButton
       className="toaster group"
       toastOptions={{
         classNames: {

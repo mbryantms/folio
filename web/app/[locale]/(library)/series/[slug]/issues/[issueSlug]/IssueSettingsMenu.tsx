@@ -53,7 +53,7 @@ import {
   useIssueMarkers,
   useMe,
 } from "@/lib/api/queries";
-import { TOAST } from "@/lib/api/toast-strings";
+import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { readerUrl } from "@/lib/urls";
 import type { IssueDetailView } from "@/lib/api/types";
@@ -131,6 +131,7 @@ export function IssueSettingsMenu({
       deleteMarker.mutate(undefined, {
         onSuccess: () =>
           toast.success("Bookmark removed", {
+            duration: UNDO_TOAST_DURATION_MS,
             action: {
               label: "Undo",
               onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
@@ -173,6 +174,7 @@ export function IssueSettingsMenu({
             return;
           }
           toast.success(`Added "${issueLabel}" to Want to Read`, {
+            duration: UNDO_TOAST_DURATION_MS,
             action: {
               label: "Undo",
               onClick: () => removeFromWtr.mutate({ entryId: entry.id }, {}),
