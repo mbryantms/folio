@@ -1477,6 +1477,9 @@ export type Field =
   | "cover_artist"
   | "editor"
   | "translator"
+  | "characters"
+  | "teams"
+  | "locations"
   | "read_progress"
   | "last_read"
   | "read_count";

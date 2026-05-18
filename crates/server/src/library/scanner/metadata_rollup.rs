@@ -16,7 +16,8 @@
 //! Editing a series's surfaced genres means editing the underlying issues.
 
 use entity::{
-    issue, issue_credit, issue_genre, issue_tag, series_credit, series_genre, series_tag,
+    issue, issue_character, issue_credit, issue_genre, issue_location, issue_tag, issue_team,
+    series_character, series_credit, series_genre, series_location, series_tag, series_team,
 };
 use sea_orm::{
     ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Statement,
@@ -80,6 +81,16 @@ pub struct IssueMetadataInputs<'a> {
     pub cover_artist: Option<&'a str>,
     pub editor: Option<&'a str>,
     pub translator: Option<&'a str>,
+    /// `<Characters>` from ComicInfo — CSV. Written to `issue_characters`
+    /// and rolled up to `series_characters` so saved-view filters can
+    /// match against character names.
+    pub characters: Option<&'a str>,
+    /// `<Teams>` from ComicInfo — CSV. Written to `issue_teams` and
+    /// rolled up to `series_teams`.
+    pub teams: Option<&'a str>,
+    /// `<Locations>` from ComicInfo — CSV. Written to `issue_locations`
+    /// and rolled up to `series_locations`.
+    pub locations: Option<&'a str>,
 }
 
 impl<'a> IssueMetadataInputs<'a> {
@@ -253,6 +264,117 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
         }
     }
 
+    // ───── characters ─────
+    let desired_characters: Vec<String> = inputs.characters.map(split_csv).unwrap_or_default();
+    let existing_characters: HashSet<String> = issue_character::Entity::find()
+        .filter(issue_character::Column::IssueId.eq(issue_id))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|r| r.character)
+        .collect();
+    let desired_characters_set: HashSet<String> = desired_characters.iter().cloned().collect();
+    if desired_characters_set != existing_characters {
+        issue_character::Entity::delete_many()
+            .filter(issue_character::Column::IssueId.eq(issue_id))
+            .exec(db)
+            .await?;
+        if !desired_characters.is_empty() {
+            let rows: Vec<issue_character::ActiveModel> = desired_characters
+                .into_iter()
+                .map(|c| issue_character::ActiveModel {
+                    issue_id: Set(issue_id.to_string()),
+                    character: Set(c),
+                })
+                .collect();
+            issue_character::Entity::insert_many(rows)
+                .on_conflict(
+                    OnConflict::columns([
+                        issue_character::Column::IssueId,
+                        issue_character::Column::Character,
+                    ])
+                    .do_nothing()
+                    .to_owned(),
+                )
+                .do_nothing()
+                .exec(db)
+                .await?;
+        }
+    }
+
+    // ───── teams ─────
+    let desired_teams: Vec<String> = inputs.teams.map(split_csv).unwrap_or_default();
+    let existing_teams: HashSet<String> = issue_team::Entity::find()
+        .filter(issue_team::Column::IssueId.eq(issue_id))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|r| r.team)
+        .collect();
+    let desired_teams_set: HashSet<String> = desired_teams.iter().cloned().collect();
+    if desired_teams_set != existing_teams {
+        issue_team::Entity::delete_many()
+            .filter(issue_team::Column::IssueId.eq(issue_id))
+            .exec(db)
+            .await?;
+        if !desired_teams.is_empty() {
+            let rows: Vec<issue_team::ActiveModel> = desired_teams
+                .into_iter()
+                .map(|t| issue_team::ActiveModel {
+                    issue_id: Set(issue_id.to_string()),
+                    team: Set(t),
+                })
+                .collect();
+            issue_team::Entity::insert_many(rows)
+                .on_conflict(
+                    OnConflict::columns([issue_team::Column::IssueId, issue_team::Column::Team])
+                        .do_nothing()
+                        .to_owned(),
+                )
+                .do_nothing()
+                .exec(db)
+                .await?;
+        }
+    }
+
+    // ───── locations ─────
+    let desired_locations: Vec<String> = inputs.locations.map(split_csv).unwrap_or_default();
+    let existing_locations: HashSet<String> = issue_location::Entity::find()
+        .filter(issue_location::Column::IssueId.eq(issue_id))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|r| r.location)
+        .collect();
+    let desired_locations_set: HashSet<String> = desired_locations.iter().cloned().collect();
+    if desired_locations_set != existing_locations {
+        issue_location::Entity::delete_many()
+            .filter(issue_location::Column::IssueId.eq(issue_id))
+            .exec(db)
+            .await?;
+        if !desired_locations.is_empty() {
+            let rows: Vec<issue_location::ActiveModel> = desired_locations
+                .into_iter()
+                .map(|l| issue_location::ActiveModel {
+                    issue_id: Set(issue_id.to_string()),
+                    location: Set(l),
+                })
+                .collect();
+            issue_location::Entity::insert_many(rows)
+                .on_conflict(
+                    OnConflict::columns([
+                        issue_location::Column::IssueId,
+                        issue_location::Column::Location,
+                    ])
+                    .do_nothing()
+                    .to_owned(),
+                )
+                .do_nothing()
+                .exec(db)
+                .await?;
+        }
+    }
+
     Ok(())
 }
 
@@ -311,6 +433,54 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
             JOIN issues i ON i.id = ic.issue_id
             WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
             ON CONFLICT DO NOTHING",
+        [series_id.into()],
+    ))
+    .await?;
+
+    series_character::Entity::delete_many()
+        .filter(series_character::Column::SeriesId.eq(series_id))
+        .exec(db)
+        .await?;
+    db.execute(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        r#"INSERT INTO series_characters (series_id, "character")
+            SELECT DISTINCT $1, ic."character"
+            FROM issue_characters ic
+            JOIN issues i ON i.id = ic.issue_id
+            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+            ON CONFLICT DO NOTHING"#,
+        [series_id.into()],
+    ))
+    .await?;
+
+    series_team::Entity::delete_many()
+        .filter(series_team::Column::SeriesId.eq(series_id))
+        .exec(db)
+        .await?;
+    db.execute(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        r"INSERT INTO series_teams (series_id, team)
+            SELECT DISTINCT $1, it.team
+            FROM issue_teams it
+            JOIN issues i ON i.id = it.issue_id
+            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+            ON CONFLICT DO NOTHING",
+        [series_id.into()],
+    ))
+    .await?;
+
+    series_location::Entity::delete_many()
+        .filter(series_location::Column::SeriesId.eq(series_id))
+        .exec(db)
+        .await?;
+    db.execute(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        r#"INSERT INTO series_locations (series_id, "location")
+            SELECT DISTINCT $1, il."location"
+            FROM issue_locations il
+            JOIN issues i ON i.id = il.issue_id
+            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+            ON CONFLICT DO NOTHING"#,
         [series_id.into()],
     ))
     .await?;
@@ -434,6 +604,9 @@ pub async fn replace_issue_metadata_from_model<C: ConnectionTrait>(
         cover_artist: row.cover_artist.as_deref(),
         editor: row.editor.as_deref(),
         translator: row.translator.as_deref(),
+        characters: row.characters.as_deref(),
+        teams: row.teams.as_deref(),
+        locations: row.locations.as_deref(),
     };
     replace_issue_metadata(db, &row.id, &inputs).await
 }

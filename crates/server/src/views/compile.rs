@@ -535,6 +535,28 @@ mod tests {
     }
 
     #[test]
+    fn characters_teams_locations_emit_exists_against_per_field_junction_table() {
+        for (field, table) in [
+            (Field::Characters, "series_characters"),
+            (Field::Teams, "series_teams"),
+            (Field::Locations, "series_locations"),
+        ] {
+            let d = dsl_all(vec![Condition {
+                group_id: 0,
+                field,
+                op: Op::IncludesAny,
+                value: json!(["Spider-Man"]),
+            }]);
+            let stmt = compile(&make(d)).unwrap();
+            let sql = stmt.to_string(PostgresQueryBuilder);
+            assert!(
+                sql.contains("EXISTS") && sql.contains(table),
+                "{field:?} should compile against {table}; got SQL: {sql}",
+            );
+        }
+    }
+
+    #[test]
     fn writer_filter_scopes_to_role_in_credits_table() {
         let d = dsl_all(vec![Condition {
             group_id: 0,

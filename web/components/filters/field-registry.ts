@@ -191,6 +191,27 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     optionsEndpoint: { kind: "credits", role: "translator" },
   },
   {
+    id: "characters",
+    label: "Characters",
+    kind: "multi",
+    allowedOps: MULTI_OPS,
+    optionsEndpoint: { kind: "characters" },
+  },
+  {
+    id: "teams",
+    label: "Teams",
+    kind: "multi",
+    allowedOps: MULTI_OPS,
+    optionsEndpoint: { kind: "teams" },
+  },
+  {
+    id: "locations",
+    label: "Locations",
+    kind: "multi",
+    allowedOps: MULTI_OPS,
+    optionsEndpoint: { kind: "locations" },
+  },
+  {
     id: "read_progress",
     label: "Read Progress",
     kind: "number",

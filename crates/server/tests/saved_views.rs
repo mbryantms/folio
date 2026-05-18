@@ -15,10 +15,16 @@ use chrono::Utc;
 use common::TestApp;
 use entity::{
     issue::ActiveModel as IssueAM,
+    issue_character::ActiveModel as IssueCharacterAM,
     issue_genre::ActiveModel as IssueGenreAM,
+    issue_location::ActiveModel as IssueLocationAM,
+    issue_team::ActiveModel as IssueTeamAM,
     library,
     series::{ActiveModel as SeriesAM, normalize_name},
+    series_character::ActiveModel as SeriesCharacterAM,
     series_genre::ActiveModel as SeriesGenreAM,
+    series_location::ActiveModel as SeriesLocationAM,
+    series_team::ActiveModel as SeriesTeamAM,
     user::Entity as UserEntity,
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, QueryOrder, Set};
@@ -1238,4 +1244,358 @@ async fn pinned_true_is_alias_for_system_page() {
         .map(|v| v["id"].as_str().unwrap())
         .collect();
     assert!(home_ids.contains(&view_id.as_str()));
+}
+
+// ───── Characters / Teams / Locations as filter fields ─────
+
+/// Seed one library + one series + one active issue, plus the
+/// per-field junction rows (issue_X + series_X) for whichever
+/// `field`/`values` pair is supplied. The scanner would normally
+/// write these via `replace_issue_metadata` + `rollup_series_metadata`;
+/// tests don't run the scanner so we populate directly.
+async fn seed_series_with_field(
+    app: &TestApp,
+    lib_slug: &str,
+    series_name: &str,
+    field: &str, // "characters" | "teams" | "locations"
+    values: &[&str],
+) -> Uuid {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib_id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    library::ActiveModel {
+        id: Set(lib_id),
+        name: Set(format!("Lib {lib_slug}")),
+        root_path: Set(format!("/tmp/{lib_slug}-{lib_id}")),
+        default_language: Set("en".into()),
+        default_reading_direction: Set("ltr".into()),
+        dedupe_by_content: Set(true),
+        slug: Set(lib_id.to_string()),
+        scan_schedule_cron: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        last_scan_at: Set(None),
+        ignore_globs: Set(serde_json::json!([])),
+        report_missing_comicinfo: Set(false),
+        file_watch_enabled: Set(true),
+        soft_delete_days: Set(30),
+        thumbnails_enabled: Set(true),
+        thumbnail_format: Set("webp".to_owned()),
+        thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
+        thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
+        generate_page_thumbs_on_scan: Set(false),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let series_id = Uuid::now_v7();
+    SeriesAM {
+        id: Set(series_id),
+        library_id: Set(lib_id),
+        name: Set(series_name.into()),
+        normalized_name: Set(normalize_name(series_name)),
+        year: Set(Some(2020)),
+        volume: Set(None),
+        publisher: Set(None),
+        imprint: Set(None),
+        status: Set("continuing".into()),
+        total_issues: Set(None),
+        age_rating: Set(None),
+        summary: Set(None),
+        language_code: Set("en".into()),
+        comicvine_id: Set(None),
+        metron_id: Set(None),
+        gtin: Set(None),
+        series_group: Set(None),
+        slug: Set(format!("{lib_slug}-{series_name}")),
+        alternate_names: Set(serde_json::json!([])),
+        created_at: Set(now),
+        updated_at: Set(now),
+        folder_path: Set(None),
+        last_scanned_at: Set(None),
+        match_key: Set(None),
+        removed_at: Set(None),
+        removal_confirmed_at: Set(None),
+        status_user_set_at: Set(None),
+        reading_direction: Set(None),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let issue_id = format!("{:0>62}{:02x}", series_id.simple(), 0u8);
+    IssueAM {
+        id: Set(issue_id.clone()),
+        library_id: Set(lib_id),
+        series_id: Set(series_id),
+        slug: Set(format!("{series_name}-1")),
+        file_path: Set(format!("/tmp/{lib_slug}/{series_name}.cbz")),
+        file_size: Set(1),
+        file_mtime: Set(now),
+        state: Set("active".into()),
+        content_hash: Set(issue_id.clone()),
+        title: Set(None),
+        sort_number: Set(Some(1.0)),
+        number_raw: Set(Some("1".into())),
+        volume: Set(None),
+        year: Set(Some(2020)),
+        month: Set(None),
+        day: Set(None),
+        summary: Set(None),
+        notes: Set(None),
+        language_code: Set(None),
+        format: Set(None),
+        black_and_white: Set(None),
+        manga: Set(None),
+        age_rating: Set(None),
+        page_count: Set(Some(20)),
+        pages: Set(serde_json::json!([])),
+        comic_info_raw: Set(serde_json::json!({})),
+        alternate_series: Set(None),
+        story_arc: Set(None),
+        story_arc_number: Set(None),
+        characters: Set(None),
+        teams: Set(None),
+        locations: Set(None),
+        tags: Set(None),
+        genre: Set(None),
+        writer: Set(None),
+        penciller: Set(None),
+        inker: Set(None),
+        colorist: Set(None),
+        letterer: Set(None),
+        cover_artist: Set(None),
+        editor: Set(None),
+        translator: Set(None),
+        publisher: Set(None),
+        imprint: Set(None),
+        scan_information: Set(None),
+        community_rating: Set(None),
+        review: Set(None),
+        web_url: Set(None),
+        comicvine_id: Set(None),
+        metron_id: Set(None),
+        gtin: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        removed_at: Set(None),
+        removal_confirmed_at: Set(None),
+        superseded_by: Set(None),
+        special_type: Set(None),
+        hash_algorithm: Set(1),
+        thumbnails_generated_at: Set(None),
+        thumbnail_version: Set(0),
+        thumbnails_error: Set(None),
+        additional_links: Set(serde_json::json!([])),
+        user_edited: Set(serde_json::json!([])),
+        comicinfo_count: Set(None),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    for v in values {
+        match field {
+            "characters" => {
+                IssueCharacterAM {
+                    issue_id: Set(issue_id.clone()),
+                    character: Set((*v).into()),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+                SeriesCharacterAM {
+                    series_id: Set(series_id),
+                    character: Set((*v).into()),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+            }
+            "teams" => {
+                IssueTeamAM {
+                    issue_id: Set(issue_id.clone()),
+                    team: Set((*v).into()),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+                SeriesTeamAM {
+                    series_id: Set(series_id),
+                    team: Set((*v).into()),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+            }
+            "locations" => {
+                IssueLocationAM {
+                    issue_id: Set(issue_id.clone()),
+                    location: Set((*v).into()),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+                SeriesLocationAM {
+                    series_id: Set(series_id),
+                    location: Set((*v).into()),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+            }
+            _ => unreachable!("unknown junction field {field}"),
+        }
+    }
+    series_id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filter_view_by_characters_includes_any() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "char@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let spidey = seed_series_with_field(
+        &app,
+        "marvel",
+        "Amazing Spider-Man",
+        "characters",
+        &["Spider-Man", "Mary Jane"],
+    )
+    .await;
+    let _saga =
+        seed_series_with_field(&app, "image", "Saga", "characters", &["Marko", "Alana"]).await;
+    let _ = spidey;
+
+    let body = serde_json::json!({
+        "kind": "filter_series",
+        "name": "Spider-stories",
+        "filter": {
+            "match_mode": "all",
+            "conditions": [
+                { "group_id": 0, "field": "characters", "op": "includes_any", "value": ["Spider-Man"] }
+            ]
+        },
+        "sort_field": "name",
+        "sort_order": "asc",
+        "result_limit": 50,
+    });
+    let (status, view) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "view: {view:#?}");
+    let view_id = view["id"].as_str().unwrap();
+    let url = format!("/api/me/saved-views/{view_id}/results");
+    let (status, results) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<String> = results["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        names.contains(&"Amazing Spider-Man".to_owned()),
+        "names: {names:?}",
+    );
+    assert!(!names.contains(&"Saga".to_owned()), "names: {names:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filter_view_by_teams_includes_any() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "team@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let _avengers =
+        seed_series_with_field(&app, "marvel", "Avengers Vol. 5", "teams", &["Avengers"]).await;
+    let _xmen = seed_series_with_field(&app, "marvel", "Uncanny X-Men", "teams", &["X-Men"]).await;
+
+    let body = serde_json::json!({
+        "kind": "filter_series",
+        "name": "Avengers Stories",
+        "filter": {
+            "match_mode": "all",
+            "conditions": [
+                { "group_id": 0, "field": "teams", "op": "includes_any", "value": ["Avengers"] }
+            ]
+        },
+        "sort_field": "name",
+        "sort_order": "asc",
+        "result_limit": 50,
+    });
+    let (status, view) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "view: {view:#?}");
+    let view_id = view["id"].as_str().unwrap();
+    let url = format!("/api/me/saved-views/{view_id}/results");
+    let (status, results) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<String> = results["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        names.contains(&"Avengers Vol. 5".to_owned()),
+        "names: {names:?}",
+    );
+    assert!(
+        !names.contains(&"Uncanny X-Men".to_owned()),
+        "names: {names:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filter_view_by_locations_includes_any() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "loc@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let _gotham = seed_series_with_field(&app, "dc", "Batman", "locations", &["Gotham City"]).await;
+    let _metro = seed_series_with_field(&app, "dc", "Superman", "locations", &["Metropolis"]).await;
+
+    let body = serde_json::json!({
+        "kind": "filter_series",
+        "name": "Gotham Stories",
+        "filter": {
+            "match_mode": "all",
+            "conditions": [
+                { "group_id": 0, "field": "locations", "op": "includes_any", "value": ["Gotham City"] }
+            ]
+        },
+        "sort_field": "name",
+        "sort_order": "asc",
+        "result_limit": 50,
+    });
+    let (status, view) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "view: {view:#?}");
+    let view_id = view["id"].as_str().unwrap();
+    let url = format!("/api/me/saved-views/{view_id}/results");
+    let (status, results) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<String> = results["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(names.contains(&"Batman".to_owned()), "names: {names:?}");
+    assert!(!names.contains(&"Superman".to_owned()), "names: {names:?}");
 }

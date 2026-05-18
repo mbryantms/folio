@@ -56,6 +56,9 @@ pub enum Field {
     CoverArtist,
     Editor,
     Translator,
+    Characters,
+    Teams,
+    Locations,
     // ───── per-user reading-state (joined via user_series_progress) ─────
     ReadProgress,
     LastRead,

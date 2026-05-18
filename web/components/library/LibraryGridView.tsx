@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, Filter, X } from "lucide-react";
+import { BookmarkPlus, ChevronDown, Filter, X } from "lucide-react";
+import { toast } from "sonner";
 
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
@@ -12,6 +13,9 @@ import {
   RATING_MIN,
   RATING_STEP,
 } from "@/components/library/library-grid-filters";
+import { libraryGridStateToFilterBuilderState } from "@/components/library/libraryGridStateToFilterState";
+import type { FilterBuilderState } from "@/components/filters/filter-builder";
+import { NewFilterViewDialog } from "@/components/saved-views/AddViewButton";
 import type {
   CreditKey,
   CreditState,
@@ -157,6 +161,13 @@ export function LibraryGridView({
     init.ratingRange ?? null,
   );
   const [filterOpen, setFilterOpen] = React.useState(false);
+  // M2 of saved-views parity — "Save as view…" dialog state. Seeded
+  // from the current facet snapshot at click time; cleared when the
+  // dialog closes.
+  const [saveViewOpen, setSaveViewOpen] = React.useState(false);
+  const [saveViewSeed, setSaveViewSeed] = React.useState<
+    Partial<FilterBuilderState> | undefined
+  >(undefined);
 
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
@@ -415,6 +426,46 @@ export function LibraryGridView({
           ) : null}
         </Button>
 
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={facetCount === 0}
+          onClick={() => {
+            const today = new Date().toISOString().slice(0, 10);
+            const result = libraryGridStateToFilterBuilderState(
+              {
+                status,
+                yearFrom,
+                yearTo,
+                publishers,
+                languages,
+                ageRatings,
+                genres,
+                tags,
+                credits,
+                characters,
+                teams,
+                locations,
+                ratingRange,
+                trimmedQ,
+              },
+              today,
+            );
+            for (const facet of result.droppedFacets) {
+              toast.warning(
+                `${facet} filter can't be saved to a view yet — skipped`,
+              );
+            }
+            setSaveViewSeed(result.state);
+            setSaveViewOpen(true);
+          }}
+          title="Persist these filters as a new saved view"
+        >
+          <BookmarkPlus className="mr-1 h-3.5 w-3.5" />
+          Save as view…
+        </Button>
+
         {facetCount > 0 ? (
           <Button
             type="button"
@@ -560,6 +611,13 @@ export function LibraryGridView({
         onLocations={setLocations}
         activeCount={facetCount}
         onClear={clearFacets}
+      />
+
+      <NewFilterViewDialog
+        open={saveViewOpen}
+        onOpenChange={setSaveViewOpen}
+        initial={saveViewSeed}
+        autoPin
       />
     </>
   );

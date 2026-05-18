@@ -351,6 +351,45 @@ const SPECS: &[FieldSpec] = &[
         enum_values: &[],
     },
     FieldSpec {
+        field: Field::Characters,
+        kind: FieldKind::Multi,
+        id: "characters",
+        label: "Characters",
+        source: Source::JunctionExists {
+            table: "series_characters",
+            value_col: "character",
+            role: None,
+        },
+        allowed_ops: MULTI_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::Teams,
+        kind: FieldKind::Multi,
+        id: "teams",
+        label: "Teams",
+        source: Source::JunctionExists {
+            table: "series_teams",
+            value_col: "team",
+            role: None,
+        },
+        allowed_ops: MULTI_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::Locations,
+        kind: FieldKind::Multi,
+        id: "locations",
+        label: "Locations",
+        source: Source::JunctionExists {
+            table: "series_locations",
+            value_col: "location",
+            role: None,
+        },
+        allowed_ops: MULTI_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
         field: Field::ReadProgress,
         kind: FieldKind::Number,
         id: "read_progress",
@@ -404,7 +443,7 @@ mod tests {
         // and a matching `FieldSpec` row. Forgetting both leaves the
         // count unchanged but `spec_for` would panic at runtime — the
         // mismatch is the alarm.
-        const KNOWN_FIELD_COUNT: usize = 25;
+        const KNOWN_FIELD_COUNT: usize = 28;
         assert_eq!(SPECS.len(), KNOWN_FIELD_COUNT);
         for spec in SPECS {
             let looked_up = spec_for(spec.field);
