@@ -61,7 +61,13 @@ export function MainSidebar({
             // bigger gap stacks up too much white space when the user
             // splits a kind across two groups (e.g. "All Libraries" in
             // one section, the named libraries in another).
-            "flex flex-1 flex-col gap-3 overflow-y-auto py-6 text-sm",
+            //
+            // `min-h-0` lets the nav actually shrink inside the flex
+            // column; without it the default `min-height: auto`
+            // forces the nav to its content size and shoves the
+            // ShortcutsHelpButton + UserFooter siblings off-screen on
+            // tall sidebars / short viewports.
+            "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-6 text-sm",
             collapsed ? "px-2" : "px-3",
           )}
         >
@@ -209,7 +215,12 @@ export function MainSidebar({
             );
           })}
         </nav>
-        <div className={cn("px-2 pb-1", collapsed && "px-2")}>
+        <div
+          className={cn(
+            "flex pb-1",
+            collapsed ? "justify-center px-2" : "justify-end px-3",
+          )}
+        >
           <ShortcutsHelpButton collapsed={collapsed} />
         </div>
       </TooltipProvider>
