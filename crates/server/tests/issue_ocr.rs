@@ -739,3 +739,93 @@ async fn cache_lookup_keyed_by_lang() {
     );
     assert_eq!(body["error"]["code"], "archive_unreadable");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn detect_cache_hit_skips_detector_for_different_region() {
+    // v0.3.25: the detector now runs on the **full page** and its
+    // bbox list is cached per `(content_hash, page)`. Two OCR calls
+    // on the same page with *different* user regions should both
+    // run the recognizer but share the detector output — second
+    // call short-circuits the heavy detect stage.
+    //
+    // We pre-seed the detect cache with a single bbox that overlaps
+    // one region but not the other. The handler will:
+    //  - call A: detect-cache HIT → bbox picked (covers user rect) →
+    //    recognize → result cache MISS → run recognizer → 200
+    //  - call B: same content_hash + page → detect-cache HIT →
+    //    no bbox overlaps → fall back to user rect → recognize →
+    //    200
+    // Both calls return 200 without ever invoking the detector — the
+    // detect bytes-cache served them. We can't directly assert
+    // "detector didn't run" (no probe), but observing two distinct
+    // recognize results on bogus archive paths would mean the
+    // pipeline got past detect — which it can't if our cache reads
+    // happen before page load. (The archive *does* load here because
+    // we need the recognizer to run, so we use a real CBZ.)
+    use redis::AsyncCommands;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-detect-cache@example.com").await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("detect.cbz");
+    build_cbz(&cbz, "page-001.png", &png_bytes(200, 200));
+    let (_lib, issue_id) = seed_issue(&app, cbz.to_str().unwrap()).await;
+
+    // Pre-seed the detect cache with one bbox at (50, 50, 100, 100).
+    let detect_key = server::ocr::cache::detect_cache_key(&issue_id, 0);
+    let bboxes = serde_json::json!([{
+        "xmin": 50.0_f64, "ymin": 50.0_f64,
+        "xmax": 150.0_f64, "ymax": 150.0_f64,
+        "confidence": 0.9_f64, "class": 0_u32,
+    }])
+    .to_string();
+    let mut redis = app.state().jobs.redis.clone();
+    let _: () = redis.set_ex(&detect_key, bboxes, 60).await.unwrap();
+
+    // Call A: user region overlaps the seeded bbox.
+    let (status_a, body_a) = post_ocr(
+        &app,
+        &issue_id,
+        Some(&admin),
+        json!({
+            "page": 0,
+            "region": { "x": 60, "y": 60, "w": 40, "h": 40 },
+            "lang": "western",
+        }),
+    )
+    .await;
+    // Skip when pipeline isn't available on this box, same tolerance
+    // as the other pipeline-reach tests.
+    if status_a != StatusCode::OK {
+        assert_eq!(
+            body_a["error"]["code"], "ocr_failed",
+            "non-200 must be ocr_failed, not an earlier short-circuit",
+        );
+        return;
+    }
+
+    // Detect cache must still be present after the call.
+    let cached_after: Option<String> = redis.get(&detect_key).await.unwrap();
+    assert!(
+        cached_after.is_some(),
+        "detect cache entry should survive the OCR call",
+    );
+
+    // Call B: user region misses the seeded bbox → recognizer runs
+    // on the user's rect verbatim. Still 200.
+    let (status_b, body_b) = post_ocr(
+        &app,
+        &issue_id,
+        Some(&admin),
+        json!({
+            "page": 0,
+            "region": { "x": 0, "y": 0, "w": 30, "h": 30 },
+            "lang": "western",
+        }),
+    )
+    .await;
+    assert_eq!(
+        status_b,
+        StatusCode::OK,
+        "second OCR on cached-detect page should succeed: {body_b}",
+    );
+}

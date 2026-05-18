@@ -224,6 +224,9 @@ pub async fn serve(
             h: req.region.h,
         },
         language,
+        content_hash: row.content_hash.clone(),
+        page: req.page,
+        redis: app.jobs.redis.clone(),
     };
     match run_ocr(input).await {
         Ok(out) => {

@@ -20,6 +20,38 @@ async fn main() -> anyhow::Result<()> {
         dotenvy::dotenv().ok();
     }
 
+    // Auto-tune OpenMP threads for the OCR detector (ort/onnxruntime is
+    // built with OpenMP; `with_intra_threads()` is a no-op there — only
+    // `OMP_NUM_THREADS` actually moves the needle). OpenMP doesn't read
+    // cgroup CPU quotas, so without this hint it tries to use every host
+    // core it can see — on a constrained container that means thread
+    // thrashing and a 10× slowdown. `available_parallelism()` does
+    // respect cgroups on Linux, so we let it decide. Capped at 8 to
+    // avoid diminishing returns + memory bloat on fat hosts.
+    //
+    // SAFETY: `set_var` is technically unsafe in multi-threaded contexts
+    // (Rust 1.83+). We call it at the very top of `main`, before any
+    // user code has run; tokio worker threads exist but are idle —
+    // they don't read env vars at startup. Operator-overridable: if
+    // `OMP_NUM_THREADS` is already set we honor it.
+    if std::env::var_os("OMP_NUM_THREADS").is_none() {
+        let n = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(8);
+        // SAFETY: documented above; set_var is unsafe in multi-threaded
+        // contexts (Rust 1.83+) but we call it before any of our code
+        // reads env vars.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("OMP_NUM_THREADS", n.to_string());
+        }
+        tracing::debug!(
+            threads = n,
+            "auto-tuned OMP_NUM_THREADS for ort/onnxruntime"
+        );
+    }
+
     // Allow `--emit-openapi` to print the spec and exit (used by `just openapi`).
     // Done before observability init so structured startup logs don't leak into
     // the JSON output on stdout.

@@ -94,7 +94,11 @@ Code map:
 
 ## Cache
 
-Redis-backed; fail-open on every operation.
+Two Redis-backed layers, both fail-open on every operation.
+
+### Result cache
+
+Stores the final recognized text per region.
 
 **Key**: `ocr:cache:{content_hash}:{page}:{lang}:{region_hash}`
 
@@ -108,14 +112,71 @@ Redis-backed; fail-open on every operation.
 - `lang` is part of the key so the manga and western recognizers
   cache independently.
 
-**TTL**: 7 days. OCR is deterministic per
-`(content_hash, region, lang)` but a finite TTL caps Redis size in
-deploys that occasionally re-render with different region guesses.
+Hit → short-circuit before page load + decode. Miss → run the
+full pipeline and write the result.
+
+### Detector-result cache (M4 follow-up, v0.3.25)
+
+Stores the detector's polygon list per page so re-OCRs on *different*
+regions of the same page skip the expensive detector stage. The
+detector is by far the heaviest part of the pipeline (~3 s on a fast
+CPU, much more on constrained hosts) — caching its output is what
+makes "OCR every bubble on this page" feasible.
+
+**Key**: `ocr:detect:{content_hash}:{page}`
+
+**Value**: JSON array of `{xmin, ymin, xmax, ymax, confidence, class}`
+in page-pixel coordinates.
+
+Flow per OCR call:
+
+1. Result-cache lookup. Hit → return.
+2. Decode the page.
+3. Detect-cache lookup. Hit → use cached polygons.
+4. Miss → run detector on the **full page**, cache the polygons.
+5. Pick the polygon whose intersection with the user's rect is
+   largest. Fall back to the user's rect verbatim if none overlap.
+6. Recognize the chosen crop.
+7. Write the result cache.
+
+Pre-v0.3.25, step 3-4 ran the detector over a crop around the user's
+rect, not the full page. The model resizes its input to 1024×1024
+internally either way, so per-call inference cost is unchanged — but
+moving to full-page detection lets two OCR calls on different bubbles
+of the same page share the work.
+
+**TTL**: 7 days for both caches. OCR + detection are deterministic
+per `(content_hash, …)` but a finite TTL caps Redis size.
 
 **Metrics**:
 
-- `comic_ocr_cache_hits_total` / `comic_ocr_cache_misses_total` —
-  counter.
+- `comic_ocr_cache_hits_total` / `comic_ocr_cache_misses_total`
+  — counter (result cache).
+- `comic_ocr_detect_cache_hits_total` /
+  `comic_ocr_detect_cache_misses_total` — counter (detector cache).
+
+## OpenMP threads (`OMP_NUM_THREADS`)
+
+The ort/onnxruntime build the upstream `comic-text-detector` crate
+uses is compiled with OpenMP. Per the ort docs,
+`Session::with_intra_threads()` is **a no-op** with OpenMP builds —
+the only knob that matters is the `OMP_NUM_THREADS` env var.
+
+OpenMP doesn't read cgroup CPU quotas. Left to its own devices it
+sees host cores, which in a 4-CPU LXC running on a 16-core host means
+it spawns 16 threads that all fight for 4 cores. The result is severe
+thrashing — observed ~48 s detector inference on a system that should
+run in ~3 s. **This is by far the biggest perf gotcha in the
+pipeline.**
+
+Folio's `main.rs` auto-tunes this at process start: if `OMP_NUM_THREADS`
+isn't already set, we call `std::thread::available_parallelism()`
+(which *does* respect cgroups on Linux) and set the env var to that
+value, clamped to 8 to avoid diminishing returns on fat boxes.
+
+Operator override: set `OMP_NUM_THREADS=N` in compose / env-file to
+pin the count. Lower it if the OCR endpoint is starving other
+workers; raise it if you have idle cores.
 
 ## Rate limit
 
