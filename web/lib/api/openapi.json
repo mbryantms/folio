@@ -3062,6 +3062,55 @@
         }
       }
     },
+    "/libraries/{slug}/scan-runs/{scan_id}/cancel": {
+      "post": {
+        "tags": [
+          "api::scan_runs"
+        ],
+        "summary": "`POST /libraries/{slug}/scan-runs/{scan_id}/cancel` — flip a stuck\nscan_runs row to a terminal state. Idempotent against already-\nterminal rows (returns 409). The worker is the usual authority on\nstate transitions; this endpoint is the manual escape hatch for\nscans that have lost their worker (e.g., operator cleared the\nqueue mid-flight, server restart killed an in-flight job, or the\nworker hangs and no progress events arrive).",
+        "description": "Writes `state=\"cancelled\"`, `ended_at=NOW`, `error=\"Cancelled by\nadmin\"`. Emits `ScanEvent::Failed` so connected WebSocket clients\n(the Live scan page) drop the run out of their \"active\" set\nimmediately. Race note: if a still-alive worker subsequently\nreaches `finalize_run`, it will overwrite this row with its own\nterminal state — that's fine and expected.",
+        "operationId": "cancel",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanCancelResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library or scan run not found"
+          },
+          "409": {
+            "description": "scan run already terminal"
+          }
+        }
+      }
+    },
     "/libraries/{slug}/validate-deeply": {
       "post": {
         "tags": [
@@ -11329,6 +11378,33 @@
               "null"
             ],
             "description": "`None` for system views (admin-curated, visible to every user)."
+          }
+        }
+      },
+      "ScanCancelResp": {
+        "type": "object",
+        "required": [
+          "id",
+          "state"
+        ],
+        "properties": {
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
           }
         }
       },

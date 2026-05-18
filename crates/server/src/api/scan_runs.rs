@@ -5,26 +5,31 @@
 //! Plus [`prune`] — the trim-to-last-50 helper used by the daily cron.
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
 };
 use entity::{scan_run, series};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, Statement,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    DbBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
+use crate::library::events::ScanEvent;
+use crate::middleware::RequestContext;
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/libraries/{slug}/scan-runs", get(list))
+    Router::new()
+        .route("/libraries/{slug}/scan-runs", get(list))
+        .route("/libraries/{slug}/scan-runs/{scan_id}/cancel", post(cancel))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -182,6 +187,129 @@ pub async fn prune(db: &DatabaseConnection, keep: u64) -> anyhow::Result<u64> {
     );
     let res = db.execute(stmt).await?;
     Ok(res.rows_affected())
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ScanCancelResp {
+    pub id: String,
+    pub state: String,
+    pub ended_at: Option<String>,
+    pub error: Option<String>,
+}
+
+/// `POST /libraries/{slug}/scan-runs/{scan_id}/cancel` — flip a stuck
+/// scan_runs row to a terminal state. Idempotent against already-
+/// terminal rows (returns 409). The worker is the usual authority on
+/// state transitions; this endpoint is the manual escape hatch for
+/// scans that have lost their worker (e.g., operator cleared the
+/// queue mid-flight, server restart killed an in-flight job, or the
+/// worker hangs and no progress events arrive).
+///
+/// Writes `state="cancelled"`, `ended_at=NOW`, `error="Cancelled by
+/// admin"`. Emits `ScanEvent::Failed` so connected WebSocket clients
+/// (the Live scan page) drop the run out of their "active" set
+/// immediately. Race note: if a still-alive worker subsequently
+/// reaches `finalize_run`, it will overwrite this row with its own
+/// terminal state — that's fine and expected.
+#[utoipa::path(
+    post,
+    path = "/libraries/{slug}/scan-runs/{scan_id}/cancel",
+    params(
+        ("slug" = String, Path,),
+        ("scan_id" = String, Path,),
+    ),
+    responses(
+        (status = 200, body = ScanCancelResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "library or scan run not found"),
+        (status = 409, description = "scan run already terminal"),
+    )
+)]
+pub async fn cancel(
+    State(app): State<AppState>,
+    admin: RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath((slug, scan_id)): AxPath<(String, String)>,
+) -> impl IntoResponse {
+    let lib = match crate::api::libraries::find_by_slug(&app.db, &slug).await {
+        Ok(r) => r,
+        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "library not found"),
+    };
+    let scan_uuid = match Uuid::parse_str(&scan_id) {
+        Ok(u) => u,
+        Err(_) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "validation",
+                "scan_id must be a UUID",
+            );
+        }
+    };
+    let row = match scan_run::Entity::find_by_id(scan_uuid).one(&app.db).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "scan run not found"),
+        Err(e) => {
+            tracing::warn!(error = %e, "scan cancel: lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if row.library_id != lib.id {
+        return error(StatusCode::NOT_FOUND, "not_found", "scan run not found");
+    }
+    if matches!(row.state.as_str(), "complete" | "failed" | "cancelled") {
+        return error(
+            StatusCode::CONFLICT,
+            "already_terminal",
+            &format!("scan run already in terminal state: {}", row.state),
+        );
+    }
+    let now = chrono::Utc::now().fixed_offset();
+    let cancel_msg = "Cancelled by admin".to_string();
+    let mut am: scan_run::ActiveModel = row.into();
+    am.state = Set("cancelled".into());
+    am.ended_at = Set(Some(now));
+    am.error = Set(Some(cancel_msg.clone()));
+    let updated = match am.update(&app.db).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "scan cancel: row update failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    // Connected Live-scan clients listen for `scan.failed`; emit one
+    // so the UI drops the run out of its "active" set and surfaces a
+    // terminal status without a page reload.
+    app.events.emit(ScanEvent::Failed {
+        library_id: lib.id,
+        scan_id: scan_uuid,
+        error: cancel_msg.clone(),
+    });
+
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: admin.0.id,
+            action: "admin.scan_run.cancel",
+            target_type: Some("scan_run"),
+            target_id: Some(scan_uuid.to_string()),
+            payload: serde_json::json!({
+                "library_id": lib.id.to_string(),
+                "kind": updated.kind,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+
+    Json(ScanCancelResp {
+        id: updated.id.to_string(),
+        state: updated.state,
+        ended_at: updated.ended_at.map(|t| t.to_rfc3339()),
+        error: updated.error,
+    })
+    .into_response()
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {

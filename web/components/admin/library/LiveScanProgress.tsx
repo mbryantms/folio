@@ -32,6 +32,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  useCancelScanRun,
   useClearQueue,
   useDeleteAllThumbnails,
   useForceRecreateThumbnails,
@@ -212,6 +213,8 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
   const thumbnailSettings = useThumbnailsSettings(libraryId);
   const thumbnailStatus = useThumbnailsStatus(libraryId, { intervalMs: 2_000 });
   const trigger = useTriggerScan(libraryId);
+  const cancelScan = useCancelScanRun(libraryId);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = React.useState(false);
   const eventLibraryId = library.data?.id ?? "__loading-library-id__";
   const { status: wsStatus, events } = useScanEvents({
     libraryId: eventLibraryId,
@@ -352,6 +355,18 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
             />
             WebSocket {wsStatus}
           </div>
+          {state.status === "running" && state.scanId ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={cancelScan.isPending}
+              onClick={() => setCancelConfirmOpen(true)}
+              title="Stop tracking this run and flip its DB row to cancelled"
+            >
+              {cancelScan.isPending ? "Cancelling…" : "Cancel scan"}
+            </Button>
+          ) : null}
           <ScanModeMenu
             disabled={state.status === "queued"}
             isPending={trigger.isPending}
@@ -360,6 +375,43 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
           />
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={cancelConfirmOpen}
+        onOpenChange={setCancelConfirmOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel this scan?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Flips the <code>scan_runs</code> row to{" "}
+              <code>cancelled</code> and emits a terminal event so this
+              page stops showing it as running. A still-alive worker
+              would finish on its own and overwrite the cancelled row
+              with its real terminal state — use this when the worker
+              is gone (queue cleared, server restart, hang).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancelScan.isPending}>
+              Keep tracking
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={cancelScan.isPending}
+              onClick={() => {
+                if (!state.scanId) return;
+                cancelScan.mutate(
+                  { scanId: state.scanId },
+                  { onSettled: () => setCancelConfirmOpen(false) },
+                );
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {cancelScan.isPending ? "Cancelling…" : "Cancel scan"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Card>
         <CardContent className="space-y-4 p-5">
@@ -985,6 +1037,10 @@ function statusFromRun(run?: ScanRunView): Status {
   if (run.state === "queued") return "queued";
   if (run.state === "complete" || run.state === "completed") return "completed";
   if (run.state === "failed") return "failed";
+  // Cancelled runs land here when an admin hit the manual cancel
+  // endpoint. UI-wise we treat them as a terminal failed state so
+  // the run drops out of "active" and the topbar pill clears.
+  if (run.state === "cancelled") return "failed";
   return "idle";
 }
 

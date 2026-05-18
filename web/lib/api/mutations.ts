@@ -283,6 +283,33 @@ export function useDeleteLibrary(id: string) {
 }
 
 /**
+ * Cancel a stuck `scan_runs` row by id. The worker is the usual
+ * authority on terminal state, but if the queue was cleared mid-flight
+ * (or the server restarted while a job was in-flight), the row sits
+ * at `state='running'` forever. This endpoint is the manual escape
+ * hatch: it flips the row to `cancelled` and emits a `scan.failed`
+ * WS event so the Live scan page drops the run out of its active set.
+ */
+export function useCancelScanRun(librarySlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<
+    { id: string; state: string; ended_at: string | null; error: string | null },
+    { scanId: string }
+  >(
+    (input) => ({
+      path: `/libraries/${librarySlug}/scan-runs/${input.scanId}/cancel`,
+      method: "POST",
+    }),
+    {
+      successMessage: () => "Scan cancelled",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.scanRunsAll(librarySlug) });
+      },
+    },
+  );
+}
+
+/**
  * Trigger a library scan. `mode` is preferred; `force` remains supported as
  * the legacy content-verify alias.
  */
