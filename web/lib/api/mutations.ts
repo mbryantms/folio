@@ -543,6 +543,7 @@ export function useBulkMarkProgress() {
       toastId: "bulk-progress",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+        invalidateRails(qc);
       },
     },
   );
@@ -645,6 +646,7 @@ export function useBulkMarkSeriesProgress() {
       toastId: "bulk-series-progress",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+        invalidateRails(qc);
       },
     },
   );
@@ -865,6 +867,7 @@ export function useUpsertIssueProgress() {
     {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+        invalidateRails(qc);
       },
     },
   );
@@ -892,6 +895,7 @@ export function useUpsertSeriesProgress(seriesId: string) {
       },
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+        invalidateRails(qc);
       },
     },
   );
