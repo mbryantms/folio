@@ -184,10 +184,9 @@ fn classify_publisher_children(
             }
             FolderShape::Empty => result.empty_folders.push(sub),
             FolderShape::Ambiguous(reason) => {
-                result.ambiguous_folders.push(AmbiguousFolder {
-                    path: sub,
-                    reason,
-                });
+                result
+                    .ambiguous_folders
+                    .push(AmbiguousFolder { path: sub, reason });
             }
         }
     }
@@ -638,11 +637,7 @@ mod tests {
         assert!(result.series_folders.is_empty());
         assert_eq!(result.ambiguous_folders.len(), 1);
         assert_eq!(result.ambiguous_folders[0].path, vertigo);
-        assert!(
-            result.ambiguous_folders[0]
-                .reason
-                .contains("third nesting")
-        );
+        assert!(result.ambiguous_folders[0].reason.contains("third nesting"));
     }
 
     /// An archive file directly under a publisher folder (no series

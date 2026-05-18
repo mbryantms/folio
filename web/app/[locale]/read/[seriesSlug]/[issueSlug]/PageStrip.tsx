@@ -124,10 +124,10 @@ export function PageStrip({
   // because `computeSpreadGroups` already emits them as solo groups.
   const activePages = useMemo<readonly number[]>(() => {
     if (viewMode !== "double") return [currentPage];
-    const groups = computeSpreadGroups(pages, { coverSolo });
+    const groups = computeSpreadGroups(pages, { coverSolo, totalPages });
     const idx = groupIndexForPage(groups, currentPage);
     return groups[idx] ?? [currentPage];
-  }, [viewMode, coverSolo, pages, currentPage]);
+  }, [viewMode, coverSolo, pages, currentPage, totalPages]);
 
   const updateVisibleRange = useCallback(() => {
     const el = stripRef.current;

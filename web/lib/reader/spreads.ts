@@ -19,28 +19,43 @@ export type SpreadGroup = readonly number[];
 export interface SpreadOptions {
   /** When true (default), index 0 is rendered solo and pairs sync from 1. */
   coverSolo?: boolean;
+  /**
+   * Authoritative page count for the issue. ComicInfo's `<Pages>`
+   * element is *optional metadata* — some publishers ship it truncated
+   * (e.g. only the cover) even when `<PageCount>` is the full count.
+   * When `totalPages` is provided the walker iterates [0, totalPages),
+   * looking up `pages[i]?.double_page` defensively (missing entries
+   * default to false). When omitted, falls back to `pages.length` for
+   * backward compatibility with callers that don't know the count.
+   */
+  totalPages?: number;
 }
 
 /**
- * Walk `pages` and emit spread groups. Rules, in order:
+ * Walk pages and emit spread groups. Rules, in order:
  *
  *  1. If `coverSolo` (default true) and `i === 0`, emit `[0]` and advance.
  *  2. If `pages[i].double_page === true`, emit `[i]` solo and advance.
- *  3. If `i + 1 < pages.length` and `pages[i + 1].double_page !== true`,
+ *  3. If `i + 1 < total` and `pages[i + 1].double_page !== true`,
  *     emit `[i, i + 1]` and advance by 2.
  *  4. Else emit `[i]` solo and advance.
  *
  * Rule (3) avoids ever pairing a page with a *following* spread — the
  * spread takes its own group on the next iteration.
+ *
+ * `total` is `opts.totalPages ?? pages.length`. The `pages[]` array is
+ * a metadata side-table consulted for the `double_page` flag; missing
+ * entries are treated as `double_page: false`.
  */
 export function computeSpreadGroups(
   pages: ReadonlyArray<PageInfo>,
   opts: SpreadOptions = {},
 ): ReadonlyArray<SpreadGroup> {
   const coverSolo = opts.coverSolo ?? true;
+  const total = Math.max(0, opts.totalPages ?? pages.length);
   const groups: number[][] = [];
   let i = 0;
-  while (i < pages.length) {
+  while (i < total) {
     if (coverSolo && i === 0) {
       groups.push([0]);
       i = 1;
@@ -51,7 +66,7 @@ export function computeSpreadGroups(
       i += 1;
       continue;
     }
-    if (i + 1 < pages.length && pages[i + 1]?.double_page !== true) {
+    if (i + 1 < total && pages[i + 1]?.double_page !== true) {
       groups.push([i, i + 1]);
       i += 2;
       continue;

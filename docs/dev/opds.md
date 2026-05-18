@@ -85,8 +85,70 @@ Facet groups exposed:
 
 | Endpoint | Direction | Notes |
 |---|---|---|
-| `PUT /opds/v1/issues/{id}/progress` | Read → Folio | Per-issue `{page, finished}`. Requires `read+progress` app-password scope. |
+| `PUT /opds/v1/issues/{id}/progress` | Read → Folio | Per-issue `{page \| position, finished, device}`. Requires `read+progress` app-password scope. Full wire format in [opds-progress-protocol.md](opds-progress-protocol.md). |
 | `PUT /opds/v1/syncs/progress/{hash}` | KOReader → Folio | KOReader Sync.app shim — accepts KOReader's wire format. |
+
+### Sync surfaces (opds-sync-1.0)
+
+| Endpoint / feature | Surface | Notes |
+|---|---|---|
+| `pse:lastRead` + `pse:lastReadDate` | every issue entry (Atom v1) | Inline per-user read state. Drives "you're 14/32" badges in Panels / Chunky without a side-channel call. |
+| `metadata.position` object | every issue publication (v2 JSON) | Readium-shaped `{position, totalProgression, modified, finished, totalPages}`. |
+| `rel="next"` / `rel="previous"` | per-entry, series + CBL feeds | Sequential reading order. After finishing an issue, a client can follow `rel=next` to stream the next file without re-fetching the parent feed. |
+| `rel="https://folio.local/rels/up-next"` | feed root, series + CBL | Folio-namespaced hint pointing at the issue the user should resume in *this* feed. Same resolver as the web On Deck rail. |
+| `?resume=1` synthetic prepend | series + CBL acquisition feeds | Universal-compat companion to up-next. Prepends a `▶ Resume — {title}` entry at index 0 when the resolver lands on a non-first canonical entry. M2.3-aware clients can dedupe via the `folio:resume` category tag. |
+| `/opds/v1/continue` | aggregate "in-progress issues" | Newest-progress-first; carries feed-level up-next pointing at the most recent. |
+| `/opds/v1/on-deck` | aggregate "what to read next" | One entry per active series / CBL the user is reading. Same data as the home OnDeck rail. |
+| `/opds/v1/history` | finished issues, newest-first | Paginated. Powers "what did I read in March" queries. |
+| `<pse:lastReadDate>` at CBL feed root | per-list "last read in this list" | MAX `progress_record.updated_at` across matched issues. |
+| `numberOfRead` / `numberOfFinished` | v2 `/opds/v2/lists` nav entries + CBL acq metadata | "5 of 24 finished" inline on the list summary. |
+| Implicit progress on PSE stream hits | server-side, transparent to client | Every `GET /opds/pse/{id}/{n}` fires a fire-and-forget progress upsert. Monotonic-only — buffered prefetches behind current position are dropped. `finished=true` set on last-page hit. Device tag `"opds-pse"`. |
+| `rel="http://opds-spec.org/sync"` | catalog root (v1 + v2) | Discoverable write-back endpoint advertisement. v2 carries the `profile` URL anchoring the [protocol doc](opds-progress-protocol.md). |
+
+### Client compatibility matrix
+
+Verified behavior is marked **(verified)**. Other entries reflect
+each client's documented capabilities; we haven't yet driven a real
+build end-to-end against Folio's full sync surface — when you exercise
+one, please update this table.
+
+| Client | Read OPDS v1 | Read OPDS v2 | Write progress | Honors `rel=next` | Honors `pse:lastRead` | App-password required |
+| --- | --- | --- | --- | --- | --- | --- |
+| Panels (iOS) | ✓ | partial | implicit (PSE) | manual UI | ✓ | yes — `read+progress` scope |
+| Chunky (iOS) | ✓ | no | implicit (PSE) | manual UI | ✓ | yes — `read+progress` scope |
+| KOReader | ✓ | no | explicit (sync.app) | manual UI | ✓ | yes (Basic auth carries app-password) |
+| Calibre Companion | ✓ | no | none | no | no | yes — read scope sufficient |
+
+**Per-client gotchas:**
+
+- **Panels** — Honors the PSE stream and writes implicit progress
+  via that path. The explicit `PUT /opds/v1/issues/{id}/progress`
+  endpoint isn't called; rely on the implicit signal. The
+  M5 `<uri>` drill-in on author chips works.
+- **Chunky** — Same as Panels for progress. Less complete metadata
+  rendering (limited `<category>` support). Requires the
+  per-extension MIME on the acquisition link.
+- **KOReader** — Calls the `/opds/v1/syncs/progress/{hash}` shim,
+  not the explicit per-issue endpoint. Uses percentage (0.0-1.0),
+  which Folio converts to integer page. Document-hash is BLAKE3 of
+  the file bytes — Folio uses the same hash as `issue.id`, so the
+  shim is a thin format adapter.
+- **Calibre Companion** — Read-only by design. No progress write
+  back; treat it as a discovery client.
+
+**Capability auto-detection.** Capable clients can detect Folio's
+write-back support via the catalog-root rel:
+
+```xml
+<link rel="http://opds-spec.org/sync"
+      href="/opds/v1/issues/{issue_id}/progress"
+      type="application/json"/>
+```
+
+The rel is Folio-namespaced (no canonical OPDS sync rel exists yet).
+The OPDS 2.0 mirror carries the same href plus a `profile` URL
+(`https://folio.bryhome.live/spec/progress-write-v1`) anchoring the
+documented wire format — see [opds-progress-protocol.md](opds-progress-protocol.md).
 
 ## OPDS 2.0 (JSON) at a glance
 
@@ -162,17 +224,30 @@ box. Two practical recommendations:
 
 ## Plan history
 
-The OPDS surface evolved through two completed plans:
+The OPDS surface evolved through three completed plans:
 
-- `~/.claude/plans/opds-readiness-1.0.md` — Phase-2 OPDS readiness
+- `~/.claude/plans/done/opds-readiness-1.0.md` — Phase-2 OPDS readiness
   (M1-M7). Established the baseline catalog, page streaming
   extension, progress sync, KOReader shim, OPDS 2.0 JSON mirror.
-- `~/.claude/plans/opds-richer-feeds-1.0.md` — Visual + UX polish
+- `~/.claude/plans/done/opds-richer-feeds-1.0.md` — Visual + UX polish
   (M1-M7). Added cover art on series entries, rich metadata, custom
   Pages, faceted browse, aggregation feeds, OPDS 2.0 groups[], and
   `rel=alternate` JSON links.
+- `~/.claude/plans/done/opds-sync-1.0.md` — End-to-end progress sync.
+  Inline read-state annotations (M1), sequential rel=next/previous
+  (M2), feed-level up-next rel (M2.3), `?resume=1` synthetic-entry
+  opt-in (M2.4), `/continue` + `/on-deck` aggregate feeds (M2.5),
+  implicit PSE progress writes (M3), write-back advertisement (M4),
+  history feed + conflict-resolution tests (M5), bidirectional CBL
+  progress (M6). Sync details in
+  [opds-progress-protocol.md](opds-progress-protocol.md); regression
+  guards across 12 test files (`opds_inline_progress`,
+  `opds_sequential_nav`, `opds_up_next_rel`, `opds_resume_synthetic`,
+  `opds_personal_feeds`, `opds_pse_implicit_progress`,
+  `opds_progress_advertisement`, `opds_history_and_conflicts`,
+  `opds_cbl_progress`).
 
-Both plans are complete. Future OPDS work would target the
+All three plans are complete. Future OPDS work would target the
 deferred items in those plans (reading-status facet, empty-series
-placeholder thumbnails, OpenSearch facet params) or new surfaces
-discovered through user feedback.
+placeholder thumbnails, OpenSearch facet params, Automerge CRDT
+progress merge) or new surfaces discovered through user feedback.

@@ -1493,6 +1493,9 @@ mod tests {
             detect_special_type(None, "Series Origin.cbz", false, None),
             Some("OneShot"),
         );
-        assert_eq!(detect_special_type(None, "Series 001.cbz", true, None), None);
+        assert_eq!(
+            detect_special_type(None, "Series 001.cbz", true, None),
+            None
+        );
     }
 }

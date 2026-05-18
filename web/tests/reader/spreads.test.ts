@@ -101,6 +101,31 @@ describe("computeSpreadGroups", () => {
     expect(groups).toEqual([[0], [1, 2], [3]]);
   });
 
+  it("walks to totalPages when ComicInfo <Pages> is truncated", () => {
+    // Regression: Berserk V2003 041 ships a ComicInfo with only 2
+    // `<Page>` rows declared despite `<PageCount>160</PageCount>`.
+    // Without `totalPages`, computeSpreadGroups iterated only 2
+    // indices, leaving the reader stuck on group 0 — atLastGroup
+    // tripped after one click and EndOfIssueCard appeared at page 2.
+    // The fix: walk [0, totalPages) and treat missing pages[i] as
+    // `double_page: false`.
+    const pages: PageInfo[] = [single(0), single(1)];
+    const groups = computeSpreadGroups(pages, {
+      coverSolo: true,
+      totalPages: 8,
+    });
+    // [0] cover, [1,2], [3,4], [5,6], [7] tail.
+    expect(groups).toEqual([[0], [1, 2], [3, 4], [5, 6], [7]]);
+  });
+
+  it("treats missing pages[i] entries as default (single page)", () => {
+    // When `pages` is empty but totalPages > 0, the walker should
+    // still emit one solo + pairs for every index, because absent
+    // metadata can't claim `double_page: true`.
+    const groups = computeSpreadGroups([], { totalPages: 5 });
+    expect(groups).toEqual([[0], [1, 2], [3, 4]]);
+  });
+
   it("matches the Geiger 004 fixture: spreads at 9, 26, 27 (out of 32)", () => {
     const pages: PageInfo[] = Array.from({ length: 32 }, (_, i) =>
       i === 9 || i === 26 || i === 27 ? spread(i) : single(i),

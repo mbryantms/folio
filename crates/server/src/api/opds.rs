@@ -29,8 +29,8 @@ use axum::{
     routing::get,
 };
 use entity::{
-    cbl_entry, cbl_list, collection_entry, issue, library_user_access, saved_view, series,
-    series_credit, series_genre, user_page, user_view_pin,
+    cbl_entry, cbl_list, collection_entry, issue, library_user_access, progress_record, saved_view,
+    series, series_credit, series_genre, user_page, user_view_pin,
 };
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
@@ -60,8 +60,16 @@ pub(crate) const PAGE_SIZE: u64 = 50;
 const ATOM_CT: &str = "application/atom+xml; charset=utf-8";
 const NAV_CT: &str = "application/atom+xml;profile=opds-catalog;kind=navigation";
 const ACQ_CT: &str = "application/atom+xml;profile=opds-catalog;kind=acquisition";
+const ENTRY_CT: &str = "application/atom+xml;type=entry";
 const DEFAULT_ACQ_MIME: &str = "application/zip";
 const WWW_AUTHENTICATE_OPDS: &str = r#"Basic realm="Folio OPDS""#;
+
+/// Folio-namespaced rel emitted on resume-context feeds (series, CBL,
+/// collection) that points at the entry the caller should resume next.
+/// Clients aware of the rel can surface a "Resume" button without
+/// parsing the entry list. The rel is Folio-specific; the OPDS spec
+/// doesn't define a standard "up-next" yet. M2.3 of opds-sync-1.0.
+pub(crate) const UP_NEXT_REL: &str = "https://folio.local/rels/up-next";
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -79,6 +87,9 @@ pub fn routes() -> Router<AppState> {
         // Each reuses the same render path as the corresponding generic
         // feed so cover/metadata/PSE links stay consistent.
         .route("/opds/v1/continue", get(continue_reading))
+        .route("/opds/v1/on-deck", get(on_deck))
+        // M5 of opds-sync — read history (finished issues newest-first).
+        .route("/opds/v1/history", get(history))
         .route("/opds/v1/new-this-month", get(new_this_month))
         .route("/opds/v1/by-creator/{writer}", get(by_creator))
         .route("/opds/v1/search", get(search))
@@ -196,6 +207,30 @@ pub struct PageQuery {
     pub page: Option<u64>,
 }
 
+/// `?resume=1` query opt-in for resume-context feeds. When `1`/`true`,
+/// the feed prepends a synthetic "▶ Resume — {title}" entry pointing at
+/// the same up-next issue [`UP_NEXT_REL`] advertises. M2.4 of
+/// opds-sync-1.0.
+#[derive(Debug, Default, Deserialize)]
+pub struct ResumeQuery {
+    pub resume: Option<String>,
+}
+
+impl ResumeQuery {
+    /// Accept `1`, `true`, `yes` (case-insensitive). Anything else is
+    /// treated as off — the param is opt-in and small clients sometimes
+    /// echo random strings into preserved query keys.
+    pub(crate) fn is_set(&self) -> bool {
+        matches!(
+            self.resume
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("1" | "true" | "yes")
+        )
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub q: Option<String>,
@@ -239,6 +274,7 @@ async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
   <link rel="self" href="/opds/v1" type="{nav}"/>
   <link rel="start" href="/opds/v1" type="{nav}"/>
   <link rel="search" href="/opds/v1/search.xml" type="application/opensearchdescription+xml"/>
+  <link rel="http://opds-spec.org/sync" href="/opds/v1/issues/{{issue_id}}/progress" type="application/json"/>
   <entry>
     <id>{base}/opds/v1/series</id>
     <title>All series</title>
@@ -262,6 +298,18 @@ async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
     <title>Continue reading</title>
     <updated>{now}</updated>
     <link rel="subsection" href="/opds/v1/continue" type="{acq}"/>
+  </entry>
+  <entry>
+    <id>{base}/opds/v1/on-deck</id>
+    <title>On Deck</title>
+    <updated>{now}</updated>
+    <link rel="subsection" href="/opds/v1/on-deck" type="{acq}"/>
+  </entry>
+  <entry>
+    <id>{base}/opds/v1/history</id>
+    <title>Read history</title>
+    <updated>{now}</updated>
+    <link rel="subsection" href="/opds/v1/history" type="{acq}"/>
   </entry>
   <entry>
     <id>{base}/opds/v1/new-this-month</id>
@@ -647,6 +695,7 @@ async fn series_one(
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
     Query(q): Query<PageQuery>,
+    Query(resume_q): Query<ResumeQuery>,
 ) -> Response {
     let s = match series::Entity::find_by_id(id).one(&app.db).await {
         Ok(Some(s)) => s,
@@ -693,13 +742,40 @@ async fn series_one(
     let cover_map = fetch_cover_issues(&app.db, &[s.id]).await;
     let cover = cover_map.get(&s.id).map(String::as_str);
     let key = app.secrets.url_signing_key.as_ref();
+    let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
+    let progress = fetch_user_progress(&app.db, user.id, &issue_ids).await;
+    // M2.3: feed-level "up-next" rel — resolve the first unfinished issue
+    // in the series. Reuses the same helper that powers the web app's
+    // On Deck rail + reader end-card so OPDS clients see identical
+    // resolution. Lookup failures fall through silently (the rel is
+    // optional; we'd rather render a feed without the hint than 500).
+    let up_next_issue = crate::api::next_up::pick_next_in_series(&app, user.id, s.id)
+        .await
+        .ok()
+        .flatten();
     let mut entries = String::new();
-    for i in &issues {
+    // M2.4: `?resume=1` opt-in. Prepend a synthetic Resume entry when
+    // the caller opted in AND the up-next issue isn't already the first
+    // canonical entry (skipping the redundant-duplicate case for fresh
+    // series). Synthetic ALWAYS sits at index 0; canonical ordering
+    // below is untouched.
+    if resume_q.is_set()
+        && should_emit_resume_synthetic(up_next_issue.as_ref(), issues.first())
+        && let Some(up) = up_next_issue.as_ref()
+    {
+        entries.push_str(&render_resume_synthetic_entry(up));
+    }
+    for (idx, i) in issues.iter().enumerate() {
         let series_slug = slugs.get(&i.series_id).map(String::as_str);
+        let prev = idx.checked_sub(1).and_then(|p| issues.get(p));
+        let next = issues.get(idx + 1);
         entries.push_str(&render_issue_acq_entry(
             i,
             series_slug,
             Some((user.id, key)),
+            progress.get(&i.id),
+            prev,
+            next,
         ));
     }
     let series_description = render_series_description(s.summary.as_deref());
@@ -713,6 +789,7 @@ async fn series_one(
         ),
         None => String::new(),
     };
+    let up_next_link = render_up_next_feed_link(up_next_issue.as_ref().map(|i| i.id.as_str()));
     let now = chrono::Utc::now().to_rfc3339();
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -722,6 +799,7 @@ async fn series_one(
   <updated>{now}</updated>
 {description}{metadata}{cover_links}  <link rel="self" href="{self_href}?page={page}" type="{acq}"/>
   <link rel="up" href="/opds/v1" type="{nav}"/>
+{up_next_link}
 {pagination}{entries}</feed>
 "#,
         id = id,
@@ -760,6 +838,10 @@ async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
         &rows,
         "",
         user.id,
+        false,
+        None,
+        "",
+        None,
     )
     .await;
     atom(body)
@@ -839,6 +921,11 @@ async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Res
     let visible = access::for_user(&app, &user).await;
     let issues = fetch_visible_issues_preserving_order(&app, &filtered_ids, &visible).await;
 
+    // M2.5: feed-level up-next rel points at the most-recently-touched
+    // in-progress issue (issues[0] thanks to `ORDER BY p.updated_at
+    // DESC` above). Aggregate-feed semantics: "the answer to 'what
+    // should I read next?' across the user's whole library".
+    let up_next_id = issues.first().map(|i| i.id.clone());
     let body = build_acquisition_feed(
         &app,
         "urn:opds:continue",
@@ -847,6 +934,144 @@ async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Res
         &issues,
         "",
         user.id,
+        false,
+        up_next_id.as_deref(),
+        "",
+        None,
+    )
+    .await;
+    atom(body)
+}
+
+/// `/opds/v1/on-deck` — aggregate "what to read next" rail surfaced as
+/// an acquisition feed. One entry per series (or per CBL list) the user
+/// is actively reading; the entry is the first-unread issue in that
+/// context. Same data + same ordering as the web home page's On Deck
+/// rail (powered by [`api::rails::compute_on_deck`]) so the two stay
+/// consistent. M2.5 of opds-sync-1.0.
+async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response {
+    let acl = access::for_user(&app, &user).await;
+    let cards = match crate::api::rails::compute_on_deck(&app, user.id, &acl).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    // Cap to match the web rail's render budget — keeps the feed small
+    // for resource-constrained mobile clients (Panels/Chunky) too.
+    let issue_ids: Vec<String> = cards
+        .iter()
+        .take(24)
+        .map(|c| match c {
+            crate::api::rails::OnDeckCard::SeriesNext { issue, .. } => issue.id.clone(),
+            crate::api::rails::OnDeckCard::CblNext { issue, .. } => issue.id.clone(),
+        })
+        .collect();
+    // `compute_on_deck` already enforced the ACL via `acl.contains(...)`
+    // when building each card. `fetch_visible_issues_preserving_order`
+    // re-checks defensively — drops anything that's been removed between
+    // the rail query and the hydration round-trip.
+    let issues = fetch_visible_issues_preserving_order(&app, &issue_ids, &acl).await;
+    let up_next_id = issues.first().map(|i| i.id.clone());
+    let body = build_acquisition_feed(
+        &app,
+        "urn:opds:on-deck",
+        "On Deck",
+        "/opds/v1/on-deck",
+        &issues,
+        "",
+        user.id,
+        false,
+        up_next_id.as_deref(),
+        "",
+        None,
+    )
+    .await;
+    atom(body)
+}
+
+/// `/opds/v1/history` — issues the caller has finished, newest-finish
+/// first. Powers "what did I read in <month>" queries from OPDS clients
+/// without web-app context. Paginated at [`PAGE_SIZE`] entries per page.
+/// M5 of opds-sync-1.0.
+async fn history(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<PageQuery>,
+) -> Response {
+    use sea_orm::DbBackend;
+    let allowed = match allowed_libraries(&app, &user).await {
+        Ok(v) => v,
+        Err(e) => return server_error(e),
+    };
+    #[derive(FromQueryResult)]
+    struct Row {
+        issue_id: String,
+        library_id: Uuid,
+    }
+    let page = q.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * PAGE_SIZE;
+    // Hard cap at PAGE_SIZE per page — even an aggressive completionist's
+    // history fits in a handful of pages with `next` rel pagination.
+    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        SELECT p.issue_id AS issue_id, i.library_id AS library_id
+        FROM progress_records p
+        JOIN issues i ON i.id = p.issue_id
+        WHERE p.user_id = $1 AND p.finished = true
+          AND i.state = 'active' AND i.removed_at IS NULL
+        ORDER BY p.updated_at DESC
+        LIMIT $2 OFFSET $3
+        "#,
+        [
+            user.id.into(),
+            (PAGE_SIZE as i64).into(),
+            (offset as i64).into(),
+        ],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return server_error(e.to_string()),
+    };
+    // ACL in Rust mirrors the rail handlers — keeps the SQL simple while
+    // still excluding rows in libraries the caller can't see.
+    let filtered_ids: Vec<String> = match allowed.as_ref() {
+        None => rows.into_iter().map(|r| r.issue_id).collect(),
+        Some(visible) => rows
+            .into_iter()
+            .filter(|r| visible.contains(&r.library_id))
+            .map(|r| r.issue_id)
+            .collect(),
+    };
+    let visible = access::for_user(&app, &user).await;
+    let issues = fetch_visible_issues_preserving_order(&app, &filtered_ids, &visible).await;
+    // Pagination link rels mirror series_list / other paged feeds. The
+    // total page count is computed off the un-ACL'd row count which
+    // would require a separate COUNT(*) round-trip; the simpler
+    // heuristic: emit a `next` rel iff we returned a full page.
+    let pagination = if issues.len() as u64 == PAGE_SIZE {
+        format!(
+            r#"  <link rel="next" href="/opds/v1/history?page={next}" type="{acq}"/>
+"#,
+            next = page + 1,
+            acq = ACQ_CT,
+        )
+    } else {
+        String::new()
+    };
+    let body = build_acquisition_feed(
+        &app,
+        "urn:opds:history",
+        "Read history",
+        &format!("/opds/v1/history?page={page}"),
+        &issues,
+        &pagination,
+        user.id,
+        false,
+        None,
+        "",
+        None,
     )
     .await;
     atom(body)
@@ -884,6 +1109,10 @@ async fn new_this_month(State(app): State<AppState>, user: CurrentUser) -> Respo
         &rows,
         "",
         user.id,
+        false,
+        None,
+        "",
+        None,
     )
     .await;
     atom(body)
@@ -1023,6 +1252,10 @@ async fn search(
                 &[],
                 "",
                 user.id,
+                false,
+                None,
+                "",
+                None,
             )
             .await,
         );
@@ -1244,6 +1477,7 @@ fn parse_byte_range(header: &str, total: u64) -> Option<Result<(u64, u64), ()>> 
 
 // ────────────── helpers ──────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn build_acquisition_feed(
     app: &AppState,
     feed_id: &str,
@@ -1252,19 +1486,45 @@ async fn build_acquisition_feed(
     issues: &[issue::Model],
     pagination: &str,
     user_id: Uuid,
+    sequential_nav: bool,
+    up_next_issue_id: Option<&str>,
+    resume_prefix: &str,
+    feed_last_read_date: Option<&chrono::DateTime<chrono::FixedOffset>>,
 ) -> String {
     let now = chrono::Utc::now().to_rfc3339();
     let slugs = fetch_series_slugs(&app.db, issues).await;
     let key = app.secrets.url_signing_key.as_ref();
-    let mut entries = String::new();
-    for i in issues {
+    let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
+    let progress = fetch_user_progress(&app.db, user_id, &issue_ids).await;
+    let mut entries = String::from(resume_prefix);
+    for (idx, i) in issues.iter().enumerate() {
         let series_slug = slugs.get(&i.series_id).map(String::as_str);
+        let (prev, next) = if sequential_nav {
+            (
+                idx.checked_sub(1).and_then(|p| issues.get(p)),
+                issues.get(idx + 1),
+            )
+        } else {
+            (None, None)
+        };
         entries.push_str(&render_issue_acq_entry(
             i,
             series_slug,
             Some((user_id, key)),
+            progress.get(&i.id),
+            prev,
+            next,
         ));
     }
+    let up_next_link = render_up_next_feed_link(up_next_issue_id);
+    let last_read = feed_last_read_date
+        .map(|ts| {
+            format!(
+                "  <pse:lastReadDate>{}</pse:lastReadDate>\n",
+                ts.to_rfc3339()
+            )
+        })
+        .unwrap_or_default();
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:pse="http://vaemendis.net/opds-pse/ns">
@@ -1273,7 +1533,7 @@ async fn build_acquisition_feed(
   <updated>{now}</updated>
   <link rel="self" href="{self_href}" type="{acq}"/>
   <link rel="up" href="/opds/v1" type="{nav}"/>
-{pagination}{entries}</feed>
+{last_read}{up_next_link}{pagination}{entries}</feed>
 "#,
         id = xml_escape(feed_id),
         title = xml_escape(title),
@@ -1293,10 +1553,25 @@ async fn build_acquisition_feed(
 /// link is signed per (issue, user, exp): the link can't be rendered
 /// without knowing the caller. Pass `None` for `pse_ctx` if the entry
 /// is rendered for a non-authenticated surface (none today; reserved).
+///
+/// `progress` carries the caller's read-state row for this issue when
+/// present; the renderer emits `pse:lastRead` + `pse:lastReadDate` so
+/// PSE-aware clients can draw a progress badge inline without a
+/// side-channel call. Resolved in bulk via [`fetch_user_progress`].
+///
+/// `prev` / `next` carry the neighbouring issues in the feed's reading
+/// sequence; the renderer emits `rel="previous"` / `rel="next"`
+/// acquisition links so a client finishing one issue can stream the
+/// adjacent one without re-fetching the parent feed. Only set on feeds
+/// that have a *reading* sequence (per-series sort, CBL position);
+/// discovery feeds (Recent, Search, New this month) pass `None`.
 fn render_issue_acq_entry(
     i: &issue::Model,
     series_slug: Option<&str>,
     pse_ctx: Option<(Uuid, &[u8])>,
+    progress: Option<&progress_record::Model>,
+    prev: Option<&issue::Model>,
+    next: Option<&issue::Model>,
 ) -> String {
     let label = i.title.clone().unwrap_or_else(|| {
         i.number_raw
@@ -1318,7 +1593,7 @@ fn render_issue_acq_entry(
     <link rel="http://opds-spec.org/image" href="/issues/{id}/pages/0" type="image/jpeg"/>
 {related}    <link rel="http://opds-spec.org/acquisition" href="/opds/v1/issues/{id}/file" type="{mime}"/>
     <link rel="alternate" href="/api/issues/{id}" type="application/json"/>
-{pse}  </entry>
+{pse}{progress}{nav}  </entry>
 "#,
         id = i.id,
         title = xml_escape(&label),
@@ -1337,6 +1612,117 @@ fn render_issue_acq_entry(
             .unwrap_or_default(),
         mime = mime_for(&i.file_path),
         pse = pse_link,
+        progress = render_pse_last_read(progress),
+        nav = render_sequential_nav_links(prev, next),
+    )
+}
+
+/// Render a synthetic `▶ Resume — {title}` entry that prepends a
+/// resume-context feed when the caller passed `?resume=1`. The entry
+/// re-uses the canonical issue's acquisition link (no duplicate
+/// downloads); its `<id>` is `folio:resume:{canonical_id}` so a
+/// [`UP_NEXT_REL`]-aware client can dedupe it against the canonical
+/// entry, and its `<category>` carries the `folio:resume` term that
+/// tells those clients the synthetic origin. M2.4 of opds-sync-1.0.
+fn render_resume_synthetic_entry(i: &issue::Model) -> String {
+    let label = i.title.clone().unwrap_or_else(|| {
+        i.number_raw
+            .clone()
+            .map(|n| format!("Issue #{n}"))
+            .unwrap_or_else(|| "Issue".into())
+    });
+    let title = xml_escape(&format!("\u{25B6} Resume \u{2014} {label}"));
+    let mime = mime_for(&i.file_path);
+    format!(
+        r#"  <entry>
+    <id>folio:resume:{id}</id>
+    <title>{title}</title>
+    <updated>{updated}</updated>
+    <category scheme="https://folio.local/categories/resume" term="folio:resume" label="Resume here"/>
+    <link rel="http://opds-spec.org/image/thumbnail" href="/issues/{id}/pages/0/thumb" type="image/webp"/>
+    <link rel="http://opds-spec.org/image" href="/issues/{id}/pages/0" type="image/jpeg"/>
+    <link rel="http://opds-spec.org/acquisition" href="/opds/v1/issues/{id}/file" type="{mime}"/>
+    <link rel="alternate" href="/api/issues/{id}" type="application/json"/>
+  </entry>
+"#,
+        id = i.id,
+        title = title,
+        updated = i.updated_at.to_rfc3339(),
+        mime = mime,
+    )
+}
+
+/// Should the synthetic resume entry be emitted? Skip when the up-next
+/// issue is also the first entry of the canonical list — the synthetic
+/// would just duplicate it. Returns true only when the prepend adds
+/// value (the caller is mid-list). Shared with [`super::opds_v2`].
+pub(crate) fn should_emit_resume_synthetic(
+    up_next: Option<&issue::Model>,
+    canonical_first: Option<&issue::Model>,
+) -> bool {
+    match (up_next, canonical_first) {
+        (Some(a), Some(b)) => a.id != b.id,
+        _ => false,
+    }
+}
+
+/// Emit the feed-root `up-next` rel pointing at the issue the caller
+/// should resume in this feed. `None` (no unfinished issue / lookup
+/// failure) → empty string so the rel is omitted and the rest of the
+/// feed renders unchanged. M2.3 of opds-sync-1.0.
+fn render_up_next_feed_link(issue_id: Option<&str>) -> String {
+    match issue_id {
+        Some(id) => format!(
+            "  <link rel=\"{rel}\" href=\"/opds/v1/issues/{id}\" type=\"{ct}\"/>\n",
+            rel = UP_NEXT_REL,
+            ct = ENTRY_CT,
+        ),
+        None => String::new(),
+    }
+}
+
+/// Emit `rel="previous"` / `rel="next"` acquisition links for entries
+/// inside a reading-sequence feed. M2 of opds-sync-1.0.
+fn render_sequential_nav_links(prev: Option<&issue::Model>, next: Option<&issue::Model>) -> String {
+    let mut out = String::new();
+    if let Some(p) = prev {
+        let _ = std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!(
+                "    <link rel=\"previous\" href=\"/opds/v1/issues/{id}/file\" type=\"{mime}\"/>\n",
+                id = p.id,
+                mime = mime_for(&p.file_path),
+            ),
+        );
+    }
+    if let Some(n) = next {
+        let _ = std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!(
+                "    <link rel=\"next\" href=\"/opds/v1/issues/{id}/file\" type=\"{mime}\"/>\n",
+                id = n.id,
+                mime = mime_for(&n.file_path),
+            ),
+        );
+    }
+    out
+}
+
+/// Render the `<pse:lastRead>` + `<pse:lastReadDate>` annotations that
+/// OPDS-PSE clients (Panels, Chunky) consume to draw a "you're N pages in"
+/// badge on each entry. Empty when the user has no progress row for this
+/// issue. The feed root MUST declare
+/// `xmlns:pse="http://vaemendis.net/opds-pse/ns"` — every acquisition feed
+/// in this module already does, since it sits alongside the existing
+/// `pse:count` stream link.
+fn render_pse_last_read(progress: Option<&progress_record::Model>) -> String {
+    let Some(p) = progress else {
+        return String::new();
+    };
+    format!(
+        "    <pse:lastRead>{page}</pse:lastRead>\n    <pse:lastReadDate>{date}</pse:lastReadDate>\n",
+        page = p.last_page,
+        date = p.updated_at.to_rfc3339(),
     )
 }
 
@@ -1556,6 +1942,131 @@ pub(crate) async fn fetch_cover_issues(
             HashMap::new()
         }
     }
+}
+
+/// Bulk-load the caller's `progress_record` rows for every issue id in
+/// `issue_ids` in a single query. Returns an empty map when the input is
+/// empty or the lookup fails — feed rendering must never 500 because the
+/// progress side-table couldn't be read; we just drop the read-state
+/// annotations and continue. Used by M1 of the OPDS sync plan to emit
+/// `pse:lastRead` / `metadata.position` inline on every acquisition entry.
+pub(crate) async fn fetch_user_progress(
+    db: &sea_orm::DatabaseConnection,
+    user_id: Uuid,
+    issue_ids: &[String],
+) -> HashMap<String, progress_record::Model> {
+    if issue_ids.is_empty() {
+        return HashMap::new();
+    }
+    let mut ids: Vec<String> = issue_ids.to_vec();
+    ids.sort();
+    ids.dedup();
+    match progress_record::Entity::find()
+        .filter(progress_record::Column::UserId.eq(user_id))
+        .filter(progress_record::Column::IssueId.is_in(ids))
+        .all(db)
+        .await
+    {
+        Ok(rows) => rows.into_iter().map(|r| (r.issue_id.clone(), r)).collect(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "opds: progress lookup failed; feeds will omit pse:lastRead annotations"
+            );
+            HashMap::new()
+        }
+    }
+}
+
+/// Bidirectional-progress summary for a single CBL list: per-list
+/// counts + the most-recent progress timestamp across all matched
+/// issues. Feeds the v1 CBL acquisition feed's `<pse:lastReadDate>`
+/// and the v2 navigation entries' `numberOfRead` / `numberOfFinished`.
+/// M6 of opds-sync-1.0.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CblProgressSummary {
+    /// Distinct matched-issue count in the list (after dropping
+    /// unmatched entries and any issues the caller can't see).
+    pub matched: u32,
+    /// Count of issues with any progress beyond cover (`finished=true`
+    /// OR `last_page > 0`). Matches the "started" semantic the home-
+    /// page rails use elsewhere.
+    pub read: u32,
+    /// Count of issues with `finished=true`.
+    pub finished: u32,
+    /// MAX(progress_record.updated_at) across matched issues; `None`
+    /// when the caller has no progress on any issue in the list.
+    pub last_read_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+}
+
+/// Compute progress summary for one CBL list. Single-query helper —
+/// the calling pattern in `cbl_lists_nav` is N+1 over the user's CBLs,
+/// which is fine while the typical user has < 50 lists. Errors degrade
+/// to an empty summary so the feed renders unchanged even when the
+/// progress side-table is unavailable.
+pub(crate) async fn compute_cbl_progress_summary(
+    db: &sea_orm::DatabaseConnection,
+    user_id: Uuid,
+    cbl_list_id: Uuid,
+    visible: &access::VisibleLibraries,
+) -> CblProgressSummary {
+    use sea_orm::DbBackend;
+    #[derive(FromQueryResult)]
+    struct Row {
+        library_id: Uuid,
+        last_page: Option<i32>,
+        finished: Option<bool>,
+        updated_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    }
+    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        SELECT i.library_id  AS library_id,
+               p.last_page   AS last_page,
+               p.finished    AS finished,
+               p.updated_at  AS updated_at
+        FROM cbl_entries e
+        JOIN issues i ON i.id = e.matched_issue_id
+        LEFT JOIN progress_records p
+          ON p.user_id = $2 AND p.issue_id = i.id
+        WHERE e.cbl_list_id = $1
+          AND e.matched_issue_id IS NOT NULL
+          AND i.state = 'active'
+          AND i.removed_at IS NULL
+        "#,
+        [cbl_list_id.into(), user_id.into()],
+    ))
+    .all(db)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "opds: cbl progress summary lookup failed");
+            return CblProgressSummary::default();
+        }
+    };
+    let mut summary = CblProgressSummary::default();
+    for row in rows {
+        if !visible.contains(row.library_id) {
+            continue;
+        }
+        summary.matched += 1;
+        let finished = row.finished.unwrap_or(false);
+        let last_page = row.last_page.unwrap_or(0);
+        if finished {
+            summary.finished += 1;
+        }
+        if finished || last_page > 0 {
+            summary.read += 1;
+        }
+        if let Some(ts) = row.updated_at {
+            summary.last_read_at = match summary.last_read_at {
+                Some(prev) if prev >= ts => Some(prev),
+                _ => Some(ts),
+            };
+        }
+    }
+    summary
 }
 
 /// Per-series metadata that OPDS clients display alongside the
@@ -1930,6 +2441,7 @@ async fn cbl_list_acq(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
+    Query(resume_q): Query<ResumeQuery>,
 ) -> Response {
     let list = match cbl_list::Entity::find_by_id(id).one(&app.db).await {
         Ok(Some(l)) => l,
@@ -1958,6 +2470,30 @@ async fn cbl_list_acq(
     let visible = access::for_user(&app, &user).await;
     let issues = fetch_visible_issues_preserving_order(&app, &issue_ids, &visible).await;
     let self_href = format!("/opds/v1/lists/{id}");
+    // M2.3: resolve the next-unfinished CBL entry for the feed-root
+    // up-next rel. Same helper that powers `next-up` for the web app
+    // so the OPDS resume target never diverges from the in-app one.
+    let up_next_full = crate::api::next_up::pick_next_in_cbl(&app, user.id, id, &visible, None)
+        .await
+        .ok()
+        .flatten()
+        .map(|(iss, _slug, _name, _pos)| iss);
+    let up_next_id = up_next_full.as_ref().map(|i| i.id.clone());
+    // M2.4: `?resume=1` opt-in. Synthetic prepend only when the resolver
+    // hits a non-first canonical entry; a fresh CBL (up-next == issues[0])
+    // would emit a duplicate so we suppress.
+    let resume_prefix = if resume_q.is_set()
+        && should_emit_resume_synthetic(up_next_full.as_ref(), issues.first())
+        && let Some(up) = up_next_full.as_ref()
+    {
+        render_resume_synthetic_entry(up)
+    } else {
+        String::new()
+    };
+    // M6: feed-level lastReadDate reflects the most-recent progress
+    // event ON ANY ISSUE in this CBL — clients render "last read 2
+    // hours ago" without parsing entry-level annotations.
+    let cbl_summary = compute_cbl_progress_summary(&app.db, user.id, id, &visible).await;
     let body = build_acquisition_feed(
         &app,
         &format!("urn:cbl:{id}"),
@@ -1966,6 +2502,10 @@ async fn cbl_list_acq(
         &issues,
         "",
         user.id,
+        true,
+        up_next_id.as_deref(),
+        &resume_prefix,
+        cbl_summary.last_read_at.as_ref(),
     )
     .await;
     atom(body)
@@ -2455,6 +2995,8 @@ async fn render_collection_acq(
     let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
     let series_covers = fetch_cover_issues(&app.db, &collection_series_ids).await;
     let series_facets = fetch_series_facets(&app.db, &collection_series_ids).await;
+    let issue_id_list: Vec<String> = issue_by_id.keys().cloned().collect();
+    let progress = fetch_user_progress(&app.db, user.id, &issue_id_list).await;
 
     let key = app.secrets.url_signing_key.as_ref();
     let mut entries = String::new();
@@ -2469,7 +3011,14 @@ async fn render_collection_acq(
             && let Some(i) = issue_by_id.get(iid)
         {
             let slug = issue_slug_by_series.get(&i.series_id).map(String::as_str);
-            entries.push_str(&render_issue_acq_entry(i, slug, Some((user.id, key))));
+            entries.push_str(&render_issue_acq_entry(
+                i,
+                slug,
+                Some((user.id, key)),
+                progress.get(iid),
+                None,
+                None,
+            ));
         }
     }
 
@@ -2594,7 +3143,19 @@ fn wrap_nav_feed(feed_id: &str, title: &str, self_href: &str, entries: &str) -> 
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ProgressPutReq {
-    pub page: i32,
+    /// 0-based page index. Either `page` or `position` is required;
+    /// when both are present, `page` wins (it's the precise
+    /// source-of-truth). Pre-M4 callers that always sent `page` keep
+    /// working unchanged.
+    #[serde(default)]
+    pub page: Option<i32>,
+    /// Readium-style fractional progression in `[0.0, 1.0]`. Server
+    /// derives the integer `last_page` via
+    /// `round(position * page_count)`, clamped to `[0, page_count - 1]`.
+    /// Requires the issue to have a known `page_count`. M4 of
+    /// opds-sync-1.0.
+    #[serde(default)]
+    pub position: Option<f64>,
     /// Optional — when absent, server preserves the previous `finished`
     /// flag. Matches `POST /progress`'s semantics for cross-surface
     /// consistency.
@@ -2609,7 +3170,12 @@ pub(crate) struct ProgressPutReq {
 #[derive(Debug, serde::Serialize)]
 struct ProgressPutResp {
     issue_id: String,
+    /// 0-based integer page index. Always present.
     page: i32,
+    /// Readium-style fractional progression `[0.0, 1.0]`. Alias for
+    /// `percent`; both fields carry the same value so clients can pick
+    /// whichever name matches their mental model. M4 of opds-sync-1.0.
+    position: f64,
     percent: f64,
     finished: bool,
     updated_at: String,
@@ -2630,9 +3196,6 @@ pub(crate) async fn progress_put(
     axum::Json(req): axum::Json<ProgressPutReq>,
 ) -> Response {
     let user = user.0;
-    if req.page < 0 {
-        return error(StatusCode::BAD_REQUEST, "validation", "page must be >= 0");
-    }
     let row = match issue::Entity::find_by_id(issue_id.clone())
         .one(&app.db)
         .await
@@ -2644,11 +3207,48 @@ pub(crate) async fn progress_put(
     if !visible(&app, &user, row.library_id).await {
         return not_found();
     }
+    // M4: normalize `page` / `position` into the integer `last_page`
+    // the storage layer expects. `page` wins when both are present —
+    // it's the precise source-of-truth. `position` requires the issue
+    // to have a known `page_count` since the conversion is multiplicative.
+    let total_pages = row.page_count.unwrap_or(0).max(0);
+    let page = match (req.page, req.position) {
+        (Some(p), _) => p,
+        (None, Some(pos)) => {
+            if total_pages <= 0 {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "validation",
+                    "position requires the issue to have a known page_count",
+                );
+            }
+            if !pos.is_finite() {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "validation",
+                    "position must be a finite number",
+                );
+            }
+            let clamped = pos.clamp(0.0, 1.0);
+            let p = (clamped * total_pages as f64).round() as i32;
+            p.clamp(0, total_pages - 1)
+        }
+        (None, None) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "validation",
+                "either page or position is required",
+            );
+        }
+    };
+    if page < 0 {
+        return error(StatusCode::BAD_REQUEST, "validation", "page must be >= 0");
+    }
     let model = match crate::api::progress::upsert_for(
         &app,
         user.id,
         &row,
-        req.page,
+        page,
         req.finished,
         req.device.clone(),
     )
@@ -2675,6 +3275,7 @@ pub(crate) async fn progress_put(
     axum::Json(ProgressPutResp {
         issue_id: model.issue_id,
         page: model.last_page,
+        position: model.percent,
         percent: model.percent,
         finished: model.finished,
         updated_at: model.updated_at.to_rfc3339(),

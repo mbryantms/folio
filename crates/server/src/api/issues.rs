@@ -1076,12 +1076,14 @@ pub async fn bulk_metadata(
         // the scanner skips them on rescan. We add to the existing
         // set rather than replace so prior PATCH /issues edits stay
         // sticky.
-        let mut user_edited: BTreeSet<String> = serde_json::from_value(row.user_edited.clone())
-            .unwrap_or_default();
+        let mut user_edited: BTreeSet<String> =
+            serde_json::from_value(row.user_edited.clone()).unwrap_or_default();
         for name in req.patch.touched_field_names() {
             user_edited.insert(name.to_owned());
         }
-        am.user_edited = Set(serde_json::json!(user_edited.into_iter().collect::<Vec<_>>()));
+        am.user_edited = Set(serde_json::json!(
+            user_edited.into_iter().collect::<Vec<_>>()
+        ));
         am.updated_at = Set(chrono::Utc::now().fixed_offset());
 
         match am.update(&app.db).await {

@@ -409,8 +409,8 @@ export function Reader({
   // Single + webtoon modes don't pair pages and use the raw `currentPage`
   // for navigation as before.
   const groups = useMemo<ReadonlyArray<SpreadGroup>>(
-    () => computeSpreadGroups(pages, { coverSolo }),
-    [pages, coverSolo],
+    () => computeSpreadGroups(pages, { coverSolo, totalPages }),
+    [pages, coverSolo, totalPages],
   );
   const currentGroupIdx = useMemo(
     () => groupIndexForPage(groups, currentPage),

@@ -33,11 +33,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(Series::Table)
-                    .add_column(
-                        ColumnDef::new(Series::ReadingDirection)
-                            .string()
-                            .null(),
-                    )
+                    .add_column(ColumnDef::new(Series::ReadingDirection).string().null())
                     .to_owned(),
             )
             .await

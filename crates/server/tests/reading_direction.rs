@@ -291,12 +291,7 @@ async fn issue_detail_exposes_library_default_reading_direction() {
     let auth = register_admin(&app).await;
     seed(&app, "lib-rtl", "rtl", None).await;
 
-    let (status, body) = get(
-        &app,
-        &auth,
-        "/api/series/lib-rtl/issues/issue-1",
-    )
-    .await;
+    let (status, body) = get(&app, &auth, "/api/series/lib-rtl/issues/issue-1").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["library_default_reading_direction"], "rtl");
     // Series didn't pin → field should be absent (skip_serializing_if).
@@ -315,12 +310,7 @@ async fn issue_detail_exposes_series_reading_direction() {
     let auth = register_admin(&app).await;
     seed(&app, "series-rtl", "ltr", Some("rtl")).await;
 
-    let (status, body) = get(
-        &app,
-        &auth,
-        "/api/series/series-rtl/issues/issue-1",
-    )
-    .await;
+    let (status, body) = get(&app, &auth, "/api/series/series-rtl/issues/issue-1").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["series_reading_direction"], "rtl");
     assert_eq!(body["library_default_reading_direction"], "ltr");
@@ -360,8 +350,7 @@ async fn patch_series_reading_direction_round_trip() {
     let (status, body) = get(&app, &auth, "/api/series/patch-dir").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        body.get("reading_direction").is_none()
-            || body["reading_direction"].is_null(),
+        body.get("reading_direction").is_none() || body["reading_direction"].is_null(),
         "after clearing, reading_direction should be omitted: {body:#?}",
     );
 }

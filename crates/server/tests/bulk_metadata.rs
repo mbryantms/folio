@@ -323,8 +323,10 @@ async fn bulk_metadata_skip_if_set_leaves_existing_values_alone() {
         .all(&db)
         .await
         .unwrap();
-    let by_id: std::collections::HashMap<_, _> =
-        rows.iter().map(|r| (r.id.clone(), r.manga.clone())).collect();
+    let by_id: std::collections::HashMap<_, _> = rows
+        .iter()
+        .map(|r| (r.id.clone(), r.manga.clone()))
+        .collect();
     // First + third NULL → flipped to YesAndRightToLeft.
     assert_eq!(by_id[&ids[0]].as_deref(), Some("YesAndRightToLeft"));
     assert_eq!(by_id[&ids[2]].as_deref(), Some("YesAndRightToLeft"));
@@ -512,6 +514,9 @@ async fn bulk_metadata_null_clears_in_replace_mode() {
         .await
         .unwrap();
     for r in &rows {
-        assert!(r.language_code.is_none(), "language_code should be cleared: {r:?}");
+        assert!(
+            r.language_code.is_none(),
+            "language_code should be cleared: {r:?}"
+        );
     }
 }

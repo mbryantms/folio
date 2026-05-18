@@ -17,13 +17,9 @@ mod common;
 
 use common::TestApp;
 use entity::{
-    issue::Entity as IssueEntity,
-    library::ActiveModel as LibraryAM,
-    series::Entity as SeriesEntity,
+    issue::Entity as IssueEntity, library::ActiveModel as LibraryAM, series::Entity as SeriesEntity,
 };
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set,
-};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
 use server::library::scanner;
 use std::io::Write;
 use std::path::Path;

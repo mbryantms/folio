@@ -336,9 +336,7 @@ async fn auto_set_reading_direction<C: ConnectionTrait>(
     series_id: Uuid,
 ) -> Result<(), sea_orm::DbErr> {
     use entity::{issue, series};
-    use sea_orm::{
-        ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set,
-    };
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
 
     // Skip if the series already has an override — admin / user
     // values are sticky and never overwritten.
