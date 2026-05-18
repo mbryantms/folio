@@ -81,6 +81,11 @@ pub struct OcrInput {
     /// swallowed; the pipeline falls back to running the detector
     /// inline.
     pub redis: ConnectionManager,
+    /// When `true`, run the detector + snap to the tightest enclosing
+    /// bubble polygon. When `false`, the pipeline skips the detector
+    /// entirely and the recognizer runs on the user's rect verbatim —
+    /// see [`crate::api::issue_ocr::OcrRequest::detect`].
+    pub detect: bool,
 }
 
 #[derive(Debug)]
@@ -121,15 +126,31 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
         Language::Manga => "manga",
     };
     let start = std::time::Instant::now();
-    let detector = Detector::shared().await?;
+    // Only initialize the detector singleton when we're actually
+    // going to use it. The first-call cost includes a HF download +
+    // ort session build — skipping that on the no-detect path means
+    // operators with detection disabled never pay it.
+    let detector = if input.detect {
+        Some(Detector::shared().await?)
+    } else {
+        None
+    };
     let recognizer: &'static dyn Recognizer = match input.language {
         Language::Western => WesternOcr::shared().await?,
         Language::Manga => MangaOcr::shared().await?,
     };
 
     // ─── Detect (with per-page cache) ────────────────────────────
-    let detect_key = cache::detect_cache_key(&input.content_hash, input.page);
-    let cached_bboxes = cache::get_detect(&input.redis, &detect_key).await;
+    // When `detect` is off we skip the cache lookup + detector run
+    // entirely. The blocking task receives `None` for both and falls
+    // through to "OCR the user's rect verbatim".
+    let (detect_key, cached_bboxes) = if input.detect {
+        let key = cache::detect_cache_key(&input.content_hash, input.page);
+        let cached = cache::get_detect(&input.redis, &key).await;
+        (Some(key), cached)
+    } else {
+        (None, None)
+    };
 
     let redis_for_put = input.redis.clone();
     let detect_key_for_put = detect_key.clone();
@@ -139,8 +160,8 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
     .await
     .map_err(|e| anyhow::anyhow!("ocr task panicked: {e}"))??;
 
-    if let Some(bboxes) = bboxes_to_cache {
-        cache::put_detect(&redis_for_put, &detect_key_for_put, &bboxes).await;
+    if let (Some(key), Some(bboxes)) = (detect_key_for_put, bboxes_to_cache) {
+        cache::put_detect(&redis_for_put, &key, &bboxes).await;
     }
 
     metrics::histogram!("comic_ocr_pipeline_seconds", "lang" => lang_label)
@@ -154,7 +175,7 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
 /// only when the detector ran inline (cache miss), telling the async
 /// caller to schedule a Redis PUT.
 fn run_blocking(
-    detector: &Detector,
+    detector: Option<&Detector>,
     recognizer: &dyn Recognizer,
     input: OcrInput,
     lang_label: &'static str,
@@ -174,13 +195,17 @@ fn run_blocking(
         return Err(anyhow::anyhow!("region collapsed to zero area"));
     }
 
-    // ─── Detect on the full page (or use cache) ──────────────────
-    let (bboxes, bboxes_to_cache) = match cached_bboxes {
-        Some(b) => (b, None),
-        None => {
+    // ─── Detect on the full page (or use cache, or skip) ─────────
+    // Three cases:
+    //   - detect=false → no detector handle; skip directly to recognize
+    //   - detect=true + cache hit → use cached bboxes
+    //   - detect=true + cache miss → run detector, return bboxes to cache
+    let (refined_page, bboxes_to_cache) = match (detector, cached_bboxes) {
+        (Some(_), Some(bboxes)) => (pick_bbox_page(&bboxes, &clamped, page_w, page_h), None),
+        (Some(det), None) => {
             let det_out = {
-                let mut det = detector.lock()?;
-                det.inference(&input.page_image, DETECTOR_CONF, DETECTOR_NMS)?
+                let mut d = det.lock()?;
+                d.inference(&input.page_image, DETECTOR_CONF, DETECTOR_NMS)?
             };
             let bboxes: Vec<CachedBbox> = det_out
                 .bboxes
@@ -194,12 +219,13 @@ fn run_blocking(
                     class: b.class as u32,
                 })
                 .collect();
-            (bboxes.clone(), Some(bboxes))
+            let picked = pick_bbox_page(&bboxes, &clamped, page_w, page_h);
+            (picked, Some(bboxes))
         }
+        (None, _) => (None, None),
     };
 
-    // ─── Pick the bbox overlapping the user's rect (page coords) ─
-    let refined_page = pick_bbox_page(&bboxes, &clamped, page_w, page_h);
+    // ─── Pick crop, recognize ────────────────────────────────────
     let (final_img, refined_bbox) = if let Some(r) = refined_page {
         (input.page_image.crop_imm(r.x, r.y, r.w, r.h), Some(r))
     } else {
@@ -211,7 +237,6 @@ fn run_blocking(
         )
     };
 
-    // ─── Recognize ───────────────────────────────────────────────
     let recognize_start = std::time::Instant::now();
     let recognition = recognizer.recognize(&final_img)?;
     metrics::histogram!("comic_ocr_recognize_seconds", "lang" => lang_label)

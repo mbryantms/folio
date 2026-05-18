@@ -9564,6 +9564,13 @@
           "region"
         ],
         "properties": {
+          "detect": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "When `true`, run `comic-text-detector` over the page to snap\nthe user's drag rect to the tightest enclosing speech-bubble\npolygon. When `false` (or omitted — that's the default as of\nv0.3.26), the recognizer runs on the user's rect verbatim.\n\nWhy default off: on CPU-constrained hosts the detector costs\n~50 s on the *first* bubble of a page (subsequent bubbles on\nthe same page hit the polygon cache and run ~200 ms). That\ncold-start makes the snap-to-bubble feature unusable in\npractice. Operators on fast hardware can flip the request\nflag to `true` to opt in; a future server config knob will\nlet them flip the default. The recognizer-only path\n(~200 ms total) matches what the old browser-side\ntesseract.js delivered, just better quality (real Tesseract\n5 + tessdata_best, not the in-browser fast variant)."
+          },
           "lang": {
             "type": [
               "string",

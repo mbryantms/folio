@@ -42,8 +42,21 @@ pub const CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Build the Redis key for one cache entry. Public so tests can
 /// pre-seed entries without going through the full handler path.
-pub fn cache_key(content_hash: &str, page: u32, lang: &str, region_hash: &str) -> String {
-    format!("ocr:cache:{content_hash}:{page}:{lang}:{region_hash}")
+///
+/// `detect` distinguishes snap-to-bubble results (`true` → `d`) from
+/// raw-rect results (`false` → `r`). The recognized text differs
+/// between the two because the detector reframes the user's region;
+/// mixing them in the cache would serve stale answers when an
+/// operator (or future per-call override) flips detection state.
+pub fn cache_key(
+    content_hash: &str,
+    page: u32,
+    lang: &str,
+    detect: bool,
+    region_hash: &str,
+) -> String {
+    let d = if detect { "d" } else { "r" };
+    format!("ocr:cache:{content_hash}:{page}:{lang}:{d}:{region_hash}")
 }
 
 /// Stable 32-hex BLAKE3 of the integer-pixel rect. Keeping it
@@ -189,12 +202,19 @@ mod tests {
 
     #[test]
     fn cache_key_includes_every_component() {
-        let k = cache_key("hash1", 7, "western", "rh1");
+        let k = cache_key("hash1", 7, "western", true, "rh1");
         assert!(k.contains("hash1"));
         assert!(k.contains(":7:"));
         assert!(k.contains("western"));
         assert!(k.contains("rh1"));
         assert!(k.starts_with("ocr:cache:"));
+    }
+
+    #[test]
+    fn cache_key_distinguishes_detect_flag() {
+        let with_det = cache_key("h", 0, "western", true, "rh");
+        let without_det = cache_key("h", 0, "western", false, "rh");
+        assert_ne!(with_det, without_det);
     }
 
     #[test]

@@ -13,7 +13,8 @@ detector + recognizer pipeline that ships with the Rust binary.
 {
   "page": 0,
   "region": { "x": 250, "y": 300, "w": 100, "h": 80 },
-  "lang": "western"
+  "lang": "western",
+  "detect": false
 }
 // Response (200)
 {
@@ -28,9 +29,18 @@ detector + recognizer pipeline that ships with the Rust binary.
   uses the actual `(width, height)` for the bounds check.
 - `lang` is `"western"` (default) or `"manga"`. Phase 2 will read
   `series.text_language`.
-- `refined_bbox` is the detector's snap-to-bubble rect. Absent when
-  no detector hit overlapped the user's region — the recognizer ran
-  on the user's rect verbatim.
+- `detect` is the **snap-to-bubble opt-in** (v0.3.26). When `true`
+  the pipeline runs `comic-text-detector` over the page to refine
+  the user's rect to the tightest bubble polygon. When `false` or
+  omitted (the default) the recognizer runs on the user's rect
+  verbatim. The detector's first call on a fresh page costs ~50 s
+  on a typical CPU-bound container; subsequent calls on the same
+  page hit the polygon cache (~200 ms). Default-off keeps every
+  call fast at the cost of slightly worse region tightness; the
+  reader UI exposes a toggle for users on fast servers.
+- `refined_bbox` is the detector's snap-to-bubble rect. `None`
+  when `detect: false`, when no bbox overlapped the user's region,
+  or when no detector was run.
 
 Error codes (envelope `{ "error": { "code", "message" } }`):
 

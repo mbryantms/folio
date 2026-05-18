@@ -622,7 +622,10 @@ async fn cache_hit_short_circuits_pipeline() {
     // `seed_issue` sets content_hash == issue_id, so the key the
     // handler computes uses `issue_id` for the content_hash slot.
     let region_hash = server::ocr::cache::region_hash(10, 20, 30, 40);
-    let key = server::ocr::cache::cache_key(&issue_id, 0, "western", &region_hash);
+    // Default `detect` is `false` post-v0.3.26 — the seed must match
+    // the key shape the handler will compute for a request without
+    // an explicit `detect` field.
+    let key = server::ocr::cache::cache_key(&issue_id, 0, "western", false, &region_hash);
     let payload = serde_json::json!({
         "text": "sentinel-cached-text",
         "confidence": 0.42_f64,
@@ -692,7 +695,7 @@ async fn cache_miss_then_pipeline_writes_cache() {
     }
 
     let region_hash = server::ocr::cache::region_hash(10, 10, 60, 40);
-    let key = server::ocr::cache::cache_key(&issue_id, 0, "western", &region_hash);
+    let key = server::ocr::cache::cache_key(&issue_id, 0, "western", false, &region_hash);
     let mut redis = app.state().jobs.redis.clone();
     let cached: Option<String> = redis.get(&key).await.unwrap();
     let cached = cached.expect("pipeline success should have populated the cache");
@@ -715,7 +718,7 @@ async fn cache_lookup_keyed_by_lang() {
     let admin = register(&app, "ocr-cache-lang@example.com").await;
     let (_lib, issue_id) = seed_issue(&app, "/nonexistent/lang.cbz").await;
     let region_hash = server::ocr::cache::region_hash(0, 0, 50, 50);
-    let western_key = server::ocr::cache::cache_key(&issue_id, 0, "western", &region_hash);
+    let western_key = server::ocr::cache::cache_key(&issue_id, 0, "western", false, &region_hash);
     let payload = serde_json::json!({ "text": "western-only", "confidence": 0.9_f64 }).to_string();
     let mut redis = app.state().jobs.redis.clone();
     let _: () = redis.set_ex(&western_key, payload, 60).await.unwrap();
@@ -781,7 +784,9 @@ async fn detect_cache_hit_skips_detector_for_different_region() {
     let mut redis = app.state().jobs.redis.clone();
     let _: () = redis.set_ex(&detect_key, bboxes, 60).await.unwrap();
 
-    // Call A: user region overlaps the seeded bbox.
+    // Call A: user region overlaps the seeded bbox. Post-v0.3.26 we
+    // must opt into the detector explicitly — without `detect: true`
+    // the handler skips both the detect cache and the detector run.
     let (status_a, body_a) = post_ocr(
         &app,
         &issue_id,
@@ -790,6 +795,7 @@ async fn detect_cache_hit_skips_detector_for_different_region() {
             "page": 0,
             "region": { "x": 60, "y": 60, "w": 40, "h": 40 },
             "lang": "western",
+            "detect": true,
         }),
     )
     .await;
@@ -811,7 +817,8 @@ async fn detect_cache_hit_skips_detector_for_different_region() {
     );
 
     // Call B: user region misses the seeded bbox → recognizer runs
-    // on the user's rect verbatim. Still 200.
+    // on the user's rect verbatim. Still 200. `detect: true` again
+    // so the handler consults the detect cache.
     let (status_b, body_b) = post_ocr(
         &app,
         &issue_id,
@@ -820,6 +827,7 @@ async fn detect_cache_hit_skips_detector_for_different_region() {
             "page": 0,
             "region": { "x": 0, "y": 0, "w": 30, "h": 30 },
             "lang": "western",
+            "detect": true,
         }),
     )
     .await;
@@ -827,5 +835,61 @@ async fn detect_cache_hit_skips_detector_for_different_region() {
         status_b,
         StatusCode::OK,
         "second OCR on cached-detect page should succeed: {body_b}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn detect_disabled_skips_detector_cache() {
+    // v0.3.26: when `detect` is omitted (defaults to false) the
+    // handler must bypass the detect cache entirely — no `ocr:detect:*`
+    // key should appear in Redis after the call. We verify by polling
+    // the key after a successful OCR; absence proves the detector
+    // didn't run.
+    use redis::AsyncCommands;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-detect-off@example.com").await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("nodetect.cbz");
+    build_cbz(&cbz, "page-001.png", &png_bytes(120, 120));
+    let (_lib, issue_id) = seed_issue(&app, cbz.to_str().unwrap()).await;
+
+    let (status, body) = post_ocr(
+        &app,
+        &issue_id,
+        Some(&admin),
+        json!({
+            "page": 0,
+            "region": { "x": 10, "y": 10, "w": 60, "h": 40 },
+            "lang": "western",
+            // Note: no `detect` field — should default to false.
+        }),
+    )
+    .await;
+    // Recognize is far cheaper than detect+recognize; we expect 200
+    // on any host with tessdata staged. 500 is tolerated for parity
+    // with the other pipeline-reach tests but indicates a bad config.
+    if status != StatusCode::OK {
+        assert_eq!(body["error"]["code"], "ocr_failed");
+        return;
+    }
+
+    // The detect cache key for this page should be ABSENT — proof
+    // the detector path was skipped.
+    let detect_key = server::ocr::cache::detect_cache_key(&issue_id, 0);
+    let mut redis = app.state().jobs.redis.clone();
+    let cached: Option<String> = redis.get(&detect_key).await.unwrap();
+    assert!(
+        cached.is_none(),
+        "detect cache should be untouched when detect=false (default); got {cached:?}",
+    );
+
+    // The result cache should hold the recognize-only output under
+    // the `detect=false` key shape.
+    let region_hash = server::ocr::cache::region_hash(10, 10, 60, 40);
+    let key = server::ocr::cache::cache_key(&issue_id, 0, "western", false, &region_hash);
+    let result_cached: Option<String> = redis.get(&key).await.unwrap();
+    assert!(
+        result_cached.is_some(),
+        "result cache should be populated under the no-detect key",
     );
 }

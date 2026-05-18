@@ -49,6 +49,23 @@ pub struct OcrRequest {
     /// sends an explicit hint.
     #[serde(default)]
     pub lang: Option<String>,
+    /// When `true`, run `comic-text-detector` over the page to snap
+    /// the user's drag rect to the tightest enclosing speech-bubble
+    /// polygon. When `false` (or omitted — that's the default as of
+    /// v0.3.26), the recognizer runs on the user's rect verbatim.
+    ///
+    /// Why default off: on CPU-constrained hosts the detector costs
+    /// ~50 s on the *first* bubble of a page (subsequent bubbles on
+    /// the same page hit the polygon cache and run ~200 ms). That
+    /// cold-start makes the snap-to-bubble feature unusable in
+    /// practice. Operators on fast hardware can flip the request
+    /// flag to `true` to opt in; a future server config knob will
+    /// let them flip the default. The recognizer-only path
+    /// (~200 ms total) matches what the old browser-side
+    /// tesseract.js delivered, just better quality (real Tesseract
+    /// 5 + tessdata_best, not the in-browser fast variant).
+    #[serde(default)]
+    pub detect: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, utoipa::ToSchema)]
@@ -124,10 +141,20 @@ pub async fn serve(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
+    // ─── Resolve detect mode ─────────────────────────────────────
+    // Default off: see [`OcrRequest::detect`] for the rationale —
+    // the detector cold-start is too slow on most operator hosts to
+    // run by default. Clients opt in explicitly.
+    let detect = req.detect.unwrap_or(false);
+
     // ─── Cache lookup (M4) ───────────────────────────────────────
     // Key includes `content_hash` rather than `issue_id` so a rescan
     // that retags the same row with different bytes invalidates
     // every entry for free — old keys age out via [`cache::CACHE_TTL`].
+    // It also includes the `detect` flag so snap-to-bubble results
+    // and raw-rect results cache independently (their recognized
+    // text differs).
+    //
     // Region bounds aren't validated yet (that needs the decoded
     // page size) but anything we hand back from the cache passed
     // bounds at write time and the content_hash binding makes that
@@ -137,7 +164,7 @@ pub async fn serve(
         Language::Western => "western",
         Language::Manga => "manga",
     };
-    let key = cache::cache_key(&row.content_hash, req.page, lang_str, &region_hash);
+    let key = cache::cache_key(&row.content_hash, req.page, lang_str, detect, &region_hash);
     if let Some(hit) = cache::get(&app.jobs.redis, &key).await {
         return Json(hit).into_response();
     }
@@ -227,6 +254,7 @@ pub async fn serve(
         content_hash: row.content_hash.clone(),
         page: req.page,
         redis: app.jobs.redis.clone(),
+        detect,
     };
     match run_ocr(input).await {
         Ok(out) => {
