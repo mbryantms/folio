@@ -15,6 +15,16 @@
 //!   matches this exactly so the report mirrors what the recognizer
 //!   actually reads on cold start).
 //!
+//! **Upstream gotcha (hf-hub 0.4.3):** `comic-text-detector` and
+//! `manga-ocr` both call `hf_hub::api::sync::Api::new()`, which
+//! resolves the cache via `Cache::default()` and **does not honor
+//! `HF_HOME`**. The real cache root is
+//! `dirs::home_dir() + .cache/huggingface/hub/`, i.e. driven by
+//! `HOME`. Our `hf_home_dir()` below reads `HF_HOME` first and falls
+//! back to `${HOME}/.cache/huggingface` for that reason — and the
+//! Folio Dockerfile sets `HOME=/data` so both resolutions land on
+//! the same persistent path. See `docs/dev/ocr.md`.
+//!
 //! Missing directories return `present = false` + `bytes_on_disk = 0`
 //! rather than an error — the operator dashboard uses this to drive
 //! a "model not yet downloaded" hint.

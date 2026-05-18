@@ -117,7 +117,19 @@ ENV COMIC_BIND_ADDR=0.0.0.0:8080 \
     COMIC_DATA_PATH=/data \
     COMIC_AUTO_MIGRATE=true \
     TESSDATA_PREFIX=/app/tessdata \
+    HOME=/data \
     HF_HOME=/data/.cache/huggingface
+
+# HOME=/data is the load-bearing override here, not HF_HOME.
+# Upstream `comic-text-detector` 0.5.1 calls `hf_hub::api::sync::Api::new()`,
+# which uses `Cache::default()` and resolves via `dirs::home_dir()` —
+# `HF_HOME` is *only* honored by `Api::from_env()`, which the crate
+# doesn't use. Pointing `HOME` at the persistent volume makes the
+# detector + manga-ocr ONNX caches land under `/data/.cache/...`
+# instead of the ephemeral `/home/nonroot/.cache/...`. The
+# `HF_HOME` env stays for documentation + future hf-hub bumps that
+# fix the precedence; `GET /admin/ocr/models` reads it first and
+# falls back to HOME, so both pointers land on the same path.
 
 # Healthcheck handled by the orchestrator via `/app/server --healthcheck`
 # (see `compose.prod.yml`). Inline `HEALTHCHECK` would bake the cadence into

@@ -160,11 +160,32 @@ In the Folio Docker image:
   rust-builder stage compiles Tesseract from source and downloads
   tessdata; both are copied into the runtime image). `TESSDATA_PREFIX`
   defaults to that path.
-- `HF_HOME` defaults to `/data/.cache/huggingface` so the detector +
-  manga-ocr downloads land in the operator's persistent volume and
-  survive container restarts.
+- `HOME=/data` so the detector + manga-ocr ONNX caches land under
+  `/data/.cache/huggingface/hub/` (in the persistent volume) and
+  survive container restarts. `HF_HOME=/data/.cache/huggingface` is
+  set in parallel — see the gotcha below.
 - Both env vars are operator-overridable for air-gapped deploys; the
   loader exactly mirrors what `GET /admin/ocr/models` reports.
+
+### Upstream cache-resolution gotcha
+
+`comic-text-detector` 0.5.1 calls `hf_hub::api::sync::Api::new()`,
+which internally uses `Cache::default()`. **`Cache::default()`
+ignores `HF_HOME`** — only `Api::from_env()` / `Cache::from_env()`
+honor it. The cache path the crate actually writes to is
+`dirs::home_dir() + .cache/huggingface/hub/`, i.e. driven by `HOME`,
+not `HF_HOME`.
+
+Folio's `Dockerfile` sets `HOME=/data` so this works out cleanly:
+the crate resolves to `/data/.cache/...` and the admin endpoint
+reports the same. If upstream bumps to a version that fixes this
+precedence we can drop the `HOME` override; `HF_HOME` is kept for
+forward-compatibility.
+
+Local-dev builds without `HOME` set will land the cache at
+`~/.cache/huggingface/hub/` (the user's real home) — that's fine,
+just don't be surprised when `du -sh ~/.cache/huggingface` grows by
+a few hundred MB the first time you run an OCR test.
 
 ## Admin surfaces
 
