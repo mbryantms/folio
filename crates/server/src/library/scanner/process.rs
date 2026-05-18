@@ -145,6 +145,11 @@ pub async fn ingest_one<C: ConnectionTrait>(
     lib: &library::Model,
     path: &Path,
     series_id: Uuid,
+    // Series folder root. Used to detect when `path` sits inside an
+    // allowlist subfolder (`Specials`/`Annuals`/…) for path-derived
+    // `special_type` classification. Pass the series folder itself
+    // even when the archive lives directly inside it.
+    series_folder: &Path,
     manifest: Option<&IssueManifest>,
     // F-2: when `Some`, allocate new issue slugs against this in-memory
     // HashSet (pre-fetched once per series) instead of issuing a
@@ -158,7 +163,19 @@ pub async fn ingest_one<C: ConnectionTrait>(
 ) -> anyhow::Result<()> {
     let (size, mtime) = file_fingerprint(path)?;
     ingest_one_with_fingerprint(
-        state, db, lib, path, series_id, manifest, slug_set, size, mtime, stats, health, force,
+        state,
+        db,
+        lib,
+        path,
+        series_id,
+        series_folder,
+        manifest,
+        slug_set,
+        size,
+        mtime,
+        stats,
+        health,
+        force,
     )
     .await
 }
@@ -170,6 +187,8 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     lib: &library::Model,
     path: &Path,
     series_id: Uuid,
+    // See `ingest_one` for `series_folder` semantics.
+    series_folder: &Path,
     manifest: Option<&IssueManifest>,
     // See `ingest_one` for `slug_set` semantics.
     slug_set: Option<&mut std::collections::HashSet<String>>,
@@ -385,9 +404,24 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         info.page_count
     };
 
-    // Spec §6.5: classify specials/annuals/one-shots.
-    let special_type = detect_special_type(info.format.as_deref(), leaf, number_raw.is_some())
-        .map(|s| s.to_string());
+    // Spec §6.5 + nested-folders M2.5: classify specials/annuals/one-shots.
+    // Path-derived hint fires when the archive lives in an allowlist
+    // subfolder (e.g. `Series/Specials/Artbook 1.cbz`); the immediate
+    // parent's name drives the classification. Pass `None` when the
+    // archive sits directly in the series folder so the existing
+    // filename/format heuristics still run unchanged.
+    let parent_folder_name = path
+        .parent()
+        .filter(|p| *p != series_folder)
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str());
+    let special_type = detect_special_type(
+        info.format.as_deref(),
+        leaf,
+        number_raw.is_some(),
+        parent_folder_name,
+    )
+    .map(|s| s.to_string());
 
     let now = Utc::now().fixed_offset();
     let issue_id = hash.clone(); // dedupe_by_content default
@@ -1176,15 +1210,28 @@ fn merge_metron_into_comicinfo(info: &mut ComicInfo, m: &MetronInfo) {
 }
 
 /// Spec §6.5 special_type detection. Heuristics applied in order:
-///   1. `ComicInfo.Format` field — explicit signal wins
-///   2. Filename token: `_SP_`, `Special` → Special
+///   1. `ComicInfo.Format` field — explicit author signal wins
+///   2. Parent folder name (if set) matches the series-subfolder
+///      allowlist (`Specials`/`Annuals`/`Oneshots`/...) — see
+///      [`enumerate::is_series_subfolder_name`]. Closes the
+///      `Series/Specials/Artbook 1.cbz` ↔ `Series - v01.cbz`
+///      numbering collision documented in
+///      `~/.claude/plans/scanner-nested-folders-1.0.md` M2.5.
 ///   3. Filename token: `Annual`, `_Annual_` → Annual
-///   4. No recognizable issue number → OneShot
-///   5. Otherwise → None
+///   4. Filename token: `_SP_`, `Special` → Special
+///   5. No recognizable issue number → OneShot
+///   6. Otherwise → None
+///
+/// `parent_folder_name` should be the *immediate* parent folder's
+/// name (`Path::file_name()`) when the archive lives in a subfolder of
+/// the series folder, and `None` when it lives at the series folder
+/// itself. Callers in the scanner derive this by comparing
+/// `path.parent()` to the series folder.
 pub fn detect_special_type(
     format: Option<&str>,
     filename: &str,
     has_number: bool,
+    parent_folder_name: Option<&str>,
 ) -> Option<&'static str> {
     if let Some(fmt) = format {
         let lc = fmt.to_ascii_lowercase();
@@ -1197,6 +1244,11 @@ pub fn detect_special_type(
             _ => {}
         }
     }
+    if let Some(name) = parent_folder_name
+        && let Some(tag) = special_type_from_subfolder(name)
+    {
+        return Some(tag);
+    }
     let lower = filename.to_ascii_lowercase();
     if lower.contains("annual") {
         return Some("Annual");
@@ -1208,6 +1260,19 @@ pub fn detect_special_type(
         return Some("OneShot");
     }
     None
+}
+
+/// Map a series-subfolder name (case-insensitive) to the
+/// `special_type` it implies. Returns `None` for names outside the
+/// allowlist, including the canonical "main run lives here" case
+/// where the archive sits directly in the series folder.
+fn special_type_from_subfolder(name: &str) -> Option<&'static str> {
+    match name.to_ascii_lowercase().as_str() {
+        "specials" | "extras" | "bonus" | "tie-ins" => Some("Special"),
+        "annuals" | "annual" => Some("Annual"),
+        "oneshots" | "one-shots" => Some("OneShot"),
+        _ => None,
+    }
 }
 
 /// Read `series.json` from the folder root, if present. Returns `None`
@@ -1366,5 +1431,68 @@ mod tests {
         assert!(s.contains("genre"));
         assert!(s.contains("tags"));
         assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn detect_special_type_uses_subfolder_when_filename_silent() {
+        // Filename has a number, no recognizable token, but the
+        // parent folder is `Specials` → Special wins.
+        assert_eq!(
+            detect_special_type(None, "Artbook 1.cbz", true, Some("Specials")),
+            Some("Special"),
+        );
+        assert_eq!(
+            detect_special_type(None, "Vol 2024.cbz", true, Some("Annuals")),
+            Some("Annual"),
+        );
+        assert_eq!(
+            detect_special_type(None, "Ashcan 1.cbz", true, Some("Oneshots")),
+            Some("OneShot"),
+        );
+        // Allowlist is case-insensitive.
+        assert_eq!(
+            detect_special_type(None, "Artbook 1.cbz", true, Some("SPECIALS")),
+            Some("Special"),
+        );
+        // Non-allowlist subfolder name doesn't trigger the path rule.
+        assert_eq!(
+            detect_special_type(None, "Foo 001.cbz", true, Some("Volume 2")),
+            None,
+        );
+    }
+
+    #[test]
+    fn detect_special_type_format_beats_subfolder() {
+        // ComicInfo Format wins over path hint.
+        assert_eq!(
+            detect_special_type(Some("Annual"), "Artbook 1.cbz", true, Some("Specials")),
+            Some("Annual"),
+        );
+    }
+
+    #[test]
+    fn detect_special_type_subfolder_beats_filename_token() {
+        // The `_sp_` filename token would normally classify as Special.
+        // The Annuals parent must win because path-derived runs before
+        // filename heuristics.
+        assert_eq!(
+            detect_special_type(None, "x_sp_y 001.cbz", true, Some("Annuals")),
+            Some("Annual"),
+        );
+    }
+
+    #[test]
+    fn detect_special_type_no_parent_falls_back_to_filename() {
+        // No parent means the archive sits directly in the series
+        // folder. Filename heuristics still run.
+        assert_eq!(
+            detect_special_type(None, "Series Annual 2024.cbz", true, None),
+            Some("Annual"),
+        );
+        assert_eq!(
+            detect_special_type(None, "Series Origin.cbz", false, None),
+            Some("OneShot"),
+        );
+        assert_eq!(detect_special_type(None, "Series 001.cbz", true, None), None);
     }
 }

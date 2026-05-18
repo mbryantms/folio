@@ -19,8 +19,8 @@ use entity::{
     series::Entity as SeriesEntity,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Set,
-    Statement,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
+    QueryFilter, Set, Statement,
 };
 use server::library::{events::ScanEvent, scanner};
 use std::io::Write;
@@ -1037,6 +1037,185 @@ async fn files_at_root_are_ignored_not_indexed() {
         .await
         .unwrap();
     assert!(persisted.is_some(), "health event should still persist");
+}
+
+/// A 3-deep layout (`root/Publisher/Imprint/Series/CBZ`) violates the
+/// two-layouts contract. The scanner must surface the violation as an
+/// `AmbiguousFolder` health issue (Warning severity) and refuse to
+/// ingest the subtree — better than guessing which level is the series.
+///
+/// See `~/.claude/plans/scanner-nested-folders-1.0.md` M2.
+#[tokio::test]
+async fn ambiguous_three_deep_layout_skips_ingest_and_warns() {
+    use entity::library_health_issue::Entity as HealthEntity;
+
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    // DC/Vertigo/Sandman/Sandman 001.cbz — 3 levels of nesting.
+    let dc = tmp.path().join("DC");
+    let vertigo = dc.join("Vertigo");
+    let sandman = vertigo.join("Sandman");
+    std::fs::create_dir_all(&sandman).unwrap();
+    write_minimal_cbz(&sandman.join("Sandman 001.cbz"), None, 300);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    let mut rx = state.events.subscribe();
+    let stats = scanner::scan_library(&state, lib_id).await.unwrap();
+
+    // Nothing in the ambiguous subtree gets ingested.
+    assert_eq!(
+        stats.series_created, 0,
+        "ambiguous subtree must not create series",
+    );
+    assert_eq!(
+        stats.files_added, 0,
+        "ambiguous subtree must not create issues",
+    );
+    let series_count = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .count(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(series_count, 0);
+    let issue_count = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .count(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(issue_count, 0);
+
+    // Health event fires live with Warning severity.
+    let events = drain_scan_events(&mut rx);
+    let health_evt = events
+        .iter()
+        .find_map(|e| match e {
+            ScanEvent::HealthIssue {
+                library_id,
+                scan_id,
+                kind,
+                severity,
+                path,
+            } if kind == "AmbiguousFolder" => {
+                Some((*library_id, *scan_id, severity.clone(), path.clone()))
+            }
+            _ => None,
+        })
+        .expect("live AmbiguousFolder health event");
+    assert_eq!(health_evt.0, lib_id);
+    assert_eq!(health_evt.2, "warning");
+    assert!(
+        health_evt
+            .3
+            .as_deref()
+            .unwrap_or_default()
+            .ends_with("Vertigo"),
+        "event should fire on the Imprint folder; got {:?}",
+        health_evt.3,
+    );
+
+    // Issue persists with the operator-actionable reason in the payload.
+    let persisted = HealthEntity::find()
+        .filter(entity::library_health_issue::Column::LibraryId.eq(lib_id))
+        .filter(entity::library_health_issue::Column::ScanId.eq(Some(health_evt.1)))
+        .filter(entity::library_health_issue::Column::Kind.eq("AmbiguousFolder"))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("AmbiguousFolder row must persist");
+    let reason = persisted
+        .payload
+        .get("data")
+        .and_then(|d| d.get("reason"))
+        .and_then(|r| r.as_str())
+        .unwrap_or_default();
+    assert!(
+        reason.contains("third nesting"),
+        "reason should explain the violation; got {reason:?}",
+    );
+}
+
+/// Layout B — a CBZ with no ComicInfo nested under a publisher folder
+/// must land with `series.publisher` set from the folder name. This is
+/// the M3 publisher-promotion fallback: ComicInfo + series.json take
+/// priority; the folder name only fills in when both are silent.
+///
+/// See `~/.claude/plans/scanner-nested-folders-1.0.md` M3.
+#[tokio::test]
+async fn nested_layout_promotes_parent_folder_to_series_publisher() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    // tmp/Publisher Q/Series Q/Series Q 001.cbz — no ComicInfo.
+    let publisher = tmp.path().join("Publisher Q");
+    let series_folder = publisher.join("Series Q");
+    std::fs::create_dir_all(&series_folder).unwrap();
+    write_minimal_cbz(&series_folder.join("Series Q 001.cbz"), None, 310);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    let stats = scanner::scan_library(&state, lib_id).await.unwrap();
+
+    assert_eq!(stats.series_created, 1);
+    assert_eq!(stats.files_added, 1);
+
+    let row = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("series row");
+    assert_eq!(
+        row.publisher.as_deref(),
+        Some("Publisher Q"),
+        "publisher should be promoted from the parent folder when ComicInfo + series.json are silent",
+    );
+    // Sanity: the folder_path points at the series folder (depth-2), not
+    // at the publisher container (depth-1). Identity rooting at depth-2
+    // is what makes the rest of the scanner work for nested libraries.
+    assert_eq!(
+        row.folder_path.as_deref(),
+        Some(series_folder.to_string_lossy().as_ref()),
+    );
+}
+
+/// When ComicInfo carries an explicit `<Publisher>`, the path-derived
+/// hint must not win. Author intent always trumps filesystem
+/// convention.
+#[tokio::test]
+async fn comicinfo_publisher_overrides_folder_hint() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    // tmp/Folder Pub/Series R/Series R 001.cbz — ComicInfo says
+    // "Real Pub", folder says "Folder Pub". ComicInfo should win.
+    let publisher_folder = tmp.path().join("Folder Pub");
+    let series_folder = publisher_folder.join("Series R");
+    std::fs::create_dir_all(&series_folder).unwrap();
+    let xml = r#"<?xml version="1.0"?>
+<ComicInfo>
+  <Series>Series R</Series>
+  <Number>1</Number>
+  <Publisher>Real Pub</Publisher>
+</ComicInfo>"#;
+    write_minimal_cbz(&series_folder.join("Series R 001.cbz"), Some(xml), 311);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let row = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("series row");
+    assert_eq!(
+        row.publisher.as_deref(),
+        Some("Real Pub"),
+        "ComicInfo <Publisher> must override the folder-derived hint",
+    );
 }
 
 // ────────────── Phase A: dimension probe + double-page inference ──────────────

@@ -8732,6 +8732,13 @@
             ],
             "format": "double"
           },
+          "special_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Spec §6.5 classification: `\"Special\"`, `\"Annual\"`, `\"OneShot\"`,\n`\"TPB\"`, or `None` for ordinary numbered issues. Drives the\nreader's Specials & Extras section on the series detail page."
+          },
           "state": {
             "type": "string"
           },

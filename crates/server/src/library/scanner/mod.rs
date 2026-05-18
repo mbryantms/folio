@@ -129,6 +129,11 @@ struct PlannedFolder {
     archives: Vec<PathBuf>,
     known_series_id: Option<Uuid>,
     skipped_unchanged: bool,
+    /// Set when the series was discovered beneath a publisher container
+    /// (Layout B). Used as the last-resort fallback for
+    /// `series.publisher` after ComicInfo + `series.json` — see
+    /// `process_planned_folder` identity-hint assembly.
+    publisher_hint: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -733,8 +738,10 @@ async fn build_library_scan_plan(
     let known = known_series_by_folder(state, lib).await?;
     let concurrency = state.cfg().scan_worker_count.max(1);
     let mut planned = futures::stream::iter(layout.series_folders.iter().cloned())
-        .map(|folder| {
+        .map(|candidate| {
             let ignore = ignore.clone();
+            let folder = candidate.path.clone();
+            let publisher_hint = candidate.publisher_hint.clone();
             let known_entry = known.get(&folder.to_string_lossy().into_owned()).copied();
             async move {
                 let mut known_series_id = known_entry.map(|(id, _)| id);
@@ -770,6 +777,7 @@ async fn build_library_scan_plan(
                     archives,
                     known_series_id,
                     skipped_unchanged,
+                    publisher_hint,
                 })
             }
         })
@@ -800,6 +808,7 @@ async fn build_series_scan_plan(
             archives,
             known_series_id: Some(series_id),
             skipped_unchanged: false,
+            publisher_hint: None,
         }],
         total_archives,
         ..ScanPlan::default()
@@ -1052,12 +1061,24 @@ async fn run_issue_phase(
     let manifest =
         process::IssueManifest::for_paths(&state.db, std::slice::from_ref(&path)).await?;
     let txn = state.db.begin().await?;
+    // Series folder is needed so the path-derived special_type rule
+    // (M2.5) can tell a `Specials/Artbook.cbz` from a main-run issue.
+    // Fall back to the archive's parent if the series row has no
+    // recorded folder_path (e.g., legacy rows from before the
+    // folder-path identity fast path landed).
+    let series_folder: PathBuf = series::Entity::find_by_id(row.series_id)
+        .one(&state.db)
+        .await?
+        .and_then(|s| s.folder_path)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.parent().map(PathBuf::from).unwrap_or_default());
     let ingest = process::ingest_one(
         state,
         &txn,
         lib,
         &path,
         row.series_id,
+        &series_folder,
         Some(&manifest),
         // Single-archive scan: no need to pre-fetch; the per-call DB
         // allocator's one COUNT query is fine.
@@ -1185,6 +1206,12 @@ async fn run_phases(
     for f in &layout.empty_folders {
         health.emit(IssueKind::EmptyFolder { path: f.clone() });
     }
+    for ambiguous in &layout.ambiguous_folders {
+        health.emit(IssueKind::AmbiguousFolder {
+            path: ambiguous.path.clone(),
+            reason: ambiguous.reason.clone(),
+        });
+    }
 
     let plan_started = Instant::now();
     let plan = build_library_scan_plan(state, lib, &layout, force, &ignore).await?;
@@ -1221,7 +1248,7 @@ async fn run_phases(
     let present_folders: HashSet<String> = layout
         .series_folders
         .iter()
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(|s| s.path.to_string_lossy().into_owned())
         .collect();
     let mut scanned_series = HashSet::new();
     let mut seen_paths = HashSet::new();
@@ -1502,6 +1529,7 @@ async fn process_planned_folder(
     let folder = planned.path;
     let known_series_id = planned.known_series_id;
     let archives = planned.archives;
+    let publisher_hint = planned.publisher_hint;
 
     // Read series.json up-front so the early-skip branches can still
     // surface it to the caller. The sidecar is the authoritative
@@ -1550,6 +1578,9 @@ async fn process_planned_folder(
     // Build the identity hint from (in precedence order, lowest-first):
     //   1. series.json — folder-level metadata (Mylar3 sidecar)
     //   2. first archive's ComicInfo + filename inference
+    //   3. publisher_hint — parent folder name for nested-by-publisher
+    //      layouts (Layout B). Last-resort fallback; only consulted
+    //      when ComicInfo and series.json are both silent on publisher.
     // ComicInfo wins on overlapping fields per spec §6.7. The parsed
     // sidecar is also threaded into the post-scan reconcile step
     // (below) where it takes priority over the per-issue ComicInfo
@@ -1587,6 +1618,11 @@ async fn process_planned_folder(
             if hint.comicvine_id.is_none() {
                 hint.comicvine_id = meta.comicid;
             }
+        }
+        if hint.publisher.is_none()
+            && let Some(name) = publisher_hint.as_deref()
+        {
+            hint.publisher = Some(name.to_owned());
         }
         let resolved = crate::library::identity::resolve_or_create(
             &state.db,
@@ -1675,6 +1711,7 @@ async fn process_planned_folder(
                     lib,
                     path,
                     series_id,
+                    &folder,
                     Some(&manifest),
                     Some(&mut slug_set),
                     *size,
@@ -1691,6 +1728,7 @@ async fn process_planned_folder(
                     lib,
                     path,
                     series_id,
+                    &folder,
                     Some(&manifest),
                     Some(&mut slug_set),
                     stats,

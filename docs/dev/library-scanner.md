@@ -136,17 +136,58 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
   (called from [mod.rs:1130](../../crates/server/src/library/scanner/mod.rs#L1130) on a
   blocking thread).
 - **Inputs**: library root + compiled `IgnoreRules`.
-- **Outputs**: `EnumerationResult { series_folders, files_at_root,
-  empty_folders }`.
+- **Outputs**: `EnumerationResult { series_folders: Vec<SeriesCandidate>,
+  files_at_root, empty_folders, ambiguous_folders }`.
+  - `SeriesCandidate` carries `path` and `publisher_hint`. The latter
+    is `Some(name)` when the series sits beneath a publisher container
+    (Layout B below) and `None` for flat layouts.
 - **Layout rules** (spec §2.2, §5.1):
   - dot-prefixed entries (`.git`, `.DS_Store`, …) are silently skipped
   - built-in skips: `__MACOSX`, `Thumbs.db`, `desktop.ini`, `@eaDir`
   - user-glob ignores apply before classification
-  - files at root → `FileAtRoot` health issue
-    ([mod.rs:1138](../../crates/server/src/library/scanner/mod.rs#L1138))
-  - dirs with no entries → `EmptyFolder` health issue
-    ([mod.rs:1141](../../crates/server/src/library/scanner/mod.rs#L1141))
-  - non-empty dirs → series-folder candidates
+
+#### Two supported on-disk layouts
+
+The library root may follow either shape; both are auto-detected and a
+single library may mix them per-child (one flat series next to one
+publisher container is fine).
+
+- **Layout A (flat):** `root/Series/CBZ`. A series folder has CBZ files
+  at its own depth-1. It MAY contain category subfolders (`Specials`,
+  `Annuals`, `Oneshots`, `Extras`, `Bonus`, `Tie-Ins`) holding extra
+  archives. The recursive archive walker slurps everything inside the
+  series folder — non-allowlist subdirs are still walked, they just
+  don't drive `special_type`.
+- **Layout B (nested-by-publisher):** `root/Publisher/Series/CBZ`. A
+  publisher folder has zero archives at its own depth-1; its children
+  are Layout-A series folders. The depth-1 folder name becomes the
+  `publisher_hint` for every series beneath it.
+
+Each depth-1 child of the library root classifies independently per
+this rule:
+
+| Direct child contains                                       | Classification                            |
+|---                                                          |---                                        |
+| File at root                                                | `FileAtRoot` (Warning)                    |
+| ≥1 archive at its depth-1                                   | **Series folder** (Layout A)              |
+| 0 archives at depth-1, ≥1 non-allowlist subdir with archives | **Publisher folder** (Layout B)          |
+| 0 archives at depth-1, only allowlist subdirs with archives | `AmbiguousFolder` (Warning) — series with only specials |
+| 0 archives anywhere                                         | `EmptyFolder` (Info)                      |
+
+Publisher folders are walked one level deeper. Inside, each grandchild
+classifies the same way — but a publisher-inside-publisher (3-deep
+nesting) is `AmbiguousFolder`, since Folio caps support at two levels.
+Imprint metadata belongs in ComicInfo, not the filesystem.
+
+Series-subfolder allowlist (case-insensitive): `Specials`, `Extras`,
+`Bonus`, `Tie-Ins`, `Annuals`, `Annual`, `Oneshots`, `One-Shots`. See
+[`enumerate::is_series_subfolder_name`](../../crates/server/src/library/scanner/enumerate.rs).
+The same allowlist drives `special_type` assignment for archives
+nested inside it (see §4.4 Process folder).
+
+There is **no `scan_layout` override knob.** The folder shape is
+self-describing; the auto-classifier handles both Layout A and Layout B
+without per-library configuration.
 
 ### 4.3 Plan
 
@@ -171,7 +212,9 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
   fanned out from [mod.rs:1185](../../crates/server/src/library/scanner/mod.rs#L1185)
   with `buffer_unordered(scan_worker_count)`.
 - **Inputs**: a `PlannedFolder { path, archives, known_series_id,
-  skipped_unchanged }`.
+  skipped_unchanged, publisher_hint }`. `publisher_hint` is set when
+  the series came from a Layout B (nested-by-publisher) classification
+  in §4.2.
 - **Steps** in order:
 
   1. **Skip-unchanged short-circuit**
@@ -181,13 +224,18 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
      close issues whose root cause is still on disk, return
      `processed=false`.
   2. **Series identity** ([mod.rs:1470–1520](../../crates/server/src/library/scanner/mod.rs#L1470-L1520)).
-     Build a `SeriesIdentityHint` by merging:
+     Build a `SeriesIdentityHint` by merging, in precedence order
+     (lowest-first):
      - `process::peek_identity_hint(&archives[0])` — first archive's
-       ComicInfo
+       ComicInfo + filename inference
      - `process::read_series_json(&folder)` — Mylar3 sidecar
        (gap-fills name, year, publisher, imprint, age_rating,
        total_issues, volume, comicvine_id; ComicInfo wins on
        overlapping fields per spec §6.7)
+     - `publisher_hint` — parent folder name for Layout B. Last-resort
+       fallback; only consulted when ComicInfo and series.json are both
+       silent on publisher. Closes the "nested library shows no
+       publisher" gap without operator config.
 
      Then call [`identity::resolve_or_create`](../../crates/server/src/library/identity.rs#L86):
      1. sticky `match_key` (admin override) — never overwritten
@@ -232,6 +280,8 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
        ([process.rs:339, 411–428](../../crates/server/src/library/scanner/process.rs#L339))
      - cover-thumbnail enqueue
        ([process.rs:511 (insert path) and update path equivalent](../../crates/server/src/library/scanner/process.rs#L511))
+     - `special_type` classification (spec §6.5) — see
+       "special_type precedence" below
   4. **Stamp `last_scanned_at`**
      ([mod.rs:1621–1631](../../crates/server/src/library/scanner/mod.rs#L1621-L1631))
      so the next scan's folder mtime fast-path can fire.
@@ -241,6 +291,33 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
      defers this to a single batch call after Phase 4
      ([mod.rs:1645–1652](../../crates/server/src/library/scanner/mod.rs#L1645-L1652),
       see §Fast-paths).
+
+#### `special_type` precedence
+
+Per
+[`detect_special_type`](../../crates/server/src/library/scanner/process.rs).
+Rules are evaluated top-to-bottom; the first match wins:
+
+| Rule | Source | Wins over |
+|---|---|---|
+| ComicInfo `<Format>` | author signal | everything |
+| Allowlist subfolder name | path | filename heuristics |
+| Filename `Annual` token | heuristic | none |
+| Filename `_SP_` / `special` token | heuristic | none |
+| No recognizable issue number | filename | none → `OneShot` |
+
+Allowlist-subfolder → tag mapping:
+
+| Subfolder name (case-insensitive)                | `special_type` |
+|---                                               |---             |
+| `Specials`, `Extras`, `Bonus`, `Tie-Ins`         | `Special`      |
+| `Annuals`, `Annual`                              | `Annual`       |
+| `Oneshots`, `One-Shots`                          | `OneShot`      |
+
+The series folder is established by §4.2 classification; the
+comparison happens via `path.parent() != series_folder` so an
+archive sitting directly in the series folder always falls through
+to the filename/format heuristics.
 
 ### 4.5 Reconcile
 
@@ -400,12 +477,13 @@ opaque JSON so adding variants doesn't need a migration.
   ([health.rs:331](../../crates/server/src/library/health.rs#L331)).
   Endpoint: `POST /libraries/{id}/health-issues/{issue_id}/dismiss`.
 
-### Actively emitted (9 variants)
+### Actively emitted (10 variants)
 
 | Kind | Severity | Trigger | Emitter | Payload | Fix |
 |---|---|---|---|---|---|
 | `FileAtRoot` | warning | Archive sits at the library root, not inside a series folder. | [enumerate Phase 2 → mod.rs:1138](../../crates/server/src/library/scanner/mod.rs#L1138) | `{ path }` | Move into a series folder. |
 | `EmptyFolder` | warning | Direct child of root has no entries. | [enumerate Phase 2 → mod.rs:1141](../../crates/server/src/library/scanner/mod.rs#L1141) | `{ path }` | Add files or remove the folder. |
+| `AmbiguousFolder` | warning | Folder violates the two-layouts contract: archives at depth-1 *and* non-allowlist archive-bearing subdirs; or no archives at depth-1 with only allowlist subdirs; or 3-deep nesting; or a stray archive directly inside a publisher folder. The subtree is skipped — better than guessing. | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path, reason }` (`reason` carries an actionable hint that adapts to the violation shape) | Fix the on-disk layout per §4.2 "Two supported on-disk layouts". |
 | `UnreadableFile` | error | Per-issue scan target is masked by the library's ignore globs. | [run_issue_phase mod.rs:995](../../crates/server/src/library/scanner/mod.rs#L995) | `{ path, error }` | Adjust `library.ignore_globs`, or move the file out of the ignored path. |
 | `UnreadableArchive` | error | OS / archive-layer I/O error opening the archive. | [process.rs:244](../../crates/server/src/library/scanner/process.rs#L244) | `{ path, error }` | Check perms, replace the file. |
 | `MissingComicInfo` | info | Archive has no `ComicInfo.xml`. **Gated** on `library.report_missing_comicinfo=true` — loose libraries don't get spammed by default. | [process.rs:222](../../crates/server/src/library/scanner/process.rs#L222) | `{ path }` | Tag with ComicTagger / Mylar, or flip the per-library setting off. |

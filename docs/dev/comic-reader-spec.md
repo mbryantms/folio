@@ -225,8 +225,35 @@ Library *──* User    (via library_user_access — see §5.1.1)
 User 1──* ProgressRecord, Bookmark, Review
 ```
 
-- **Library** — root path, scan schedule, default language, default reading direction.
+- **Library** — root path, scan schedule, default language, default reading direction. **On-disk layout** is auto-detected per the two-layouts contract below; no per-library override knob.
 - **Series** — derived from folder structure or `series.json`. Auto-merged on rescan via `comicid` or normalized name+year. Stores aggregated metadata (publisher, year_began, year_end, status, total_issues, age_rating, summary). External-ID columns present from day one even if enrichment is deferred: `comicvine_id BIGINT NULL`, `metron_id BIGINT NULL`, `gtin TEXT NULL`.
+
+#### Supported on-disk layouts
+
+Folio recognizes either of two shapes under the library root; both are
+classified at scan time without operator configuration. A single
+library may mix them — each depth-1 child of the root is classified
+independently.
+
+- **Layout A (flat):** `root/Series/CBZ`. Series folders contain
+  archives at their own depth-1. They MAY contain category subfolders
+  (`Specials`, `Annuals`, `Oneshots`, `Extras`, `Bonus`, `Tie-Ins`)
+  holding extra archives; those drive per-issue `special_type` (§6.5)
+  without changing the parent's classification.
+- **Layout B (nested-by-publisher):** `root/Publisher/Series/CBZ`. The
+  depth-1 folder has zero archives at its own depth-1 and contains
+  Layout-A series folders. The depth-1 folder name auto-promotes to
+  `series.publisher` as a last-resort fallback (after ComicInfo and
+  `series.json` — author intent always wins).
+
+3-deep nesting (e.g., `Publisher/Imprint/Series/CBZ`), series folders
+with no main-run archives at depth-1, and stray archives directly
+beneath a publisher folder are out of scope. The scanner surfaces them
+as `AmbiguousFolder` health issues (warning severity) and skips the
+subtree rather than guessing. See
+[`docs/dev/library-scanner.md`](library-scanner.md) §4.2 for the full
+classification table.
+
 - **Issue** — single archive file. Stable ID = `blake3(path)` or `blake3(content)` if `dedupe_by_content=true` (**default**, see §5.1.2). Holds the parsed ComicInfo blob plus extracted/normalized columns for indexing. External-ID columns: `comicvine_id BIGINT NULL`, `metron_id BIGINT NULL`, `gtin TEXT NULL`, `web_url TEXT NULL` (parsed from ComicInfo `<Web>`).
 - **Page** — *not a separate table.* Page list and per-page metadata (from ComicInfo `<Pages>`) stored as JSONB on the Issue. Only materialized as rows if a future feature requires it.
 

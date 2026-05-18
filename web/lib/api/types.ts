@@ -170,6 +170,10 @@ export type IssueSummaryView = {
   page_count: number | null;
   state: string;
   cover_url: string | null;
+  /** Spec §6.5 classification: `"Special"`, `"Annual"`, `"OneShot"`,
+   *  `"TPB"`, or omitted for ordinary numbered issues. Drives the
+   *  reader's Specials & Extras section on the series detail page. */
+  special_type?: string | null;
   created_at: string;
   updated_at: string;
 };

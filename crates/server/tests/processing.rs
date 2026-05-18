@@ -145,6 +145,106 @@ async fn special_type_detection_classifies_files() {
     assert_eq!(st("Pi Origin Story"), Some("OneShot".into()));
 }
 
+/// M2.5 regression — an artbook tucked under `Specials/` must classify
+/// as `special_type = Special` even though its filename has a number
+/// and ComicInfo is silent. Before M2.5 this collided with the v01
+/// main-run file under the same series at the issue-number level.
+///
+/// See `~/.claude/plans/scanner-nested-folders-1.0.md` M2.5.
+#[tokio::test]
+async fn subfolder_named_specials_promotes_special_type() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Tau (2025)");
+    let specials = folder.join("Specials");
+    std::fs::create_dir_all(&specials).unwrap();
+
+    // Main run — no ComicInfo, no special. Use `001` not `v01` so
+    // filename inference treats it as an issue number (not a volume),
+    // keeping has_number=true and the no-number→OneShot rule from
+    // firing.
+    write_cbz_with_xml(&folder.join("Series Tau 001.cbz"), 1, 2, None, None);
+    // Specials subfolder — no ComicInfo. Filename has a number too,
+    // but the *path* tells us this is a Special.
+    write_cbz_with_xml(&specials.join("Artbook 1.cbz"), 2, 2, None, None);
+    // Annuals subfolder — similar shape.
+    let annuals = folder.join("Annuals");
+    std::fs::create_dir_all(&annuals).unwrap();
+    write_cbz_with_xml(&annuals.join("Annual 1.cbz"), 3, 2, None, None);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issues = IssueEntity::find().all(&state.db).await.unwrap();
+    let by_path: std::collections::HashMap<String, Option<String>> = issues
+        .into_iter()
+        .map(|i| (i.file_path, i.special_type))
+        .collect();
+    let st = |needle: &str| -> Option<String> {
+        by_path
+            .iter()
+            .find(|(p, _)| p.contains(needle))
+            .and_then(|(_, st)| st.clone())
+    };
+    assert_eq!(
+        st("Series Tau 001"),
+        None,
+        "main-run issue must not get a special_type: {by_path:?}",
+    );
+    assert_eq!(
+        st("Artbook 1"),
+        Some("Special".into()),
+        "Specials/ subfolder promotes special_type=Special: {by_path:?}",
+    );
+    assert_eq!(
+        st("Annual 1"),
+        Some("Annual".into()),
+        "Annuals/ subfolder promotes special_type=Annual: {by_path:?}",
+    );
+}
+
+/// ComicInfo `<Format>` still wins over the subfolder hint — author
+/// intent is the strongest signal.
+#[tokio::test]
+async fn comicinfo_format_overrides_subfolder_special_type() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Upsilon (2025)");
+    let specials = folder.join("Specials");
+    std::fs::create_dir_all(&specials).unwrap();
+
+    // Main run so the series folder qualifies as a series folder.
+    write_cbz_with_xml(&folder.join("Upsilon 001.cbz"), 1, 2, None, None);
+
+    // CBZ in Specials/ but ComicInfo claims it's an Annual. Author
+    // intent must beat the path hint.
+    write_cbz_with_xml(
+        &specials.join("Mislabeled.cbz"),
+        2,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Upsilon</Series><Format>Annual</Format></ComicInfo>"#,
+        ),
+        None,
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issues = IssueEntity::find().all(&state.db).await.unwrap();
+    let mislabeled = issues
+        .into_iter()
+        .find(|i| i.file_path.contains("Mislabeled"))
+        .expect("mislabeled issue ingested");
+    assert_eq!(
+        mislabeled.special_type.as_deref(),
+        Some("Annual"),
+        "ComicInfo <Format> must override the Specials/ subfolder hint",
+    );
+}
+
 #[tokio::test]
 async fn page_count_reflects_archive_not_comicinfo() {
     let app = TestApp::spawn().await;

@@ -519,6 +519,11 @@ pub struct IssueSummaryView {
     pub page_count: Option<i32>,
     pub state: String,
     pub cover_url: Option<String>,
+    /// Spec §6.5 classification: `"Special"`, `"Annual"`, `"OneShot"`,
+    /// `"TPB"`, or `None` for ordinary numbered issues. Drives the
+    /// reader's Specials & Extras section on the series detail page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub special_type: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -624,6 +629,7 @@ impl IssueSummaryView {
             page_count: m.page_count,
             state: m.state,
             cover_url,
+            special_type: m.special_type,
             created_at: m.created_at.to_rfc3339(),
             updated_at: m.updated_at.to_rfc3339(),
         }

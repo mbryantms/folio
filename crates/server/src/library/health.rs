@@ -107,6 +107,18 @@ pub enum IssueKind {
         page_index: u32,
         error: String,
     },
+    /// A folder under the library root violates the two-layouts
+    /// contract: it's neither a Layout A series folder (CBZs at
+    /// depth-1) nor a Layout B publisher container (zero CBZs at
+    /// depth-1, ≥1 non-allowlist subdir with CBZs). The scanner
+    /// skips it rather than guessing. `reason` carries an actionable
+    /// hint for the admin (which way the folder is malformed).
+    ///
+    /// See `~/.claude/plans/scanner-nested-folders-1.0.md` M2.
+    AmbiguousFolder {
+        path: PathBuf,
+        reason: String,
+    },
 }
 
 impl IssueKind {
@@ -129,6 +141,7 @@ impl IssueKind {
             Self::RecoveredArchive { .. } => "RecoveredArchive",
             Self::SkippedArchiveEntries { .. } => "SkippedArchiveEntries",
             Self::UnreadablePage { .. } => "UnreadablePage",
+            Self::AmbiguousFolder { .. } => "AmbiguousFolder",
         }
     }
 
@@ -147,7 +160,8 @@ impl IssueKind {
             | Self::OrphanedSeriesJson { .. }
             | Self::UnsupportedArchiveFormat { .. }
             | Self::SkippedArchiveEntries { .. }
-            | Self::UnreadablePage { .. } => Severity::Warning,
+            | Self::UnreadablePage { .. }
+            | Self::AmbiguousFolder { .. } => Severity::Warning,
 
             Self::MissingComicInfo { .. } | Self::RecoveredArchive { .. } => Severity::Info,
         }
@@ -209,6 +223,13 @@ impl IssueKind {
                 // releases and shouldn't churn the fingerprint.
                 format!("UnreadablePage:{}:{page_index}", path.display())
             }
+            Self::AmbiguousFolder { path, .. } => {
+                // One fingerprint per folder path. The `reason` string
+                // intentionally isn't in the key — if we tweak the
+                // wording across versions the same on-disk shape should
+                // still UPDATE the existing row, not duplicate it.
+                format!("AmbiguousFolder:{}", path.display())
+            }
         };
         // Hash the key so the column stays a fixed length and doesn't leak
         // the full path through the unique index.
@@ -233,7 +254,8 @@ impl IssueKind {
             | Self::UnsupportedArchiveFormat { path, .. }
             | Self::RecoveredArchive { path, .. }
             | Self::SkippedArchiveEntries { path, .. }
-            | Self::UnreadablePage { path, .. } => Some(path.to_string_lossy().into_owned()),
+            | Self::UnreadablePage { path, .. }
+            | Self::AmbiguousFolder { path, .. } => Some(path.to_string_lossy().into_owned()),
             Self::FolderNameMismatch { folder, .. } => Some(folder.clone()),
             Self::MixedSeriesInFolder { folder, .. } | Self::OrphanedSeriesJson { folder } => {
                 Some(folder.to_string_lossy().into_owned())

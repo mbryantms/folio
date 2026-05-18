@@ -26,6 +26,7 @@ import { useSeriesIssuesInfinite } from "@/lib/api/queries";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { SpecialsExtrasSection, splitMainAndSpecials } from "./SpecialsExtrasSection";
 
 /** Per-series listing only supports a subset of `IssueSort` — the
  *  cross-library discovery sorts (`year`, `page_count`, `user_rating`)
@@ -81,6 +82,11 @@ export function IssuesPanel({
 
   const query = useSeriesIssuesInfinite(seriesSlug, filters);
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  // Split main-run from specials/annuals/oneshots (see spec §6.5).
+  // The grid renders the main run; specials/extras go into a sibling
+  // section below that's hidden when empty.
+  const { mainRun: mainRunItems, specials: specialItems } =
+    splitMainAndSpecials(items);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Multi-select state — first surface to land for the
@@ -289,9 +295,15 @@ export function IssuesPanel({
         <p className="text-muted-foreground text-sm">
           {debouncedQ ? `No issues matched "${debouncedQ}".` : "No issues yet."}
         </p>
+      ) : mainRunItems.length === 0 ? (
+        <p className="text-muted-foreground text-sm">
+          {debouncedQ
+            ? `No main-run issues matched "${debouncedQ}".`
+            : "No main-run issues yet — see Specials & Extras below."}
+        </p>
       ) : (
         <ul role="list" className="grid gap-4" style={gridStyle}>
-          {items.map((iss) => (
+          {mainRunItems.map((iss) => (
             <li key={iss.id}>
               <IssueCard
                 issue={iss}
@@ -324,6 +336,10 @@ export function IssuesPanel({
         <p className="text-muted-foreground mt-2 text-center text-xs">
           Loading more…
         </p>
+      )}
+
+      {!query.isLoading && specialItems.length > 0 && (
+        <SpecialsExtrasSection items={specialItems} gridStyle={gridStyle} />
       )}
     </section>
   );
