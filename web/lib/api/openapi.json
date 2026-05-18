@@ -763,6 +763,29 @@
         }
       }
     },
+    "/admin/ocr/models": {
+      "get": {
+        "tags": [
+          "api::admin_ocr"
+        ],
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcrModelsView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/admin/queue-depth": {
       "get": {
         "tags": [
@@ -1190,6 +1213,32 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/admin/server/latest-release": {
+      "get": {
+        "tags": [
+          "api::server_releases"
+        ],
+        "operationId": "latest_release",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestReleaseView"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "update check disabled, repo not on GitHub, or last fetch errored"
           },
           "403": {
             "description": "admin only"
@@ -4028,6 +4077,56 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/me/issues/{id}/ocr": {
+      "post": {
+        "tags": [
+          "api::issue_ocr"
+        ],
+        "operationId": "serve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "issue UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OcrRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcrResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid request body"
+          },
+          "404": {
+            "description": "issue not found"
+          },
+          "500": {
+            "description": "ocr pipeline failure"
           }
         }
       }
@@ -8654,6 +8753,28 @@
           }
         }
       },
+      "LatestReleaseView": {
+        "type": "object",
+        "required": [
+          "tag",
+          "html_url",
+          "published_at"
+        ],
+        "properties": {
+          "html_url": {
+            "type": "string",
+            "description": "Browse URL on the host's release page."
+          },
+          "published_at": {
+            "type": "string",
+            "description": "Publication timestamp from GitHub (RFC 3339)."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Release tag (e.g. `\"v0.1.9\"`)."
+          }
+        }
+      },
       "LibraryAccessGrantView": {
         "type": "object",
         "required": [
@@ -9319,6 +9440,175 @@
                 "description": "The next-up issue, denormalized with its parent series slug + name\nso the reader can render the pill / end-card without a follow-up\nfetch. `None` iff `source == \"none\"`."
               }
             ]
+          }
+        }
+      },
+      "OcrModelView": {
+        "type": "object",
+        "required": [
+          "id",
+          "purpose",
+          "kind",
+          "cache_dir",
+          "present",
+          "bytes_on_disk",
+          "expected_bytes_approx",
+          "source"
+        ],
+        "properties": {
+          "bytes_on_disk": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Recursive sum of bytes under `cache_dir`. `0` when\n`present = false`.",
+            "minimum": 0
+          },
+          "cache_dir": {
+            "type": "string",
+            "description": "Absolute path the loader actually reads from. May not exist\nyet — pair with `present`."
+          },
+          "expected_bytes_approx": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Typical post-download size — informational, used by the UI to\nrender a download-progress bar before the model is fully cached.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identifier; never localized."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`\"onnx\"` (HF-cached models) or `\"tessdata\"` (Tesseract LSTM)."
+          },
+          "present": {
+            "type": "boolean",
+            "description": "`true` if at least one model file is on disk under\n`cache_dir`. For HF entries this is \"the snapshot folder\nholds files\"; for tessdata, \"`eng.traineddata` exists\"."
+          },
+          "purpose": {
+            "type": "string",
+            "description": "One-line operator-facing description."
+          },
+          "source": {
+            "type": "string",
+            "description": "Where the binary fetches this model from on first init.\n`\"huggingface.co/<repo>\"` or `\"tessdata_best (build script)\"`."
+          }
+        }
+      },
+      "OcrModelsView": {
+        "type": "object",
+        "required": [
+          "hf_home",
+          "tessdata_dir",
+          "models",
+          "total_bytes_on_disk"
+        ],
+        "properties": {
+          "hf_home": {
+            "type": "string",
+            "description": "Resolved `HF_HOME` — useful for operators wanting to\npre-stage models on disk in air-gapped deploys."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OcrModelView"
+            },
+            "description": "Per-model state."
+          },
+          "tessdata_dir": {
+            "type": "string",
+            "description": "Resolved tessdata directory; see module doc for resolution\norder."
+          },
+          "total_bytes_on_disk": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of `bytes_on_disk` across every entry.",
+            "minimum": 0
+          }
+        }
+      },
+      "OcrRegion": {
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "properties": {
+          "h": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "w": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "x": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "y": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "OcrRequest": {
+        "type": "object",
+        "required": [
+          "page",
+          "region"
+        ],
+        "properties": {
+          "lang": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`\"western\"` (default) or `\"manga\"`. Phase 2 will read\n`series.text_language` as the default; for now the client\nsends an explicit hint."
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based page index, matching the reader's URL convention.",
+            "minimum": 0
+          },
+          "region": {
+            "$ref": "#/components/schemas/OcrRegion",
+            "description": "User's drag rectangle in page-pixel coordinates. All four\nfields are unsigned pixels; w/h must be > 0 and the rect\nmust fit inside the decoded page bounds."
+          }
+        }
+      },
+      "OcrResponse": {
+        "type": "object",
+        "required": [
+          "text",
+          "confidence"
+        ],
+        "properties": {
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "Mean confidence in `[0.0, 1.0]`. Tesseract surfaces a real\nper-page score; manga-ocr reports `1.0` (or `0.0` for an\nempty result) since the greedy decoder doesn't expose\nper-token probabilities."
+          },
+          "refined_bbox": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OcrRegion",
+                "description": "Detector's snap-to-bubble rectangle in page-pixel coords.\n`None` when no detector hit overlapped the user's region —\nthe recognizer ran on the user's rect verbatim."
+              }
+            ]
+          },
+          "text": {
+            "type": "string",
+            "description": "Recognized text, trimmed."
           }
         }
       },

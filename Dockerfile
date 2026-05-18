@@ -24,8 +24,17 @@ WORKDIR /work
 # build-essential / g++ pulled in for cc-rs crates (zstd-sys, image, webp,
 # blake3, etc.) that compile C/C++. pkg-config + libssl-dev cover the
 # native OpenSSL link path used by reqwest's default features.
+#
+# cmake + clang + libclang-dev are for the `tesseract-rs/build-tesseract`
+# feature: the build script downloads Leptonica 1.84.1 + Tesseract 5.3.4
+# and compiles both via cmake. clang/libclang-dev cover the bindgen pass
+# tesseract-rs runs against the freshly-built libtesseract. ca-certificates
+# is needed by the same build script — it fetches the source tarballs over
+# HTTPS during cargo build. One-time ~10 min compile cost; cargo-chef
+# caches the result across rebuilds.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config libssl-dev \
+    cmake clang libclang-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef --locked
 COPY --from=planner /work/recipe.json recipe.json
@@ -90,13 +99,25 @@ COPY --from=apt-source   /usr/bin/unrar-free            /usr/bin/unrar
 # tini as PID 1 — reaps zombies, forwards SIGTERM to the server for graceful drain.
 COPY --from=apt-source   /usr/bin/tini                  /sbin/tini
 
+# Tesseract LSTM models (text-detection-1.0 plan). The `tesseract-rs`
+# build script downloaded `eng.traineddata` from `tessdata_best` to
+# `/root/.tesseract-rs/tessdata/` while the rust-builder stage ran;
+# we bake that ~15 MB file into the image so the OCR endpoint works
+# out of the box without a runtime download. The `TESSDATA_PREFIX`
+# env below points the recognizer here. Operators on air-gapped
+# deploys can override via `TESSDATA_PREFIX` to use a pre-staged
+# directory.
+COPY --from=rust-builder /root/.tesseract-rs/tessdata   /app/tessdata
+
 VOLUME ["/library", "/data"]
 EXPOSE 8080
 
 ENV COMIC_BIND_ADDR=0.0.0.0:8080 \
     COMIC_LIBRARY_PATH=/library \
     COMIC_DATA_PATH=/data \
-    COMIC_AUTO_MIGRATE=true
+    COMIC_AUTO_MIGRATE=true \
+    TESSDATA_PREFIX=/app/tessdata \
+    HF_HOME=/data/.cache/huggingface
 
 # Healthcheck handled by the orchestrator via `/app/server --healthcheck`
 # (see `compose.prod.yml`). Inline `HEALTHCHECK` would bake the cadence into

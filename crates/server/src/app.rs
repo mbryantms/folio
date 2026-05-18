@@ -162,6 +162,8 @@ use utoipa::OpenApi;
         api::pages::delete_one,
         api::pages::reorder,
         api::pages::set_sidebar,
+        api::issue_ocr::serve,
+        api::admin_ocr::list,
         api::markers::list,
         api::markers::create,
         api::markers::count,
@@ -351,6 +353,11 @@ use utoipa::OpenApi;
         api::pages::UpdatePageReq,
         api::pages::ReorderPagesReq,
         api::pages::SetSidebarQuery,
+        api::issue_ocr::OcrRequest,
+        api::issue_ocr::OcrResponse,
+        api::issue_ocr::OcrRegion,
+        api::admin_ocr::OcrModelView,
+        api::admin_ocr::OcrModelsView,
         api::markers::MarkerView,
         api::markers::MarkerListView,
         api::markers::MarkerCountView,
@@ -696,6 +703,8 @@ pub fn router(state: AppState) -> Router {
         .merge(api::cbl_lists::routes())
         .merge(api::collections::routes())
         .merge(api::pages::routes())
+        .merge(api::issue_ocr::routes())
+        .merge(api::admin_ocr::routes())
         .merge(api::markers::routes())
         .merge(api::filter_options::routes())
         .merge(api::admin_logs::routes())

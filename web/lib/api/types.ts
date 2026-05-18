@@ -784,6 +784,32 @@ export type LatestReleaseView = {
   published_at: string;
 };
 
+/** One model entry inside [`OcrModelsView`]. Discovery walks
+ *  `${HF_HOME}/hub/models--<org>--<repo>/…` for ONNX models and
+ *  `${TESSDATA_PREFIX}/eng.traineddata` for tessdata. `bytes_on_disk`
+ *  is the recursive sum under `cache_dir`. `present` reflects whether
+ *  *any* bytes were found there. */
+export type OcrModelView = {
+  id: "comic-text-detector" | "manga-ocr" | "tesseract-eng";
+  purpose: string;
+  kind: "onnx" | "tessdata";
+  cache_dir: string;
+  present: boolean;
+  bytes_on_disk: number;
+  expected_bytes_approx: number;
+  source: string;
+};
+
+/** Read-only view of the OCR-model cache state. Surfaced on
+ *  `/admin/server` so operators can verify auto-downloads completed
+ *  and pre-stage models for air-gapped deploys. */
+export type OcrModelsView = {
+  hf_home: string;
+  tessdata_dir: string;
+  models: OcrModelView[];
+  total_bytes_on_disk: number;
+};
+
 export type ServerInfoView = {
   /** `git describe --tags --always --dirty`. Linkable to a GitHub
    *  release page when it starts with `v` and has no `-` suffix

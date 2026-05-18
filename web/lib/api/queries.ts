@@ -76,6 +76,7 @@ import type {
   SeriesSort,
   SeriesView,
   LatestReleaseView,
+  OcrModelsView,
   ServerInfoView,
   SessionListView,
   SortOrder,
@@ -266,6 +267,8 @@ export const queryKeys = {
   /** Server info — version, uptime, redis/postgres pings. */
   serverInfo: ["admin", "server-info"] as const,
   latestRelease: ["admin", "latest-release"] as const,
+  /** OCR model download / on-disk state (text-detection-1.0 M5). */
+  ocrModels: ["admin", "ocr-models"] as const,
   /** In-process log ring buffer. Tail filter is part of the key so the
    *  follow-tail toggle never collides with a paused snapshot. */
   adminLogs: (filters: AdminLogFilters) => ["admin", "logs", filters] as const,
@@ -794,6 +797,23 @@ export function useServerInfo(opts?: {
     enabled,
     refetchInterval: intervalMs,
     staleTime: intervalMs,
+  });
+}
+
+/** OCR model cache state (text-detection-1.0 plan, M5).
+ *  Read-only; the response shape is stable across requests so we
+ *  poll lightly — operators look at this on demand, not in
+ *  real-time. */
+export function useOcrModels(opts?: { enabled?: boolean }) {
+  const { enabled = true } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.ocrModels,
+    queryFn: () => jsonFetch<OcrModelsView>("/admin/ocr/models"),
+    enabled,
+    // Models almost never change after first download; keep stale
+    // for 30 s so an operator polling the page sees fresh-enough
+    // data without polling.
+    staleTime: 30_000,
   });
 }
 

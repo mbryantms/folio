@@ -217,5 +217,6 @@ Default admin (first registered user becomes admin):
 - Reader keyboard map: [docs/dev/reader-shortcuts.md](docs/dev/reader-shortcuts.md)
 - OPDS readiness audit: [docs/dev/opds-audit.md](docs/dev/opds-audit.md)
 - Runtime-config split (env vs DB): [docs/dev/runtime-configuration.md](docs/dev/runtime-configuration.md)
+- OCR pipeline (detector + recognizer + cache + admin surfaces): [docs/dev/ocr.md](docs/dev/ocr.md)
 - Active plans live under `~/.claude/plans/`; check the auto-memory index for
   what's currently in flight vs. shipped.

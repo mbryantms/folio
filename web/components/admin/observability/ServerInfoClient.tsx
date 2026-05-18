@@ -7,14 +7,23 @@ import {
   HardDrive,
   ListChecks,
   Eye,
+  ScanText,
   Sparkles,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useLatestRelease, useServerInfo } from "@/lib/api/queries";
-import type { LatestReleaseView, ServerInfoView } from "@/lib/api/types";
+import {
+  useLatestRelease,
+  useOcrModels,
+  useServerInfo,
+} from "@/lib/api/queries";
+import type {
+  LatestReleaseView,
+  OcrModelView,
+  ServerInfoView,
+} from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 export function ServerInfoClient() {
@@ -36,8 +45,126 @@ export function ServerInfoClient() {
       <DependenciesCard data={data} />
       <RuntimeCard data={data} />
       <LinksCard />
+      <OcrModelsCard />
     </div>
   );
+}
+
+function OcrModelsCard() {
+  // Poll every 30 s — if any model is downloading the card refreshes
+  // mid-fetch, giving the operator a near-live progress readout
+  // without aggressively hitting the disk walker. Stable once
+  // everything's `ready` (the response shape doesn't change), so the
+  // extra requests are cheap.
+  const models = useOcrModels();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">
+          OCR models
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {models.isLoading || !models.data ? (
+          <Skeleton className="h-24 w-full" />
+        ) : models.error ? (
+          <p className="text-destructive text-sm">
+            Failed to load OCR model status.
+          </p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {models.data.models.map((m) => (
+              <OcrModelRow key={m.id} model={m} />
+            ))}
+            <li className="border-border/40 mt-2 flex items-baseline justify-between border-t pt-2">
+              <span className="text-muted-foreground inline-flex items-center gap-2">
+                <ScanText className="h-3.5 w-3.5" />
+                Total on disk
+              </span>
+              <span className="text-foreground font-mono tabular-nums">
+                {formatBytes(models.data.total_bytes_on_disk)}
+              </span>
+            </li>
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function OcrModelRow({ model }: { model: OcrModelView }) {
+  const state = classifyModelState(model);
+  return (
+    <li className="flex items-baseline justify-between gap-3">
+      <span
+        className="text-muted-foreground min-w-0 truncate"
+        title={`${model.purpose}\n${model.cache_dir}`}
+      >
+        {model.id}
+      </span>
+      <span className="text-foreground inline-flex items-center gap-2 font-mono tabular-nums">
+        {model.present ? formatBytes(model.bytes_on_disk) : "—"}
+        <Badge
+          variant="outline"
+          className={cn(
+            state.kind === "ready" && "border-emerald-500/40 text-emerald-400",
+            state.kind === "downloading" &&
+              "border-amber-500/40 text-amber-300",
+            state.kind === "missing" &&
+              "border-muted-foreground/30 text-muted-foreground",
+          )}
+        >
+          {state.label}
+        </Badge>
+      </span>
+    </li>
+  );
+}
+
+/** Three-state classification used by the model tile.
+ *
+ *  - `ready` — `bytes_on_disk` is at least 95% of
+ *    `expected_bytes_approx`. We accept slight over-/undershoot
+ *    because `expected_bytes_approx` is a hand-picked round number,
+ *    not a sha-pinned download manifest.
+ *  - `downloading` — at least one byte on disk but below the
+ *    `ready` threshold. Operators see this between "first OCR
+ *    request triggered the HF fetch" and "fetch completed".
+ *  - `missing` — nothing on disk. First OCR call will fetch.
+ *
+ *  Exported for unit tests.
+ */
+export function classifyModelState(model: OcrModelView): {
+  kind: "ready" | "downloading" | "missing";
+  pct: number;
+  label: string;
+} {
+  if (!model.present || model.bytes_on_disk === 0) {
+    return { kind: "missing", pct: 0, label: "missing" };
+  }
+  const pct =
+    model.expected_bytes_approx > 0
+      ? Math.min(
+          100,
+          Math.round((model.bytes_on_disk / model.expected_bytes_approx) * 100),
+        )
+      : 100;
+  if (pct >= 95) return { kind: "ready", pct, label: "ready" };
+  return { kind: "downloading", pct, label: `downloading ${pct}%` };
+}
+
+/** Compact byte formatting — picks the largest unit that keeps the
+ *  display under 4 characters. `1024^2 → "1.0 MB"`. */
+export function formatBytes(bytes: number): string {
+  if (bytes <= 0) return "0 B";
+  const units = ["B", "kB", "MB", "GB"];
+  let value = bytes;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i++;
+  }
+  return `${value < 10 && i > 0 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
 }
 
 function BuildCard({ data }: { data: ServerInfoView }) {

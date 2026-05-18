@@ -9,6 +9,14 @@ license.workspace = true
 name = "server"
 path = "src/main.rs"
 
+[features]
+default = []
+# Opt-in GPU acceleration for the OCR pipeline. Forwarded to
+# `comic-text-detector/cuda` (and through it to `ort/cuda`). Default
+# builds stay CPU-only — enabling this requires CUDA Toolkit + the
+# `onnxruntime` GPU shared library on the operator's box.
+cuda = ["comic-text-detector/cuda"]
+
 [dependencies]
 # Web stack
 axum = { workspace = true }
@@ -60,6 +68,18 @@ lettre = { workspace = true }
 walkdir = { workspace = true }
 infer = { workspace = true }
 image = { workspace = true }
+# Text-bubble detection on cropped reader regions. Gated behind a
+# `Mutex<ComicTextDetector>` singleton in `src/ocr/detector.rs`;
+# model auto-downloads from HF on first use (~50 MB). The `cuda`
+# server feature below flips this crate's `cuda` feature on.
+comic-text-detector = { workspace = true }
+# Vertical-Japanese OCR for manga (M2). ONNX models auto-download
+# from HF on first init (~80 MB encoder + decoder).
+manga-ocr = { workspace = true }
+# Western OCR via vendored Tesseract 5.3.4 + Leptonica 1.84.1 (M2).
+# Build script compiles natively via cmake; cache lives at
+# `~/.tesseract-rs/` and survives `cargo clean`.
+tesseract-rs = { workspace = true }
 webp = { workspace = true }
 fast_image_resize = { workspace = true }
 rayon = { workspace = true }

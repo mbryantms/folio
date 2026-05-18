@@ -1,11 +1,13 @@
 "use client";
 
+import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
 import type { MarkerRegion } from "@/lib/api/types";
 
-/** Inputs shared by both OCR and image-hash paths. The cropped pixels
- *  come from the same image URL the `<img>` is rendering, sampled at
- *  the image's natural resolution so the OCR engine sees the highest
- *  fidelity available without re-fetching. */
+/** Inputs shared by both OCR and image-hash paths. `naturalSize`
+ *  is still required because the image-hash path crops pixels in
+ *  the browser; the OCR path uses it only to map the region's
+ *  0–100 percent fields into integer pixel coordinates that the
+ *  server-side handler expects. */
 type CropInput = {
   issueId: string;
   pageIndex: number;
@@ -13,7 +15,9 @@ type CropInput = {
   naturalSize: { width: number; height: number };
 };
 
-/** Promise-cached Image so concurrent overlays don't re-decode. */
+/** Promise-cached Image so concurrent overlays don't re-decode. Used
+ *  by the image-hash path; the OCR path doesn't load the page bytes
+ *  client-side any more (the server reads from the canonical archive). */
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -29,16 +33,10 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   return p;
 }
 
-/** Canvas-crop the region against the source image at native resolution,
- *  optionally upsampled by `scale`. Tesseract works best with text at
- *  ~300 DPI, and a comic page rendered at ~100 DPI on screen
- *  ([typical], doesn't account for image post-processing) is too small
- *  for the engine — upsampling 2-3x before OCR more than doubles
- *  legibility. */
-async function cropToCanvas(
-  input: CropInput,
-  scale = 1,
-): Promise<HTMLCanvasElement> {
+/** Canvas-crop the region against the source image at native
+ *  resolution. Image-hash uses this directly; the OCR path doesn't
+ *  any more (server-side now). */
+async function cropToCanvas(input: CropInput): Promise<HTMLCanvasElement> {
   const src = `/issues/${input.issueId}/pages/${input.pageIndex}`;
   const img = await loadImage(src);
   const w = input.naturalSize.width;
@@ -48,167 +46,105 @@ async function cropToCanvas(
   const cw = Math.max(1, Math.round((input.region.w / 100) * w));
   const ch = Math.max(1, Math.round((input.region.h / 100) * h));
   const canvas = document.createElement("canvas");
-  canvas.width = Math.round(cw * scale);
-  canvas.height = Math.round(ch * scale);
+  canvas.width = cw;
+  canvas.height = ch;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("no 2d context");
-  // `imageSmoothingQuality = 'high'` matters when we upsample —
-  // bilinear interpolation keeps the text edges crisp where the
-  // default 'low' would alias. Off when scale is 1, on otherwise.
-  if (scale !== 1) {
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-  }
-  ctx.drawImage(img, x, y, cw, ch, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, x, y, cw, ch, 0, 0, cw, ch);
   return canvas;
 }
 
-/** Mutate the canvas in place: convert to grayscale and binarize at a
- *  threshold derived from the per-region mean luma. Output is pure
- *  black-and-white pixels — Tesseract's text engine is calibrated for
- *  this kind of crisp two-tone image and accuracy jumps significantly
- *  vs. raw colored comic art with halftone screens / gradients. */
-function binarize(canvas: HTMLCanvasElement): void {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const pixels = data.data;
-  // First pass: compute mean luma.
-  let sum = 0;
-  for (let i = 0; i < pixels.length; i += 4) {
-    sum += 0.299 * pixels[i]! + 0.587 * pixels[i + 1]! + 0.114 * pixels[i + 2]!;
-  }
-  const mean = sum / (pixels.length / 4);
-  // Bias the threshold a bit toward the brighter side — speech bubbles
-  // are usually mostly white with dark text, so a mean-based cut
-  // would push too many white pixels to black on bright bubbles. Bias
-  // -20 leaves the white background intact while still binarizing the
-  // text glyphs cleanly.
-  const threshold = Math.max(120, Math.min(220, mean - 20));
-  for (let i = 0; i < pixels.length; i += 4) {
-    const luma =
-      0.299 * pixels[i]! + 0.587 * pixels[i + 1]! + 0.114 * pixels[i + 2]!;
-    const v = luma > threshold ? 255 : 0;
-    pixels[i] = v;
-    pixels[i + 1] = v;
-    pixels[i + 2] = v;
-  }
-  ctx.putImageData(data, 0, 0);
+/** Translate the marker's percent-based region into the integer
+ *  pixel rect the server expects. Clamped to page bounds so a
+ *  rounding overshoot near the right/bottom edges can't push us
+ *  into the handler's `invalid_region` branch. */
+function regionToPixels(
+  region: MarkerRegion,
+  natural: { width: number; height: number },
+): { x: number; y: number; w: number; h: number } {
+  const W = natural.width;
+  const H = natural.height;
+  const x = Math.max(0, Math.min(W - 1, Math.round((region.x / 100) * W)));
+  const y = Math.max(0, Math.min(H - 1, Math.round((region.y / 100) * H)));
+  const w = Math.max(1, Math.min(W - x, Math.round((region.w / 100) * W)));
+  const h = Math.max(1, Math.min(H - y, Math.round((region.h / 100) * H)));
+  return { x, y, w, h };
 }
 
-type TesseractWorker = {
-  setParameters: (params: Record<string, string | number>) => Promise<unknown>;
-  recognize: (
-    img: Blob | string,
-  ) => Promise<{ data: { text?: string; confidence?: number } }>;
-  terminate: () => Promise<unknown>;
-};
-type TesseractModule = {
-  createWorker: (
-    lang?: string,
-    oem?: number,
-    options?: Record<string, unknown>,
-  ) => Promise<TesseractWorker>;
-  recognize: (
-    img: Blob | string,
-    lang?: string,
-  ) => Promise<{ data: { text?: string; confidence?: number } }>;
-};
-
-/** Lazy-singleton tesseract worker shared across every OCR call in the
- *  reader. Loading the WASM + English language data is the slow part
- *  (~2s on a warm cache); reusing the worker across pages drops the
- *  per-OCR cost to roughly the recognize() call itself.
+/** Run server-side OCR over the cropped region. The pipeline runs
+ *  `comic-text-detector` → snap-to-bubble → Tesseract LSTM (or
+ *  manga-ocr for `lang: "manga"`); results are cached server-side
+ *  keyed by `(content_hash, page, lang, region_hash)` so a re-OCR
+ *  on the same region is a Redis round-trip.
  *
- *  We hold the worker as a Promise so concurrent first-call sites await
- *  the same initialization without racing to spawn duplicates. The
- *  module reference is kept separately for the no-worker fallback
- *  path on older tesseract.js builds. */
-let workerSingleton: Promise<TesseractWorker> | null = null;
-let moduleSingleton: TesseractModule | null = null;
-
-async function loadTesseract(): Promise<TesseractModule | null> {
-  if (moduleSingleton) return moduleSingleton;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dyn = (await import(
-      /* @vite-ignore */ "tesseract.js" as any
-    )) as unknown;
-    moduleSingleton = dyn as TesseractModule;
-    return moduleSingleton;
-  } catch (err) {
-    console.warn("markers: tesseract.js unavailable, falling back", err);
-    return null;
-  }
-}
-
-async function getOcrWorker(
-  mod: TesseractModule,
-): Promise<TesseractWorker | null> {
-  if (typeof mod.createWorker !== "function") return null;
-  if (!workerSingleton) {
-    // Stash the promise immediately so concurrent callers await the
-    // same boot — if initialization fails we clear the slot so the
-    // next call can retry.
-    workerSingleton = (async () => {
-      const worker = await mod.createWorker("eng");
-      await worker.setParameters({
-        tessedit_pageseg_mode: "6",
-      });
-      return worker;
-    })();
-    workerSingleton.catch(() => {
-      workerSingleton = null;
-    });
-  }
-  return workerSingleton;
-}
-
-/** Run client-side OCR on the cropped region. Pre-processes the crop
- *  with a 3x upscale + grayscale binarization to give the engine a
- *  fighting chance against stylized comic lettering — accuracy without
- *  that pre-pass is poor in practice. Uses a singleton worker so
- *  subsequent calls in the same session skip the WASM-load. */
+ *  Returns `null` when the server failed (non-2xx, network error)
+ *  or recognized no text. The caller (`MarkerEditor` /
+ *  `MarkerOverlay`) decides how to surface that — usually a
+ *  "Couldn't read any text" toast and a fallback to a plain
+ *  highlight.
+ *
+ *  Pre-M6 this ran tesseract.js entirely in the browser. The new
+ *  path drops the 6 MB WASM bundle + 2 s cold-boot in exchange for
+ *  a network round-trip; quality is materially better because the
+ *  server pairs a real bubble detector with `tessdata_best`. */
 export async function ocrCroppedRegion(
   input: CropInput,
 ): Promise<{ text: string; confidence: number } | null> {
-  if (typeof document === "undefined") return null;
-  // 3x upscale brings a typical 60×40 px speech-bubble crop to
-  // 180×120, comfortably above the 30+ px per character minimum
-  // tesseract wants. Larger scales (>4x) start to inflate without
-  // adding detail.
-  const canvas = await cropToCanvas(input, 3);
-  binarize(canvas);
-  const blob: Blob | null = await new Promise((resolve) =>
-    canvas.toBlob((b) => resolve(b), "image/png"),
-  );
-  if (!blob) return null;
-
-  const mod = await loadTesseract();
-  if (!mod) return null;
-
+  // Unlike pre-M6 — no canvas / DOM touch any more, so no SSR
+  // guard. The file is `"use client"` for the other helpers; the
+  // function itself is safe to call from any context that has
+  // `fetch` (i.e. Node 18+ as well as the browser).
+  const region = regionToPixels(input.region, input.naturalSize);
+  const csrf = getCsrfToken();
+  let res: Response;
   try {
-    const worker = await getOcrWorker(mod);
-    if (worker) {
-      const result = await worker.recognize(blob);
-      const text = (result.data?.text ?? "").trim();
-      const confidence = Number(result.data?.confidence ?? 0);
-      return text ? { text, confidence } : null;
-    }
-    // Fallback for older tesseract.js versions without the worker API.
-    const result = await mod.recognize(blob, "eng");
-    const text = (result.data?.text ?? "").trim();
-    const confidence = Number(result.data?.confidence ?? 0);
-    return text ? { text, confidence } : null;
+    res = await apiFetch(`/me/issues/${input.issueId}/ocr`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+      },
+      body: JSON.stringify({
+        page: input.pageIndex,
+        region,
+        lang: "western",
+      }),
+    });
   } catch (err) {
-    console.warn("markers: tesseract recognize failed", err);
+    // Network failure (offline, DNS, TLS). Same null-return contract
+    // as before so the call site treats it like "couldn't OCR" —
+    // toast strings are owned there.
+    console.warn("markers: server OCR network error", err);
     return null;
   }
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      detail = body.error?.message ?? detail;
+    } catch {
+      // Body wasn't JSON — keep the status code message.
+    }
+    console.warn(`markers: server OCR failed (${res.status}): ${detail}`);
+    return null;
+  }
+  let payload: { text?: string; confidence?: number };
+  try {
+    payload = (await res.json()) as { text?: string; confidence?: number };
+  } catch (err) {
+    console.warn("markers: server OCR returned malformed JSON", err);
+    return null;
+  }
+  const text = (payload.text ?? "").trim();
+  if (!text) return null;
+  const confidence = Number(payload.confidence ?? 0);
+  return { text, confidence };
 }
 
 /** Compute a SHA-256 over the cropped pixel bytes. Used for the
- *  image-aware highlight mode so a future "find this panel" lookup can
- *  bucket matches by hash. Returns lowercase hex. */
+ *  image-aware highlight mode so a future "find this panel" lookup
+ *  can bucket matches by hash. Returns lowercase hex. */
 export async function sha256CroppedRegion(
   input: CropInput,
 ): Promise<string | null> {

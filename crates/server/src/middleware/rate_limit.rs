@@ -145,6 +145,20 @@ pub const OPDS: Bucket = Bucket {
     burst: 60,
 };
 
+/// `POST /me/issues/{id}/ocr` — 60/min/IP + burst 60. OCR is CPU-heavy
+/// (text-detection-1.0 plan, M4): each request runs a YOLO-style
+/// detector + a Tesseract / manga-ocr inference. The Redis-backed
+/// cache covers retries on the same region for free, so the bucket
+/// only needs to bound *novel* requests from a single IP. 60/min
+/// matches the OPDS bucket — generous enough for a reader exploring
+/// every bubble on a page, tight enough to make a runaway script
+/// noticeable.
+pub const OCR: Bucket = Bucket {
+    name: "ocr",
+    period: Duration::from_secs(1),
+    burst: 60,
+};
+
 // ───────── error handler ─────────
 
 fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<Body> {

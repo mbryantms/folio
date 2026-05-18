@@ -146,6 +146,25 @@ unrar = "0.5"
 sevenz-rust = "0.6"
 tar = "0.4"
 
+# OCR / text detection (text-detection-1.0 plan, Phase 1).
+# License: GPL-3.0-only on the koharu crates — compatible with
+# Folio's AGPL-3.0-or-later. `hf-hub` lands with M5's
+# `/admin/ocr/models` surface.
+#
+# Pinned ort versions: `comic-text-detector` + `manga-ocr` both
+# resolve to `ort = 2.0.0-rc.10` (verified via lockfile probe
+# 2026-05-17); any bump that crosses crates needs a re-probe.
+comic-text-detector = "0.5.1"
+manga-ocr = "0.5.1"
+# Native Tesseract bindings. The `build-tesseract` feature compiles
+# Leptonica 1.84.1 + Tesseract 5.3.4 from source via cmake on the
+# build host and caches them at `~/.tesseract-rs/` across rebuilds.
+# It also downloads `eng.traineddata` from `tessdata_best` to the
+# same cache directory at first build (requires internet); set
+# `TESSDATA_PREFIX` to point Folio at a pre-staged copy on
+# air-gapped operators. First build adds ~10 min one-time cost.
+tesseract-rs = { version = "0.2", features = ["build-tesseract"] }
+
 # Background jobs (Redis-backed via apalis)
 apalis = { version = "0.6", features = ["limit", "tracing"] }
 apalis-redis = "0.6"

@@ -21,8 +21,8 @@ export type FitMode = "width" | "height" | "original";
  *   - `idle` — overlay is read-only; rects render for hover/inspection.
  *   - `select-rect` — pointer-drag captures a region rect, opens the
  *     editor on release with `{ shape: 'rect' }`.
- *   - `select-text` — same drag, but the cropped pixels also feed
- *     `tesseract.js` to populate `selection.text`.
+ *   - `select-text` — same drag, but the region is POSTed to
+ *     `/api/me/issues/{id}/ocr` to populate `selection.text`.
  *   - `select-image` — same drag, but the cropped pixels feed
  *     `crypto.subtle.digest` to populate `selection.image_hash`. */
 export type MarkerMode =
