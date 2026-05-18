@@ -136,6 +136,7 @@ async fn seed_issue(app: &TestApp, file_path: &std::path::Path) -> String {
         removed_at: Set(None),
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
+        reading_direction: Set(None),
     }
     .insert(&db)
     .await

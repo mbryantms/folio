@@ -67,8 +67,7 @@ export function IssueCard({
   const progressMap = useUserProgress().data;
   const progress = progressMap?.get(issue.id);
   const finished = progress?.finished ?? false;
-  const inProgress =
-    !!progress && !finished && progress.percent > 0;
+  const inProgress = !!progress && !finished && progress.percent > 0;
   const percent = inProgress
     ? Math.max(0, Math.min(100, Math.round(progress.percent * 100)))
     : 0;

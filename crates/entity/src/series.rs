@@ -71,6 +71,16 @@ pub struct Model {
     /// the count, so the Complete/Incomplete UI stays accurate.
     #[sea_orm(nullable)]
     pub status_user_set_at: Option<DateTimeWithTimeZone>,
+    /// Per-series reading-direction override
+    /// (`manga-and-bulk-metadata-1.0` M2). `"ltr"` / `"rtl"` / `"ttb"`
+    /// or `NULL` meaning "Auto — inherit from user pref / library
+    /// default at read time". ComicInfo `<Manga>YesAndRightToLeft</Manga>`
+    /// on the issue still wins above this layer. M3's scanner heuristic
+    /// auto-pins this to `"rtl"` when ≥80% of a series's issues carry
+    /// the manga flag and the column is currently NULL; admin-set
+    /// values are sticky and never overwritten.
+    #[sea_orm(nullable)]
+    pub reading_direction: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

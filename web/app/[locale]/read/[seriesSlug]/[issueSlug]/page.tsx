@@ -95,6 +95,20 @@ export default async function ReadPage({
   // still mounts and the user gets an error if page 0 is also missing.
   const totalPages = Math.max(1, issue.page_count ?? 1);
 
+  // Series + library reading-direction layers of the resolution chain
+  // (see `manga-and-bulk-metadata-1.0`). Both surfaced on
+  // IssueDetailView so the read page doesn't need a second fetch.
+  const seriesReadingDirection: Direction | null =
+    issue.series_reading_direction === "ltr" ||
+    issue.series_reading_direction === "rtl"
+      ? issue.series_reading_direction
+      : null;
+  const libraryDefaultDirection: Direction | null =
+    issue.library_default_reading_direction === "ltr" ||
+    issue.library_default_reading_direction === "rtl"
+      ? issue.library_default_reading_direction
+      : null;
+
   // Best-effort fetch of the user's reader prefs. Per-series localStorage and
   // the `Manga` flag still win over global defaults; these are only the
   // fallback for a fresh series with no other signal.
@@ -154,6 +168,8 @@ export default async function ReadPage({
       pages={issue.pages ?? []}
       manga={issue.manga ?? null}
       userDefaultDirection={userDefaultDirection}
+      libraryDefaultDirection={libraryDefaultDirection}
+      seriesReadingDirection={seriesReadingDirection}
       userDefaultFitMode={userDefaultFitMode}
       userDefaultViewMode={userDefaultViewMode}
       userDefaultPageStrip={userDefaultPageStrip}

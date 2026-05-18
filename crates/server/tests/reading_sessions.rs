@@ -245,6 +245,7 @@ async fn seed_with(app: &TestApp, name: &str, extras: SeedExtras<'_>) -> (Uuid, 
         removed_at: Set(None),
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
+        reading_direction: Set(None),
     }
     .insert(&db)
     .await

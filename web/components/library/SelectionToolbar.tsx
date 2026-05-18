@@ -91,13 +91,10 @@ export function SelectionToolbar({
 
   React.useEffect(() => {
     if (open) {
-      // The cascading-render warning from react-hooks/set-state-in-effect
-      // is the desired behavior here: we need `shouldRender=true` to
-      // commit BEFORE the rAF-gated `setPhase("open")` runs, so the
-      // browser paints the closed state (data-state="closed") on the
-      // first commit and transitions to open on the second. Without
-      // the synchronous setState, the toolbar mounts directly into
-      // the open state and skips the entrance keyframe.
+      // Keep a real mounted copy after the first open frame. The render
+      // path below already paints the closed wrapper immediately when
+      // `open` flips true, avoiding the one-frame gap where the trigger
+      // disappeared but the toolbar was still null.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setShouldRender(true);
       // Two RAFs so the browser paints the closed state first; without
@@ -118,7 +115,7 @@ export function SelectionToolbar({
     return () => clearTimeout(t);
   }, [open]);
 
-  if (!shouldRender) return null;
+  if (!shouldRender && !open) return null;
 
   // Outer wrapper handles the height collapse via the modern
   // `grid-template-rows: 0fr ↔ 1fr` trick so content below the
@@ -154,6 +151,10 @@ export function SelectionToolbarBody({
 }: SelectionToolbarProps & { dataState?: "open" | "closed" }) {
   const allSelected = count === total && total > 0;
   const overflowItems = overflow ?? [];
+  const canSelectAll = !!onSelectAll && !allSelected;
+  const canClear = count > 0;
+  const hasMobileMenu = overflowItems.length > 0 || !!onSelectAll || canClear;
+  const actionDisabled = isPending || count === 0;
 
   return (
     <div
@@ -162,8 +163,8 @@ export function SelectionToolbarBody({
       aria-label={`${count} item${count === 1 ? "" : "s"} selected`}
       aria-live="polite"
       className={cn(
-        "bg-background/95 border-border sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b py-2 backdrop-blur",
-        "sm:flex-nowrap",
+        "bg-background/95 border-border sticky top-0 z-20 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b py-2 backdrop-blur",
+        "sm:flex sm:flex-nowrap",
         // Mount + unmount animation: keyframes selection-toolbar-in
         // / -out in `web/styles/globals.css`. Toggled via the
         // `data-state` attribute the presence wrapper sets.
@@ -181,35 +182,91 @@ export function SelectionToolbarBody({
         <X className="h-4 w-4" />
       </Button>
 
-      <span className="text-sm font-medium tabular-nums">
+      <span className="min-w-[5.75rem] text-sm font-medium tabular-nums">
         {count} selected
       </span>
 
-      {onSelectAll && !allSelected && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onSelectAll}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          Select all ({total})
-        </Button>
+      <div className="hidden min-w-[13rem] items-center gap-1 sm:flex">
+        {canSelectAll && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onSelectAll}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            Select all ({total})
+          </Button>
+        )}
+
+        {canClear && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onClear}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            Clear
+          </Button>
+        )}
+      </div>
+
+      {hasMobileMenu && (
+        <div className="flex justify-end sm:hidden">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="More actions"
+                aria-haspopup="menu"
+                disabled={
+                  isPending &&
+                  overflowItems.length > 0 &&
+                  !canSelectAll &&
+                  !canClear
+                }
+                className="h-9 w-9"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canSelectAll && (
+                <DropdownMenuItem onClick={onSelectAll}>
+                  Select all ({total})
+                </DropdownMenuItem>
+              )}
+              {canClear && (
+                <DropdownMenuItem onClick={onClear}>Clear</DropdownMenuItem>
+              )}
+              {(canSelectAll || canClear) && overflowItems.length > 0 && (
+                <DropdownMenuSeparator />
+              )}
+              {overflowItems.map((a, i) => {
+                const Icon = a.icon;
+                return (
+                  <React.Fragment key={a.id}>
+                    {a.destructive && i > 0 && <DropdownMenuSeparator />}
+                    <DropdownMenuItem
+                      onClick={a.onClick}
+                      disabled={a.disabled || actionDisabled}
+                      className={a.destructive ? "text-destructive" : undefined}
+                    >
+                      {Icon && <Icon className="mr-2 h-4 w-4" />}
+                      {a.label}
+                    </DropdownMenuItem>
+                  </React.Fragment>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       )}
 
-      {count > 0 && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onClear}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          Clear
-        </Button>
-      )}
-
-      <div className="ml-auto flex items-center gap-1">
+      <div className="sm:col-span-auto col-span-3 flex min-w-0 items-center gap-1 sm:ml-auto">
         {primary.map((a) => {
           const Icon = a.icon;
           return (
@@ -219,7 +276,8 @@ export function SelectionToolbarBody({
               variant={a.destructive ? "destructive" : "default"}
               size="sm"
               onClick={a.onClick}
-              disabled={a.disabled || isPending || count === 0}
+              disabled={a.disabled || actionDisabled}
+              className="min-w-0 flex-1 sm:flex-none"
             >
               {Icon && <Icon className="mr-1.5 h-4 w-4" />}
               {a.label}
@@ -227,68 +285,27 @@ export function SelectionToolbarBody({
           );
         })}
 
-        {/* Overflow actions: inline at sm+, dropdown at sm-. The
-         *  hidden/flex toggle is done via Tailwind responsive
-         *  classes rather than JS-driven media queries to keep
-         *  SSR + hydration consistent. */}
+        {/* Overflow actions render inline at sm+. The mobile menu above
+         *  combines utilities + overflow in one stable top-right slot. */}
         {overflowItems.length > 0 && (
-          <>
-            <div className="hidden items-center gap-1 sm:flex">
-              {overflowItems.map((a) => {
-                const Icon = a.icon;
-                return (
-                  <Button
-                    key={a.id}
-                    type="button"
-                    variant={a.destructive ? "destructive" : "outline"}
-                    size="sm"
-                    onClick={a.onClick}
-                    disabled={a.disabled || isPending || count === 0}
-                  >
-                    {Icon && <Icon className="mr-1.5 h-4 w-4" />}
-                    {a.label}
-                  </Button>
-                );
-              })}
-            </div>
-            <div className="flex sm:hidden">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label="More actions"
-                    aria-haspopup="menu"
-                    disabled={isPending || count === 0}
-                    className="h-9 w-9"
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {overflowItems.map((a, i) => {
-                    const Icon = a.icon;
-                    return (
-                      <React.Fragment key={a.id}>
-                        {a.destructive && i > 0 && <DropdownMenuSeparator />}
-                        <DropdownMenuItem
-                          onClick={a.onClick}
-                          disabled={a.disabled}
-                          className={
-                            a.destructive ? "text-destructive" : undefined
-                          }
-                        >
-                          {Icon && <Icon className="mr-2 h-4 w-4" />}
-                          {a.label}
-                        </DropdownMenuItem>
-                      </React.Fragment>
-                    );
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </>
+          <div className="hidden items-center gap-1 sm:flex">
+            {overflowItems.map((a) => {
+              const Icon = a.icon;
+              return (
+                <Button
+                  key={a.id}
+                  type="button"
+                  variant={a.destructive ? "destructive" : "outline"}
+                  size="sm"
+                  onClick={a.onClick}
+                  disabled={a.disabled || actionDisabled}
+                >
+                  {Icon && <Icon className="mr-1.5 h-4 w-4" />}
+                  {a.label}
+                </Button>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

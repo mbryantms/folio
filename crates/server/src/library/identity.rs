@@ -224,6 +224,11 @@ pub async fn resolve_or_create(
             // Scanner-created series have no manual status override.
             // PATCH /series/{slug} stamps this when a user pins a status.
             status_user_set_at: Set(None),
+            // Reading direction is computed at read time from the
+            // resolution chain (ComicInfo → series → user → library →
+            // LTR). New rows ship with NULL = "Auto"; M3's scanner
+            // heuristic and admin edits via PATCH may pin a value.
+            reading_direction: Set(None),
         };
         match am.insert(db).await {
             Ok(_) => return Ok(SeriesMatch::Created { id }),

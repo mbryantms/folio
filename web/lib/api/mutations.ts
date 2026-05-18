@@ -548,6 +548,81 @@ export function useBulkMarkProgress() {
   );
 }
 
+/**
+ * Bulk-edit a subset of ComicInfo metadata across N issues. Backs
+ * the "Edit metadata…" dialog in the SelectionToolbar. See
+ * `~/.claude/plans/manga-and-bulk-metadata-1.0.md` M4/M5.
+ *
+ * Field set is intentionally narrow — credit fields (writer,
+ * penciller, …) are excluded because they vary issue-to-issue (guest
+ * artists, variant covers, mid-series translator changes). Continue
+ * using the per-issue drawer for credits.
+ *
+ * `mode = "skip_if_set"` (default) leaves issues with the field
+ * already set untouched. `"replace"` overwrites unconditionally.
+ */
+export type BulkMetadataPatch = {
+  language_code?: string | null;
+  manga?: string | null;
+  publisher?: string | null;
+  imprint?: string | null;
+  age_rating?: string | null;
+  format?: string | null;
+  genre?: string | null;
+  tags?: string | null;
+  story_arc?: string | null;
+};
+
+export type BulkMetadataResp = {
+  updated: number;
+  skipped: number;
+  forbidden: number;
+  not_found: number;
+};
+
+function summarizeBulkMetadata(data: BulkMetadataResp | null | undefined): string {
+  const d = data ?? { updated: 0, skipped: 0, forbidden: 0, not_found: 0 };
+  if (d.updated === 0 && d.skipped === 0) {
+    return "No issues changed";
+  }
+  const parts: string[] = [];
+  parts.push(`${d.updated} updated`);
+  if (d.skipped > 0) parts.push(`${d.skipped} skipped`);
+  if (d.forbidden > 0 || d.not_found > 0) {
+    parts.push(`${d.forbidden + d.not_found} unavailable`);
+  }
+  return parts.join(" · ");
+}
+
+export function useBulkUpdateMetadata() {
+  const qc = useQueryClient();
+  return useApiMutation<
+    BulkMetadataResp,
+    {
+      issue_ids: string[];
+      patch: BulkMetadataPatch;
+      mode?: "skip_if_set" | "replace";
+    }
+  >(
+    (input) => ({
+      path: `/me/issues/bulk-metadata`,
+      method: "PATCH",
+      body: input,
+    }),
+    {
+      successMessage: (data) => summarizeBulkMetadata(data),
+      toastId: "bulk-metadata",
+      onSuccess: () => {
+        // Invalidate the issue lists / series detail that may have
+        // cached the old values. The CSV-like fields (genre, tags)
+        // also feed series-level metadata rollups.
+        qc.invalidateQueries({ queryKey: ["issues"] });
+        qc.invalidateQueries({ queryKey: ["series"] });
+      },
+    },
+  );
+}
+
 /** Multi-select mark-read/unread for filter views, which are
  *  series-only surfaces. Each selected series id expands server-side
  *  to its active issues, then walks the same `upsert_for` helper

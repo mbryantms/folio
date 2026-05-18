@@ -189,6 +189,12 @@ pub struct UpdateSeriesReq {
     /// first issue's summary on read).
     #[serde(default, deserialize_with = "deserialize_some_string")]
     pub summary: Option<Option<String>>,
+    /// Per-series reading-direction override. `"ltr"` / `"rtl"` /
+    /// `"ttb"` (future-compat) or `null` for "Auto, inherit". Empty or
+    /// whitespace-only strings are rejected — clients should send
+    /// `null` explicitly to clear. See `manga-and-bulk-metadata-1.0` M2.
+    #[serde(default, deserialize_with = "deserialize_some_string")]
+    pub reading_direction: Option<Option<String>>,
 }
 
 fn deserialize_some_i64<'de, D>(d: D) -> Result<Option<Option<i64>>, D::Error>
@@ -258,6 +264,29 @@ pub async fn update_series(
         None
     };
 
+    // Validate the reading-direction override if the caller is
+    // setting it. `null` clears (back to "Auto"); a recognized value
+    // pins. Unknown values are rejected so a typo doesn't silently
+    // disable the cascade.
+    let normalized_reading_dir = if let Some(v) = req.reading_direction.as_ref() {
+        match v.as_deref() {
+            None => Some(None),
+            Some(s) => {
+                let t = s.trim().to_ascii_lowercase();
+                if !matches!(t.as_str(), "ltr" | "rtl" | "ttb") {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        "validation.reading_direction",
+                        "reading_direction must be ltr, rtl, ttb, or null",
+                    );
+                }
+                Some(Some(t))
+            }
+        }
+    } else {
+        None
+    };
+
     // Validate + slugify any admin-supplied slug.
     let new_slug = if let Some(input) = req.slug.as_deref() {
         let s = crate::slug::slugify_segment(input);
@@ -309,6 +338,9 @@ pub async fn update_series(
     if let Some(v) = normalized_summary.clone() {
         am.summary = Set(v);
     }
+    if let Some(v) = normalized_reading_dir.clone() {
+        am.reading_direction = Set(v);
+    }
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
     match am.update(&app.db).await {
         Ok(updated) => {
@@ -341,6 +373,9 @@ pub async fn update_series(
             }
             if let Some(v) = normalized_summary {
                 diff.insert("summary".into(), serde_json::json!(v));
+            }
+            if let Some(v) = normalized_reading_dir {
+                diff.insert("reading_direction".into(), serde_json::json!(v));
             }
             if !diff.is_empty() {
                 crate::audit::record(
@@ -437,6 +472,15 @@ pub struct SeriesView {
     /// Calling user's rating for this series, 0..=5 in half-star steps.
     /// `None` means "no rating set". Detail-only.
     pub user_rating: Option<f64>,
+    /// Per-series reading-direction override. `"ltr"` / `"rtl"` /
+    /// `"ttb"` or `None` meaning "Auto — inherit from user pref /
+    /// library default at read time". The reader consults this above
+    /// the user and library defaults but below ComicInfo `<Manga>`.
+    /// Editable via `PATCH /series/{slug}` and set automatically by
+    /// the M3 scanner heuristic when ≥80% of a series's issues
+    /// declare manga.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading_direction: Option<String>,
 }
 
 /// Per-user, server-computed read progress for the whole series. Sidesteps
@@ -495,6 +539,7 @@ impl From<series::Model> for SeriesView {
             latest_year: None,
             progress_summary: None,
             user_rating: None,
+            reading_direction: m.reading_direction,
         }
     }
 }
@@ -578,6 +623,18 @@ pub struct IssueDetailView {
     /// the parser strips the prefix so callers see the bare integer.
     pub comicvine_id: Option<i64>,
     pub metron_id: Option<i64>,
+    /// Parent series' `reading_direction` override. Consulted by the
+    /// reader above the user and library defaults but below ComicInfo
+    /// `<Manga>`. `None` = "Auto" (series has no override). Plumbed by
+    /// the issue-detail handler; not stored on the issue row itself.
+    /// See `manga-and-bulk-metadata-1.0` M2.
+    pub series_reading_direction: Option<String>,
+    /// Parent library's `default_reading_direction` (`"ltr"` | `"rtl"`).
+    /// The reader consults this as a fallback below ComicInfo
+    /// `<Manga>` and the user's per-account preference but above the
+    /// hard-coded LTR default. Plumbed by the issue-detail handler;
+    /// not stored on the issue row itself.
+    pub library_default_reading_direction: Option<String>,
     /// Calling user's 0..=5 rating for this issue. `None` when unset.
     pub user_rating: Option<f64>,
     /// File size in bytes from the disk row at the last scan. Surfaced in the
@@ -695,6 +752,8 @@ impl IssueDetailView {
             gtin: m.gtin,
             comicvine_id: m.comicvine_id,
             metron_id: m.metron_id,
+            series_reading_direction: None,
+            library_default_reading_direction: None,
             user_rating: None,
             file_size: m.file_size,
             created_at: m.created_at.to_rfc3339(),

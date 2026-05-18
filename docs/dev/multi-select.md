@@ -121,6 +121,7 @@ introduce a new gesture layer.
 | `useBulkMarkSeriesProgress` | `POST /me/progress/series-bulk`   | series-level   |
 | `useBulkAddToCollection`    | `POST /me/collections/{id}/members/bulk-add` | any kind |
 | `useBulkRemoveFromCollection` | `POST /me/collections/{id}/members/bulk-remove` | any kind |
+| `useBulkUpdateMetadata`     | `PATCH /me/issues/bulk-metadata`  | issue-level    |
 
 All four hooks:
 - Toast on success with a count summary
@@ -191,6 +192,32 @@ Cap: 500 targets. Owner-guarded; non-owners get 403.
 ### `POST /me/collections/{id}/members/bulk-remove`
 
 Same `targets` shape. Returns `{ removed, not_present, invalid }`.
+
+### `PATCH /me/issues/bulk-metadata`
+
+Per-field patch across a list of issue ids. Backs the "Edit
+metadata…" dialog from `manga-and-bulk-metadata-1.0` M4+M5.
+
+**Request:** `{ issue_ids, patch, mode: "skip_if_set" | "replace" }`.
+
+**Patch fields (9 — credits deliberately excluded):**
+`language_code`, `manga`, `publisher`, `imprint`, `age_rating`,
+`format`, `genre`, `tags`, `story_arc`.
+
+Sending `null` for a field clears it (in `replace` mode); omitting
+leaves it untouched. `skip_if_set` only writes to rows where the
+targeted column is currently `NULL`.
+
+Credit fields (`writer`, `penciller`, `cover_artist`, `editor`,
+`translator`, `inker`, `colorist`, `letterer`) are NOT accepted —
+they vary issue-to-issue (guest artists, variants, mid-series
+translator changes) and bulk-editing risks clobbering accurate
+per-issue values. The dialog doesn't surface them; the server's
+patch struct doesn't deserialize them; sending one is silently
+dropped and the all-empty check then rejects the request.
+
+Returns `{ updated, skipped, forbidden, not_found }`. Single
+`admin.issue.bulk_metadata_update` audit row per call.
 
 ## How a new list page wires it up
 

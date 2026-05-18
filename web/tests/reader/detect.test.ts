@@ -27,6 +27,7 @@ describe("detectDirection", () => {
   it("returns rtl for manga=YesAndRightToLeft regardless of user default", () => {
     expect(detectDirection("YesAndRightToLeft", "ltr")).toBe("rtl");
     expect(detectDirection("YesAndRightToLeft", null)).toBe("rtl");
+    expect(detectDirection("YesAndRightToLeft", "ltr", "ltr")).toBe("rtl");
   });
 
   it("falls back to user default when manga is plain Yes", () => {
@@ -37,6 +38,43 @@ describe("detectDirection", () => {
   it("defaults to ltr when neither manga nor user pref is set", () => {
     expect(detectDirection(null, null)).toBe("ltr");
     expect(detectDirection(undefined, undefined)).toBe("ltr");
+  });
+
+  it("uses library default when user pref is null (M1)", () => {
+    expect(detectDirection(null, null, "rtl")).toBe("rtl");
+    expect(detectDirection(null, null, "ltr")).toBe("ltr");
+  });
+
+  it("user pref wins over library default when both set (M1)", () => {
+    expect(detectDirection(null, "ltr", "rtl")).toBe("ltr");
+    expect(detectDirection(null, "rtl", "ltr")).toBe("rtl");
+  });
+
+  it("falls back to ltr when library default is unrecognized", () => {
+    // Forward-compatibility: future "ttb" or "auto" shouldn't pin
+    // to an unknown value at this layer — defer to the next signal.
+    expect(detectDirection(null, null, "ttb" as never)).toBe("ltr");
+    expect(detectDirection(null, null, null)).toBe("ltr");
+    expect(detectDirection(null, null, undefined)).toBe("ltr");
+  });
+
+  it("series override wins over user + library defaults (M2)", () => {
+    // Series says RTL; user says LTR; library says LTR. Series wins.
+    expect(detectDirection(null, "ltr", "ltr", "rtl")).toBe("rtl");
+    expect(detectDirection(null, "rtl", "rtl", "ltr")).toBe("ltr");
+  });
+
+  it("ComicInfo Manga still wins over series override (M2)", () => {
+    // Author intent is the highest layer.
+    expect(
+      detectDirection("YesAndRightToLeft", "ltr", "ltr", "ltr"),
+    ).toBe("rtl");
+  });
+
+  it("series override skipped when null falls through to user (M2)", () => {
+    // Series has no opinion → defer to user.
+    expect(detectDirection(null, "rtl", "ltr", null)).toBe("rtl");
+    expect(detectDirection(null, "rtl", "ltr", undefined)).toBe("rtl");
   });
 });
 

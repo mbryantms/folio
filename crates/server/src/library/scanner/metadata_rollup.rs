@@ -315,6 +315,70 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
     ))
     .await?;
 
+    auto_set_reading_direction(db, series_id).await?;
+
+    Ok(())
+}
+
+/// `manga-and-bulk-metadata-1.0` M3 — when ≥80% of a series's active
+/// issues carry `manga IN ('Yes', 'YesAndRightToLeft')` AND the
+/// series row currently has no override, pin `reading_direction =
+/// "rtl"`. Sticky: never overwrites an admin-set value (we only
+/// touch rows where the column is currently NULL).
+///
+/// Threshold is intentionally generous (80%, not 100%) — series with
+/// occasional non-manga inserts (Free Comic Book Day specials,
+/// localized covers without the Manga flag) still get auto-flipped.
+/// One pure-manga issue isn't enough; the ≥3-issue minimum prevents
+/// tiny series from flipping on a single mis-tagged file.
+async fn auto_set_reading_direction<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
+    use entity::{issue, series};
+    use sea_orm::{
+        ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set,
+    };
+
+    // Skip if the series already has an override — admin / user
+    // values are sticky and never overwritten.
+    let row = match series::Entity::find_by_id(series_id).one(db).await? {
+        Some(r) if r.reading_direction.is_none() => r,
+        _ => return Ok(()),
+    };
+
+    let total = issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(series_id))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .count(db)
+        .await?;
+    if total < 3 {
+        return Ok(());
+    }
+
+    let manga_count = issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(series_id))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::Manga.is_in(["Yes", "YesAndRightToLeft"]))
+        .count(db)
+        .await?;
+    // 80% threshold; integer math to avoid float drift on small totals.
+    if manga_count * 5 < total * 4 {
+        return Ok(());
+    }
+
+    let mut am: series::ActiveModel = row.into();
+    am.reading_direction = Set(Some("rtl".to_owned()));
+    am.updated_at = Set(chrono::Utc::now().fixed_offset());
+    am.update(db).await?;
+    tracing::info!(
+        series_id = %series_id,
+        manga_count,
+        total,
+        "scanner heuristic: auto-set series.reading_direction = rtl",
+    );
     Ok(())
 }
 

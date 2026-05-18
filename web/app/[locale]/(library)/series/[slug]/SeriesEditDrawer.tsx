@@ -26,6 +26,17 @@ const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "limited", label: "Limited" },
 ];
 
+/** Reading-direction override at the series level. The empty-string
+ *  value represents "Auto" (= NULL on the row, defer to user pref /
+ *  library default at read time). `manga-and-bulk-metadata-1.0` M2.
+ */
+const READING_DIRECTION_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Auto (inherit)" },
+  { value: "ltr", label: "Left-to-right" },
+  { value: "rtl", label: "Right-to-left (manga)" },
+  { value: "ttb", label: "Vertical (webtoon)" },
+];
+
 /**
  * Series Edit drawer — companion to the per-issue Edit drawer. Surfaces the
  * series-wide fields (status, summary) plus the external-database identifiers
@@ -69,6 +80,7 @@ export function SeriesEditDrawer({
 
 type FormState = {
   status: string;
+  reading_direction: string;
   summary: string;
   comicvine_id: string;
   metron_id: string;
@@ -77,6 +89,7 @@ type FormState = {
 function initialState(s: SeriesView): FormState {
   return {
     status: s.status?.toLowerCase() ?? "continuing",
+    reading_direction: s.reading_direction ?? "",
     summary: s.summary ?? "",
     comicvine_id: s.comicvine_id != null ? String(s.comicvine_id) : "",
     metron_id: s.metron_id != null ? String(s.metron_id) : "",
@@ -139,6 +152,20 @@ function EditForm({
                 value={form.status}
                 onChange={(v) => set("status", v)}
                 options={STATUS_OPTIONS}
+              />
+            </Field>
+          </Section>
+
+          <Section
+            title="Reading"
+            hint="ComicInfo Manga=YesAndRightToLeft on an issue still wins. Auto = defer to your account default and the library."
+          >
+            <Field label="Reading direction" htmlFor="se-direction">
+              <NativeSelect
+                id="se-direction"
+                value={form.reading_direction}
+                onChange={(v) => set("reading_direction", v)}
+                options={READING_DIRECTION_OPTIONS}
               />
             </Field>
           </Section>
@@ -283,6 +310,14 @@ function buildBody(prev: SeriesView, form: FormState): UpdateSeriesReq {
   const nextStatus = form.status.trim().toLowerCase();
   if (nextStatus !== "" && nextStatus !== prev.status?.toLowerCase()) {
     body.status = nextStatus;
+  }
+
+  // Reading direction: "" = Auto (clear server override). Round-trip
+  // through the same emptyToNull treatment so an explicit clear is a
+  // PATCH with `reading_direction: null`.
+  const prevDir = prev.reading_direction ?? "";
+  if (form.reading_direction !== prevDir) {
+    body.reading_direction = emptyToNull(form.reading_direction);
   }
 
   // Summary: prefer current series-level value (which the API may have

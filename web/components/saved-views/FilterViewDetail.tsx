@@ -109,13 +109,21 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
               step={CARD_SIZE_STEP}
               defaultSize={CARD_SIZE_DEFAULT}
             />
-            {!selection.selectMode && items.length > 0 && (
+            {items.length > 0 && (
               <Button
                 ref={selectButtonRef}
                 variant="outline"
                 size="sm"
                 onClick={() => selection.enter()}
                 aria-label="Enter select mode"
+                aria-hidden={selection.selectMode}
+                tabIndex={selection.selectMode ? -1 : 0}
+                disabled={selection.selectMode}
+                className={
+                  selection.selectMode
+                    ? "pointer-events-none invisible opacity-0 transition-opacity duration-150"
+                    : "transition-opacity duration-150"
+                }
               >
                 <ListChecks className="mr-1.5 h-4 w-4" />
                 Select
@@ -171,6 +179,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
+        isPending={bulkMark.isPending}
       />
 
       {isInitialLoading ? (

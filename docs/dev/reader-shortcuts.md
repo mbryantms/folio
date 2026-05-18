@@ -123,14 +123,28 @@ User toggles always win and persist per series under
 
 ## Direction auto-detect
 
-1. ComicInfo `Manga=YesAndRightToLeft` → **RTL** (always wins).
-2. Otherwise, the user's `default_reading_direction` profile preference (set
-   via the user menu, stored on `users.default_reading_direction`) →
-   `ltr` / `rtl` / null=auto.
-3. Fallback → **LTR**.
+Five-layer resolution chain (highest-priority first), shipped in
+`~/.claude/plans/manga-and-bulk-metadata-1.0.md` M1+M2:
 
-Per-series localStorage choice (`reader:direction:<series_id>`) overrides
-all three when present.
+1. ComicInfo `Manga=YesAndRightToLeft` on the issue → **RTL** (always
+   wins — author intent).
+2. `series.reading_direction` override → admin-set per-series, or
+   auto-set by the M3 scanner heuristic when ≥80% of the series's
+   issues declare manga.
+3. The user's `default_reading_direction` profile preference (set
+   via the user menu, stored on `users.default_reading_direction`)
+   → `ltr` / `rtl` / null=auto.
+4. The parent library's `default_reading_direction` (newly consulted
+   by M1).
+5. Fallback → **LTR**.
+
+Unrecognized values at any layer (`"auto"`, future `"ttb"` at a
+layer that doesn't yet support it) are treated as "no opinion" and
+the chain falls through to the next signal.
+
+Per-series localStorage choice (`reader:direction:<series_id>`)
+overrides all five when present — client-side only, not synced
+across devices. Server-side per-series sync is deferred (R4).
 
 ## Mini-map / page strip
 

@@ -16,15 +16,32 @@ const SPREAD_ASPECT_THRESHOLD = 1.2; // w/h
 const DOUBLE_PAGE_FLAG_RATIO = 0.1;
 
 /**
- * Detect reading direction. Manga marked `YesAndRightToLeft` always wins.
- * Falls back to the user's global preference, then `ltr`.
+ * Detect reading direction. Manga marked `YesAndRightToLeft` always
+ * wins. Falls back through the chain documented in
+ * `~/.claude/plans/manga-and-bulk-metadata-1.0.md`:
+ *
+ *   1. ComicInfo `<Manga>` on the issue (highest — author intent)
+ *   2. `series.reading_direction` (M2 — admin / scanner-heuristic set)
+ *   3. user's `default_reading_direction`
+ *   4. library's `default_reading_direction` (M1 — newly consulted)
+ *   5. `ltr` (final default)
+ *
+ * Each layer accepts `null` / `undefined` meaning "no opinion, defer
+ * to the next layer." Non-recognized strings ("auto", future "ttb",
+ * etc.) are treated as "no opinion" at this layer for forward
+ * compatibility — the next-most-specific signal wins.
  */
 export function detectDirection(
   manga: string | null | undefined,
   userDefault: Direction | null | undefined,
+  libraryDefault?: Direction | null | undefined,
+  seriesOverride?: Direction | null | undefined,
 ): Direction {
   if (manga === "YesAndRightToLeft") return "rtl";
-  return userDefault ?? "ltr";
+  if (seriesOverride === "ltr" || seriesOverride === "rtl") return seriesOverride;
+  if (userDefault === "ltr" || userDefault === "rtl") return userDefault;
+  if (libraryDefault === "ltr" || libraryDefault === "rtl") return libraryDefault;
+  return "ltr";
 }
 
 /**

@@ -204,6 +204,7 @@ async fn seed_one_issue(app: &TestApp, slug_prefix: &str) -> (Uuid, Uuid, String
         removed_at: Set(None),
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
+        reading_direction: Set(None),
     }
     .insert(&db)
     .await
@@ -606,6 +607,7 @@ async fn next_up_caught_up_populates_fallback_suggestion_when_user_has_on_deck()
             removed_at: Set(None),
             removal_confirmed_at: Set(None),
             status_user_set_at: Set(None),
+        reading_direction: Set(None),
         }
         .insert(&db)
         .await

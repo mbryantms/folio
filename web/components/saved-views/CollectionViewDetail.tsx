@@ -296,13 +296,21 @@ export function CollectionViewDetail({
               step={CARD_SIZE_STEP}
               defaultSize={CARD_SIZE_DEFAULT}
             />
-            {!selection.selectMode && orderedEntries.length > 0 && (
+            {orderedEntries.length > 0 && (
               <Button
                 ref={selectButtonRef}
                 variant="outline"
                 size="sm"
                 onClick={() => selection.enter()}
                 aria-label="Enter select mode"
+                aria-hidden={selection.selectMode}
+                tabIndex={selection.selectMode ? -1 : 0}
+                disabled={selection.selectMode}
+                className={cn(
+                  "transition-opacity duration-150",
+                  selection.selectMode &&
+                    "pointer-events-none invisible opacity-0",
+                )}
               >
                 <ListChecks className="mr-1.5 h-4 w-4" />
                 Select
@@ -457,11 +465,10 @@ export function CollectionViewDetail({
           <AlertDialogHeader>
             <AlertDialogTitle>
               Remove {selectedTargets.length} item
-              {selectedTargets.length === 1 ? "" : "s"} from this
-              collection?
+              {selectedTargets.length === 1 ? "" : "s"} from this collection?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              The items stay in your library; only their membership in
+              The items stay in your library; only their membership in{" "}
               &ldquo;{savedView.name}&rdquo; is removed.
             </AlertDialogDescription>
           </AlertDialogHeader>

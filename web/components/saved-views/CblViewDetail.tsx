@@ -34,10 +34,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useCblList, useCblListEntriesInfinite } from "@/lib/api/queries";
-import {
-  useBulkMarkProgress,
-  useRefreshCblList,
-} from "@/lib/api/mutations";
+import { useBulkMarkProgress, useRefreshCblList } from "@/lib/api/mutations";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
@@ -110,10 +107,7 @@ function CblViewDetailInner({
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          if (
-            entriesQuery.hasNextPage &&
-            !entriesQuery.isFetchingNextPage
-          ) {
+          if (entriesQuery.hasNextPage && !entriesQuery.isFetchingNextPage) {
             void entriesQuery.fetchNextPage();
           }
         }
@@ -255,13 +249,21 @@ function CblViewDetailInner({
               step={CARD_SIZE_STEP}
               defaultSize={CARD_SIZE_DEFAULT}
             />
-            {!selection.selectMode && loadedEntries.length > 0 && (
+            {loadedEntries.length > 0 && (
               <Button
                 ref={selectButtonRef}
                 variant="outline"
                 size="sm"
                 onClick={() => selection.enter()}
                 aria-label="Enter select mode"
+                aria-hidden={selection.selectMode}
+                tabIndex={selection.selectMode ? -1 : 0}
+                disabled={selection.selectMode}
+                className={
+                  selection.selectMode
+                    ? "pointer-events-none invisible opacity-0 transition-opacity duration-150"
+                    : "transition-opacity duration-150"
+                }
               >
                 <ListChecks className="mr-1.5 h-4 w-4" />
                 Select
@@ -490,8 +492,8 @@ function renderYearRangeBadge(
           </span>
         </TooltipTrigger>
         <TooltipContent side="bottom" className="max-w-xs">
-          Year range covered by this list. Auto-filled from the earliest
-          and latest entry at import; edit in Settings.
+          Year range covered by this list. Auto-filled from the earliest and
+          latest entry at import; edit in Settings.
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

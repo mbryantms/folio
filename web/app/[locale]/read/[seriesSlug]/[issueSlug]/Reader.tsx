@@ -54,6 +54,8 @@ export function Reader({
   pages,
   manga,
   userDefaultDirection,
+  libraryDefaultDirection,
+  seriesReadingDirection,
   userDefaultFitMode,
   userDefaultViewMode,
   userDefaultPageStrip,
@@ -80,6 +82,14 @@ export function Reader({
   pages: PageInfo[];
   manga: string | null;
   userDefaultDirection: Direction | null;
+  /** Parent library's `default_reading_direction`. Fallback in the
+   *  resolution chain below `userDefaultDirection` but above LTR.
+   *  See `manga-and-bulk-metadata-1.0` M1. */
+  libraryDefaultDirection: Direction | null;
+  /** Parent series' `reading_direction` override. Sits in the
+   *  resolution chain between ComicInfo `<Manga>` and the user pref.
+   *  See `manga-and-bulk-metadata-1.0` M2. */
+  seriesReadingDirection: Direction | null;
   userDefaultFitMode: FitMode | null;
   userDefaultViewMode: ViewMode | null;
   userDefaultPageStrip: boolean;
@@ -343,8 +353,14 @@ export function Reader({
   ]);
 
   const initialDirection = useMemo<Direction>(
-    () => detectDirection(manga, userDefaultDirection),
-    [manga, userDefaultDirection],
+    () =>
+      detectDirection(
+        manga,
+        userDefaultDirection,
+        libraryDefaultDirection,
+        seriesReadingDirection,
+      ),
+    [manga, userDefaultDirection, libraryDefaultDirection, seriesReadingDirection],
   );
   // User defaults take precedence over auto-detection on first mount; per-series
   // localStorage still wins over both (see store.init).

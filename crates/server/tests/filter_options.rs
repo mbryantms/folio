@@ -188,6 +188,7 @@ async fn seed_library_with_metadata(
         removed_at: Set(None),
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
+        reading_direction: Set(None),
     }
     .insert(&db)
     .await
@@ -524,6 +525,7 @@ async fn seed_library_with_publishers(
             removed_at: Set(None),
             removal_confirmed_at: Set(None),
             status_user_set_at: Set(None),
+        reading_direction: Set(None),
         }
         .insert(&db)
         .await
@@ -611,6 +613,7 @@ async fn seed_one_series(
         removed_at: Set(None),
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
+        reading_direction: Set(None),
     }
     .insert(&db)
     .await
@@ -824,6 +827,7 @@ async fn seed_series_full(
         removed_at: Set(None),
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
+        reading_direction: Set(None),
     }
     .insert(&db)
     .await
@@ -1098,6 +1102,7 @@ async fn seed_series_with_issue_csv(
         removed_at: Set(None),
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
+        reading_direction: Set(None),
     }
     .insert(&db)
     .await

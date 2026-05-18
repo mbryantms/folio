@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Circle, FolderPlus, ListChecks } from "lucide-react";
+import { Check, Circle, FolderPlus, ListChecks, Pencil } from "lucide-react";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import { EditMetadataDialog } from "@/components/library/EditMetadataDialog";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
@@ -26,7 +27,10 @@ import { useSeriesIssuesInfinite } from "@/lib/api/queries";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
-import { SpecialsExtrasSection, splitMainAndSpecials } from "./SpecialsExtrasSection";
+import {
+  SpecialsExtrasSection,
+  splitMainAndSpecials,
+} from "./SpecialsExtrasSection";
 
 /** Per-series listing only supports a subset of `IssueSort` — the
  *  cross-library discovery sorts (`year`, `page_count`, `user_rating`)
@@ -95,6 +99,7 @@ export function IssuesPanel({
   const selection = useSelection(items);
   const bulkMark = useBulkMarkProgress();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [editMetadataOpen, setEditMetadataOpen] = useState(false);
   const runBulk = useCallback(
     (finished: boolean) => {
       const ids = Array.from(selection.selected);
@@ -228,18 +233,23 @@ export function IssuesPanel({
             step={CARD_SIZE_STEP}
             defaultSize={CARD_SIZE_DEFAULT}
           />
-          {!selection.selectMode && (
-            <Button
-              ref={selectButtonRef}
-              variant="outline"
-              size="sm"
-              onClick={() => selection.enter()}
-              aria-label="Enter select mode"
-            >
-              <ListChecks className="mr-1.5 h-4 w-4" />
-              Select
-            </Button>
-          )}
+          <Button
+            ref={selectButtonRef}
+            variant="outline"
+            size="sm"
+            onClick={() => selection.enter()}
+            aria-label="Enter select mode"
+            aria-hidden={selection.selectMode}
+            tabIndex={selection.selectMode ? -1 : 0}
+            disabled={selection.selectMode}
+            className={cn(
+              "transition-opacity duration-150",
+              selection.selectMode && "pointer-events-none invisible opacity-0",
+            )}
+          >
+            <ListChecks className="mr-1.5 h-4 w-4" />
+            Select
+          </Button>
         </div>
       </div>
 
@@ -268,6 +278,12 @@ export function IssuesPanel({
             icon: FolderPlus,
             onClick: () => setPickerOpen(true),
           },
+          {
+            id: "edit-metadata",
+            label: "Edit metadata…",
+            icon: Pencil,
+            onClick: () => setEditMetadataOpen(true),
+          },
         ]}
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
@@ -281,6 +297,14 @@ export function IssuesPanel({
           if (!next) selection.clear();
         }}
         targets={selectedTargets}
+      />
+      <EditMetadataDialog
+        open={editMetadataOpen}
+        onOpenChange={(next) => {
+          setEditMetadataOpen(next);
+          if (!next) selection.clear();
+        }}
+        issueIds={Array.from(selection.selected)}
       />
 
       {query.isError && (

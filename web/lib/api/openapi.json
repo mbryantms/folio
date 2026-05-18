@@ -4081,6 +4081,41 @@
         }
       }
     },
+    "/me/issues/bulk-metadata": {
+      "patch": {
+        "tags": [
+          "api::issues"
+        ],
+        "summary": "Bulk-update a per-field patch across a list of issue ids.",
+        "description": "One transaction; batched by issue across the patch's fields. ACL\nis per-issue via the library access check. Skips per-field +\nper-issue when `mode = skip_if_set` AND the column is non-NULL.\nEmits one `admin.issue.bulk_metadata_update` audit row per call\nwith `{ patch_keys, mode, updated_count, requested_count }`.",
+        "operationId": "bulk_metadata",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkMetadataReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkMetadataResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation"
+          }
+        }
+      }
+    },
     "/me/issues/{id}/ocr": {
       "post": {
         "tags": [
@@ -6688,6 +6723,132 @@
           }
         }
       },
+      "BulkMetadataPatch": {
+        "type": "object",
+        "description": "Per-field patch surface for the bulk-edit dialog\n(`manga-and-bulk-metadata-1.0` M4). Every field is independently\noptional. Sending `null` for a nullable field clears it; omitting\nleaves it untouched.\n\n**Credit fields are deliberately excluded** (writer, penciller,\ncover_artist, editor, translator, inker, colorist, letterer):\nthese vary issue-to-issue in real series (guest artists, variant\ncovers, mid-series translator changes) and bulk-editing them\nrisks clobbering accurate per-issue credits. Continue using the\nper-issue drawer for credits.",
+        "properties": {
+          "age_rating": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "genre": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CSV. Replaces the field wholesale; for additive tag operations\nthe M5 dialog assembles the union client-side and sends it\nhere."
+          },
+          "imprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO-639-1 language code (`\"ja\"`, `\"en\"`, …). `null` clears."
+          },
+          "manga": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ComicInfo Manga: `\"No\"` / `\"Yes\"` / `\"YesAndRightToLeft\"`.\n`null` clears."
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "story_arc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "BulkMetadataReq": {
+        "type": "object",
+        "required": [
+          "issue_ids",
+          "patch"
+        ],
+        "properties": {
+          "issue_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mode": {
+            "$ref": "#/components/schemas/BulkMode"
+          },
+          "patch": {
+            "$ref": "#/components/schemas/BulkMetadataPatch"
+          }
+        }
+      },
+      "BulkMetadataResp": {
+        "type": "object",
+        "required": [
+          "updated",
+          "skipped",
+          "forbidden",
+          "not_found"
+        ],
+        "properties": {
+          "forbidden": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues the caller doesn't have library access to. Filtered\nsilently; surfaced in the response for admin debugging.",
+            "minimum": 0
+          },
+          "not_found": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues whose id didn't resolve to an active row.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues skipped because every targeted column was already set\nAND `mode = \"skip_if_set\"`. (Counted once per issue, not per\nfield.)",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues whose row was updated.",
+            "minimum": 0
+          }
+        }
+      },
+      "BulkMode": {
+        "type": "string",
+        "enum": [
+          "skip_if_set",
+          "replace"
+        ]
+      },
       "BulkRemoveMembersReq": {
         "type": "object",
         "description": "Body for `POST /me/collections/{id}/members/bulk-remove`. Identifies\neach member by its `(entry_kind, ref_id)` pair — the same shape the\nbulk-add endpoint accepts — so the UI doesn't have to round-trip\nto look up the `collection_entries.id` PK for each row.\n\nPlan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M4).",
@@ -8405,6 +8566,13 @@
               "null"
             ]
           },
+          "library_default_reading_direction": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parent library's `default_reading_direction` (`\"ltr\"` | `\"rtl\"`).\nThe reader consults this as a fallback below ComicInfo\n`<Manga>` and the user's per-account preference but above the\nhard-coded LTR default. Plumbed by the issue-detail handler;\nnot stored on the issue row itself."
+          },
           "library_id": {
             "type": "string"
           },
@@ -8472,6 +8640,13 @@
           },
           "series_id": {
             "type": "string"
+          },
+          "series_reading_direction": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parent series' `reading_direction` override. Consulted by the\nreader above the user and library defaults but below ComicInfo\n`<Manga>`. `None` = \"Auto\" (series has no override). Plumbed by\nthe issue-detail handler; not stored on the issue row itself.\nSee `manga-and-bulk-metadata-1.0` M2."
           },
           "series_slug": {
             "type": "string",
@@ -11583,6 +11758,13 @@
               "null"
             ]
           },
+          "reading_direction": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Per-series reading-direction override. `\"ltr\"` / `\"rtl\"` /\n`\"ttb\"` or `None` meaning \"Auto — inherit from user pref /\nlibrary default at read time\". The reader consults this above\nthe user and library defaults but below ComicInfo `<Manga>`.\nEditable via `PATCH /series/{slug}` and set automatically by\nthe M3 scanner heuristic when ≥80% of a series's issues\ndeclare manga."
+          },
           "slug": {
             "type": "string"
           },
@@ -12854,6 +13036,13 @@
               "null"
             ],
             "format": "int64"
+          },
+          "reading_direction": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Per-series reading-direction override. `\"ltr\"` / `\"rtl\"` /\n`\"ttb\"` (future-compat) or `null` for \"Auto, inherit\". Empty or\nwhitespace-only strings are rejected — clients should send\n`null` explicitly to clear. See `manga-and-bulk-metadata-1.0` M2."
           },
           "slug": {
             "type": [

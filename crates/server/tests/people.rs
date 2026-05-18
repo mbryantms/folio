@@ -188,6 +188,7 @@ async fn seed_series(app: &TestApp, lib_id: Uuid, name: &str) -> Uuid {
         removed_at: Set(None),
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
+        reading_direction: Set(None),
     }
     .insert(&db)
     .await

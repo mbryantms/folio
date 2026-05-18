@@ -102,6 +102,10 @@ export type SeriesView = {
   /** Calling user's 0..=5 rating for the series. Half-star precision.
    *  Null means "not rated". */
   user_rating?: number | null;
+  /** Per-series reading-direction override. `"ltr"` / `"rtl"` /
+   *  `"ttb"` or `null` for "Auto (inherit from user pref / library)".
+   *  See manga-and-bulk-metadata-1.0 M2. */
+  reading_direction?: string | null;
 };
 
 export type SeriesProgressSummary = {
@@ -147,6 +151,10 @@ export type UpdateSeriesReq = {
   /** Series-level summary. `null` clears (the API falls back to the first
    *  issue's summary on read). Omit to leave untouched. */
   summary?: string | null;
+  /** Per-series reading-direction override. `"ltr"` / `"rtl"` /
+   *  `"ttb"` or `null` for "Auto" (clear). Server rejects unknown
+   *  values. See manga-and-bulk-metadata-1.0 M2. */
+  reading_direction?: string | null;
 };
 
 export type IssueSummaryView = {
@@ -265,6 +273,16 @@ export type IssueDetailView = {
   /** External-database IDs. ComicVine `4000-N` strips to the integer N. */
   comicvine_id: number | null;
   metron_id: number | null;
+  /** Parent series' `reading_direction` override. The reader consults
+   *  this as the second layer of the resolution chain (below
+   *  ComicInfo `<Manga>` but above the user pref). `null` = "Auto".
+   *  See manga-and-bulk-metadata-1.0 M2. */
+  series_reading_direction?: string | null;
+  /** Parent library's `default_reading_direction`. The reader consults
+   *  this as a fallback below ComicInfo `<Manga>` and the user's
+   *  per-account preference but above the hard-coded LTR default.
+   *  See manga-and-bulk-metadata-1.0 M1. */
+  library_default_reading_direction?: string | null;
   /** Calling user's 0..=5 rating for this issue. Null means "not rated". */
   user_rating: number | null;
   /** File size in bytes from the on-disk row at last scan. */

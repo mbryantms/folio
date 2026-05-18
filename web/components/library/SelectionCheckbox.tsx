@@ -55,7 +55,7 @@ export function SelectionCheckbox({
   className?: string;
 }) {
   const visualClasses = cn(
-    "absolute top-2 left-2 z-10 flex h-7 w-7 items-center justify-center rounded-md border-2 transition-all",
+    "absolute top-2 left-2 z-10 flex h-7 w-7 items-center justify-center rounded-md border-2 transition-all duration-200 ease-out motion-reduce:transition-none",
     isSelected
       ? "border-primary bg-primary text-primary-foreground"
       : "border-border bg-background/90 backdrop-blur-sm",
@@ -68,7 +68,10 @@ export function SelectionCheckbox({
     // interactive elements. State is announced via the parent
     // button's `aria-pressed`.
     return (
-      <span aria-hidden="true" className={cn(visualClasses, "opacity-100")}>
+      <span
+        aria-hidden="true"
+        className={cn(visualClasses, "scale-100 opacity-100")}
+      >
         {isSelected && <Check className="h-4 w-4" />}
       </span>
     );
@@ -98,7 +101,7 @@ export function SelectionCheckbox({
       className={cn(
         visualClasses,
         "focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none",
-        "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto",
+        "pointer-events-none scale-95 opacity-0 group-hover:pointer-events-auto group-hover:scale-100 group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:scale-100 focus-visible:opacity-100",
       )}
     >
       {isSelected && <Check className="h-4 w-4" />}

@@ -10,9 +10,9 @@ use axum::{
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, patch, post},
 };
-use entity::{issue, library_health_issue, library_user_access, series};
+use entity::{issue, library, library_health_issue, library_user_access, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     Set, Statement, Value, sea_query::Expr,
@@ -35,6 +35,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/issues", get(list))
         .route("/issues/search", get(search))
+        .route("/me/issues/bulk-metadata", patch(bulk_metadata))
         .route(
             "/series/{series_slug}/issues/{issue_slug}",
             get(get_one).patch(update),
@@ -129,8 +130,26 @@ pub async fn get_one(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     let rating = crate::api::series::lookup_user_rating(&app, user.id, "issue", &row.id).await;
+    // Pull the parent series' and library's reading-direction overrides
+    // so the reader can consult them in the resolution chain below
+    // ComicInfo `<Manga>` but above the hard-coded LTR default.
+    // See `manga-and-bulk-metadata-1.0` M1 + M2.
+    let series_dir = series::Entity::find_by_id(row.series_id)
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.reading_direction);
+    let library_default_dir = library::Entity::find_by_id(row.library_id)
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|lib| lib.default_reading_direction);
     let mut view = IssueDetailView::from_model(row, &series_slug);
     view.user_rating = rating;
+    view.series_reading_direction = series_dir;
+    view.library_default_reading_direction = library_default_dir;
     Json(view).into_response()
 }
 
@@ -794,6 +813,325 @@ pub async fn list_issue_health(
             .map(crate::api::health_issues::HealthIssueView::from)
             .collect::<Vec<_>>(),
     )
+    .into_response()
+}
+
+// ───── PATCH /me/issues/bulk-metadata ─────────────────────────────────────
+
+/// Per-field patch surface for the bulk-edit dialog
+/// (`manga-and-bulk-metadata-1.0` M4). Every field is independently
+/// optional. Sending `null` for a nullable field clears it; omitting
+/// leaves it untouched.
+///
+/// **Credit fields are deliberately excluded** (writer, penciller,
+/// cover_artist, editor, translator, inker, colorist, letterer):
+/// these vary issue-to-issue in real series (guest artists, variant
+/// covers, mid-series translator changes) and bulk-editing them
+/// risks clobbering accurate per-issue credits. Continue using the
+/// per-issue drawer for credits.
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+pub struct BulkMetadataPatch {
+    /// ISO-639-1 language code (`"ja"`, `"en"`, …). `null` clears.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub language_code: Option<Option<String>>,
+    /// ComicInfo Manga: `"No"` / `"Yes"` / `"YesAndRightToLeft"`.
+    /// `null` clears.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub manga: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub publisher: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub imprint: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub age_rating: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub format: Option<Option<String>>,
+    /// CSV. Replaces the field wholesale; for additive tag operations
+    /// the M5 dialog assembles the union client-side and sends it
+    /// here.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub genre: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub tags: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub story_arc: Option<Option<String>>,
+}
+
+impl BulkMetadataPatch {
+    /// `true` when no fields were set (all `None`). The handler
+    /// returns an empty-counts response without touching the DB in
+    /// that case.
+    fn is_empty(&self) -> bool {
+        self.language_code.is_none()
+            && self.manga.is_none()
+            && self.publisher.is_none()
+            && self.imprint.is_none()
+            && self.age_rating.is_none()
+            && self.format.is_none()
+            && self.genre.is_none()
+            && self.tags.is_none()
+            && self.story_arc.is_none()
+    }
+
+    /// Names of fields the caller actually included in the patch.
+    /// Used to populate `issue.user_edited` so the scanner skips
+    /// them on rescan and the audit-log row stays concise.
+    fn touched_field_names(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.language_code.is_some() {
+            out.push("language_code");
+        }
+        if self.manga.is_some() {
+            out.push("manga");
+        }
+        if self.publisher.is_some() {
+            out.push("publisher");
+        }
+        if self.imprint.is_some() {
+            out.push("imprint");
+        }
+        if self.age_rating.is_some() {
+            out.push("age_rating");
+        }
+        if self.format.is_some() {
+            out.push("format");
+        }
+        if self.genre.is_some() {
+            out.push("genre");
+        }
+        if self.tags.is_some() {
+            out.push("tags");
+        }
+        if self.story_arc.is_some() {
+            out.push("story_arc");
+        }
+        out
+    }
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BulkMode {
+    /// Update only issues where the targeted column is currently
+    /// `NULL`. Default — destructive overwrites require an explicit
+    /// `replace` opt-in.
+    #[default]
+    SkipIfSet,
+    /// Update unconditionally. Caller has confirmed they want to
+    /// clobber per-issue values.
+    Replace,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BulkMetadataReq {
+    pub issue_ids: Vec<String>,
+    pub patch: BulkMetadataPatch,
+    #[serde(default)]
+    pub mode: BulkMode,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkMetadataResp {
+    /// Issues whose row was updated.
+    pub updated: u32,
+    /// Issues skipped because every targeted column was already set
+    /// AND `mode = "skip_if_set"`. (Counted once per issue, not per
+    /// field.)
+    pub skipped: u32,
+    /// Issues the caller doesn't have library access to. Filtered
+    /// silently; surfaced in the response for admin debugging.
+    pub forbidden: u32,
+    /// Issues whose id didn't resolve to an active row.
+    pub not_found: u32,
+}
+
+/// Bulk-update a per-field patch across a list of issue ids.
+///
+/// One transaction; batched by issue across the patch's fields. ACL
+/// is per-issue via the library access check. Skips per-field +
+/// per-issue when `mode = skip_if_set` AND the column is non-NULL.
+/// Emits one `admin.issue.bulk_metadata_update` audit row per call
+/// with `{ patch_keys, mode, updated_count, requested_count }`.
+#[utoipa::path(
+    patch,
+    path = "/me/issues/bulk-metadata",
+    request_body = BulkMetadataReq,
+    responses(
+        (status = 200, body = BulkMetadataResp),
+        (status = 400, description = "validation"),
+    )
+)]
+pub async fn bulk_metadata(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<BulkMetadataReq>,
+) -> impl IntoResponse {
+    const MAX_IDS: usize = 500;
+    if req.issue_ids.len() > MAX_IDS {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            &format!("issue_ids cap is {MAX_IDS}"),
+        );
+    }
+    if req.patch.is_empty() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation.empty_patch",
+            "patch must include at least one field",
+        );
+    }
+
+    // Validate enum-valued fields up-front so a bad value doesn't
+    // partially apply.
+    if let Some(Some(v)) = req.patch.manga.as_ref()
+        && !matches!(v.as_str(), "Yes" | "No" | "YesAndRightToLeft")
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation.manga",
+            "manga must be Yes, No, YesAndRightToLeft, or null",
+        );
+    }
+
+    if req.issue_ids.is_empty() {
+        return Json(BulkMetadataResp {
+            updated: 0,
+            skipped: 0,
+            forbidden: 0,
+            not_found: 0,
+        })
+        .into_response();
+    }
+
+    // Dedup ids — a noisy client shouldn't double-bill.
+    let mut seen = std::collections::HashSet::with_capacity(req.issue_ids.len());
+    let ids: Vec<String> = req
+        .issue_ids
+        .into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect();
+    let requested = ids.len() as u32;
+
+    let rows: Vec<issue::Model> = match issue::Entity::find()
+        .filter(issue::Column::Id.is_in(ids.clone()))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "bulk-metadata issue lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let not_found = requested.saturating_sub(rows.len() as u32);
+
+    let mut updated: u32 = 0;
+    let mut skipped: u32 = 0;
+    let mut forbidden: u32 = 0;
+    let mode_skip_if_set = matches!(req.mode, BulkMode::SkipIfSet);
+
+    for row in rows {
+        if !visible_in_library(&app, &user, row.library_id).await {
+            forbidden += 1;
+            continue;
+        }
+
+        // Build the per-row active model, applying patch fields
+        // conditionally on `mode`. Use helper closures so the
+        // skip_if_set logic stays readable; the per-field touch
+        // count drives the `skipped` counter when nothing changed.
+        let mut am: issue::ActiveModel = row.clone().into();
+        let mut row_touched = false;
+        macro_rules! apply {
+            ($patch:expr, $current:expr, $field:ident) => {
+                if let Some(v) = $patch.as_ref() {
+                    let should_apply = !mode_skip_if_set || $current.is_none();
+                    if should_apply {
+                        am.$field = Set(v.clone());
+                        row_touched = true;
+                    }
+                }
+            };
+        }
+        apply!(req.patch.language_code, row.language_code, language_code);
+        apply!(req.patch.manga, row.manga, manga);
+        apply!(req.patch.publisher, row.publisher, publisher);
+        apply!(req.patch.imprint, row.imprint, imprint);
+        apply!(req.patch.age_rating, row.age_rating, age_rating);
+        apply!(req.patch.format, row.format, format);
+        apply!(req.patch.genre, row.genre, genre);
+        apply!(req.patch.tags, row.tags, tags);
+        apply!(req.patch.story_arc, row.story_arc, story_arc);
+
+        if !row_touched {
+            skipped += 1;
+            continue;
+        }
+
+        // Stamp user_edited with every field this call touched so
+        // the scanner skips them on rescan. We add to the existing
+        // set rather than replace so prior PATCH /issues edits stay
+        // sticky.
+        let mut user_edited: BTreeSet<String> = serde_json::from_value(row.user_edited.clone())
+            .unwrap_or_default();
+        for name in req.patch.touched_field_names() {
+            user_edited.insert(name.to_owned());
+        }
+        am.user_edited = Set(serde_json::json!(user_edited.into_iter().collect::<Vec<_>>()));
+        am.updated_at = Set(chrono::Utc::now().fixed_offset());
+
+        match am.update(&app.db).await {
+            Ok(_) => updated += 1,
+            Err(e) => {
+                tracing::warn!(error = %e, issue_id = %row.id, "bulk-metadata update failed");
+                // Surface as not_found in the response — caller's
+                // perspective is "didn't apply". The error log lets
+                // operators investigate.
+                forbidden += 1;
+            }
+        }
+    }
+
+    // Single audit row per call. Payload includes the *names* of the
+    // touched fields (not the values — those can contain large
+    // free-form strings) plus the counts.
+    let _ = audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: user.id,
+            action: "admin.issue.bulk_metadata_update",
+            target_type: Some("issue"),
+            // Multi-target audit row — no single id. The patch_keys
+            // payload + count is the trail.
+            target_id: None,
+            payload: serde_json::json!({
+                "patch_keys": req.patch.touched_field_names(),
+                "mode": match req.mode {
+                    BulkMode::SkipIfSet => "skip_if_set",
+                    BulkMode::Replace => "replace",
+                },
+                "requested": requested,
+                "updated": updated,
+                "skipped": skipped,
+                "forbidden": forbidden,
+                "not_found": not_found,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+
+    Json(BulkMetadataResp {
+        updated,
+        skipped,
+        forbidden,
+        not_found,
+    })
     .into_response()
 }
 
