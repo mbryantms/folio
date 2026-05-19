@@ -184,8 +184,8 @@ async fn v1_series_feed_decorates_each_state_with_glyph_and_page_count() {
     );
     assert_eq!(
         title_of(&blocks, &b),
-        "\u{25D0} Second Strike (14 / 32)",
-        "in-progress should be ◐ with (N+1 / M):\n{body}"
+        "Up Next: \u{25D0} Second Strike (14 / 32)",
+        "in-progress should be ◐ with (N+1 / M), prefixed because it's the up-next target:\n{body}"
     );
     assert_eq!(
         title_of(&blocks, &c),
@@ -214,8 +214,8 @@ async fn v1_series_feed_omits_page_count_suffix_when_unknown() {
     let blocks = entry_blocks_by_id(&body);
     assert_eq!(
         title_of(&blocks, &i),
-        "\u{25D0} Mystery",
-        "unknown page_count should drop the (N / M) suffix:\n{body}"
+        "Up Next: \u{25D0} Mystery",
+        "unknown page_count should drop the (N / M) suffix; sole unfinished issue is the up-next target:\n{body}"
     );
 }
 
@@ -249,8 +249,8 @@ async fn v1_series_feed_respects_user_opt_out_flag() {
     let blocks = entry_blocks_by_id(&body);
     assert_eq!(
         title_of(&blocks, &i),
-        "Vanilla",
-        "opt-out must strip glyph + suffix entirely:\n{body}"
+        "Up Next: Vanilla",
+        "opt-out strips glyph + suffix; the up-next prefix is structural and applies regardless:\n{body}"
     );
     assert!(
         !body.contains("\u{25CB}") && !body.contains("\u{25D0}") && !body.contains("\u{25CF}"),
@@ -291,5 +291,8 @@ async fn v2_series_feed_decorates_publication_title() {
         .as_str()
         .unwrap()
         .to_owned();
+    // Issue A is unread (no progress row) at position 1.0, so it's the
+    // first unfinished issue and the up-next target — Issue B carries
+    // progress glyphs but no prefix.
     assert_eq!(title_b, "\u{25D0} Issue B (5 / 20)");
 }

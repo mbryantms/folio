@@ -429,9 +429,27 @@ async fn root_navigation_shape() {
         "atom content-type, got {ct:?}"
     );
     let body = body_text(resp.into_body()).await;
-    assert!(body.contains(r#"href="/opds/v1/series""#));
-    assert!(body.contains(r#"href="/opds/v1/recent""#));
+    // opds-richer-feeds 1.1 M3: pages drive the root nav. The two
+    // explicit system feeds + the catch-all sibling feeds + browse
+    // remain; the per-user "Home" page entry is auto-seeded on first
+    // login so it must appear too.
+    assert!(body.contains(r#"href="/opds/v1/continue""#));
+    assert!(body.contains(r#"href="/opds/v1/on-deck""#));
+    assert!(body.contains(r#"href="/opds/v1/pages/home""#));
+    assert!(body.contains(r#"href="/opds/v1/lists""#));
+    assert!(body.contains(r#"href="/opds/v1/collections""#));
+    assert!(body.contains(r#"href="/opds/v1/views""#));
+    assert!(body.contains(r#"href="/opds/v1/browse""#));
     assert!(body.contains(r#"rel="search""#));
+    // Dropped from root by M3 (handlers remain URL-addressable).
+    assert!(!body.contains(r#"href="/opds/v1/series""#));
+    assert!(!body.contains(r#"href="/opds/v1/recent""#));
+    assert!(!body.contains(r#"href="/opds/v1/new-this-month""#));
+    assert!(!body.contains(r#"href="/opds/v1/history""#));
+    assert!(!body.contains(r#"href="/opds/v1/wtr""#));
+    assert!(
+        !body.contains(r#"href="/opds/v1/pages""#) || body.contains(r#"href="/opds/v1/pages/"#)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1097,7 +1115,9 @@ async fn root_navigation_includes_personal_subsections() {
     let resp = get_with_auth(&app, "/opds/v1", Header::Cookie(auth.cookies())).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_text(resp.into_body()).await;
-    assert!(body.contains(r#"href="/opds/v1/wtr""#));
+    // opds-richer-feeds 1.1 M3: /wtr dropped from root nav (still URL-
+    // addressable; surfaces inside `/collections` and any page where
+    // the user pinned it). Other catch-all siblings remain.
     assert!(body.contains(r#"href="/opds/v1/lists""#));
     assert!(body.contains(r#"href="/opds/v1/collections""#));
     assert!(body.contains(r#"href="/opds/v1/views""#));

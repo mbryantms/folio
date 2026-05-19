@@ -161,45 +161,32 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
         opds::fetch_visible_issues_preserving_order(&app, &continue_ids, &visible).await;
     let continue_pubs = build_publications(&app, &user, &continue_issues).await;
 
-    // Group: New this month — last 30 days, top 8 by created_at.
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
-    let mut new_sel = issue::Entity::find()
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
-        .filter(issue::Column::CreatedAt.gte(cutoff.fixed_offset()))
-        .order_by_desc(issue::Column::CreatedAt)
-        .limit(8);
-    if let Some(ids) = allowed.as_ref() {
-        new_sel = new_sel.filter(issue::Column::LibraryId.is_in(ids.clone()));
-    }
-    let new_rows = new_sel.all(&app.db).await.unwrap_or_default();
-    let new_pubs = build_publications(&app, &user, &new_rows).await;
-
-    // Group: Series — top 8 by name. Cover + facets share the same
-    // helpers as the main /opds/v2/series feed.
-    let mut series_sel = series::Entity::find()
-        .order_by_asc(series::Column::Name)
-        .limit(8);
-    if let Some(ids) = allowed.as_ref() {
-        series_sel = series_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
-    }
-    let series_rows = series_sel.all(&app.db).await.unwrap_or_default();
-    let series_ids: Vec<Uuid> = series_rows.iter().map(|s| s.id).collect();
-    let series_covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
-    let series_facets = opds::fetch_series_facets(&app.db, &series_ids).await;
-    let series_nav: Vec<Value> = series_rows
+    // opds-richer-feeds 1.1 M3: pages drive the primary nav. One nav
+    // entry per `user_page` (position-ordered) sits between the two
+    // explicit top-level system feeds (Continue reading, On Deck) and
+    // the catch-all sibling feeds (Reading lists, Collections, Saved
+    // views, Browse). Lazy-seed Home so fresh accounts still see a
+    // page entry; idempotent + race-safe via partial unique index.
+    let _ = crate::pages::system_page_id(&app.db, user.id).await;
+    let pages = user_page::Entity::find()
+        .filter(user_page::Column::UserId.eq(user.id))
+        .order_by_asc(user_page::Column::Position)
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    let page_nav_entries: Vec<Value> = pages
         .iter()
-        .map(|s| {
-            series_nav_entry(
-                s,
-                series_covers.get(&s.id).map(String::as_str),
-                series_facets.get(&s.id),
-            )
+        .map(|p| {
+            json!({
+                "title": p.name,
+                "href": format!("/opds/v2/pages/{}", p.slug),
+                "type": NAV_CT,
+            })
         })
         .collect();
 
     // Build the groups[] array — skip any that came back empty so
-    // a fresh-install root catalog doesn't show three empty bands.
+    // a fresh-install root catalog doesn't show empty bands.
     let mut groups: Vec<Value> = Vec::new();
     if !continue_pubs.is_empty() {
         groups.push(json!({
@@ -208,20 +195,18 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
             "publications": continue_pubs,
         }));
     }
-    if !new_pubs.is_empty() {
-        groups.push(json!({
-            "metadata": { "title": "New this month", "numberOfItems": new_pubs.len() },
-            "links": [{ "rel": "self", "href": "/opds/v2/new-this-month", "type": NAV_CT }],
-            "publications": new_pubs,
-        }));
-    }
-    if !series_nav.is_empty() {
-        groups.push(json!({
-            "metadata": { "title": "All series", "numberOfItems": series_nav.len() },
-            "links": [{ "rel": "self", "href": "/opds/v2/series", "type": NAV_CT }],
-            "navigation": series_nav,
-        }));
-    }
+
+    let mut navigation: Vec<Value> = vec![
+        json!({ "title": "Continue reading", "href": "/opds/v2/continue", "type": NAV_CT }),
+        json!({ "title": "On Deck", "href": "/opds/v2/on-deck", "type": NAV_CT }),
+    ];
+    navigation.extend(page_nav_entries);
+    navigation.extend([
+        json!({ "title": "Reading lists", "href": "/opds/v2/lists", "type": NAV_CT }),
+        json!({ "title": "Collections", "href": "/opds/v2/collections", "type": NAV_CT }),
+        json!({ "title": "Saved views", "href": "/opds/v2/views", "type": NAV_CT }),
+        json!({ "title": "Browse", "href": "/opds/v2/browse", "type": NAV_CT }),
+    ]);
 
     let body = json!({
         "metadata": {
@@ -251,20 +236,7 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
               "templated": true,
               "profile": "https://folio.bryhome.live/spec/progress-write-v1" },
         ],
-        "navigation": [
-            { "title": "All series", "href": "/opds/v2/series", "type": NAV_CT },
-            { "title": "Browse", "href": "/opds/v2/browse", "type": NAV_CT },
-            { "title": "Recently added", "href": "/opds/v2/recent", "type": NAV_CT },
-            { "title": "Continue reading", "href": "/opds/v2/continue", "type": NAV_CT },
-            { "title": "On Deck", "href": "/opds/v2/on-deck", "type": NAV_CT },
-            { "title": "Read history", "href": "/opds/v2/history", "type": NAV_CT },
-            { "title": "New this month", "href": "/opds/v2/new-this-month", "type": NAV_CT },
-            { "title": "Want to Read", "href": "/opds/v2/wtr", "type": NAV_CT },
-            { "title": "Reading lists", "href": "/opds/v2/lists", "type": NAV_CT },
-            { "title": "Collections", "href": "/opds/v2/collections", "type": NAV_CT },
-            { "title": "Saved views", "href": "/opds/v2/views", "type": NAV_CT },
-            { "title": "My pages", "href": "/opds/v2/pages", "type": NAV_CT },
-        ],
+        "navigation": navigation,
         "groups": groups,
     });
     json_response(body)
@@ -597,7 +569,13 @@ async fn series_one(
             up_next_issue.as_ref().map(|i| i.id.as_str()),
         );
     }
-    let publications = build_publications_sequential(&app, &user, &issues).await;
+    let publications = build_publications_sequential(
+        &app,
+        &user,
+        &issues,
+        up_next_issue.as_ref().map(|i| i.id.as_str()),
+    )
+    .await;
     let mut links = vec![json!({
         "rel": "self",
         "href": format!("{self_href}?page={page}"),
@@ -1196,7 +1174,13 @@ async fn cbl_list_acq(
             up_next_full.as_ref().map(|i| i.id.as_str()),
         );
     }
-    let publications = build_publications_sequential(&app, &user, &issues).await;
+    let publications = build_publications_sequential(
+        &app,
+        &user,
+        &issues,
+        up_next_full.as_ref().map(|i| i.id.as_str()),
+    )
+    .await;
 
     let mut links = vec![json!({
         "rel": "self",
@@ -1623,20 +1607,37 @@ async fn build_publications(
     user: &CurrentUser,
     issues: &[issue::Model],
 ) -> Vec<Value> {
-    build_publications_inner(app, user, issues, false).await
+    build_publications_inner(app, user, issues, false, None).await
+}
+
+/// Like [`build_publications`], but threads an `up_next_id` for title-
+/// prefix emission. Mixed collection feeds (WTR + saved-collection)
+/// don't get sequential nav (the series-row gaps make `next`/`previous`
+/// links misleading), but they DO get the resume-target prefix.
+/// opds-richer-feeds 1.1 M1.
+async fn build_publications_with_up_next(
+    app: &AppState,
+    user: &CurrentUser,
+    issues: &[issue::Model],
+    up_next_id: Option<&str>,
+) -> Vec<Value> {
+    build_publications_inner(app, user, issues, false, up_next_id).await
 }
 
 /// Like [`build_publications`], but emits sequential `rel="next"` and
 /// `rel="previous"` links on each publication based on its index in
 /// `issues`. M2 of opds-sync-1.0 — applied only to feeds that have a
 /// reading sequence (per-series sort, CBL position). Discovery feeds
-/// (Recent, Search, New this month) leave them off.
+/// (Recent, Search, New this month) leave them off. `up_next_id` is
+/// the resume-target issue whose title gets the `Up Next: ` prefix
+/// (opds-richer-feeds 1.1 M1).
 async fn build_publications_sequential(
     app: &AppState,
     user: &CurrentUser,
     issues: &[issue::Model],
+    up_next_id: Option<&str>,
 ) -> Vec<Value> {
-    build_publications_inner(app, user, issues, true).await
+    build_publications_inner(app, user, issues, true, up_next_id).await
 }
 
 async fn build_publications_inner(
@@ -1644,6 +1645,7 @@ async fn build_publications_inner(
     user: &CurrentUser,
     issues: &[issue::Model],
     sequential_nav: bool,
+    up_next_id: Option<&str>,
 ) -> Vec<Value> {
     if issues.is_empty() {
         return Vec::new();
@@ -1674,6 +1676,7 @@ async fn build_publications_inner(
                 prev,
                 next,
                 progress_glyphs: glyphs,
+                up_next_id,
             })
         })
         .collect()
@@ -1691,6 +1694,7 @@ struct PublicationCtx<'a> {
     prev: Option<&'a issue::Model>,
     next: Option<&'a issue::Model>,
     progress_glyphs: bool,
+    up_next_id: Option<&'a str>,
 }
 
 fn publication_for(ctx: PublicationCtx<'_>) -> Value {
@@ -1703,6 +1707,7 @@ fn publication_for(ctx: PublicationCtx<'_>) -> Value {
         prev,
         next,
         progress_glyphs,
+        up_next_id,
     } = ctx;
     let base = i.title.clone().unwrap_or_else(|| {
         i.number_raw
@@ -1710,7 +1715,13 @@ fn publication_for(ctx: PublicationCtx<'_>) -> Value {
             .map(|n| format!("Issue #{n}"))
             .unwrap_or_else(|| "Issue".into())
     });
-    let label = opds::decorate_title_with_progress(&base, progress, i.page_count, progress_glyphs);
+    let decorated =
+        opds::decorate_title_with_progress(&base, progress, i.page_count, progress_glyphs);
+    let label = if up_next_id == Some(i.id.as_str()) {
+        format!("Up Next: {decorated}")
+    } else {
+        decorated
+    };
     let mut metadata = serde_json::Map::new();
     metadata.insert("@type".into(), Value::from("http://schema.org/Periodical"));
     metadata.insert("title".into(), Value::from(label));
@@ -1983,10 +1994,13 @@ async fn render_collection_acq_v2(
         Ok(r) => r,
         Err(e) => return server_error(e.to_string()),
     };
-    if reorder {
+    let up_next_id = if reorder {
         let up_next = opds::pick_next_in_collection(&app.db, user.id, &rows).await;
         opds::reorder_collection_entries_up_next_first(&mut rows, up_next.as_deref());
-    }
+        up_next
+    } else {
+        None
+    };
     let series_ids: Vec<Uuid> = rows.iter().filter_map(|r| r.series_id).collect();
     let issue_ids: Vec<String> = rows.iter().filter_map(|r| r.issue_id.clone()).collect();
 
@@ -2047,7 +2061,9 @@ async fn render_collection_acq_v2(
             publication_models.push(i.clone());
         }
     }
-    let publications = build_publications(app, user, &publication_models).await;
+    let publications =
+        build_publications_with_up_next(app, user, &publication_models, up_next_id.as_deref())
+            .await;
 
     let body = json!({
         "metadata": {

@@ -199,7 +199,16 @@ app makes its own UI decisions. Empirically:
 
 - **Panels** renders cover art prominently in browse, byline +
   publisher + year + genre chips on the series detail screen.
-  Honors the M5 `<uri>` drill-in.
+  Honors the M5 `<uri>` drill-in. **Progress resume:** as of
+  opds-richer-feeds 1.1 Folio emits `pse:last_read` /
+  `pse:last_read_date` on BOTH the PSE stream link and the regular
+  acquisition link, so Panels sets the initial resume page on first
+  download. After Panels caches the file locally, it relies on its
+  own per-issue state and does not re-consult the OPDS payload — if
+  the web app advances progress past the locally-cached point, the
+  user has to redownload in Panels (or rely on the KOReader-style
+  sync API, which Panels does not implement). This is a Panels-side
+  limitation, not a Folio gap.
 - **Chunky** renders cover + title + author inline in the browse
   grid. Has limited support for `<category>` chips.
 - **KOReader** renders a list view (no grid). Shows author + year
@@ -252,16 +261,31 @@ The OPDS surface evolved through four completed plans:
   `preserve_canonical_order` opt-outs. M3 added a title-level glyph +
   `(N / M)` suffix for universal-compat progress visibility on
   clients that ignore PSE entirely.
+- `~/.claude/plans/done/opds-richer-feeds-1.1.md` — three follow-ups
+  triggered by Panels feedback. M1 prefixes the up-next entry's
+  title with `"Up Next: "` so clients that don't honor the feed-level
+  rel still surface the resume target. M2 mirrors `pse:last_read` /
+  `pse:last_read_date` onto the regular acquisition link (Panels
+  reads them there on first download). M3 reorganizes the root
+  navigation around `user_page`: Continue reading + On Deck stay
+  top-level, every user-page becomes its own folder, and the
+  redundant `All series` / `Recently added` / `Read history` /
+  `New this month` / `Want to Read` / `My pages` shortcuts are
+  removed (their handlers stay URL-addressable; pin to a page or
+  use the existing catch-all feeds to reach them). `Browse` becomes
+  the canonical entry point to the whole library (it was a superset
+  of `All series` — facets added).
 
-Regression guards across 14 test files: `opds_inline_progress`,
+Regression guards across 15 test files: `opds_inline_progress`,
 `opds_sequential_nav`, `opds_up_next_rel`, `opds_default_reorder`,
 `opds_progress_glyphs`, `opds_personal_feeds`,
 `opds_pse_implicit_progress`, `opds_progress_advertisement`,
-`opds_history_and_conflicts`, `opds_cbl_progress`, plus the v2
-mirrors. (`opds_resume_synthetic.rs` was deleted in cleanup M2 —
-the path it exercised no longer exists.)
+`opds_history_and_conflicts`, `opds_cbl_progress`,
+`opds_richer_feeds_1_1`, plus the v2 mirrors.
+(`opds_resume_synthetic.rs` was deleted in cleanup M2 — the path
+it exercised no longer exists.)
 
-All four plans are complete. Future OPDS work would target the
+All five plans are complete. Future OPDS work would target the
 deferred items in those plans (reading-status facet, empty-series
 placeholder thumbnails, OpenSearch facet params, Automerge CRDT
 progress merge) or new surfaces discovered through user feedback.

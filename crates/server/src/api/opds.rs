@@ -241,8 +241,43 @@ pub(crate) const BROWSE_PUBLISHER_FACET_LIMIT: u64 = 20;
 /// here drives the order the client renders the facet group in.
 pub(crate) const BROWSE_STATUSES: &[&str] = &["continuing", "ended", "hiatus", "cancelled"];
 
-async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
+async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
     let now = chrono::Utc::now().to_rfc3339();
+
+    // opds-richer-feeds 1.1 M3: pages are the primary organizing
+    // surface in the web app, so they're the primary organizing surface
+    // in OPDS too. One entry per `user_page`, in position order. A page
+    // contains the views the user has pinned to it via
+    // `user_view_pin.page_id`; the existing /opds/v1/pages/{slug}
+    // handler renders that listing.
+    //
+    // Lazy-seed the system "Home" page first so a brand-new account
+    // that hasn't touched the web app yet still gets a page entry. The
+    // helper is idempotent + race-safe via the partial unique index.
+    let _ = crate::pages::system_page_id(&app.db, user.id).await;
+    let pages = user_page::Entity::find()
+        .filter(user_page::Column::UserId.eq(user.id))
+        .order_by_asc(user_page::Column::Position)
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    let base_str = app.cfg().public_url.clone();
+    let base = xml_escape(&base_str);
+    let mut page_entries = String::new();
+    for p in &pages {
+        let _ = std::fmt::Write::write_fmt(
+            &mut page_entries,
+            format_args!(
+                "  <entry>\n    <id>{base}/opds/v1/pages/{slug}</id>\n    <title>{title}</title>\n    <updated>{now}</updated>\n    <link rel=\"subsection\" href=\"/opds/v1/pages/{slug_attr}\" type=\"{nav}\"/>\n  </entry>\n",
+                slug = xml_escape(&p.slug),
+                slug_attr = xml_escape(&p.slug),
+                title = xml_escape(&p.name),
+                now = now,
+                nav = NAV_CT,
+            ),
+        );
+    }
+
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog">
@@ -253,24 +288,6 @@ async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
   <link rel="start" href="/opds/v1" type="{nav}"/>
   <link rel="search" href="/opds/v1/search.xml" type="application/opensearchdescription+xml"/>
   <link rel="http://opds-spec.org/sync" href="/opds/v1/issues/{{issue_id}}/progress" type="application/json"/>
-  <entry>
-    <id>{base}/opds/v1/series</id>
-    <title>All series</title>
-    <updated>{now}</updated>
-    <link rel="subsection" href="/opds/v1/series" type="{acq}"/>
-  </entry>
-  <entry>
-    <id>{base}/opds/v1/browse</id>
-    <title>Browse</title>
-    <updated>{now}</updated>
-    <link rel="subsection" href="/opds/v1/browse" type="{acq}"/>
-  </entry>
-  <entry>
-    <id>{base}/opds/v1/recent</id>
-    <title>Recently added</title>
-    <updated>{now}</updated>
-    <link rel="http://opds-spec.org/sort/new" href="/opds/v1/recent" type="{acq}"/>
-  </entry>
   <entry>
     <id>{base}/opds/v1/continue</id>
     <title>Continue reading</title>
@@ -283,25 +300,7 @@ async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
     <updated>{now}</updated>
     <link rel="subsection" href="/opds/v1/on-deck" type="{acq}"/>
   </entry>
-  <entry>
-    <id>{base}/opds/v1/history</id>
-    <title>Read history</title>
-    <updated>{now}</updated>
-    <link rel="subsection" href="/opds/v1/history" type="{acq}"/>
-  </entry>
-  <entry>
-    <id>{base}/opds/v1/new-this-month</id>
-    <title>New this month</title>
-    <updated>{now}</updated>
-    <link rel="http://opds-spec.org/sort/new" href="/opds/v1/new-this-month" type="{acq}"/>
-  </entry>
-  <entry>
-    <id>{base}/opds/v1/wtr</id>
-    <title>Want to Read</title>
-    <updated>{now}</updated>
-    <link rel="subsection" href="/opds/v1/wtr" type="{acq}"/>
-  </entry>
-  <entry>
+{page_entries}  <entry>
     <id>{base}/opds/v1/lists</id>
     <title>Reading lists</title>
     <updated>{now}</updated>
@@ -320,18 +319,19 @@ async fn root(State(app): State<AppState>, _user: CurrentUser) -> Response {
     <link rel="subsection" href="/opds/v1/views" type="{nav}"/>
   </entry>
   <entry>
-    <id>{base}/opds/v1/pages</id>
-    <title>My pages</title>
+    <id>{base}/opds/v1/browse</id>
+    <title>Browse</title>
     <updated>{now}</updated>
-    <link rel="subsection" href="/opds/v1/pages" type="{nav}"/>
+    <link rel="subsection" href="/opds/v1/browse" type="{acq}"/>
   </entry>
 </feed>
 "#,
-        base = xml_escape(&app.cfg().public_url),
+        base = base,
         name = xml_escape("Comic Reader"),
         now = now,
         nav = NAV_CT,
         acq = ACQ_CT,
+        page_entries = page_entries,
     );
     atom(body)
 }
@@ -739,20 +739,22 @@ async fn series_one(
         reorder_issues_up_next_first(&mut issues, up_next_issue.as_ref().map(|i| i.id.as_str()));
     }
     let glyphs = user_progress_glyphs_flag(&app.db, user.id).await;
+    let up_next_id = up_next_issue.as_ref().map(|i| i.id.as_str());
     let mut entries = String::new();
     for (idx, i) in issues.iter().enumerate() {
         let series_slug = slugs.get(&i.series_id).map(String::as_str);
         let prev = idx.checked_sub(1).and_then(|p| issues.get(p));
         let next = issues.get(idx + 1);
-        entries.push_str(&render_issue_acq_entry(
-            i,
+        entries.push_str(&render_issue_acq_entry(IssueAcqEntryCtx {
+            issue: i,
             series_slug,
-            Some((user.id, key)),
-            progress.get(&i.id),
+            pse_ctx: Some((user.id, key)),
+            progress: progress.get(&i.id),
             prev,
             next,
-            glyphs,
-        ));
+            progress_glyphs: glyphs,
+            up_next_issue_id: up_next_id,
+        }));
     }
     let series_description = render_series_description(s.summary.as_deref());
     let series_metadata = entry_metadata_series(&s, series_facets.get(&s.id));
@@ -1512,15 +1514,16 @@ async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -
         } else {
             (None, None)
         };
-        entries.push_str(&render_issue_acq_entry(
-            i,
+        entries.push_str(&render_issue_acq_entry(IssueAcqEntryCtx {
+            issue: i,
             series_slug,
-            Some((user_id, key)),
-            progress.get(&i.id),
+            pse_ctx: Some((user_id, key)),
+            progress: progress.get(&i.id),
             prev,
             next,
-            glyphs,
-        ));
+            progress_glyphs: glyphs,
+            up_next_issue_id,
+        }));
     }
     let up_next_link = render_up_next_feed_link(up_next_issue_id);
     let last_read = feed_last_read_date
@@ -1571,26 +1574,54 @@ async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -
 /// adjacent one without re-fetching the parent feed. Only set on feeds
 /// that have a *reading* sequence (per-series sort, CBL position);
 /// discovery feeds (Recent, Search, New this month) pass `None`.
-fn render_issue_acq_entry(
-    i: &issue::Model,
-    series_slug: Option<&str>,
-    pse_ctx: Option<(Uuid, &[u8])>,
-    progress: Option<&progress_record::Model>,
-    prev: Option<&issue::Model>,
-    next: Option<&issue::Model>,
+/// Per-entry render context for [`render_issue_acq_entry`]. Folded
+/// into a struct during opds-richer-feeds 1.1 M1 when the arg list
+/// crossed the clippy `too_many_arguments` threshold (8). Mirrors
+/// `PublicationCtx` on the v2 side.
+struct IssueAcqEntryCtx<'a> {
+    issue: &'a issue::Model,
+    series_slug: Option<&'a str>,
+    pse_ctx: Option<(Uuid, &'a [u8])>,
+    progress: Option<&'a progress_record::Model>,
+    prev: Option<&'a issue::Model>,
+    next: Option<&'a issue::Model>,
     progress_glyphs: bool,
-) -> String {
+    up_next_issue_id: Option<&'a str>,
+}
+
+fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
+    let IssueAcqEntryCtx {
+        issue: i,
+        series_slug,
+        pse_ctx,
+        progress,
+        prev,
+        next,
+        progress_glyphs,
+        up_next_issue_id,
+    } = ctx;
     let base = i.title.clone().unwrap_or_else(|| {
         i.number_raw
             .clone()
             .map(|n| format!("Issue #{n}"))
             .unwrap_or_else(|| "Issue".into())
     });
-    let label = decorate_title_with_progress(&base, progress, i.page_count, progress_glyphs);
+    let decorated = decorate_title_with_progress(&base, progress, i.page_count, progress_glyphs);
+    let label = if up_next_issue_id == Some(i.id.as_str()) {
+        format!("Up Next: {decorated}")
+    } else {
+        decorated
+    };
     let pse_link = match pse_ctx {
         Some((user_id, key)) => render_pse_stream_link(i, user_id, key, progress),
         None => String::new(),
     };
+    // opds-richer-feeds 1.1 M2: mirror the PSE progress hints onto the
+    // regular acquisition link too. The OPDS-PSE spec puts them on the
+    // stream link, but Panels (iOS/macOS) downloads the full archive
+    // via the acquisition link and reads progress hints from the same
+    // element. Stream-link emission is unchanged; this is additive.
+    let acquisition_progress_attrs = pse_progress_attrs(progress);
     format!(
         r#"  <entry>
     <id>urn:issue:{id}</id>
@@ -1599,7 +1630,7 @@ fn render_issue_acq_entry(
     {summary}
 {metadata}    <link rel="http://opds-spec.org/image/thumbnail" href="/issues/{id}/pages/0/thumb" type="image/webp"/>
     <link rel="http://opds-spec.org/image" href="/issues/{id}/pages/0" type="image/jpeg"/>
-{related}    <link rel="http://opds-spec.org/acquisition" href="/opds/v1/issues/{id}/file" type="{mime}"/>
+{related}    <link rel="http://opds-spec.org/acquisition" href="/opds/v1/issues/{id}/file" type="{mime}"{acquisition_progress_attrs}/>
     <link rel="alternate" href="/api/issues/{id}" type="application/json"/>
 {pse}{nav}  </entry>
 "#,
@@ -1799,6 +1830,21 @@ fn render_sequential_nav_links(prev: Option<&issue::Model>, next: Option<&issue:
     out
 }
 
+/// Format the `pse:last_read` + `pse:last_read_date` attribute pair
+/// for inline emission on either the PSE stream link or the regular
+/// acquisition link. Returns an empty string when no progress row
+/// exists. Centralized so the two link variants can't drift apart.
+fn pse_progress_attrs(progress: Option<&progress_record::Model>) -> String {
+    match progress {
+        Some(p) => format!(
+            " pse:last_read=\"{page}\" pse:last_read_date=\"{date}\"",
+            page = p.last_page,
+            date = p.updated_at.to_rfc3339(),
+        ),
+        None => String::new(),
+    }
+}
+
 /// Render the per-entry PSE stream link. The literal `{pageNumber}`
 /// token is intentional — OPDS-PSE clients substitute it themselves
 /// when fetching each page. `pse:count` advertises the page total so
@@ -1828,14 +1874,7 @@ fn render_pse_stream_link(
     // `{pageNumber}` token stays literal, the rest of the query is just
     // ASCII alphanumerics and `=`.
     let escaped_query = query.replace('&', "&amp;");
-    let progress_attrs = match progress {
-        Some(p) => format!(
-            " pse:last_read=\"{page}\" pse:last_read_date=\"{date}\"",
-            page = p.last_page,
-            date = p.updated_at.to_rfc3339(),
-        ),
-        None => String::new(),
-    };
+    let progress_attrs = pse_progress_attrs(progress);
     format!(
         "    <link rel=\"http://vaemendis.net/opds-pse/stream\" type=\"image/jpeg\" pse:count=\"{count}\"{progress_attrs} href=\"/opds/pse/{id}/{{pageNumber}}?{q}\"/>\n",
         id = i.id,
@@ -3045,10 +3084,13 @@ async fn render_collection_acq(
         Err(e) => return server_error(e.to_string()),
     };
 
-    if reorder {
+    let up_next_id = if reorder {
         let up_next = pick_next_in_collection(&app.db, user.id, &rows).await;
         reorder_collection_entries_up_next_first(&mut rows, up_next.as_deref());
-    }
+        up_next
+    } else {
+        None
+    };
 
     let series_ids: Vec<Uuid> = rows.iter().filter_map(|r| r.series_id).collect();
     let issue_ids: Vec<String> = rows.iter().filter_map(|r| r.issue_id.clone()).collect();
@@ -3119,15 +3161,16 @@ async fn render_collection_acq(
             && let Some(i) = issue_by_id.get(iid)
         {
             let slug = issue_slug_by_series.get(&i.series_id).map(String::as_str);
-            entries.push_str(&render_issue_acq_entry(
-                i,
-                slug,
-                Some((user.id, key)),
-                progress.get(iid),
-                None,
-                None,
-                glyphs,
-            ));
+            entries.push_str(&render_issue_acq_entry(IssueAcqEntryCtx {
+                issue: i,
+                series_slug: slug,
+                pse_ctx: Some((user.id, key)),
+                progress: progress.get(iid),
+                prev: None,
+                next: None,
+                progress_glyphs: glyphs,
+                up_next_issue_id: up_next_id.as_deref(),
+            }));
         }
     }
 

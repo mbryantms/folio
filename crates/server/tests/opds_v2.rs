@@ -506,12 +506,24 @@ async fn root_shape_advertises_v2_subsections() {
         assert!(n["href"].is_string(), "nav href: {n}");
     }
     let nav_hrefs: Vec<&str> = nav.iter().map(|n| n["href"].as_str().unwrap()).collect();
-    assert!(nav_hrefs.contains(&"/opds/v2/series"));
-    assert!(nav_hrefs.contains(&"/opds/v2/recent"));
-    assert!(nav_hrefs.contains(&"/opds/v2/wtr"));
+    // opds-richer-feeds 1.1 M3: pages drive the primary nav. The two
+    // explicit top-level system feeds + the catch-all sibling feeds +
+    // Browse + the auto-seeded "Home" page must all appear; the
+    // dropped entries (series/recent/history/new-this-month/wtr/my-
+    // pages) must not.
+    assert!(nav_hrefs.contains(&"/opds/v2/continue"));
+    assert!(nav_hrefs.contains(&"/opds/v2/on-deck"));
+    assert!(nav_hrefs.contains(&"/opds/v2/pages/home"));
     assert!(nav_hrefs.contains(&"/opds/v2/lists"));
     assert!(nav_hrefs.contains(&"/opds/v2/collections"));
     assert!(nav_hrefs.contains(&"/opds/v2/views"));
+    assert!(nav_hrefs.contains(&"/opds/v2/browse"));
+    assert!(!nav_hrefs.contains(&"/opds/v2/series"));
+    assert!(!nav_hrefs.contains(&"/opds/v2/recent"));
+    assert!(!nav_hrefs.contains(&"/opds/v2/wtr"));
+    assert!(!nav_hrefs.contains(&"/opds/v2/history"));
+    assert!(!nav_hrefs.contains(&"/opds/v2/new-this-month"));
+    assert!(!nav_hrefs.contains(&"/opds/v2/pages"));
     assert!(
         link_with_rel(links, "search").is_some(),
         "search template link"
@@ -1540,11 +1552,14 @@ async fn v2_root_carries_language_and_modified() {
     );
 }
 
-/// The root carries a `groups[]` array bundling inlined previews of
-/// "Continue reading" + "New this month" + "All series" — capable
-/// OPDS 2.0 clients render this as a multi-section home in one
-/// round-trip. Each group carries a `rel=self` link pointing at the
-/// standalone paginated surface.
+/// The root carries a `groups[]` array bundling an inlined preview of
+/// "Continue reading" — capable OPDS 2.0 clients render this as a
+/// multi-section home in one round-trip. The group carries a
+/// `rel=self` link pointing at the standalone paginated surface.
+///
+/// opds-richer-feeds 1.1 M3 dropped the "New this month" and
+/// "All series" preview groups when those entries were removed from
+/// the root navigation — pages own discovery now.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn v2_root_emits_groups_with_inlined_previews() {
     let app = TestApp::spawn().await;
@@ -1553,8 +1568,6 @@ async fn v2_root_emits_groups_with_inlined_previews() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib_id = seed_library(&db, tmp.path()).await;
-    // Seed a series so the "All series" group has content.
-    seed_series(&db, lib_id, "Shown").await;
     // Seed an in-progress issue so "Continue reading" populates.
     let series_id = seed_series(&db, lib_id, "WithProgress").await;
     let issue_id =
@@ -1568,24 +1581,20 @@ async fn v2_root_emits_groups_with_inlined_previews() {
         .iter()
         .filter_map(|g| g["metadata"]["title"].as_str())
         .collect();
-    // At minimum "Continue reading" and "All series" should populate
-    // given the seeding. "New this month" may or may not depending on
-    // backdating; this test asserts the schema not the count.
     assert!(titles.contains(&"Continue reading"), "groups: {titles:?}");
-    assert!(titles.contains(&"All series"), "groups: {titles:?}");
 
-    // Each group MUST carry rel=self to the standalone paginated feed
+    // The group MUST carry rel=self to the standalone paginated feed
     // so tapping the section header drills into it.
-    let series_group = groups
+    let cr_group = groups
         .iter()
-        .find(|g| g["metadata"]["title"] == "All series")
+        .find(|g| g["metadata"]["title"] == "Continue reading")
         .unwrap();
-    let self_href = series_group["links"]
+    let self_href = cr_group["links"]
         .as_array()
         .and_then(|l| l.iter().find(|x| x["rel"] == "self"))
         .and_then(|x| x["href"].as_str())
         .expect("rel=self on group");
-    assert_eq!(self_href, "/opds/v2/series");
+    assert_eq!(self_href, "/opds/v2/continue");
 }
 
 /// Empty groups are omitted entirely — a fresh-install catalog with
