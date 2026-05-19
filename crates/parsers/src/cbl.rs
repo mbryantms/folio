@@ -202,8 +202,14 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedCbl, ParseError> {
             }
 
             Ok(Event::Text(t)) => {
-                let s = t
-                    .unescape()
+                // quick-xml 0.40 removed `BytesText::unescape()`; the
+                // old single-shot is now `decode()` followed by an
+                // explicit `escape::unescape()`. Both can fail (encoding
+                // error / invalid entity) and roll up as Malformed.
+                let decoded = t
+                    .decode()
+                    .map_err(|e| ParseError::Malformed(e.to_string()))?;
+                let s = quick_xml::escape::unescape(&decoded)
                     .map_err(|e| ParseError::Malformed(e.to_string()))?;
                 current_text.push_str(&s);
             }
@@ -238,7 +244,7 @@ fn book_from_start(e: &quick_xml::events::BytesStart<'_>) -> Result<ParsedCblBoo
     for attr in e.attributes().with_checks(false).flatten() {
         let k = String::from_utf8_lossy(attr.key.as_ref()).to_string();
         let v = attr
-            .unescape_value()
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map(|c| c.into_owned())
             .unwrap_or_default();
         match k.as_str() {
@@ -259,7 +265,7 @@ fn database_from_attrs(
     for attr in e.attributes().with_checks(false).flatten() {
         let k = String::from_utf8_lossy(attr.key.as_ref()).to_string();
         let v = attr
-            .unescape_value()
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map(|c| c.into_owned())
             .unwrap_or_default();
         match k.as_str() {

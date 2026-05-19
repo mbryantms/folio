@@ -119,15 +119,20 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                     current_creator_role = None;
                     for attr in e.attributes().with_checks(false).flatten() {
                         if attr.key.as_ref() == b"role" {
-                            current_creator_role =
-                                attr.unescape_value().ok().map(|c| c.into_owned());
+                            current_creator_role = attr
+                                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                .ok()
+                                .map(|c| c.into_owned());
                         }
                     }
                 } else if name == "ID" {
                     current_id_source = None;
                     for attr in e.attributes().with_checks(false).flatten() {
                         if attr.key.as_ref() == b"source" {
-                            current_id_source = attr.unescape_value().ok().map(|c| c.into_owned());
+                            current_id_source = attr
+                                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                .ok()
+                                .map(|c| c.into_owned());
                         }
                     }
                 }
@@ -162,7 +167,15 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                 }
             }
             Ok(Event::Text(t)) => {
-                text.push_str(&t.unescape().map(|c| c.into_owned()).unwrap_or_default());
+                // quick-xml 0.40: `BytesText::unescape()` removed;
+                // chain `decode()` + `escape::unescape()`. Errors fall
+                // back to empty (matches the old `.unwrap_or_default`).
+                let s = t
+                    .decode()
+                    .ok()
+                    .and_then(|d| quick_xml::escape::unescape(&d).ok().map(|u| u.into_owned()))
+                    .unwrap_or_default();
+                text.push_str(&s);
             }
             Ok(Event::CData(t)) => {
                 text.push_str(&String::from_utf8_lossy(t.as_ref()));

@@ -141,7 +141,7 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
                     for attr in e.attributes().with_checks(false).flatten() {
                         let k = String::from_utf8_lossy(attr.key.as_ref()).to_string();
                         let v = attr
-                            .unescape_value()
+                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             .map(|c| c.into_owned())
                             .unwrap_or_default();
                         current_page_attrs.insert(k, v);
@@ -159,7 +159,7 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
                     for attr in e.attributes().with_checks(false).flatten() {
                         let k = String::from_utf8_lossy(attr.key.as_ref()).to_string();
                         let v = attr
-                            .unescape_value()
+                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             .map(|c| c.into_owned())
                             .unwrap_or_default();
                         attrs.insert(k, v);
@@ -193,7 +193,15 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
                 path.pop();
             }
             Ok(Event::Text(t)) => {
-                let s = t.unescape().map(|c| c.into_owned()).unwrap_or_default();
+                // quick-xml 0.40 split `BytesText::unescape()` into
+                // `decode()` + `escape::unescape()`. We chain Option
+                // ladders so a decode/unescape failure falls back to
+                // empty (matches the old `.unwrap_or_default()` shape).
+                let s = t
+                    .decode()
+                    .ok()
+                    .and_then(|d| quick_xml::escape::unescape(&d).ok().map(|u| u.into_owned()))
+                    .unwrap_or_default();
                 current_text.push_str(&s);
             }
             Ok(Event::CData(t)) => {
