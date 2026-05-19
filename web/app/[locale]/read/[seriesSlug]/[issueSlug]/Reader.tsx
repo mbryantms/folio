@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useGesture } from "@use-gesture/react";
 import { toast } from "sonner";
 import { useReaderStore, type FitMode } from "@/lib/reader/store";
 import {
@@ -11,11 +10,7 @@ import {
   type Direction,
   type ViewMode,
 } from "@/lib/reader/detect";
-import {
-  actionForKey,
-  resolveKeybinds,
-  shouldSkipHotkey,
-} from "@/lib/reader/keybinds";
+import { resolveKeybinds } from "@/lib/reader/keybinds";
 import { useReadingSession } from "@/lib/reader/session";
 import {
   computeSpreadGroups,
@@ -23,8 +18,11 @@ import {
   groupIndexForPage,
   type SpreadGroup,
 } from "@/lib/reader/spreads";
+import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
+import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
+import { useReaderSwipe } from "@/lib/reader/use-swipe";
+import { useReaderKeymap } from "@/lib/reader/use-keymap";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
-import { apiFetch } from "@/lib/api/auth-refresh";
 import { readerUrl } from "@/lib/urls";
 import {
   useCreateMarker,
@@ -40,10 +38,6 @@ import { MarkerOverlay } from "./MarkerOverlay";
 import { PageStrip } from "./PageStrip";
 import { PageImage } from "./PageImage";
 import { ReaderChrome } from "./ReaderChrome";
-
-const PROGRESS_DEBOUNCE_MS = 300;
-const PREFETCH_AHEAD = 2;
-const SWIPE_THRESHOLD_PX = 30;
 
 export function Reader({
   issueId,
@@ -477,275 +471,89 @@ export function Reader({
   const onLeftZone = direction === "rtl" ? goNext : goPrev;
   const onRightZone = direction === "rtl" ? goPrev : goNext;
 
-  // Keyboard nav (§7.4). Bindings are resolved from user prefs (M4) so the
-  // user's /settings/keybinds page can rebind every action. Spacebar always
-  // pages forward — it's not user-rebindable since the OS already steals it
-  // when a button has focus. The `?` shortcut-sheet toggle lives in
-  // `<GlobalShortcutsSheet>` at the root so it works everywhere; the
-  // sheet picks a Reader-first section ordering on this route.
+  // Bookmark-page list precomputed for the keymap hook's
+  // `nextBookmark` / `prevBookmark` jumps. Sorted ascending so the
+  // `find` / linear walk inside the hook can short-circuit.
+  const bookmarkPages = useMemo<readonly number[]>(
+    () =>
+      (issueMarkers.data?.items ?? [])
+        .filter((m) => m.kind === "bookmark")
+        .map((m) => m.page_index)
+        .sort((a, b) => a - b),
+    [issueMarkers.data],
+  );
 
-  // `g g` leader state. Bare `g` arms the leader; a second `g` within
-  // 500 ms fires firstPage. Stored in a ref so the listener can read
-  // and clear it without forcing a re-render between strokes.
-  const ggLeaderRef = useRef<number | null>(null);
-  const GG_LEADER_MS = 500;
+  // The keymap's `quitReader` action either dismisses the end-card
+  // (first Esc) or exits the reader (subsequent Esc). The hook only
+  // owns dispatch; this component owns the end-card visibility and
+  // router push.
+  const handleQuitReader = useCallback(() => {
+    router.push(exitUrl);
+  }, [exitUrl, router]);
 
-  useEffect(() => {
-    const goFirstPage = () => {
-      // Jump to the first spread group in double-page mode (cover-solo
-      // when enabled), or page 0 otherwise. RTL doesn't flip here:
-      // "first" is always page 0 regardless of reading direction.
-      if (viewMode === "double" && groups.length > 0) {
-        setPage(firstPageOfGroup(groups, 0));
-      } else {
-        setPage(0);
-      }
-    };
-    const goLastPage = () => {
-      if (viewMode === "double" && groups.length > 0) {
-        setPage(firstPageOfGroup(groups, groups.length - 1));
-      } else {
-        setPage(totalPages - 1);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (shouldSkipHotkey(e)) return;
-      // While the user is mid-selection or editing a pending marker,
-      // swallow page-nav + most reader actions so a stray arrow / space
-      // doesn't flip the page out from under the highlight. ESC still
-      // exits via MarkerOverlay's capture-phase handler. The arrow-key
-      // nudge in MarkerOverlay also runs in capture-phase, so it gets
-      // first crack at the event before we ever reach this branch.
-      const markerActive =
-        markerModeForKeybinds !== "idle" || pendingMarkerForKeybinds !== null;
-      if (markerActive) return;
-      // Spacebar always advances (regardless of binding).
-      if (e.key === " ") {
-        e.preventDefault();
-        goNext();
-        return;
-      }
-      // Vim aliases (not in the keybind registry — they're convention,
-      // not customization). `g g` → firstPage; `Shift+G` → lastPage.
-      // Aliases survive a user rebinding `firstPage` / `lastPage` away
-      // from Home / End.
-      const noChord = !e.metaKey && !e.ctrlKey && !e.altKey;
-      if (noChord && e.key === "g" && !e.shiftKey) {
-        e.preventDefault();
-        const now = Date.now();
-        const lead = ggLeaderRef.current;
-        if (lead != null && now - lead < GG_LEADER_MS) {
-          ggLeaderRef.current = null;
-          goFirstPage();
-        } else {
-          ggLeaderRef.current = now;
-        }
-        return;
-      }
-      // Any other key resets the leader so `g x` doesn't carry state.
-      ggLeaderRef.current = null;
-      if (noChord && (e.key === "G" || (e.key === "g" && e.shiftKey))) {
-        e.preventDefault();
-        goLastPage();
-        return;
-      }
-      const action = actionForKey(e, bindings);
-      if (!action) return;
-      e.preventDefault();
-      switch (action) {
-        case "nextPage":
-          if (
-            direction === "rtl" &&
-            (e.key === "ArrowRight" || e.key === "ArrowLeft")
-          ) {
-            // Arrow keys flip in RTL so the visual swipe-to-advance feels right.
-            if (e.key === "ArrowRight") goPrev();
-            else goNext();
-          } else {
-            goNext();
-          }
-          break;
-        case "prevPage":
-          if (
-            direction === "rtl" &&
-            (e.key === "ArrowRight" || e.key === "ArrowLeft")
-          ) {
-            if (e.key === "ArrowLeft") goNext();
-            else goPrev();
-          } else {
-            goPrev();
-          }
-          break;
-        case "firstPage":
-          goFirstPage();
-          break;
-        case "lastPage":
-          goLastPage();
-          break;
-        case "toggleChrome":
-          toggleChrome();
-          break;
-        case "cycleFit":
-          cycleFitMode();
-          break;
-        case "cycleViewMode":
-          cycleViewMode();
-          break;
-        case "togglePageStrip":
-          togglePageStrip();
-          break;
-        case "quitReader":
-          // End-of-issue card swallows the first Esc — second one exits
-          // as normal. Keeps "Stay here" reachable from the keyboard
-          // without a separate keybind.
-          if (showEndCard) {
-            setShowEndCard(false);
-            break;
-          }
-          router.push(exitUrl);
-          break;
-        case "bookmarkPage":
-          toggleBookmark();
-          break;
-        case "addNote":
-          beginMarkerEdit({
-            kind: "note",
-            page_index: currentPage,
-            region: null,
-            selection: null,
-            body: "",
-            is_favorite: false,
-            tags: [],
-          });
-          break;
-        case "startHighlight":
-          setMarkerMode("select-rect");
-          break;
-        case "favoritePage":
-          toggleFavorite();
-          break;
-        case "toggleMarkersHidden": {
-          // Toggle returns the next value via the store; surface a
-          // small toast so it's clear what just flipped (the visual
-          // delta isn't always obvious if there are few markers on the
-          // current page).
-          toggleMarkersHidden();
-          const nowHidden = useReaderStore.getState().markersHidden;
-          toast.message(nowHidden ? "Markers hidden" : "Markers shown");
-          break;
-        }
-        case "nextBookmark": {
-          const pages = (issueMarkers.data?.items ?? [])
-            .filter((m) => m.kind === "bookmark")
-            .map((m) => m.page_index)
-            .sort((a, b) => a - b);
-          const next = pages.find((p) => p > currentPage);
-          if (next != null) setPage(next);
-          break;
-        }
-        case "prevBookmark": {
-          const pages = (issueMarkers.data?.items ?? [])
-            .filter((m) => m.kind === "bookmark")
-            .map((m) => m.page_index)
-            .sort((a, b) => a - b);
-          // Walk backwards to find the largest page-index strictly less
-          // than the current — `findLast` would be cleaner but the
-          // tsconfig target lags the ES2023 lib.
-          let prev: number | undefined;
-          for (const p of pages) {
-            if (p < currentPage) prev = p;
-            else break;
-          }
-          if (prev != null) setPage(prev);
-          break;
-        }
-        case "nextIssue":
-          goNextIssue();
-          break;
-        case "prevIssue":
-          goPrevIssue();
-          break;
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [
-    beginMarkerEdit,
+  // `addNote` / `startHighlight` keymap actions are forwarded through
+  // these wrappers so the hook doesn't need to know about the marker
+  // store's `beginMarkerEdit` / `setMarkerMode` shape.
+  const beginAddNote = useCallback(() => {
+    beginMarkerEdit({
+      kind: "note",
+      page_index: currentPage,
+      region: null,
+      selection: null,
+      body: "",
+      is_favorite: false,
+      tags: [],
+    });
+  }, [beginMarkerEdit, currentPage]);
+  const beginHighlight = useCallback(() => {
+    setMarkerMode("select-rect");
+  }, [setMarkerMode]);
+
+  // `toggleMarkersHidden` from the store flips visibility silently;
+  // the keymap wants a toast confirming the new state (the visual
+  // delta isn't obvious with few markers on the current page).
+  const toggleMarkersHiddenWithToast = useCallback(() => {
+    toggleMarkersHidden();
+    const nowHidden = useReaderStore.getState().markersHidden;
+    toast.message(nowHidden ? "Markers hidden" : "Markers shown");
+  }, [toggleMarkersHidden]);
+
+  // Reader keymap — §7.4 (M7.5). Bindings already resolved against
+  // user prefs above; the hook owns the global keydown listener,
+  // `g g` / `Shift+G` vim aliases, RTL arrow-key flip, and end-card
+  // Esc-then-exit two-step. Marker-mode active state suppresses
+  // page-nav so a highlight drag isn't interrupted; the marker
+  // overlay's capture-phase handler still owns Esc in that mode.
+  useReaderKeymap({
     bindings,
+    viewMode,
+    direction,
+    groups,
+    totalPages,
     currentPage,
+    markerActive:
+      markerModeForKeybinds !== "idle" || pendingMarkerForKeybinds !== null,
+    showEndCard,
+    bookmarkPages,
+    setPage,
+    onNext: goNext,
+    onPrev: goPrev,
+    onNextIssue: goNextIssue,
+    onPrevIssue: goPrevIssue,
+    toggleChrome,
     cycleFitMode,
     cycleViewMode,
-    direction,
-    exitUrl,
-    goNext,
-    goNextIssue,
-    goPrev,
-    goPrevIssue,
-    groups,
-    issueId,
-    issueMarkers.data,
-    showEndCard,
-    markerModeForKeybinds,
-    pendingMarkerForKeybinds,
-    router,
-    setMarkerMode,
-    setPage,
+    togglePageStrip,
     toggleBookmark,
     toggleFavorite,
-    toggleChrome,
-    toggleMarkersHidden,
-    togglePageStrip,
-    totalPages,
-    viewMode,
-  ]);
+    toggleMarkersHidden: toggleMarkersHiddenWithToast,
+    beginAddNote,
+    beginHighlight,
+    onQuitReader: handleQuitReader,
+    onDismissEndCard: dismissEndCard,
+  });
 
-  // Progress write — debounced so a fast page-flip doesn't hammer the server.
-  const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const csrfToken = useMemo(() => {
-    if (typeof document === "undefined") return "";
-    const m = document.cookie.match(/(?:^|;\s*)(?:__Host-)?comic_csrf=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : "";
-  }, []);
-
-  useEffect(() => {
-    if (!issueId) return;
-    // Incognito skips the per-page progress write entirely. The
-    // reading-session tracker is also disabled by the parent (it gates on
-    // `activityTrackingEnabled`), so the server is never told the issue
-    // was opened in this mode.
-    if (incognito) return;
-    if (progressTimer.current) clearTimeout(progressTimer.current);
-    progressTimer.current = setTimeout(() => {
-      // `finished` is sticky on the server: omit it on mid-issue writes
-      // so a jump to a bookmark (or any non-last page) can't clear a
-      // previously-marked-read issue. We only assert `finished: true`
-      // when the user genuinely lands on the last page — explicit
-      // "Mark as unread" goes through the mutation hook with its own
-      // explicit `finished: false`.
-      const onLastPage = currentPage >= totalPages - 1;
-      const body: Record<string, unknown> = {
-        issue_id: issueId,
-        page: currentPage,
-      };
-      if (onLastPage) body.finished = true;
-      // Routed through `apiFetch` so a token expiring mid-reading
-      // triggers the implicit refresh-and-retry instead of silently
-      // dropping the write (audit M1).
-      void apiFetch("/progress", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
-        },
-        body: JSON.stringify(body),
-      }).catch(() => {
-        /* best-effort; will retry on next page change */
-      });
-    }, PROGRESS_DEBOUNCE_MS);
-    return () => {
-      if (progressTimer.current) clearTimeout(progressTimer.current);
-    };
-  }, [csrfToken, currentPage, incognito, issueId, totalPages]);
+  useReaderProgressWrite({ issueId, currentPage, totalPages, incognito });
 
   // M6a — capture the reading session (idempotent 30s heartbeat + final
   // flush). Coexists with the per-page progress write above; one source
@@ -764,29 +572,14 @@ export function Reader({
     idleMs: readingIdleMs,
   });
 
-  // Prefetch upcoming pages by seeding the browser HTTP cache. In
-  // double-page mode we advance by group, not by page index, so we don't
-  // waste requests on the back of a pair we just rendered.
-  useEffect(() => {
-    if (viewMode === "webtoon") return; // webtoon renders the whole stack
-    if (viewMode === "double" && groups.length > 0) {
-      for (let g = 1; g <= PREFETCH_AHEAD; g += 1) {
-        const grp = groups[currentGroupIdx + g];
-        if (!grp) break;
-        for (const p of grp) {
-          const img = new Image();
-          img.src = `/issues/${issueId}/pages/${p}`;
-        }
-      }
-      return;
-    }
-    for (let i = 1; i <= PREFETCH_AHEAD; i += 1) {
-      const next = currentPage + i;
-      if (next >= totalPages) break;
-      const img = new Image();
-      img.src = `/issues/${issueId}/pages/${next}`;
-    }
-  }, [currentPage, currentGroupIdx, groups, issueId, totalPages, viewMode]);
+  useReaderPrefetch({
+    issueId,
+    totalPages,
+    currentPage,
+    currentGroupIdx,
+    groups,
+    viewMode,
+  });
 
   // Reset scroll on page change in single/double mode so each new page
   // starts at the top. Webtoon manages its own scroll position via the
@@ -846,41 +639,15 @@ export function Reader({
   // drag in highlight mode was being interpreted as a page-flip
   // swipe. Switching off the gesture entirely is cleaner than
   // racing `stopPropagation` on the native handlers.
-  const gesturesEnabled =
-    markerModeForKeybinds === "idle" && pendingMarkerForKeybinds === null;
-  useGesture(
-    {
-      onDragEnd: ({ movement: [mx], cancel }) => {
-        if (viewMode === "webtoon") {
-          cancel();
-          return;
-        }
-        // When the user has pinch-zoomed in, single-finger drags
-        // are panning the visual viewport — don't also turn the
-        // page or they'll lose their place every time they try to
-        // read across a zoomed-in panel.
-        if (typeof window !== "undefined") {
-          const scale = window.visualViewport?.scale ?? 1;
-          if (scale > 1.05) return;
-        }
-        if (Math.abs(mx) < SWIPE_THRESHOLD_PX) return;
-        // Swipe-right (positive mx) → previous page in LTR, next in RTL.
-        const swipeIsForward = direction === "rtl" ? mx > 0 : mx < 0;
-        if (swipeIsForward) goNext();
-        else goPrev();
-      },
-    },
-    {
-      target: gestureRef,
-      drag: {
-        axis: "x",
-        filterTaps: true,
-        threshold: 10,
-        enabled: gesturesEnabled,
-      },
-      eventOptions: { passive: false },
-    },
-  );
+  useReaderSwipe({
+    target: gestureRef,
+    enabled:
+      markerModeForKeybinds === "idle" && pendingMarkerForKeybinds === null,
+    viewMode,
+    direction,
+    onNext: goNext,
+    onPrev: goPrev,
+  });
 
   return (
     <div
