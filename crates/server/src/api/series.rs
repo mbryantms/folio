@@ -951,54 +951,62 @@ pub(crate) fn parse_cursor(s: &str) -> Result<(String, String), ()> {
     Ok((value.to_string(), id.to_string()))
 }
 
-#[utoipa::path(
-    get,
-    path = "/series",
-    responses((status = 200, body = SeriesListView))
-)]
-pub async fn list(
-    State(app): State<AppState>,
-    user: CurrentUser,
-    Query(q): Query<ListSeriesQuery>,
-) -> impl IntoResponse {
-    // Validate query length up front (§A4).
+// ───── /series list helpers ─────
+//
+// Pattern mirrors `issues::list` (M7.1): validation up front, then
+// visibility → static filters → search-mode early return → count →
+// cursor → sort → fetch → hydrate. Each helper threads
+// sea_orm::Select<series::Entity> through; validation helpers return
+// `Result<_, &'static str>` so the handler can wrap with the canonical
+// `error()` builder (keeps clippy::result_large_err happy).
+
+fn validate_list_series_query_params(q: &ListSeriesQuery) -> Result<(), &'static str> {
     if let Some(s) = q.q.as_ref()
         && s.len() > MAX_QUERY_LEN
     {
-        return error(StatusCode::BAD_REQUEST, "validation", "q too long");
+        return Err("q too long");
     }
+    if let Some(s) = q.status.as_deref()
+        && !VALID_STATUSES.contains(&s)
+    {
+        return Err("unknown status");
+    }
+    if q.user_rating_min.is_some() || q.user_rating_max.is_some() {
+        let min = q.user_rating_min.unwrap_or(0.0);
+        let max = q.user_rating_max.unwrap_or(5.0);
+        if !(0.0..=5.0).contains(&min) || !(0.0..=5.0).contains(&max) || min > max {
+            return Err("user_rating bounds must be 0..=5 with min <= max");
+        }
+    }
+    Ok(())
+}
 
-    let visible_libs = visible_libraries(&app, &user).await;
-    let empty = || {
-        Json(SeriesListView {
-            items: Vec::new(),
-            next_cursor: None,
-            total: Some(0),
-        })
-        .into_response()
-    };
-    let mut select = series::Entity::find();
-    if let Some(lib) = q.library {
-        if !visible_libs.unrestricted && !visible_libs.allowed.contains(&lib) {
-            return empty();
+fn apply_series_visibility(
+    mut select: sea_orm::Select<series::Entity>,
+    visible: &VisibleLibs,
+    library: Option<Uuid>,
+) -> Option<sea_orm::Select<series::Entity>> {
+    if let Some(lib) = library {
+        if !visible.unrestricted && !visible.allowed.contains(&lib) {
+            return None;
         }
         select = select.filter(series::Column::LibraryId.eq(lib));
-    } else if !visible_libs.unrestricted {
-        if visible_libs.allowed.is_empty() {
-            return empty();
+    } else if !visible.unrestricted {
+        if visible.allowed.is_empty() {
+            return None;
         }
         select = select.filter(
-            series::Column::LibraryId
-                .is_in(visible_libs.allowed.iter().copied().collect::<Vec<_>>()),
+            series::Column::LibraryId.is_in(visible.allowed.iter().copied().collect::<Vec<_>>()),
         );
     }
+    Some(select)
+}
 
-    // Metadata facet filters. Validation up front so a typo in the
-    // status value 400s instead of silently returning empty.
+fn apply_series_direct_column_filters(
+    mut select: sea_orm::Select<series::Entity>,
+    q: &ListSeriesQuery,
+) -> sea_orm::Select<series::Entity> {
     if let Some(s) = q.status.as_deref() {
-        if !VALID_STATUSES.contains(&s) {
-            return error(StatusCode::BAD_REQUEST, "validation", "unknown status");
-        }
         select = select.filter(series::Column::Status.eq(s));
     }
     if let Some(y) = q.year_from {
@@ -1007,24 +1015,27 @@ pub async fn list(
     if let Some(y) = q.year_to {
         select = select.filter(series::Column::Year.lte(y));
     }
-    if let Some(raw) = q.publisher.as_deref() {
+    let direct_facets: [(Option<&str>, series::Column); 3] = [
+        (q.publisher.as_deref(), series::Column::Publisher),
+        (q.language.as_deref(), series::Column::LanguageCode),
+        (q.age_rating.as_deref(), series::Column::AgeRating),
+    ];
+    for (raw, column) in direct_facets {
+        let Some(raw) = raw else { continue };
         let values = split_csv(raw);
-        if !values.is_empty() {
-            select = select.filter(series::Column::Publisher.is_in(values));
+        if values.is_empty() {
+            continue;
         }
+        select = select.filter(column.is_in(values));
     }
-    if let Some(raw) = q.language.as_deref() {
-        let values = split_csv(raw);
-        if !values.is_empty() {
-            select = select.filter(series::Column::LanguageCode.is_in(values));
-        }
-    }
-    if let Some(raw) = q.age_rating.as_deref() {
-        let values = split_csv(raw);
-        if !values.is_empty() {
-            select = select.filter(series::Column::AgeRating.is_in(values));
-        }
-    }
+    select
+}
+
+/// Genres + tags via the per-series junction tables.
+fn apply_series_junction_facet_filters(
+    mut select: sea_orm::Select<series::Entity>,
+    q: &ListSeriesQuery,
+) -> sea_orm::Select<series::Entity> {
     if let Some(raw) = q.genres.as_deref() {
         let values = split_csv(raw);
         if !values.is_empty() {
@@ -1043,10 +1054,15 @@ pub async fn list(
             ));
         }
     }
-    // Credit-role facets all share the same shape: includes-any against
-    // `series_credits` filtered by the role string. Each query param
-    // maps to one role.
-    for (raw, role) in [
+    select
+}
+
+/// One includes-any against `series_credits` per credit role.
+fn apply_series_credit_role_filters(
+    mut select: sea_orm::Select<series::Entity>,
+    q: &ListSeriesQuery,
+) -> sea_orm::Select<series::Entity> {
+    let credit_facets: [(Option<&str>, &'static str); 8] = [
         (q.writers.as_deref(), "writer"),
         (q.pencillers.as_deref(), "penciller"),
         (q.inkers.as_deref(), "inker"),
@@ -1055,7 +1071,8 @@ pub async fn list(
         (q.cover_artists.as_deref(), "cover_artist"),
         (q.editors.as_deref(), "editor"),
         (q.translators.as_deref(), "translator"),
-    ] {
+    ];
+    for (raw, role) in credit_facets {
         let Some(raw) = raw else { continue };
         let values = split_csv(raw);
         if values.is_empty() {
@@ -1066,17 +1083,23 @@ pub async fn list(
             [Value::from(role), Value::from(values)],
         ));
     }
-    // Cast / setting CSV facets — characters, teams, locations live as
-    // CSV strings on `issues`, not in junction tables, so we EXISTS
-    // into issues and split the CSV per-row. Splitting on `[,;]`
-    // mirrors the aggregator (`fn aggregate_csv`) so a value the user
-    // sees as a chip on the series page is the same value here.
-    // Lowercased on both sides so matching is case-insensitive.
-    for (raw, column) in [
+    select
+}
+
+/// Cast / setting facets — characters, teams, locations live as CSV
+/// strings on `issues`, not in junction tables. Splitting on `[,;]`
+/// mirrors `aggregate_csv` so chip values match. Lowercased on both
+/// sides so matching is case-insensitive.
+fn apply_series_cast_setting_filters(
+    mut select: sea_orm::Select<series::Entity>,
+    q: &ListSeriesQuery,
+) -> sea_orm::Select<series::Entity> {
+    let cast_facets: [(Option<&str>, &'static str); 3] = [
         (q.characters.as_deref(), "characters"),
         (q.teams.as_deref(), "teams"),
         (q.locations.as_deref(), "locations"),
-    ] {
+    ];
+    for (raw, column) in cast_facets {
         let Some(raw) = raw else { continue };
         let values = split_csv(raw);
         if values.is_empty() {
@@ -1097,168 +1120,107 @@ pub async fn list(
         );
         select = select.filter(Expr::cust_with_values(&sql, [Value::from(lowered)]));
     }
-    // Per-user rating range. Joins (via EXISTS) to `user_ratings`
-    // scoped to the calling user; series without a rating from this
-    // user are excluded when either bound is set.
+    select
+}
+
+/// EXISTS-subquery filter on the calling user's per-series rating.
+/// Caller must call `validate_list_series_query_params` first — this
+/// helper trusts the bounds.
+fn apply_series_user_rating_filter(
+    mut select: sea_orm::Select<series::Entity>,
+    q: &ListSeriesQuery,
+    user_id: Uuid,
+) -> sea_orm::Select<series::Entity> {
     if q.user_rating_min.is_some() || q.user_rating_max.is_some() {
         let min = q.user_rating_min.unwrap_or(0.0);
         let max = q.user_rating_max.unwrap_or(5.0);
-        if !(0.0..=5.0).contains(&min) || !(0.0..=5.0).contains(&max) || min > max {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "validation",
-                "user_rating bounds must be 0..=5 with min <= max",
-            );
-        }
         select = select.filter(Expr::cust_with_values(
             "EXISTS (SELECT 1 FROM user_ratings ur \
              WHERE ur.user_id = $1 \
                AND ur.target_type = 'series' \
                AND ur.target_id = series.id::text \
                AND ur.rating BETWEEN $2 AND $3)",
-            [Value::from(user.id), Value::from(min), Value::from(max)],
+            [Value::from(user_id), Value::from(min), Value::from(max)],
         ));
     }
+    select
+}
 
-    let limit = clamp_limit(q.limit);
-    let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
-
-    // Search mode: rank by ts_rank_cd; cursor + sort options are ignored
-    // (search results are always ranked, returned as a single page).
-    if let Some(text) = q_text {
-        let select = select
-            .filter(
-                Condition::any()
-                    .add(Expr::cust_with_values(
-                        "search_doc @@ websearch_to_tsquery('simple', $1)",
-                        [text],
-                    ))
-                    .add(Expr::cust_with_values(
-                        "normalized_name % $1",
-                        [entity::series::normalize_name(text)],
-                    )),
-            )
-            .order_by_desc(Expr::cust_with_values(
-                "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
-                [text],
-            ))
-            .order_by_asc(series::Column::NormalizedName)
-            .limit(limit);
-        let rows = match select.all(&app.db).await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!(error = %e, "list series search failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        };
-        // Search mode is always one ranked page — total equals the
-        // number of items the FTS query matched, capped by `limit`.
-        // Surfacing that as `total` so the client doesn't have to
-        // special-case the search branch.
-        let items = hydrate_series(&app, rows).await;
-        let total = Some(items.len() as i64);
-        return Json(SeriesListView {
-            items,
-            next_cursor: None,
-            total,
-        })
-        .into_response();
-    }
-
-    // Sort + cursor mode.
-    let sort = q.sort.unwrap_or_default();
-    // Defaults: name ASC, timestamps DESC (recently-updated/added rails),
-    // year DESC (newest first feels right for "by release date").
-    let order = q.order.unwrap_or(match sort {
-        SeriesSort::Name => SortOrder::Asc,
-        SeriesSort::CreatedAt | SeriesSort::UpdatedAt | SeriesSort::Year => SortOrder::Desc,
-    });
-    let asc = matches!(order, SortOrder::Asc);
-
-    // Count once on the first page only (no cursor). Postgres's
-    // COUNT(*) over the filtered set is fast enough at typical Folio
-    // scale and the client uses this for the header subtitle.
-    let total: Option<i64> = if q.cursor.is_none() {
-        match select.clone().count(&app.db).await {
-            Ok(n) => Some(n as i64),
-            Err(e) => {
-                tracing::error!(error = %e, "list series count failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        }
-    } else {
-        None
-    };
-
-    if let Some(cursor) = q.cursor.as_deref() {
-        let Ok((c_value, c_id_str)) = parse_cursor(cursor) else {
-            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-        };
-        let Ok(c_id) = Uuid::parse_str(&c_id_str) else {
-            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-        };
-        select = match sort {
-            SeriesSort::Name => apply_string_cursor(
+/// Decode the opaque cursor and dispatch to the per-sort
+/// `apply_*_cursor` helper. Static `Err` keeps the `Result` variant
+/// small (clippy::result_large_err); caller maps to 400 `validation`.
+fn apply_series_cursor(
+    select: sea_orm::Select<series::Entity>,
+    cursor: &str,
+    sort: SeriesSort,
+    asc: bool,
+) -> Result<sea_orm::Select<series::Entity>, &'static str> {
+    let (c_value, c_id_str) = parse_cursor(cursor).map_err(|_| "invalid cursor")?;
+    let c_id = Uuid::parse_str(&c_id_str).map_err(|_| "invalid cursor")?;
+    Ok(match sort {
+        SeriesSort::Name => apply_string_cursor(
+            select,
+            series::Column::NormalizedName,
+            series::Column::Id,
+            &c_value,
+            c_id,
+            asc,
+        ),
+        SeriesSort::CreatedAt => {
+            let ts =
+                chrono::DateTime::parse_from_rfc3339(&c_value).map_err(|_| "invalid cursor")?;
+            apply_ts_cursor(
                 select,
-                series::Column::NormalizedName,
+                series::Column::CreatedAt,
                 series::Column::Id,
-                &c_value,
+                ts,
                 c_id,
                 asc,
-            ),
-            SeriesSort::CreatedAt => match chrono::DateTime::parse_from_rfc3339(&c_value) {
-                Ok(ts) => apply_ts_cursor(
-                    select,
-                    series::Column::CreatedAt,
-                    series::Column::Id,
-                    ts,
-                    c_id,
-                    asc,
-                ),
-                Err(_) => {
-                    return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-                }
-            },
-            SeriesSort::UpdatedAt => match chrono::DateTime::parse_from_rfc3339(&c_value) {
-                Ok(ts) => apply_ts_cursor(
-                    select,
-                    series::Column::UpdatedAt,
-                    series::Column::Id,
-                    ts,
-                    c_id,
-                    asc,
-                ),
-                Err(_) => {
-                    return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-                }
-            },
-            SeriesSort::Year => {
-                // Empty `c_value` encodes a NULL year on the boundary
-                // row; otherwise parse as i32 (validate explicitly so a
-                // garbled cursor 400s instead of silently page-shifting).
-                let parsed = if c_value.is_empty() {
-                    None
-                } else {
-                    match c_value.parse::<i32>() {
-                        Ok(n) => Some(n),
-                        Err(_) => {
-                            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-                        }
-                    }
-                };
-                apply_i32_cursor(
-                    select,
-                    series::Column::Year,
-                    series::Column::Id,
-                    parsed,
-                    c_id,
-                    asc,
-                )
-            }
-        };
-    }
+            )
+        }
+        SeriesSort::UpdatedAt => {
+            let ts =
+                chrono::DateTime::parse_from_rfc3339(&c_value).map_err(|_| "invalid cursor")?;
+            apply_ts_cursor(
+                select,
+                series::Column::UpdatedAt,
+                series::Column::Id,
+                ts,
+                c_id,
+                asc,
+            )
+        }
+        SeriesSort::Year => {
+            // Empty `c_value` encodes a NULL year on the boundary row;
+            // otherwise parse as i32 (validate explicitly so a garbled
+            // cursor 400s instead of silently page-shifting).
+            let parsed = if c_value.is_empty() {
+                None
+            } else {
+                Some(c_value.parse::<i32>().map_err(|_| "invalid cursor")?)
+            };
+            apply_i32_cursor(
+                select,
+                series::Column::Year,
+                series::Column::Id,
+                parsed,
+                c_id,
+                asc,
+            )
+        }
+    })
+}
 
-    select = match sort {
+/// Final ORDER BY chain. Year is nullable; we emulate `NULLS LAST` on
+/// both ASC and DESC so undated series consistently sort to the bottom
+/// regardless of direction (Postgres defaults are NULLS LAST on ASC,
+/// NULLS FIRST on DESC).
+fn apply_series_sort_ordering(
+    select: sea_orm::Select<series::Entity>,
+    sort: SeriesSort,
+    asc: bool,
+) -> sea_orm::Select<series::Entity> {
+    match sort {
         SeriesSort::Name => {
             if asc {
                 select
@@ -1293,10 +1255,6 @@ pub async fn list(
             }
         }
         SeriesSort::Year => {
-            // Year is nullable. Postgres defaults are NULLS LAST on
-            // ASC and NULLS FIRST on DESC; emulate NULLS LAST on
-            // both so undated series consistently sort to the bottom
-            // regardless of direction.
             let nulls_last = Expr::cust("year IS NULL");
             let s = select.order_by_asc(nulls_last);
             if asc {
@@ -1307,7 +1265,138 @@ pub async fn list(
                     .order_by_desc(series::Column::Id)
             }
         }
+    }
+}
+
+/// Compute the opaque cursor encoding for the boundary row when the
+/// fetched window overflows the page limit. Empty string for Year
+/// = NULL year on the boundary; the cursor decoder uses that as the
+/// signal to switch to id-only filtering inside the NULL bucket.
+fn compute_next_series_cursor(
+    rows: &[series::Model],
+    limit: u64,
+    sort: SeriesSort,
+) -> Option<String> {
+    if rows.len() as u64 <= limit {
+        return None;
+    }
+    let r = rows.get(limit as usize - 1)?;
+    let value = match sort {
+        SeriesSort::Name => r.normalized_name.clone(),
+        SeriesSort::CreatedAt => r.created_at.to_rfc3339(),
+        SeriesSort::UpdatedAt => r.updated_at.to_rfc3339(),
+        SeriesSort::Year => r.year.map(|y| y.to_string()).unwrap_or_default(),
     };
+    Some(encode_cursor(&value, &r.id.to_string()))
+}
+
+#[utoipa::path(
+    get,
+    path = "/series",
+    responses((status = 200, body = SeriesListView))
+)]
+pub async fn list(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<ListSeriesQuery>,
+) -> impl IntoResponse {
+    if let Err(msg) = validate_list_series_query_params(&q) {
+        return error(StatusCode::BAD_REQUEST, "validation", msg);
+    }
+
+    let visible_libs = visible_libraries(&app, &user).await;
+    let empty = || {
+        Json(SeriesListView {
+            items: Vec::new(),
+            next_cursor: None,
+            total: Some(0),
+        })
+        .into_response()
+    };
+    let Some(mut select) =
+        apply_series_visibility(series::Entity::find(), &visible_libs, q.library)
+    else {
+        return empty();
+    };
+    select = apply_series_direct_column_filters(select, &q);
+    select = apply_series_junction_facet_filters(select, &q);
+    select = apply_series_credit_role_filters(select, &q);
+    select = apply_series_cast_setting_filters(select, &q);
+    select = apply_series_user_rating_filter(select, &q, user.id);
+
+    let limit = clamp_limit(q.limit);
+    let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
+
+    // Search mode: rank by ts_rank_cd; cursor + sort options are ignored
+    // (search results are always ranked, returned as a single page —
+    // total equals items.len()).
+    if let Some(text) = q_text {
+        let ranked = select
+            .filter(
+                Condition::any()
+                    .add(Expr::cust_with_values(
+                        "search_doc @@ websearch_to_tsquery('simple', $1)",
+                        [text],
+                    ))
+                    .add(Expr::cust_with_values(
+                        "normalized_name % $1",
+                        [entity::series::normalize_name(text)],
+                    )),
+            )
+            .order_by_desc(Expr::cust_with_values(
+                "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
+                [text],
+            ))
+            .order_by_asc(series::Column::NormalizedName)
+            .limit(limit);
+        let rows = match ranked.all(&app.db).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "list series search failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+        let items = hydrate_series(&app, rows).await;
+        let total = Some(items.len() as i64);
+        return Json(SeriesListView {
+            items,
+            next_cursor: None,
+            total,
+        })
+        .into_response();
+    }
+
+    // Sort + cursor mode. Defaults: name ASC, timestamps DESC
+    // (recently-updated/added rails), year DESC.
+    let sort = q.sort.unwrap_or_default();
+    let order = q.order.unwrap_or(match sort {
+        SeriesSort::Name => SortOrder::Asc,
+        SeriesSort::CreatedAt | SeriesSort::UpdatedAt | SeriesSort::Year => SortOrder::Desc,
+    });
+    let asc = matches!(order, SortOrder::Asc);
+
+    // Count once on the first page only (no cursor). Postgres's
+    // COUNT(*) over the filtered set is fast enough at typical Folio
+    // scale and the client uses this for the header subtitle.
+    let total: Option<i64> = if q.cursor.is_none() {
+        match select.clone().count(&app.db).await {
+            Ok(n) => Some(n as i64),
+            Err(e) => {
+                tracing::error!(error = %e, "list series count failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(cursor) = q.cursor.as_deref() {
+        select = match apply_series_cursor(select, cursor, sort, asc) {
+            Ok(s) => s,
+            Err(msg) => return error(StatusCode::BAD_REQUEST, "validation", msg),
+        };
+    }
+    select = apply_series_sort_ordering(select, sort, asc);
 
     let rows: Vec<series::Model> = match select.limit(limit + 1).all(&app.db).await {
         Ok(v) => v,
@@ -1316,23 +1405,7 @@ pub async fn list(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-
-    let next_cursor = if rows.len() as u64 > limit {
-        rows.get(limit as usize - 1).map(|r| {
-            let value = match sort {
-                SeriesSort::Name => r.normalized_name.clone(),
-                SeriesSort::CreatedAt => r.created_at.to_rfc3339(),
-                SeriesSort::UpdatedAt => r.updated_at.to_rfc3339(),
-                // Empty string = NULL year on the boundary row; the
-                // cursor parser uses that as a signal to switch to
-                // id-only filtering inside the NULL bucket.
-                SeriesSort::Year => r.year.map(|y| y.to_string()).unwrap_or_default(),
-            };
-            encode_cursor(&value, &r.id.to_string())
-        })
-    } else {
-        None
-    };
+    let next_cursor = compute_next_series_cursor(&rows, limit, sort);
     let page: Vec<series::Model> = rows.into_iter().take(limit as usize).collect();
 
     Json(SeriesListView {
