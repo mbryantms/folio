@@ -125,6 +125,18 @@ pub struct Model {
     /// badge sourced from `GET /me/markers/count`. Default false so new
     /// accounts get a quiet sidebar; toggled from /settings/account.
     pub show_marker_count: bool,
+
+    /// OPDS sync cleanup M2: when true, `/opds/v1/wtr` + v2 mirror
+    /// reorder the user's next-up issue to position 0. When false,
+    /// WTR renders in the user-curated drag order. Default true —
+    /// the reorder behavior is the right answer for the common case.
+    pub opds_wtr_reorder: bool,
+
+    /// OPDS sync cleanup M3: when true, OPDS entry titles carry a
+    /// progress glyph (◯ / ◐ / ●) plus `(N / M)` page-count suffix
+    /// so clients that ignore PSE attributes still surface "what's
+    /// left". Default true.
+    pub opds_progress_glyphs: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

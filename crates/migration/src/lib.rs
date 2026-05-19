@@ -59,6 +59,8 @@ mod m20261217_000001_marker_favorite_flag;
 mod m20261217_000002_marker_tags;
 mod m20261218_000001_people_search;
 mod m20261219_000001_character_team_location_junctions;
+mod m20261220_000001_opds_reorder_opt_outs;
+mod m20261221_000001_opds_progress_glyphs;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -126,6 +128,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260516_000001_issues_content_hash_idx::Migration),
             Box::new(m20260518_000001_series_reading_direction::Migration),
             Box::new(m20261219_000001_character_team_location_junctions::Migration),
+            Box::new(m20261220_000001_opds_reorder_opt_outs::Migration),
+            Box::new(m20261221_000001_opds_progress_glyphs::Migration),
         ]
     }
 }

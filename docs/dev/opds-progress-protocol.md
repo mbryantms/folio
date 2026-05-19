@@ -198,3 +198,29 @@ Pre-M4 clients that send `{"page": N, ...}` continue to work unchanged
 which serde's `#[serde(default)]` accepts back-compat as either
 "missing" or "value". Only the new `position`-only payload requires
 M4-era server code.
+
+## Read-back annotations (opds-sync-cleanup-1.0)
+
+Even for clients that never POST progress, Folio surfaces what they've
+read back through three independent channels so they can render
+"where I left off" without making a side-channel call:
+
+1. **PSE attributes on the stream link** —
+   `<link rel=".../stream" ... pse:last_read="N" pse:last_read_date="ISO8601" />`.
+   Snake_case **attributes**, not child elements; this matches the
+   [OPDS-PSE spec](https://anansi-project.github.io/docs/opds-pse/specs)
+   and the shape Panels / Chunky actually parse.
+
+2. **Default up-next-first reorder** — every reading-sequence feed
+   (series, CBL, WTR, collections) emits the user's next-unfinished
+   issue at entry index 0. Curators with strict canonical orders
+   (DC Year One, sequential trade reading lists, etc.) can opt out
+   per-row via `preserve_canonical_order = true`. WTR is system-owned
+   so its toggle lives on the user row (`users.opds_wtr_reorder`).
+
+3. **Title-glyph + page-count suffix** — every entry / publication
+   title is decorated with `◯` (unread), `◐` (in progress), or `●`
+   (finished), plus `(N / M)` when page totals are known. This is the
+   universal-compat fallback for clients that ignore both PSE
+   attributes and the `up-next` rel. Hide via
+   `users.opds_progress_glyphs = false`.

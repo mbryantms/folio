@@ -18,6 +18,16 @@ vi.mock("@/lib/api/mutations", () => ({
     isPending: false,
   }),
 }));
+// Shared progress map drives the finished check + percent bar. The
+// mutable `progressState` lets individual tests seed a row before
+// rendering without re-creating the module mock.
+const progressState = new Map<
+  string,
+  { issue_id: string; last_page: number; percent: number; finished: boolean }
+>();
+vi.mock("@/lib/api/queries", () => ({
+  useUserProgress: () => ({ data: progressState }),
+}));
 // QuickReadOverlay and CoverMenuButton transitively pull `useRouter`.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {} }),
@@ -35,6 +45,8 @@ vi.mock("@/components/collections/useCoverMenuCollectionActions", () => ({
 vi.mock("@/components/CoverLongPressActions", () => ({
   useCoverLongPressActions: () => ({ wrapperProps: {}, sheet: null }),
 }));
+
+import { Check } from "lucide-react";
 
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
 import type {
@@ -150,5 +162,33 @@ describe("CblIssueCard", () => {
       cblSavedViewId: SV_ID,
     });
     expect(rootType(tree)).toBe("div");
+  });
+
+  it("renders the read-check overlay for a finished issue", () => {
+    progressState.clear();
+    progressState.set("i1", {
+      issue_id: "i1",
+      last_page: 21,
+      percent: 1,
+      finished: true,
+    });
+    const tree = CblIssueCard({
+      entry: entry(),
+      issue: issue(),
+      cblSavedViewId: SV_ID,
+    });
+    const check = findByType(tree, Check);
+    expect(check).toBeTruthy();
+    progressState.clear();
+  });
+
+  it("does NOT render the read-check overlay when the issue is unread", () => {
+    progressState.clear();
+    const tree = CblIssueCard({
+      entry: entry(),
+      issue: issue(),
+      cblSavedViewId: SV_ID,
+    });
+    expect(findByType(tree, Check)).toBeNull();
   });
 });

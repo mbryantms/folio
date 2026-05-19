@@ -205,6 +205,7 @@ async fn seed_one_issue(app: &TestApp, slug_prefix: &str) -> (Uuid, Uuid, String
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await
@@ -357,6 +358,7 @@ async fn seed_cbl_list(app: &TestApp, name: &str, entries: &[(i32, &str)]) -> Uu
         refresh_schedule: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await
@@ -418,6 +420,7 @@ async fn seed_cbl_saved_view(
         result_limit: Set(None),
         cbl_list_id: Set(Some(cbl_list_id)),
         auto_pin: Set(false),
+        preserve_canonical_order: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -608,6 +611,7 @@ async fn next_up_caught_up_populates_fallback_suggestion_when_user_has_on_deck()
             removal_confirmed_at: Set(None),
             status_user_set_at: Set(None),
             reading_direction: Set(None),
+            preserve_canonical_order: Set(false),
         }
         .insert(&db)
         .await

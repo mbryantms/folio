@@ -1,5 +1,6 @@
 "use client";
 
+import { Check } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -14,6 +15,7 @@ import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
+import { useUserProgress } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { CblEntryView, IssueSummaryView } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
@@ -55,6 +57,15 @@ export function CblIssueCard({
   const heading = issue?.title ?? entry.series_name;
   const router = useRouter();
   const upsertProgress = useUpsertIssueProgress();
+  // Shared progress map — same hook IssueCard / SeriesCard read so the
+  // read-check (finished) and percent bar (in progress) appear here
+  // too. Map is keyed by issue id and dedupes via TanStack.
+  const progress = useUserProgress().data?.get(issue?.id ?? "");
+  const finished = progress?.finished ?? false;
+  const inProgress = !!progress && !finished && progress.percent > 0;
+  const percent = inProgress
+    ? Math.max(0, Math.min(100, Math.round(progress.percent * 100)))
+    : 0;
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue?.id ?? "",
@@ -150,6 +161,31 @@ export function CblIssueCard({
         >
           {entry.match_status}
         </Badge>
+      )}
+      {/* Read state — bottom-right to leave bottom-left for the CBL
+       *  position badge. Mirrors the affordance on `IssueCard`
+       *  (which has no position badge so places its check at
+       *  bottom-left); shape + ring + size kept in lockstep so the
+       *  visual cue is identical across surfaces. */}
+      {issue && issue.state === "active" && finished && (
+        <span
+          aria-label="Read"
+          title="Read"
+          className="bg-primary/90 text-primary-foreground absolute right-2 bottom-2 inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 shadow-sm ring-black/10 backdrop-blur dark:ring-white/10"
+        >
+          <Check aria-hidden="true" className="h-3.5 w-3.5" />
+        </span>
+      )}
+      {issue && issue.state === "active" && inProgress && (
+        <div
+          className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
+          aria-hidden="true"
+        >
+          <div
+            className="bg-primary h-full transition-[width]"
+            style={{ width: `${percent}%` }}
+          />
+        </div>
       )}
       {showActions && issue && !inSelectMode && (
         <>

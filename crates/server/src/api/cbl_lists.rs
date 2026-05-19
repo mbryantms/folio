@@ -1073,6 +1073,7 @@ async fn create_list_from_parsed(
         refresh_schedule: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
+        preserve_canonical_order: Set(false),
     };
     match source {
         SourceMeta::Upload {

@@ -163,6 +163,7 @@ async fn seed_issue(app: &TestApp) -> String {
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await
@@ -630,6 +631,7 @@ async fn seed_series_with_issues(app: &TestApp, n_issues: usize) -> (Uuid, Vec<S
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await

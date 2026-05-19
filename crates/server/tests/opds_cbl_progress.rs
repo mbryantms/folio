@@ -25,7 +25,7 @@ use entity::{
     progress_record::ActiveModel as ProgressAM,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, Set};
+use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -176,6 +176,7 @@ async fn seed_series(db: &DatabaseConnection, lib_id: Uuid, name: &str) -> Uuid 
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(db)
     .await
@@ -314,6 +315,7 @@ async fn seed_cbl_list(db: &DatabaseConnection, owner: Uuid, name: &str) -> Uuid
         refresh_schedule: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
+        preserve_canonical_order: Set(false),
     }
     .insert(db)
     .await
@@ -502,6 +504,19 @@ async fn v1_cbl_feed_per_entry_rel_next_honors_cbl_position_with_mixed_states() 
     seed_cbl_entry(&db, list_id, 0, Some(&a)).await;
     seed_cbl_entry(&db, list_id, 1, Some(&b)).await;
     seed_cbl_entry(&db, list_id, 2, Some(&c)).await;
+    // opds-sync-cleanup M2 default-reorders the up-next issue to entry
+    // index 0, which would scramble rel=next in this test. The
+    // invariant under test is "rel=next follows positional order
+    // through mixed progress states", so opt the list out of the
+    // reorder.
+    let mut am: entity::cbl_list::ActiveModel = entity::cbl_list::Entity::find_by_id(list_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.preserve_canonical_order = Set(true);
+    am.update(&db).await.unwrap();
     // a finished; b in-progress; c untouched. Reading-sequence rel=next
     // is purely positional — should still emit a→b and b→c regardless
     // of finished states. M2 wires these via the sequential_nav flag.

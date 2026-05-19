@@ -323,6 +323,7 @@ pub(crate) async fn ensure_want_to_read_seeded(
         auto_pin: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
+        preserve_canonical_order: Set(false),
     }
     .insert(db)
     .await;
@@ -484,6 +485,7 @@ pub async fn create(
         auto_pin: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
+        preserve_canonical_order: Set(false),
     })
     .insert(&app.db)
     .await

@@ -227,6 +227,7 @@ async fn seed_matchable_issues(app: &TestApp) -> Uuid {
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await
@@ -990,6 +991,7 @@ async fn entries_endpoint_walks_past_old_500_cap() {
         refresh_schedule: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await

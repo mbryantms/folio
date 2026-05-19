@@ -201,6 +201,7 @@ async fn seed_series(db: &DatabaseConnection, lib_id: Uuid, name: &str) -> Uuid 
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(db)
     .await
@@ -311,6 +312,7 @@ async fn seed_collection(db: &DatabaseConnection, owner: Uuid, name: &str) -> Uu
         result_limit: Set(None),
         cbl_list_id: Set(None),
         auto_pin: Set(false),
+        preserve_canonical_order: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -372,6 +374,7 @@ async fn seed_cbl_list(db: &DatabaseConnection, owner: Option<Uuid>, name: &str)
         refresh_schedule: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
+        preserve_canonical_order: Set(false),
     }
     .insert(db)
     .await
@@ -436,6 +439,7 @@ async fn seed_filter_view(
         result_limit: Set(Some(20)),
         cbl_list_id: Set(None),
         auto_pin: Set(false),
+        preserve_canonical_order: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -1253,6 +1257,7 @@ async fn seed_series_full_v2(
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(db)
     .await

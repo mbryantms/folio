@@ -33,8 +33,8 @@ use axum::{
     routing::get,
 };
 use entity::{
-    cbl_entry, cbl_list, collection_entry, issue, progress_record, saved_view, series, user_page,
-    user_view_pin,
+    cbl_entry, cbl_list, collection_entry, issue, progress_record, saved_view, series,
+    user as user_entity, user_page, user_view_pin,
 };
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
@@ -548,7 +548,6 @@ async fn series_one(
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
     Query(q): Query<PageQuery>,
-    Query(resume_q): Query<opds::ResumeQuery>,
 ) -> Response {
     let s = match series::Entity::find_by_id(id).one(&app.db).await {
         Ok(Some(s)) => s,
@@ -569,7 +568,7 @@ async fn series_one(
     let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
     let page = q.page.unwrap_or(1).max(1);
     let offset = (page - 1) * opds::PAGE_SIZE;
-    let issues = match issue::Entity::find()
+    let mut issues = match issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(id))
         .order_by_asc(issue::Column::SortNumber)
         .offset(offset)
@@ -581,13 +580,6 @@ async fn series_one(
         Err(e) => return server_error(e.to_string()),
     };
     let self_href = format!("/opds/v2/series/{id}");
-    let mut publications = build_publications_sequential(&app, &user, &issues).await;
-    let mut links = vec![json!({
-        "rel": "self",
-        "href": format!("{self_href}?page={page}"),
-        "type": NAV_CT,
-    })];
-    paginate_links(&mut links, &self_href, page, total_pages, opds::PAGE_SIZE);
     // M2.3: feed-level up-next rel pointing at the first unfinished
     // issue in this series. Shares the helper with the v1 surface and
     // the web app's On Deck rail so resolution can't drift.
@@ -595,18 +587,23 @@ async fn series_one(
         .await
         .ok()
         .flatten();
+    // M2 of opds-sync-cleanup: default reorder. Move the up-next issue
+    // to position 0 unless the series owner opted out.
+    if !s.preserve_canonical_order {
+        opds::reorder_issues_up_next_first(
+            &mut issues,
+            up_next_issue.as_ref().map(|i| i.id.as_str()),
+        );
+    }
+    let publications = build_publications_sequential(&app, &user, &issues).await;
+    let mut links = vec![json!({
+        "rel": "self",
+        "href": format!("{self_href}?page={page}"),
+        "type": NAV_CT,
+    })];
+    paginate_links(&mut links, &self_href, page, total_pages, opds::PAGE_SIZE);
     if let Some(up_next) = up_next_issue.as_ref() {
         links.push(up_next_link_json(&up_next.id));
-    }
-    // M2.4: `?resume=1` opt-in. Prepend a synthetic Resume publication
-    // when the caller opted in AND up-next isn't the first canonical
-    // entry already. Suppression of the redundant-duplicate case keeps
-    // a fresh series feed from showing two copies of issue 1.
-    if resume_q.is_set()
-        && opds::should_emit_resume_synthetic(up_next_issue.as_ref(), issues.first())
-        && let Some(up) = up_next_issue.as_ref()
-    {
-        publications.insert(0, resume_synthetic_publication(up));
     }
 
     // Series-level metadata at the feed root. Mirrors what v1
@@ -1093,7 +1090,11 @@ async fn wtr(State(app): State<AppState>, user: CurrentUser) -> Response {
         Ok(v) => v,
         Err(e) => return server_error(e.to_string()),
     };
-    render_collection_acq_v2(&app, &user, &wtr, "/opds/v2/wtr", "Want to Read").await
+    let reorder = match user_entity::Entity::find_by_id(user.id).one(&app.db).await {
+        Ok(Some(u)) => u.opds_wtr_reorder,
+        _ => true,
+    };
+    render_collection_acq_v2(&app, &user, &wtr, "/opds/v2/wtr", "Want to Read", reorder).await
 }
 
 async fn cbl_lists_nav(State(app): State<AppState>, user: CurrentUser) -> Response {
@@ -1152,7 +1153,6 @@ async fn cbl_list_acq(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
-    Query(resume_q): Query<opds::ResumeQuery>,
 ) -> Response {
     let list = match cbl_list::Entity::find_by_id(id).one(&app.db).await {
         Ok(Some(l)) => l,
@@ -1179,32 +1179,30 @@ async fn cbl_list_acq(
         .filter_map(|e| e.matched_issue_id.clone())
         .collect();
     let visible = access::for_user(&app, &user).await;
-    let issues = opds::fetch_visible_issues_preserving_order(&app, &issue_ids, &visible).await;
-    let mut publications = build_publications_sequential(&app, &user, &issues).await;
+    let mut issues = opds::fetch_visible_issues_preserving_order(&app, &issue_ids, &visible).await;
+
+    // M2.3: feed-level up-next rel + M2 reorder. Same resolver as the
+    // v1 surface so the resume target is identical across protocols.
+    let up_next_full = crate::api::next_up::pick_next_in_cbl(&app, user.id, id, &visible, None)
+        .await
+        .ok()
+        .flatten()
+        .map(|(iss, _slug, _name, _pos)| iss);
+    if !list.preserve_canonical_order {
+        opds::reorder_issues_up_next_first(
+            &mut issues,
+            up_next_full.as_ref().map(|i| i.id.as_str()),
+        );
+    }
+    let publications = build_publications_sequential(&app, &user, &issues).await;
 
     let mut links = vec![json!({
         "rel": "self",
         "href": format!("/opds/v2/lists/{id}"),
         "type": NAV_CT,
     })];
-    // M2.3: feed-level up-next rel — same resolver as the v1 surface
-    // (pick_next_in_cbl honors list position + library ACL + finished
-    // state) so the resume target is identical across protocols.
-    let up_next_full = crate::api::next_up::pick_next_in_cbl(&app, user.id, id, &visible, None)
-        .await
-        .ok()
-        .flatten()
-        .map(|(iss, _slug, _name, _pos)| iss);
     if let Some(up_next) = up_next_full.as_ref() {
         links.push(up_next_link_json(&up_next.id));
-    }
-    // M2.4: synthetic Resume prepend when opted in + not already at the
-    // first canonical entry.
-    if resume_q.is_set()
-        && opds::should_emit_resume_synthetic(up_next_full.as_ref(), issues.first())
-        && let Some(up) = up_next_full.as_ref()
-    {
-        publications.insert(0, resume_synthetic_publication(up));
     }
 
     // M6: bidirectional CBL progress — feed-root lastReadDate +
@@ -1293,7 +1291,8 @@ async fn collection_acq(
     }
     let self_href = format!("/opds/v2/collections/{id}");
     let title = view.name.clone();
-    render_collection_acq_v2(&app, &user, &view, &self_href, &title).await
+    let reorder = !view.preserve_canonical_order;
+    render_collection_acq_v2(&app, &user, &view, &self_href, &title, reorder).await
 }
 
 async fn views_nav(State(app): State<AppState>, user: CurrentUser) -> Response {
@@ -1617,53 +1616,6 @@ fn up_next_link_json(issue_id: &str) -> Value {
     })
 }
 
-/// Build a synthetic "▶ Resume — {title}" publication object that
-/// gets prepended at index 0 of a v2 feed when `?resume=1` is set on
-/// a resume-context URL. M2.4 of opds-sync-1.0. The synthetic carries:
-///  - `metadata.identifier = "folio:resume:<id>"` so M2.3-aware clients
-///    can correlate it with the canonical publication and hide one.
-///  - `metadata.subject` flagged with the same `folio:resume` term.
-///  - the canonical acquisition link, NOT a new download URL.
-fn resume_synthetic_publication(i: &issue::Model) -> Value {
-    let label = i.title.clone().unwrap_or_else(|| {
-        i.number_raw
-            .clone()
-            .map(|n| format!("Issue #{n}"))
-            .unwrap_or_else(|| "Issue".into())
-    });
-    let title = format!("\u{25B6} Resume \u{2014} {label}");
-    json!({
-        "metadata": {
-            "@type": "http://schema.org/Periodical",
-            "title": title,
-            "identifier": format!("folio:resume:{}", i.id),
-            "modified": i.updated_at.to_rfc3339(),
-            "subject": [{
-                "name": "Resume here",
-                "scheme": "https://folio.local/categories/resume",
-                "code": "folio:resume",
-            }],
-        },
-        "links": [{
-            "rel": "http://opds-spec.org/acquisition",
-            "href": format!("/opds/v1/issues/{}/file", i.id),
-            "type": super::opds::mime_for(&i.file_path),
-        }],
-        "images": [
-            {
-                "rel": "http://opds-spec.org/image/thumbnail",
-                "href": format!("/issues/{}/pages/0/thumb", i.id),
-                "type": "image/webp",
-            },
-            {
-                "rel": "http://opds-spec.org/image",
-                "href": format!("/issues/{}/pages/0", i.id),
-                "type": "image/jpeg",
-            },
-        ],
-    })
-}
-
 async fn build_publications(
     app: &AppState,
     user: &CurrentUser,
@@ -1698,6 +1650,7 @@ async fn build_publications_inner(
     let key = app.secrets.url_signing_key.as_ref();
     let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
     let progress = opds::fetch_user_progress(&app.db, user.id, &issue_ids).await;
+    let glyphs = opds::user_progress_glyphs_flag(&app.db, user.id).await;
     issues
         .iter()
         .enumerate()
@@ -1718,11 +1671,13 @@ async fn build_publications_inner(
                 progress.get(&i.id),
                 prev,
                 next,
+                glyphs,
             )
         })
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn publication_for(
     i: &issue::Model,
     series_slug: Option<&str>,
@@ -1731,13 +1686,15 @@ fn publication_for(
     progress: Option<&progress_record::Model>,
     prev: Option<&issue::Model>,
     next: Option<&issue::Model>,
+    progress_glyphs: bool,
 ) -> Value {
-    let label = i.title.clone().unwrap_or_else(|| {
+    let base = i.title.clone().unwrap_or_else(|| {
         i.number_raw
             .clone()
             .map(|n| format!("Issue #{n}"))
             .unwrap_or_else(|| "Issue".into())
     });
+    let label = opds::decorate_title_with_progress(&base, progress, i.page_count, progress_glyphs);
     let mut metadata = serde_json::Map::new();
     metadata.insert("@type".into(), Value::from("http://schema.org/Periodical"));
     metadata.insert("title".into(), Value::from(label));
@@ -1999,8 +1956,9 @@ async fn render_collection_acq_v2(
     view: &saved_view::Model,
     self_href: &str,
     title: &str,
+    reorder: bool,
 ) -> Response {
-    let rows = match collection_entry::Entity::find()
+    let mut rows = match collection_entry::Entity::find()
         .filter(collection_entry::Column::SavedViewId.eq(view.id))
         .order_by_asc(collection_entry::Column::Position)
         .all(&app.db)
@@ -2009,6 +1967,10 @@ async fn render_collection_acq_v2(
         Ok(r) => r,
         Err(e) => return server_error(e.to_string()),
     };
+    if reorder {
+        let up_next = opds::pick_next_in_collection(&app.db, user.id, &rows).await;
+        opds::reorder_collection_entries_up_next_first(&mut rows, up_next.as_deref());
+    }
     let series_ids: Vec<Uuid> = rows.iter().filter_map(|r| r.series_id).collect();
     let issue_ids: Vec<String> = rows.iter().filter_map(|r| r.issue_id.clone()).collect();
 

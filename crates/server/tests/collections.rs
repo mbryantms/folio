@@ -173,6 +173,7 @@ async fn seed_series_with_issue(app: &TestApp, slug: &str) -> (Uuid, Uuid, Strin
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await

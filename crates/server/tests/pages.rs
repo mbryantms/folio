@@ -368,6 +368,7 @@ async fn delete_custom_page_cascades_pin_rows() {
         result_limit: Set(Some(12)),
         cbl_list_id: Set(None),
         auto_pin: Set(false),
+        preserve_canonical_order: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }

@@ -177,6 +177,7 @@ async fn seed_series(db: &DatabaseConnection, lib_id: Uuid, name: &str) -> Uuid 
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(db)
     .await
@@ -328,20 +329,32 @@ async fn v1_entry_carries_pse_last_read_when_progress_present() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_text(resp.into_body()).await;
     let block = entry_block(&body, &issue_id);
+    // OPDS-PSE spec: `last_read` / `last_read_date` are snake_case
+    // ATTRIBUTES on the stream link, not free-standing child elements.
+    // Verify the attribute shape that Panels / Chunky actually consume.
     assert!(
-        block.contains("<pse:lastRead>14</pse:lastRead>"),
-        "lastRead present: {block}"
+        block.contains(r#"pse:last_read="14""#),
+        "last_read attribute present on stream link: {block}"
     );
     assert!(
-        block.contains("<pse:lastReadDate>"),
-        "lastReadDate present: {block}"
+        block.contains("pse:last_read_date=\""),
+        "last_read_date attribute present on stream link: {block}"
     );
-    // The feed-root namespace must already be declared; assert it so a future
-    // refactor that drops the declaration trips this test instead of shipping
-    // a broken feed.
+    // Regression guard: pse:count must survive on the same link.
+    assert!(
+        block.contains(r#"pse:count="32""#),
+        "pse:count attribute preserved on stream link: {block}"
+    );
+    // Feed-root namespace declared.
     assert!(
         body.contains(r#"xmlns:pse="http://vaemendis.net/opds-pse/ns""#),
         "feed declares pse namespace"
+    );
+    // Negative-case guard: no free-standing child elements (the broken
+    // shape Folio emitted in v0.3.29-31).
+    assert!(
+        !block.contains("<pse:lastRead>") && !block.contains("<pse:lastReadDate>"),
+        "no free-standing child elements: {block}"
     );
 }
 
@@ -369,13 +382,15 @@ async fn v1_entry_omits_pse_last_read_when_progress_absent() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_text(resp.into_body()).await;
     let block = entry_block(&body, &issue_id);
+    // Stream link still emitted (so `pse:count` carries page total),
+    // but no last_read attributes when the caller has no progress row.
     assert!(
-        !block.contains("<pse:lastRead>"),
-        "lastRead absent when no progress row: {block}"
+        block.contains(r#"pse:count="24""#),
+        "stream link with count still emitted: {block}"
     );
     assert!(
-        !block.contains("<pse:lastReadDate>"),
-        "lastReadDate absent when no progress row: {block}"
+        !block.contains("pse:last_read"),
+        "no last_read attribute when no progress row: {block}"
     );
 }
 
@@ -404,8 +419,8 @@ async fn v1_finished_issue_emits_last_page() {
     let body = body_text(resp.into_body()).await;
     let block = entry_block(&body, &issue_id);
     assert!(
-        block.contains("<pse:lastRead>19</pse:lastRead>"),
-        "finished issue emits last_page=19: {block}"
+        block.contains(r#"pse:last_read="19""#),
+        "finished issue emits last_read=19 on the stream link: {block}"
     );
 }
 
@@ -457,15 +472,15 @@ async fn v1_multi_issue_feed_renders_mixed_states() {
     let block_b = entry_block(&body, &b);
     let block_c = entry_block(&body, &c);
     assert!(
-        block_a.contains("<pse:lastRead>5</pse:lastRead>"),
+        block_a.contains(r#"pse:last_read="5""#),
         "a in-progress: {block_a}"
     );
     assert!(
-        !block_b.contains("<pse:lastRead>"),
-        "b untouched, no annotation: {block_b}"
+        !block_b.contains("pse:last_read"),
+        "b untouched, no last_read attribute: {block_b}"
     );
     assert!(
-        block_c.contains("<pse:lastRead>29</pse:lastRead>"),
+        block_c.contains(r#"pse:last_read="29""#),
         "c finished: {block_c}"
     );
 }

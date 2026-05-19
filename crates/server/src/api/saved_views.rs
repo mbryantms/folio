@@ -827,6 +827,7 @@ async fn create_inner(
         auto_pin: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
+        preserve_canonical_order: Set(false),
     };
     let saved = match am.insert(&app.db).await {
         Ok(m) => m,

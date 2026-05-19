@@ -66,6 +66,13 @@ pub struct Model {
     pub auto_pin: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    /// When true, the matching OPDS collection feed
+    /// (`/opds/v1/collections/{id}` + v2) renders in strict
+    /// position order regardless of the caller's progress. Default
+    /// false — feeds auto-reorder the up-next issue to position 0.
+    /// Only meaningful for kind='collection' rows. M2 of
+    /// `opds-sync-cleanup-1.0`.
+    pub preserve_canonical_order: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -61,6 +61,13 @@ pub struct Model {
     pub refresh_schedule: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    /// When true, the `/opds/v1/lists/{id}` + v2 mirror render in
+    /// strict CBL position order regardless of the caller's
+    /// progress. Default false — feeds auto-reorder the up-next
+    /// issue to position 0. Curators of strict-order lists ("DC
+    /// Year-One Reading Order") flip this on. M2 of
+    /// `opds-sync-cleanup-1.0`.
+    pub preserve_canonical_order: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

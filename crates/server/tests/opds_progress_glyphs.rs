@@ -1,16 +1,17 @@
-//! Integration tests for M2.4 of opds-sync-1.0 — `?resume=1` opt-in
-//! synthetic Resume entry.
+//! Integration tests for M3 of opds-sync-cleanup-1.0 — title-glyph + page-
+//! count suffix annotation on every reading-sequence OPDS entry.
 //!
-//! Verifies:
-//!  - Synthetic entry sits at index 0 of a CBL feed when the user is
-//!    mid-list (resolver lands on a non-first canonical entry).
-//!  - Synthetic NOT emitted when the user hasn't started — up-next
-//!    would point at the first entry and the synthetic would be a
-//!    redundant duplicate.
-//!  - Canonical entry ordering is preserved under the synthetic
-//!    prepend (originals still follow CBL position).
-//!  - Synthetic id matches the `folio:resume:<canonical_id>` shape so
-//!    M2.3-aware clients can correlate and dedupe.
+//! Verifies, for v1 (Atom) and v2 (JSON):
+//!  - `◯ {title}` for unread entries (no progress row).
+//!  - `◐ {title} (N / M)` for in-progress (last_page > 0, !finished).
+//!  - `● {title} (M / M)` for finished entries.
+//!  - The per-user `users.opds_progress_glyphs = false` opt-out hides
+//!    the prefix and suffix entirely (raw title only).
+//!  - `(N / M)` suffix is omitted when `page_count` is unknown.
+//!
+//! The user-facing pitch: clients that ignore the PSE `pse:last_read`
+//! attribute (Komga, KOReader, older Tachiyomi) still see "where I left
+//! off" because the cue lives in the title string itself.
 
 mod common;
 
@@ -21,14 +22,13 @@ use axum::{
 use chrono::Utc;
 use common::TestApp;
 use entity::{
-    cbl_entry::ActiveModel as CblEntryAM,
-    cbl_list::ActiveModel as CblListAM,
     issue::ActiveModel as IssueAM,
     library,
     progress_record::ActiveModel as ProgressAM,
     series::{ActiveModel as SeriesAM, normalize_name},
+    user as user_entity,
 };
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, Set};
+use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -179,6 +179,7 @@ async fn seed_series(db: &DatabaseConnection, lib_id: Uuid, name: &str) -> Uuid 
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(true),
     }
     .insert(db)
     .await
@@ -186,6 +187,7 @@ async fn seed_series(db: &DatabaseConnection, lib_id: Uuid, name: &str) -> Uuid 
     id
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn seed_issue(
     db: &DatabaseConnection,
     lib_id: Uuid,
@@ -193,6 +195,8 @@ async fn seed_issue(
     file_path: &std::path::Path,
     payload: &[u8],
     sort_number: f64,
+    title: &str,
+    page_count: Option<i32>,
 ) -> String {
     std::fs::write(file_path, payload).unwrap();
     let bytes = std::fs::read(file_path).unwrap();
@@ -208,7 +212,7 @@ async fn seed_issue(
         file_mtime: Set(now),
         state: Set("active".into()),
         content_hash: Set(hash.clone()),
-        title: Set(Some(format!("Issue {sort_number}"))),
+        title: Set(Some(title.into())),
         sort_number: Set(Some(sort_number)),
         number_raw: Set(Some(format!("{sort_number}"))),
         volume: Set(None),
@@ -222,7 +226,7 @@ async fn seed_issue(
         black_and_white: Set(None),
         manga: Set(None),
         age_rating: Set(None),
-        page_count: Set(Some(20)),
+        page_count: Set(page_count),
         pages: Set(serde_json::json!([])),
         comic_info_raw: Set(serde_json::json!({})),
         alternate_series: Set(None),
@@ -270,14 +274,21 @@ async fn seed_issue(
     hash
 }
 
-async fn seed_progress_finished(db: &DatabaseConnection, user_id: Uuid, issue_id: &str) {
+async fn seed_progress(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    issue_id: &str,
+    last_page: i32,
+    percent: f64,
+    finished: bool,
+) {
     let now = Utc::now().fixed_offset();
     ProgressAM {
         user_id: Set(user_id),
         issue_id: Set(issue_id.into()),
-        last_page: Set(19),
-        percent: Set(1.0),
-        finished: Set(true),
+        last_page: Set(last_page),
+        percent: Set(percent),
+        finished: Set(finished),
         updated_at: Set(now),
         device: Set(None),
     }
@@ -286,205 +297,227 @@ async fn seed_progress_finished(db: &DatabaseConnection, user_id: Uuid, issue_id
     .unwrap();
 }
 
-async fn seed_cbl_list(db: &DatabaseConnection, owner: Uuid, name: &str) -> Uuid {
-    let id = Uuid::now_v7();
-    let now = Utc::now().fixed_offset();
-    CblListAM {
-        id: Set(id),
-        owner_user_id: Set(Some(owner)),
-        source_kind: Set("upload".into()),
-        source_url: Set(None),
-        catalog_source_id: Set(None),
-        catalog_path: Set(None),
-        github_blob_sha: Set(None),
-        source_etag: Set(None),
-        source_last_modified: Set(None),
-        raw_sha256: Set(vec![0u8; 32]),
-        raw_xml: Set("<ReadingList />".into()),
-        parsed_name: Set(name.into()),
-        parsed_matchers_present: Set(false),
-        num_issues_declared: Set(None),
-        description: Set(None),
-        imported_at: Set(now),
-        last_refreshed_at: Set(None),
-        last_match_run_at: Set(None),
-        refresh_schedule: Set(None),
-        created_at: Set(now),
-        updated_at: Set(now),
+/// Slice each `<entry>` block out of a v1 feed body and return them as
+/// a Vec of `(id, block)` pairs. Lets tests assert on the title of a
+/// specific entry without false-positives from neighboring entries.
+fn entry_blocks_by_id(body: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for raw in body.split("<entry>").skip(1) {
+        let block = raw.split("</entry>").next().unwrap_or("");
+        let id = block
+            .split("<id>urn:issue:")
+            .nth(1)
+            .and_then(|s| s.split("</id>").next())
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        out.push((id, block.to_owned()));
     }
-    .insert(db)
-    .await
-    .unwrap();
-    id
+    out
 }
 
-async fn seed_cbl_entry(
-    db: &DatabaseConnection,
-    list_id: Uuid,
-    position: i32,
-    matched_issue_id: Option<&str>,
-) {
-    let now = Utc::now().fixed_offset();
-    let status = if matched_issue_id.is_some() {
-        "matched"
-    } else {
-        "missing"
-    };
-    CblEntryAM {
-        id: Set(Uuid::now_v7()),
-        cbl_list_id: Set(list_id),
-        position: Set(position),
-        series_name: Set("Seed".into()),
-        issue_number: Set(position.to_string()),
-        volume: Set(None),
-        year: Set(None),
-        cv_series_id: Set(None),
-        cv_issue_id: Set(None),
-        metron_series_id: Set(None),
-        metron_issue_id: Set(None),
-        matched_issue_id: Set(matched_issue_id.map(str::to_owned)),
-        match_status: Set(status.into()),
-        match_method: Set(None),
-        match_confidence: Set(None),
-        ambiguous_candidates: Set(None),
-        user_resolved_at: Set(None),
-        matched_at: Set(matched_issue_id.map(|_| now)),
-    }
-    .insert(db)
-    .await
-    .unwrap();
+fn title_of(blocks: &[(String, String)], issue_id: &str) -> String {
+    let block = blocks
+        .iter()
+        .find(|(id, _)| id == issue_id)
+        .unwrap_or_else(|| panic!("entry block for {issue_id} not found"));
+    block
+        .1
+        .split("<title>")
+        .nth(1)
+        .and_then(|s| s.split("</title>").next())
+        .unwrap_or("")
+        .to_owned()
 }
 
-/// Setup helper: 3-issue CBL where `finished_count` issues at the front
-/// are marked finished. Returns (list_id, issue_ids in CBL position order).
-async fn setup_cbl_with_progress(
-    app: &TestApp,
-    user_id: Uuid,
-    finished_count: usize,
-    tmp: &std::path::Path,
-) -> (Uuid, Vec<String>) {
-    let db = Database::connect(&app.db_url).await.unwrap();
-    let lib_id = seed_library(&db, tmp).await;
-    let series_id = seed_series(&db, lib_id, "Resume Series").await;
-
-    let mut ids = Vec::new();
-    for n in 0..3 {
-        let path = tmp.join(format!("issue-{n}.cbz"));
-        let payload = format!("resume-{n}").into_bytes();
-        let id = seed_issue(&db, lib_id, series_id, &path, &payload, (n + 1) as f64).await;
-        ids.push(id);
-    }
-    for id in ids.iter().take(finished_count) {
-        seed_progress_finished(&db, user_id, id).await;
-    }
-
-    let list_id = seed_cbl_list(&db, user_id, "Resume Test").await;
-    for (pos, id) in ids.iter().enumerate() {
-        seed_cbl_entry(&db, list_id, pos as i32, Some(id)).await;
-    }
-    (list_id, ids)
-}
+// ────────────── v1 ──────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cbl_with_resume_prepends_synthetic_at_index_zero_when_mid_list() {
+async fn v1_series_feed_decorates_each_state_with_glyph_and_page_count() {
     let app = TestApp::spawn().await;
-    let auth = register(&app, "resume-mid@example.com").await;
+    let auth = register(&app, "glyph-v1-states@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    // Issues 0 and 1 finished; up-next = issue 2.
-    let (list_id, ids) = setup_cbl_with_progress(&app, auth.user_id, 2, tmp.path()).await;
+    let lib = seed_library(&db, tmp.path()).await;
+    let series = seed_series(&db, lib, "Glyph Series").await;
+    // a finished, b in progress (page 14 of 32), c unread.
+    let a = seed_issue(
+        &db,
+        lib,
+        series,
+        &tmp.path().join("a.cbz"),
+        b"g-a",
+        1.0,
+        "First Strike",
+        Some(32),
+    )
+    .await;
+    let b = seed_issue(
+        &db,
+        lib,
+        series,
+        &tmp.path().join("b.cbz"),
+        b"g-b",
+        2.0,
+        "Second Strike",
+        Some(32),
+    )
+    .await;
+    let c = seed_issue(
+        &db,
+        lib,
+        series,
+        &tmp.path().join("c.cbz"),
+        b"g-c",
+        3.0,
+        "Third Strike",
+        Some(32),
+    )
+    .await;
+    seed_progress(&db, auth.user_id, &a, 31, 1.0, true).await;
+    seed_progress(&db, auth.user_id, &b, 13, 13.0 / 32.0, false).await;
 
-    let resp = get_cookie(&app, &format!("/opds/v1/lists/{list_id}?resume=1"), &auth).await;
+    let resp = get_cookie(&app, &format!("/opds/v1/series/{series}"), &auth).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_text(resp.into_body()).await;
-    // First <entry> must be the synthetic resume entry.
-    let first_entry_idx = body.find("<entry>").expect("at least one entry");
-    let first_entry_end = body[first_entry_idx..]
-        .find("</entry>")
-        .expect("entry close")
-        + first_entry_idx;
-    let first_entry = &body[first_entry_idx..first_entry_end];
-    let resume_target = &ids[2];
-    assert!(
-        first_entry.contains(&format!("folio:resume:{resume_target}")),
-        "first entry is the synthetic for issue 2: {first_entry}"
+    let blocks = entry_blocks_by_id(&body);
+    assert_eq!(
+        title_of(&blocks, &a),
+        "\u{25CF} First Strike (32 / 32)",
+        "finished should be ● with (M / M):\n{body}"
     );
-    assert!(
-        first_entry.contains("term=\"folio:resume\""),
-        "synthetic carries folio:resume category: {first_entry}"
+    assert_eq!(
+        title_of(&blocks, &b),
+        "\u{25D0} Second Strike (14 / 32)",
+        "in-progress should be ◐ with (N+1 / M):\n{body}"
     );
-    assert!(
-        first_entry.contains("\u{25B6} Resume"),
-        "synthetic title prefixed with ▶ Resume: {first_entry}"
+    assert_eq!(
+        title_of(&blocks, &c),
+        "\u{25CB} Third Strike",
+        "unread should be ◯ with no page suffix (no progress row):\n{body}"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cbl_with_resume_has_no_synthetic_when_user_hasnt_started() {
+async fn v1_series_feed_omits_page_count_suffix_when_unknown() {
     let app = TestApp::spawn().await;
-    let auth = register(&app, "resume-fresh@example.com").await;
+    let auth = register(&app, "glyph-v1-nopagect@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    // No progress — up-next would land on issue 0, identical to the
-    // first canonical entry; the synthetic would just duplicate.
-    let (list_id, _ids) = setup_cbl_with_progress(&app, auth.user_id, 0, tmp.path()).await;
+    let lib = seed_library(&db, tmp.path()).await;
+    let series = seed_series(&db, lib, "Unknown Pages").await;
+    let i = seed_issue(
+        &db,
+        lib,
+        series,
+        &tmp.path().join("a.cbz"),
+        b"np-a",
+        1.0,
+        "Mystery",
+        None,
+    )
+    .await;
+    seed_progress(&db, auth.user_id, &i, 5, 0.5, false).await;
 
-    let resp = get_cookie(&app, &format!("/opds/v1/lists/{list_id}?resume=1"), &auth).await;
+    let resp = get_cookie(&app, &format!("/opds/v1/series/{series}"), &auth).await;
     let body = body_text(resp.into_body()).await;
-    assert!(
-        !body.contains("folio:resume:"),
-        "fresh CBL does NOT prepend a synthetic — would be redundant: {body}"
+    let blocks = entry_blocks_by_id(&body);
+    assert_eq!(
+        title_of(&blocks, &i),
+        "\u{25D0} Mystery",
+        "unknown page_count should drop the (N / M) suffix:\n{body}"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cbl_resume_preserves_canonical_entry_ordering() {
+async fn v1_series_feed_respects_user_opt_out_flag() {
     let app = TestApp::spawn().await;
-    let auth = register(&app, "resume-order@example.com").await;
+    let auth = register(&app, "glyph-v1-optout@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    // Issue 0 finished; up-next = issue 1.
-    let (list_id, ids) = setup_cbl_with_progress(&app, auth.user_id, 1, tmp.path()).await;
+    let lib = seed_library(&db, tmp.path()).await;
+    let series = seed_series(&db, lib, "Plain").await;
+    let i = seed_issue(
+        &db,
+        lib,
+        series,
+        &tmp.path().join("a.cbz"),
+        b"po-a",
+        1.0,
+        "Vanilla",
+        Some(32),
+    )
+    .await;
+    seed_progress(&db, auth.user_id, &i, 13, 0.5, false).await;
 
-    let resp = get_cookie(&app, &format!("/opds/v1/lists/{list_id}?resume=1"), &auth).await;
+    // Flip the per-user flag.
+    let mut u: user_entity::ActiveModel = user_entity::Entity::find_by_id(auth.user_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    u.opds_progress_glyphs = Set(false);
+    u.update(&db).await.unwrap();
+
+    let resp = get_cookie(&app, &format!("/opds/v1/series/{series}"), &auth).await;
     let body = body_text(resp.into_body()).await;
-    // After the synthetic, the canonical urn:issue: entries must still
-    // appear in CBL position order. Find each one's position in the body
-    // and assert monotonic.
-    let pos_0 = body
-        .find(&format!("urn:issue:{}", ids[0]))
-        .expect("issue 0 present");
-    let pos_1 = body
-        .find(&format!("urn:issue:{}", ids[1]))
-        .expect("issue 1 present");
-    let pos_2 = body
-        .find(&format!("urn:issue:{}", ids[2]))
-        .expect("issue 2 present");
-    assert!(pos_0 < pos_1, "canonical order 0→1 preserved");
-    assert!(pos_1 < pos_2, "canonical order 1→2 preserved");
-    // Synthetic's id contains `folio:resume:<id>`; its substring uses
-    // `folio:resume:` so it must appear before urn:issue:ids[1] (the
-    // resume target's canonical entry).
-    let resume_target_id = &ids[1];
-    let synth_pos = body
-        .find(&format!("folio:resume:{resume_target_id}"))
-        .expect("synthetic present");
+    let blocks = entry_blocks_by_id(&body);
+    assert_eq!(
+        title_of(&blocks, &i),
+        "Vanilla",
+        "opt-out must strip glyph + suffix entirely:\n{body}"
+    );
     assert!(
-        synth_pos < pos_1,
-        "synthetic prepends BEFORE its canonical entry"
+        !body.contains("\u{25CB}") && !body.contains("\u{25D0}") && !body.contains("\u{25CF}"),
+        "no progress glyph should appear anywhere in feed when opted out:\n{body}"
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cbl_resume_synthetic_id_matches_folio_resume_shape() {
-    let app = TestApp::spawn().await;
-    let auth = register(&app, "resume-id@example.com").await;
-    let tmp = tempfile::tempdir().unwrap();
-    let (list_id, ids) = setup_cbl_with_progress(&app, auth.user_id, 1, tmp.path()).await;
+// ────────────── v2 ──────────────
 
-    let resp = get_cookie(&app, &format!("/opds/v1/lists/{list_id}?resume=1"), &auth).await;
-    let body = body_text(resp.into_body()).await;
-    let resume_target = &ids[1];
-    let expected_id_tag = format!("<id>folio:resume:{resume_target}</id>");
-    assert!(
-        body.contains(&expected_id_tag),
-        "synthetic id uses folio:resume:<canonical_id> shape (got body: {body})"
-    );
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_series_feed_decorates_publication_title() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "glyph-v2@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    let series = seed_series(&db, lib, "V2 Series").await;
+    let _a = seed_issue(
+        &db,
+        lib,
+        series,
+        &tmp.path().join("a.cbz"),
+        b"v2-a",
+        1.0,
+        "Issue A",
+        Some(20),
+    )
+    .await;
+    let b = seed_issue(
+        &db,
+        lib,
+        series,
+        &tmp.path().join("b.cbz"),
+        b"v2-b",
+        2.0,
+        "Issue B",
+        Some(20),
+    )
+    .await;
+    seed_progress(&db, auth.user_id, &b, 4, 0.25, false).await;
+
+    let resp = get_cookie(&app, &format!("/opds/v2/series/{series}"), &auth).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = body_json(resp.into_body()).await;
+    let pubs = body["publications"].as_array().expect("publications array");
+    let title_b = pubs
+        .iter()
+        .find(|p| p["metadata"]["identifier"] == format!("urn:folio:issue:{b}"))
+        .expect("issue b publication")["metadata"]["title"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(title_b, "\u{25D0} Issue B (5 / 20)");
 }

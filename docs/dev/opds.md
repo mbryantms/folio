@@ -92,11 +92,13 @@ Facet groups exposed:
 
 | Endpoint / feature | Surface | Notes |
 |---|---|---|
-| `pse:lastRead` + `pse:lastReadDate` | every issue entry (Atom v1) | Inline per-user read state. Drives "you're 14/32" badges in Panels / Chunky without a side-channel call. |
+| `pse:last_read` + `pse:last_read_date` **attributes** on `<link rel=".../stream">` | per-issue PSE link (Atom v1) | Spec-conformant snake_case attributes per the [OPDS-PSE namespace](https://anansi-project.github.io/docs/opds-pse/specs). Drives "you're 14/32" badges in Panels / Chunky without a side-channel call. **Older docs showed `<pse:lastRead>` as a standalone camelCase element — that was a bug and is fixed in opds-sync-cleanup M1.** |
 | `metadata.position` object | every issue publication (v2 JSON) | Readium-shaped `{position, totalProgression, modified, finished, totalPages}`. |
 | `rel="next"` / `rel="previous"` | per-entry, series + CBL feeds | Sequential reading order. After finishing an issue, a client can follow `rel=next` to stream the next file without re-fetching the parent feed. |
 | `rel="https://folio.local/rels/up-next"` | feed root, series + CBL | Folio-namespaced hint pointing at the issue the user should resume in *this* feed. Same resolver as the web On Deck rail. |
-| `?resume=1` synthetic prepend | series + CBL acquisition feeds | Universal-compat companion to up-next. Prepends a `▶ Resume — {title}` entry at index 0 when the resolver lands on a non-first canonical entry. M2.3-aware clients can dedupe via the `folio:resume` category tag. |
+| Default up-next-first reorder | series / CBL / WTR / collection acquisition feeds (v1 + v2) | The next-unfinished issue is moved to entry index 0 on every reading-sequence feed. opds-sync-cleanup M2 made this the default for clients that ignore both `pse:last_read` and the up-next rel (most of them). The `?resume=1` synthetic-entry path is gone — reorder replaces it. |
+| `preserve_canonical_order` opt-out | `series` / `cbl_lists` / `saved_views` rows + `users.opds_wtr_reorder` for WTR | Per-row escape hatch: setting the flag keeps canonical (sort_number / list position / drag-order) ordering even when up-next falls mid-list. Use for curated reading orders like "DC Year One". WTR is system-owned so its toggle lives on the user row instead. |
+| Title-glyph + `(N / M)` suffix | every issue entry / publication (v1 + v2) | Each entry's title is decorated with a state glyph (`◯` unread / `◐` in progress / `●` finished) plus an `(N / M)` page suffix when total pages is known. Universal-compat cue for clients that ignore PSE attributes (Komga, KOReader, older Tachiyomi). Hide via `users.opds_progress_glyphs = false`. |
 | `/opds/v1/continue` | aggregate "in-progress issues" | Newest-progress-first; carries feed-level up-next pointing at the most recent. |
 | `/opds/v1/on-deck` | aggregate "what to read next" | One entry per active series / CBL the user is reading. Same data as the home OnDeck rail. |
 | `/opds/v1/history` | finished issues, newest-first | Paginated. Powers "what did I read in March" queries. |
@@ -112,7 +114,7 @@ each client's documented capabilities; we haven't yet driven a real
 build end-to-end against Folio's full sync surface — when you exercise
 one, please update this table.
 
-| Client | Read OPDS v1 | Read OPDS v2 | Write progress | Honors `rel=next` | Honors `pse:lastRead` | App-password required |
+| Client | Read OPDS v1 | Read OPDS v2 | Write progress | Honors `rel=next` | Honors `pse:last_read` | App-password required |
 | --- | --- | --- | --- | --- | --- | --- |
 | Panels (iOS) | ✓ | partial | implicit (PSE) | manual UI | ✓ | yes — `read+progress` scope |
 | Chunky (iOS) | ✓ | no | implicit (PSE) | manual UI | ✓ | yes — `read+progress` scope |
@@ -224,7 +226,7 @@ box. Two practical recommendations:
 
 ## Plan history
 
-The OPDS surface evolved through three completed plans:
+The OPDS surface evolved through four completed plans:
 
 - `~/.claude/plans/done/opds-readiness-1.0.md` — Phase-2 OPDS readiness
   (M1-M7). Established the baseline catalog, page streaming
@@ -235,19 +237,31 @@ The OPDS surface evolved through three completed plans:
   `rel=alternate` JSON links.
 - `~/.claude/plans/done/opds-sync-1.0.md` — End-to-end progress sync.
   Inline read-state annotations (M1), sequential rel=next/previous
-  (M2), feed-level up-next rel (M2.3), `?resume=1` synthetic-entry
-  opt-in (M2.4), `/continue` + `/on-deck` aggregate feeds (M2.5),
-  implicit PSE progress writes (M3), write-back advertisement (M4),
-  history feed + conflict-resolution tests (M5), bidirectional CBL
-  progress (M6). Sync details in
-  [opds-progress-protocol.md](opds-progress-protocol.md); regression
-  guards across 12 test files (`opds_inline_progress`,
-  `opds_sequential_nav`, `opds_up_next_rel`, `opds_resume_synthetic`,
-  `opds_personal_feeds`, `opds_pse_implicit_progress`,
-  `opds_progress_advertisement`, `opds_history_and_conflicts`,
-  `opds_cbl_progress`).
+  (M2), feed-level up-next rel (M2.3), `/continue` + `/on-deck`
+  aggregate feeds (M2.5), implicit PSE progress writes (M3),
+  write-back advertisement (M4), history feed + conflict-resolution
+  tests (M5), bidirectional CBL progress (M6). Sync details in
+  [opds-progress-protocol.md](opds-progress-protocol.md).
+- `~/.claude/plans/done/opds-sync-cleanup-1.0.md` — Spec + UX-fit
+  cleanup. M1 moved `pse:last_read` / `pse:last_read_date` to
+  snake_case attributes on the PSE stream link (the original
+  `<pse:lastRead>` element shape didn't match the spec and Panels
+  ignored it). M2 replaced the opt-in `?resume=1` synthetic entry
+  with a default up-next-first reorder across every reading-sequence
+  feed (series + CBL + WTR + collections), with per-row
+  `preserve_canonical_order` opt-outs. M3 added a title-level glyph +
+  `(N / M)` suffix for universal-compat progress visibility on
+  clients that ignore PSE entirely.
 
-All three plans are complete. Future OPDS work would target the
+Regression guards across 14 test files: `opds_inline_progress`,
+`opds_sequential_nav`, `opds_up_next_rel`, `opds_default_reorder`,
+`opds_progress_glyphs`, `opds_personal_feeds`,
+`opds_pse_implicit_progress`, `opds_progress_advertisement`,
+`opds_history_and_conflicts`, `opds_cbl_progress`, plus the v2
+mirrors. (`opds_resume_synthetic.rs` was deleted in cleanup M2 —
+the path it exercised no longer exists.)
+
+All four plans are complete. Future OPDS work would target the
 deferred items in those plans (reading-status facet, empty-series
 placeholder thumbnails, OpenSearch facet params, Automerge CRDT
 progress merge) or new surfaces discovered through user feedback.

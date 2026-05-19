@@ -395,6 +395,8 @@ pub async fn register(
         language: Set("en".into()),
         exclude_from_aggregates: Set(false),
         show_marker_count: Set(false),
+        opds_wtr_reorder: Set(true),
+        opds_progress_glyphs: Set(true),
     };
 
     let inserted = match am.insert(&app.db).await {

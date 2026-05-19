@@ -161,6 +161,7 @@ async fn seed(
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await

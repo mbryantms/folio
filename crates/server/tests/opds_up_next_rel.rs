@@ -178,6 +178,7 @@ async fn seed_series(db: &DatabaseConnection, lib_id: Uuid, name: &str) -> Uuid 
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(db)
     .await
@@ -310,6 +311,7 @@ async fn seed_cbl_list(db: &DatabaseConnection, owner: Uuid, name: &str) -> Uuid
         refresh_schedule: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
+        preserve_canonical_order: Set(false),
     }
     .insert(db)
     .await

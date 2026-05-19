@@ -81,6 +81,13 @@ pub struct Model {
     /// values are sticky and never overwritten.
     #[sea_orm(nullable)]
     pub reading_direction: Option<String>,
+    /// When true, `/opds/v1/series/{id}` and `/opds/v2/series/{id}`
+    /// render in strict `sort_number ASC` order regardless of the
+    /// caller's progress. Default false — feeds auto-reorder the
+    /// up-next issue to position 0 for users mid-series. Curators
+    /// who want the first-issue-always-first UI flip this on per
+    /// series. M2 of `opds-sync-cleanup-1.0`.
+    pub preserve_canonical_order: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -77,6 +77,7 @@ async fn seed(app: &TestApp, with_thumbs_for_state: &str) -> String {
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await

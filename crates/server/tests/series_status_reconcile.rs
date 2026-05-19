@@ -100,6 +100,7 @@ async fn seed_series(
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(status_user_set_at),
         reading_direction: Set(None),
+        preserve_canonical_order: Set(false),
     }
     .insert(&db)
     .await
