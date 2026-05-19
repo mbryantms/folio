@@ -34,12 +34,23 @@ export type FieldSpec = {
   allowedOps: Op[];
   /** Closed list of legal scalar values. Empty unless `kind === 'enum'`. */
   enumValues?: readonly string[];
+  /** Optional display-label override per enum value. Falls back to the
+   *  wire value when missing — so `status: "ended"` and `age_rating:
+   *  "Teen"` render as-is, but `read_status: "in_progress"` doesn't have
+   *  to leak the snake_case identifier into the UI. */
+  enumLabels?: Readonly<Record<string, string>>;
   /** Where the `MultiSelectEditor` (or library-Combobox) fetches its
    *  options. `undefined` when there is no remote lookup. */
   optionsEndpoint?: OptionsEndpoint;
 };
 
-const TEXT_OPS: Op[] = ["contains", "starts_with", "equals", "not_equals"];
+const TEXT_OPS: Op[] = [
+  "contains",
+  "not_contains",
+  "starts_with",
+  "equals",
+  "not_equals",
+];
 const NUMBER_OPS: Op[] = [
   "equals",
   "not_equals",
@@ -59,6 +70,21 @@ const SERIES_STATUS_VALUES = [
   "cancelled",
   "hiatus",
   "limited",
+] as const;
+
+/** library-filters-richer-1.0 M2 — three-state read rollup over the
+ *  per-user `user_series_progress` view. Mirrors `READ_STATUS_VALUES`
+ *  in `crates/server/src/views/registry.rs`. */
+const READ_STATUS_VALUES = ["read", "in_progress", "unread"] as const;
+
+/** library-filters-richer-1.0 M4 — three-state local-collection
+ *  completeness. `unknown` covers series with `total_issues IS NULL`
+ *  (no canonical expected count from ComicInfo). Mirrors
+ *  `COLLECTION_COMPLETENESS_VALUES` in the Rust registry. */
+const COLLECTION_COMPLETENESS_VALUES = [
+  "complete",
+  "incomplete",
+  "unknown",
 ] as const;
 
 const AGE_RATING_VALUES = [
@@ -224,6 +250,35 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     kind: "number",
     allowedOps: NUMBER_OPS,
   },
+  // library-filters-richer-1.0 M2: three-state read rollup
+  {
+    id: "read_status",
+    label: "Read Status",
+    kind: "enum",
+    allowedOps: ENUM_OPS,
+    enumValues: READ_STATUS_VALUES,
+    enumLabels: { read: "Read", in_progress: "In progress", unread: "Unread" },
+  },
+  // library-filters-richer-1.0 M3: numeric "what's left"
+  {
+    id: "unread_issues",
+    label: "Unread Issues",
+    kind: "number",
+    allowedOps: NUMBER_OPS,
+  },
+  // library-filters-richer-1.0 M4: do I have all issues?
+  {
+    id: "collection_completeness",
+    label: "Collection Completeness",
+    kind: "enum",
+    allowedOps: ENUM_OPS,
+    enumValues: COLLECTION_COMPLETENESS_VALUES,
+    enumLabels: {
+      complete: "Complete",
+      incomplete: "Incomplete",
+      unknown: "Unknown (no expected count)",
+    },
+  },
 ] as const;
 
 export function specFor(field: Field): FieldSpec {
@@ -234,6 +289,7 @@ export function specFor(field: Field): FieldSpec {
 
 export const OP_LABELS: Record<Op, string> = {
   contains: "contains",
+  not_contains: "does not contain",
   starts_with: "starts with",
   equals: "equals",
   not_equals: "does not equal",

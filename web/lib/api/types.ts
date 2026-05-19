@@ -1482,10 +1482,14 @@ export type Field =
   | "locations"
   | "read_progress"
   | "last_read"
-  | "read_count";
+  | "read_count"
+  | "read_status"
+  | "unread_issues"
+  | "collection_completeness";
 
 export type Op =
   | "contains"
+  | "not_contains"
   | "starts_with"
   | "equals"
   | "not_equals"

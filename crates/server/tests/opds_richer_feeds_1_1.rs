@@ -257,20 +257,26 @@ async fn v1_continue_reading_emits_pse_last_read_on_acquisition_link() {
     let body = body_text(resp.into_body()).await;
     let block = entry_block_by_issue(&body, &issue);
 
-    // The acquisition link itself must now carry pse:last_read so
-    // Panels (which downloads the full CBZ from that link rather than
-    // streaming from the PSE link) sees the resume hint.
+    // The acquisition link must carry the progress hint so clients
+    // that don't consume the PSE stream link (or download the full
+    // archive instead of page-streaming) still see the resume target.
+    // Both snake_case and camelCase spellings land — see
+    // `pse_progress_attrs` doc-comment for rationale.
     let acq_line = block
         .lines()
         .find(|l| l.contains(r#"rel="http://opds-spec.org/acquisition""#))
         .expect("acquisition link present");
     assert!(
-        acq_line.contains(r#"pse:last_read="14""#),
-        "acquisition link must carry pse:last_read: {acq_line}"
+        acq_line.contains(r#"pse:last_read="15""#),
+        "snake_case last_read on acquisition link (1-indexed): {acq_line}"
     );
     assert!(
-        acq_line.contains("pse:last_read_date=\""),
-        "acquisition link must carry pse:last_read_date: {acq_line}"
+        acq_line.contains(r#"pse:lastRead="15""#),
+        "camelCase lastRead on acquisition link (Komga/Panels shape): {acq_line}"
+    );
+    assert!(
+        acq_line.contains("pse:lastReadDate=\""),
+        "camelCase lastReadDate on acquisition link: {acq_line}"
     );
     // Stream link emission preserved — regression guard.
     let stream_line = block
@@ -278,9 +284,78 @@ async fn v1_continue_reading_emits_pse_last_read_on_acquisition_link() {
         .find(|l| l.contains(r#"rel="http://vaemendis.net/opds-pse/stream""#))
         .expect("stream link present");
     assert!(
-        stream_line.contains(r#"pse:last_read="14""#),
-        "stream link still carries pse:last_read: {stream_line}"
+        stream_line.contains(r#"pse:last_read="15""#),
+        "snake_case last_read on stream link: {stream_line}"
     );
+    assert!(
+        stream_line.contains(r#"pse:lastRead="15""#),
+        "camelCase lastRead on stream link: {stream_line}"
+    );
+}
+
+/// Regression for the "Panels opens Continue Reading at the cover even
+/// though the web UI shows progress" bug (reported 2026-05-19). Two
+/// problems compounded:
+///   1. Folio v1 emitted `pse:last_read` raw (0-indexed `last_page`),
+///      so a user just past the cover (`last_page = 1`) got
+///      `pse:last_read="1"`. Panels treats `1` as 1-indexed display
+///      position → opens at page 1 = cover. Fix: emit `last_page + 1`.
+///   2. Folio emitted snake_case attribute names. Komga / Kavita ship
+///      camelCase and Panels follows that convention — strict parsers
+///      didn't see our attribute at all. Fix: emit both spellings.
+///
+/// Pin both invariants here so this can't silently regress again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pse_progress_attrs_emit_1_indexed_and_both_spellings() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "panels-regress@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    let series = seed_series(&db, lib, "Just Past Cover").await;
+    let issue = common::seed::IssueSeed::new(lib, series, &tmp.path().join("p.cbz"), b"pjc-1", 1.0)
+        .with_title("Just Past Cover #1")
+        .with_page_count(24)
+        .insert(&db)
+        .await;
+    // The bug-reproducer: user one page past the cover. `last_page = 1`
+    // (0-indexed; display page 2). Pre-fix Folio emitted "1" here,
+    // which Panels treated as "open at display page 1 = cover".
+    seed_progress(&db, auth.user_id, &issue, 1, 0.04, false).await;
+
+    let resp = get_cookie(&app, "/opds/v1/continue", &auth).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    let block = entry_block_by_issue(&body, &issue);
+
+    // The literal "2" — last_page (1) + 1 — must appear with BOTH
+    // attribute spellings on both the stream and acquisition links.
+    let stream_line = block
+        .lines()
+        .find(|l| l.contains(r#"rel="http://vaemendis.net/opds-pse/stream""#))
+        .expect("stream link present");
+    let acq_line = block
+        .lines()
+        .find(|l| l.contains(r#"rel="http://opds-spec.org/acquisition""#))
+        .expect("acquisition link present");
+    for line in [stream_line, acq_line] {
+        assert!(
+            line.contains(r#"pse:last_read="2""#),
+            "snake_case last_read = last_page + 1: {line}"
+        );
+        assert!(
+            line.contains(r#"pse:lastRead="2""#),
+            "camelCase lastRead = last_page + 1: {line}"
+        );
+        assert!(
+            !line.contains(r#"pse:last_read="1""#),
+            "must not emit raw last_page: {line}"
+        );
+        assert!(
+            line.contains("pse:lastReadDate=\""),
+            "camelCase lastReadDate companion: {line}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

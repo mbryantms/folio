@@ -36,10 +36,14 @@ const ALL_FIELDS: Field[] = [
   "read_progress",
   "last_read",
   "read_count",
+  "read_status",
+  "unread_issues",
+  "collection_completeness",
 ];
 
 const ALL_OPS: Op[] = [
   "contains",
+  "not_contains",
   "starts_with",
   "equals",
   "not_equals",

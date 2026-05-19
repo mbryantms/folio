@@ -144,16 +144,28 @@ async fn v1_entry_carries_pse_last_read_when_progress_present() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_text(resp.into_body()).await;
     let block = entry_block(&body, &issue_id);
-    // OPDS-PSE spec: `last_read` / `last_read_date` are snake_case
-    // ATTRIBUTES on the stream link, not free-standing child elements.
-    // Verify the attribute shape that Panels / Chunky actually consume.
+    // OPDS-PSE: `last_read` / `last_read_date` are ATTRIBUTES on the
+    // stream link, not free-standing child elements. The wire value is
+    // 1-indexed (display page number), so a DB `last_page = 14`
+    // (0-indexed) emits as `"15"`. Both snake_case and camelCase
+    // spellings land on the element so we satisfy strict spec parsers
+    // (snake_case, per Anansi docs) and Komga/Kavita-compatible clients
+    // like Panels (camelCase, which they actually consume).
     assert!(
-        block.contains(r#"pse:last_read="14""#),
-        "last_read attribute present on stream link: {block}"
+        block.contains(r#"pse:last_read="15""#),
+        "snake_case last_read = last_page + 1: {block}"
+    );
+    assert!(
+        block.contains(r#"pse:lastRead="15""#),
+        "camelCase lastRead = last_page + 1: {block}"
     );
     assert!(
         block.contains("pse:last_read_date=\""),
-        "last_read_date attribute present on stream link: {block}"
+        "snake_case last_read_date present: {block}"
+    );
+    assert!(
+        block.contains("pse:lastReadDate=\""),
+        "camelCase lastReadDate present: {block}"
     );
     // Regression guard: pse:count must survive on the same link.
     assert!(
@@ -233,9 +245,10 @@ async fn v1_finished_issue_emits_last_page() {
     let resp = get_cookie(&app, &format!("/opds/v1/series/{series_id}"), &auth).await;
     let body = body_text(resp.into_body()).await;
     let block = entry_block(&body, &issue_id);
+    // Finished at page index 19 → emit 1-indexed display page 20.
     assert!(
-        block.contains(r#"pse:last_read="19""#),
-        "finished issue emits last_read=19 on the stream link: {block}"
+        block.contains(r#"pse:last_read="20""#),
+        "finished issue emits last_page + 1 on the stream link: {block}"
     );
 }
 
@@ -286,17 +299,18 @@ async fn v1_multi_issue_feed_renders_mixed_states() {
     let block_a = entry_block(&body, &a);
     let block_b = entry_block(&body, &b);
     let block_c = entry_block(&body, &c);
+    // last_page + 1: 5 → 6 (in-progress), 29 → 30 (finished).
     assert!(
-        block_a.contains(r#"pse:last_read="5""#),
-        "a in-progress: {block_a}"
+        block_a.contains(r#"pse:last_read="6""#),
+        "a in-progress (last_page 5 → emit 6): {block_a}"
     );
     assert!(
         !block_b.contains("pse:last_read"),
         "b untouched, no last_read attribute: {block_b}"
     );
     assert!(
-        block_c.contains(r#"pse:last_read="29""#),
-        "c finished: {block_c}"
+        block_c.contains(r#"pse:last_read="30""#),
+        "c finished (last_page 29 → emit 30): {block_c}"
     );
 }
 

@@ -425,6 +425,389 @@ async fn create_filter_view_and_run_results() {
     assert!(!names.contains(&"Saga".to_owned()), "Saga is Sci-Fi");
 }
 
+/// M1 of library-filters-richer-1.0: the `not_contains` operator
+/// excludes rows whose text column contains the pattern. NULL values
+/// in the column are also excluded (`NOT LIKE` semantics on NULL).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn not_contains_excludes_matching_text() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "notc@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_lib, _series) = seed_series_with_genre(
+        &app,
+        "notc-lib",
+        "Action",
+        &["Saga of the Swamp Thing", "Hawkeye", "Saga"],
+    )
+    .await;
+
+    let body = serde_json::json!({
+        "kind": "filter_series",
+        "name": "Not Saga",
+        "filter": {
+            "match_mode": "all",
+            "conditions": [
+                { "group_id": 0, "field": "name", "op": "not_contains", "value": "Saga" }
+            ]
+        },
+        "sort_field": "name",
+        "sort_order": "asc",
+        "result_limit": 50,
+    });
+    let (status, view) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "view: {view:#?}");
+    let view_id = view["id"].as_str().unwrap();
+
+    let url = format!("/api/me/saved-views/{view_id}/results");
+    let (status, results) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK, "results: {results:#?}");
+    let items = results["items"].as_array().unwrap();
+    let names: Vec<String> = items
+        .iter()
+        .map(|i| i["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        names.contains(&"Hawkeye".to_owned()),
+        "Hawkeye should match (no \"Saga\" substring): {names:?}"
+    );
+    assert!(
+        !names.contains(&"Saga".to_owned()),
+        "Saga itself must not match: {names:?}"
+    );
+    assert!(
+        !names.contains(&"Saga of the Swamp Thing".to_owned()),
+        "Saga-prefixed name must not match: {names:?}"
+    );
+}
+
+// ─── library-filters-richer-1.0 M2 / M3 / M4 fixtures ────────────────
+
+/// Seed one series with `n` issues, all `sort_number = 1.0 + i`.
+/// Optionally pin `total_issues` (used by M4 completeness tests).
+/// Returns (series_id, [issue_id; n]).
+async fn seed_series_with_issues(
+    app: &TestApp,
+    lib_name: &str,
+    series_name: &str,
+    n: usize,
+    total_issues: Option<i32>,
+) -> (Uuid, Vec<String>) {
+    use chrono::Utc;
+    use entity::library;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib_id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    library::ActiveModel {
+        id: Set(lib_id),
+        name: Set(format!("Lib {lib_name}")),
+        root_path: Set(format!("/tmp/{lib_name}-{lib_id}")),
+        default_language: Set("en".into()),
+        default_reading_direction: Set("ltr".into()),
+        dedupe_by_content: Set(true),
+        slug: Set(lib_id.to_string()),
+        scan_schedule_cron: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        last_scan_at: Set(None),
+        ignore_globs: Set(serde_json::json!([])),
+        report_missing_comicinfo: Set(false),
+        file_watch_enabled: Set(true),
+        soft_delete_days: Set(30),
+        thumbnails_enabled: Set(true),
+        thumbnail_format: Set("webp".to_owned()),
+        thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
+        thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
+        generate_page_thumbs_on_scan: Set(false),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let series_id = Uuid::now_v7();
+    SeriesAM {
+        id: Set(series_id),
+        library_id: Set(lib_id),
+        name: Set(series_name.into()),
+        normalized_name: Set(normalize_name(series_name)),
+        year: Set(Some(2020)),
+        volume: Set(None),
+        publisher: Set(None),
+        imprint: Set(None),
+        status: Set("continuing".into()),
+        total_issues: Set(total_issues),
+        age_rating: Set(None),
+        summary: Set(None),
+        language_code: Set("en".into()),
+        comicvine_id: Set(None),
+        metron_id: Set(None),
+        gtin: Set(None),
+        series_group: Set(None),
+        slug: Set(format!("{lib_name}-{series_name}")),
+        alternate_names: Set(serde_json::json!([])),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let mut issue_ids = Vec::with_capacity(n);
+    for i in 0..n {
+        let id = common::seed::seed_issue(
+            &db,
+            lib_id,
+            series_id,
+            &tmp.path().join(format!("issue-{i}.cbz")),
+            format!("{series_name}-{i}").as_bytes(),
+            1.0 + i as f64,
+        )
+        .await;
+        issue_ids.push(id);
+    }
+    (series_id, issue_ids)
+}
+
+/// Helper: run a filter against the caller's saved-view results and
+/// return the matched series names. Centralizes the boilerplate around
+/// POST + GET + JSON-walking.
+async fn run_filter_for_names(
+    app: &TestApp,
+    auth: &Authed,
+    name: &str,
+    field: &str,
+    op: &str,
+    value: serde_json::Value,
+) -> Vec<String> {
+    let body = serde_json::json!({
+        "kind": "filter_series",
+        "name": name,
+        "filter": {
+            "match_mode": "all",
+            "conditions": [
+                { "group_id": 0, "field": field, "op": op, "value": value }
+            ]
+        },
+        "sort_field": "name",
+        "sort_order": "asc",
+        "result_limit": 50,
+    });
+    let (status, view) = http(
+        app,
+        Method::POST,
+        "/api/me/saved-views",
+        Some(auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "view: {view:#?}");
+    let view_id = view["id"].as_str().unwrap();
+    let url = format!("/api/me/saved-views/{view_id}/results");
+    let (status, results) = http(app, Method::GET, &url, Some(auth), None).await;
+    assert_eq!(status, StatusCode::OK, "results: {results:#?}");
+    results["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// M2 of library-filters-richer-1.0: `read_status` separates three
+/// rollup states. `Done` is fully read, `Pending` is mid-series,
+/// `Fresh` has no progress at all, and `Started` has a progress row
+/// but no finished issues (≠ Fresh in the view-row sense).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_status_filter_separates_all_three_states() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "rs-states@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let (_done_id, done_issues) = seed_series_with_issues(&app, "ds", "Done", 2, None).await;
+    let (_pending_id, pending_issues) =
+        seed_series_with_issues(&app, "ps", "Pending", 3, None).await;
+    let (_started_id, started_issues) =
+        seed_series_with_issues(&app, "ss", "Started", 2, None).await;
+    let (_fresh_id, _fresh_issues) = seed_series_with_issues(&app, "fs", "Fresh", 2, None).await;
+
+    // Done: every issue finished.
+    for id in &done_issues {
+        common::seed::seed_progress_finished(&db, auth.user_id, id).await;
+    }
+    // Pending: 1 of 3 finished.
+    common::seed::seed_progress_finished(&db, auth.user_id, &pending_issues[0]).await;
+    // Started: one progress row, not finished — view row exists with
+    // finished_count = 0. Must surface as 'in_progress', not 'unread'.
+    common::seed::seed_progress(&db, auth.user_id, &started_issues[0], 5, 0.25, false).await;
+    // Fresh: no progress_record rows at all → no view row → 'unread'.
+
+    let read =
+        run_filter_for_names(&app, &auth, "M2 read", "read_status", "is", "read".into()).await;
+    let in_prog = run_filter_for_names(
+        &app,
+        &auth,
+        "M2 in_prog",
+        "read_status",
+        "is",
+        "in_progress".into(),
+    )
+    .await;
+    let unread = run_filter_for_names(
+        &app,
+        &auth,
+        "M2 unread",
+        "read_status",
+        "is",
+        "unread".into(),
+    )
+    .await;
+
+    assert_eq!(read, vec!["Done"], "fully-finished series only");
+    assert_eq!(
+        in_prog,
+        vec!["Pending", "Started"],
+        "started-but-not-finished AND mid-series both surface as in_progress"
+    );
+    assert_eq!(
+        unread,
+        vec!["Fresh"],
+        "untouched series surface as unread (LEFT JOIN miss)"
+    );
+}
+
+/// M2 follow-up: `in` operator combines states.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_status_in_filter_combines_states() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "rs-in@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let (_, done_issues) = seed_series_with_issues(&app, "din", "Done", 2, None).await;
+    let (_, pending_issues) = seed_series_with_issues(&app, "pin", "Pending", 3, None).await;
+    let (_, _fresh) = seed_series_with_issues(&app, "fin", "Fresh", 1, None).await;
+    for id in &done_issues {
+        common::seed::seed_progress_finished(&db, auth.user_id, id).await;
+    }
+    common::seed::seed_progress_finished(&db, auth.user_id, &pending_issues[0]).await;
+
+    let names = run_filter_for_names(
+        &app,
+        &auth,
+        "M2 IN",
+        "read_status",
+        "in",
+        serde_json::json!(["read", "in_progress"]),
+    )
+    .await;
+    assert_eq!(
+        names,
+        vec!["Done", "Pending"],
+        "IN of read + in_progress drops untouched Fresh series"
+    );
+}
+
+/// M3 of library-filters-richer-1.0: `unread_issues` counts remaining
+/// issues per series for the caller. Untouched series surface their
+/// FULL active-issue count (falls back through the active-issue-count
+/// join), so "> 5 unread" picks them up too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unread_issues_filter_by_remaining_count() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "un-cnt@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let (_, started_issues) = seed_series_with_issues(&app, "us", "Big", 10, None).await;
+    let (_, _untouched) = seed_series_with_issues(&app, "uu", "Untouched", 8, None).await;
+    seed_series_with_issues(&app, "u3", "Tiny", 3, None).await;
+
+    // Big: 3 of 10 finished → 7 unread
+    for id in started_issues.iter().take(3) {
+        common::seed::seed_progress_finished(&db, auth.user_id, id).await;
+    }
+    // Untouched: never read → all 8 unread (via aic fallback)
+    // Tiny: never read → all 3 unread → won't match > 5
+
+    let names = run_filter_for_names(
+        &app,
+        &auth,
+        "M3 gt5",
+        "unread_issues",
+        "gt",
+        serde_json::json!(5),
+    )
+    .await;
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted,
+        vec!["Big".to_owned(), "Untouched".to_owned()],
+        "unread_issues > 5 includes both started (7) and untouched (8); Tiny (3) is excluded"
+    );
+}
+
+/// M4 of library-filters-richer-1.0: `collection_completeness` rolls
+/// `series.total_issues` against the on-disk active issue count into
+/// three states. `unknown` covers `total_issues IS NULL` regardless of
+/// how many issues are on disk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collection_completeness_three_state_rollup() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cc-rollup@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    // Complete: 5 of 5 expected
+    seed_series_with_issues(&app, "cc", "Complete", 5, Some(5)).await;
+    // Incomplete: 3 of 10 expected
+    seed_series_with_issues(&app, "ic", "Incomplete", 3, Some(10)).await;
+    // Unknown: total_issues NULL — issue count on disk is irrelevant
+    seed_series_with_issues(&app, "uc", "Unknown", 7, None).await;
+    // Edge: more issues on disk than expected (still counts as complete)
+    seed_series_with_issues(&app, "oc", "Overshoot", 12, Some(10)).await;
+
+    let complete = run_filter_for_names(
+        &app,
+        &auth,
+        "M4 complete",
+        "collection_completeness",
+        "is",
+        "complete".into(),
+    )
+    .await;
+    let incomplete = run_filter_for_names(
+        &app,
+        &auth,
+        "M4 incomplete",
+        "collection_completeness",
+        "is",
+        "incomplete".into(),
+    )
+    .await;
+    let unknown = run_filter_for_names(
+        &app,
+        &auth,
+        "M4 unknown",
+        "collection_completeness",
+        "is",
+        "unknown".into(),
+    )
+    .await;
+
+    assert_eq!(complete, vec!["Complete", "Overshoot"]);
+    assert_eq!(incomplete, vec!["Incomplete"]);
+    assert_eq!(unknown, vec!["Unknown"]);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_rejects_invalid_filter() {
     let app = TestApp::spawn().await;

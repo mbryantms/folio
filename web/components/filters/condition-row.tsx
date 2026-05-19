@@ -136,6 +136,7 @@ function renderValueEditor(
           op={condition.op}
           value={condition.value}
           values={spec.enumValues ?? []}
+          labels={spec.enumLabels}
           onChange={(v) => onValueChange(v)}
         />
       );

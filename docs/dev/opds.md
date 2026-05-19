@@ -199,16 +199,17 @@ app makes its own UI decisions. Empirically:
 
 - **Panels** renders cover art prominently in browse, byline +
   publisher + year + genre chips on the series detail screen.
-  Honors the M5 `<uri>` drill-in. **Progress resume:** as of
-  opds-richer-feeds 1.1 Folio emits `pse:last_read` /
-  `pse:last_read_date` on BOTH the PSE stream link and the regular
-  acquisition link, so Panels sets the initial resume page on first
-  download. After Panels caches the file locally, it relies on its
-  own per-issue state and does not re-consult the OPDS payload — if
-  the web app advances progress past the locally-cached point, the
-  user has to redownload in Panels (or rely on the KOReader-style
-  sync API, which Panels does not implement). This is a Panels-side
-  limitation, not a Folio gap.
+  Honors the M5 `<uri>` drill-in. **Progress resume:** Folio emits
+  PSE progress hints on both the stream link AND the regular
+  acquisition link, in both snake_case (`pse:last_read` /
+  `pse:last_read_date`) and camelCase (`pse:lastRead` /
+  `pse:lastReadDate`) spellings, with **1-indexed display position**
+  as the value (`progress_record.last_page + 1`). The dual emission
+  exists because the Anansi PSE spec is ambiguous on case while
+  Komga/Kavita and Panels read camelCase, and the dual-link emission
+  covers both page-streaming and full-download flows. Without this
+  Panels falls back to the cover (display page 1) — see the
+  regression in `opds_richer_feeds_1_1::pse_progress_attrs_emit_1_indexed_and_both_spellings`.
 - **Chunky** renders cover + title + author inline in the browse
   grid. Has limited support for `<category>` chips.
 - **KOReader** renders a list view (no grid). Shows author + year

@@ -89,6 +89,21 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
         );
     }
 
+    // library-filters-richer-1.0 M4: only emit the active-issue-count
+    // aggregate join when the filter references `collection_completeness`.
+    // Keeps the baseline filter cost untouched for the 95% of filters
+    // that don't need this.
+    if needs_active_issue_count_join(input.dsl) {
+        let alias = active_issue_count_alias();
+        q.join_subquery(
+            JoinType::LeftJoin,
+            active_issue_count_subquery(),
+            alias.clone(),
+            Expr::col((alias, Alias::new("series_id")))
+                .equals((series::Entity, series::Column::Id)),
+        );
+    }
+
     let mut combined = match input.dsl.match_mode {
         MatchMode::All => SeaCondition::all(),
         MatchMode::Any => SeaCondition::any(),
@@ -128,8 +143,47 @@ fn needs_reading_join(dsl: &FilterDsl, sort: SortField) -> bool {
     }
     dsl.conditions.iter().any(|c| {
         let spec = registry::spec_for(c.field);
-        matches!(spec.source, Source::Reading(_))
+        matches!(spec.source, Source::Reading(_) | Source::ReadingComputed(_))
     })
+}
+
+/// library-filters-richer-1.0: the active-issue-count aggregate is
+/// joined whenever a filter references a field that needs the
+/// series-level total. M4's `collection_completeness` uses it
+/// directly; M3's `unread_issues` falls back to it for series the user
+/// has never started (where `user_series_progress` has no row).
+fn needs_active_issue_count_join(dsl: &FilterDsl) -> bool {
+    dsl.conditions.iter().any(|c| {
+        matches!(
+            registry::spec_for(c.field).source,
+            Source::SeriesComputed("collection_completeness")
+                | Source::ReadingComputed("unread_issues"),
+        )
+    })
+}
+
+/// Alias for the active-issue-count subquery; centralized so
+/// `series_computed_predicate` doesn't sprinkle string literals.
+fn active_issue_count_alias() -> Alias {
+    Alias::new("aic")
+}
+
+/// `SELECT series_id, COUNT(*) AS active_count FROM issues WHERE state =
+/// 'active' AND removed_at IS NULL GROUP BY series_id`. Joined LEFT so
+/// series with zero on-disk issues land as NULL → COALESCE'd to 0.
+fn active_issue_count_subquery() -> SelectStatement {
+    use entity::issue;
+    Query::select()
+        .column(issue::Column::SeriesId)
+        .expr_as(
+            Func::count(Expr::col((issue::Entity, issue::Column::Id))),
+            Alias::new("active_count"),
+        )
+        .from(issue::Entity)
+        .and_where(Expr::col(issue::Column::State).eq("active"))
+        .and_where(Expr::col(issue::Column::RemovedAt).is_null())
+        .add_group_by([Expr::col(issue::Column::SeriesId).into()])
+        .to_owned()
 }
 
 fn compile_condition(cond: &Condition) -> Result<SeaCondition, CompileError> {
@@ -140,6 +194,8 @@ fn compile_condition(cond: &Condition) -> Result<SeaCondition, CompileError> {
     match spec.source {
         Source::Series(col) => series_predicate(cond, spec.kind, col),
         Source::Reading(col) => reading_predicate(cond, spec.kind, col),
+        Source::ReadingComputed(tag) => reading_computed_predicate(cond, spec.kind, tag),
+        Source::SeriesComputed(tag) => series_computed_predicate(cond, spec.kind, tag),
         Source::JunctionExists {
             table,
             value_col,
@@ -180,6 +236,89 @@ fn reading_predicate(
     Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
 }
 
+/// library-filters-richer-1.0 M2 + M3: derived per-user fields over the
+/// `user_series_progress` LEFT JOIN. The `tag` selects which expression
+/// to evaluate as the LHS — `read_status` is the three-state CASE rollup,
+/// `unread_issues` is `total_count - finished_count`. Both COALESCE the
+/// missing-row case (series the user never started → no row in usp) to
+/// the "unread" / "all-remaining" end of the spectrum.
+fn reading_computed_predicate(
+    cond: &Condition,
+    kind: FieldKind,
+    tag: &'static str,
+) -> Result<SeaCondition, CompileError> {
+    let lhs: SimpleExpr = match tag {
+        "read_status" => {
+            // Three-state rollup. The `user_series_progress` view only
+            // has a row when the user has at least one `progress_record`
+            // for the series, so `usp.total_count IS NULL` (LEFT JOIN
+            // miss) means "never touched" → 'unread'. The row's
+            // existence implies the user has started at least one
+            // issue, so when nothing is finished yet we report
+            // 'in_progress' — not 'unread'.
+            //
+            // Raw SQL via `Expr::cust` rather than sea_query's case
+            // builder because the latter doesn't compose with the
+            // multi-column predicate we want for the WHERE clause.
+            // The CASE is self-contained — no user-controlled input
+            // substitution.
+            Expr::cust(
+                "CASE \
+                 WHEN usp.total_count IS NULL THEN 'unread' \
+                 WHEN usp.total_count = 0 THEN 'unread' \
+                 WHEN usp.finished_count >= usp.total_count THEN 'read' \
+                 ELSE 'in_progress' END",
+            )
+        }
+        "unread_issues" => {
+            // `total - finished`, with `total` falling back to the
+            // series-level active-issue count when `user_series_progress`
+            // has no row for this (user, series) pair. Result: filtering
+            // for "unread_issues > 5" includes series the user has
+            // never touched if the series itself has > 5 issues.
+            Expr::cust(
+                "(COALESCE(usp.total_count, aic.active_count, 0) \
+                  - COALESCE(usp.finished_count, 0))",
+            )
+        }
+        _ => {
+            return Err(CompileError::Internal(format!(
+                "unknown ReadingComputed tag `{tag}`"
+            )));
+        }
+    };
+    Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
+}
+
+/// library-filters-richer-1.0 M4: derived series-level fields backed by
+/// the active-issue-count aggregate (`aic`). The `tag` selects which
+/// predicate to emit — currently only `collection_completeness`. NULL
+/// handling: `series.total_issues IS NULL` always maps to `unknown`
+/// regardless of how many issues are on disk.
+fn series_computed_predicate(
+    cond: &Condition,
+    kind: FieldKind,
+    tag: &'static str,
+) -> Result<SeaCondition, CompileError> {
+    match tag {
+        "collection_completeness" => {
+            // Evaluates against `series.total_issues` (canonical expected
+            // count from ComicInfo) and `aic.active_count` (current on-
+            // disk count, NULL when zero — COALESCE'd to 0).
+            let lhs: SimpleExpr = Expr::cust(
+                "CASE \
+                 WHEN series.total_issues IS NULL THEN 'unknown' \
+                 WHEN COALESCE(aic.active_count, 0) >= series.total_issues THEN 'complete' \
+                 ELSE 'incomplete' END",
+            );
+            Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
+        }
+        _ => Err(CompileError::Internal(format!(
+            "unknown SeriesComputed tag `{tag}`"
+        ))),
+    }
+}
+
 fn scalar_predicate(
     cond: &Condition,
     kind: FieldKind,
@@ -195,6 +334,14 @@ fn scalar_predicate(
         Op::Equals | Op::Is => Ok(lhs.eq(scalar_value(v, kind, &bad)?)),
         Op::NotEquals | Op::IsNot => Ok(lhs.ne(scalar_value(v, kind, &bad)?)),
         Op::Contains => Ok(lhs.like(format!("%{}%", as_text(v, &bad)?))),
+        Op::NotContains => {
+            // NULL handling: `column NOT LIKE 'pattern'` returns NULL on
+            // NULL inputs, so rows with the text column NULL are
+            // excluded. Mirrors `Op::NotEquals` semantics — by design.
+            // Documented in docs/dev/saved-views.md (M5 of
+            // library-filters-richer-1.0).
+            Ok(lhs.not_like(format!("%{}%", as_text(v, &bad)?)))
+        }
         Op::StartsWith => Ok(lhs.like(format!("{}%", as_text(v, &bad)?))),
         Op::Gt | Op::After => Ok(lhs.gt(scalar_value(v, kind, &bad)?)),
         Op::Gte => Ok(lhs.gte(scalar_value(v, kind, &bad)?)),

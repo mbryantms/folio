@@ -31,6 +31,13 @@ pub enum FieldKind {
 /// FROM table WHERE table.series_id = series.id AND ...)` (or `NOT EXISTS`
 /// for `Excludes`). `Reading(col)` reads from the `user_series_progress`
 /// LEFT JOIN, COALESCE'd to a sensible zero for unstarted series.
+/// `ReadingComputed(tag)` is the same JOIN but evaluates a CASE / arithmetic
+/// expression built per-tag inside `reading_computed_predicate` — used for
+/// derived per-user fields like `read_status` (3-state rollup) and
+/// `unread_issues` (`total_count - finished_count`).
+/// `SeriesComputed(tag)` joins an aggregate against another table and
+/// evaluates a per-tag expression — used for `collection_completeness`,
+/// which compares `series.total_issues` to a `COUNT(issues)` aggregate.
 #[derive(Debug, Clone, Copy)]
 pub enum Source {
     /// Identifier matches a `series::Column` variant by name (snake_case).
@@ -46,6 +53,17 @@ pub enum Source {
     },
     /// Pulled from the `user_series_progress` view.
     Reading(&'static str),
+    /// Derived per-user expression over `user_series_progress`. The tag
+    /// disambiguates which expression — handled in
+    /// `compile::reading_computed_predicate`. Wire format: `read_status`
+    /// (CASE rollup), `unread_issues` (`total_count - finished_count`).
+    ReadingComputed(&'static str),
+    /// Derived series-level expression over an extra join. The tag
+    /// disambiguates the predicate — handled in
+    /// `compile::series_computed_predicate`. Wire format:
+    /// `collection_completeness` (`series.total_issues` vs active issue
+    /// count).
+    SeriesComputed(&'static str),
 }
 
 #[derive(Debug, Clone)]
@@ -65,7 +83,13 @@ pub struct FieldSpec {
     pub enum_values: &'static [&'static str],
 }
 
-const TEXT_OPS: &[Op] = &[Op::Contains, Op::StartsWith, Op::Equals, Op::NotEquals];
+const TEXT_OPS: &[Op] = &[
+    Op::Contains,
+    Op::NotContains,
+    Op::StartsWith,
+    Op::Equals,
+    Op::NotEquals,
+];
 const NUMBER_OPS: &[Op] = &[
     Op::Equals,
     Op::NotEquals,
@@ -90,6 +114,15 @@ const MULTI_OPS: &[Op] = &[Op::IncludesAny, Op::IncludesAll, Op::Excludes];
 /// scanner-side default ('continuing'). Limited list so the UI can render
 /// a select.
 const SERIES_STATUS_VALUES: &[&str] = &["continuing", "ended", "cancelled", "hiatus", "limited"];
+/// Three-state read rollup over `user_series_progress`. Computed via a
+/// CASE expression in `compile::reading_computed_predicate`.
+/// library-filters-richer-1.0 M2.
+const READ_STATUS_VALUES: &[&str] = &["read", "in_progress", "unread"];
+/// Three-state local-collection completeness over `series.total_issues`
+/// vs `COUNT(issues)`. `unknown` covers `total_issues IS NULL` (series
+/// without a canonical expected count from ComicInfo).
+/// library-filters-richer-1.0 M4.
+const COLLECTION_COMPLETENESS_VALUES: &[&str] = &["complete", "incomplete", "unknown"];
 /// ComicInfo `AgeRating` values per the Anansi schema. Open-ended in the
 /// data (the scanner stores any string), but the UI restricts choices to
 /// the known set — unknown values still match via direct equality.
@@ -416,6 +449,36 @@ const SPECS: &[FieldSpec] = &[
         allowed_ops: NUMBER_OPS,
         enum_values: &[],
     },
+    // ─── library-filters-richer-1.0 M2: read_status enum rollup ──────────
+    FieldSpec {
+        field: Field::ReadStatus,
+        kind: FieldKind::Enum,
+        id: "read_status",
+        label: "Read Status",
+        source: Source::ReadingComputed("read_status"),
+        allowed_ops: ENUM_OPS,
+        enum_values: READ_STATUS_VALUES,
+    },
+    // ─── library-filters-richer-1.0 M3: unread_issues numeric ─────────────
+    FieldSpec {
+        field: Field::UnreadIssues,
+        kind: FieldKind::Number,
+        id: "unread_issues",
+        label: "Unread Issues",
+        source: Source::ReadingComputed("unread_issues"),
+        allowed_ops: NUMBER_OPS,
+        enum_values: &[],
+    },
+    // ─── library-filters-richer-1.0 M4: collection_completeness enum ─────
+    FieldSpec {
+        field: Field::CollectionCompleteness,
+        kind: FieldKind::Enum,
+        id: "collection_completeness",
+        label: "Collection Completeness",
+        source: Source::SeriesComputed("collection_completeness"),
+        allowed_ops: ENUM_OPS,
+        enum_values: COLLECTION_COMPLETENESS_VALUES,
+    },
 ];
 
 pub fn spec_for(field: Field) -> &'static FieldSpec {
@@ -443,7 +506,7 @@ mod tests {
         // and a matching `FieldSpec` row. Forgetting both leaves the
         // count unchanged but `spec_for` would panic at runtime — the
         // mismatch is the alarm.
-        const KNOWN_FIELD_COUNT: usize = 28;
+        const KNOWN_FIELD_COUNT: usize = 31;
         assert_eq!(SPECS.len(), KNOWN_FIELD_COUNT);
         for spec in SPECS {
             let looked_up = spec_for(spec.field);

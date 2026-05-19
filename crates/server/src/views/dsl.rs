@@ -63,6 +63,20 @@ pub enum Field {
     ReadProgress,
     LastRead,
     ReadCount,
+    // ───── derived per-user rollups (library-filters-richer-1.0 M2+M3) ─
+    /// Three-state rollup: `read` (all issues finished) /
+    /// `in_progress` (some finished) / `unread` (none finished or
+    /// empty series).
+    ReadStatus,
+    /// Number of unfinished issues in the series for the caller —
+    /// `total_count − finished_count`.
+    UnreadIssues,
+    // ───── derived series-level rollups (library-filters-richer-1.0 M4) ─
+    /// Three-state local-collection completeness: `complete` (active
+    /// issue count >= `series.total_issues`) / `incomplete` (less) /
+    /// `unknown` (`series.total_issues` IS NULL — no canonical
+    /// expected count from ComicInfo).
+    CollectionCompleteness,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
@@ -70,6 +84,7 @@ pub enum Field {
 pub enum Op {
     // text
     Contains,
+    NotContains,
     StartsWith,
     // text + enum + number
     Equals,

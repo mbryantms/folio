@@ -33,6 +33,8 @@ export type MultiSelectEditorProps = {
   /** Optional library scope passed to the options endpoint. */
   library?: string;
   placeholder?: string;
+  /** Optional display-label mapper. Bare wire value used when absent. */
+  optionLabel?: (value: string) => string;
 };
 
 /** Shared multi-select pill input used by enum (`in`/`not_in`) and
@@ -45,7 +47,9 @@ export function MultiSelectEditor({
   endpoint,
   library,
   placeholder = "Add value…",
+  optionLabel,
 }: MultiSelectEditorProps) {
+  const labelFor = (v: string) => optionLabel?.(v) ?? v;
   const selected = Array.isArray(value) ? (value as string[]) : [];
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -116,7 +120,7 @@ export function MultiSelectEditor({
                           checked ? "opacity-100" : "opacity-0",
                         )}
                       />
-                      {opt}
+                      {labelFor(opt)}
                     </CommandItem>
                   );
                 })}
@@ -129,12 +133,12 @@ export function MultiSelectEditor({
         <div className="flex flex-wrap gap-1">
           {selected.map((v) => (
             <Badge key={v} variant="secondary" className="gap-1 pr-1">
-              {v}
+              {labelFor(v)}
               <button
                 type="button"
                 onClick={() => onChange(selected.filter((x) => x !== v))}
                 className="hover:bg-muted-foreground/20 rounded-sm"
-                aria-label={`Remove ${v}`}
+                aria-label={`Remove ${labelFor(v)}`}
               >
                 <X className="h-3 w-3" />
               </button>

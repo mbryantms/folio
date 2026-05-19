@@ -1830,17 +1830,36 @@ fn render_sequential_nav_links(prev: Option<&issue::Model>, next: Option<&issue:
     out
 }
 
-/// Format the `pse:last_read` + `pse:last_read_date` attribute pair
-/// for inline emission on either the PSE stream link or the regular
-/// acquisition link. Returns an empty string when no progress row
-/// exists. Centralized so the two link variants can't drift apart.
+/// Format the PSE progress-hint attribute pair for inline emission on
+/// either the PSE stream link or the regular acquisition link. Returns
+/// an empty string when no progress row exists. Centralized so the two
+/// link variants can't drift apart.
+///
+/// Wire format: **both** snake_case (`pse:last_read`) and camelCase
+/// (`pse:lastRead`) attribute names land on the same element, with
+/// matching `_date` companions. The Anansi PSE spec is ambiguous on
+/// case; Komga / Kavita ship camelCase and that's what Panels (iOS)
+/// and Chunky read. We emit both so we satisfy strict parsers either
+/// way — XML allows distinct-localname attributes on the same element,
+/// so this is well-formed.
+///
+/// Value: **1-indexed page number**, i.e. `p.last_page + 1`. The DB
+/// stores `last_page` as a 0-indexed page index (cover = 0); the OPDS
+/// wire convention (and Folio's own v2 `metadata.position`) is 1-indexed
+/// display position. Emitting raw `last_page` is the v0.3.36-and-earlier
+/// bug that caused "Continue Reading opens at the cover": for a user
+/// just past page 1, `last_page=1` was emitted, Panels read it as
+/// "page 1" (1-indexed = cover) and showed the cover.
 fn pse_progress_attrs(progress: Option<&progress_record::Model>) -> String {
     match progress {
-        Some(p) => format!(
-            " pse:last_read=\"{page}\" pse:last_read_date=\"{date}\"",
-            page = p.last_page,
-            date = p.updated_at.to_rfc3339(),
-        ),
+        Some(p) => {
+            let page = p.last_page + 1;
+            let date = p.updated_at.to_rfc3339();
+            format!(
+                " pse:last_read=\"{page}\" pse:lastRead=\"{page}\" \
+                 pse:last_read_date=\"{date}\" pse:lastReadDate=\"{date}\""
+            )
+        }
         None => String::new(),
     }
 }
