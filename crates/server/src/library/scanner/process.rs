@@ -186,85 +186,54 @@ pub async fn ingest_one<C: ConnectionTrait>(
     ingest_one_with_fingerprint(ctx, db, path, slug_set, size, mtime, outputs).await
 }
 
-pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
-    ctx: &IngestCtx<'_>,
-    db: &C,
+/// One archive's parsed state, ready for downstream column mapping.
+/// The MetronInfo has already been merged into `info` (spec §4.4 +
+/// §6.8 — MetronInfo wins on overlap), so callers see a single
+/// canonical `ComicInfo`.
+struct ParsedArchive {
+    hash: String,
+    info: ComicInfo,
+    actual_pages: u32,
+    /// `"active"` for happy-path + MissingComicInfo (no ComicInfo but
+    /// the archive is intact); `"encrypted"` / `"malformed"` for the
+    /// degraded paths. Stored on `issues.state` so downstream consumers
+    /// (UI, page-bytes guard) can react to the partial-data state.
+    parse_state: &'static str,
+}
+
+/// Outcome of the by-content-hash dedupe check, when no row was found
+/// via the file_path index. `Moved` and `Duplicate` both rely on the
+/// fingerprint matching an existing row; the difference is whether
+/// the old path is still on disk.
+enum DedupeOutcome {
+    NotDuplicate,
+    /// Boxed because `issue::Model` is ~1KB; keeping the enum
+    /// discriminant cheap to pass on the happy path.
+    Moved(Box<issue::Model>),
+    Duplicate,
+}
+
+/// Hash + parse the archive (under the archive-work semaphore + on a
+/// blocking task), translate diagnostics into health-issues, record
+/// phase timings, and unwrap the `ArchiveOutcome` into a single
+/// `ParsedArchive` shape. Returns `Ok(None)` for `Unreadable` — the
+/// caller has nothing to write and should return `Ok(())`.
+async fn parse_archive_for_ingest(
+    state: &AppState,
+    lib: &library::Model,
     path: &Path,
-    slug_set: Option<&mut std::collections::HashSet<String>>,
     size: i64,
-    mtime: chrono::DateTime<chrono::Utc>,
-    outputs: &mut IngestOutputs<'_>,
-) -> anyhow::Result<()> {
-    let IngestCtx {
-        state,
-        lib,
-        series_id,
-        series_folder,
-        manifest,
-        force,
-    } = *ctx;
-    // Reborrow the mutable outputs once at the top so the function body
-    // can keep referring to `stats` / `health` directly instead of
-    // `outputs.stats` / `outputs.health` at every site.
-    let stats: &mut ScanStats = &mut *outputs.stats;
-    let health: &mut HealthCollector = &mut *outputs.health;
-    // Postgres `timestamptz` truncates writes to microsecond precision, so a
-    // fresh nanosecond-precision fs mtime never round-trips byte-equal. Force
-    // both sides into the same precision up front so the §9.1 fast path
-    // actually fires on subsequent scans of unchanged files. (Without this,
-    // every per-series rescan re-hashes, re-parses, and re-thumbs every file
-    // even when nothing on disk changed.)
-    let path_str = path.to_string_lossy().into_owned();
-
-    // Existing row? If size+mtime match, skip re-hash (spec §9.1 fast path).
-    let mut existing = if let Some(manifest) = manifest {
-        manifest.by_path(&path_str)
-    } else {
-        IssueEntity::find()
-            .filter(issue::Column::FilePath.eq(path_str.clone()))
-            .one(db)
-            .await?
-    };
-    if !force
-        && let Some(row) = &existing
-        && row_metadata_is_current(row, size, mtime)
-    {
-        stats.files_unchanged += 1;
-        // The archive isn't being re-opened, so any open health issue tied to
-        // this file (MissingComicInfo, MalformedComicInfo, …) won't be
-        // re-emitted by the rest of `process_file`. Tell the collector so the
-        // auto-resolve sweep at scan end leaves it alone.
-        health.touch_file(path);
-        return Ok(());
-    }
-
-    // Spec §10.1 UnsupportedArchiveFormat — recognized extension but no
-    // reader yet (currently CBR + CB7 — see crates/archive/src/cbr.rs and
-    // cb7.rs). Emit a health issue and skip without trying to hash a file
-    // we can't read.
-    let ext_lower = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(str::to_ascii_lowercase);
-    if matches!(ext_lower.as_deref(), Some("cbr" | "cb7")) {
-        stats.files_skipped += 1;
-        health.emit(IssueKind::UnsupportedArchiveFormat {
-            path: path.to_path_buf(),
-            ext: ext_lower.unwrap_or_default(),
-        });
-        return Ok(());
-    }
-
-    // Hash + parse. Both operations are blocking filesystem/archive work, so keep
-    // them off the async scheduler used by HTTP and websocket handlers.
+    stats: &mut ScanStats,
+    health: &mut HealthCollector,
+) -> anyhow::Result<Option<ParsedArchive>> {
     let path_for_blocking = path.to_path_buf();
     // F-9: tunable read buffer for BLAKE3 hashing. Larger buffers reduce
     // syscall + page-cache-readahead overhead; default 1024 KB matches the
     // historical hardcoded chunk and was the right value all along — the
     // env var existed but wasn't wired until now.
     let hash_buffer_kb = state.cfg().scan_hash_buffer_kb;
-    // `ArchiveLimits` is `Copy`; capture once before spawn_blocking so
-    // a `COMIC_ARCHIVE_MAX_*` env override flows into the parse path.
+    // `ArchiveLimits` is `Copy`; capture once before spawn_blocking so a
+    // `COMIC_ARCHIVE_MAX_*` env override flows into the parse path.
     let archive_limits = state.cfg().archive_limits();
     let (hash, archive_outcome, timing, diagnostics) = {
         let _archive_permit = state
@@ -287,9 +256,9 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         .map_err(|e| anyhow::anyhow!("archive parse task failed: {e}"))??
     };
 
-    // Translate archive-crate diagnostics into structured health-
-    // issues. Both run independently of the ComicInfo outcome —
-    // a file can need recovery AND have a clean ComicInfo, or be
+    // Translate archive-crate diagnostics into structured health
+    // issues. Both run independently of the ComicInfo outcome — a
+    // file can need recovery AND have a clean ComicInfo, or be
     // partially-skipped AND have rich metadata. See Tranche A of
     // `~/.claude/plans/recovery-visibility-1.0.md`.
     if let Some(technique) = diagnostics.recovery {
@@ -364,7 +333,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
                 path: path.to_path_buf(),
                 error: e,
             });
-            return Ok(());
+            return Ok(None);
         }
     };
 
@@ -373,6 +342,138 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     if let Some(m) = &metron_opt {
         merge_metron_into_comicinfo(&mut info, m);
     }
+
+    Ok(Some(ParsedArchive {
+        hash,
+        info,
+        actual_pages,
+        parse_state,
+    }))
+}
+
+/// Check whether the file's content fingerprint matches a row that
+/// the per-path lookup didn't find. Two cases:
+///
+/// - The matching row's `file_path` is stale (file moved on disk):
+///   stamp `issue_paths` with the old location, return `Moved` so the
+///   caller updates the existing row in place.
+/// - The matching row's `file_path` still exists: this is a true
+///   duplicate; emit a health issue, increment the dup counter, and
+///   return `Duplicate` so the caller bails before INSERT and avoids
+///   a primary-key conflict that would roll back the chunk.
+///
+/// Filters by `content_hash` rather than `id` so retagged rows (where
+/// `id` is the historical first-insert hash but diverges from the live
+/// `content_hash`) are still detected as the same logical issue.
+async fn dedupe_by_content_hash<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    path_str: &str,
+    series_id: Uuid,
+    path: &Path,
+    health: &mut HealthCollector,
+    stats: &mut ScanStats,
+) -> anyhow::Result<DedupeOutcome> {
+    let prior = IssueEntity::find()
+        .filter(issue::Column::ContentHash.eq(issue_id))
+        .order_by_asc(issue::Column::Id)
+        .one(db)
+        .await?;
+    let Some(prior) = prior else {
+        return Ok(DedupeOutcome::NotDuplicate);
+    };
+    let previous_path = std::path::Path::new(&prior.file_path);
+    if prior.file_path != path_str && !previous_path.exists() {
+        remember_moved_issue_path(db, &prior.id, &prior.file_path, path_str).await?;
+        Ok(DedupeOutcome::Moved(Box::new(prior)))
+    } else {
+        health.emit(IssueKind::DuplicateContent {
+            path_a: std::path::PathBuf::from(&prior.file_path),
+            path_b: path.to_path_buf(),
+        });
+        stats.files_duplicate += 1;
+        tracing::info!(
+            series_id = %series_id,
+            kept = %prior.file_path,
+            duplicate = %path.display(),
+            "scanner: skipping duplicate (same content hash as existing issue)",
+        );
+        Ok(DedupeOutcome::Duplicate)
+    }
+}
+
+pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
+    ctx: &IngestCtx<'_>,
+    db: &C,
+    path: &Path,
+    slug_set: Option<&mut std::collections::HashSet<String>>,
+    size: i64,
+    mtime: chrono::DateTime<chrono::Utc>,
+    outputs: &mut IngestOutputs<'_>,
+) -> anyhow::Result<()> {
+    let IngestCtx {
+        state,
+        lib,
+        series_id,
+        series_folder,
+        manifest,
+        force,
+    } = *ctx;
+    // Reborrow the mutable outputs once at the top so the function body
+    // can keep referring to `stats` / `health` directly instead of
+    // `outputs.stats` / `outputs.health` at every site.
+    let stats: &mut ScanStats = &mut *outputs.stats;
+    let health: &mut HealthCollector = &mut *outputs.health;
+    let path_str = path.to_string_lossy().into_owned();
+
+    // Existing row? If size+mtime match, skip re-hash (spec §9.1 fast path).
+    let mut existing = if let Some(manifest) = manifest {
+        manifest.by_path(&path_str)
+    } else {
+        IssueEntity::find()
+            .filter(issue::Column::FilePath.eq(path_str.clone()))
+            .one(db)
+            .await?
+    };
+    if !force
+        && let Some(row) = &existing
+        && row_metadata_is_current(row, size, mtime)
+    {
+        stats.files_unchanged += 1;
+        // The archive isn't being re-opened, so any open health issue tied to
+        // this file (MissingComicInfo, MalformedComicInfo, …) won't be
+        // re-emitted by the rest of `process_file`. Tell the collector so the
+        // auto-resolve sweep at scan end leaves it alone.
+        health.touch_file(path);
+        return Ok(());
+    }
+
+    // Spec §10.1 UnsupportedArchiveFormat — recognized extension but no
+    // reader yet (currently CBR + CB7 — see crates/archive/src/cbr.rs and
+    // cb7.rs). Emit a health issue and skip without trying to hash a file
+    // we can't read.
+    let ext_lower = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(str::to_ascii_lowercase);
+    if matches!(ext_lower.as_deref(), Some("cbr" | "cb7")) {
+        stats.files_skipped += 1;
+        health.emit(IssueKind::UnsupportedArchiveFormat {
+            path: path.to_path_buf(),
+            ext: ext_lower.unwrap_or_default(),
+        });
+        return Ok(());
+    }
+
+    let Some(ParsedArchive {
+        hash,
+        info,
+        actual_pages,
+        parse_state,
+    }) = parse_archive_for_ingest(state, lib, path, size, stats, health).await?
+    else {
+        return Ok(());
+    };
 
     // Filename inference fills gaps.
     let leaf = path
@@ -431,39 +532,16 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     let now = Utc::now().fixed_offset();
     let issue_id = hash.clone(); // dedupe_by_content default
 
-    // Dedupe-by-content: when the file_path lookup misses but a row already
-    // tracks this file's bytes, treat it as a move if the old path is gone;
-    // otherwise surface a duplicate warning instead of rolling back the
-    // chunk on a primary-key conflict. Filter by `content_hash` rather than
-    // `id` so retagged rows (where `id` is the historical first-insert hash
-    // and diverges from the live `content_hash`) are still detected as the
-    // same logical issue. `order_by_asc(Id)` keeps the choice deterministic
-    // if two rows share a hash transiently.
+    // Dedupe-by-content fires only when the per-path lookup missed.
+    // `order_by_asc(Id)` inside the helper keeps the choice
+    // deterministic if two rows transiently share a hash.
     if existing.is_none() {
-        let prior = IssueEntity::find()
-            .filter(issue::Column::ContentHash.eq(issue_id.clone()))
-            .order_by_asc(issue::Column::Id)
-            .one(db)
-            .await?;
-        if let Some(prior) = prior {
-            let previous_path = std::path::Path::new(&prior.file_path);
-            if prior.file_path != path_str && !previous_path.exists() {
-                remember_moved_issue_path(db, &prior.id, &prior.file_path, &path_str).await?;
-                existing = Some(prior);
-            } else {
-                health.emit(IssueKind::DuplicateContent {
-                    path_a: std::path::PathBuf::from(&prior.file_path),
-                    path_b: path.to_path_buf(),
-                });
-                stats.files_duplicate += 1;
-                tracing::info!(
-                    series_id = %series_id,
-                    kept = %prior.file_path,
-                    duplicate = %path.display(),
-                    "scanner: skipping duplicate (same content hash as existing issue)",
-                );
-                return Ok(());
-            }
+        match dedupe_by_content_hash(db, &issue_id, &path_str, series_id, path, health, stats)
+            .await?
+        {
+            DedupeOutcome::NotDuplicate => {}
+            DedupeOutcome::Moved(prior) => existing = Some(*prior),
+            DedupeOutcome::Duplicate => return Ok(()),
         }
     }
 
