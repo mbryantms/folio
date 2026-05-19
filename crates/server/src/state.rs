@@ -102,7 +102,7 @@ impl AppState {
     // `app::serve`; the parameter list mirrors `Inner`. Bundling into a
     // builder buys little vs. the noise of routing each name through
     // it.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         cfg: Config,
         baseline: Config,

@@ -30,6 +30,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 
+import { apiFetch } from "@/lib/api/auth-refresh";
+
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const TICK_INTERVAL_MS = 1_000;
 const MIN_DWELL_MS_PER_PAGE = 1_500;
@@ -342,9 +344,11 @@ function getCsrfToken(): string | null {
 async function postSession(body: unknown): Promise<void> {
   try {
     const csrf = getCsrfToken();
-    await fetch("/api/me/reading-sessions", {
+    // Routed through `apiFetch` so token-expiry on a long reading
+    // session triggers the implicit refresh-and-retry instead of
+    // silently dropping the heartbeat (audit M1).
+    await apiFetch("/me/reading-sessions", {
       method: "POST",
-      credentials: "include",
       headers: {
         "Content-Type": "application/json",
         ...(csrf ? { "X-CSRF-Token": csrf } : {}),

@@ -166,7 +166,7 @@ export function HorizontalScrollRail({
         // styles below if the plugin isn't loaded). The bottom padding
         // is density-driven so compact mode can trim the otherwise-
         // empty strip beneath the cards.
-        className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="[scrollbar-width:none] overflow-x-auto [&::-webkit-scrollbar]:hidden"
         style={{
           scrollbarWidth: "none",
           paddingBottom: "var(--density-rail-pb)",
@@ -230,7 +230,7 @@ export function HorizontalScrollRail({
           // treatment + the project's standard `bg-primary` button
           // styling so the scroll affordance reads as a real button
           // against any cover art behind it.
-          "bg-primary/90 text-primary-foreground hover:bg-primary absolute top-[42%] left-1 z-10 inline-flex h-14 w-7 -translate-y-1/2 items-center justify-center rounded-md ring-2 shadow-md ring-white/20 backdrop-blur transition-all duration-150 ease-out focus-visible:ring-offset-2 focus-visible:outline-none",
+          "bg-primary/90 text-primary-foreground hover:bg-primary absolute top-[42%] left-1 z-10 inline-flex h-14 w-7 -translate-y-1/2 items-center justify-center rounded-md shadow-md ring-2 ring-white/20 backdrop-blur transition-all duration-150 ease-out focus-visible:ring-offset-2 focus-visible:outline-none",
           canLeft
             ? "scale-100 opacity-0 group-hover/rail:opacity-100 focus-visible:opacity-100"
             : "pointer-events-none scale-95 opacity-0",
@@ -244,7 +244,7 @@ export function HorizontalScrollRail({
         tabIndex={canRight ? 0 : -1}
         onClick={() => scrollBy("right")}
         className={cn(
-          "bg-primary/90 text-primary-foreground hover:bg-primary absolute top-[42%] right-1 z-10 inline-flex h-14 w-7 -translate-y-1/2 items-center justify-center rounded-md ring-2 shadow-md ring-white/20 backdrop-blur transition-all duration-150 ease-out focus-visible:ring-offset-2 focus-visible:outline-none",
+          "bg-primary/90 text-primary-foreground hover:bg-primary absolute top-[42%] right-1 z-10 inline-flex h-14 w-7 -translate-y-1/2 items-center justify-center rounded-md shadow-md ring-2 ring-white/20 backdrop-blur transition-all duration-150 ease-out focus-visible:ring-offset-2 focus-visible:outline-none",
           canRight
             ? "scale-100 opacity-0 group-hover/rail:opacity-100 focus-visible:opacity-100"
             : "pointer-events-none scale-95 opacity-0",

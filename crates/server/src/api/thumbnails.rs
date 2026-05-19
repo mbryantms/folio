@@ -31,6 +31,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use tokio_util::io::ReaderStream;
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::library::thumbnails::{self, ThumbFormat, ThumbnailQuality, Variant};
 use crate::state::AppState;
@@ -228,7 +229,10 @@ async fn serve_file(
         header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
-    headers.insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
+    headers.insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
+    );
 
     if req_headers
         .get(header::IF_NONE_MATCH)
@@ -272,12 +276,4 @@ async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool
         .ok()
         .flatten()
         .is_some()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        axum::Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

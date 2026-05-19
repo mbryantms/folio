@@ -21,6 +21,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::error;
 use crate::auth::RequireAdmin;
 use crate::config::AuthMode;
 use crate::middleware::rate_limit;
@@ -265,12 +266,4 @@ pub async fn probe_discovery(
         scopes_supported: pick_vec("scopes_supported"),
     })
     .into_response()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

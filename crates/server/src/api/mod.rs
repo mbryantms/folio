@@ -45,3 +45,27 @@ pub mod sessions;
 pub mod sidebar_layout;
 pub mod thumbnails;
 pub mod ws_scan_events;
+
+use axum::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+
+/// Canonical error-envelope helper. Every mutating handler returns
+/// errors via this shape per the project convention documented in
+/// CLAUDE.md: `{"error": {"code": "...", "message": "..."}}`.
+///
+/// Promoted from `api/libraries.rs` during code-quality-cleanup M1
+/// (was duplicated verbatim across 36 sibling files).
+pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {
+    (
+        status,
+        Json(serde_json::json!({"error": {"code": code, "message": message}})),
+    )
+        .into_response()
+}
+
+/// 404 with the standard envelope. Used by feed/page handlers that
+/// don't want to spell out the `not_found` code inline.
+pub(crate) fn not_found() -> Response {
+    error(StatusCode::NOT_FOUND, "not_found", "Not found")
+}

@@ -37,6 +37,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, se
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::error;
 use crate::api::rails::OnDeckCard;
 use crate::api::saved_views::KIND_CBL;
 use crate::api::series::IssueSummaryView;
@@ -324,7 +325,7 @@ async fn none_view_with_fallback(
 /// are unit. clippy flags the size delta but it's a transient
 /// stack-only value returned from one function — boxing would just add
 /// an allocation for no benefit.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 enum CblBranchOutcome {
     /// Saved view resolved, current issue is in the list, and at least
     /// one later entry is unfinished.
@@ -699,14 +700,6 @@ pub(crate) async fn pick_next_in_cbl(
         )));
     }
     Ok(None)
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }
 
 // ───────────────────────────────────────────────────────────────────

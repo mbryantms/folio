@@ -159,28 +159,28 @@ export default async function ReadPage({
     <>
       <ReaderHealthToast seriesSlug={seriesSlug} issueSlug={issueSlug} />
       <Reader
-      issueId={issue.id}
-      seriesId={issue.series_id}
-      cblSavedViewId={cblSavedViewId}
-      exitUrl={`/series/${seriesSlug}/issues/${issueSlug}`}
-      totalPages={totalPages}
-      initialPage={initialPage}
-      pages={issue.pages ?? []}
-      manga={issue.manga ?? null}
-      userDefaultDirection={userDefaultDirection}
-      libraryDefaultDirection={libraryDefaultDirection}
-      seriesReadingDirection={seriesReadingDirection}
-      userDefaultFitMode={userDefaultFitMode}
-      userDefaultViewMode={userDefaultViewMode}
-      userDefaultPageStrip={userDefaultPageStrip}
-      userDefaultCoverSolo={userDefaultCoverSolo}
-      userKeybinds={userKeybinds}
-      activityTrackingEnabled={activityTrackingEnabled && !isIncognito}
-      incognito={isIncognito}
-      readingMinActiveMs={readingMinActiveMs}
-      readingMinPages={readingMinPages}
-      readingIdleMs={readingIdleMs}
-    />
+        issueId={issue.id}
+        seriesId={issue.series_id}
+        cblSavedViewId={cblSavedViewId}
+        exitUrl={`/series/${seriesSlug}/issues/${issueSlug}`}
+        totalPages={totalPages}
+        initialPage={initialPage}
+        pages={issue.pages ?? []}
+        manga={issue.manga ?? null}
+        userDefaultDirection={userDefaultDirection}
+        libraryDefaultDirection={libraryDefaultDirection}
+        seriesReadingDirection={seriesReadingDirection}
+        userDefaultFitMode={userDefaultFitMode}
+        userDefaultViewMode={userDefaultViewMode}
+        userDefaultPageStrip={userDefaultPageStrip}
+        userDefaultCoverSolo={userDefaultCoverSolo}
+        userKeybinds={userKeybinds}
+        activityTrackingEnabled={activityTrackingEnabled && !isIncognito}
+        incognito={isIncognito}
+        readingMinActiveMs={readingMinActiveMs}
+        readingMinPages={readingMinPages}
+        readingIdleMs={readingIdleMs}
+      />
     </>
   );
 }

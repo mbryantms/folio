@@ -178,9 +178,7 @@ function ProfileCard({
           action="/api/me/account"
           className="space-y-5"
         >
-          {csrf ? (
-            <input type="hidden" name="csrf_token" value={csrf} />
-          ) : null}
+          {csrf ? <input type="hidden" name="csrf_token" value={csrf} /> : null}
           <FormField
             control={form.control}
             name="display_name"
@@ -262,9 +260,7 @@ function PasswordCard() {
           action="/api/me/account"
           className="space-y-5"
         >
-          {csrf ? (
-            <input type="hidden" name="csrf_token" value={csrf} />
-          ) : null}
+          {csrf ? <input type="hidden" name="csrf_token" value={csrf} /> : null}
           <FormField
             control={form.control}
             name="current_password"

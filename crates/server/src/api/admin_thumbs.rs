@@ -50,6 +50,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::jobs::post_scan;
@@ -1348,12 +1349,4 @@ async fn queue_depth(app: &AppState) -> Result<i64, anyhow::Error> {
     use apalis::prelude::Storage;
     let mut storage = app.jobs.post_scan_thumbs_storage.clone();
     Ok(storage.len().await?)
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

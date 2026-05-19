@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use entity::app_password::{self, Entity as AppPasswordEntity};
 
+use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::{CurrentUser, app_password as ap};
 use crate::middleware::RequestContext;
@@ -271,12 +272,4 @@ pub async fn revoke(
     )
     .await;
     StatusCode::NO_CONTENT.into_response()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

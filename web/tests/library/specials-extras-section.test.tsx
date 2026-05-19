@@ -137,7 +137,7 @@ describe("<SpecialsExtrasSection>", () => {
       }),
     ]);
     expect(html).toContain("Specials &amp; Extras");
-    expect(html).toContain("data-testid=\"specials-extras-section\"");
+    expect(html).toContain('data-testid="specials-extras-section"');
     expect(html).toContain("Annual 1");
   });
 });

@@ -125,9 +125,7 @@ export function useGlobalSearch(
   const issuesLimit = opts.perCategory ?? BACKEND_MAX.issues;
   const peopleLimit = opts.perCategory ?? BACKEND_MAX.people;
 
-  const series = useSeriesList(
-    enabled ? { q: query, limit: seriesLimit } : {},
-  );
+  const series = useSeriesList(enabled ? { q: query, limit: seriesLimit } : {});
   const issues = useIssueSearch(
     enabled ? { q: query, limit: issuesLimit } : {},
   );

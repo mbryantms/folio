@@ -156,9 +156,64 @@ impl JobRuntime {
         Ok(())
     }
 
-    /// Spawn workers for every queue. Returns when any worker exits — callers
-    /// should keep this future alive for the server's lifetime.
-    pub async fn run(self, state: AppState) {
+    /// Spawn workers for every queue, watching `shutdown` for a clean
+    /// drain signal. Returns when `shutdown.cancelled()` resolves AND
+    /// the apalis monitor finishes its graceful-shutdown handshake
+    /// (drains in-flight jobs up to the apalis-default timeout).
+    ///
+    /// **Panic safety.** Monitor errors (or future panics) restart the
+    /// monitor with an exponential backoff capped at 30s. The outer
+    /// cancellation token still breaks the loop on shutdown, so a
+    /// SIGTERM mid-restart still terminates cleanly. Replaces the
+    /// `.expect("apalis monitor crashed")` from before code-quality-
+    /// cleanup M4 which would have killed the worker process on the
+    /// first transient redis blip.
+    pub async fn run(self, state: AppState, shutdown: tokio_util::sync::CancellationToken) {
+        let mut delay = std::time::Duration::from_secs(1);
+        loop {
+            if shutdown.is_cancelled() {
+                tracing::info!("apalis monitor: shutdown observed, exiting run loop");
+                return;
+            }
+
+            let outcome = self
+                .clone()
+                .run_monitor_once(state.clone(), &shutdown)
+                .await;
+            if shutdown.is_cancelled() {
+                tracing::info!("apalis monitor: shutdown observed after run; exiting");
+                return;
+            }
+            match outcome {
+                Ok(()) => {
+                    // Monitor returned Ok without shutdown being signalled —
+                    // unusual; treat the same as transient error and restart.
+                    tracing::warn!("apalis monitor exited unexpectedly; restarting");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "apalis monitor exited with error; restarting");
+                }
+            }
+            tokio::select! {
+                () = tokio::time::sleep(delay) => {}
+                () = shutdown.cancelled() => {
+                    tracing::info!("apalis monitor: shutdown observed during backoff; exiting");
+                    return;
+                }
+            }
+            // Exponential backoff capped at 30s.
+            delay = (delay * 2).min(std::time::Duration::from_secs(30));
+        }
+    }
+
+    /// Run the apalis monitor once. Separated from [`run`] so the
+    /// panic-restart loop can call back in cleanly. `shutdown` is
+    /// forwarded as the `run_with_signal` cancellation future.
+    async fn run_monitor_once(
+        self,
+        state: AppState,
+        shutdown: &tokio_util::sync::CancellationToken,
+    ) -> std::io::Result<()> {
         use apalis::prelude::*;
 
         let scan_concurrency = state.cfg().scan_worker_count;
@@ -194,15 +249,21 @@ impl JobRuntime {
             .backend(self.post_scan_dictionary_storage.clone())
             .build_fn(post_scan::handle_dictionary);
 
+        let shutdown_fut = {
+            let token = shutdown.clone();
+            async move {
+                token.cancelled().await;
+                Ok(())
+            }
+        };
         Monitor::new()
             .register(scan_worker)
             .register(scan_series_worker)
             .register(thumbs_worker)
             .register(search_worker)
             .register(dictionary_worker)
-            .run()
+            .run_with_signal(shutdown_fut)
             .await
-            .expect("apalis monitor crashed");
     }
 
     /// Coalesce a series- or issue-scoped scan request. Unlike full-library

@@ -1389,7 +1389,7 @@ async fn issue_session(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn finalize_session(
     app: &AppState,
     user_row: &user::Model,

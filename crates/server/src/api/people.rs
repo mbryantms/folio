@@ -19,6 +19,7 @@ use axum::{
 use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
 use serde::{Deserialize, Serialize};
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
@@ -55,14 +56,6 @@ struct Row {
     person: String,
     roles: Vec<String>,
     credit_count: i64,
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }
 
 #[utoipa::path(

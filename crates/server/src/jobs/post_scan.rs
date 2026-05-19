@@ -813,9 +813,11 @@ pub async fn handle_search(job: SearchJob, _state: Data<AppState>) -> Result<(),
 }
 
 pub async fn handle_dictionary(job: DictionaryJob, _state: Data<AppState>) -> Result<(), Error> {
-    tracing::debug!(
-        library_id = %job.library_id,
-        "post_scan_dictionary (TODO: 'did you mean' trigram refresh)",
-    );
+    // No-op by design. The "did you mean" trigram surface was deferred
+    // by decision in incompleteness-cleanup M2 (D-3) — Postgres-side
+    // `pg_trgm` similarity hits already cover the common typos without
+    // a separate dictionary. The job slot is kept so the cron schedule
+    // doesn't need to be rewritten if the decision is ever revisited.
+    tracing::trace!(library_id = %job.library_id, "post_scan_dictionary (no-op)");
     Ok(())
 }

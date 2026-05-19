@@ -338,8 +338,8 @@ function SidebarSection() {
               <AlertDialogTitle>Reset sidebar to defaults?</AlertDialogTitle>
               <AlertDialogDescription>
                 Every customization here — removed rows, reorders, custom
-                headers + spacers — gets cleared. New libraries and saved
-                views you add later will automatically appear.
+                headers + spacers — gets cleared. New libraries and saved views
+                you add later will automatically appear.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -434,7 +434,7 @@ function MobileMoveButtons({
         onClick={onUp}
         disabled={!onUp}
         aria-label="Move up"
-        className="text-muted-foreground hover:text-foreground disabled:opacity-30 flex h-4 w-7 items-center justify-center rounded-sm"
+        className="text-muted-foreground hover:text-foreground flex h-4 w-7 items-center justify-center rounded-sm disabled:opacity-30"
       >
         <ChevronUp className="h-3 w-3" />
       </button>
@@ -443,7 +443,7 @@ function MobileMoveButtons({
         onClick={onDown}
         disabled={!onDown}
         aria-label="Move down"
-        className="text-muted-foreground hover:text-foreground disabled:opacity-30 flex h-4 w-7 items-center justify-center rounded-sm"
+        className="text-muted-foreground hover:text-foreground flex h-4 w-7 items-center justify-center rounded-sm disabled:opacity-30"
       >
         <ChevronDown className="h-3 w-3" />
       </button>
@@ -490,7 +490,12 @@ function SidebarRow({
   // Headers + a few default kinds support label rename inline; only
   // headers really need it, but allowing user-defined overrides on the
   // others is cheap and matches the "everything's customizable" spirit.
-  const renamable = isHeader || entry.kind === "builtin" || entry.kind === "library" || entry.kind === "view" || entry.kind === "page";
+  const renamable =
+    isHeader ||
+    entry.kind === "builtin" ||
+    entry.kind === "library" ||
+    entry.kind === "view" ||
+    entry.kind === "page";
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(entry.label);
   const [lastSeen, setLastSeen] = React.useState(entry.label);
@@ -569,7 +574,7 @@ function SidebarRow({
           }}
           className={cn(
             "min-w-0 flex-1 text-sm",
-            isHeader && "font-semibold uppercase tracking-wider",
+            isHeader && "font-semibold tracking-wider uppercase",
           )}
         />
       ) : (
@@ -579,7 +584,7 @@ function SidebarRow({
           className={cn(
             "group min-w-0 flex-1 truncate text-left text-sm",
             renamable && "hover:bg-secondary/40 -mx-1 rounded px-1",
-            isHeader && "font-semibold uppercase tracking-wider",
+            isHeader && "font-semibold tracking-wider uppercase",
           )}
           title={renamable ? "Click to rename" : undefined}
           disabled={!renamable}
@@ -626,7 +631,7 @@ function KindChip({ kind }: { kind: SidebarEntryView["kind"] }) {
   return (
     <Badge
       variant="outline"
-      className="text-muted-foreground hidden shrink-0 text-[10px] font-medium uppercase tracking-wider sm:inline-flex"
+      className="text-muted-foreground hidden shrink-0 text-[10px] font-medium tracking-wider uppercase sm:inline-flex"
     >
       {label}
     </Badge>
@@ -775,9 +780,7 @@ function AddToSidebarDialog({
   const hiddenSavedViewIds = React.useMemo(
     () =>
       new Set(
-        hiddenEntries
-          .filter((e) => e.kind === "view")
-          .map((e) => e.ref_id),
+        hiddenEntries.filter((e) => e.kind === "view").map((e) => e.ref_id),
       ),
     [hiddenEntries],
   );
@@ -956,7 +959,7 @@ function AddRow({
       </div>
       <Badge
         variant="outline"
-        className="text-muted-foreground hidden shrink-0 text-[10px] font-medium uppercase tracking-wider sm:inline-flex"
+        className="text-muted-foreground hidden shrink-0 text-[10px] font-medium tracking-wider uppercase sm:inline-flex"
       >
         {addRowKindLabel(kind)}
       </Badge>

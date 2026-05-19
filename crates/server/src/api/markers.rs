@@ -40,9 +40,37 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
+
+/// Slim error newtype for validator helpers — `Result<T, MarkerError>`
+/// avoids the `clippy::result_large_err` lint that `axum::response::Response`
+/// triggers (Response is ~200 bytes; MarkerError is one pointer + one
+/// status). Materialises the canonical envelope at the HTTP boundary
+/// via `IntoResponse`. M3 of code-quality-cleanup-1.0.
+struct MarkerError {
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+}
+
+impl MarkerError {
+    const fn new(status: StatusCode, code: &'static str, message: &'static str) -> Self {
+        Self {
+            status,
+            code,
+            message,
+        }
+    }
+}
+
+impl axum::response::IntoResponse for MarkerError {
+    fn into_response(self) -> axum::response::Response {
+        error(self.status, self.code, self.message)
+    }
+}
 
 const MAX_BODY_BYTES: usize = 10 * 1024;
 const MAX_LABEL_BYTES: usize = 280;
@@ -219,14 +247,6 @@ pub struct ListQuery {
 
 // ────────────── helpers ──────────────
 
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
-}
-
 fn to_view(m: marker::Model) -> MarkerView {
     MarkerView {
         id: m.id.to_string(),
@@ -255,8 +275,7 @@ fn to_view(m: marker::Model) -> MarkerView {
 /// whitespace, lowercase, drop empties, dedupe while preserving order
 /// of first appearance. Returns an error response if any tag is too
 /// long or the list exceeds the per-marker cap.
-#[allow(clippy::result_large_err)]
-fn normalize_tags(raw: Vec<String>) -> Result<Vec<String>, axum::response::Response> {
+fn normalize_tags(raw: Vec<String>) -> Result<Vec<String>, MarkerError> {
     let mut out: Vec<String> = Vec::with_capacity(raw.len());
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for s in raw {
@@ -265,7 +284,7 @@ fn normalize_tags(raw: Vec<String>) -> Result<Vec<String>, axum::response::Respo
             continue;
         }
         if trimmed.chars().count() > MAX_TAG_LEN {
-            return Err(error(
+            return Err(MarkerError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "tag too long",
@@ -276,7 +295,7 @@ fn normalize_tags(raw: Vec<String>) -> Result<Vec<String>, axum::response::Respo
         }
     }
     if out.len() > MAX_TAGS_PER_MARKER {
-        return Err(error(
+        return Err(MarkerError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "too many tags",
@@ -370,25 +389,30 @@ async fn hydrate_views(
 
 /// Verify the calling user can see `issue_id`. Returns the issue row
 /// (we need its `series_id` and `page_count` to populate the marker)
-/// or an HTTP response on miss / forbidden.
+/// or a [`MarkerError`] on miss / forbidden / DB failure. Caller
+/// converts to `Response` via `IntoResponse` at the HTTP boundary.
 async fn fetch_visible_issue(
     app: &AppState,
     user: &CurrentUser,
     issue_id: &str,
-) -> Result<issue::Model, axum::response::Response> {
+) -> Result<issue::Model, MarkerError> {
     let row = issue::Entity::find_by_id(issue_id.to_owned())
         .one(&app.db)
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "markers: issue fetch failed");
-            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+            MarkerError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         })?;
     let Some(row) = row else {
-        return Err(error(StatusCode::NOT_FOUND, "not_found", "issue not found"));
+        return Err(MarkerError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "issue not found",
+        ));
     };
     let visible = access::for_user(app, user).await;
     if !visible.contains(row.library_id) {
-        return Err(error(
+        return Err(MarkerError::new(
             StatusCode::FORBIDDEN,
             "forbidden",
             "issue not visible",
@@ -399,14 +423,13 @@ async fn fetch_visible_issue(
 
 /// Per-kind shape + region/selection validation. Returns Ok on success
 /// or a 400/422 response with a stable error code.
-#[allow(clippy::result_large_err)]
 fn validate_shape(
     kind: &str,
     region: Option<&serde_json::Value>,
     body: Option<&str>,
-) -> Result<(), axum::response::Response> {
+) -> Result<(), MarkerError> {
     if !ALL_KINDS.contains(&kind) {
-        return Err(error(
+        return Err(MarkerError::new(
             StatusCode::BAD_REQUEST,
             "validation",
             "kind must be bookmark | note | highlight",
@@ -415,7 +438,7 @@ fn validate_shape(
     if kind == KIND_NOTE {
         let body = body.unwrap_or("");
         if body.trim().is_empty() {
-            return Err(error(
+            return Err(MarkerError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "note requires body",
@@ -423,7 +446,7 @@ fn validate_shape(
         }
     }
     if kind == KIND_HIGHLIGHT && region.is_none() {
-        return Err(error(
+        return Err(MarkerError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "highlight requires region",
@@ -432,7 +455,7 @@ fn validate_shape(
     if let Some(b) = body
         && b.len() > MAX_BODY_BYTES
     {
-        return Err(error(
+        return Err(MarkerError::new(
             StatusCode::BAD_REQUEST,
             "validation",
             "body too large (max 10 KB)",
@@ -444,23 +467,22 @@ fn validate_shape(
 /// Clamp the `{ x, y, w, h }` numeric values to [0, 100] and ensure
 /// `shape` is one of the allowed tokens. Tolerates extra fields (so
 /// future client revisions don't trip an over-strict check).
-#[allow(clippy::result_large_err)]
 fn normalize_region(
     raw: Option<serde_json::Value>,
-) -> Result<Option<serde_json::Value>, axum::response::Response> {
+) -> Result<Option<serde_json::Value>, MarkerError> {
     let Some(serde_json::Value::Object(mut obj)) = raw else {
         return Ok(None);
     };
     for key in ["x", "y", "w", "h"] {
         let Some(v) = obj.get(key) else {
-            return Err(error(
+            return Err(MarkerError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "region requires x, y, w, h",
             ));
         };
         let Some(n) = v.as_f64() else {
-            return Err(error(
+            return Err(MarkerError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "region x/y/w/h must be numbers",
@@ -476,14 +498,14 @@ fn normalize_region(
     }
     if let Some(shape) = obj.get("shape") {
         let Some(s) = shape.as_str() else {
-            return Err(error(
+            return Err(MarkerError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "region.shape must be a string",
             ));
         };
         if !matches!(s, "rect" | "text" | "image") {
-            return Err(error(
+            return Err(MarkerError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "region.shape must be rect | text | image",
@@ -499,13 +521,12 @@ fn normalize_region(
     Ok(Some(serde_json::Value::Object(obj)))
 }
 
-#[allow(clippy::result_large_err)]
 fn normalize_selection(
     raw: Option<serde_json::Value>,
-) -> Result<Option<serde_json::Value>, axum::response::Response> {
+) -> Result<Option<serde_json::Value>, MarkerError> {
     let Some(value) = raw else { return Ok(None) };
     let serde_json::Value::Object(obj) = &value else {
-        return Err(error(
+        return Err(MarkerError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "selection must be an object",
@@ -517,7 +538,7 @@ fn normalize_selection(
     {
         // Generous upper bound — OCR'd text can run long but anything
         // beyond ~1 KB suggests a runaway crop.
-        return Err(error(
+        return Err(MarkerError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "selection.text too long",
@@ -531,22 +552,15 @@ fn encode_cursor(updated_at: chrono::DateTime<chrono::FixedOffset>, id: Uuid) ->
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s.as_bytes())
 }
 
-#[allow(clippy::result_large_err)]
-fn decode_cursor(
-    raw: &str,
-) -> Result<(chrono::DateTime<chrono::FixedOffset>, Uuid), axum::response::Response> {
+fn decode_cursor(raw: &str) -> Result<(chrono::DateTime<chrono::FixedOffset>, Uuid), MarkerError> {
+    let bad = || MarkerError::new(StatusCode::BAD_REQUEST, "validation", "bad cursor");
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(raw.as_bytes())
-        .map_err(|_| error(StatusCode::BAD_REQUEST, "validation", "bad cursor"))?;
-    let decoded = String::from_utf8(bytes)
-        .map_err(|_| error(StatusCode::BAD_REQUEST, "validation", "bad cursor"))?;
-    let (ts, id) = decoded
-        .rsplit_once('|')
-        .ok_or_else(|| error(StatusCode::BAD_REQUEST, "validation", "bad cursor"))?;
-    let parsed_ts = chrono::DateTime::parse_from_rfc3339(ts)
-        .map_err(|_| error(StatusCode::BAD_REQUEST, "validation", "bad cursor"))?;
-    let parsed_id = Uuid::parse_str(id)
-        .map_err(|_| error(StatusCode::BAD_REQUEST, "validation", "bad cursor"))?;
+        .map_err(|_| bad())?;
+    let decoded = String::from_utf8(bytes).map_err(|_| bad())?;
+    let (ts, id) = decoded.rsplit_once('|').ok_or_else(bad)?;
+    let parsed_ts = chrono::DateTime::parse_from_rfc3339(ts).map_err(|_| bad())?;
+    let parsed_id = Uuid::parse_str(id).map_err(|_| bad())?;
     Ok((parsed_ts, parsed_id))
 }
 
@@ -646,7 +660,7 @@ pub async fn list(
                         ),
                 );
             }
-            Err(resp) => return resp,
+            Err(resp) => return resp.into_response(),
         }
     }
 
@@ -751,7 +765,7 @@ pub async fn list_for_issue(
     // reach this issue, before we leak whether they have markers on
     // it.
     if let Err(resp) = fetch_visible_issue(&app, &user, &issue_id).await {
-        return resp;
+        return resp.into_response();
     }
     let rows = match marker::Entity::find()
         .filter(marker::Column::UserId.eq(user.id))
@@ -784,7 +798,7 @@ pub async fn create(
 ) -> impl IntoResponse {
     let issue_row = match fetch_visible_issue(&app, &user, &req.issue_id).await {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return resp.into_response(),
     };
 
     let body = req
@@ -793,15 +807,15 @@ pub async fn create(
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty());
     if let Err(resp) = validate_shape(&req.kind, req.region.as_ref(), body.as_deref()) {
-        return resp;
+        return resp.into_response();
     }
     let region = match normalize_region(req.region) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return resp.into_response(),
     };
     let selection = match normalize_selection(req.selection) {
         Ok(s) => s,
-        Err(resp) => return resp,
+        Err(resp) => return resp.into_response(),
     };
 
     let page_count = issue_row.page_count.unwrap_or(i32::MAX);
@@ -816,7 +830,7 @@ pub async fn create(
     let tags = match req.tags {
         Some(t) => match normalize_tags(t) {
             Ok(v) => v,
-            Err(resp) => return resp,
+            Err(resp) => return resp.into_response(),
         },
         None => Vec::new(),
     };
@@ -916,24 +930,24 @@ pub async fn update(
     if let Some(region_opt) = req.region {
         next_region = match normalize_region(region_opt) {
             Ok(r) => r,
-            Err(resp) => return resp,
+            Err(resp) => return resp.into_response(),
         };
     }
     let mut next_selection = row.selection.clone();
     if let Some(selection_opt) = req.selection {
         next_selection = match normalize_selection(selection_opt) {
             Ok(s) => s,
-            Err(resp) => return resp,
+            Err(resp) => return resp.into_response(),
         };
     }
     if let Err(resp) = validate_shape(&row.kind, next_region.as_ref(), next_body.as_deref()) {
-        return resp;
+        return resp.into_response();
     }
 
     let next_tags = match req.tags {
         Some(t) => match normalize_tags(t) {
             Ok(v) => Some(v),
-            Err(resp) => return resp,
+            Err(resp) => return resp.into_response(),
         },
         None => None,
     };

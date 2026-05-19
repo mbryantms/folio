@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::library::events::ScanEvent;
@@ -310,12 +311,4 @@ pub async fn cancel(
         error: updated.error,
     })
     .into_response()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

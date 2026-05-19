@@ -5,9 +5,13 @@
 //!   - `validate`   — §4.2 sanity checks before starting
 //!   - `enumerate`  — §4.3 list children, find series folders + layout violations
 //!   - `process`    — §4.5 + §6 per-file pipeline (hash, parse, upsert)
+//!   - `reconcile_status` — §7 series-status reconciliation
+//!   - `metadata_rollup`  — §8 series-level metadata aggregation
+//!   - `stats`            — scan-progress + completion stats emitter
 //!
-//! Reconciliation, identity merging, and post-scan jobs land in later
-//! milestones; their hooks are TODOs in `scan_library`.
+//! Library Scanner v1 shipped 2026-Q1; reconciliation, identity
+//! merging, and post-scan thumbnail/search workers (`crate::jobs::post_scan`)
+//! are all wired and exercised end-to-end.
 
 pub mod enumerate;
 pub mod metadata_rollup;
@@ -308,7 +312,7 @@ fn add_delta(counter: &AtomicU64, before: u64, after: u64) {
 /// History tab; behavior is identical in both cases. `issue_id` is honored
 /// only when `kind == ScanKind::Issue` and lets the History row link back
 /// to the originating issue.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn scan_series_folder(
     state: &AppState,
     library_id: Uuid,
@@ -331,16 +335,28 @@ pub async fn scan_series_folder(
     // Light validation: folder must still exist and live under the library
     // root. Falls through to a "no-op" scan run when missing — the next
     // reconcile picks up the soft-delete (matches `validate.rs` doc note).
+    // `canonicalize` is synchronous; M4 of code-quality-cleanup-1.0
+    // routes both calls through `spawn_blocking` so a slow / disconnected
+    // mount can't stall the runtime.
     if !validate::folder_still_exists(folder) {
         anyhow::bail!(
             "series folder no longer exists on disk: {}",
             folder.display()
         );
     }
-    let root_canon = std::fs::canonicalize(&lib.root_path)
-        .map_err(|e| anyhow::anyhow!("library root unreadable: {e}"))?;
-    let folder_canon = std::fs::canonicalize(folder)
-        .map_err(|e| anyhow::anyhow!("series folder unreadable: {e}"))?;
+    let root_path = lib.root_path.clone();
+    let folder_pb = folder.to_path_buf();
+    let canonicalized: anyhow::Result<(std::path::PathBuf, std::path::PathBuf)> =
+        tokio::task::spawn_blocking(move || {
+            let root_canon = std::fs::canonicalize(&root_path)
+                .map_err(|e| anyhow::anyhow!("library root unreadable: {e}"))?;
+            let folder_canon = std::fs::canonicalize(&folder_pb)
+                .map_err(|e| anyhow::anyhow!("series folder unreadable: {e}"))?;
+            Ok((root_canon, folder_canon))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("canonicalize task failed: {e}"))?;
+    let (root_canon, folder_canon) = canonicalized?;
     if !folder_canon.starts_with(&root_canon) {
         anyhow::bail!(
             "series folder is not inside the library root: {}",
@@ -627,7 +643,7 @@ fn stats_json_with_progress(
     Ok(json)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn emit_progress(
     state: &AppState,
     library_id: Uuid,
@@ -737,9 +753,14 @@ async fn build_library_scan_plan(
 
     let known = known_series_by_folder(state, lib).await?;
     let concurrency = state.cfg().scan_worker_count.max(1);
+    // M1 of code-quality-cleanup: share IgnoreRules across the per-folder
+    // fanout via Arc so the parallel-stream worker count doesn't multiply
+    // the clone count. One owned clone here, then atomic refcount bumps
+    // per planned folder + per spawn_blocking move.
+    let ignore = Arc::new(ignore.clone());
     let mut planned = futures::stream::iter(layout.series_folders.iter().cloned())
         .map(|candidate| {
-            let ignore = ignore.clone();
+            let ignore = Arc::clone(&ignore);
             let folder = candidate.path.clone();
             let publisher_hint = candidate.publisher_hint.clone();
             let known_entry = known.get(&folder.to_string_lossy().into_owned()).copied();
@@ -749,7 +770,7 @@ async fn build_library_scan_plan(
                 let archives = if !force {
                     if let Some((_id, Some(last))) = known_entry {
                         let folder_for_walk = folder.clone();
-                        let ignore_for_walk = ignore.clone();
+                        let ignore_for_walk = Arc::clone(&ignore);
                         let last_utc = last.to_utc();
                         let walk = tokio::task::spawn_blocking(move || {
                             enumerate::list_archives_changed_since(
@@ -819,7 +840,7 @@ async fn build_series_scan_plan(
 /// then run a series-only reconcile so siblings stay untouched. Thumbnail
 /// catchup is scoped to the series; search/dictionary fanout remains
 /// library-scoped until those jobs grow narrower invalidation APIs.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn run_series_phases(
     state: &AppState,
     lib: &library::Model,
@@ -1072,20 +1093,23 @@ async fn run_issue_phase(
         .and_then(|s| s.folder_path)
         .map(PathBuf::from)
         .unwrap_or_else(|| path.parent().map(PathBuf::from).unwrap_or_default());
-    let ingest = process::ingest_one(
+    let ctx = process::IngestCtx {
         state,
-        &txn,
         lib,
+        series_id: row.series_id,
+        series_folder: &series_folder,
+        manifest: Some(&manifest),
+        force,
+    };
+    let mut outputs = process::IngestOutputs { stats, health };
+    let ingest = process::ingest_one(
+        &ctx,
+        &txn,
         &path,
-        row.series_id,
-        &series_folder,
-        Some(&manifest),
         // Single-archive scan: no need to pre-fetch; the per-call DB
         // allocator's one COUNT query is fine.
         None,
-        stats,
-        health,
-        force,
+        &mut outputs,
     )
     .await;
     match ingest {
@@ -1513,7 +1537,7 @@ pub fn spawn_cbl_rematch_all(state: AppState) {
     });
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn process_planned_folder(
     state: &AppState,
     lib: &library::Model,
@@ -1702,40 +1726,35 @@ async fn process_planned_folder(
             tracing::warn!(error = %e, "scanner: SET LOCAL synchronous_commit=OFF failed; continuing with default");
         }
         let mut chunk_ok = true;
+        let ctx = process::IngestCtx {
+            state,
+            lib,
+            series_id,
+            series_folder: &folder,
+            manifest: Some(&manifest),
+            force,
+        };
         for (path, fingerprint) in chunk {
             let before_stats = stats.clone();
+            // Reborrow stats/health per iteration so `stats` outside the
+            // call is still usable for the post-ingest tracker update.
+            let mut outputs = process::IngestOutputs {
+                stats: &mut *stats,
+                health: &mut *health,
+            };
             let ingest = if let Some((size, mtime)) = fingerprint {
                 process::ingest_one_with_fingerprint(
-                    state,
+                    &ctx,
                     &txn,
-                    lib,
                     path,
-                    series_id,
-                    &folder,
-                    Some(&manifest),
                     Some(&mut slug_set),
                     *size,
                     *mtime,
-                    stats,
-                    health,
-                    force,
+                    &mut outputs,
                 )
                 .await
             } else {
-                process::ingest_one(
-                    state,
-                    &txn,
-                    lib,
-                    path,
-                    series_id,
-                    &folder,
-                    Some(&manifest),
-                    Some(&mut slug_set),
-                    stats,
-                    health,
-                    force,
-                )
-                .await
+                process::ingest_one(&ctx, &txn, path, Some(&mut slug_set), &mut outputs).await
             };
             if let Some(tracker) = &live_progress {
                 tracker.record_file_done(&before_stats, stats);

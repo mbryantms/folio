@@ -196,7 +196,7 @@ export function IssueCard({
           <span
             aria-label="Read"
             title="Read"
-            className="bg-primary/90 text-primary-foreground absolute bottom-2 left-2 inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 shadow-sm ring-black/10 backdrop-blur dark:ring-white/10"
+            className="bg-primary/90 text-primary-foreground absolute bottom-2 left-2 inline-flex h-6 w-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
           >
             <Check aria-hidden="true" className="h-3.5 w-3.5" />
           </span>

@@ -169,6 +169,20 @@ export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
 };
 
 /**
+ * Pull the `keybinds` override map off a `useMe()` result. Centralises
+ * the cast that several global / sidebar / shortcuts-sheet components
+ * used to inline (`(me.data?.keybinds ?? null) as Record<string,
+ * string> | null`). The cast was always safe — `MeView.keybinds` is
+ * already typed `Record<string, string>` — but inlining duplicated the
+ * shape in three files. M5 of code-quality-cleanup-1.0.
+ */
+export function readMeKeybinds(me: {
+  data?: { keybinds?: Record<string, string> | null } | null;
+}): Record<string, string> | null {
+  return me.data?.keybinds ?? null;
+}
+
+/**
  * Merge user overrides into the defaults. Any action absent from `overrides`
  * keeps its default binding.
  */

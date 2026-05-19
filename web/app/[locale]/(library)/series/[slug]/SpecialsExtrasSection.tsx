@@ -72,9 +72,8 @@ export function SpecialsExtrasSection({
       </h3>
       <p className="text-muted-foreground mb-3 text-xs">
         Annuals, one-shots, tie-ins, and bonus material. Discovered from
-        ComicInfo <span className="font-mono">&lt;Format&gt;</span> or
-        from a recognized subfolder (
-        <span className="font-mono">Specials/</span>,{" "}
+        ComicInfo <span className="font-mono">&lt;Format&gt;</span> or from a
+        recognized subfolder (<span className="font-mono">Specials/</span>,{" "}
         <span className="font-mono">Annuals/</span>,{" "}
         <span className="font-mono">Oneshots/</span>).
       </p>

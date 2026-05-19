@@ -43,9 +43,7 @@ import * as React from "react";
  * primitive; the page binds the keyboard event.
  */
 export function useSelection<T extends { id: string }>(items: T[]) {
-  const [selected, setSelected] = React.useState<Set<string>>(
-    () => new Set(),
-  );
+  const [selected, setSelected] = React.useState<Set<string>>(() => new Set());
   // Set by `exit()` / `clear()` callers; also flips automatically
   // when the selection becomes non-empty.
   const [selectMode, setSelectMode] = React.useState(false);
@@ -163,8 +161,7 @@ export function computeToggle<T extends { id: string }>(
   ev?: { shiftKey?: boolean },
 ): Set<string> {
   const next = new Set(prev);
-  const wantRange =
-    ev?.shiftKey === true && anchor !== null && anchor !== id;
+  const wantRange = ev?.shiftKey === true && anchor !== null && anchor !== id;
   if (wantRange) {
     const a = idToIndex.get(anchor);
     const b = idToIndex.get(id);

@@ -35,6 +35,7 @@ use uuid::Uuid;
 use entity::auth_session::{self, Entity as SessionEntity};
 use entity::user::{ActiveModel as UserAM, Entity as UserEntity};
 
+use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::CurrentUser;
 use crate::auth::cookies::REFRESH_COOKIE;
@@ -245,12 +246,4 @@ pub async fn revoke_all(
     .await;
 
     Json(RevokeAllResp { revoked }).into_response()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

@@ -22,6 +22,7 @@ use entity::{issue, library_user_access};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::middleware::rate_limit;
 use crate::ocr::cache;
@@ -296,12 +297,4 @@ async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool
         .ok()
         .flatten()
         .is_some()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

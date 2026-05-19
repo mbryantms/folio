@@ -5,6 +5,7 @@ import * as React from "react";
 import { useMe } from "@/lib/api/queries";
 import {
   actionForKey,
+  readMeKeybinds,
   resolveKeybinds,
   shouldSkipHotkey,
 } from "@/lib/reader/keybinds";
@@ -47,8 +48,7 @@ export function useSidebarState(initial: SidebarState) {
   // Cursor / GitHub convention). The shared `shouldSkipHotkey` gate
   // keeps typing "b" in a search field from collapsing the shell.
   const bindings = React.useMemo(() => {
-    const stored = (me.data?.keybinds ?? null) as Record<string, string> | null;
-    return resolveKeybinds(stored);
+    return resolveKeybinds(readMeKeybinds(me));
   }, [me.data?.keybinds]);
 
   React.useEffect(() => {

@@ -32,6 +32,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::error;
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::cbl::{
     catalog,
@@ -344,14 +345,6 @@ pub struct UpdateCatalogSourceReq {
 }
 
 // ───── helpers ─────
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
-}
 
 fn list_to_view(m: &cbl_list::Model, stats: CblStatsView) -> CblListView {
     CblListView {

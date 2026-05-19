@@ -30,7 +30,7 @@ const SERIES_UPDATED_THROTTLE: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum ScanEvent {
     #[serde(rename = "scan.started")]
     Started {

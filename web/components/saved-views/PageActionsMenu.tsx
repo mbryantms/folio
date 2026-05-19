@@ -176,9 +176,8 @@ export function PageActionsMenu({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this page?</AlertDialogTitle>
             <AlertDialogDescription>
-              Pins on this page will be removed. The saved views themselves
-              stay — you can pin them to other pages from Settings → Saved
-              views.
+              Pins on this page will be removed. The saved views themselves stay
+              — you can pin them to other pages from Settings → Saved views.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

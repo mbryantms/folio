@@ -24,13 +24,8 @@ vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
 }));
 vi.mock("next/link", () => ({
-  default: ({
-    children,
-    href,
-  }: {
-    children: React.ReactNode;
-    href: string;
-  }) => React.createElement("a", { href }, children),
+  default: ({ children, href }: { children: React.ReactNode; href: string }) =>
+    React.createElement("a", { href }, children),
 }));
 // Radix Tabs only renders the active TabsContent. For this snapshot we
 // want both the login *and* register form HTML in the output so we can
@@ -81,9 +76,7 @@ describe("credential forms — progressive enhancement", () => {
   });
 
   it("forgot-password ships method=POST + real action", () => {
-    const html = renderToStaticMarkup(
-      React.createElement(ForgotPasswordForm),
-    );
+    const html = renderToStaticMarkup(React.createElement(ForgotPasswordForm));
     assertPostFormPresent(html, "/auth/local/request-password-reset");
   });
 

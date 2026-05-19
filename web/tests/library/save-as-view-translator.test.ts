@@ -4,7 +4,11 @@ import { EMPTY_CREDITS } from "@/components/library/library-grid-filters";
 
 const TODAY = "2026-05-18";
 
-function snapshot(overrides: Partial<Parameters<typeof libraryGridStateToFilterBuilderState>[0]> = {}) {
+function snapshot(
+  overrides: Partial<
+    Parameters<typeof libraryGridStateToFilterBuilderState>[0]
+  > = {},
+) {
   return {
     status: "any",
     yearFrom: "",

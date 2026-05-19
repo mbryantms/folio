@@ -110,9 +110,9 @@ export function NewLibraryDialog() {
                     />
                   </FormControl>
                   <FormDescription>
-                    Browse to the folder Folio should scan. Scope is
-                    restricted to the container&apos;s library mount
-                    (<code className="font-mono">COMIC_LIBRARY_PATH</code>).
+                    Browse to the folder Folio should scan. Scope is restricted
+                    to the container&apos;s library mount (
+                    <code className="font-mono">COMIC_LIBRARY_PATH</code>).
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

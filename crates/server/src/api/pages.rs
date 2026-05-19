@@ -34,6 +34,7 @@ use uuid::Uuid;
 
 use crate::api::sidebar_layout::KIND_PAGE;
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::slug::allocate_user_page_slug;
 use crate::state::AppState;
@@ -111,11 +112,6 @@ pub struct ReorderPagesReq {
 }
 
 // ───── helpers ─────
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    let body = serde_json::json!({ "error": { "code": code, "message": message } });
-    (status, Json(body)).into_response()
-}
 
 async fn fetch_owned<C: ConnectionTrait>(
     db: &C,

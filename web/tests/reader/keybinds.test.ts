@@ -93,9 +93,9 @@ describe("toggleSidebar registry entry", () => {
 
   it("dispatches via actionForKey on Ctrl+B", () => {
     const bindings = resolveKeybinds(undefined);
-    expect(
-      actionForKey({ key: "b", ctrlKey: true }, bindings),
-    ).toBe("toggleSidebar");
+    expect(actionForKey({ key: "b", ctrlKey: true }, bindings)).toBe(
+      "toggleSidebar",
+    );
   });
 });
 
@@ -113,9 +113,9 @@ describe("nextIssue registry entry", () => {
 
   it("dispatches via actionForKey on Shift+N", () => {
     const bindings = resolveKeybinds(undefined);
-    expect(
-      actionForKey({ key: "N", shiftKey: true }, bindings),
-    ).toBe("nextIssue");
+    expect(actionForKey({ key: "N", shiftKey: true }, bindings)).toBe(
+      "nextIssue",
+    );
   });
 });
 
@@ -131,9 +131,9 @@ describe("prevIssue registry entry", () => {
 
   it("dispatches via actionForKey on Shift+P", () => {
     const bindings = resolveKeybinds(undefined);
-    expect(
-      actionForKey({ key: "P", shiftKey: true }, bindings),
-    ).toBe("prevIssue");
+    expect(actionForKey({ key: "P", shiftKey: true }, bindings)).toBe(
+      "prevIssue",
+    );
   });
 });
 

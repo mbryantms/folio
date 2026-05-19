@@ -38,9 +38,11 @@ export function detectDirection(
   seriesOverride?: Direction | null | undefined,
 ): Direction {
   if (manga === "YesAndRightToLeft") return "rtl";
-  if (seriesOverride === "ltr" || seriesOverride === "rtl") return seriesOverride;
+  if (seriesOverride === "ltr" || seriesOverride === "rtl")
+    return seriesOverride;
   if (userDefault === "ltr" || userDefault === "rtl") return userDefault;
-  if (libraryDefault === "ltr" || libraryDefault === "rtl") return libraryDefault;
+  if (libraryDefault === "ltr" || libraryDefault === "rtl")
+    return libraryDefault;
   return "ltr";
 }
 

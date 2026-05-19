@@ -72,7 +72,7 @@ export function CoverMenuButton({
           className={cn(
             "absolute top-2 left-2 z-10",
             // Fixed visual footprint (32px) — never grows with cover size.
-            "bg-background/85 text-foreground inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full ring-1 shadow-sm ring-black/10 backdrop-blur dark:ring-white/10",
+            "bg-background/85 text-foreground inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10",
             // Hidden by default, revealed when the cover's parent .group
             // is hovered or has focus.
             "scale-90 opacity-0 transition-all duration-150 ease-out",

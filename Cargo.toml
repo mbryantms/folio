@@ -94,9 +94,9 @@ chacha20poly1305 = { version = "0.10", features = ["std"] }
 arc-swap = "1.7"
 
 # Auth
-jsonwebtoken = "9"
-oauth2 = "4.4"
-openidconnect = "3.5"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+oauth2 = "5"
+openidconnect = "4"
 ed25519-dalek = { version = "2.1", features = ["rand_core", "pkcs8", "pem"] }
 base64 = "0.22"
 # Base32 (no-padding) for OPDS app-password plaintexts — keeps tokens

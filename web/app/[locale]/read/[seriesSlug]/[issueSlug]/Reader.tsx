@@ -24,6 +24,7 @@ import {
   type SpreadGroup,
 } from "@/lib/reader/spreads";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
+import { apiFetch } from "@/lib/api/auth-refresh";
 import { readerUrl } from "@/lib/urls";
 import {
   useCreateMarker,
@@ -319,7 +320,8 @@ export function Reader({
                 duration: UNDO_TOAST_DURATION_MS,
                 action: {
                   label: "Undo",
-                  onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
+                  onClick: () =>
+                    createMarker.mutate(markerToCreateReq(snapshot)),
                 },
               }),
           });
@@ -360,7 +362,12 @@ export function Reader({
         libraryDefaultDirection,
         seriesReadingDirection,
       ),
-    [manga, userDefaultDirection, libraryDefaultDirection, seriesReadingDirection],
+    [
+      manga,
+      userDefaultDirection,
+      libraryDefaultDirection,
+      seriesReadingDirection,
+    ],
   );
   // User defaults take precedence over auto-detection on first mount; per-series
   // localStorage still wins over both (see store.init).
@@ -721,9 +728,11 @@ export function Reader({
         page: currentPage,
       };
       if (onLastPage) body.finished = true;
-      void fetch("/api/progress", {
+      // Routed through `apiFetch` so a token expiring mid-reading
+      // triggers the implicit refresh-and-retry instead of silently
+      // dropping the write (audit M1).
+      void apiFetch("/progress", {
         method: "POST",
-        credentials: "include",
         headers: {
           "Content-Type": "application/json",
           ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
@@ -1115,10 +1124,7 @@ function DoublePagePane({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   return (
-    <div
-      ref={wrapperRef}
-      className={`relative align-top ${paneClass}`}
-    >
+    <div ref={wrapperRef} className={`relative align-top ${paneClass}`}>
       <PageImage
         src={`/issues/${issueId}/pages/${page}`}
         alt={`Page ${page + 1}`}

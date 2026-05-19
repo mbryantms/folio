@@ -49,7 +49,7 @@ pub fn blake3_file_with_buffer(
 /// (e.g. on a tmpfs that doesn't support fadvise) are silently ignored
 /// since the hash itself doesn't depend on it.
 #[cfg(unix)]
-#[allow(unsafe_code)]
+#[expect(unsafe_code)]
 fn advise_sequential(f: &File) {
     use std::os::unix::io::AsRawFd;
     // SAFETY: `f` is a live, owned File; raw fd is valid for the duration

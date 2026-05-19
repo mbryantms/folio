@@ -21,6 +21,7 @@ use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
@@ -70,14 +71,6 @@ pub struct OptionsView {
 #[derive(Debug, FromQueryResult)]
 struct ValueRow {
     value: String,
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }
 
 #[utoipa::path(

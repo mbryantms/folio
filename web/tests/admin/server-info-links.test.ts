@@ -74,9 +74,7 @@ describe("commitUrl", () => {
   });
 
   it("links the full SHA when both are present", () => {
-    expect(
-      commitUrl(REPO, "abcd1234ef567890abcd1234ef567890abcd1234"),
-    ).toBe(
+    expect(commitUrl(REPO, "abcd1234ef567890abcd1234ef567890abcd1234")).toBe(
       "https://github.com/mbryantms/folio/commit/abcd1234ef567890abcd1234ef567890abcd1234",
     );
   });
@@ -104,9 +102,7 @@ describe("formatRelativeFromEpoch", () => {
 
   it("'just now' for the current second + the future", () => {
     expect(formatRelativeFromEpoch(NOW / 1000, NOW)).toBe("just now");
-    expect(formatRelativeFromEpoch((NOW + 5_000) / 1000, NOW)).toBe(
-      "just now",
-    );
+    expect(formatRelativeFromEpoch((NOW + 5_000) / 1000, NOW)).toBe("just now");
   });
 
   it("minutes bucket", () => {
@@ -128,9 +124,9 @@ describe("formatRelativeFromEpoch", () => {
   });
 
   it("days bucket", () => {
-    expect(
-      formatRelativeFromEpoch((NOW - 2 * 24 * 3600_000) / 1000, NOW),
-    ).toBe("2d ago");
+    expect(formatRelativeFromEpoch((NOW - 2 * 24 * 3600_000) / 1000, NOW)).toBe(
+      "2d ago",
+    );
     expect(
       formatRelativeFromEpoch((NOW - 29 * 24 * 3600_000) / 1000, NOW),
     ).toBe("29d ago");

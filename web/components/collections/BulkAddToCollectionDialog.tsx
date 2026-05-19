@@ -26,10 +26,7 @@ import {
 } from "@/lib/api/mutations";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import { cn } from "@/lib/utils";
-import type {
-  CollectionEntryKind,
-  SavedViewView,
-} from "@/lib/api/types";
+import type { CollectionEntryKind, SavedViewView } from "@/lib/api/types";
 
 const WANT_TO_READ_KEY = "want_to_read";
 

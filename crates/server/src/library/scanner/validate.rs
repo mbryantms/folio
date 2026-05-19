@@ -35,37 +35,72 @@ pub async fn validate_library(
     state: &AppState,
     lib: &library::Model,
 ) -> Result<(), ValidationError> {
-    let root = Path::new(&lib.root_path);
-    let root_canon = std::fs::canonicalize(root)
-        .map_err(|_| ValidationError::RootMissing(lib.root_path.clone()))?;
-
-    if !root_canon.is_dir() {
-        return Err(ValidationError::RootNotDirectory(lib.root_path.clone()));
-    }
-
-    let mut iter = std::fs::read_dir(&root_canon)
-        .map_err(|e| ValidationError::RootUnreadable(lib.root_path.clone(), e.to_string()))?;
-    if iter.next().is_none() {
-        return Err(ValidationError::RootEmpty(lib.root_path.clone()));
-    }
+    // Filesystem syscalls (canonicalize, read_dir, is_dir) are
+    // synchronous and can block on slow / disconnected mounts. Route
+    // them through `spawn_blocking` so the tokio runtime keeps making
+    // progress on other requests during library validation. M4 of
+    // code-quality-cleanup-1.0.
+    let root_path = lib.root_path.clone();
+    let data_path = state.cfg().data_path.clone();
+    let root_path_for_block = root_path.clone();
+    let prevalidation: Result<(std::path::PathBuf, Option<std::path::PathBuf>), ValidationError> =
+        tokio::task::spawn_blocking(move || {
+            let root = Path::new(&root_path_for_block);
+            let root_canon = std::fs::canonicalize(root)
+                .map_err(|_| ValidationError::RootMissing(root_path_for_block.clone()))?;
+            if !root_canon.is_dir() {
+                return Err(ValidationError::RootNotDirectory(
+                    root_path_for_block.clone(),
+                ));
+            }
+            let mut iter = std::fs::read_dir(&root_canon).map_err(|e| {
+                ValidationError::RootUnreadable(root_path_for_block.clone(), e.to_string())
+            })?;
+            if iter.next().is_none() {
+                return Err(ValidationError::RootEmpty(root_path_for_block.clone()));
+            }
+            let data_canon = std::fs::canonicalize(&data_path).ok();
+            Ok((root_canon, data_canon))
+        })
+        .await
+        .map_err(|e| ValidationError::RootUnreadable(root_path.clone(), e.to_string()))?;
+    let (root_canon, data_canon) = prevalidation?;
 
     // Loop check: root must not be the data dir.
-    if let Ok(data_canon) = std::fs::canonicalize(&state.cfg().data_path)
-        && root_canon == data_canon
+    if let Some(d) = data_canon
+        && root_canon == d
     {
         return Err(ValidationError::LoopWithDataPath);
     }
 
     // Overlap check: no other library may share or contain this root. Equality
-    // and ancestor relationships both count.
+    // and ancestor relationships both count. The other-library canonicalize
+    // calls are also blocking — batch them in a single spawn_blocking.
     if let Ok(others) = library::Entity::find().all(&state.db).await {
-        for other in others.into_iter().filter(|l| l.id != lib.id) {
-            if let Ok(other_canon) = std::fs::canonicalize(&other.root_path)
-                && (other_canon == root_canon
-                    || other_canon.starts_with(&root_canon)
-                    || root_canon.starts_with(&other_canon))
-            {
-                return Err(ValidationError::OverlapsAnotherLibrary(other.root_path));
+        let other_roots: Vec<(uuid::Uuid, String)> = others
+            .into_iter()
+            .filter(|l| l.id != lib.id)
+            .map(|l| (l.id, l.root_path))
+            .collect();
+        if !other_roots.is_empty() {
+            let root_canon_for_block = root_canon.clone();
+            let conflict = tokio::task::spawn_blocking(move || {
+                for (_id, other_root) in other_roots {
+                    if let Ok(other_canon) = std::fs::canonicalize(&other_root)
+                        && (other_canon == root_canon_for_block
+                            || other_canon.starts_with(&root_canon_for_block)
+                            || root_canon_for_block.starts_with(&other_canon))
+                    {
+                        return Some(other_root);
+                    }
+                }
+                None
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(other_root) = conflict {
+                return Err(ValidationError::OverlapsAnotherLibrary(other_root));
             }
         }
     }

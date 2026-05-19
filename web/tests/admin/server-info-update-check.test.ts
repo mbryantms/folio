@@ -79,15 +79,11 @@ describe("isNewerRelease", () => {
   it("treats a user past a tag (with git-describe extensions) as already up-to-date for that tag", () => {
     // The user is on v0.1.8 plus 3 extra commits — upstream v0.1.8
     // is NOT newer.
-    expect(
-      isNewerRelease("v0.1.8-3-gabcd1234", release("v0.1.8")),
-    ).toBe(false);
+    expect(isNewerRelease("v0.1.8-3-gabcd1234", release("v0.1.8"))).toBe(false);
   });
 
   it("still flags a strictly newer release even when current has extensions", () => {
-    expect(
-      isNewerRelease("v0.1.8-3-gabcd1234", release("v0.1.9")),
-    ).toBe(true);
+    expect(isNewerRelease("v0.1.8-3-gabcd1234", release("v0.1.9"))).toBe(true);
     expect(isNewerRelease("v0.1.8-dirty", release("v0.2.0"))).toBe(true);
   });
 

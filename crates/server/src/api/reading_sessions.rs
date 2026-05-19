@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
@@ -1077,15 +1078,18 @@ pub async fn compute_stats_for_user(
     let top_imprints = if scope_is_series_or_issue {
         Vec::new()
     } else {
-        top_column_with_alias(
-            app,
+        let filter = StatsFilter {
             backend,
             user_id,
+            since: since.as_ref(),
+            issue_filter: issue_filter.as_deref(),
+            series_filter: series_filter.as_ref(),
+        };
+        top_column_with_alias(
+            app,
+            &filter,
             "s.imprint",
             "JOIN series s ON s.id = rs.series_id",
-            since.as_ref(),
-            issue_filter.as_deref(),
-            series_filter.as_ref(),
         )
         .await
     };
@@ -1257,20 +1261,36 @@ fn append_scope(
     idx
 }
 
+/// Filter cluster shared by the stats helpers. Folded into one struct
+/// during code-quality-cleanup M3 so individual helpers don't keep
+/// growing positional-args ladders. M3 only threads this through
+/// `top_column_with_alias` (the sole helper that crossed the 8-arg
+/// clippy threshold); the sibling helpers stay at 6-7 args until the
+/// next pass picks them up.
+struct StatsFilter<'a> {
+    backend: sea_orm::DbBackend,
+    user_id: Uuid,
+    since: Option<&'a DateTime<FixedOffset>>,
+    issue_filter: Option<&'a str>,
+    series_filter: Option<&'a Uuid>,
+}
+
 /// Top-N for a scalar column reachable from `reading_sessions rs` via an
 /// extra `JOIN` clause. `column_expr` is `SELECT`-side; `join` is appended
 /// to the FROM. Filters out NULL/empty after coalesce.
-#[allow(clippy::too_many_arguments)]
 async fn top_column_with_alias(
     app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
+    filter: &StatsFilter<'_>,
     column_expr: &str,
     join: &str,
-    since: Option<&DateTime<FixedOffset>>,
-    issue_filter: Option<&str>,
-    series_filter: Option<&Uuid>,
 ) -> Vec<TopNameEntry> {
+    let StatsFilter {
+        backend,
+        user_id,
+        since,
+        issue_filter,
+        series_filter,
+    } = *filter;
     let mut sql = format!(
         "SELECT NULLIF(TRIM(COALESCE({column_expr}, '')), '') AS name, \
            COUNT(*)::bigint AS sessions, \
@@ -1514,7 +1534,6 @@ async fn compute_pace_series(
 /// Top reread issues — most sessions per issue, with title + series labels.
 /// `limit` caps the result; series-scoped requests pass a large value so the
 /// grid heatmap on the series page can color every issue the user has read.
-#[allow(clippy::too_many_arguments)]
 async fn compute_reread_top_issues(
     app: &AppState,
     backend: sea_orm::DbBackend,
@@ -1886,14 +1905,6 @@ async fn visible(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
         .ok()
         .flatten()
         .is_some()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }
 
 #[cfg(test)]

@@ -80,8 +80,8 @@ export function NewPageButton() {
           <DialogHeader>
             <DialogTitle>New page</DialogTitle>
             <DialogDescription>
-              Pages hold up to 12 pinned saved-view rails. You can rename
-              or delete them later from the page header.
+              Pages hold up to 12 pinned saved-view rails. You can rename or
+              delete them later from the page header.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onSubmit} className="space-y-3">

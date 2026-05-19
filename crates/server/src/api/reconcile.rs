@@ -22,6 +22,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use super::error;
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
 
@@ -242,12 +243,4 @@ pub async fn confirm_issue(
     // M5: now that the issue is confirmed-removed, drop its on-disk thumbs.
     crate::library::thumbnails::wipe_issue_thumbs(&data_dir, &issue_id);
     StatusCode::NO_CONTENT.into_response()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

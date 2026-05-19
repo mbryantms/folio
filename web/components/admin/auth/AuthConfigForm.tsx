@@ -10,10 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SegmentedControl } from "@/components/settings/SegmentedControl";
 import { Switch } from "@/components/ui/switch";
-import {
-  useProbeOidcDiscovery,
-  useUpdateSettings,
-} from "@/lib/api/mutations";
+import { useProbeOidcDiscovery, useUpdateSettings } from "@/lib/api/mutations";
 import type { OidcDiscoverResp } from "@/lib/api/types";
 
 export type AuthConfigInitial = {
@@ -82,8 +79,11 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
     if (state.oidc_client_secret_input !== "") {
       patch["auth.oidc.client_secret"] = state.oidc_client_secret_input;
     }
-    if (state.oidc_trust_unverified_email !== initial.oidc_trust_unverified_email) {
-      patch["auth.oidc.trust_unverified_email"] = state.oidc_trust_unverified_email;
+    if (
+      state.oidc_trust_unverified_email !== initial.oidc_trust_unverified_email
+    ) {
+      patch["auth.oidc.trust_unverified_email"] =
+        state.oidc_trust_unverified_email;
     }
 
     await update.mutateAsync(patch);
@@ -127,9 +127,9 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
               ]}
             />
             <p className="text-muted-foreground text-xs">
-              <strong>Local</strong> uses email+password.{" "}
-              <strong>OIDC</strong> uses an external IdP only.{" "}
-              <strong>Both</strong> shows both sign-in CTAs.
+              <strong>Local</strong> uses email+password. <strong>OIDC</strong>{" "}
+              uses an external IdP only. <strong>Both</strong> shows both
+              sign-in CTAs.
             </p>
           </CardContent>
         </Card>
@@ -225,9 +225,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                   disabled={!oidcEnabled}
                 />
                 {clientIdMissing && (
-                  <FieldHint tone="error">
-                    Client ID is required.
-                  </FieldHint>
+                  <FieldHint tone="error">Client ID is required.</FieldHint>
                 )}
               </div>
               <div className="space-y-2">
@@ -249,9 +247,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                   disabled={!oidcEnabled}
                 />
                 {secretMissing && (
-                  <FieldHint tone="error">
-                    Client secret is required.
-                  </FieldHint>
+                  <FieldHint tone="error">Client secret is required.</FieldHint>
                 )}
                 <p className="text-muted-foreground text-xs">
                   Stored encrypted at rest. Never echoed back over the API.
@@ -262,11 +258,11 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
             <div className="flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
               <div>
                 <Label className="text-sm">Trust unverified email</Label>
-                <p className="text-amber-200/80 text-xs">
+                <p className="text-xs text-amber-200/80">
                   When ON, accept the `email` claim even if{" "}
                   <code>email_verified</code> is false. Materially weakens
-                  email-claim trust; only enable if your IdP doesn&rsquo;t
-                  emit the flag.
+                  email-claim trust; only enable if your IdP doesn&rsquo;t emit
+                  the flag.
                 </p>
               </div>
               <Switch

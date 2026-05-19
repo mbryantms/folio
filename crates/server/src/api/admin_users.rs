@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::middleware::RequestContext;
@@ -707,12 +708,4 @@ fn parse_cursor(s: &str) -> Result<Uuid, ()> {
         .map_err(|_| ())?;
     let arr: [u8; 16] = bytes.as_slice().try_into().map_err(|_| ())?;
     Ok(Uuid::from_bytes(arr))
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

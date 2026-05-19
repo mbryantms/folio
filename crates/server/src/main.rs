@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         // SAFETY: documented above; set_var is unsafe in multi-threaded
         // contexts (Rust 1.83+) but we call it before any of our code
         // reads env vars.
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::set_var("OMP_NUM_THREADS", n.to_string());
         }
@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--emit-openapi") {
         let spec = app::openapi_spec();
         // Intentional stdout: `just openapi` redirects this into the spec file.
-        #[allow(clippy::print_stdout)]
+        #[expect(clippy::print_stdout)]
         {
             println!("{}", serde_json::to_string_pretty(&spec)?);
         }
@@ -102,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
 // Healthcheck failure messages go to stderr so `docker inspect --format '{{.State.Health.Log}}'`
 // surfaces them to operators. Tracing isn't initialized this early so it's
 // raw stderr or nothing.
-#[allow(clippy::print_stderr)]
+#[expect(clippy::print_stderr)]
 fn healthcheck_probe() -> i32 {
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpStream};

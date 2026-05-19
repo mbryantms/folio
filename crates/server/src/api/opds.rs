@@ -56,6 +56,8 @@ use crate::views::{
     dsl::{FilterDsl, MatchMode, SortField, SortOrder},
 };
 
+use super::{error, not_found};
+
 pub(crate) const PAGE_SIZE: u64 = 50;
 const ATOM_CT: &str = "application/atom+xml; charset=utf-8";
 const NAV_CT: &str = "application/atom+xml;profile=opds-catalog;kind=navigation";
@@ -806,15 +808,17 @@ async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
     };
     let body = build_acquisition_feed(
         &app,
-        "urn:recent",
-        "Recently added",
-        "/opds/v1/recent",
-        &rows,
-        "",
-        user.id,
-        false,
-        None,
-        None,
+        AcquisitionFeedArgs {
+            feed_id: "urn:recent",
+            title: "Recently added",
+            self_href: "/opds/v1/recent",
+            issues: &rows,
+            pagination: "",
+            user_id: user.id,
+            sequential_nav: false,
+            up_next_issue_id: None,
+            feed_last_read_date: None,
+        },
     )
     .await;
     atom(body)
@@ -901,15 +905,17 @@ async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Res
     let up_next_id = issues.first().map(|i| i.id.clone());
     let body = build_acquisition_feed(
         &app,
-        "urn:opds:continue",
-        "Continue reading",
-        "/opds/v1/continue",
-        &issues,
-        "",
-        user.id,
-        false,
-        up_next_id.as_deref(),
-        None,
+        AcquisitionFeedArgs {
+            feed_id: "urn:opds:continue",
+            title: "Continue reading",
+            self_href: "/opds/v1/continue",
+            issues: &issues,
+            pagination: "",
+            user_id: user.id,
+            sequential_nav: false,
+            up_next_issue_id: up_next_id.as_deref(),
+            feed_last_read_date: None,
+        },
     )
     .await;
     atom(body)
@@ -945,15 +951,17 @@ async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response {
     let up_next_id = issues.first().map(|i| i.id.clone());
     let body = build_acquisition_feed(
         &app,
-        "urn:opds:on-deck",
-        "On Deck",
-        "/opds/v1/on-deck",
-        &issues,
-        "",
-        user.id,
-        false,
-        up_next_id.as_deref(),
-        None,
+        AcquisitionFeedArgs {
+            feed_id: "urn:opds:on-deck",
+            title: "On Deck",
+            self_href: "/opds/v1/on-deck",
+            issues: &issues,
+            pagination: "",
+            user_id: user.id,
+            sequential_nav: false,
+            up_next_issue_id: up_next_id.as_deref(),
+            feed_last_read_date: None,
+        },
     )
     .await;
     atom(body)
@@ -1031,17 +1039,20 @@ async fn history(
     } else {
         String::new()
     };
+    let history_href = format!("/opds/v1/history?page={page}");
     let body = build_acquisition_feed(
         &app,
-        "urn:opds:history",
-        "Read history",
-        &format!("/opds/v1/history?page={page}"),
-        &issues,
-        &pagination,
-        user.id,
-        false,
-        None,
-        None,
+        AcquisitionFeedArgs {
+            feed_id: "urn:opds:history",
+            title: "Read history",
+            self_href: &history_href,
+            issues: &issues,
+            pagination: &pagination,
+            user_id: user.id,
+            sequential_nav: false,
+            up_next_issue_id: None,
+            feed_last_read_date: None,
+        },
     )
     .await;
     atom(body)
@@ -1073,15 +1084,17 @@ async fn new_this_month(State(app): State<AppState>, user: CurrentUser) -> Respo
     };
     let body = build_acquisition_feed(
         &app,
-        "urn:opds:new-this-month",
-        "New this month",
-        "/opds/v1/new-this-month",
-        &rows,
-        "",
-        user.id,
-        false,
-        None,
-        None,
+        AcquisitionFeedArgs {
+            feed_id: "urn:opds:new-this-month",
+            title: "New this month",
+            self_href: "/opds/v1/new-this-month",
+            issues: &rows,
+            pagination: "",
+            user_id: user.id,
+            sequential_nav: false,
+            up_next_issue_id: None,
+            feed_last_read_date: None,
+        },
     )
     .await;
     atom(body)
@@ -1215,15 +1228,17 @@ async fn search(
         return atom(
             build_acquisition_feed(
                 &app,
-                "urn:search",
-                "Search",
-                "/opds/v1/search",
-                &[],
-                "",
-                user.id,
-                false,
-                None,
-                None,
+                AcquisitionFeedArgs {
+                    feed_id: "urn:search",
+                    title: "Search",
+                    self_href: "/opds/v1/search",
+                    issues: &[],
+                    pagination: "",
+                    user_id: user.id,
+                    sequential_nav: false,
+                    up_next_issue_id: None,
+                    feed_last_read_date: None,
+                },
             )
             .await,
         );
@@ -1335,8 +1350,8 @@ pub(crate) async fn download(
     let leaf = std::path::Path::new(&row.file_path)
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("comic.cbz")
-        .to_owned();
+        .map(sanitize_filename_for_header)
+        .unwrap_or_else(|| "comic.cbz".to_owned());
     let mime = mime_for(&row.file_path);
 
     audit::record(
@@ -1370,13 +1385,15 @@ pub(crate) async fn download(
             hdrs.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
             hdrs.insert(
                 header::CONTENT_DISPOSITION,
-                HeaderValue::from_str(&format!("attachment; filename=\"{leaf}\"")).unwrap(),
+                HeaderValue::from_str(&format!("attachment; filename=\"{leaf}\""))
+                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
             );
             hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
             hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
             hdrs.insert(
                 header::CONTENT_RANGE,
-                HeaderValue::from_str(&format!("bytes {start}-{end}/{total}")).unwrap(),
+                HeaderValue::from_str(&format!("bytes {start}-{end}/{total}"))
+                    .unwrap_or_else(|_| HeaderValue::from_static("bytes 0-0/0")),
             );
             (StatusCode::PARTIAL_CONTENT, hdrs, body).into_response()
         }
@@ -1384,7 +1401,8 @@ pub(crate) async fn download(
             let mut hdrs = HeaderMap::new();
             hdrs.insert(
                 header::CONTENT_RANGE,
-                HeaderValue::from_str(&format!("bytes */{total}")).unwrap(),
+                HeaderValue::from_str(&format!("bytes */{total}"))
+                    .unwrap_or_else(|_| HeaderValue::from_static("bytes */0")),
             );
             (StatusCode::RANGE_NOT_SATISFIABLE, hdrs, Body::empty()).into_response()
         }
@@ -1394,7 +1412,8 @@ pub(crate) async fn download(
             hdrs.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
             hdrs.insert(
                 header::CONTENT_DISPOSITION,
-                HeaderValue::from_str(&format!("attachment; filename=\"{leaf}\"")).unwrap(),
+                HeaderValue::from_str(&format!("attachment; filename=\"{leaf}\""))
+                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
             );
             hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(total));
             hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
@@ -1445,19 +1464,37 @@ fn parse_byte_range(header: &str, total: u64) -> Option<Result<(u64, u64), ()>> 
 
 // ────────────── helpers ──────────────
 
-#[allow(clippy::too_many_arguments)]
-async fn build_acquisition_feed(
-    app: &AppState,
-    feed_id: &str,
-    title: &str,
-    self_href: &str,
-    issues: &[issue::Model],
-    pagination: &str,
-    user_id: Uuid,
-    sequential_nav: bool,
-    up_next_issue_id: Option<&str>,
-    feed_last_read_date: Option<&chrono::DateTime<chrono::FixedOffset>>,
-) -> String {
+/// Argument bundle for [`build_acquisition_feed`]. Collected into one
+/// struct during code-quality-cleanup M3 to close the
+/// `clippy::too_many_arguments` suppression on the renderer.
+pub(crate) struct AcquisitionFeedArgs<'a> {
+    pub feed_id: &'a str,
+    pub title: &'a str,
+    pub self_href: &'a str,
+    pub issues: &'a [issue::Model],
+    pub pagination: &'a str,
+    pub user_id: Uuid,
+    /// When `true`, emit per-entry `rel="next"` / `rel="previous"`
+    /// acquisition links so PSE clients can stream the adjacent issue
+    /// without re-fetching the feed. Reading-sequence feeds set this;
+    /// discovery feeds (Recent, Search, New this month) pass `false`.
+    pub sequential_nav: bool,
+    pub up_next_issue_id: Option<&'a str>,
+    pub feed_last_read_date: Option<&'a chrono::DateTime<chrono::FixedOffset>>,
+}
+
+async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -> String {
+    let AcquisitionFeedArgs {
+        feed_id,
+        title,
+        self_href,
+        issues,
+        pagination,
+        user_id,
+        sequential_nav,
+        up_next_issue_id,
+        feed_last_read_date,
+    } = args;
     let now = chrono::Utc::now().to_rfc3339();
     let slugs = fetch_series_slugs(&app.db, issues).await;
     let key = app.secrets.url_signing_key.as_ref();
@@ -1534,7 +1571,6 @@ async fn build_acquisition_feed(
 /// adjacent one without re-fetching the parent feed. Only set on feeds
 /// that have a *reading* sequence (per-series sort, CBL position);
 /// discovery feeds (Recent, Search, New this month) pass `None`.
-#[allow(clippy::too_many_arguments)]
 fn render_issue_acq_entry(
     i: &issue::Model,
     series_slug: Option<&str>,
@@ -2397,21 +2433,23 @@ fn atom(body: String) -> Response {
     (StatusCode::OK, hdrs, body).into_response()
 }
 
-fn not_found() -> Response {
-    error(StatusCode::NOT_FOUND, "not_found", "not found")
-}
-
+/// Local server_error wrapper that adds an `opds error` warn-log
+/// before delegating to the canonical envelope. Preserves the
+/// per-feed tracing context across the OPDS surface.
 fn server_error<E: std::fmt::Display>(e: E) -> Response {
     tracing::warn!(error = %e, "opds error");
-    error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+    super::error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
 }
 
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        axum::Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
+/// Strip control characters (CR / LF / NUL etc.) from a filesystem
+/// leaf before substituting it into a `Content-Disposition` header.
+/// `HeaderValue::from_str` rejects controls; without this guard a
+/// CBZ filename containing `\r\n` would panic the OPDS download task.
+/// Replacement char is `_`.
+fn sanitize_filename_for_header(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() || c == '"' { '_' } else { c })
+        .collect()
 }
 
 fn xml_escape(s: &str) -> String {
@@ -2553,17 +2591,21 @@ async fn cbl_list_acq(
     // event ON ANY ISSUE in this CBL — clients render "last read 2
     // hours ago" without parsing entry-level annotations.
     let cbl_summary = compute_cbl_progress_summary(&app.db, user.id, id, &visible).await;
+    let feed_id_str = format!("urn:cbl:{id}");
+    let title_str = format!("Reading list — {}", list.parsed_name);
     let body = build_acquisition_feed(
         &app,
-        &format!("urn:cbl:{id}"),
-        &format!("Reading list — {}", list.parsed_name),
-        &self_href,
-        &issues,
-        "",
-        user.id,
-        true,
-        up_next_id.as_deref(),
-        cbl_summary.last_read_at.as_ref(),
+        AcquisitionFeedArgs {
+            feed_id: &feed_id_str,
+            title: &title_str,
+            self_href: &self_href,
+            issues: &issues,
+            pagination: "",
+            user_id: user.id,
+            sequential_nav: true,
+            up_next_issue_id: up_next_id.as_deref(),
+            feed_last_read_date: cbl_summary.last_read_at.as_ref(),
+        },
     )
     .await;
     atom(body)

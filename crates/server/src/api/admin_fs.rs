@@ -25,6 +25,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use super::error;
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
 
@@ -182,14 +183,6 @@ pub async fn list(
         entries,
     })
     .into_response()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }
 
 #[cfg(test)]

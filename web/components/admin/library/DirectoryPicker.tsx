@@ -67,7 +67,7 @@ export function DirectoryPicker({
         disabled={disabled}
         onClick={() => handleOpenChange(true)}
         className={cn(
-          "border-input bg-background flex h-9 w-full items-center justify-between gap-2 rounded-md border px-3 text-left text-sm font-mono",
+          "border-input bg-background flex h-9 w-full items-center justify-between gap-2 rounded-md border px-3 text-left font-mono text-sm",
           "hover:bg-accent/40 focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}
@@ -136,8 +136,8 @@ function BrowserDialog({
           <DialogTitle>Choose a library folder</DialogTitle>
           <DialogDescription>
             Browse the server&apos;s filesystem inside the configured library
-            root. Click a folder to drill in, or pick the current folder
-            with the button below.
+            root. Click a folder to drill in, or pick the current folder with
+            the button below.
           </DialogDescription>
         </DialogHeader>
 
@@ -174,9 +174,7 @@ function BrowserDialog({
         <div className="border-border rounded-md border">
           <ScrollArea className="h-72">
             {query.isLoading && (
-              <div className="text-muted-foreground p-4 text-sm">
-                Loading…
-              </div>
+              <div className="text-muted-foreground p-4 text-sm">Loading…</div>
             )}
             {query.error && (
               <div className="text-destructive space-y-2 p-4 text-sm">
@@ -185,9 +183,8 @@ function BrowserDialog({
             )}
             {query.data && query.data.entries.length === 0 && (
               <div className="text-muted-foreground p-4 text-sm">
-                This folder is empty. Use &ldquo;Select this folder&rdquo;
-                to pick it anyway, or step back up to choose a different
-                one.
+                This folder is empty. Use &ldquo;Select this folder&rdquo; to
+                pick it anyway, or step back up to choose a different one.
               </div>
             )}
             {query.data && query.data.entries.length > 0 && (

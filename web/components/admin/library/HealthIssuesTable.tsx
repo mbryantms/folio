@@ -39,13 +39,14 @@ function payloadSummary(kind: string, p: unknown): string {
   if (kind === "RecoveredArchive") {
     const technique =
       typeof obj.technique === "string" ? obj.technique : "unknown";
-    return path ? `${path} — recovered (${technique})` : `recovered (${technique})`;
+    return path
+      ? `${path} — recovered (${technique})`
+      : `recovered (${technique})`;
   }
   if (kind === "SkippedArchiveEntries") {
     const dropped = typeof obj.dropped === "number" ? obj.dropped : "?";
     const total = typeof obj.total === "number" ? obj.total : "?";
-    const reason =
-      typeof obj.reason === "string" ? obj.reason : "soft defense";
+    const reason = typeof obj.reason === "string" ? obj.reason : "soft defense";
     const suffix = `${dropped} of ${total} entries dropped (${reason})`;
     return path ? `${path} — ${suffix}` : suffix;
   }
@@ -229,11 +230,10 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground max-w-prose text-xs">
-          Page-decode failures don&apos;t surface during normal scans
-          (they only read headers). Run a deep validate to walk every
-          active page through the image decoder — slow, opt-in, and
-          one library at a time. Findings appear as{" "}
-          <span className="font-mono">UnreadablePage</span> rows below
+          Page-decode failures don&apos;t surface during normal scans (they only
+          read headers). Run a deep validate to walk every active page through
+          the image decoder — slow, opt-in, and one library at a time. Findings
+          appear as <span className="font-mono">UnreadablePage</span> rows below
           as the run progresses.
         </p>
         <Button

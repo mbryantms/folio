@@ -25,6 +25,7 @@ use chrono::{DateTime, FixedOffset};
 use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
 use serde::{Deserialize, Serialize};
 
+use super::error;
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
 
@@ -308,12 +309,4 @@ fn decode_cursor(s: &str) -> Option<(DateTime<FixedOffset>, String, String)> {
         kind.to_owned(),
         source_id.to_owned(),
     ))
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

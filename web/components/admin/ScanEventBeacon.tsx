@@ -132,10 +132,7 @@ export function ScanEventBeacon() {
               don't break. The destructive "Clear all" remains visually
               distinct via the bg-destructive override. */}
           <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-4">
-            <AlertDialogCancel
-              disabled={clearQueue.isPending}
-              className="m-0"
-            >
+            <AlertDialogCancel disabled={clearQueue.isPending} className="m-0">
               Cancel
             </AlertDialogCancel>
             <Button
@@ -172,7 +169,7 @@ export function ScanEventBeacon() {
                   { onSettled: () => setConfirmClear(false) },
                 )
               }
-              className="m-0 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 m-0"
             >
               {clearQueue.isPending ? "Clearing…" : "Clear all"}
             </AlertDialogAction>

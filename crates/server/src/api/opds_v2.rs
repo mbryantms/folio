@@ -59,6 +59,8 @@ use crate::views::{
     dsl::{SortField, SortOrder},
 };
 
+use super::{error, not_found};
+
 const NAV_CT: &str = "application/opds+json";
 
 pub fn routes() -> Router<AppState> {
@@ -1043,7 +1045,7 @@ async fn search(
         return json_response(body);
     }
     if needle.len() > 200 {
-        return error_status(StatusCode::BAD_REQUEST, "validation");
+        return error(StatusCode::BAD_REQUEST, "validation", "validation");
     }
     let allowed = match opds::allowed_libraries(&app, &user).await {
         Ok(v) => v,
@@ -1663,31 +1665,45 @@ async fn build_publications_inner(
             } else {
                 (None, None)
             };
-            publication_for(
-                i,
-                slugs.get(&i.series_id).map(String::as_str),
-                user.id,
-                key,
-                progress.get(&i.id),
+            publication_for(PublicationCtx {
+                issue: i,
+                series_slug: slugs.get(&i.series_id).map(String::as_str),
+                user_id: user.id,
+                url_signing_key: key,
+                progress: progress.get(&i.id),
                 prev,
                 next,
-                glyphs,
-            )
+                progress_glyphs: glyphs,
+            })
         })
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn publication_for(
-    i: &issue::Model,
-    series_slug: Option<&str>,
+/// Per-publication render context. Folds the eight call-site values
+/// into one struct during code-quality-cleanup M3 so the builder
+/// surface doesn't fan back out across the file.
+struct PublicationCtx<'a> {
+    issue: &'a issue::Model,
+    series_slug: Option<&'a str>,
     user_id: Uuid,
-    url_signing_key: &[u8],
-    progress: Option<&progress_record::Model>,
-    prev: Option<&issue::Model>,
-    next: Option<&issue::Model>,
+    url_signing_key: &'a [u8],
+    progress: Option<&'a progress_record::Model>,
+    prev: Option<&'a issue::Model>,
+    next: Option<&'a issue::Model>,
     progress_glyphs: bool,
-) -> Value {
+}
+
+fn publication_for(ctx: PublicationCtx<'_>) -> Value {
+    let PublicationCtx {
+        issue: i,
+        series_slug,
+        user_id,
+        url_signing_key,
+        progress,
+        prev,
+        next,
+        progress_glyphs,
+    } = ctx;
     let base = i.title.clone().unwrap_or_else(|| {
         i.number_raw
             .clone()
@@ -2059,21 +2075,11 @@ fn json_response(body: Value) -> Response {
     (StatusCode::OK, hdrs, axum::Json(body)).into_response()
 }
 
-fn not_found() -> Response {
-    error_status(StatusCode::NOT_FOUND, "not_found")
-}
-
+/// Local server_error wrapper that adds an `opds_v2 error` warn-log
+/// before delegating to the canonical envelope.
 fn server_error<E: std::fmt::Display>(e: E) -> Response {
     tracing::warn!(error = %e, "opds_v2 error");
-    error_status(StatusCode::INTERNAL_SERVER_ERROR, "internal")
-}
-
-fn error_status(status: StatusCode, code: &str) -> Response {
-    (
-        status,
-        axum::Json(json!({"error": {"code": code, "message": code}})),
-    )
-        .into_response()
+    super::error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
 }
 
 fn url_escape(s: &str) -> String {

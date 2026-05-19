@@ -10,6 +10,8 @@
 // the fields.
 #![allow(dead_code, unreachable_pub)]
 
+pub mod seed;
+
 use axum::Router;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use sea_orm::Database;

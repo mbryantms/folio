@@ -19,16 +19,10 @@ use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, Response, StatusCode, header},
 };
-use chrono::Utc;
 use common::TestApp;
-use entity::{
-    issue::ActiveModel as IssueAM,
-    library,
-    progress_record::ActiveModel as ProgressAM,
-    series::{ActiveModel as SeriesAM, normalize_name},
-    user as user_entity,
-};
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
+use common::seed::{seed_library, seed_progress, seed_series};
+use entity::user as user_entity;
+use sea_orm::{ActiveModelTrait, Database, EntityTrait, Set};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -116,187 +110,7 @@ async fn get_cookie(app: &TestApp, uri: &str, auth: &Authed) -> Response<Body> {
         .unwrap()
 }
 
-async fn seed_library(db: &DatabaseConnection, root: &std::path::Path) -> Uuid {
-    let id = Uuid::now_v7();
-    let now = Utc::now().fixed_offset();
-    library::ActiveModel {
-        id: Set(id),
-        name: Set(format!("Lib {}", &id.to_string()[..8])),
-        root_path: Set(root.to_string_lossy().into_owned()),
-        default_language: Set("en".into()),
-        default_reading_direction: Set("ltr".into()),
-        dedupe_by_content: Set(true),
-        slug: Set(id.to_string()),
-        scan_schedule_cron: Set(None),
-        created_at: Set(now),
-        updated_at: Set(now),
-        last_scan_at: Set(None),
-        ignore_globs: Set(serde_json::json!([])),
-        report_missing_comicinfo: Set(false),
-        file_watch_enabled: Set(true),
-        soft_delete_days: Set(30),
-        thumbnails_enabled: Set(true),
-        thumbnail_format: Set("webp".into()),
-        thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
-        thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
-        generate_page_thumbs_on_scan: Set(false),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    id
-}
-
-async fn seed_series(db: &DatabaseConnection, lib_id: Uuid, name: &str) -> Uuid {
-    let id = Uuid::now_v7();
-    let now = Utc::now().fixed_offset();
-    SeriesAM {
-        id: Set(id),
-        library_id: Set(lib_id),
-        name: Set(name.into()),
-        normalized_name: Set(normalize_name(name)),
-        year: Set(Some(2020)),
-        volume: Set(None),
-        publisher: Set(None),
-        imprint: Set(None),
-        status: Set("continuing".into()),
-        total_issues: Set(None),
-        age_rating: Set(None),
-        summary: Set(None),
-        language_code: Set("en".into()),
-        comicvine_id: Set(None),
-        metron_id: Set(None),
-        gtin: Set(None),
-        series_group: Set(None),
-        slug: Set(id.to_string()),
-        alternate_names: Set(serde_json::json!([])),
-        created_at: Set(now),
-        updated_at: Set(now),
-        folder_path: Set(None),
-        last_scanned_at: Set(None),
-        match_key: Set(None),
-        removed_at: Set(None),
-        removal_confirmed_at: Set(None),
-        status_user_set_at: Set(None),
-        reading_direction: Set(None),
-        preserve_canonical_order: Set(true),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    id
-}
-
 #[allow(clippy::too_many_arguments)]
-async fn seed_issue(
-    db: &DatabaseConnection,
-    lib_id: Uuid,
-    series_id: Uuid,
-    file_path: &std::path::Path,
-    payload: &[u8],
-    sort_number: f64,
-    title: &str,
-    page_count: Option<i32>,
-) -> String {
-    std::fs::write(file_path, payload).unwrap();
-    let bytes = std::fs::read(file_path).unwrap();
-    let hash = blake3::hash(&bytes).to_hex().to_string();
-    let now = Utc::now().fixed_offset();
-    IssueAM {
-        id: Set(hash.clone()),
-        library_id: Set(lib_id),
-        series_id: Set(series_id),
-        slug: Set(Uuid::now_v7().to_string()),
-        file_path: Set(file_path.to_string_lossy().into_owned()),
-        file_size: Set(std::fs::metadata(file_path).unwrap().len() as i64),
-        file_mtime: Set(now),
-        state: Set("active".into()),
-        content_hash: Set(hash.clone()),
-        title: Set(Some(title.into())),
-        sort_number: Set(Some(sort_number)),
-        number_raw: Set(Some(format!("{sort_number}"))),
-        volume: Set(None),
-        year: Set(None),
-        month: Set(None),
-        day: Set(None),
-        summary: Set(None),
-        notes: Set(None),
-        language_code: Set(None),
-        format: Set(None),
-        black_and_white: Set(None),
-        manga: Set(None),
-        age_rating: Set(None),
-        page_count: Set(page_count),
-        pages: Set(serde_json::json!([])),
-        comic_info_raw: Set(serde_json::json!({})),
-        alternate_series: Set(None),
-        story_arc: Set(None),
-        story_arc_number: Set(None),
-        characters: Set(None),
-        teams: Set(None),
-        locations: Set(None),
-        tags: Set(None),
-        genre: Set(None),
-        writer: Set(None),
-        penciller: Set(None),
-        inker: Set(None),
-        colorist: Set(None),
-        letterer: Set(None),
-        cover_artist: Set(None),
-        editor: Set(None),
-        translator: Set(None),
-        publisher: Set(None),
-        imprint: Set(None),
-        scan_information: Set(None),
-        community_rating: Set(None),
-        review: Set(None),
-        web_url: Set(None),
-        comicvine_id: Set(None),
-        metron_id: Set(None),
-        gtin: Set(None),
-        created_at: Set(now),
-        updated_at: Set(now),
-        removed_at: Set(None),
-        removal_confirmed_at: Set(None),
-        superseded_by: Set(None),
-        special_type: Set(None),
-        hash_algorithm: Set(1),
-        thumbnails_generated_at: Set(None),
-        thumbnail_version: Set(0),
-        thumbnails_error: Set(None),
-        additional_links: Set(serde_json::json!([])),
-        user_edited: Set(serde_json::json!([])),
-        comicinfo_count: Set(None),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    hash
-}
-
-async fn seed_progress(
-    db: &DatabaseConnection,
-    user_id: Uuid,
-    issue_id: &str,
-    last_page: i32,
-    percent: f64,
-    finished: bool,
-) {
-    let now = Utc::now().fixed_offset();
-    ProgressAM {
-        user_id: Set(user_id),
-        issue_id: Set(issue_id.into()),
-        last_page: Set(last_page),
-        percent: Set(percent),
-        finished: Set(finished),
-        updated_at: Set(now),
-        device: Set(None),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-}
-
 /// Slice each `<entry>` block out of a v1 feed body and return them as
 /// a Vec of `(id, block)` pairs. Lets tests assert on the title of a
 /// specific entry without false-positives from neighboring entries.
@@ -341,39 +155,21 @@ async fn v1_series_feed_decorates_each_state_with_glyph_and_page_count() {
     let lib = seed_library(&db, tmp.path()).await;
     let series = seed_series(&db, lib, "Glyph Series").await;
     // a finished, b in progress (page 14 of 32), c unread.
-    let a = seed_issue(
-        &db,
-        lib,
-        series,
-        &tmp.path().join("a.cbz"),
-        b"g-a",
-        1.0,
-        "First Strike",
-        Some(32),
-    )
-    .await;
-    let b = seed_issue(
-        &db,
-        lib,
-        series,
-        &tmp.path().join("b.cbz"),
-        b"g-b",
-        2.0,
-        "Second Strike",
-        Some(32),
-    )
-    .await;
-    let c = seed_issue(
-        &db,
-        lib,
-        series,
-        &tmp.path().join("c.cbz"),
-        b"g-c",
-        3.0,
-        "Third Strike",
-        Some(32),
-    )
-    .await;
+    let a = common::seed::IssueSeed::new(lib, series, &tmp.path().join("a.cbz"), b"g-a", 1.0)
+        .with_title("First Strike")
+        .with_page_count_opt(Some(32))
+        .insert(&db)
+        .await;
+    let b = common::seed::IssueSeed::new(lib, series, &tmp.path().join("b.cbz"), b"g-b", 2.0)
+        .with_title("Second Strike")
+        .with_page_count_opt(Some(32))
+        .insert(&db)
+        .await;
+    let c = common::seed::IssueSeed::new(lib, series, &tmp.path().join("c.cbz"), b"g-c", 3.0)
+        .with_title("Third Strike")
+        .with_page_count_opt(Some(32))
+        .insert(&db)
+        .await;
     seed_progress(&db, auth.user_id, &a, 31, 1.0, true).await;
     seed_progress(&db, auth.user_id, &b, 13, 13.0 / 32.0, false).await;
 
@@ -406,17 +202,11 @@ async fn v1_series_feed_omits_page_count_suffix_when_unknown() {
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
     let series = seed_series(&db, lib, "Unknown Pages").await;
-    let i = seed_issue(
-        &db,
-        lib,
-        series,
-        &tmp.path().join("a.cbz"),
-        b"np-a",
-        1.0,
-        "Mystery",
-        None,
-    )
-    .await;
+    let i = common::seed::IssueSeed::new(lib, series, &tmp.path().join("a.cbz"), b"np-a", 1.0)
+        .with_title("Mystery")
+        .with_page_count_opt(None)
+        .insert(&db)
+        .await;
     seed_progress(&db, auth.user_id, &i, 5, 0.5, false).await;
 
     let resp = get_cookie(&app, &format!("/opds/v1/series/{series}"), &auth).await;
@@ -437,17 +227,11 @@ async fn v1_series_feed_respects_user_opt_out_flag() {
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
     let series = seed_series(&db, lib, "Plain").await;
-    let i = seed_issue(
-        &db,
-        lib,
-        series,
-        &tmp.path().join("a.cbz"),
-        b"po-a",
-        1.0,
-        "Vanilla",
-        Some(32),
-    )
-    .await;
+    let i = common::seed::IssueSeed::new(lib, series, &tmp.path().join("a.cbz"), b"po-a", 1.0)
+        .with_title("Vanilla")
+        .with_page_count_opt(Some(32))
+        .insert(&db)
+        .await;
     seed_progress(&db, auth.user_id, &i, 13, 0.5, false).await;
 
     // Flip the per-user flag.
@@ -484,28 +268,16 @@ async fn v2_series_feed_decorates_publication_title() {
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
     let series = seed_series(&db, lib, "V2 Series").await;
-    let _a = seed_issue(
-        &db,
-        lib,
-        series,
-        &tmp.path().join("a.cbz"),
-        b"v2-a",
-        1.0,
-        "Issue A",
-        Some(20),
-    )
-    .await;
-    let b = seed_issue(
-        &db,
-        lib,
-        series,
-        &tmp.path().join("b.cbz"),
-        b"v2-b",
-        2.0,
-        "Issue B",
-        Some(20),
-    )
-    .await;
+    let _a = common::seed::IssueSeed::new(lib, series, &tmp.path().join("a.cbz"), b"v2-a", 1.0)
+        .with_title("Issue A")
+        .with_page_count_opt(Some(20))
+        .insert(&db)
+        .await;
+    let b = common::seed::IssueSeed::new(lib, series, &tmp.path().join("b.cbz"), b"v2-b", 2.0)
+        .with_title("Issue B")
+        .with_page_count_opt(Some(20))
+        .insert(&db)
+        .await;
     seed_progress(&db, auth.user_id, &b, 4, 0.25, false).await;
 
     let resp = get_cookie(&app, &format!("/opds/v2/series/{series}"), &auth).await;

@@ -8,6 +8,7 @@ import { useMe } from "@/lib/api/queries";
 import {
   KEYBIND_SCOPES,
   actionForKey,
+  readMeKeybinds,
   resolveKeybinds,
   shouldSkipHotkey,
 } from "@/lib/reader/keybinds";
@@ -32,10 +33,10 @@ export function GlobalHotkeys() {
   const me = useMe();
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const bindings = useMemo(() => {
-    const stored = (me.data?.keybinds ?? null) as Record<string, string> | null;
-    return resolveKeybinds(stored);
-  }, [me.data?.keybinds]);
+  const bindings = useMemo(
+    () => resolveKeybinds(readMeKeybinds(me)),
+    [me.data?.keybinds],
+  );
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

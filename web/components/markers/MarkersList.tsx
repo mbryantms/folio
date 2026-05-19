@@ -725,7 +725,7 @@ function MarkerCard({
         <span
           aria-label="Favorite"
           title="Favorite"
-          className="absolute right-2 bottom-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/90 text-rose-50 ring-1 shadow-sm ring-black/20"
+          className="absolute right-2 bottom-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/90 text-rose-50 shadow-sm ring-1 ring-black/20"
         >
           <Star className="h-3 w-3 fill-current" aria-hidden="true" />
         </span>

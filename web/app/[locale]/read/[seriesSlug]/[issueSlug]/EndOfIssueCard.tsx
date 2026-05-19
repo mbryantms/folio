@@ -101,7 +101,7 @@ export function EndOfIssueCard({
         // visible. `max-h-[85vh]` keeps the card from outgrowing the
         // viewport on tiny windows.
         "fixed top-1/2 z-50 flex w-80 max-w-[85vw] -translate-y-1/2 flex-col",
-        "bg-background text-foreground rounded-lg border border-border shadow-2xl",
+        "bg-background text-foreground border-border rounded-lg border shadow-2xl",
         "max-h-[85vh] overflow-hidden",
         // CSS-only slide animation. `pointer-events-none` while closed
         // keeps the offscreen card from intercepting clicks on the
@@ -111,8 +111,8 @@ export function EndOfIssueCard({
         open
           ? "translate-x-0"
           : slideFromRight
-            ? "translate-x-[calc(100%+1.5rem)] pointer-events-none"
-            : "-translate-x-[calc(100%+1.5rem)] pointer-events-none",
+            ? "pointer-events-none translate-x-[calc(100%+1.5rem)]"
+            : "pointer-events-none -translate-x-[calc(100%+1.5rem)]",
       )}
     >
       <div className="flex items-start justify-between gap-3 p-4 pb-2">
@@ -121,13 +121,13 @@ export function EndOfIssueCard({
             {source === "none" ? "End of the line" : "Next up:"}
           </p>
           {source !== "none" && target ? (
-            <h2 className="mt-0.5 text-base font-semibold leading-snug">
+            <h2 className="mt-0.5 text-base leading-snug font-semibold">
               {heading}
             </h2>
           ) : isLoading && !data ? (
             <div className="bg-muted mt-1 h-5 w-40 animate-pulse rounded" />
           ) : (
-            <h2 className="mt-0.5 text-base font-semibold leading-snug">
+            <h2 className="mt-0.5 text-base leading-snug font-semibold">
               You&apos;re caught up.
             </h2>
           )}
@@ -277,7 +277,7 @@ function FallbackSuggestionTile({
       </div>
       <div className="min-w-0 flex-1">
         <div
-          className="truncate text-sm font-medium leading-snug"
+          className="truncate text-sm leading-snug font-medium"
           title={heading}
         >
           {heading}

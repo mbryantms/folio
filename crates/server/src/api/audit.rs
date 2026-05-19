@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+use super::error;
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
 
@@ -266,12 +267,4 @@ fn parse_cursor(s: &str) -> Result<(chrono::DateTime<chrono::FixedOffset>, Uuid)
     let parsed_ts = chrono::DateTime::parse_from_rfc3339(ts).map_err(|_| ())?;
     let parsed_id = Uuid::parse_str(id).map_err(|_| ())?;
     Ok((parsed_ts, parsed_id))
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

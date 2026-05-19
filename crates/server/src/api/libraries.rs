@@ -23,6 +23,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::{ignore, thumbnails};
@@ -932,14 +933,6 @@ async fn user_can_see(app: &AppState, user: &CurrentUser, lib: &library::Model) 
         .ok()
         .flatten()
         .is_some()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }
 
 /// Tri-state deserialize helper: `{"foo": null}` becomes `Some(None)`

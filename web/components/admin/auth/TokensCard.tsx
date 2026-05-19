@@ -34,7 +34,8 @@ export function TokensCard({
     // unreachable, so we don't need the in-handler short-circuit.
     const patch: Record<string, unknown> = {};
     if (access !== initial.access_ttl) patch["auth.jwt.access_ttl"] = access;
-    if (refresh !== initial.refresh_ttl) patch["auth.jwt.refresh_ttl"] = refresh;
+    if (refresh !== initial.refresh_ttl)
+      patch["auth.jwt.refresh_ttl"] = refresh;
     await update.mutateAsync(patch);
   }
 

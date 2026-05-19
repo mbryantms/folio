@@ -376,20 +376,16 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
         </CardContent>
       </Card>
 
-      <AlertDialog
-        open={cancelConfirmOpen}
-        onOpenChange={setCancelConfirmOpen}
-      >
+      <AlertDialog open={cancelConfirmOpen} onOpenChange={setCancelConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Cancel this scan?</AlertDialogTitle>
             <AlertDialogDescription>
-              Flips the <code>scan_runs</code> row to{" "}
-              <code>cancelled</code> and emits a terminal event so this
-              page stops showing it as running. A still-alive worker
-              would finish on its own and overwrite the cancelled row
-              with its real terminal state — use this when the worker
-              is gone (queue cleared, server restart, hang).
+              Flips the <code>scan_runs</code> row to <code>cancelled</code> and
+              emits a terminal event so this page stops showing it as running. A
+              still-alive worker would finish on its own and overwrite the
+              cancelled row with its real terminal state — use this when the
+              worker is gone (queue cleared, server restart, hang).
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

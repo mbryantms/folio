@@ -16,10 +16,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import {
-  useDeleteSavedView,
-  useSidebarSavedView,
-} from "@/lib/api/mutations";
+import { useDeleteSavedView, useSidebarSavedView } from "@/lib/api/mutations";
 import { useSavedViews } from "@/lib/api/queries";
 import type { SavedViewView } from "@/lib/api/types";
 
@@ -189,9 +186,7 @@ function ViewRow({ view }: { view: SavedViewView }) {
       <ToggleControl
         label="In sidebar"
         checked={view.show_in_sidebar}
-        onCheckedChange={(next) =>
-          sidebar.mutate({ id: view.id, show: next })
-        }
+        onCheckedChange={(next) => sidebar.mutate({ id: view.id, show: next })}
       />
     </li>
   );

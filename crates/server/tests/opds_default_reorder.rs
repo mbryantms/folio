@@ -15,22 +15,12 @@ use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, Response, StatusCode, header},
 };
-use chrono::Utc;
 use common::TestApp;
-use entity::{
-    cbl_entry::ActiveModel as CblEntryAM,
-    cbl_list::ActiveModel as CblListAM,
-    collection_entry::ActiveModel as CollectionEntryAM,
-    issue::ActiveModel as IssueAM,
-    library,
-    progress_record::ActiveModel as ProgressAM,
-    saved_view::ActiveModel as SavedViewAM,
-    series::{ActiveModel as SeriesAM, normalize_name},
-    user as user_entity,
+use common::seed::{
+    seed_cbl_entry, seed_collection_entry_issue, seed_issue, seed_library, seed_progress_finished,
 };
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, EntityTrait, QueryFilter, Set,
-};
+use entity::user as user_entity;
+use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, Set};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -118,313 +108,6 @@ async fn get_cookie(app: &TestApp, uri: &str, auth: &Authed) -> Response<Body> {
         .unwrap()
 }
 
-async fn seed_library(db: &DatabaseConnection, root: &std::path::Path) -> Uuid {
-    let id = Uuid::now_v7();
-    let now = Utc::now().fixed_offset();
-    library::ActiveModel {
-        id: Set(id),
-        name: Set(format!("Lib {}", &id.to_string()[..8])),
-        root_path: Set(root.to_string_lossy().into_owned()),
-        default_language: Set("en".into()),
-        default_reading_direction: Set("ltr".into()),
-        dedupe_by_content: Set(true),
-        slug: Set(id.to_string()),
-        scan_schedule_cron: Set(None),
-        created_at: Set(now),
-        updated_at: Set(now),
-        last_scan_at: Set(None),
-        ignore_globs: Set(serde_json::json!([])),
-        report_missing_comicinfo: Set(false),
-        file_watch_enabled: Set(true),
-        soft_delete_days: Set(30),
-        thumbnails_enabled: Set(true),
-        thumbnail_format: Set("webp".into()),
-        thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
-        thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
-        generate_page_thumbs_on_scan: Set(false),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    id
-}
-
-async fn seed_series(
-    db: &DatabaseConnection,
-    lib_id: Uuid,
-    name: &str,
-    preserve_canonical_order: bool,
-) -> Uuid {
-    let id = Uuid::now_v7();
-    let now = Utc::now().fixed_offset();
-    SeriesAM {
-        id: Set(id),
-        library_id: Set(lib_id),
-        name: Set(name.into()),
-        normalized_name: Set(normalize_name(name)),
-        year: Set(Some(2020)),
-        volume: Set(None),
-        publisher: Set(None),
-        imprint: Set(None),
-        status: Set("continuing".into()),
-        total_issues: Set(None),
-        age_rating: Set(None),
-        summary: Set(None),
-        language_code: Set("en".into()),
-        comicvine_id: Set(None),
-        metron_id: Set(None),
-        gtin: Set(None),
-        series_group: Set(None),
-        slug: Set(id.to_string()),
-        alternate_names: Set(serde_json::json!([])),
-        created_at: Set(now),
-        updated_at: Set(now),
-        folder_path: Set(None),
-        last_scanned_at: Set(None),
-        match_key: Set(None),
-        removed_at: Set(None),
-        removal_confirmed_at: Set(None),
-        status_user_set_at: Set(None),
-        reading_direction: Set(None),
-        preserve_canonical_order: Set(preserve_canonical_order),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    id
-}
-
-async fn seed_issue(
-    db: &DatabaseConnection,
-    lib_id: Uuid,
-    series_id: Uuid,
-    file_path: &std::path::Path,
-    payload: &[u8],
-    sort_number: f64,
-) -> String {
-    std::fs::write(file_path, payload).unwrap();
-    let bytes = std::fs::read(file_path).unwrap();
-    let hash = blake3::hash(&bytes).to_hex().to_string();
-    let now = Utc::now().fixed_offset();
-    IssueAM {
-        id: Set(hash.clone()),
-        library_id: Set(lib_id),
-        series_id: Set(series_id),
-        slug: Set(Uuid::now_v7().to_string()),
-        file_path: Set(file_path.to_string_lossy().into_owned()),
-        file_size: Set(std::fs::metadata(file_path).unwrap().len() as i64),
-        file_mtime: Set(now),
-        state: Set("active".into()),
-        content_hash: Set(hash.clone()),
-        title: Set(Some(format!("Issue {sort_number}"))),
-        sort_number: Set(Some(sort_number)),
-        number_raw: Set(Some(format!("{sort_number}"))),
-        volume: Set(None),
-        year: Set(None),
-        month: Set(None),
-        day: Set(None),
-        summary: Set(None),
-        notes: Set(None),
-        language_code: Set(None),
-        format: Set(None),
-        black_and_white: Set(None),
-        manga: Set(None),
-        age_rating: Set(None),
-        page_count: Set(Some(20)),
-        pages: Set(serde_json::json!([])),
-        comic_info_raw: Set(serde_json::json!({})),
-        alternate_series: Set(None),
-        story_arc: Set(None),
-        story_arc_number: Set(None),
-        characters: Set(None),
-        teams: Set(None),
-        locations: Set(None),
-        tags: Set(None),
-        genre: Set(None),
-        writer: Set(None),
-        penciller: Set(None),
-        inker: Set(None),
-        colorist: Set(None),
-        letterer: Set(None),
-        cover_artist: Set(None),
-        editor: Set(None),
-        translator: Set(None),
-        publisher: Set(None),
-        imprint: Set(None),
-        scan_information: Set(None),
-        community_rating: Set(None),
-        review: Set(None),
-        web_url: Set(None),
-        comicvine_id: Set(None),
-        metron_id: Set(None),
-        gtin: Set(None),
-        created_at: Set(now),
-        updated_at: Set(now),
-        removed_at: Set(None),
-        removal_confirmed_at: Set(None),
-        superseded_by: Set(None),
-        special_type: Set(None),
-        hash_algorithm: Set(1),
-        thumbnails_generated_at: Set(None),
-        thumbnail_version: Set(0),
-        thumbnails_error: Set(None),
-        additional_links: Set(serde_json::json!([])),
-        user_edited: Set(serde_json::json!([])),
-        comicinfo_count: Set(None),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    hash
-}
-
-async fn seed_progress_finished(db: &DatabaseConnection, user_id: Uuid, issue_id: &str) {
-    let now = Utc::now().fixed_offset();
-    ProgressAM {
-        user_id: Set(user_id),
-        issue_id: Set(issue_id.into()),
-        last_page: Set(19),
-        percent: Set(1.0),
-        finished: Set(true),
-        updated_at: Set(now),
-        device: Set(None),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-}
-
-async fn seed_cbl_list(
-    db: &DatabaseConnection,
-    owner: Uuid,
-    name: &str,
-    preserve_canonical_order: bool,
-) -> Uuid {
-    let id = Uuid::now_v7();
-    let now = Utc::now().fixed_offset();
-    CblListAM {
-        id: Set(id),
-        owner_user_id: Set(Some(owner)),
-        source_kind: Set("upload".into()),
-        source_url: Set(None),
-        catalog_source_id: Set(None),
-        catalog_path: Set(None),
-        github_blob_sha: Set(None),
-        source_etag: Set(None),
-        source_last_modified: Set(None),
-        raw_sha256: Set(vec![0u8; 32]),
-        raw_xml: Set("<ReadingList />".into()),
-        parsed_name: Set(name.into()),
-        parsed_matchers_present: Set(false),
-        num_issues_declared: Set(None),
-        description: Set(None),
-        imported_at: Set(now),
-        last_refreshed_at: Set(None),
-        last_match_run_at: Set(None),
-        refresh_schedule: Set(None),
-        created_at: Set(now),
-        updated_at: Set(now),
-        preserve_canonical_order: Set(preserve_canonical_order),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    id
-}
-
-async fn seed_cbl_entry(
-    db: &DatabaseConnection,
-    list_id: Uuid,
-    position: i32,
-    matched_issue_id: Option<&str>,
-) {
-    let now = Utc::now().fixed_offset();
-    let status = if matched_issue_id.is_some() {
-        "matched"
-    } else {
-        "missing"
-    };
-    CblEntryAM {
-        id: Set(Uuid::now_v7()),
-        cbl_list_id: Set(list_id),
-        position: Set(position),
-        series_name: Set("Seed".into()),
-        issue_number: Set(position.to_string()),
-        volume: Set(None),
-        year: Set(None),
-        cv_series_id: Set(None),
-        cv_issue_id: Set(None),
-        metron_series_id: Set(None),
-        metron_issue_id: Set(None),
-        matched_issue_id: Set(matched_issue_id.map(str::to_owned)),
-        match_status: Set(status.into()),
-        match_method: Set(None),
-        match_confidence: Set(None),
-        ambiguous_candidates: Set(None),
-        user_resolved_at: Set(None),
-        matched_at: Set(matched_issue_id.map(|_| now)),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-}
-
-async fn seed_collection(
-    db: &DatabaseConnection,
-    owner: Uuid,
-    name: &str,
-    preserve_canonical_order: bool,
-) -> Uuid {
-    let id = Uuid::now_v7();
-    let now = Utc::now().fixed_offset();
-    SavedViewAM {
-        id: Set(id),
-        user_id: Set(Some(owner)),
-        kind: Set("collection".into()),
-        system_key: Set(None),
-        name: Set(name.into()),
-        description: Set(None),
-        custom_year_start: Set(None),
-        custom_year_end: Set(None),
-        custom_tags: Set(Vec::new()),
-        match_mode: Set(None),
-        conditions: Set(None),
-        sort_field: Set(None),
-        sort_order: Set(None),
-        result_limit: Set(None),
-        cbl_list_id: Set(None),
-        auto_pin: Set(false),
-        preserve_canonical_order: Set(preserve_canonical_order),
-        created_at: Set(now),
-        updated_at: Set(now),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-    id
-}
-
-async fn seed_collection_entry_issue(
-    db: &DatabaseConnection,
-    view_id: Uuid,
-    position: i32,
-    issue_id: &str,
-) {
-    let now = Utc::now().fixed_offset();
-    CollectionEntryAM {
-        id: Set(Uuid::now_v7()),
-        saved_view_id: Set(view_id),
-        position: Set(position),
-        entry_kind: Set("issue".into()),
-        series_id: Set(None),
-        issue_id: Set(Some(issue_id.into())),
-        added_at: Set(now),
-    }
-    .insert(db)
-    .await
-    .unwrap();
-}
-
 /// Return the indices of `urn:issue:<id>` markers in feed order. Useful for
 /// asserting the relative position of issues without coupling to nearby XML.
 fn issue_positions(body: &str, ids: &[&str]) -> Vec<usize> {
@@ -456,7 +139,10 @@ async fn series_default_reorder_moves_up_next_to_position_zero() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
-    let series = seed_series(&db, lib, "Reorder Me", false).await;
+    let series = common::seed::SeriesSeed::new(lib, "Reorder Me")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     let a = seed_issue(&db, lib, series, &tmp.path().join("a.cbz"), b"r-a", 1.0).await;
     let b = seed_issue(&db, lib, series, &tmp.path().join("b.cbz"), b"r-b", 2.0).await;
     let c = seed_issue(&db, lib, series, &tmp.path().join("c.cbz"), b"r-c", 3.0).await;
@@ -482,7 +168,10 @@ async fn series_preserve_canonical_order_opt_out_keeps_natural_order() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
-    let series = seed_series(&db, lib, "Year One", true).await;
+    let series = common::seed::SeriesSeed::new(lib, "Year One")
+        .with_preserve_canonical_order(true)
+        .insert(&db)
+        .await;
     let a = seed_issue(&db, lib, series, &tmp.path().join("a.cbz"), b"y-a", 1.0).await;
     let b = seed_issue(&db, lib, series, &tmp.path().join("b.cbz"), b"y-b", 2.0).await;
     let c = seed_issue(&db, lib, series, &tmp.path().join("c.cbz"), b"y-c", 3.0).await;
@@ -508,7 +197,10 @@ async fn cbl_default_reorder_moves_up_next_to_position_zero() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
-    let series = seed_series(&db, lib, "Crossover", false).await;
+    let series = common::seed::SeriesSeed::new(lib, "Crossover")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     let i1 = seed_issue(&db, lib, series, &tmp.path().join("1.cbz"), b"cb1", 1.0).await;
     let i2 = seed_issue(&db, lib, series, &tmp.path().join("2.cbz"), b"cb2", 2.0).await;
     let i3 = seed_issue(&db, lib, series, &tmp.path().join("3.cbz"), b"cb3", 3.0).await;
@@ -518,7 +210,10 @@ async fn cbl_default_reorder_moves_up_next_to_position_zero() {
     seed_progress_finished(&db, auth.user_id, &i2).await;
     seed_progress_finished(&db, auth.user_id, &i3).await;
 
-    let list = seed_cbl_list(&db, auth.user_id, "Storyline", false).await;
+    let list = common::seed::CblListSeed::new(auth.user_id, "Storyline")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     seed_cbl_entry(&db, list, 0, Some(&i1)).await;
     seed_cbl_entry(&db, list, 1, Some(&i2)).await;
     seed_cbl_entry(&db, list, 2, Some(&i3)).await;
@@ -542,13 +237,19 @@ async fn cbl_preserve_canonical_order_opt_out_keeps_list_position() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
-    let series = seed_series(&db, lib, "Curated", false).await;
+    let series = common::seed::SeriesSeed::new(lib, "Curated")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     let i1 = seed_issue(&db, lib, series, &tmp.path().join("1.cbz"), b"cp1", 1.0).await;
     let i2 = seed_issue(&db, lib, series, &tmp.path().join("2.cbz"), b"cp2", 2.0).await;
     let i3 = seed_issue(&db, lib, series, &tmp.path().join("3.cbz"), b"cp3", 3.0).await;
     seed_progress_finished(&db, auth.user_id, &i1).await;
 
-    let list = seed_cbl_list(&db, auth.user_id, "Year One Order", true).await;
+    let list = common::seed::CblListSeed::new(auth.user_id, "Year One Order")
+        .with_preserve_canonical_order(true)
+        .insert(&db)
+        .await;
     seed_cbl_entry(&db, list, 0, Some(&i1)).await;
     seed_cbl_entry(&db, list, 1, Some(&i2)).await;
     seed_cbl_entry(&db, list, 2, Some(&i3)).await;
@@ -572,13 +273,19 @@ async fn collection_default_reorder_moves_up_next_issue_first() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
-    let series = seed_series(&db, lib, "Side Stories", false).await;
+    let series = common::seed::SeriesSeed::new(lib, "Side Stories")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     let a = seed_issue(&db, lib, series, &tmp.path().join("a.cbz"), b"co-a", 1.0).await;
     let b = seed_issue(&db, lib, series, &tmp.path().join("b.cbz"), b"co-b", 2.0).await;
     let c = seed_issue(&db, lib, series, &tmp.path().join("c.cbz"), b"co-c", 3.0).await;
     seed_progress_finished(&db, auth.user_id, &a).await;
 
-    let view = seed_collection(&db, auth.user_id, "My Picks", false).await;
+    let view = common::seed::CollectionSeed::new(auth.user_id, "My Picks")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     seed_collection_entry_issue(&db, view, 0, &a).await;
     seed_collection_entry_issue(&db, view, 1, &b).await;
     seed_collection_entry_issue(&db, view, 2, &c).await;
@@ -601,13 +308,19 @@ async fn collection_preserve_canonical_order_opt_out_keeps_position_order() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
-    let series = seed_series(&db, lib, "Curated Coll", false).await;
+    let series = common::seed::SeriesSeed::new(lib, "Curated Coll")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     let a = seed_issue(&db, lib, series, &tmp.path().join("a.cbz"), b"cop-a", 1.0).await;
     let b = seed_issue(&db, lib, series, &tmp.path().join("b.cbz"), b"cop-b", 2.0).await;
     let c = seed_issue(&db, lib, series, &tmp.path().join("c.cbz"), b"cop-c", 3.0).await;
     seed_progress_finished(&db, auth.user_id, &a).await;
 
-    let view = seed_collection(&db, auth.user_id, "Canonical", true).await;
+    let view = common::seed::CollectionSeed::new(auth.user_id, "Canonical")
+        .with_preserve_canonical_order(true)
+        .insert(&db)
+        .await;
     seed_collection_entry_issue(&db, view, 0, &a).await;
     seed_collection_entry_issue(&db, view, 1, &b).await;
     seed_collection_entry_issue(&db, view, 2, &c).await;
@@ -631,7 +344,10 @@ async fn wtr_default_reorders_up_next_first() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
-    let series = seed_series(&db, lib, "WTR Series", false).await;
+    let series = common::seed::SeriesSeed::new(lib, "WTR Series")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     let a = seed_issue(&db, lib, series, &tmp.path().join("a.cbz"), b"w-a", 1.0).await;
     let b = seed_issue(&db, lib, series, &tmp.path().join("b.cbz"), b"w-b", 2.0).await;
     let c = seed_issue(&db, lib, series, &tmp.path().join("c.cbz"), b"w-c", 3.0).await;
@@ -668,7 +384,10 @@ async fn wtr_user_opt_out_preserves_drag_order() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
-    let series = seed_series(&db, lib, "WTR Curated", false).await;
+    let series = common::seed::SeriesSeed::new(lib, "WTR Curated")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     let a = seed_issue(&db, lib, series, &tmp.path().join("a.cbz"), b"wp-a", 1.0).await;
     let b = seed_issue(&db, lib, series, &tmp.path().join("b.cbz"), b"wp-b", 2.0).await;
     let c = seed_issue(&db, lib, series, &tmp.path().join("c.cbz"), b"wp-c", 3.0).await;
@@ -715,7 +434,10 @@ async fn resume_query_param_is_ignored_after_cleanup() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
-    let series = seed_series(&db, lib, "No Synth", false).await;
+    let series = common::seed::SeriesSeed::new(lib, "No Synth")
+        .with_preserve_canonical_order(false)
+        .insert(&db)
+        .await;
     let a = seed_issue(&db, lib, series, &tmp.path().join("a.cbz"), b"ns-a", 1.0).await;
     let _b = seed_issue(&db, lib, series, &tmp.path().join("b.cbz"), b"ns-b", 2.0).await;
     seed_progress_finished(&db, auth.user_id, &a).await;

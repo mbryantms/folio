@@ -253,12 +253,14 @@ pub async fn stream(
     let mut hdrs = HeaderMap::new();
     hdrs.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(meta.mime).unwrap(),
+        HeaderValue::from_str(meta.mime)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     hdrs.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("inline; filename=\"page-{n}.{}\"", meta.ext)).unwrap(),
+        HeaderValue::from_str(&format!("inline; filename=\"page-{n}.{}\"", meta.ext))
+            .unwrap_or_else(|_| HeaderValue::from_static("inline")),
     );
     // PSE clients (Chunky / KOReader) re-fetch pages on every reopen
     // unless the cache is honoured. The signed URL itself is the access
@@ -268,7 +270,11 @@ pub async fn stream(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=1800"),
     );
-    hdrs.insert(header::ETAG, HeaderValue::from_str(&etag_value).unwrap());
+    hdrs.insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag_value)
+            .unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
+    );
     hdrs.insert(
         header::CONTENT_LENGTH,
         HeaderValue::from(body_bytes.len() as u64),
@@ -277,7 +283,8 @@ pub async fn stream(
         let end = start + body_bytes.len() as u64 - 1;
         hdrs.insert(
             header::CONTENT_RANGE,
-            HeaderValue::from_str(&format!("bytes {start}-{end}/{}", meta.total)).unwrap(),
+            HeaderValue::from_str(&format!("bytes {start}-{end}/{}", meta.total))
+                .unwrap_or_else(|_| HeaderValue::from_static("bytes 0-0/0")),
         );
     }
 
@@ -397,7 +404,8 @@ fn unsatisfiable(total: u64) -> Response {
     let mut hdrs = HeaderMap::new();
     hdrs.insert(
         header::CONTENT_RANGE,
-        HeaderValue::from_str(&format!("bytes */{total}")).unwrap(),
+        HeaderValue::from_str(&format!("bytes */{total}"))
+            .unwrap_or_else(|_| HeaderValue::from_static("bytes */0")),
     );
     hdrs.insert(
         HeaderName::from_static("x-content-type-options"),

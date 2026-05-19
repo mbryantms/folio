@@ -20,6 +20,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::error;
 use crate::auth::RequireAdmin;
 use crate::middleware::RequestContext;
 use crate::settings::{self, registry};
@@ -307,14 +308,6 @@ fn validate_value(kind: registry::SettingKind, value: &Value) -> Result<(), &'st
         }
     }
     Ok(())
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }
 
 #[cfg(test)]

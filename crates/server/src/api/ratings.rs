@@ -23,6 +23,7 @@ use entity::user_rating;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::state::AppState;
 
@@ -225,12 +226,4 @@ async fn visible_in_library(app: &AppState, user: &CurrentUser, lib_id: uuid::Uu
         .ok()
         .flatten()
         .is_some()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

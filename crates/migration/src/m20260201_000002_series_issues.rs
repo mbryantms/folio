@@ -11,7 +11,7 @@ pub(crate) struct Migration;
 
 // `SeriesGroup` keeps its prefix because sea-orm's `Iden` derive maps
 // variant casing to column identifiers; renaming would change the column name.
-#[allow(clippy::enum_variant_names)]
+#[expect(clippy::enum_variant_names)]
 #[derive(Iden)]
 enum Series {
     Table,

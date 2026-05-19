@@ -35,6 +35,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::{error, not_found};
 use crate::api::series::IssueSummaryView;
 use crate::auth::CurrentUser;
 use crate::library::access;
@@ -764,16 +765,4 @@ async fn ensure_target_visible(
         }
         _ => Err(error(StatusCode::BAD_REQUEST, "validation", "invalid kind")),
     }
-}
-
-fn not_found() -> Response {
-    error(StatusCode::NOT_FOUND, "not_found", "target not found")
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

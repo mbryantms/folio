@@ -57,9 +57,7 @@ export function MultiPinDialog({
         </DialogHeader>
         <div className="max-h-[50vh] space-y-1 overflow-y-auto py-1">
           {pagesQ.isLoading ? (
-            <p className="text-muted-foreground py-4 text-sm">
-              Loading pages…
-            </p>
+            <p className="text-muted-foreground py-4 text-sm">Loading pages…</p>
           ) : pages.length === 0 ? (
             <p className="text-muted-foreground py-4 text-sm">
               No pages yet. Use &ldquo;New page&rdquo; in the sidebar.

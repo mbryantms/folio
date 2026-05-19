@@ -468,8 +468,8 @@ export function CollectionViewDetail({
               {selectedTargets.length === 1 ? "" : "s"} from this collection?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              The items stay in your library; only their membership in{" "}
-              &ldquo;{savedView.name}&rdquo; is removed.
+              The items stay in your library; only their membership in &ldquo;
+              {savedView.name}&rdquo; is removed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -603,7 +603,7 @@ function DragHandle({
       // The handle sits at top-right of the card; the kebab is top-left.
       // `touch-none` prevents the page from scrolling while dragging on
       // touch devices.
-      className="bg-background/85 absolute top-2 right-2 z-20 inline-flex h-8 w-8 cursor-grab touch-none items-center justify-center rounded-full opacity-0 ring-1 shadow-sm ring-black/10 backdrop-blur transition group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing dark:ring-white/10"
+      className="bg-background/85 absolute top-2 right-2 z-20 inline-flex h-8 w-8 cursor-grab touch-none items-center justify-center rounded-full opacity-0 shadow-sm ring-1 ring-black/10 backdrop-blur transition group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing dark:ring-white/10"
       {...attributes}
       {...listeners}
     >

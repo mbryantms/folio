@@ -42,6 +42,8 @@ use crate::views::{
     dsl::{FilterDsl, MatchMode, SortField, SortOrder},
 };
 
+use super::error;
+
 pub const KIND_FILTER_SERIES: &str = "filter_series";
 pub const KIND_SYSTEM: &str = "system";
 pub const KIND_CBL: &str = "cbl";
@@ -289,14 +291,6 @@ pub struct ResultsQuery {
 }
 
 // ───── shared helpers ─────
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
-}
 
 fn validate_create(req: &CreateSavedViewReq) -> Result<(), (StatusCode, &'static str, String)> {
     if req.name.trim().is_empty() {

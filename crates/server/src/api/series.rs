@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 const MAX_QUERY_LEN: usize = 200;
 
+use super::error;
 use crate::api::libraries::{ScanMode, ScanResp};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::middleware::RequestContext;
@@ -2459,12 +2460,4 @@ pub async fn resume(
         state: "finished".into(),
     })
     .into_response()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

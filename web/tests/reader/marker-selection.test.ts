@@ -32,7 +32,9 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-function input(overrides: Partial<Parameters<typeof ocrCroppedRegion>[0]> = {}) {
+function input(
+  overrides: Partial<Parameters<typeof ocrCroppedRegion>[0]> = {},
+) {
   return {
     issueId: "abc-issue",
     pageIndex: 2,
@@ -110,9 +112,7 @@ describe("ocrCroppedRegion — server-side OCR", () => {
     );
     const result = await ocrCroppedRegion(input());
     expect(result).toBeNull();
-    expect(consoleWarn).toHaveBeenCalledWith(
-      expect.stringContaining("429"),
-    );
+    expect(consoleWarn).toHaveBeenCalledWith(expect.stringContaining("429"));
     consoleWarn.mockRestore();
   });
 

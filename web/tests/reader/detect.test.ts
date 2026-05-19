@@ -66,9 +66,9 @@ describe("detectDirection", () => {
 
   it("ComicInfo Manga still wins over series override (M2)", () => {
     // Author intent is the highest layer.
-    expect(
-      detectDirection("YesAndRightToLeft", "ltr", "ltr", "ltr"),
-    ).toBe("rtl");
+    expect(detectDirection("YesAndRightToLeft", "ltr", "ltr", "ltr")).toBe(
+      "rtl",
+    );
   });
 
   it("series override skipped when null falls through to user (M2)", () => {

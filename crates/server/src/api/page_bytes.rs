@@ -21,6 +21,7 @@ use axum::{
 use entity::{issue, library_user_access};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::state::AppState;
 
@@ -175,18 +176,24 @@ pub async fn serve(
     let mut hdrs = HeaderMap::new();
     hdrs.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(info.mime).unwrap(),
+        HeaderValue::from_str(info.mime)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     hdrs.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("inline; filename=\"page-{n}.{}\"", info.ext)).unwrap(),
+        HeaderValue::from_str(&format!("inline; filename=\"page-{n}.{}\"", info.ext))
+            .unwrap_or_else(|_| HeaderValue::from_static("inline")),
     );
     hdrs.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=3600"),
     );
-    hdrs.insert(header::ETAG, HeaderValue::from_str(&etag_value).unwrap());
+    hdrs.insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag_value)
+            .unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
+    );
     hdrs.insert(
         header::CONTENT_LENGTH,
         HeaderValue::from(body_bytes.len() as u64),
@@ -195,7 +202,8 @@ pub async fn serve(
         let end = start + body_bytes.len() as u64 - 1;
         hdrs.insert(
             header::CONTENT_RANGE,
-            HeaderValue::from_str(&format!("bytes {start}-{end}/{}", info.total)).unwrap(),
+            HeaderValue::from_str(&format!("bytes {start}-{end}/{}", info.total))
+                .unwrap_or_else(|_| HeaderValue::from_static("bytes 0-0/0")),
         );
     }
 
@@ -329,7 +337,8 @@ fn unsatisfiable(total: u64) -> Response {
     let mut hdrs = HeaderMap::new();
     hdrs.insert(
         header::CONTENT_RANGE,
-        HeaderValue::from_str(&format!("bytes */{total}")).unwrap(),
+        HeaderValue::from_str(&format!("bytes */{total}"))
+            .unwrap_or_else(|_| HeaderValue::from_static("bytes */0")),
     );
     hdrs.insert(
         HeaderName::from_static("x-content-type-options"),
@@ -355,14 +364,6 @@ async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool
         .ok()
         .flatten()
         .is_some()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        axum::Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }
 
 #[cfg(test)]

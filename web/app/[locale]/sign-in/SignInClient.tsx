@@ -112,9 +112,8 @@ export function SignInClient({
         {insecureWarning ? (
           <Banner tone="error">
             This page is served over plain HTTP. Sessions require HTTPS, so
-            signing in here will not stick — your browser drops the
-            session cookies. Use the HTTPS URL or visit via{" "}
-            <code>localhost</code>.
+            signing in here will not stick — your browser drops the session
+            cookies. Use the HTTPS URL or visit via <code>localhost</code>.
           </Banner>
         ) : null}
         <BannerStrip banner={banner} errorMessage={errorMessage} />

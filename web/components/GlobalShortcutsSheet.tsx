@@ -12,7 +12,11 @@ import {
 
 import { ShortcutsSheet } from "./ShortcutsSheet";
 import { useMe } from "@/lib/api/queries";
-import { resolveKeybinds, shouldSkipHotkey } from "@/lib/reader/keybinds";
+import {
+  readMeKeybinds,
+  resolveKeybinds,
+  shouldSkipHotkey,
+} from "@/lib/reader/keybinds";
 
 interface ShortcutsSheetContextValue {
   open: () => void;
@@ -57,10 +61,10 @@ export function GlobalShortcutsSheet({
   const me = useMe();
   const pathname = usePathname() ?? "";
 
-  const bindings = useMemo(() => {
-    const stored = (me.data?.keybinds ?? null) as Record<string, string> | null;
-    return resolveKeybinds(stored);
-  }, [me.data?.keybinds]);
+  const bindings = useMemo(
+    () => resolveKeybinds(readMeKeybinds(me)),
+    [me.data?.keybinds],
+  );
 
   const open = useCallback(() => setOpen(true), []);
   const close = useCallback(() => setOpen(false), []);

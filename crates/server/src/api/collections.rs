@@ -200,14 +200,6 @@ pub struct ListEntriesQuery {
 
 // ───── helpers ─────
 
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
-}
-
 /// Fetch a collection by id and verify the caller owns it. Returns the
 /// row on success; an HTTP response otherwise (404 / 403 / 500).
 async fn fetch_owned(
@@ -1309,5 +1301,6 @@ fn decode_position_cursor(s: &str) -> Option<i32> {
 }
 
 // Pull in the count-style helper without importing all of sea_orm.
+use super::error;
 use sea_orm::PaginatorTrait;
 use sea_orm::QuerySelect;

@@ -14,13 +14,11 @@
 import { describe, expect, it } from "vitest";
 
 import { mainNav } from "@/components/library/main-nav";
-import type {
-  SidebarEntryView,
-  SidebarLayoutView,
-} from "@/lib/api/types";
+import type { SidebarEntryView, SidebarLayoutView } from "@/lib/api/types";
 
 function entry(
-  overrides: Partial<SidebarEntryView> & Pick<SidebarEntryView, "kind" | "ref_id">,
+  overrides: Partial<SidebarEntryView> &
+    Pick<SidebarEntryView, "kind" | "ref_id">,
 ): SidebarEntryView {
   return {
     label: overrides.ref_id,
@@ -253,9 +251,7 @@ describe("mainNav with saved views and overrides", () => {
     const layout = defaultLayout();
     // Hide Collections; Browse should still be a contiguous run, just
     // shorter. "All Libraries" stays in the Libraries section.
-    const collections = layout.entries.find(
-      (e) => e.ref_id === "collections",
-    )!;
+    const collections = layout.entries.find((e) => e.ref_id === "collections")!;
     collections.visible = false;
     const sections = mainNav("", layout);
     const browse = sections.find((s) => s.label === "Browse")!;
@@ -331,12 +327,13 @@ describe("mainNav with saved views and overrides", () => {
       ],
     };
     const sections = mainNav("", layout);
-    expect(sections.map((s) => [s.label, s.items.map((i) => i.label)]))
-      .toEqual([
+    expect(sections.map((s) => [s.label, s.items.map((i) => i.label)])).toEqual(
+      [
         ["Browse", ["Home", "Bookmarks"]],
         ["Filters", ["My View"]],
         ["More", ["Collections"]],
-      ]);
+      ],
+    );
   });
 
   it("spacer entries emit a spacer section between content groups", () => {
@@ -455,11 +452,12 @@ describe("mainNav with saved views and overrides", () => {
       ],
     };
     const sections = mainNav("", layout);
-    expect(sections.map((s) => [s.label, s.items.map((i) => i.label)]))
-      .toEqual([
+    expect(sections.map((s) => [s.label, s.items.map((i) => i.label)])).toEqual(
+      [
         ["Browse", ["Library"]],
         ["Pages", ["Marvel"]],
-      ]);
+      ],
+    );
     const marvel = sections
       .find((s) => s.label === "Pages")!
       .items.find((i) => i.label === "Marvel")!;

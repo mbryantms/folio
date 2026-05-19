@@ -83,8 +83,8 @@ export function ForgotPasswordForm({
               </>
             ) : (
               <>
-                If that address matches an account, a password-reset link is
-                on its way. The link expires in 1 hour.
+                If that address matches an account, a password-reset link is on
+                its way. The link expires in 1 hour.
               </>
             )}
           </CardDescription>

@@ -55,24 +55,25 @@ describe("apiFetch refresh-and-retry", () => {
     //   3. Retry PATCH — must carry CSRF=NEW, not the original OLD header
     setCookie("OLD");
     let call = 0;
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
-        call += 1;
-        captured.push({ url: String(input), init: init ?? {} });
-        if (call === 1) {
-          return new Response("unauth", { status: 401 });
-        }
-        if (call === 2) {
-          // Simulate the cookie rotation that /api/auth/refresh would
-          // trigger server-side; the browser-equivalent here is just
-          // flipping what `document.cookie` returns next.
-          setCookie("NEW");
-          return new Response("ok", { status: 200 });
-        }
-        // Retry of the original request.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      call += 1;
+      captured.push({ url: String(input), init: init ?? {} });
+      if (call === 1) {
+        return new Response("unauth", { status: 401 });
+      }
+      if (call === 2) {
+        // Simulate the cookie rotation that /api/auth/refresh would
+        // trigger server-side; the browser-equivalent here is just
+        // flipping what `document.cookie` returns next.
+        setCookie("NEW");
         return new Response("ok", { status: 200 });
-      }) as typeof fetch);
+      }
+      // Retry of the original request.
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch);
 
     const res = await apiFetch("/me/account", {
       method: "PATCH",
@@ -95,7 +96,9 @@ describe("apiFetch refresh-and-retry", () => {
     setCookie("X");
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation((async () => new Response("unauth", { status: 401 })) as typeof fetch);
+      .mockImplementation(
+        (async () => new Response("unauth", { status: 401 })) as typeof fetch,
+      );
 
     const res = await apiFetch("/auth/refresh", { method: "POST" });
     expect(res.status).toBe(401);
@@ -126,9 +129,7 @@ function headerOf(init: RequestInit, name: string): string | null {
   if (!h) return null;
   if (h instanceof Headers) return h.get(name);
   if (Array.isArray(h)) {
-    const entry = h.find(
-      ([k]) => k.toLowerCase() === name.toLowerCase(),
-    );
+    const entry = h.find(([k]) => k.toLowerCase() === name.toLowerCase());
     return entry ? entry[1]! : null;
   }
   const rec = h as Record<string, string>;

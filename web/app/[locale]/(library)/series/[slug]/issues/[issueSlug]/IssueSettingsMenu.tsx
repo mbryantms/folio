@@ -48,11 +48,7 @@ import {
   useScanIssue,
   useUpsertIssueProgress,
 } from "@/lib/api/mutations";
-import {
-  useCollections,
-  useIssueMarkers,
-  useMe,
-} from "@/lib/api/queries";
+import { useCollections, useIssueMarkers, useMe } from "@/lib/api/queries";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { readerUrl } from "@/lib/urls";
@@ -247,134 +243,134 @@ export function IssueSettingsMenu({
 
   return (
     <>
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" disabled={busy}>
-          {busy ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Settings2 className="mr-2 h-4 w-4" />
-          )}
-          Actions
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
-        <DropdownMenuLabel>Reading</DropdownMenuLabel>
-        <DropdownMenuGroup>
-          {showReadFromStart && (
-            <DropdownMenuItem onSelect={readFromStart}>
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Read from beginning
-            </DropdownMenuItem>
-          )}
-          {canRead && (
-            <DropdownMenuItem onSelect={readIncognito}>
-              <EyeOff className="mr-2 h-4 w-4" />
-              Read in incognito
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuItem onSelect={markRead}>
-            <CheckCircle2 className="mr-2 h-4 w-4" />
-            Mark as read
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={markUnread}>
-            <Circle className="mr-2 h-4 w-4" />
-            Mark as unread
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={toggleBookmark}
-            disabled={createMarker.isPending || deleteMarker.isPending}
-          >
-            <Bookmark className="mr-2 h-4 w-4" />
-            {existingBookmark ? "Remove bookmark" : "Bookmark"}
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>Library</DropdownMenuLabel>
-        <DropdownMenuGroup>
-          <DropdownMenuItem
-            onSelect={addToReadingList}
-            disabled={!wtrId || addToWtr.isPending}
-          >
-            <BookmarkPlus className="mr-2 h-4 w-4" />
-            Add to Want to Read
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setCollectionDialogOpen(true)}>
-            <Folder className="mr-2 h-4 w-4" />
-            Add to collection…
-          </DropdownMenuItem>
-          {canRead && (
-            <DropdownMenuItem asChild>
-              <a href={`/opds/v1/issues/${issue.id}/file`} download>
-                <Download className="mr-2 h-4 w-4" />
-                Download
-              </a>
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuGroup>
-
-        {isAdmin && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>Admin</DropdownMenuLabel>
-            <DropdownMenuGroup>
-              <DropdownMenuItem
-                onSelect={triggerScan}
-                disabled={scan.isPending}
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Scan issue
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" disabled={busy}>
+            {busy ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Settings2 className="mr-2 h-4 w-4" />
+            )}
+            Actions
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-60">
+          <DropdownMenuLabel>Reading</DropdownMenuLabel>
+          <DropdownMenuGroup>
+            {showReadFromStart && (
+              <DropdownMenuItem onSelect={readFromStart}>
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Read from beginning
               </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <Images className="mr-2 h-4 w-4" />
-                  Thumbnails
-                </DropdownMenuSubTrigger>
-                <DropdownMenuPortal>
-                  <DropdownMenuSubContent>
-                    <DropdownMenuItem
-                      onSelect={() => regenerateCover.mutate()}
-                      disabled={regenerateCover.isPending}
-                    >
-                      <ImageIcon className="mr-2 h-4 w-4" />
-                      Rebuild cover
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() => generatePageMap.mutate()}
-                      disabled={generatePageMap.isPending}
-                    >
-                      <Images className="mr-2 h-4 w-4" />
-                      Fill missing page thumbnails
-                    </DropdownMenuItem>
-                    {onForceRecreatePageMap && (
+            )}
+            {canRead && (
+              <DropdownMenuItem onSelect={readIncognito}>
+                <EyeOff className="mr-2 h-4 w-4" />
+                Read in incognito
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={markRead}>
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Mark as read
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={markUnread}>
+              <Circle className="mr-2 h-4 w-4" />
+              Mark as unread
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={toggleBookmark}
+              disabled={createMarker.isPending || deleteMarker.isPending}
+            >
+              <Bookmark className="mr-2 h-4 w-4" />
+              {existingBookmark ? "Remove bookmark" : "Bookmark"}
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Library</DropdownMenuLabel>
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              onSelect={addToReadingList}
+              disabled={!wtrId || addToWtr.isPending}
+            >
+              <BookmarkPlus className="mr-2 h-4 w-4" />
+              Add to Want to Read
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setCollectionDialogOpen(true)}>
+              <Folder className="mr-2 h-4 w-4" />
+              Add to collection…
+            </DropdownMenuItem>
+            {canRead && (
+              <DropdownMenuItem asChild>
+                <a href={`/opds/v1/issues/${issue.id}/file`} download>
+                  <Download className="mr-2 h-4 w-4" />
+                  Download
+                </a>
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuGroup>
+
+          {isAdmin && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Admin</DropdownMenuLabel>
+              <DropdownMenuGroup>
+                <DropdownMenuItem
+                  onSelect={triggerScan}
+                  disabled={scan.isPending}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Scan issue
+                </DropdownMenuItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Images className="mr-2 h-4 w-4" />
+                    Thumbnails
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuPortal>
+                    <DropdownMenuSubContent>
                       <DropdownMenuItem
-                        onSelect={onForceRecreatePageMap}
-                        className="text-destructive focus:text-destructive"
+                        onSelect={() => regenerateCover.mutate()}
+                        disabled={regenerateCover.isPending}
+                      >
+                        <ImageIcon className="mr-2 h-4 w-4" />
+                        Rebuild cover
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => generatePageMap.mutate()}
+                        disabled={generatePageMap.isPending}
                       >
                         <Images className="mr-2 h-4 w-4" />
-                        Rebuild all page thumbnails
+                        Fill missing page thumbnails
                       </DropdownMenuItem>
-                    )}
-                  </DropdownMenuSubContent>
-                </DropdownMenuPortal>
-              </DropdownMenuSub>
-              {onEdit && (
-                <DropdownMenuItem onSelect={onEdit}>
-                  <Pencil className="mr-2 h-4 w-4" />
-                  Edit issue
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuGroup>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-    <AddToCollectionDialog
-      open={collectionDialogOpen}
-      onOpenChange={setCollectionDialogOpen}
-      target={collectionTarget}
-    />
+                      {onForceRecreatePageMap && (
+                        <DropdownMenuItem
+                          onSelect={onForceRecreatePageMap}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Images className="mr-2 h-4 w-4" />
+                          Rebuild all page thumbnails
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuPortal>
+                </DropdownMenuSub>
+                {onEdit && (
+                  <DropdownMenuItem onSelect={onEdit}>
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit issue
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuGroup>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <AddToCollectionDialog
+        open={collectionDialogOpen}
+        onOpenChange={setCollectionDialogOpen}
+        target={collectionTarget}
+      />
     </>
   );
 }

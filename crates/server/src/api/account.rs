@@ -22,6 +22,7 @@ use serde::Deserialize;
 
 use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 
+use super::error;
 use crate::api::form_or_json::{FormOrJson, ResponseFormat, redirect_with_error};
 use crate::audit::{self, AuditEntry};
 use crate::auth::CurrentUser;
@@ -277,12 +278,4 @@ pub async fn update(
         ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
         ResponseFormat::Form => (jar, Redirect::to("/settings/account?ok=1")).into_response(),
     }
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

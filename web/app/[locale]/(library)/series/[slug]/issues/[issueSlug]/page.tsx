@@ -59,8 +59,7 @@ export default async function IssuePage({
   // a user arriving here via a CBL link keeps their next-up resolver
   // tied to the list when they hit Read.
   const { cbl } = await searchParams;
-  const cblSavedViewId =
-    typeof cbl === "string" && cbl.length > 0 ? cbl : null;
+  const cblSavedViewId = typeof cbl === "string" && cbl.length > 0 ? cbl : null;
   let issue: IssueDetailView;
   try {
     issue = await apiGet<IssueDetailView>(
@@ -240,10 +239,7 @@ export default async function IssuePage({
               {issue.state !== "active" && (
                 <Badge variant="destructive">{issue.state}</Badge>
               )}
-              <IssueHealthBadge
-                seriesSlug={seriesSlug}
-                issueSlug={issueSlug}
-              />
+              <IssueHealthBadge seriesSlug={seriesSlug} issueSlug={issueSlug} />
               <UserRating
                 scope="issue"
                 seriesSlug={issue.series_slug}

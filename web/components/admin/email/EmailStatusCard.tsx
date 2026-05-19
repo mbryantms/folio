@@ -29,11 +29,17 @@ export function EmailStatusCard({
         <div>
           <Label>SMTP</Label>
           {status?.configured ? (
-            <Badge variant="secondary" className="bg-emerald-500/15 text-emerald-300">
+            <Badge
+              variant="secondary"
+              className="bg-emerald-500/15 text-emerald-300"
+            >
               Configured
             </Badge>
           ) : (
-            <Badge variant="outline" className="border-amber-500/50 text-amber-300">
+            <Badge
+              variant="outline"
+              className="border-amber-500/50 text-amber-300"
+            >
               Not wired
             </Badge>
           )}

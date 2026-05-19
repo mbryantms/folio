@@ -47,7 +47,8 @@ function pickAuthValues(
   };
   const mode = asString("auth.mode");
   return {
-    mode: mode === "local" || mode === "oidc" || mode === "both" ? mode : "both",
+    mode:
+      mode === "local" || mode === "oidc" || mode === "both" ? mode : "both",
     registration_open: asBool("auth.local.registration_open", true),
     oidc_issuer: asString("auth.oidc.issuer"),
     oidc_client_id: asString("auth.oidc.client_id"),

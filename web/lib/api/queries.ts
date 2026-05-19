@@ -1201,9 +1201,7 @@ export function useCblListEntriesInfinite(
  *  `web/tests/api/cbl-entries-next-page.test.ts` rather than
  *  shipping. The shape returned here flows directly into TanStack's
  *  page-walking loop: `undefined` ⇒ "no more pages, stop". */
-export function cblEntriesNextPage(
-  last: CblEntryListView,
-): string | undefined {
+export function cblEntriesNextPage(last: CblEntryListView): string | undefined {
   return last.next_cursor ?? undefined;
 }
 
@@ -1501,7 +1499,9 @@ export function useNextUp(
       const qs = cblSavedViewId
         ? `?cbl=${encodeURIComponent(cblSavedViewId)}`
         : "";
-      return jsonFetch<NextUpView>(`/issues/${encodeURIComponent(issueId)}/next-up${qs}`);
+      return jsonFetch<NextUpView>(
+        `/issues/${encodeURIComponent(issueId)}/next-up${qs}`,
+      );
     },
     enabled,
     staleTime: 5 * 60 * 1000,
@@ -1525,7 +1525,9 @@ export function usePrevUp(
       const qs = cblSavedViewId
         ? `?cbl=${encodeURIComponent(cblSavedViewId)}`
         : "";
-      return jsonFetch<NextUpView>(`/issues/${encodeURIComponent(issueId)}/prev-up${qs}`);
+      return jsonFetch<NextUpView>(
+        `/issues/${encodeURIComponent(issueId)}/prev-up${qs}`,
+      );
     },
     enabled,
     staleTime: 5 * 60 * 1000,

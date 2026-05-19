@@ -123,8 +123,8 @@ export function ManagePinsDialog({
             Manage rails on {thisPage?.name ?? "this page"}
           </DialogTitle>
           <DialogDescription>
-            {railCount} / {RAIL_CAP} rails pinned. Toggle a saved view to add
-            or remove it from this page.
+            {railCount} / {RAIL_CAP} rails pinned. Toggle a saved view to add or
+            remove it from this page.
           </DialogDescription>
         </DialogHeader>
         <div className="relative">

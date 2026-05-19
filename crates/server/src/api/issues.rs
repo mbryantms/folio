@@ -29,6 +29,7 @@ use crate::auth::{CurrentUser, RequireAdmin};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 
+use super::error;
 use super::series::{IssueDetailView, IssueLink, IssueSummaryView};
 
 pub fn routes() -> Router<AppState> {
@@ -1871,12 +1872,4 @@ async fn visible_in_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) ->
         .ok()
         .flatten()
         .is_some()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

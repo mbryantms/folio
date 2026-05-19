@@ -32,7 +32,8 @@ const formSchema = z.object({
     .string()
     .trim()
     .refine(
-      (v) => v === "" || (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 65535),
+      (v) =>
+        v === "" || (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 65535),
       "Port must be between 1 and 65535",
     ),
   tls: z.enum(["none", "starttls", "tls"]),
@@ -124,11 +125,7 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
               <FormItem>
                 <FormLabel>Port</FormLabel>
                 <FormControl>
-                  <Input
-                    inputMode="numeric"
-                    placeholder="587"
-                    {...field}
-                  />
+                  <Input inputMode="numeric" placeholder="587" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -186,7 +183,9 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
                 <Input
                   type="password"
                   autoComplete="new-password"
-                  placeholder={initial.password_set ? "•••••••• (unchanged)" : ""}
+                  placeholder={
+                    initial.password_set ? "•••••••• (unchanged)" : ""
+                  }
                   {...field}
                 />
               </FormControl>

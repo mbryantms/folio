@@ -23,7 +23,6 @@ use openidconnect::{
     AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce,
     PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
     core::{CoreClient, CoreProviderMetadata, CoreResponseType},
-    reqwest::async_http_client,
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
 use serde::Deserialize;
@@ -64,14 +63,34 @@ pub fn routes() -> Router<AppState> {
     )
 }
 
-/// One entry in the discovery cache. Holds both the wired-up
-/// [`CoreClient`] (consumed by start/callback) and the `end_session_endpoint`
-/// URL (consumed by logout, optional — not every provider publishes it).
+/// One entry in the discovery cache. As of openidconnect 4 the
+/// `CoreClient` type carries typestate parameters for which endpoints
+/// have been configured (auth url, token url, redirect URI, etc.); the
+/// configured type is unergonomic to store directly. We cache the
+/// untyped [`CoreProviderMetadata`] instead and rebuild the client per
+/// handler call via [`build_client`]. The metadata is `Clone` and the
+/// per-call rebuild is cheap (no I/O).
 #[derive(Clone)]
 pub(crate) struct DiscoveryEntry {
-    pub client: CoreClient,
+    pub provider: CoreProviderMetadata,
     pub end_session_endpoint: Option<String>,
     fetched_at: Instant,
+}
+
+/// Process-global HTTP client used for OIDC discovery + token exchange.
+/// Built once with `redirect::Policy::none()` per openidconnect 4's
+/// SSRF-prevention guidance.
+static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::const_new();
+
+async fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT
+        .get_or_init(|| async {
+            reqwest::ClientBuilder::new()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("build oidc http client")
+        })
+        .await
 }
 
 /// Process-global discovery cache. Keyed by issuer URL so a future
@@ -124,30 +143,10 @@ async fn discover_entry(app: &AppState) -> anyhow::Result<DiscoveryEntry> {
         }
     }
 
-    let client_id = cfg
-        .oidc_client_id
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("oidc client_id not set"))?;
-    let client_secret = cfg
-        .oidc_client_secret
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("oidc client_secret not set"))?;
-
     tracing::info!(target: "auth.oidc", issuer = %issuer, "oidc discovery refresh");
     let provider =
-        CoreProviderMetadata::discover_async(IssuerUrl::new(issuer.clone())?, async_http_client)
+        CoreProviderMetadata::discover_async(IssuerUrl::new(issuer.clone())?, http_client().await)
             .await?;
-
-    let redirect = format!(
-        "{}/auth/oidc/callback",
-        cfg.public_url.trim_end_matches('/')
-    );
-    let client = CoreClient::from_provider_metadata(
-        provider,
-        ClientId::new(client_id.to_string()),
-        Some(ClientSecret::new(client_secret.to_string())),
-    )
-    .set_redirect_uri(RedirectUrl::new(redirect)?);
 
     // `end_session_endpoint` is part of the OIDC RP-Initiated Logout
     // extension, not Core 1.0. openidconnect's CoreProviderMetadata
@@ -158,7 +157,7 @@ async fn discover_entry(app: &AppState) -> anyhow::Result<DiscoveryEntry> {
     let end_session_endpoint = fetch_end_session_endpoint(&issuer).await;
 
     let entry = DiscoveryEntry {
-        client,
+        provider,
         end_session_endpoint,
         fetched_at: Instant::now(),
     };
@@ -170,8 +169,59 @@ async fn discover_entry(app: &AppState) -> anyhow::Result<DiscoveryEntry> {
     Ok(entry)
 }
 
-async fn discover(app: &AppState) -> anyhow::Result<CoreClient> {
-    Ok(discover_entry(app).await?.client)
+/// Build a per-request `CoreClient` from cached provider metadata +
+/// the current config. openidconnect 4's typestate makes storing the
+/// fully-configured client awkward, so we rebuild it from the cached
+/// metadata each call (cheap — no I/O).
+fn build_client(entry: &DiscoveryEntry, app: &AppState) -> anyhow::Result<ConfiguredCoreClient> {
+    let cfg = app.cfg();
+    let client_id = cfg
+        .oidc_client_id
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("oidc client_id not set"))?;
+    let client_secret = cfg
+        .oidc_client_secret
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("oidc client_secret not set"))?;
+    let redirect = format!(
+        "{}/auth/oidc/callback",
+        cfg.public_url.trim_end_matches('/')
+    );
+    Ok(CoreClient::from_provider_metadata(
+        entry.provider.clone(),
+        ClientId::new(client_id.to_string()),
+        Some(ClientSecret::new(client_secret.to_string())),
+    )
+    .set_redirect_uri(RedirectUrl::new(redirect)?))
+}
+
+/// Type alias for the configured client after `set_redirect_uri`.
+/// openidconnect 4 carries typestate parameters for which endpoints
+/// have been configured; this captures the "auth + token + redirect
+/// set, others default" shape we use everywhere.
+type ConfiguredCoreClient = openidconnect::Client<
+    openidconnect::EmptyAdditionalClaims,
+    openidconnect::core::CoreAuthDisplay,
+    openidconnect::core::CoreGenderClaim,
+    openidconnect::core::CoreJweContentEncryptionAlgorithm,
+    openidconnect::core::CoreJsonWebKey,
+    openidconnect::core::CoreAuthPrompt,
+    openidconnect::StandardErrorResponse<openidconnect::core::CoreErrorResponseType>,
+    openidconnect::core::CoreTokenResponse,
+    openidconnect::core::CoreTokenIntrospectionResponse,
+    openidconnect::core::CoreRevocableToken,
+    openidconnect::core::CoreRevocationErrorResponse,
+    openidconnect::EndpointSet,
+    openidconnect::EndpointNotSet,
+    openidconnect::EndpointNotSet,
+    openidconnect::EndpointNotSet,
+    openidconnect::EndpointMaybeSet,
+    openidconnect::EndpointMaybeSet,
+>;
+
+async fn discover(app: &AppState) -> anyhow::Result<ConfiguredCoreClient> {
+    let entry = discover_entry(app).await?;
+    build_client(&entry, app)
 }
 
 /// Public wrapper around [`discover_entry`] so the logout handler in
@@ -387,8 +437,9 @@ pub async fn callback(
 
     let token_resp = match client
         .exchange_code(AuthorizationCode::new(code))
+        .expect("token endpoint must be set after discovery")
         .set_pkce_verifier(PkceCodeVerifier::new(state.pkce))
-        .request_async(async_http_client)
+        .request_async(http_client().await)
         .await
     {
         Ok(t) => t,

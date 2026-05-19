@@ -9,7 +9,7 @@ async fn main() {
     {
         // SAFETY: setting an env var pre-runtime is fine in the migration
         // binary because no other thread is running.
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::set_var("DATABASE_URL", url)
         };

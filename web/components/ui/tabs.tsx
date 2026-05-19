@@ -28,8 +28,8 @@ const TabsList = React.forwardRef<
       // `[&>*]:shrink-0` keeps each trigger at its intrinsic width so
       //   long labels ("Cast & Setting") stay readable inside the
       //   scrollable strip.
-      "bg-muted text-muted-foreground flex h-9 w-full items-center justify-[safe_center] overflow-x-auto rounded-md p-1 md:inline-flex md:w-fit md:overflow-visible",
-      "[&::-webkit-scrollbar]:hidden [&>*]:shrink-0 [scrollbar-width:none]",
+      "bg-muted text-muted-foreground justify-[safe_center] flex h-9 w-full items-center overflow-x-auto rounded-md p-1 md:inline-flex md:w-fit md:overflow-visible",
+      "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0",
       className,
     )}
     {...props}

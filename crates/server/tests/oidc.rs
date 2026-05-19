@@ -525,3 +525,136 @@ async fn logout_redirects_to_end_session_endpoint_for_oidc_session() {
         "RP-logout URL must include post_logout_redirect_uri"
     );
 }
+
+// ───────────────────── Discovery-cache eviction ─────────────────────
+//
+// Audit gap: `clear_discovery_cache()` is called by `PATCH /admin/settings`
+// when any `oidc.*` row changes, but no test asserted the cache actually
+// gets evicted. Without this, a future refactor could break the
+// invalidation path silently — operators would keep hitting the old
+// issuer indefinitely.
+
+/// Register a local user via the form-action endpoint and return its
+/// `(session, csrf)` cookies. First registered user becomes admin per
+/// Folio's first-user-bootstrap convention.
+async fn register_local_admin(app: &TestApp, email: &str) -> (String, String) {
+    let body = format!(r#"{{"email":"{email}","password":"correctly-horse-battery"}}"#);
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "register");
+    let session =
+        extract_set_cookie(&resp, "__Host-comic_session").expect("session cookie on register");
+    let csrf = extract_set_cookie(&resp, "__Host-comic_csrf").expect("csrf cookie on register");
+    (session, csrf)
+}
+
+#[tokio::test]
+async fn patching_oidc_issuer_evicts_discovery_cache() {
+    let op_a = MockOp::start().await;
+    let op_b = MockOp::start().await;
+
+    // Spawn pointing at A.
+    let app = TestApp::spawn_with_oidc(op_a.issuer(), false).await;
+
+    // 1) Populate the discovery cache via /auth/oidc/start. The redirect
+    //    Location header should reference op_a's `authorize` endpoint.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/auth/oidc/start")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location_before = resp
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location after first /start")
+        .to_string();
+    assert!(
+        location_before.starts_with(&format!("{}/authorize", op_a.issuer())),
+        "first /start must point at op_a; got {location_before}"
+    );
+
+    // 2) Register a local admin, then PATCH /admin/settings to swap the
+    //    issuer over to op_b. Because the new issuer is a different
+    //    wiremock host, dry-run validation needs new client_id /
+    //    client_secret (in practice they're the same string — the test
+    //    harness uses the same values for both ops).
+    let (session, csrf) = register_local_admin(&app, "admin@example.com").await;
+    let patch_body = json!({
+        "auth.oidc.issuer": op_b.issuer(),
+        "auth.oidc.client_id": "folio-test-client",
+        "auth.oidc.client_secret": "folio-test-secret",
+    });
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/admin/settings")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={session}; __Host-comic_csrf={csrf}"),
+                )
+                .header("X-CSRF-Token", &csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(patch_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(status, StatusCode::OK, "PATCH /admin/settings: {body}");
+
+    // 3) Next /auth/oidc/start should re-fetch discovery — this time
+    //    against op_b — and the redirect Location should point at op_b's
+    //    `/authorize` endpoint. If the cache had NOT been evicted, the
+    //    server would keep using op_a's cached authorize URL.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/auth/oidc/start")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location_after = resp
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location after PATCH")
+        .to_string();
+    assert!(
+        location_after.starts_with(&format!("{}/authorize", op_b.issuer())),
+        "post-PATCH /start must point at op_b (cache should be evicted); got {location_after}",
+    );
+    assert!(
+        !location_after.starts_with(&op_a.issuer()),
+        "post-PATCH /start MUST NOT point at op_a (stale cache); got {location_after}",
+    );
+}

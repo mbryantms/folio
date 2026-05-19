@@ -74,7 +74,7 @@ impl IssueManifest {
 /// the right health bucket. Variants intentionally use the `Ok`/`Missing*`/etc
 /// names from the original error space; clippy's "variant starts with enum
 /// name" lint doesn't apply here.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 enum ArchiveOutcome {
     /// ComicInfo and (optionally) MetronInfo extracted. MetronInfo wins on
     /// overlapping fields when merged downstream (spec §4.4). `actual_pages`
@@ -138,71 +138,76 @@ struct ArchiveDiagnostics {
     total_entries: u32,
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Per-series ingest context. Holds the immutable cluster the
+/// ingest pipeline threads through; per-file inputs (`path`, the
+/// optional fingerprint, the slug-set, and the mutable
+/// `IngestOutputs`) stay as positional args. Introduced in
+/// code-quality-cleanup M3 to close the
+/// `clippy::too_many_arguments` suppression on both ingest entry
+/// points.
+pub struct IngestCtx<'a> {
+    pub state: &'a AppState,
+    pub lib: &'a library::Model,
+    pub series_id: Uuid,
+    /// Series folder root. Used to detect when `path` sits inside an
+    /// allowlist subfolder (`Specials`/`Annuals`/…) for path-derived
+    /// `special_type` classification. Pass the series folder itself
+    /// even when the archive lives directly inside it.
+    pub series_folder: &'a Path,
+    pub manifest: Option<&'a IssueManifest>,
+    /// When true, bypass the per-file size+mtime fast path so the archive
+    /// is re-read and ComicInfo re-parsed even if nothing on disk changed.
+    /// Used by manual "Scan issue" / "Scan series" / library force scans
+    /// where the user explicitly asked for a fresh ingest (e.g. to pick up
+    /// new parser fields without touching every file's mtime).
+    pub force: bool,
+}
+
+/// Mutable per-batch outputs. Bundled into one struct so the call site
+/// can build one `IngestOutputs` and re-pass it through the loop.
+pub struct IngestOutputs<'a> {
+    pub stats: &'a mut ScanStats,
+    pub health: &'a mut HealthCollector,
+}
+
 pub async fn ingest_one<C: ConnectionTrait>(
-    state: &AppState,
+    ctx: &IngestCtx<'_>,
     db: &C,
-    lib: &library::Model,
     path: &Path,
-    series_id: Uuid,
-    // Series folder root. Used to detect when `path` sits inside an
-    // allowlist subfolder (`Specials`/`Annuals`/…) for path-derived
-    // `special_type` classification. Pass the series folder itself
-    // even when the archive lives directly inside it.
-    series_folder: &Path,
-    manifest: Option<&IssueManifest>,
     // F-2: when `Some`, allocate new issue slugs against this in-memory
     // HashSet (pre-fetched once per series) instead of issuing a
     // `SELECT COUNT(*)` per candidate. The set is mutated as slugs are
     // chosen so successive archives in the same batch don't collide.
     // When `None`, fall back to the per-call DB allocator.
     slug_set: Option<&mut std::collections::HashSet<String>>,
-    stats: &mut ScanStats,
-    health: &mut HealthCollector,
-    force: bool,
+    outputs: &mut IngestOutputs<'_>,
 ) -> anyhow::Result<()> {
     let (size, mtime) = file_fingerprint(path)?;
-    ingest_one_with_fingerprint(
-        state,
-        db,
-        lib,
-        path,
-        series_id,
-        series_folder,
-        manifest,
-        slug_set,
-        size,
-        mtime,
-        stats,
-        health,
-        force,
-    )
-    .await
+    ingest_one_with_fingerprint(ctx, db, path, slug_set, size, mtime, outputs).await
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
-    state: &AppState,
+    ctx: &IngestCtx<'_>,
     db: &C,
-    lib: &library::Model,
     path: &Path,
-    series_id: Uuid,
-    // See `ingest_one` for `series_folder` semantics.
-    series_folder: &Path,
-    manifest: Option<&IssueManifest>,
-    // See `ingest_one` for `slug_set` semantics.
     slug_set: Option<&mut std::collections::HashSet<String>>,
     size: i64,
     mtime: chrono::DateTime<chrono::Utc>,
-    stats: &mut ScanStats,
-    health: &mut HealthCollector,
-    // When true, bypass the per-file size+mtime fast path so the archive
-    // is re-read and ComicInfo re-parsed even if nothing on disk changed.
-    // Used by manual "Scan issue" / "Scan series" / library force scans
-    // where the user explicitly asked for a fresh ingest (e.g. to pick up
-    // new parser fields without touching every file's mtime).
-    force: bool,
+    outputs: &mut IngestOutputs<'_>,
 ) -> anyhow::Result<()> {
+    let IngestCtx {
+        state,
+        lib,
+        series_id,
+        series_folder,
+        manifest,
+        force,
+    } = *ctx;
+    // Reborrow the mutable outputs once at the top so the function body
+    // can keep referring to `stats` / `health` directly instead of
+    // `outputs.stats` / `outputs.health` at every site.
+    let stats: &mut ScanStats = &mut *outputs.stats;
+    let health: &mut HealthCollector = &mut *outputs.health;
     // Postgres `timestamptz` truncates writes to microsecond precision, so a
     // fresh nanosecond-precision fs mtime never round-trips byte-equal. Force
     // both sides into the same precision up front so the §9.1 fast path
@@ -565,10 +570,17 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         if content_changed && strip_dir.exists() {
             // Best-effort — a leftover stale dir isn't fatal, the worker
             // will overwrite individual files. But we want to drop pages
-            // that disappeared from the new archive.
-            if let Err(e) = std::fs::remove_dir_all(&strip_dir) {
-                tracing::warn!(path = %strip_dir.display(), error = %e, "failed to wipe stale strip dir");
-            }
+            // that disappeared from the new archive. `remove_dir_all` is
+            // synchronous; route through `spawn_blocking` so the async
+            // ingest path doesn't stall on slow / network-mounted data
+            // dirs. M4 of code-quality-cleanup-1.0.
+            let strip_dir_owned = strip_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Err(e) = std::fs::remove_dir_all(&strip_dir_owned) {
+                    tracing::warn!(path = %strip_dir_owned.display(), error = %e, "failed to wipe stale strip dir");
+                }
+            })
+            .await;
         }
         let updated = am.update(db).await?;
         remember_primary_issue_path(db, &row_id, &path_str).await?;

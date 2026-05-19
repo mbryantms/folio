@@ -91,11 +91,12 @@ export function PagesManager() {
   // "derive state from props" cases — using the render-phase setState
   // idiom (https://react.dev/learn/you-might-not-need-an-effect) keeps
   // the lint clean and avoids an extra mount.
-  if (sortedPages.length > 0) {
+  const firstPageId = sortedPages[0]?.id ?? null;
+  if (firstPageId !== null) {
     const stillValid =
       activeTab !== null && sortedPages.some((p) => p.id === activeTab);
     if (!stillValid) {
-      setActiveTab(sortedPages[0]!.id);
+      setActiveTab(firstPageId);
     }
   } else if (activeTab !== null) {
     setActiveTab(null);
@@ -121,8 +122,8 @@ export function PagesManager() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground text-sm">
-          Each page holds up to {RAIL_CAP} pinned saved-view rails. Drag rows
-          to reorder; use the kebab menu for page settings.
+          Each page holds up to {RAIL_CAP} pinned saved-view rails. Drag rows to
+          reorder; use the kebab menu for page settings.
         </p>
         <NewPageButton />
       </div>
@@ -135,7 +136,7 @@ export function PagesManager() {
               {p.is_system ? (
                 <Badge
                   variant="outline"
-                  className="text-muted-foreground ml-2 text-[10px] font-medium uppercase tracking-wider"
+                  className="text-muted-foreground ml-2 text-[10px] font-medium tracking-wider uppercase"
                 >
                   Home
                 </Badge>
@@ -328,8 +329,8 @@ function PageHeader({ page }: { page: PageView }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this page?</AlertDialogTitle>
             <AlertDialogDescription>
-              Pins on this page will be removed. The saved views themselves
-              stay — you can pin them to other pages from Saved views.
+              Pins on this page will be removed. The saved views themselves stay
+              — you can pin them to other pages from Saved views.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -495,8 +496,14 @@ function RailRow({
   position: number;
   onRemove: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: view.id });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: view.id });
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -539,7 +546,7 @@ function RailRow({
       <Badge
         variant="outline"
         className={cn(
-          "text-muted-foreground hidden shrink-0 text-[10px] font-medium uppercase tracking-wider sm:inline-flex",
+          "text-muted-foreground hidden shrink-0 text-[10px] font-medium tracking-wider uppercase sm:inline-flex",
         )}
       >
         {kindLabel(view.kind)}

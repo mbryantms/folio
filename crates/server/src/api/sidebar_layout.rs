@@ -52,6 +52,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
@@ -518,12 +519,4 @@ fn view_href(v: &saved_view::Model) -> String {
         return format!("/views/{}", key.replace('_', "-"));
     }
     format!("/views/{}", v.id)
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

@@ -1,19 +1,30 @@
 /**
- * Typed TanStack mutation hooks. CSRF + toast wiring is centralised here so
- * later milestones (M2 dismiss/restore, M3 user updates, M4 preferences,
- * M5 password issuance) only need to declare the endpoint shape.
+ * Typed TanStack mutation hooks. CSRF + toast wiring lives in
+ * `./_core`; per-domain hooks are gradually being sharded into
+ * siblings (`./thumbnails`, …) so this file shrinks.
+ *
+ * code-quality-cleanup M5 introduced the `mutations/` directory shape
+ * + extracted `_core.ts` + the thumbnails cluster. Remaining clusters
+ * (CBL, markers, saved-views, pages, admin) are mechanical follow-ups.
  */
-import * as React from "react";
-import {
-  useMutation,
-  useQueryClient,
-  type UseMutationOptions,
-} from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 
-import { apiFetch } from "./auth-refresh";
-import { queryKeys } from "./queries";
+import { apiFetch } from "../auth-refresh";
+import { queryKeys } from "../queries";
+import { getCsrfToken, useApiMutation } from "./_core";
+
+// Re-exports kept stable across the M5 directory split so callers
+// can continue to import everything from `"@/lib/api/mutations"`.
+export {
+  ApiMutationError,
+  apiMutate,
+  getCsrfToken,
+  useApiMutation,
+  type ApiMutationInput,
+} from "./_core";
+export * from "./thumbnails";
+
 import type {
   AccountReq,
   AdminUserDetailView,
@@ -28,7 +39,6 @@ import type {
   CreateMarkerReq,
   CreateSavedViewReq,
   MarkerView,
-  DeleteAllResp,
   DeleteLibraryResp,
   ImportSummary,
   IssueDetailView,
@@ -42,13 +52,11 @@ import type {
   QueueClearResp,
   ProgressView,
   RatingView,
-  RegenerateResp,
   SavedViewListView,
   SavedViewView,
   ScanMode,
   ScanResp,
   SetRatingReq,
-  ThumbnailsSettingsView,
   AppPasswordCreatedView,
   CreateAppPasswordReq,
   ReorderEntriesReq,
@@ -62,166 +70,11 @@ import type {
   UpdateSavedViewReq,
   UpdateSeriesReq,
   SidebarLayoutView,
-  UpdateThumbnailsSettingsReq,
   UpdateUserReq,
   UpsertProgressReq,
   UpsertSeriesProgressReq,
   UpsertSeriesProgressResp,
-} from "./types";
-
-function getCsrfToken(): string | null {
-  if (typeof document === "undefined") return null;
-  const m = document.cookie.match(/(?:^|;\s*)(?:__Host-)?comic_csrf=([^;]+)/);
-  return m ? decodeURIComponent(m[1]!) : null;
-}
-
-export type ApiMutationInput = {
-  path: string;
-  method: "POST" | "PATCH" | "PUT" | "DELETE";
-  body?: unknown;
-};
-
-/**
- * Structured error thrown by `apiMutate`. Carries the HTTP status (or
- * `"network"` when the request never reached the server) so callers
- * can branch on transience. `useApiMutation`'s `onError` reads
- * `.transient` to decide whether to attach a Retry action to the
- * error toast.
- */
-export class ApiMutationError extends Error {
-  readonly status: number | "network";
-
-  constructor(message: string, status: number | "network") {
-    super(message);
-    this.name = "ApiMutationError";
-    this.status = status;
-  }
-
-  /**
-   * `true` for failures the user can plausibly retry by clicking
-   * a button: network errors (offline / DNS / TLS hiccup) and 5xx
-   * server errors (transient backend issue, restart in progress).
-   * `false` for 4xx — those are validation / auth / permission
-   * problems where retrying without changing input won't help.
-   */
-  get transient(): boolean {
-    return (
-      this.status === "network" ||
-      (typeof this.status === "number" && this.status >= 500)
-    );
-  }
-}
-
-export async function apiMutate<T>({
-  path,
-  method,
-  body,
-}: ApiMutationInput): Promise<T | null> {
-  const csrf = getCsrfToken();
-  // Only declare `Content-Type: application/json` when there's an
-  // actual JSON body to send. axum's `Option<Json<T>>` extractor
-  // accepts a missing body cleanly but errors with 400 ("EOF while
-  // parsing a value") when the header is present and the body is
-  // empty — biting the legacy "Pin to home" pill on /settings/views
-  // which posts no body to /me/saved-views/{id}/pin.
-  const hasBody = body !== undefined;
-  let res: Response;
-  try {
-    res = await apiFetch(path, {
-      method,
-      headers: {
-        Accept: "application/json",
-        ...(hasBody ? { "Content-Type": "application/json" } : {}),
-        ...(csrf ? { "X-CSRF-Token": csrf } : {}),
-      },
-      body: hasBody ? JSON.stringify(body) : undefined,
-    });
-  } catch (e) {
-    // `fetch` rejects on network errors (offline, DNS, TLS, CORS
-    // preflight refusal). Promote to a typed retryable error so the
-    // toast can offer a Retry action.
-    const msg = e instanceof Error ? e.message : "Network error";
-    throw new ApiMutationError(msg, "network");
-  }
-  if (!res.ok) {
-    let detail = "";
-    try {
-      detail = (await res.json()).error?.message ?? `${res.status}`;
-    } catch {
-      detail = `${res.status}`;
-    }
-    throw new ApiMutationError(detail, res.status);
-  }
-  if (res.status === 204) return null;
-  const text = await res.text();
-  return text ? (JSON.parse(text) as T) : null;
-}
-
-export function useApiMutation<TData, TInput>(
-  build: (input: TInput) => ApiMutationInput,
-  options?: Omit<
-    UseMutationOptions<TData | null, Error, TInput>,
-    "mutationFn"
-  > & {
-    successMessage?: string | ((data: TData | null, input: TInput) => string);
-    /**
-     * Stable sonner toast `id`. When set, rapid-fire calls to the
-     * same mutation (e.g. bulk progress flipping read/unread back
-     * and forth) collapse into a single toast that updates in place
-     * rather than stacking N toasts. Use for bulk operations and
-     * autosave-like surfaces where each click is one logical event,
-     * not N. Sonner reuses the same toast element when an id repeats.
-     */
-    toastId?: string;
-  },
-) {
-  const { successMessage, toastId, onSuccess, onError, ...rest } = options ?? {};
-  // Ref to the mutation's `mutate` so the error-toast Retry action
-  // can re-fire the same request without forcing every call site to
-  // wire up its own onError handler. The ref is populated after the
-  // `useMutation` call below; by the time onError fires (network
-  // round-trip later), the ref is set.
-  const mutateRef = React.useRef<((input: TInput) => void) | null>(null);
-  const mutation = useMutation<TData | null, Error, TInput>({
-    mutationFn: (input) => apiMutate<TData>(build(input)),
-    onSuccess: (data, input, ctx) => {
-      if (successMessage) {
-        const msg =
-          typeof successMessage === "function"
-            ? successMessage(data, input)
-            : successMessage;
-        toast.success(msg, toastId ? { id: toastId } : undefined);
-      }
-      onSuccess?.(data, input, ctx);
-    },
-    onError: (err, input, ctx) => {
-      // Attach Retry only for transient failures (5xx + network).
-      // 4xx errors are user-facing validation/auth/permission issues
-      // that retrying without changing input won't fix.
-      const transient = err instanceof ApiMutationError && err.transient;
-      toast.error(err.message, {
-        ...(toastId ? { id: toastId } : {}),
-        ...(transient && {
-          action: {
-            label: "Retry",
-            onClick: () => mutateRef.current?.(input),
-          },
-        }),
-      });
-      onError?.(err, input, ctx);
-    },
-    ...rest,
-  });
-  // Populate the ref out-of-render so React 19's strict-mode lint
-  // (no `.current` writes during render) stays happy. `mutation.mutate`
-  // is stable across renders, so the effect fires once per hook
-  // instance; by the time onError can fire (network round-trip
-  // later), the ref is set.
-  React.useEffect(() => {
-    mutateRef.current = mutation.mutate;
-  }, [mutation.mutate]);
-  return mutation;
-}
+} from "../types";
 
 // ---------- Library Scanner v1 mutations ----------
 
@@ -293,7 +146,12 @@ export function useDeleteLibrary(id: string) {
 export function useCancelScanRun(librarySlug: string) {
   const qc = useQueryClient();
   return useApiMutation<
-    { id: string; state: string; ended_at: string | null; error: string | null },
+    {
+      id: string;
+      state: string;
+      ended_at: string | null;
+      error: string | null;
+    },
     { scanId: string }
   >(
     (input) => ({
@@ -525,7 +383,8 @@ export function useBulkAddToCollection(collectionId: string) {
         const { added, already_present, not_found, invalid } = data;
         const parts: string[] = [];
         if (added > 0) parts.push(`${added} added`);
-        if (already_present > 0) parts.push(`${already_present} already present`);
+        if (already_present > 0)
+          parts.push(`${already_present} already present`);
         const lost = not_found + invalid;
         if (lost > 0) parts.push(`${lost} skipped`);
         return parts.length > 0 ? parts.join("; ") : "No changes";
@@ -608,7 +467,9 @@ export type BulkMetadataResp = {
   not_found: number;
 };
 
-function summarizeBulkMetadata(data: BulkMetadataResp | null | undefined): string {
+function summarizeBulkMetadata(
+  data: BulkMetadataResp | null | undefined,
+): string {
   const d = data ?? { updated: 0, skipped: 0, forbidden: 0, not_found: 0 };
   if (d.updated === 0 && d.skipped === 0) {
     return "No issues changed";
@@ -1170,242 +1031,6 @@ export function useRevokeAppPassword() {
   );
 }
 
-// ---------- Thumbnail pipeline ----------
-
-function invalidateThumbs(
-  qc: ReturnType<typeof useQueryClient>,
-  libraryId: string,
-) {
-  qc.invalidateQueries({ queryKey: queryKeys.thumbnailsStatus(libraryId) });
-  qc.invalidateQueries({ queryKey: queryKeys.queueDepth });
-}
-
-/**
- * `PATCH /admin/libraries/{id}/thumbnails-settings`. Updates `enabled`,
- * `format`, and encoder quality. Format/quality changes do not
- * auto-regenerate; the admin runs force-recreate when ready.
- */
-export function useUpdateThumbnailsSettings(libraryId: string) {
-  const qc = useQueryClient();
-  return useApiMutation<ThumbnailsSettingsView, UpdateThumbnailsSettingsReq>(
-    (body) => ({
-      path: `/admin/libraries/${libraryId}/thumbnails-settings`,
-      method: "PATCH",
-      body,
-    }),
-    {
-      successMessage: "Thumbnail settings saved",
-      onSuccess: (data) => {
-        if (data) {
-          qc.setQueryData(queryKeys.thumbnailsSettings(libraryId), data);
-        } else {
-          qc.invalidateQueries({
-            queryKey: queryKeys.thumbnailsSettings(libraryId),
-          });
-        }
-      },
-    },
-  );
-}
-
-/**
- * Enqueue thumbnail jobs only for issues currently missing or stamped at
- * an older `thumbnail_version`. Does not wipe any on-disk files. Honors
- * the per-library `enabled` flag — disabled libraries return 409.
- */
-export function useGenerateMissingThumbnails(libraryId: string) {
-  const qc = useQueryClient();
-  return useApiMutation<RegenerateResp, void>(
-    () => ({
-      path: `/admin/libraries/${libraryId}/thumbnails/generate-missing`,
-      method: "POST",
-    }),
-    {
-      successMessage: (data) =>
-        data && data.enqueued > 0
-          ? `Enqueued ${data.enqueued} thumbnail job${
-              data.enqueued === 1 ? "" : "s"
-            }`
-          : "Nothing to generate — all thumbnails are up to date",
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
-/**
- * Enqueue page-map strip thumbnail jobs for every active issue. This is
- * intentionally separate from cover generation: it lets admins warm the reader
- * page strip in the background without putting that cost on scans or library
- * page loads.
- */
-export function useGeneratePageMapThumbnails(libraryId: string) {
-  const qc = useQueryClient();
-  return useApiMutation<RegenerateResp, void>(
-    () => ({
-      path: `/admin/libraries/${libraryId}/thumbnails/generate-page-map`,
-      method: "POST",
-    }),
-    {
-      successMessage: (data) =>
-        data && data.enqueued > 0
-          ? `Enqueued ${data.enqueued} page-map thumbnail job${
-              data.enqueued === 1 ? "" : "s"
-            }`
-          : "No page-map thumbnail jobs were queued",
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
-/**
- * Wipe every thumbnail for the library and re-enqueue. The only path that
- * picks up a format change. Confirms destructively in the UI.
- */
-export function useForceRecreateThumbnails(libraryId: string) {
-  const qc = useQueryClient();
-  return useApiMutation<RegenerateResp, void>(
-    () => ({
-      path: `/admin/libraries/${libraryId}/thumbnails/force-recreate`,
-      method: "POST",
-    }),
-    {
-      successMessage: (data) =>
-        `Enqueued ${data?.enqueued ?? 0} thumbnail job${
-          data?.enqueued === 1 ? "" : "s"
-        }`,
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
-// ---------- Series-scoped thumbnail regen ----------
-//
-// Each pair of hooks (cover, fill, force) targets one series so the admin
-// can rebuild a single book without rerunning the library-wide jobs. They
-// reuse `invalidateThumbs(qc, libraryId)` so the per-library readiness
-// status repolls after the queue depth ticks up.
-
-export function useRegenerateSeriesCover(
-  seriesSlug: string,
-  libraryId: string,
-) {
-  const qc = useQueryClient();
-  return useApiMutation<RegenerateResp, void>(
-    () => ({
-      path: `/admin/series/${seriesSlug}/thumbnails/regenerate-cover`,
-      method: "POST",
-    }),
-    {
-      successMessage: (data) =>
-        `Enqueued ${data?.enqueued ?? 0} cover job${
-          data?.enqueued === 1 ? "" : "s"
-        }`,
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
-export function useGenerateSeriesPageMap(
-  seriesSlug: string,
-  libraryId: string,
-) {
-  const qc = useQueryClient();
-  return useApiMutation<RegenerateResp, void>(
-    () => ({
-      path: `/admin/series/${seriesSlug}/thumbnails/generate-page-map`,
-      method: "POST",
-    }),
-    {
-      successMessage: (data) =>
-        data && data.enqueued > 0
-          ? `Enqueued ${data.enqueued} page-thumbnail job${
-              data.enqueued === 1 ? "" : "s"
-            }`
-          : "No page-thumbnail jobs were queued",
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
-export function useForceRecreateSeriesPageMap(
-  seriesSlug: string,
-  libraryId: string,
-) {
-  const qc = useQueryClient();
-  return useApiMutation<RegenerateResp, void>(
-    () => ({
-      path: `/admin/series/${seriesSlug}/thumbnails/force-recreate-page-map`,
-      method: "POST",
-    }),
-    {
-      successMessage: (data) =>
-        `Enqueued ${data?.enqueued ?? 0} page-thumbnail job${
-          data?.enqueued === 1 ? "" : "s"
-        }`,
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
-// ---------- Issue-scoped thumbnail regen ----------
-
-export function useRegenerateIssueCover(
-  seriesSlug: string,
-  issueSlug: string,
-  libraryId: string,
-) {
-  const qc = useQueryClient();
-  return useApiMutation<RegenerateResp, void>(
-    () => ({
-      path: `/admin/series/${seriesSlug}/issues/${issueSlug}/thumbnails/regenerate-cover`,
-      method: "POST",
-    }),
-    {
-      successMessage: () => "Cover regeneration queued",
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
-export function useGenerateIssuePageMap(
-  seriesSlug: string,
-  issueSlug: string,
-  libraryId: string,
-) {
-  const qc = useQueryClient();
-  return useApiMutation<RegenerateResp, void>(
-    () => ({
-      path: `/admin/series/${seriesSlug}/issues/${issueSlug}/thumbnails/generate-page-map`,
-      method: "POST",
-    }),
-    {
-      successMessage: (data) =>
-        data && data.enqueued > 0
-          ? "Page-thumbnail job queued"
-          : "Page thumbnails are already up to date",
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
-export function useForceRecreateIssuePageMap(
-  seriesSlug: string,
-  issueSlug: string,
-  libraryId: string,
-) {
-  const qc = useQueryClient();
-  return useApiMutation<RegenerateResp, void>(
-    () => ({
-      path: `/admin/series/${seriesSlug}/issues/${issueSlug}/thumbnails/force-recreate-page-map`,
-      method: "POST",
-    }),
-    {
-      successMessage: () => "Page thumbnails wiped and re-queued",
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
 // ---------- CBL lists (saved-views M6) ----------
 
 /** POST /me/cbl-lists — create from JSON body (URL or catalog source).
@@ -1832,27 +1457,6 @@ export function useReorderSavedViews() {
   );
 }
 
-/**
- * `DELETE /admin/libraries/{id}/thumbnails`. Wipe every on-disk thumbnail
- * for the library and clear DB state. No re-enqueue.
- */
-export function useDeleteAllThumbnails(libraryId: string) {
-  const qc = useQueryClient();
-  return useApiMutation<DeleteAllResp, void>(
-    () => ({
-      path: `/admin/libraries/${libraryId}/thumbnails`,
-      method: "DELETE",
-    }),
-    {
-      successMessage: (data) =>
-        `Deleted thumbnails for ${data?.deleted ?? 0} issue${
-          data?.deleted === 1 ? "" : "s"
-        }`,
-      onSuccess: () => invalidateThumbs(qc, libraryId),
-    },
-  );
-}
-
 // ---------- Collections (markers + collections M3) ----------
 
 /** Create a new user collection. The cover-menu "Create new… " flow
@@ -2060,7 +1664,7 @@ export function useReorderCollectionEntries(collectionId: string) {
 
 // ---------- Runtime settings + email (runtime-config-admin M1/M2) ----------
 
-import type { TestEmailResp, UpdateSettingsReq } from "./types";
+import type { TestEmailResp, UpdateSettingsReq } from "../types";
 
 /** Apply a batch of setting updates. Unknown keys reject the whole batch.
  *  On success the server re-runs `Config::overlay_db`, swaps the live
@@ -2105,8 +1709,8 @@ import type {
   PageView,
   ReorderPagesReq,
   UpdatePageReq,
-} from "./types";
-import { TOAST } from "./toast-strings";
+} from "../types";
+import { TOAST } from "../toast-strings";
 
 /** Probe an OIDC issuer's discovery doc before committing it. Returns the
  *  parsed endpoints + scopes_supported. Used by the "Test discovery"

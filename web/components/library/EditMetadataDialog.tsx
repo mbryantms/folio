@@ -46,14 +46,23 @@ type FieldId =
   | "tags"
   | "story_arc";
 
-type FieldDef = {
-  id: FieldId;
-  label: string;
-  /** Control kind drives the input UI; values are wire-format strings. */
-  kind: "enum" | "text";
-  /** When `kind = "enum"`, the closed value set the dropdown surfaces. */
-  options?: Array<{ value: string; label: string }>;
-};
+/// Discriminated union on `kind` so the `enum` branch's `options`
+/// field is non-optional structurally. Killed the
+/// `def.options!.map(...)` non-null assertion in render. M5 of
+/// code-quality-cleanup-1.0.
+type FieldDef =
+  | {
+      id: FieldId;
+      label: string;
+      kind: "enum";
+      /** Closed value set the dropdown surfaces. */
+      options: Array<{ value: string; label: string }>;
+    }
+  | {
+      id: FieldId;
+      label: string;
+      kind: "text";
+    };
 
 const FIELDS: FieldDef[] = [
   {
@@ -192,9 +201,8 @@ export function EditMetadataForm({
           Edit {count} issue{count === 1 ? "" : "s"}
         </DialogTitle>
         <DialogDescription>
-          Sets a single field across the selection. Credit fields
-          (writer, penciller, …) stay per-issue; edit those one at
-          a time.
+          Sets a single field across the selection. Credit fields (writer,
+          penciller, …) stay per-issue; edit those one at a time.
         </DialogDescription>
       </DialogHeader>
 
@@ -228,7 +236,7 @@ export function EditMetadataForm({
               className="border-input bg-background focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none"
             >
               <option value="">— Clear —</option>
-              {def.options!.map((o) => (
+              {def.options.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
@@ -275,8 +283,7 @@ export function EditMetadataForm({
             <span>
               <span className="font-medium">Replace existing values</span>
               <span className="text-muted-foreground block text-xs">
-                Overwrite every selected issue regardless of current
-                value.
+                Overwrite every selected issue regardless of current value.
               </span>
             </span>
           </label>

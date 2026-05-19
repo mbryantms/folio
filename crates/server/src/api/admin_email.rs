@@ -19,6 +19,7 @@ use axum::{
 };
 use serde::Serialize;
 
+use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::email::Email;
@@ -159,12 +160,4 @@ pub async fn test_send(
                 .into_response()
         }
     }
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

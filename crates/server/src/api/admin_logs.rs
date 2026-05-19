@@ -20,6 +20,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::error;
 use crate::auth::RequireAdmin;
 use crate::observability::{LOG_RING_CAPACITY, LevelFilter, LogEntry, SnapshotFilter};
 use crate::state::AppState;
@@ -121,12 +122,4 @@ pub async fn list(
         capacity: app.log_buffer.capacity(),
     })
     .into_response()
-}
-
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
 }

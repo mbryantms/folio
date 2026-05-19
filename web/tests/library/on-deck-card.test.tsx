@@ -22,7 +22,10 @@ vi.mock("@/components/CoverLongPressActions", () => ({
 
 import { OnDeckCard } from "@/components/library/OnDeckCard";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
-import type { IssueSummaryView, OnDeckCard as OnDeckCardData } from "@/lib/api/types";
+import type {
+  IssueSummaryView,
+  OnDeckCard as OnDeckCardData,
+} from "@/lib/api/types";
 
 const SV_ID = "00000000-0000-0000-0000-00000000abcd";
 

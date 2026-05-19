@@ -186,12 +186,7 @@ function BuildCard({ data }: { data: ServerInfoView }) {
       </CardHeader>
       <CardContent>
         <dl className="space-y-2 text-sm">
-          <Row
-            label="Version"
-            value={data.version}
-            mono
-            href={versionHref}
-          />
+          <Row label="Version" value={data.version} mono href={versionHref} />
           <Row
             label="Build SHA"
             value={
@@ -216,7 +211,7 @@ function BuildCard({ data }: { data: ServerInfoView }) {
         </dl>
         {newer && latest.data && (
           <div className="border-border/60 mt-4 flex items-center justify-between gap-3 rounded-md border border-dashed bg-amber-500/5 px-3 py-2 text-sm">
-            <span className="text-amber-300 inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 text-amber-300">
               <Sparkles className="h-3.5 w-3.5" aria-hidden />
               {latest.data.tag} available
             </span>
@@ -403,16 +398,8 @@ function LinksCard() {
       </CardHeader>
       <CardContent>
         <ul className="space-y-2 text-sm">
-          <ProbeLink
-            href="/healthz"
-            label="/healthz"
-            hint="liveness probe"
-          />
-          <ProbeLink
-            href="/readyz"
-            label="/readyz"
-            hint="readiness probe"
-          />
+          <ProbeLink href="/healthz" label="/healthz" hint="liveness probe" />
+          <ProbeLink href="/readyz" label="/readyz" hint="readiness probe" />
           <ProbeLink
             href="/metrics"
             label="/metrics"

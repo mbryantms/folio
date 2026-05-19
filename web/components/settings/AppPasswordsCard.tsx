@@ -146,8 +146,8 @@ export function AppPasswordsCard() {
                   <span className="font-medium">Read + write progress</span>
                   <span className="text-muted-foreground">
                     {" "}
-                    — also lets the client sync your reading position back
-                    to Folio (KOReader sync, Chunky page-progress, …).
+                    — also lets the client sync your reading position back to
+                    Folio (KOReader sync, Chunky page-progress, …).
                   </span>
                 </span>
               </label>
@@ -212,7 +212,7 @@ function OpdsConnectionInfo() {
       >
         <div className="space-y-3">
           <div className="space-y-1">
-            <Label className="text-muted-foreground text-xs uppercase tracking-wide">
+            <Label className="text-muted-foreground text-xs tracking-wide uppercase">
               OPDS catalog URL
             </Label>
             <CopyableUrl value={feedUrl} />
@@ -223,8 +223,8 @@ function OpdsConnectionInfo() {
               Authorization: Bearer app_…
             </code>
             . OPDS 2.0 (JSON-LD) is supported too — clients that prefer it
-            negotiate automatically via the <code>Accept</code> header
-            against the URL above, no separate setup needed.
+            negotiate automatically via the <code>Accept</code> header against
+            the URL above, no separate setup needed.
           </p>
         </div>
       </SettingsSection>
@@ -235,17 +235,18 @@ function OpdsConnectionInfo() {
       >
         <div className="space-y-3">
           <div className="space-y-1">
-            <Label className="text-muted-foreground text-xs uppercase tracking-wide">
+            <Label className="text-muted-foreground text-xs tracking-wide uppercase">
               KOSync custom server URL
             </Label>
             <CopyableUrl value={koreaderBase} />
             <p className="text-muted-foreground text-xs">
               Paste this into{" "}
-              <span className="font-medium">Settings → Progress sync</span>{" "}
-              → <span className="font-medium">Custom sync server</span> in
-              KOReader. Use any username; the password is an app password
-              issued above with the <span className="font-mono">read + write progress</span>{" "}
-              scope. KOReader appends{" "}
+              <span className="font-medium">Settings → Progress sync</span> →{" "}
+              <span className="font-medium">Custom sync server</span> in
+              KOReader. Use any username; the password is an app password issued
+              above with the{" "}
+              <span className="font-mono">read + write progress</span> scope.
+              KOReader appends{" "}
               <code className="bg-secondary/40 rounded px-1 py-0.5 text-[11px]">
                 /syncs/progress/&lt;document-hash&gt;
               </code>{" "}
@@ -360,7 +361,7 @@ function PasswordRow({ p }: { p: AppPasswordView }) {
           </p>
           <span
             className={
-              "border-border rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide " +
+              "border-border rounded-full border px-2 py-0.5 font-mono text-[10px] tracking-wide uppercase " +
               (p.scope === "read+progress"
                 ? "bg-primary/10 text-primary"
                 : "text-muted-foreground")

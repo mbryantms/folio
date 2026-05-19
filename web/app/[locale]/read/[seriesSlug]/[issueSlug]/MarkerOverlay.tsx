@@ -556,7 +556,7 @@ function PagePin({
           type="button"
           onClick={onEdit}
           className={cn(
-            "pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-full ring-2 shadow-md ring-white/30 backdrop-blur transition-transform hover:scale-110",
+            "pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-full shadow-md ring-2 ring-white/30 backdrop-blur transition-transform hover:scale-110",
             KIND_PIN_BG[marker.kind],
           )}
           aria-label={`${marker.kind} on this page`}

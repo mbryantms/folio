@@ -601,13 +601,20 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     // by the partial index `issues_thumbs_pending_idx`.
     let _ = crate::jobs::post_scan::enqueue_pending_all_libraries(&state).await;
 
-    // Spawn the apalis monitor in the background. We only `await` the HTTP
-    // server here; on graceful shutdown the monitor task is dropped and
-    // tokio cancels the workers.
+    // Shared shutdown token: HTTP server and apalis monitor both
+    // observe cancellation, so a single SIGTERM drains both cleanly.
+    // M4 of code-quality-cleanup-1.0 — before this, the apalis monitor
+    // was a detached spawn dropped on HTTP shutdown, abandoning any
+    // in-flight worker tasks mid-write.
+    let shutdown = tokio_util::sync::CancellationToken::new();
+
+    // Spawn the apalis monitor; retain the JoinHandle so we can wait
+    // on its graceful drain after the HTTP server returns.
     let jobs_handle = state.jobs.clone();
     let jobs_state = state.clone();
-    tokio::spawn(async move {
-        jobs_handle.run(jobs_state).await;
+    let jobs_shutdown = shutdown.clone();
+    let monitor_handle = tokio::spawn(async move {
+        jobs_handle.run(jobs_state, jobs_shutdown).await;
     });
 
     // Cron scheduler — best-effort. Failure here doesn't block startup.
@@ -623,12 +630,23 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(addr = %bind, "listening");
 
+    let http_shutdown = shutdown.clone();
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        http_shutdown.cancel();
+    })
     .await?;
+
+    // HTTP server has stopped accepting; wait for the apalis monitor
+    // to finish draining its workers (graceful) before returning.
+    if let Err(e) = monitor_handle.await {
+        tracing::warn!(error = %e, "apalis monitor task failed to join cleanly");
+    }
+    tracing::info!("apalis monitor drained; shutdown complete");
 
     Ok(())
 }

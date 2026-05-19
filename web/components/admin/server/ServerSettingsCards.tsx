@@ -19,7 +19,9 @@ export function ServerSettingsCards() {
   if (settings.isLoading) return <Skeleton className="h-48 w-full" />;
   if (settings.error || !settings.data) {
     return (
-      <p className="text-destructive text-sm">Failed to load server settings.</p>
+      <p className="text-destructive text-sm">
+        Failed to load server settings.
+      </p>
     );
   }
 
@@ -42,7 +44,9 @@ export function ServerSettingsCards() {
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <HardeningCard initial={asBool("auth.rate_limit_enabled", true)} />
-        <DiagnosticsCard initial={asString("observability.log_level", "info")} />
+        <DiagnosticsCard
+          initial={asString("observability.log_level", "info")}
+        />
       </div>
       <CachingCard initial={asUint("cache.zip_lru_capacity", 64)} />
       <WorkersCard
@@ -99,9 +103,9 @@ function HardeningCard({ initial }: { initial: boolean }) {
 function RestartHint() {
   return (
     <p className="text-muted-foreground text-xs">
-      <span className="text-amber-300">Restart required</span> — values are
-      read at boot to size the worker pool / cache. Save now to pre-load
-      for the next restart.
+      <span className="text-amber-300">Restart required</span> — values are read
+      at boot to size the worker pool / cache. Save now to pre-load for the next
+      restart.
     </p>
   );
 }
@@ -138,16 +142,11 @@ function CachingCard({ initial }: { initial: number }) {
             value={capacity}
             onChange={(e) => setCapacity(e.target.value)}
           />
-          {bad && (
-            <p className="text-xs text-red-400">Must be in [1, 4096].</p>
-          )}
+          {bad && <p className="text-xs text-red-400">Must be in [1, 4096].</p>}
           <RestartHint />
         </div>
         <div className="flex justify-end">
-          <Button
-            onClick={onSave}
-            disabled={!dirty || update.isPending || bad}
-          >
+          <Button onClick={onSave} disabled={!dirty || update.isPending || bad}>
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>
@@ -357,8 +356,8 @@ function DiagnosticsCard({ initial }: { initial: string }) {
             placeholder="e.g. info,server::auth=debug"
           />
           <p className="text-muted-foreground text-xs">
-            Live-reloaded on save — no restart needed. Invalid directives
-            return 400 before the swap.
+            Live-reloaded on save — no restart needed. Invalid directives return
+            400 before the swap.
           </p>
         </div>
         <div className="flex justify-end">
