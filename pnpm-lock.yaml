@@ -73,7 +73,7 @@ importers:
         version: 1.2.8(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@scalar/api-reference-react':
         specifier: ^0.9.38
-        version: 0.9.38(change-case@5.4.4)(idb-keyval@6.2.2)(react@19.2.6)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@3.25.76)
+        version: 0.9.38(change-case@5.4.4)(idb-keyval@6.2.2)(react@19.2.6)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@4.4.3)
       '@tanstack/react-query':
         specifier: 5.62.10
         version: 5.62.10(react@19.2.6)
@@ -135,8 +135,8 @@ importers:
         specifier: 3.6.0
         version: 3.6.0
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: 4.4.3
+        version: 4.4.3
       zustand:
         specifier: 5.0.2
         version: 5.0.2(@types/react@19.2.14)(immer@11.1.8)(react@19.2.6)(use-sync-external-store@1.6.0(react@19.2.6))
@@ -5097,28 +5097,28 @@ packages:
 
 snapshots:
 
-  '@ai-sdk/gateway@3.0.13(zod@3.25.76)':
+  '@ai-sdk/gateway@3.0.13(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.2
-      '@ai-sdk/provider-utils': 4.0.5(zod@3.25.76)
+      '@ai-sdk/provider-utils': 4.0.5(zod@4.4.3)
       '@vercel/oidc': 3.1.0
-      zod: 3.25.76
+      zod: 4.4.3
 
-  '@ai-sdk/provider-utils@4.0.5(zod@3.25.76)':
+  '@ai-sdk/provider-utils@4.0.5(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.2
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.0.8
-      zod: 3.25.76
+      zod: 4.4.3
 
   '@ai-sdk/provider@3.0.2':
     dependencies:
       json-schema: 0.4.0
 
-  '@ai-sdk/vue@3.0.33(vue@3.5.34(typescript@5.7.2))(zod@3.25.76)':
+  '@ai-sdk/vue@3.0.33(vue@3.5.34(typescript@5.7.2))(zod@4.4.3)':
     dependencies:
-      '@ai-sdk/provider-utils': 4.0.5(zod@3.25.76)
-      ai: 6.0.33(zod@3.25.76)
+      '@ai-sdk/provider-utils': 4.0.5(zod@4.4.3)
+      ai: 6.0.33(zod@4.4.3)
       swrv: 1.2.0(vue@3.5.34(typescript@5.7.2))
       vue: 3.5.34(typescript@5.7.2)
     transitivePeerDependencies:
@@ -6698,9 +6698,9 @@ snapshots:
 
   '@rtsao/scc@1.1.0': {}
 
-  '@scalar/agent-chat@0.12.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@3.25.76)':
+  '@scalar/agent-chat@0.12.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@4.4.3)':
     dependencies:
-      '@ai-sdk/vue': 3.0.33(vue@3.5.34(typescript@5.7.2))(zod@3.25.76)
+      '@ai-sdk/vue': 3.0.33(vue@3.5.34(typescript@5.7.2))(zod@4.4.3)
       '@scalar/api-client': 3.8.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)
       '@scalar/components': 0.25.0(tailwindcss@4.3.0)(typescript@5.7.2)
       '@scalar/helpers': 0.8.0
@@ -6714,7 +6714,7 @@ snapshots:
       '@scalar/validation': 0.5.0
       '@scalar/workspace-store': 0.51.0(typescript@5.7.2)
       '@vueuse/core': 13.9.0(vue@3.5.34(typescript@5.7.2))
-      ai: 6.0.33(zod@3.25.76)
+      ai: 6.0.33(zod@4.4.3)
       js-base64: 3.7.8
       neverpanic: 0.0.7(typescript@5.7.2)
       truncate-json: 3.0.1
@@ -6786,9 +6786,9 @@ snapshots:
       - typescript
       - universal-cookie
 
-  '@scalar/api-reference-react@0.9.38(change-case@5.4.4)(idb-keyval@6.2.2)(react@19.2.6)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@3.25.76)':
+  '@scalar/api-reference-react@0.9.38(change-case@5.4.4)(idb-keyval@6.2.2)(react@19.2.6)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@4.4.3)':
     dependencies:
-      '@scalar/api-reference': 1.57.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@3.25.76)
+      '@scalar/api-reference': 1.57.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@4.4.3)
       '@scalar/types': 0.11.0
       react: 19.2.6
     transitivePeerDependencies:
@@ -6808,10 +6808,10 @@ snapshots:
       - universal-cookie
       - zod
 
-  '@scalar/api-reference@1.57.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@3.25.76)':
+  '@scalar/api-reference@1.57.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@4.4.3)':
     dependencies:
       '@headlessui/vue': 1.7.23(vue@3.5.34(typescript@5.7.2))
-      '@scalar/agent-chat': 0.12.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@3.25.76)
+      '@scalar/agent-chat': 0.12.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)(zod@4.4.3)
       '@scalar/api-client': 3.8.2(change-case@5.4.4)(idb-keyval@6.2.2)(tailwindcss@4.3.0)(typescript@5.7.2)
       '@scalar/code-highlight': 0.3.4
       '@scalar/components': 0.25.0(tailwindcss@4.3.0)(typescript@5.7.2)
@@ -7648,13 +7648,13 @@ snapshots:
 
   agent-base@7.1.4: {}
 
-  ai@6.0.33(zod@3.25.76):
+  ai@6.0.33(zod@4.4.3):
     dependencies:
-      '@ai-sdk/gateway': 3.0.13(zod@3.25.76)
+      '@ai-sdk/gateway': 3.0.13(zod@4.4.3)
       '@ai-sdk/provider': 3.0.2
-      '@ai-sdk/provider-utils': 4.0.5(zod@3.25.76)
+      '@ai-sdk/provider-utils': 4.0.5(zod@4.4.3)
       '@opentelemetry/api': 1.9.0
-      zod: 3.25.76
+      zod: 4.4.3
 
   ajv@6.15.0:
     dependencies:
