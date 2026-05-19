@@ -799,135 +799,23 @@ pub async fn compute_stats_for_user(
     let since: Option<DateTime<FixedOffset>> = lookback.map(|d| (Utc::now() - d).fixed_offset());
 
     let backend = app.db.get_database_backend();
-
-    // ── Totals (in-range) ──
-    let mut totals_sql = String::from(
-        "SELECT \
-           COUNT(*)::bigint AS sessions, \
-           COALESCE(SUM(active_ms),0)::bigint AS active_ms, \
-           COALESCE(SUM(distinct_pages_read),0)::bigint AS distinct_pages_read, \
-           COUNT(DISTINCT issue_id)::bigint AS distinct_issues \
-         FROM reading_sessions \
-         WHERE user_id = $1",
-    );
-    let mut totals_params: Vec<Value> = vec![user_id.into()];
-    append_scope(
-        &mut totals_sql,
-        &mut totals_params,
-        2,
-        "",
-        since.as_ref(),
-        issue_filter.as_deref(),
-        series_filter.as_ref(),
-    );
-
-    #[derive(FromQueryResult)]
-    struct TotalsRow {
-        sessions: i64,
-        active_ms: i64,
-        distinct_pages_read: i64,
-        distinct_issues: i64,
-    }
-
-    let totals_row = match TotalsRow::find_by_statement(Statement::from_sql_and_values(
+    let filter = StatsFilter {
         backend,
-        &totals_sql,
-        totals_params,
-    ))
-    .one(&app.db)
-    .await
-    {
-        Ok(Some(r)) => r,
-        Ok(None) => TotalsRow {
-            sessions: 0,
-            active_ms: 0,
-            distinct_pages_read: 0,
-            distinct_issues: 0,
-        },
-        Err(e) => {
-            tracing::warn!(error = %e, "reading stats totals failed");
-            return Err(StatsError::internal());
-        }
+        user_id,
+        since: since.as_ref(),
+        issue_filter: issue_filter.as_deref(),
+        series_filter: series_filter.as_ref(),
     };
 
-    // ── Per-day (in-range), bucketed in user's tz ──
-    let mut day_sql = String::from(
-        "SELECT \
-           to_char((started_at AT TIME ZONE $2)::date, 'YYYY-MM-DD') AS date, \
-           COUNT(*)::bigint AS sessions, \
-           COALESCE(SUM(active_ms),0)::bigint AS active_ms, \
-           COALESCE(SUM(distinct_pages_read),0)::bigint AS pages \
-         FROM reading_sessions \
-         WHERE user_id = $1",
-    );
-    let mut day_params: Vec<Value> = vec![user_id.into(), tz.name().to_string().into()];
-    append_scope(
-        &mut day_sql,
-        &mut day_params,
-        3,
-        "",
-        since.as_ref(),
-        issue_filter.as_deref(),
-        series_filter.as_ref(),
-    );
-    day_sql.push_str(" GROUP BY 1 ORDER BY 1 ASC");
+    let totals_row = compute_totals(app, &filter).await?;
 
-    #[derive(FromQueryResult)]
-    struct DayRow {
-        date: String,
-        sessions: i64,
-        active_ms: i64,
-        pages: i64,
-    }
-
-    let day_rows = match DayRow::find_by_statement(Statement::from_sql_and_values(
-        backend, &day_sql, day_params,
-    ))
-    .all(&app.db)
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "reading stats per-day failed");
-            return Err(StatsError::internal());
-        }
-    };
-    let per_day: Vec<DayBucket> = day_rows
-        .into_iter()
-        .map(|r| DayBucket {
-            date: r.date,
-            sessions: r.sessions,
-            active_ms: r.active_ms,
-            pages: r.pages,
-        })
-        .collect();
+    let per_day = compute_per_day(app, &filter, tz).await?;
     let days_active = per_day.len() as i64;
 
-    // ── Distinct active days globally (no range filter) for streak math ──
-    let streak_sql = "SELECT DISTINCT (started_at AT TIME ZONE $2)::date AS d \
-         FROM reading_sessions \
-         WHERE user_id = $1 \
-         ORDER BY d ASC";
-
-    #[derive(FromQueryResult)]
-    struct StreakRow {
-        d: NaiveDate,
-    }
-    let streak_rows = match StreakRow::find_by_statement(Statement::from_sql_and_values(
-        backend,
-        streak_sql,
-        vec![user_id.into(), tz.name().to_string().into()],
-    ))
-    .all(&app.db)
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "reading stats streak failed");
-            return Err(StatsError::internal());
-        }
-    };
-    let active_days: Vec<NaiveDate> = streak_rows.into_iter().map(|r| r.d).collect();
+    // Streak math always operates on the user's full history, never
+    // the requested range — a "30d" view shouldn't make a 10-month
+    // streak vanish.
+    let active_days = compute_active_days(app, backend, user_id, tz).await?;
     let today_local = Utc::now().with_timezone(&tz).date_naive();
     let (current_streak, longest_streak) = streak_lengths(&active_days, today_local);
 
@@ -943,51 +831,7 @@ pub async fn compute_stats_for_user(
     let top_series = if scope_is_series_or_issue {
         Vec::new()
     } else {
-        let mut sql = String::from(
-            "SELECT s.id::text AS series_id, s.name AS name, \
-               COUNT(*)::bigint AS sessions, \
-               COALESCE(SUM(rs.active_ms),0)::bigint AS active_ms \
-             FROM reading_sessions rs \
-             JOIN series s ON s.id = rs.series_id \
-             WHERE rs.user_id = $1",
-        );
-        let mut params: Vec<Value> = vec![user_id.into()];
-        append_scope(
-            &mut sql,
-            &mut params,
-            2,
-            "rs.",
-            since.as_ref(),
-            issue_filter.as_deref(),
-            series_filter.as_ref(),
-        );
-        sql.push_str(" GROUP BY s.id, s.name ORDER BY active_ms DESC, sessions DESC LIMIT 10");
-
-        #[derive(FromQueryResult)]
-        struct Row {
-            series_id: String,
-            name: String,
-            sessions: i64,
-            active_ms: i64,
-        }
-        match Row::find_by_statement(Statement::from_sql_and_values(backend, &sql, params))
-            .all(&app.db)
-            .await
-        {
-            Ok(rows) => rows
-                .into_iter()
-                .map(|r| TopSeriesEntry {
-                    series_id: r.series_id,
-                    name: r.name,
-                    sessions: r.sessions,
-                    active_ms: r.active_ms,
-                })
-                .collect(),
-            Err(e) => {
-                tracing::warn!(error = %e, "reading stats top_series failed");
-                Vec::new()
-            }
-        }
+        compute_top_series_ranking(app, &filter).await
     };
 
     let top_genres = if scope_is_issue {
@@ -1023,54 +867,7 @@ pub async fn compute_stats_for_user(
     let top_publishers = if scope_is_series_or_issue {
         Vec::new()
     } else {
-        let mut sql = String::from(
-            "SELECT COALESCE(NULLIF(s.publisher,''), NULLIF(i.publisher,'')) AS name, \
-               COUNT(*)::bigint AS sessions, \
-               COALESCE(SUM(rs.active_ms),0)::bigint AS active_ms \
-             FROM reading_sessions rs \
-             JOIN issues i ON i.id = rs.issue_id \
-             JOIN series s ON s.id = rs.series_id \
-             WHERE rs.user_id = $1",
-        );
-        let mut params: Vec<Value> = vec![user_id.into()];
-        append_scope(
-            &mut sql,
-            &mut params,
-            2,
-            "rs.",
-            since.as_ref(),
-            issue_filter.as_deref(),
-            series_filter.as_ref(),
-        );
-        // Filter out NULL publishers post-COALESCE.
-        sql.push_str(
-            " AND COALESCE(NULLIF(s.publisher,''), NULLIF(i.publisher,'')) IS NOT NULL \
-             GROUP BY 1 ORDER BY active_ms DESC, sessions DESC LIMIT 10",
-        );
-
-        #[derive(FromQueryResult)]
-        struct Row {
-            name: String,
-            sessions: i64,
-            active_ms: i64,
-        }
-        match Row::find_by_statement(Statement::from_sql_and_values(backend, &sql, params))
-            .all(&app.db)
-            .await
-        {
-            Ok(rows) => rows
-                .into_iter()
-                .map(|r| TopNameEntry {
-                    name: r.name,
-                    sessions: r.sessions,
-                    active_ms: r.active_ms,
-                })
-                .collect(),
-            Err(e) => {
-                tracing::warn!(error = %e, "reading stats top_publishers failed");
-                Vec::new()
-            }
-        }
+        compute_top_publishers_ranking(app, &filter).await
     };
 
     // ── Stats v2 enrichments ─────────────────────────────────────────────
@@ -1078,13 +875,6 @@ pub async fn compute_stats_for_user(
     let top_imprints = if scope_is_series_or_issue {
         Vec::new()
     } else {
-        let filter = StatsFilter {
-            backend,
-            user_id,
-            since: since.as_ref(),
-            issue_filter: issue_filter.as_deref(),
-            series_filter: series_filter.as_ref(),
-        };
         top_column_with_alias(
             app,
             &filter,
@@ -1224,6 +1014,261 @@ impl StatsError {
     pub fn into_response(self) -> Response {
         error(self.status, self.code, &self.message)
     }
+}
+
+// ────────────── Stats query helpers ──────────────
+
+/// `SELECT COUNT(*), SUM(active_ms), SUM(distinct_pages_read), COUNT(DISTINCT issue_id)`
+/// from `reading_sessions` within the caller's scope. A NULL row maps
+/// to all-zeros so the empty-history path stays branch-free upstream.
+async fn compute_totals(app: &AppState, filter: &StatsFilter<'_>) -> Result<TotalsRow, StatsError> {
+    let mut sql = String::from(
+        "SELECT \
+           COUNT(*)::bigint AS sessions, \
+           COALESCE(SUM(active_ms),0)::bigint AS active_ms, \
+           COALESCE(SUM(distinct_pages_read),0)::bigint AS distinct_pages_read, \
+           COUNT(DISTINCT issue_id)::bigint AS distinct_issues \
+         FROM reading_sessions \
+         WHERE user_id = $1",
+    );
+    let mut params: Vec<Value> = vec![filter.user_id.into()];
+    append_scope(
+        &mut sql,
+        &mut params,
+        2,
+        "",
+        filter.since,
+        filter.issue_filter,
+        filter.series_filter,
+    );
+    match TotalsRow::find_by_statement(Statement::from_sql_and_values(filter.backend, &sql, params))
+        .one(&app.db)
+        .await
+    {
+        Ok(Some(r)) => Ok(r),
+        Ok(None) => Ok(TotalsRow {
+            sessions: 0,
+            active_ms: 0,
+            distinct_pages_read: 0,
+            distinct_issues: 0,
+        }),
+        Err(e) => {
+            tracing::warn!(error = %e, "reading stats totals failed");
+            Err(StatsError::internal())
+        }
+    }
+}
+
+/// Per-day sessions / active_ms / pages bucketed in the caller's
+/// timezone. `to_char((started_at AT TIME ZONE $2)::date, 'YYYY-MM-DD')`
+/// keeps the date stable across DST shifts.
+async fn compute_per_day(
+    app: &AppState,
+    filter: &StatsFilter<'_>,
+    tz: Tz,
+) -> Result<Vec<DayBucket>, StatsError> {
+    let mut sql = String::from(
+        "SELECT \
+           to_char((started_at AT TIME ZONE $2)::date, 'YYYY-MM-DD') AS date, \
+           COUNT(*)::bigint AS sessions, \
+           COALESCE(SUM(active_ms),0)::bigint AS active_ms, \
+           COALESCE(SUM(distinct_pages_read),0)::bigint AS pages \
+         FROM reading_sessions \
+         WHERE user_id = $1",
+    );
+    let mut params: Vec<Value> = vec![filter.user_id.into(), tz.name().to_string().into()];
+    append_scope(
+        &mut sql,
+        &mut params,
+        3,
+        "",
+        filter.since,
+        filter.issue_filter,
+        filter.series_filter,
+    );
+    sql.push_str(" GROUP BY 1 ORDER BY 1 ASC");
+    let rows = match DayRow::find_by_statement(Statement::from_sql_and_values(
+        filter.backend,
+        &sql,
+        params,
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "reading stats per-day failed");
+            return Err(StatsError::internal());
+        }
+    };
+    Ok(rows
+        .into_iter()
+        .map(|r| DayBucket {
+            date: r.date,
+            sessions: r.sessions,
+            active_ms: r.active_ms,
+            pages: r.pages,
+        })
+        .collect())
+}
+
+/// All distinct user-local dates with at least one session, globally
+/// (no range/scope filter). Feeds `streak_lengths` — current + longest
+/// streaks are intentionally lifetime metrics.
+async fn compute_active_days(
+    app: &AppState,
+    backend: sea_orm::DbBackend,
+    user_id: Uuid,
+    tz: Tz,
+) -> Result<Vec<NaiveDate>, StatsError> {
+    let sql = "SELECT DISTINCT (started_at AT TIME ZONE $2)::date AS d \
+         FROM reading_sessions \
+         WHERE user_id = $1 \
+         ORDER BY d ASC";
+    let rows = match StreakRow::find_by_statement(Statement::from_sql_and_values(
+        backend,
+        sql,
+        vec![user_id.into(), tz.name().to_string().into()],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "reading stats streak failed");
+            return Err(StatsError::internal());
+        }
+    };
+    Ok(rows.into_iter().map(|r| r.d).collect())
+}
+
+/// Top-10 series by active_ms, tiebroken by session count.
+async fn compute_top_series_ranking(
+    app: &AppState,
+    filter: &StatsFilter<'_>,
+) -> Vec<TopSeriesEntry> {
+    let mut sql = String::from(
+        "SELECT s.id::text AS series_id, s.name AS name, \
+           COUNT(*)::bigint AS sessions, \
+           COALESCE(SUM(rs.active_ms),0)::bigint AS active_ms \
+         FROM reading_sessions rs \
+         JOIN series s ON s.id = rs.series_id \
+         WHERE rs.user_id = $1",
+    );
+    let mut params: Vec<Value> = vec![filter.user_id.into()];
+    append_scope(
+        &mut sql,
+        &mut params,
+        2,
+        "rs.",
+        filter.since,
+        filter.issue_filter,
+        filter.series_filter,
+    );
+    sql.push_str(" GROUP BY s.id, s.name ORDER BY active_ms DESC, sessions DESC LIMIT 10");
+
+    #[derive(FromQueryResult)]
+    struct Row {
+        series_id: String,
+        name: String,
+        sessions: i64,
+        active_ms: i64,
+    }
+    match Row::find_by_statement(Statement::from_sql_and_values(filter.backend, &sql, params))
+        .all(&app.db)
+        .await
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|r| TopSeriesEntry {
+                series_id: r.series_id,
+                name: r.name,
+                sessions: r.sessions,
+                active_ms: r.active_ms,
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "reading stats top_series failed");
+            Vec::new()
+        }
+    }
+}
+
+/// Top-10 publishers across read issues, preferring `series.publisher`
+/// and falling back to `issues.publisher` so publisher-on-the-issue
+/// stays counted even when the series row's column is unset.
+async fn compute_top_publishers_ranking(
+    app: &AppState,
+    filter: &StatsFilter<'_>,
+) -> Vec<TopNameEntry> {
+    let mut sql = String::from(
+        "SELECT COALESCE(NULLIF(s.publisher,''), NULLIF(i.publisher,'')) AS name, \
+           COUNT(*)::bigint AS sessions, \
+           COALESCE(SUM(rs.active_ms),0)::bigint AS active_ms \
+         FROM reading_sessions rs \
+         JOIN issues i ON i.id = rs.issue_id \
+         JOIN series s ON s.id = rs.series_id \
+         WHERE rs.user_id = $1",
+    );
+    let mut params: Vec<Value> = vec![filter.user_id.into()];
+    append_scope(
+        &mut sql,
+        &mut params,
+        2,
+        "rs.",
+        filter.since,
+        filter.issue_filter,
+        filter.series_filter,
+    );
+    sql.push_str(
+        " AND COALESCE(NULLIF(s.publisher,''), NULLIF(i.publisher,'')) IS NOT NULL \
+         GROUP BY 1 ORDER BY active_ms DESC, sessions DESC LIMIT 10",
+    );
+
+    #[derive(FromQueryResult)]
+    struct Row {
+        name: String,
+        sessions: i64,
+        active_ms: i64,
+    }
+    match Row::find_by_statement(Statement::from_sql_and_values(filter.backend, &sql, params))
+        .all(&app.db)
+        .await
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|r| TopNameEntry {
+                name: r.name,
+                sessions: r.sessions,
+                active_ms: r.active_ms,
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "reading stats top_publishers failed");
+            Vec::new()
+        }
+    }
+}
+
+#[derive(FromQueryResult)]
+struct TotalsRow {
+    sessions: i64,
+    active_ms: i64,
+    distinct_pages_read: i64,
+    distinct_issues: i64,
+}
+
+#[derive(FromQueryResult)]
+struct DayRow {
+    date: String,
+    sessions: i64,
+    active_ms: i64,
+    pages: i64,
+}
+
+#[derive(FromQueryResult)]
+struct StreakRow {
+    d: NaiveDate,
 }
 
 // ────────────── Helpers ──────────────
