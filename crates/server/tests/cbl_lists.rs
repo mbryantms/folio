@@ -534,6 +534,70 @@ async fn delete_cascades_linked_cbl_saved_view() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deleting_cbl_saved_view_also_removes_underlying_cbl_list() {
+    // Regression for the "deleted CBL still surfaces in OPDS feeds + On
+    // Deck" bug (2026-05-19): the /settings/views surface deletes the
+    // kind='cbl' saved_view wrapper but historically left the
+    // cbl_lists row in place. OPDS `/opds/v1/lists` and the On Deck
+    // rail both query cbl_lists directly, so the deleted CBL stayed
+    // visible. The user-scoped delete handler now cascades through
+    // the underlying list when the caller owns it.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "grace@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap().to_owned();
+
+    let body = serde_json::json!({
+        "kind": "cbl",
+        "name": "Sample saved view",
+        "cbl_list_id": &list_id,
+    });
+    let (status, view_body) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "saved view create: {view_body:?}"
+    );
+    let saved_view_id = view_body["id"].as_str().unwrap().to_owned();
+
+    // Delete the saved-view wrapper — the path used by /settings/views.
+    let url = format!("/api/me/saved-views/{saved_view_id}");
+    let (status, body) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "delete failed: {body:?}");
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let list_uuid = Uuid::parse_str(&list_id).unwrap();
+    let view_uuid = Uuid::parse_str(&saved_view_id).unwrap();
+    let list = cbl_list::Entity::find_by_id(list_uuid)
+        .one(&db)
+        .await
+        .unwrap();
+    assert!(
+        list.is_none(),
+        "deleting the saved view must also drop the underlying cbl_list — otherwise OPDS + On Deck keep surfacing the deleted CBL",
+    );
+    let saved = entity::saved_view::Entity::find_by_id(view_uuid)
+        .one(&db)
+        .await
+        .unwrap();
+    assert!(saved.is_none(), "saved_view should be gone");
+    let entries = cbl_entry::Entity::find()
+        .filter(cbl_entry::Column::CblListId.eq(list_uuid))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(entries, 0, "cbl_entries should have cascaded with the list");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn non_owner_cannot_access_other_users_list() {
     let app = TestApp::spawn().await;
     let owner = register(&app, "owner@example.com").await;

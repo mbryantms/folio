@@ -23,7 +23,7 @@ use axum::{
     routing::{get, patch, post},
 };
 use chrono::Utc;
-use entity::{saved_view, user_view_pin};
+use entity::{cbl_list, saved_view, user_view_pin};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult,
     ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, Statement, TransactionTrait,
@@ -1108,6 +1108,37 @@ pub async fn delete_one(
     if row.user_id != Some(user.id) {
         return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
     }
+    // For kind='cbl' the saved view is just a wrapper around a row in
+    // `cbl_lists`. OPDS feeds (`/opds/v1/lists`) and the On Deck rail
+    // both query `cbl_lists` directly, so deleting only the wrapper
+    // leaves an orphan list that keeps surfacing the "deleted" CBL.
+    // Delete the underlying list when the user owns it; the FK on
+    // `saved_views.cbl_list_id` cascades back to this row.
+    if row.kind == KIND_CBL
+        && let Some(list_id) = row.cbl_list_id
+    {
+        match cbl_list::Entity::find_by_id(list_id)
+            .filter(cbl_list::Column::OwnerUserId.eq(user.id))
+            .one(&app.db)
+            .await
+        {
+            Ok(Some(list)) => {
+                if let Err(e) = list.delete(&app.db).await {
+                    tracing::error!(error = %e, "saved_views: cbl_list cascade delete failed");
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
+                return StatusCode::NO_CONTENT.into_response();
+            }
+            Ok(None) => {
+                // List is either already gone or system-owned (not
+                // deletable by this user). Drop the wrapper only.
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "saved_views: cbl_list lookup failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    }
     if let Err(e) = row.delete(&app.db).await {
         tracing::error!(error = %e, "saved_views: delete failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
@@ -1157,7 +1188,37 @@ pub async fn admin_delete(
         .count(&app.db)
         .await
         .unwrap_or(0);
-    if let Err(e) = row.delete(&app.db).await {
+    // Same wrapper/list relationship as the user-scoped delete: for
+    // kind='cbl' system saved views, the underlying `cbl_lists` row
+    // (owner_user_id IS NULL) is what OPDS feeds and on-deck query
+    // against, so delete it and let the FK cascade remove the wrapper.
+    let cascaded_cbl_list_id = if row.kind == KIND_CBL
+        && let Some(list_id) = row.cbl_list_id
+    {
+        match cbl_list::Entity::find_by_id(list_id)
+            .filter(cbl_list::Column::OwnerUserId.is_null())
+            .one(&app.db)
+            .await
+        {
+            Ok(Some(list)) => {
+                if let Err(e) = list.delete(&app.db).await {
+                    tracing::error!(error = %e, "saved_views: admin cbl_list cascade delete failed");
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
+                Some(list_id)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                tracing::error!(error = %e, "saved_views: admin cbl_list lookup failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    } else {
+        None
+    };
+    if cascaded_cbl_list_id.is_none()
+        && let Err(e) = row.delete(&app.db).await
+    {
         tracing::error!(error = %e, "saved_views: admin delete failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
@@ -1168,7 +1229,10 @@ pub async fn admin_delete(
             action: "admin.saved_view.delete",
             target_type: Some("saved_view"),
             target_id: Some(id.to_string()),
-            payload: serde_json::json!({ "affected_user_pins": affected_pins }),
+            payload: serde_json::json!({
+                "affected_user_pins": affected_pins,
+                "cascaded_cbl_list_id": cascaded_cbl_list_id.map(|i| i.to_string()),
+            }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),
         },

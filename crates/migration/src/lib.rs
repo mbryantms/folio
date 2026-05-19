@@ -24,6 +24,7 @@ mod m20260515_000003_user_page_description;
 mod m20260515_000004_sidebar_headers_spacers;
 mod m20260516_000001_issues_content_hash_idx;
 mod m20260518_000001_series_reading_direction;
+mod m20260519_000001_drop_orphan_cbl_lists;
 mod m20260601_000001_user_reading_direction;
 mod m20260801_000001_scanner_v1;
 mod m20260901_000001_user_preferences;
@@ -130,6 +131,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261219_000001_character_team_location_junctions::Migration),
             Box::new(m20261220_000001_opds_reorder_opt_outs::Migration),
             Box::new(m20261221_000001_opds_progress_glyphs::Migration),
+            Box::new(m20260519_000001_drop_orphan_cbl_lists::Migration),
         ]
     }
 }
