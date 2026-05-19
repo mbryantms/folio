@@ -1,3 +1,10 @@
+// eslint pin: 9.x. Bumping to 10.x is blocked on
+// `eslint-plugin-react` (pulled in via `eslint-config-next`): the
+// 7.37.5 release calls `contextOrFilename.getFilename()` on the
+// rule-context arg, which eslint 10 removed. Revisit when
+// eslint-plugin-react ships a release that targets the eslint 10
+// rule-context API.
+
 import { defineConfig } from "eslint/config";
 import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
