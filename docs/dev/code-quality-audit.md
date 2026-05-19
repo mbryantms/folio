@@ -416,15 +416,17 @@ Cover rendering is already factored to `web/components/Cover.tsx`
 
 ### 5.2 Largest functions
 
-Five functions exceed 400 lines and warrant breakup:
+Re-measured 2026-05-19 with strict brace-tracking; the original audit
+used "lines until next function" and over-counted by sweeping in
+struct definitions. Corrected sizes (status as of v0.3.34):
 
-| Location | Function | ~Lines |
-|---|---|---|
-| [api/series.rs:225](../../crates/server/src/api/series.rs#L225) | `update_series` | 677 |
-| [api/series.rs:958](../../crates/server/src/api/series.rs#L958) | `list` | 619 |
-| [library/scanner/process.rs:184](../../crates/server/src/library/scanner/process.rs#L184) | `ingest_one_with_fingerprint` | 491 |
-| [api/reading_sessions.rs:763](../../crates/server/src/api/reading_sessions.rs#L763) | `compute_stats_for_user` | 469 |
-| [api/issues.rs:1245](../../crates/server/src/api/issues.rs#L1245) | `list` | 427 |
+| Location | Function | Audit said | Actual | Status |
+|---|---|---|---|---|
+| [api/series.rs:226](../../crates/server/src/api/series.rs#L226) | `update_series` | 677 | **178** | ❌ mis-measured; well within reasonable handler size — no refactor needed |
+| [api/series.rs:959](../../crates/server/src/api/series.rs#L959) | `list` | 619 | 386 | Still oversized; M7 candidate |
+| [library/scanner/process.rs:189](../../crates/server/src/library/scanner/process.rs#L189) | `ingest_one_with_fingerprint` | 491 | 497 | Confirmed; M7 candidate |
+| [api/reading_sessions.rs:764](../../crates/server/src/api/reading_sessions.rs#L764) | `compute_stats_for_user` | 469 | 435 | Confirmed; M7 candidate |
+| [api/issues.rs:1246](../../crates/server/src/api/issues.rs#L1246) | `list` | 427 | ~~424~~ → 103 | ✅ shipped in M7.1 (commit pending); decomposed into 7 helpers |
 
 ### 5.3 Largest TypeScript files
 

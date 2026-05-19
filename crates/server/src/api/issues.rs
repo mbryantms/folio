@@ -1238,86 +1238,94 @@ fn default_cross_limit() -> u64 {
 
 const MAX_QUERY_LEN: usize = 200;
 
-#[utoipa::path(
-    get,
-    path = "/issues",
-    responses((status = 200, body = super::series::IssueListView))
-)]
-pub async fn list(
-    State(app): State<AppState>,
-    user: CurrentUser,
-    Query(q): Query<ListIssuesCrossQuery>,
-) -> impl IntoResponse {
-    use super::series::{
-        IssueListView, IssueSort, SortOrder, apply_f64_cursor, apply_i32_cursor, apply_ts_cursor,
-        clamp_limit, encode_cursor, parse_cursor, split_csv,
-    };
+// ───── /issues list helpers ─────
+//
+// `list` orchestrates these: validate → visibility → static filters →
+// search-mode early-return → count → cursor → sort → fetch → hydrate.
+// Each helper threads a sea_orm::Select<issue::Entity> through; the
+// validation-only helpers return `Result<(), Response>` so the
+// handler can surface the 4xx without unwinding the select pipeline.
 
+/// Reject pathological inputs before any DB work. Returns a static
+/// 400-validation message on failure — caller wraps with the canonical
+/// `error()` builder. Keeps the helper's `Result` variant small
+/// (clippy::result_large_err).
+fn validate_list_query_params(q: &ListIssuesCrossQuery) -> Result<(), &'static str> {
     if let Some(s) = q.q.as_ref()
         && s.len() > MAX_QUERY_LEN
     {
-        return error(StatusCode::BAD_REQUEST, "validation", "q too long");
+        return Err("q too long");
     }
+    if q.user_rating_min.is_some() || q.user_rating_max.is_some() {
+        let min = q.user_rating_min.unwrap_or(0.0);
+        let max = q.user_rating_max.unwrap_or(5.0);
+        if !(0.0..=5.0).contains(&min) || !(0.0..=5.0).contains(&max) || min > max {
+            return Err("user_rating bounds must be 0..=5 with min <= max");
+        }
+    }
+    Ok(())
+}
 
-    let visible = access::for_user(&app, &user).await;
-    let empty = || {
-        Json(IssueListView {
-            items: Vec::new(),
-            next_cursor: None,
-            total: Some(0),
-        })
-        .into_response()
-    };
-
-    let mut select = issue::Entity::find()
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null());
-
-    if let Some(lib) = q.library {
+/// Apply the per-user library visibility filter. Returns `None` when
+/// the caller is restricted and has no overlap with the requested
+/// scope — the handler should short-circuit to an empty page.
+fn apply_issue_visibility(
+    mut select: sea_orm::Select<issue::Entity>,
+    visible: &access::VisibleLibraries,
+    library: Option<Uuid>,
+) -> Option<sea_orm::Select<issue::Entity>> {
+    if let Some(lib) = library {
         if !visible.contains(lib) {
-            return empty();
+            return None;
         }
         select = select.filter(issue::Column::LibraryId.eq(lib));
     } else if !visible.unrestricted {
         if visible.allowed.is_empty() {
-            return empty();
+            return None;
         }
         select = select.filter(
             issue::Column::LibraryId.is_in(visible.allowed.iter().copied().collect::<Vec<_>>()),
         );
     }
+    Some(select)
+}
 
-    // Year range (inclusive). NULLs implicitly excluded by the
-    // comparison.
+/// Year-range bounds + IN-set facets on direct `issues.*` columns.
+fn apply_issue_direct_column_filters(
+    mut select: sea_orm::Select<issue::Entity>,
+    q: &ListIssuesCrossQuery,
+) -> sea_orm::Select<issue::Entity> {
     if let Some(y) = q.year_from {
         select = select.filter(issue::Column::Year.gte(y));
     }
     if let Some(y) = q.year_to {
         select = select.filter(issue::Column::Year.lte(y));
     }
-    // IN-set facets on direct issue columns.
-    if let Some(raw) = q.publisher.as_deref() {
-        let v = split_csv(raw);
-        if !v.is_empty() {
-            select = select.filter(issue::Column::Publisher.is_in(v));
+    let direct_facets: [(Option<&str>, issue::Column); 3] = [
+        (q.publisher.as_deref(), issue::Column::Publisher),
+        (q.language.as_deref(), issue::Column::LanguageCode),
+        (q.age_rating.as_deref(), issue::Column::AgeRating),
+    ];
+    for (raw, column) in direct_facets {
+        let Some(raw) = raw else { continue };
+        let v = super::series::split_csv(raw);
+        if v.is_empty() {
+            continue;
         }
+        select = select.filter(column.is_in(v));
     }
-    if let Some(raw) = q.language.as_deref() {
-        let v = split_csv(raw);
-        if !v.is_empty() {
-            select = select.filter(issue::Column::LanguageCode.is_in(v));
-        }
-    }
-    if let Some(raw) = q.age_rating.as_deref() {
-        let v = split_csv(raw);
-        if !v.is_empty() {
-            select = select.filter(issue::Column::AgeRating.is_in(v));
-        }
-    }
-    // CSV-includes-any against issue's own CSV columns. Splitting on
-    // `[,;]` mirrors the series `aggregate_csv` so chip values match
-    // here.
-    let csv_facets: [(Option<&str>, &'static str); 11] = [
+    select
+}
+
+/// CSV-includes-any against the issues' CSV-shaped metadata columns
+/// (`genre`, `tags`, credits, characters/teams/locations). Splits on
+/// `[,;]` to mirror the series-level `aggregate_csv` shape so chip
+/// values match between the two surfaces.
+fn apply_issue_csv_facet_filters(
+    mut select: sea_orm::Select<issue::Entity>,
+    q: &ListIssuesCrossQuery,
+) -> sea_orm::Select<issue::Entity> {
+    let csv_facets: [(Option<&str>, &'static str); 13] = [
         (q.genres.as_deref(), "genre"),
         (q.tags.as_deref(), "tags"),
         (q.writers.as_deref(), "writer"),
@@ -1329,10 +1337,12 @@ pub async fn list(
         (q.editors.as_deref(), "editor"),
         (q.translators.as_deref(), "translator"),
         (q.characters.as_deref(), "characters"),
+        (q.teams.as_deref(), "teams"),
+        (q.locations.as_deref(), "locations"),
     ];
     for (raw, column) in csv_facets {
         let Some(raw) = raw else { continue };
-        let values = split_csv(raw);
+        let values = super::series::split_csv(raw);
         if values.is_empty() {
             continue;
         }
@@ -1344,214 +1354,131 @@ pub async fn list(
         );
         select = select.filter(Expr::cust_with_values(&sql, [Value::from(lowered)]));
     }
-    // Teams and locations weren't expressible in the loop above
-    // because the column-list literal is fixed-size. Keep the same
-    // shape as the loop body.
-    for (raw, column) in [
-        (q.teams.as_deref(), "teams"),
-        (q.locations.as_deref(), "locations"),
-    ] {
-        let Some(raw) = raw else { continue };
-        let values = split_csv(raw);
-        if values.is_empty() {
-            continue;
-        }
-        let lowered: Vec<String> = values.iter().map(|s| s.to_lowercase()).collect();
-        let sql = format!(
-            "EXISTS (SELECT 1 FROM unnest( \
-               regexp_split_to_array(coalesce(issues.{column}, ''), '[,;]') \
-             ) AS piece WHERE lower(trim(piece)) = ANY($1))",
-        );
-        select = select.filter(Expr::cust_with_values(&sql, [Value::from(lowered)]));
-    }
-    // Per-user rating bounds — issues are keyed by their string id
-    // (BLAKE3) in `user_ratings.target_id`.
+    select
+}
+
+/// EXISTS-subquery filter on the calling user's per-issue rating.
+/// Caller must call `validate_list_query_params` first — this helper
+/// trusts the bounds.
+fn apply_issue_user_rating_filter(
+    mut select: sea_orm::Select<issue::Entity>,
+    q: &ListIssuesCrossQuery,
+    user_id: Uuid,
+) -> sea_orm::Select<issue::Entity> {
     if q.user_rating_min.is_some() || q.user_rating_max.is_some() {
         let min = q.user_rating_min.unwrap_or(0.0);
         let max = q.user_rating_max.unwrap_or(5.0);
-        if !(0.0..=5.0).contains(&min) || !(0.0..=5.0).contains(&max) || min > max {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "validation",
-                "user_rating bounds must be 0..=5 with min <= max",
-            );
-        }
         select = select.filter(Expr::cust_with_values(
             "EXISTS (SELECT 1 FROM user_ratings ur \
              WHERE ur.user_id = $1 \
                AND ur.target_type = 'issue' \
                AND ur.target_id = issues.id \
                AND ur.rating BETWEEN $2 AND $3)",
-            [Value::from(user.id), Value::from(min), Value::from(max)],
+            [Value::from(user_id), Value::from(min), Value::from(max)],
         ));
     }
+    select
+}
 
-    let limit = clamp_limit(q.limit);
-    let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
-
-    // Search mode: rank by ts_rank_cd; cursor + sort options are
-    // ignored. Search results are always a single ranked page.
-    if let Some(text) = q_text {
-        let select = select
-            .filter(Expr::cust_with_values(
-                "search_doc @@ websearch_to_tsquery('simple', $1)",
-                [text],
-            ))
-            .order_by_desc(Expr::cust_with_values(
-                "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
-                [text],
-            ))
-            .limit(limit);
-        let rows = match select.all(&app.db).await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!(error = %e, "list issues cross search failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        };
-        // Search mode is one ranked page — items.len() IS the total.
-        let total = Some(rows.len() as i64);
-        return hydrate_and_respond(&app, rows, None, total).await;
-    }
-
-    let sort = q.sort.unwrap_or_default();
-    let order = q.order.unwrap_or(match sort {
-        IssueSort::Number => SortOrder::Asc,
-        IssueSort::CreatedAt
-        | IssueSort::UpdatedAt
-        | IssueSort::Year
-        | IssueSort::PageCount
-        | IssueSort::UserRating => SortOrder::Desc,
-    });
-    let asc = matches!(order, SortOrder::Asc);
-
-    // First-page-only count — see `series::list` for the rationale.
-    use sea_orm::PaginatorTrait;
-    let total: Option<i64> = if q.cursor.is_none() {
-        match select.clone().count(&app.db).await {
-            Ok(n) => Some(n as i64),
-            Err(e) => {
-                tracing::error!(error = %e, "list issues cross count failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        }
-    } else {
-        None
+/// Decode the opaque cursor and dispatch to the per-sort
+/// `apply_*_cursor` helper. Returns the canonical "invalid cursor"
+/// message on any decode failure; caller maps to 400 `validation`.
+/// Static `Err` keeps the `Result` variant small
+/// (clippy::result_large_err).
+fn apply_issue_cursor(
+    select: sea_orm::Select<issue::Entity>,
+    cursor: &str,
+    sort: super::series::IssueSort,
+    asc: bool,
+    user_id: Uuid,
+) -> Result<sea_orm::Select<issue::Entity>, &'static str> {
+    use super::series::{
+        IssueSort, apply_f64_cursor, apply_i32_cursor, apply_ts_cursor, parse_cursor,
     };
+    let (c_value, c_id) = parse_cursor(cursor).map_err(|_| "invalid cursor")?;
+    let parse_f64 = || -> Result<Option<f64>, &'static str> {
+        if c_value.is_empty() {
+            Ok(None)
+        } else {
+            c_value
+                .parse::<f64>()
+                .map(Some)
+                .map_err(|_| "invalid cursor")
+        }
+    };
+    let parse_i32 = || -> Result<Option<i32>, &'static str> {
+        if c_value.is_empty() {
+            Ok(None)
+        } else {
+            c_value
+                .parse::<i32>()
+                .map(Some)
+                .map_err(|_| "invalid cursor")
+        }
+    };
+    Ok(match sort {
+        IssueSort::Number => apply_f64_cursor(
+            select,
+            issue::Column::SortNumber,
+            issue::Column::Id,
+            parse_f64()?,
+            c_id,
+            asc,
+        ),
+        IssueSort::Year => apply_i32_cursor(
+            select,
+            issue::Column::Year,
+            issue::Column::Id,
+            parse_i32()?,
+            c_id,
+            asc,
+        ),
+        IssueSort::PageCount => apply_i32_cursor(
+            select,
+            issue::Column::PageCount,
+            issue::Column::Id,
+            parse_i32()?,
+            c_id,
+            asc,
+        ),
+        IssueSort::CreatedAt => {
+            let ts =
+                chrono::DateTime::parse_from_rfc3339(&c_value).map_err(|_| "invalid cursor")?;
+            apply_ts_cursor(
+                select,
+                issue::Column::CreatedAt,
+                issue::Column::Id,
+                ts,
+                c_id,
+                asc,
+            )
+        }
+        IssueSort::UpdatedAt => {
+            let ts =
+                chrono::DateTime::parse_from_rfc3339(&c_value).map_err(|_| "invalid cursor")?;
+            apply_ts_cursor(
+                select,
+                issue::Column::UpdatedAt,
+                issue::Column::Id,
+                ts,
+                c_id,
+                asc,
+            )
+        }
+        IssueSort::UserRating => apply_user_rating_cursor(select, user_id, parse_f64()?, c_id, asc),
+    })
+}
 
-    if let Some(cursor) = q.cursor.as_deref() {
-        let Ok((c_value, c_id)) = parse_cursor(cursor) else {
-            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-        };
-        select = match sort {
-            IssueSort::Number => {
-                let parsed = if c_value.is_empty() {
-                    None
-                } else {
-                    match c_value.parse::<f64>() {
-                        Ok(v) => Some(v),
-                        Err(_) => {
-                            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-                        }
-                    }
-                };
-                apply_f64_cursor(
-                    select,
-                    issue::Column::SortNumber,
-                    issue::Column::Id,
-                    parsed,
-                    c_id,
-                    asc,
-                )
-            }
-            IssueSort::Year => {
-                let parsed = if c_value.is_empty() {
-                    None
-                } else {
-                    match c_value.parse::<i32>() {
-                        Ok(n) => Some(n),
-                        Err(_) => {
-                            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-                        }
-                    }
-                };
-                apply_i32_cursor(
-                    select,
-                    issue::Column::Year,
-                    issue::Column::Id,
-                    parsed,
-                    c_id,
-                    asc,
-                )
-            }
-            IssueSort::PageCount => {
-                let parsed = if c_value.is_empty() {
-                    None
-                } else {
-                    match c_value.parse::<i32>() {
-                        Ok(n) => Some(n),
-                        Err(_) => {
-                            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-                        }
-                    }
-                };
-                apply_i32_cursor(
-                    select,
-                    issue::Column::PageCount,
-                    issue::Column::Id,
-                    parsed,
-                    c_id,
-                    asc,
-                )
-            }
-            IssueSort::CreatedAt => match chrono::DateTime::parse_from_rfc3339(&c_value) {
-                Ok(ts) => apply_ts_cursor(
-                    select,
-                    issue::Column::CreatedAt,
-                    issue::Column::Id,
-                    ts,
-                    c_id,
-                    asc,
-                ),
-                Err(_) => {
-                    return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-                }
-            },
-            IssueSort::UpdatedAt => match chrono::DateTime::parse_from_rfc3339(&c_value) {
-                Ok(ts) => apply_ts_cursor(
-                    select,
-                    issue::Column::UpdatedAt,
-                    issue::Column::Id,
-                    ts,
-                    c_id,
-                    asc,
-                ),
-                Err(_) => {
-                    return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-                }
-            },
-            IssueSort::UserRating => {
-                // Rating cursor: empty value means the boundary row had
-                // no rating — paginate within the no-rating bucket on id
-                // alone. Otherwise compare the correlated subquery
-                // against the parsed f64. We bind `user.id` once per
-                // arm of the boundary so the SQL stays stand-alone.
-                let parsed = if c_value.is_empty() {
-                    None
-                } else {
-                    match c_value.parse::<f64>() {
-                        Ok(v) => Some(v),
-                        Err(_) => {
-                            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-                        }
-                    }
-                };
-                apply_user_rating_cursor(select, user.id, parsed, c_id, asc)
-            }
-        };
-    }
-
-    select = match sort {
+/// Final `ORDER BY` chain. Each sort mode keeps `(NULLs LAST, value,
+/// id)` ordering so cursor pagination tiebreaks cleanly.
+fn apply_issue_sort_ordering(
+    select: sea_orm::Select<issue::Entity>,
+    sort: super::series::IssueSort,
+    asc: bool,
+    user_id: Uuid,
+) -> sea_orm::Select<issue::Entity> {
+    use super::series::IssueSort;
+    match sort {
         IssueSort::Number => {
             let nulls_last = Expr::cust("sort_number IS NULL");
             let s = select.order_by_asc(nulls_last);
@@ -1608,19 +1535,17 @@ pub async fn list(
             }
         }
         IssueSort::UserRating => {
-            // Correlated subquery for the calling user's rating; NULLs
-            // (no rating from this user) sort last on ASC.
             let rating_expr = Expr::cust_with_values(
                 "(SELECT ur.rating FROM user_ratings ur \
                   WHERE ur.user_id = $1 AND ur.target_type = 'issue' \
                     AND ur.target_id = issues.id)",
-                [Value::from(user.id)],
+                [Value::from(user_id)],
             );
             let nulls_last_expr = Expr::cust_with_values(
                 "(SELECT ur.rating FROM user_ratings ur \
                   WHERE ur.user_id = $1 AND ur.target_type = 'issue' \
                     AND ur.target_id = issues.id) IS NULL",
-                [Value::from(user.id)],
+                [Value::from(user_id)],
             );
             let s = select.order_by_asc(nulls_last_expr);
             if asc {
@@ -1630,7 +1555,135 @@ pub async fn list(
                     .order_by_desc(issue::Column::Id)
             }
         }
+    }
+}
+
+/// Compute the opaque cursor encoding for the boundary row, when the
+/// fetched window overflows the page limit. Pulls the per-user rating
+/// out of band for the `UserRating` sort so the cursor encodes the
+/// correlated subquery's value.
+async fn compute_next_issue_cursor(
+    app: &AppState,
+    rows: &[issue::Model],
+    limit: u64,
+    sort: super::series::IssueSort,
+    user_id: Uuid,
+) -> Option<String> {
+    use super::series::{IssueSort, encode_cursor};
+    if rows.len() as u64 <= limit {
+        return None;
+    }
+    let r = rows.get(limit as usize - 1)?;
+    let value = match sort {
+        IssueSort::Number => r.sort_number.map(|n| n.to_string()).unwrap_or_default(),
+        IssueSort::Year => r.year.map(|y| y.to_string()).unwrap_or_default(),
+        IssueSort::PageCount => r.page_count.map(|p| p.to_string()).unwrap_or_default(),
+        IssueSort::CreatedAt => r.created_at.to_rfc3339(),
+        IssueSort::UpdatedAt => r.updated_at.to_rfc3339(),
+        IssueSort::UserRating => fetch_user_rating(app, user_id, &r.id)
+            .await
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
     };
+    Some(encode_cursor(&value, &r.id))
+}
+
+#[utoipa::path(
+    get,
+    path = "/issues",
+    responses((status = 200, body = super::series::IssueListView))
+)]
+pub async fn list(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<ListIssuesCrossQuery>,
+) -> impl IntoResponse {
+    use super::series::{IssueListView, IssueSort, SortOrder, clamp_limit};
+
+    if let Err(msg) = validate_list_query_params(&q) {
+        return error(StatusCode::BAD_REQUEST, "validation", msg);
+    }
+
+    let visible = access::for_user(&app, &user).await;
+    let empty = || {
+        Json(IssueListView {
+            items: Vec::new(),
+            next_cursor: None,
+            total: Some(0),
+        })
+        .into_response()
+    };
+
+    let base = issue::Entity::find()
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null());
+    let Some(mut select) = apply_issue_visibility(base, &visible, q.library) else {
+        return empty();
+    };
+    select = apply_issue_direct_column_filters(select, &q);
+    select = apply_issue_csv_facet_filters(select, &q);
+    select = apply_issue_user_rating_filter(select, &q, user.id);
+
+    let limit = clamp_limit(q.limit);
+    let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
+
+    // Search mode: rank by ts_rank_cd; cursor + sort options are
+    // ignored. Search results are always a single ranked page —
+    // items.len() IS the total.
+    if let Some(text) = q_text {
+        let ranked = select
+            .filter(Expr::cust_with_values(
+                "search_doc @@ websearch_to_tsquery('simple', $1)",
+                [text],
+            ))
+            .order_by_desc(Expr::cust_with_values(
+                "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
+                [text],
+            ))
+            .limit(limit);
+        let rows = match ranked.all(&app.db).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "list issues cross search failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+        let total = Some(rows.len() as i64);
+        return hydrate_and_respond(&app, rows, None, total).await;
+    }
+
+    let sort = q.sort.unwrap_or_default();
+    let order = q.order.unwrap_or(match sort {
+        IssueSort::Number => SortOrder::Asc,
+        IssueSort::CreatedAt
+        | IssueSort::UpdatedAt
+        | IssueSort::Year
+        | IssueSort::PageCount
+        | IssueSort::UserRating => SortOrder::Desc,
+    });
+    let asc = matches!(order, SortOrder::Asc);
+
+    // First-page-only count — see `series::list` for the rationale.
+    use sea_orm::PaginatorTrait;
+    let total: Option<i64> = if q.cursor.is_none() {
+        match select.clone().count(&app.db).await {
+            Ok(n) => Some(n as i64),
+            Err(e) => {
+                tracing::error!(error = %e, "list issues cross count failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(cursor) = q.cursor.as_deref() {
+        select = match apply_issue_cursor(select, cursor, sort, asc, user.id) {
+            Ok(s) => s,
+            Err(msg) => return error(StatusCode::BAD_REQUEST, "validation", msg),
+        };
+    }
+    select = apply_issue_sort_ordering(select, sort, asc, user.id);
 
     let rows: Vec<issue::Model> = match select.limit(limit + 1).all(&app.db).await {
         Ok(v) => v,
@@ -1639,31 +1692,7 @@ pub async fn list(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-
-    let next_cursor = if rows.len() as u64 > limit {
-        // We need the rating value for the cursor when sorting by
-        // user_rating; pre-compute via a one-off scalar query keyed on
-        // the boundary issue's id.
-        let boundary = rows.get(limit as usize - 1).cloned();
-        if let Some(r) = boundary {
-            let value = match sort {
-                IssueSort::Number => r.sort_number.map(|n| n.to_string()).unwrap_or_default(),
-                IssueSort::Year => r.year.map(|y| y.to_string()).unwrap_or_default(),
-                IssueSort::PageCount => r.page_count.map(|p| p.to_string()).unwrap_or_default(),
-                IssueSort::CreatedAt => r.created_at.to_rfc3339(),
-                IssueSort::UpdatedAt => r.updated_at.to_rfc3339(),
-                IssueSort::UserRating => fetch_user_rating(&app, user.id, &r.id)
-                    .await
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-            };
-            Some(encode_cursor(&value, &r.id))
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let next_cursor = compute_next_issue_cursor(&app, &rows, limit, sort, user.id).await;
     let page: Vec<issue::Model> = rows.into_iter().take(limit as usize).collect();
     hydrate_and_respond(&app, page, next_cursor, total).await
 }
