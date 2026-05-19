@@ -3,13 +3,13 @@
 import {
   Database,
   ExternalLink,
-  Github,
   HardDrive,
   ListChecks,
   Eye,
   ScanText,
   Sparkles,
 } from "lucide-react";
+import { GithubIcon } from "@/components/icons/github";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -443,7 +443,7 @@ function Row({
           >
             {value}
             {label === "Repository" ? (
-              <Github className="h-3 w-3" aria-hidden />
+              <GithubIcon className="h-3 w-3" aria-hidden />
             ) : (
               <ExternalLink className="h-3 w-3" aria-hidden />
             )}

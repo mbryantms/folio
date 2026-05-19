@@ -8,7 +8,6 @@ import {
   Check,
   CheckCircle2,
   ExternalLink,
-  Github,
   HelpCircle,
   Loader2,
   Pencil,
@@ -17,6 +16,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { GithubIcon } from "@/components/icons/github";
 
 import {
   AlertDialog,
@@ -171,7 +171,7 @@ export function CblInfoRow({ list }: { list: CblDetailView }) {
     if (list.source_kind === "catalog") {
       return (
         <Badge variant="secondary">
-          <Github className="mr-1 h-3 w-3" />
+          <GithubIcon className="mr-1 h-3 w-3" />
           Catalog · {list.catalog_path}
         </Badge>
       );
