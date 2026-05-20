@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CollapsiblePickerSection } from "@/components/ui/CollapsiblePickerSection";
 import { Input } from "@/components/ui/input";
 import { useSidebarLayout } from "@/lib/api/queries";
 import { useUpdateSidebarLayout } from "@/lib/api/mutations";
@@ -905,10 +906,15 @@ function AddToSidebarDialog({
             </p>
           ) : (
             groups.map((group) => (
-              <div key={group.kind} className="space-y-1">
-                <p className="bg-background text-muted-foreground/70 sticky top-0 z-10 px-2 pt-1 pb-0.5 text-[10px] font-medium tracking-widest uppercase">
-                  {group.label}
-                </p>
+              <CollapsiblePickerSection
+                key={group.kind}
+                label={group.label}
+                count={group.items.length}
+                // Filter views are the most common Add target on a fresh
+                // sidebar; open that section first, collapse the others.
+                defaultOpen={group.kind === "filter"}
+                forceOpen={query.trim().length > 0 ? true : undefined}
+              >
                 {group.items.map((item) => (
                   <AddRow
                     key={item.id}
@@ -918,7 +924,7 @@ function AddToSidebarDialog({
                     onAdd={() => onAdd(item)}
                   />
                 ))}
-              </div>
+              </CollapsiblePickerSection>
             ))
           )}
         </div>

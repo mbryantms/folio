@@ -11575,6 +11575,13 @@
             ],
             "description": "Originating issue id for `issue` kinds. `null` otherwise."
           },
+          "issue_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Joined issue label shaped as `{series} #{number}` (or `{series} —\n{title}` when there's no number). `null` when the issue row was\nsince deleted, or when this scan isn't issue-kinded."
+          },
           "kind": {
             "type": "string",
             "description": "`library` | `series` | `issue` — drives the History tab filter chips."

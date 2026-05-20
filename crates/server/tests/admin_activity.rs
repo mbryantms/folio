@@ -502,6 +502,56 @@ async fn invalid_cursor_400s() {
 }
 
 #[tokio::test]
+async fn payloads_carry_resolved_names() {
+    // Phase B follow-up: scan/health/audit payloads should include
+    // `library_name`, `series_name`, `issue_label`, and `actor_name`
+    // alongside the raw IDs so the UI never has to render a UUID.
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "named-admin@example.com").await;
+    let (lib_id, _series_id, _issue_id) = seed_one(&app, "named-fixture").await;
+    seed_audit(&app, admin.user_id).await;
+    seed_scan_run(&app, lib_id).await;
+    seed_health_issue(&app, lib_id).await;
+
+    let (s, body) = get(&app, &admin, "/api/admin/activity").await;
+    assert_eq!(s, StatusCode::OK, "body={body}");
+    let entries = body["entries"].as_array().unwrap();
+    let mut saw_scan_lib = false;
+    let mut saw_health_lib = false;
+    let mut saw_audit_actor = false;
+    for entry in entries {
+        match entry["kind"].as_str() {
+            Some("scan") => {
+                assert_eq!(
+                    entry["payload"]["library_name"], "Lib named-fixture",
+                    "scan payload missing library_name: {entry}"
+                );
+                saw_scan_lib = true;
+            }
+            Some("health") => {
+                assert_eq!(
+                    entry["payload"]["library_name"], "Lib named-fixture",
+                    "health payload missing library_name: {entry}"
+                );
+                saw_health_lib = true;
+            }
+            Some("audit") => {
+                let actor_name = entry["payload"]["actor_name"].as_str();
+                assert!(
+                    actor_name.is_some_and(|n| n.contains("named-admin@example.com")),
+                    "audit payload missing actor_name: {entry}"
+                );
+                saw_audit_actor = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_scan_lib, "no scan entry in feed");
+    assert!(saw_health_lib, "no health entry in feed");
+    assert!(saw_audit_actor, "no audit entry in feed");
+}
+
+#[tokio::test]
 async fn unknown_kinds_returns_empty() {
     let app = TestApp::spawn().await;
     let admin = register(&app, "admin@example.com").await;

@@ -51,10 +51,22 @@ pub struct ScanRunView {
     pub series_name: Option<String>,
     /// Originating issue id for `issue` kinds. `null` otherwise.
     pub issue_id: Option<String>,
+    /// Joined issue label shaped as `{series} #{number}` (or `{series} —
+    /// {title}` when there's no number). `null` when the issue row was
+    /// since deleted, or when this scan isn't issue-kinded.
+    pub issue_label: Option<String>,
 }
 
 impl ScanRunView {
-    fn from_model(m: scan_run::Model, series_names: &HashMap<Uuid, String>) -> Self {
+    fn from_model(
+        m: scan_run::Model,
+        series_names: &HashMap<Uuid, String>,
+        issue_labels: &HashMap<String, String>,
+    ) -> Self {
+        let issue_label = m
+            .issue_id
+            .as_deref()
+            .and_then(|id| issue_labels.get(id).cloned());
         Self {
             id: m.id.to_string(),
             state: m.state,
@@ -66,6 +78,7 @@ impl ScanRunView {
             series_id: m.series_id.map(|u| u.to_string()),
             series_name: m.series_id.and_then(|id| series_names.get(&id).cloned()),
             issue_id: m.issue_id,
+            issue_label,
         }
     }
 }
@@ -139,7 +152,25 @@ pub async fn list(
 
     // Batch-resolve series names so the table doesn't fan out one query per
     // row. Skip the lookup entirely when no rows actually reference a series.
-    let series_ids: HashSet<Uuid> = rows.iter().filter_map(|r| r.series_id).collect();
+    let mut series_ids: HashSet<Uuid> = rows.iter().filter_map(|r| r.series_id).collect();
+    let issue_ids: HashSet<String> = rows.iter().filter_map(|r| r.issue_id.clone()).collect();
+
+    // Issue scans don't always carry the originating series_id (the worker
+    // sometimes fills only issue_id). Pull it from the issues table so the
+    // joined label below can still build the "Series #N" shape.
+    let mut issue_meta: HashMap<String, (Uuid, Option<String>, Option<String>)> = HashMap::new();
+    if !issue_ids.is_empty() {
+        let issue_rows = entity::issue::Entity::find()
+            .filter(entity::issue::Column::Id.is_in(issue_ids.iter().cloned().collect::<Vec<_>>()))
+            .all(&app.db)
+            .await
+            .unwrap_or_default();
+        for i in issue_rows {
+            series_ids.insert(i.series_id);
+            issue_meta.insert(i.id.clone(), (i.series_id, i.number_raw, i.title));
+        }
+    }
+
     let mut series_names: HashMap<Uuid, String> = HashMap::new();
     if !series_ids.is_empty() {
         let names = series::Entity::find()
@@ -152,9 +183,23 @@ pub async fn list(
         }
     }
 
+    let mut issue_labels: HashMap<String, String> = HashMap::new();
+    for (id, (sid, number, title)) in issue_meta {
+        let series_name = series_names
+            .get(&sid)
+            .cloned()
+            .unwrap_or_else(|| "Unknown series".to_owned());
+        let label = match (number.as_deref(), title.as_deref()) {
+            (Some(n), _) if !n.is_empty() => format!("{series_name} #{n}"),
+            (_, Some(t)) if !t.is_empty() => format!("{series_name} — {t}"),
+            _ => series_name,
+        };
+        issue_labels.insert(id, label);
+    }
+
     Json(
         rows.into_iter()
-            .map(|m| ScanRunView::from_model(m, &series_names))
+            .map(|m| ScanRunView::from_model(m, &series_names, &issue_labels))
             .collect::<Vec<_>>(),
     )
     .into_response()

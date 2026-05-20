@@ -114,14 +114,14 @@ describe("reader store — chrome controls", () => {
     });
     const s = useReaderStore.getState();
     expect(s.chromeAutoHide).toBe(false);
-    // chromeVisible always resets to true on a fresh issue mount.
-    expect(s.chromeVisible).toBe(true);
+    // Reader opens with chrome hidden — pure-image surface; tap to reveal.
+    expect(s.chromeVisible).toBe(false);
     // Pinned never carries across mounts — interactive UIs re-pin themselves.
     expect(s.chromePinned).toBe(false);
   });
 
-  it("init restores chromeVisible to true even if previously hidden", () => {
-    useReaderStore.setState({ chromeVisible: false });
+  it("init opens with chrome hidden even if previously visible", () => {
+    useReaderStore.setState({ chromeVisible: true });
     useReaderStore.getState().init({
       issueId: "issue-1",
       seriesId: null,
@@ -130,7 +130,7 @@ describe("reader store — chrome controls", () => {
       initialDirection: "ltr",
       initialViewMode: "single",
     });
-    expect(useReaderStore.getState().chromeVisible).toBe(true);
+    expect(useReaderStore.getState().chromeVisible).toBe(false);
   });
 
   it("setBrightness clamps to [0.5, 1.5]", () => {

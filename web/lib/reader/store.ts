@@ -191,7 +191,9 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   fitMode: "width",
   viewMode: "single",
   direction: "ltr",
-  chromeVisible: true,
+  // Default to chrome-off on first open so the reader lands on a pure
+  // image surface. Tapping the page (or pressing `f`) toggles it on.
+  chromeVisible: false,
   chromeAutoHide: true,
   chromePinned: false,
   pageStripVisible: false,
@@ -314,7 +316,10 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       fitMode: fit,
       viewMode: loadViewMode(seriesId) ?? initialViewMode,
       direction: loadDirection(seriesId) ?? initialDirection,
-      chromeVisible: true,
+      // Reader opens with chrome hidden so each new issue lands on
+      // a pure-image surface. The user reveals chrome with a tap
+      // (onChromeZone) or the `f` keybind.
+      chromeVisible: false,
       chromeAutoHide: get().chromeAutoHide,
       chromePinned: false,
       pageStripVisible: initialPageStripVisible ?? false,

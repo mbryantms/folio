@@ -817,12 +817,27 @@ export function useSetSavedViewIcon() {
 
 // ---------- Home rails (Continue Reading / On Deck) ----------
 
-/** Invalidate everything the home rails depend on — progress delta, both
- *  rail queries, and the saved-views listing (system rails appear there). */
+/** Invalidate every cached surface that derives from per-user reading
+ *  progress: the two system rails, the saved-views index + per-view
+ *  results, the CBL list rail/grid variants, the collection rail/grid
+ *  variants, the marker + bookmarks listing, and the bookmarks badge.
+ *
+ *  Used by every progress-mutating hook (upsert / bulk-mark / dismiss).
+ *  The previous narrower helper missed `cbl-lists/window`, `cbl-lists/
+ *  entries`, `collections/entries`, and the bookmark surfaces, which
+ *  caused stale cards after a kebab "Mark as read" on the home rails
+ *  and `/views/[id]` detail pages. See
+ *  [docs/dev/multi-select.md](docs/dev/multi-select.md) for the rail
+ *  inventory that drove the broadening.
+ */
 function invalidateRails(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: queryKeys.continueReading });
   qc.invalidateQueries({ queryKey: queryKeys.onDeck });
   qc.invalidateQueries({ queryKey: ["saved-views"], exact: false });
+  qc.invalidateQueries({ queryKey: ["cbl-lists"], exact: false });
+  qc.invalidateQueries({ queryKey: ["collections"], exact: false });
+  qc.invalidateQueries({ queryKey: ["markers"], exact: false });
+  qc.invalidateQueries({ queryKey: queryKeys.markerCount });
 }
 
 /** `POST /me/rail-dismissals` — hide an issue / series / CBL from the home

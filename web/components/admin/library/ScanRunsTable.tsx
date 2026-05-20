@@ -293,9 +293,9 @@ function KindTarget({ run }: { run: ScanRunView }) {
         className={cn(
           "text-muted-foreground hover:text-foreground text-[11px] underline-offset-2 hover:underline",
         )}
-        title={run.series_name ?? undefined}
+        title={run.issue_label ?? run.series_name ?? undefined}
       >
-        Issue {run.issue_id.slice(0, 8)}…
+        {run.issue_label ?? `Issue ${run.issue_id.slice(0, 8)}…`}
       </Link>
     );
   }

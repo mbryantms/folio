@@ -163,22 +163,42 @@ const KIND_TONE: Record<string, string> = {
 function formatDetail(entry: ActivityEntryView): string | null {
   switch (entry.kind) {
     case "audit": {
-      const actor = (entry.payload.actor_type as string) ?? "user";
-      const target = entry.payload.target_type as string | null;
-      const targetId = entry.payload.target_id as string | null;
-      const tail =
-        target && targetId ? ` · ${target} ${targetId.slice(0, 12)}…` : "";
+      // Server-side resolver populates `actor_name`, `target_label`, etc.
+      // alongside the raw IDs. Prefer the human form; fall back to the
+      // truncated ID only for deleted entities the resolver couldn't
+      // resolve.
+      const p = entry.payload;
+      const actorName = (p.actor_name as string | undefined) ?? null;
+      const actorType = (p.actor_type as string | undefined) ?? "user";
+      const actor = actorName ?? actorType;
+      const target = p.target_type as string | undefined;
+      const targetLabel = p.target_label as string | undefined;
+      const targetId = p.target_id as string | undefined;
+      const targetText =
+        targetLabel ?? (targetId ? `${targetId.slice(0, 12)}…` : null);
+      const tail = target && targetText ? ` · ${target} ${targetText}` : "";
       return `${actor}${tail}`;
     }
     case "scan": {
-      const lib = entry.payload.library_id as string | undefined;
-      const err = entry.payload.error as string | null | undefined;
-      const tail = lib ? `library ${lib.slice(0, 8)}…` : "";
-      return err ? `${tail} · ${err}` : tail || null;
+      const p = entry.payload;
+      const libName = (p.library_name as string | undefined) ?? null;
+      const lib = p.library_id as string | undefined;
+      const seriesName = (p.series_name as string | undefined) ?? null;
+      const issueLabel = (p.issue_label as string | undefined) ?? null;
+      const err = p.error as string | null | undefined;
+      const subject =
+        issueLabel ??
+        seriesName ??
+        libName ??
+        (lib ? `library ${lib.slice(0, 8)}…` : null);
+      if (err) return subject ? `${subject} · ${err}` : err;
+      return subject;
     }
     case "health": {
+      const libName =
+        (entry.payload.library_name as string | undefined) ?? null;
       const lib = entry.payload.library_id as string | undefined;
-      return lib ? `library ${lib.slice(0, 8)}…` : null;
+      return libName ?? (lib ? `library ${lib.slice(0, 8)}…` : null);
     }
     case "reading": {
       const ms = numberOr(entry.payload.active_ms, 0);

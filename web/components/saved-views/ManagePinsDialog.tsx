@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Search } from "lucide-react";
 
 import { Checkbox } from "@/components/ui/checkbox";
+import { CollapsiblePickerSection } from "@/components/ui/CollapsiblePickerSection";
 import {
   Dialog,
   DialogContent,
@@ -159,10 +160,18 @@ export function ManagePinsDialog({
             </p>
           ) : (
             groups.map((group) => (
-              <div key={group.kind} className="space-y-1">
-                <p className="bg-background text-muted-foreground/70 sticky top-0 z-10 px-2 pt-1 pb-0.5 text-[10px] font-medium tracking-widest uppercase">
-                  {group.label}
-                </p>
+              <CollapsiblePickerSection
+                key={group.kind}
+                label={group.label}
+                count={group.items.length}
+                // Built-in rails are the most common pick on a fresh page,
+                // so default that section open. Others collapse-by-default
+                // to keep the dialog short until the user expands them.
+                defaultOpen={group.kind === "system"}
+                // While the user is searching, force every section open
+                // so matches aren't hidden behind a collapsed header.
+                forceOpen={query.trim().length > 0 ? true : undefined}
+              >
                 {group.items.map((v) => {
                   const isPinned = v.pinned_on_pages.includes(pageId);
                   const disabled = !isPinned && atCap;
@@ -196,7 +205,7 @@ export function ManagePinsDialog({
                     </label>
                   );
                 })}
-              </div>
+              </CollapsiblePickerSection>
             ))
           )}
         </div>

@@ -13,6 +13,8 @@
 //! The server filters `(ts, kind, source_id) < cursor` lexicographically so
 //! pagination is stable even across mixed-kind pages.
 
+use std::collections::{HashMap, HashSet};
+
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -22,8 +24,12 @@ use axum::{
 };
 use base64::Engine;
 use chrono::{DateTime, FixedOffset};
-use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
+use entity::{issue, library, series, user};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value,
+};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::error;
 use crate::auth::RequireAdmin;
@@ -49,6 +55,16 @@ pub struct ActivityQuery {
 pub struct ActivityListView {
     pub entries: Vec<ActivityEntryView>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(FromQueryResult)]
+struct Row {
+    kind: String,
+    source_id: String,
+    ts: DateTime<FixedOffset>,
+    summary_a: String,
+    summary_b: String,
+    payload: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -200,16 +216,6 @@ pub async fn list(
         limit + 1
     );
 
-    #[derive(FromQueryResult)]
-    struct Row {
-        kind: String,
-        source_id: String,
-        ts: DateTime<FixedOffset>,
-        summary_a: String,
-        summary_b: String,
-        payload: serde_json::Value,
-    }
-
     let rows = match Row::find_by_statement(Statement::from_sql_and_values(backend, &sql, params))
         .all(&app.db)
         .await
@@ -228,15 +234,30 @@ pub async fn list(
         None
     };
 
-    let entries: Vec<ActivityEntryView> = rows
+    let page: Vec<Row> = rows.into_iter().take(limit as usize).collect();
+
+    // Resolve UUID references in every payload to human-readable labels so
+    // the admin UI doesn't render `library d4f2e8c0…` / `series 9a1b…` /
+    // `Issue 12af…`. Mirrors the pattern in `audit.rs::resolve_labels`:
+    // collect IDs, bulk-fetch each entity table, decorate the payload.
+    let labels = match resolve_activity_labels(&app, &page).await {
+        Ok(l) => l,
+        Err(e) => {
+            // Fail soft — labels are presentation only; the IDs are still
+            // there and the page still renders.
+            tracing::warn!(error = %e, "admin_activity: label resolution failed; serving IDs only");
+            ActivityLabels::default()
+        }
+    };
+
+    let entries: Vec<ActivityEntryView> = page
         .into_iter()
-        .take(limit as usize)
         .map(|r| ActivityEntryView {
             summary: format_summary(&r.kind, &r.summary_a, &r.summary_b, &r.payload),
+            payload: decorate_payload(&r.kind, r.payload, &labels),
             kind: r.kind,
             source_id: r.source_id,
             timestamp: r.ts.to_rfc3339(),
-            payload: r.payload,
         })
         .collect();
 
@@ -245,6 +266,238 @@ pub async fn list(
         next_cursor,
     })
     .into_response()
+}
+
+#[derive(Default)]
+struct ActivityLabels {
+    users: HashMap<Uuid, String>,
+    libraries: HashMap<Uuid, String>,
+    series: HashMap<Uuid, String>,
+    /// Issue PKs are BLAKE3 hex strings, not UUIDs. Value is a display
+    /// label of the form `"{series_name} #{number}"` (or just the
+    /// series + title fallback when there's no number).
+    issues: HashMap<String, String>,
+}
+
+async fn resolve_activity_labels(
+    app: &AppState,
+    rows: &[Row],
+) -> Result<ActivityLabels, sea_orm::DbErr> {
+    let mut user_ids: HashSet<Uuid> = HashSet::new();
+    let mut library_ids: HashSet<Uuid> = HashSet::new();
+    let mut series_ids: HashSet<Uuid> = HashSet::new();
+    let mut issue_ids: HashSet<String> = HashSet::new();
+
+    for r in rows {
+        collect_uuid(&r.payload, "actor_id", &mut user_ids);
+        collect_uuid(&r.payload, "library_id", &mut library_ids);
+        collect_uuid(&r.payload, "series_id", &mut series_ids);
+        collect_str(&r.payload, "issue_id", &mut issue_ids);
+
+        // Audit `target_id` is a stringified UUID; the entity type lives
+        // in `target_type`. Resolve into the right bucket so the UI can
+        // render `user Alice` / `series Action Comics` / `library Main`.
+        if r.kind == "audit"
+            && let (Some(tt), Some(tid)) = (
+                r.payload.get("target_type").and_then(|v| v.as_str()),
+                r.payload.get("target_id").and_then(|v| v.as_str()),
+            )
+        {
+            match tt {
+                "user" => {
+                    if let Ok(id) = Uuid::parse_str(tid) {
+                        user_ids.insert(id);
+                    }
+                }
+                "library" => {
+                    if let Ok(id) = Uuid::parse_str(tid) {
+                        library_ids.insert(id);
+                    }
+                }
+                "series" => {
+                    if let Ok(id) = Uuid::parse_str(tid) {
+                        series_ids.insert(id);
+                    }
+                }
+                "issue" => {
+                    if !tid.is_empty() {
+                        issue_ids.insert(tid.to_owned());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut out = ActivityLabels::default();
+    if !user_ids.is_empty() {
+        for u in user::Entity::find()
+            .filter(user::Column::Id.is_in(user_ids.iter().copied()))
+            .all(&app.db)
+            .await?
+        {
+            let label = match u.email.as_deref() {
+                Some(email) if !email.is_empty() => format!("{} <{}>", u.display_name, email),
+                _ => u.display_name.clone(),
+            };
+            out.users.insert(u.id, label);
+        }
+    }
+    if !library_ids.is_empty() {
+        for l in library::Entity::find()
+            .filter(library::Column::Id.is_in(library_ids.iter().copied()))
+            .all(&app.db)
+            .await?
+        {
+            out.libraries.insert(l.id, l.name);
+        }
+    }
+    if !series_ids.is_empty() {
+        for s in series::Entity::find()
+            .filter(series::Column::Id.is_in(series_ids.iter().copied()))
+            .all(&app.db)
+            .await?
+        {
+            out.series.insert(s.id, s.name);
+        }
+    }
+    if !issue_ids.is_empty() {
+        // Issue label needs the parent series name too. Fetch both
+        // tables, then build "Series Name #N" / "Series Name — Title".
+        let issue_rows = issue::Entity::find()
+            .filter(issue::Column::Id.is_in(issue_ids.iter().cloned()))
+            .all(&app.db)
+            .await?;
+        let extra_series: HashSet<Uuid> = issue_rows
+            .iter()
+            .map(|i| i.series_id)
+            .filter(|sid| !out.series.contains_key(sid))
+            .collect();
+        if !extra_series.is_empty() {
+            for s in series::Entity::find()
+                .filter(series::Column::Id.is_in(extra_series.iter().copied()))
+                .all(&app.db)
+                .await?
+            {
+                out.series.insert(s.id, s.name);
+            }
+        }
+        for i in issue_rows {
+            let series_name = out
+                .series
+                .get(&i.series_id)
+                .cloned()
+                .unwrap_or_else(|| "Unknown series".to_owned());
+            let label = match (i.number_raw.as_deref(), i.title.as_deref()) {
+                (Some(num), _) if !num.is_empty() => format!("{series_name} #{num}"),
+                (_, Some(t)) if !t.is_empty() => format!("{series_name} — {t}"),
+                _ => series_name,
+            };
+            out.issues.insert(i.id, label);
+        }
+    }
+    Ok(out)
+}
+
+/// Extract a UUID-typed field from a JSON payload, when present.
+fn collect_uuid(payload: &serde_json::Value, key: &str, into: &mut HashSet<Uuid>) {
+    if let Some(s) = payload.get(key).and_then(|v| v.as_str())
+        && let Ok(id) = Uuid::parse_str(s)
+    {
+        into.insert(id);
+    }
+}
+
+/// Extract a string-typed field (issue ids are BLAKE3 hex, not UUIDs).
+fn collect_str(payload: &serde_json::Value, key: &str, into: &mut HashSet<String>) {
+    if let Some(s) = payload.get(key).and_then(|v| v.as_str())
+        && !s.is_empty()
+    {
+        into.insert(s.to_owned());
+    }
+}
+
+/// Add `*_name` / `*_label` fields next to the raw IDs in the payload so
+/// the UI can render the human form without a second round-trip.
+fn decorate_payload(
+    kind: &str,
+    mut payload: serde_json::Value,
+    labels: &ActivityLabels,
+) -> serde_json::Value {
+    let Some(obj) = payload.as_object_mut() else {
+        return payload;
+    };
+    // actor → user
+    if let Some(uuid) = obj
+        .get("actor_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        && let Some(name) = labels.users.get(&uuid)
+    {
+        obj.insert("actor_name".into(), serde_json::Value::String(name.clone()));
+    }
+    // library_id → name
+    if let Some(uuid) = obj
+        .get("library_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        && let Some(name) = labels.libraries.get(&uuid)
+    {
+        obj.insert(
+            "library_name".into(),
+            serde_json::Value::String(name.clone()),
+        );
+    }
+    // series_id → name
+    if let Some(uuid) = obj
+        .get("series_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        && let Some(name) = labels.series.get(&uuid)
+    {
+        obj.insert(
+            "series_name".into(),
+            serde_json::Value::String(name.clone()),
+        );
+    }
+    // issue_id → label (already "Series #N" shape)
+    if let Some(s) = obj.get("issue_id").and_then(|v| v.as_str())
+        && let Some(label) = labels.issues.get(s)
+    {
+        obj.insert(
+            "issue_label".into(),
+            serde_json::Value::String(label.clone()),
+        );
+    }
+    // audit target: resolve by target_type
+    if kind == "audit"
+        && let (Some(tt), Some(tid)) = (
+            obj.get("target_type")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            obj.get("target_id")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        )
+    {
+        let resolved = match tt.as_str() {
+            "user" => Uuid::parse_str(&tid)
+                .ok()
+                .and_then(|id| labels.users.get(&id).cloned()),
+            "library" => Uuid::parse_str(&tid)
+                .ok()
+                .and_then(|id| labels.libraries.get(&id).cloned()),
+            "series" => Uuid::parse_str(&tid)
+                .ok()
+                .and_then(|id| labels.series.get(&id).cloned()),
+            "issue" => labels.issues.get(&tid).cloned(),
+            _ => None,
+        };
+        if let Some(name) = resolved {
+            obj.insert("target_label".into(), serde_json::Value::String(name));
+        }
+    }
+    payload
 }
 
 fn parse_kinds(s: Option<&str>) -> std::collections::HashSet<&'static str> {

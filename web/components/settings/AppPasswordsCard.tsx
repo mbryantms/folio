@@ -128,8 +128,9 @@ export function AppPasswordsCard() {
                   <span className="font-medium">Read-only</span>
                   <span className="text-muted-foreground">
                     {" "}
-                    — browse + download. The default for catalog readers like
-                    Chunky, KyBook, Panels.
+                    — browse + download only. Choose this for one-off downloads,
+                    scripts, or clients you don&rsquo;t want writing progress
+                    back to Folio.
                   </span>
                 </span>
               </label>
@@ -148,7 +149,12 @@ export function AppPasswordsCard() {
                   <span className="text-muted-foreground">
                     {" "}
                     — also lets the client sync your reading position back to
-                    Folio (KOReader sync, Chunky page-progress, …).
+                    Folio. Recommended for active reader apps:{" "}
+                    <span className="text-foreground">Panels (iOS)</span>,{" "}
+                    <span className="text-foreground">KOReader</span>,{" "}
+                    <span className="text-foreground">Chunky</span>,{" "}
+                    <span className="text-foreground">KyBook 3</span>, and
+                    Tachiyomi-class manga readers.
                   </span>
                 </span>
               </label>

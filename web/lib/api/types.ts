@@ -1167,6 +1167,10 @@ export type ScanRunView = {
   series_name: string | null;
   /** Originating issue id when `kind` is `issue`. */
   issue_id: string | null;
+  /** Joined issue label shaped as `{series} #{number}` (or the title
+   *  variant when there's no number). `null` when the issue row was
+   *  since deleted or this scan isn't issue-kinded. */
+  issue_label: string | null;
 };
 
 export type ScanResp = {
