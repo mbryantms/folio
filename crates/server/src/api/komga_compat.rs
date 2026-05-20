@@ -107,7 +107,21 @@ async fn log_inbound(req: Request, next: Next) -> Response {
         content_type = ?content_type,
         "komga_compat: inbound /api/v1/* request",
     );
-    next.run(req).await
+    // v0.3.42 — also log the response status for every /api/v1/* hit.
+    // This surfaces the four remaining failure modes the inbound log
+    // can't discriminate: 403 (RequireProgressScope rejection), 404
+    // (issue lookup miss or library ACL deny), 422 (body shape
+    // validation), 500 (upsert error). A 204 confirms the write
+    // landed end-to-end. The TraceLayer logs the same status only at
+    // DEBUG, so this is the bridge for operators running at INFO.
+    let resp = next.run(req).await;
+    tracing::info!(
+        method = %method,
+        path = %path,
+        status = %resp.status().as_u16(),
+        "komga_compat: outbound /api/v1/* response",
+    );
+    resp
 }
 
 /// Classify the `Authorization` header into one of five buckets the
@@ -221,10 +235,24 @@ async fn patch_read_progress(
     // RequireProgressScope + Json<…> extractors succeeded, so it
     // silently dropped auth failures and body-shape failures — the
     // exact cases that need visibility.
+    // v0.3.42: log every reached branch with a discriminating reason
+    // so the outbound status code is interpretable. The middleware-level
+    // outbound log lands at the same path with status; this hands the
+    // operator a one-line cause for any 4xx.
     if !app.cfg().is_komga_compat() {
+        tracing::info!(
+            book_id = %book_id,
+            user_id = %user.0.id,
+            "komga_compat: PATCH rejected — compat mode is off (toggle `compat.opds_panels_mode = komga` in /admin/server)",
+        );
         return not_found();
     }
     if body.page.is_none() && body.completed.is_none() {
+        tracing::info!(
+            book_id = %book_id,
+            user_id = %user.0.id,
+            "komga_compat: PATCH rejected — body had neither `page` nor `completed` (Panels sent an empty or unrecognized JSON shape)",
+        );
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
@@ -236,14 +264,27 @@ async fn patch_read_progress(
         .await
     {
         Ok(Some(row)) => row,
-        Ok(None) => return not_found(),
+        Ok(None) => {
+            tracing::info!(
+                book_id = %book_id,
+                user_id = %user.0.id,
+                "komga_compat: PATCH rejected — no issue row matches the supplied book_id (Panels' OPDS entry ID is stale or unknown)",
+            );
+            return not_found();
+        }
         Err(e) => {
-            tracing::warn!(error = %e, "komga_compat: issue lookup failed");
+            tracing::warn!(error = %e, book_id = %book_id, "komga_compat: issue lookup failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
     let visible = access::for_user(&app, &user.0).await;
     if !visible.contains(issue_row.library_id) {
+        tracing::info!(
+            book_id = %book_id,
+            user_id = %user.0.id,
+            library_id = %issue_row.library_id,
+            "komga_compat: PATCH rejected — library ACL denies user (re-grant access in /admin/users/{{user}})",
+        );
         return not_found();
     }
 
@@ -272,9 +313,19 @@ async fn patch_read_progress(
     )
     .await
     {
-        tracing::warn!(error = %e, "komga_compat: progress upsert failed");
+        tracing::warn!(error = %e, book_id = %book_id, "komga_compat: progress upsert failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+    // v0.3.42: success log so the positive signal is visible at INFO.
+    // Without this, the operator only sees the inbound + outbound 204
+    // lines and has to infer success from the absence of an error log.
+    tracing::info!(
+        book_id = %book_id,
+        user_id = %user.0.id,
+        db_page = db_page,
+        finished = ?finished_override,
+        "komga_compat: PATCH accepted — progress upserted",
+    );
     StatusCode::NO_CONTENT.into_response()
 }
 

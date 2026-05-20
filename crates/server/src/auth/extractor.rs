@@ -183,6 +183,17 @@ where
         if let Some(scope) = user.app_password_scope.as_deref()
             && scope != super::app_password::SCOPE_READ_PROGRESS
         {
+            // v0.3.42 — surface scope-mismatch rejections. Previously a
+            // silent 403; the Komga-compat PATCH retry-loop in Panels
+            // produces a stream of these on a misconfigured (read-only)
+            // app-password and an operator at INFO level sees nothing.
+            tracing::info!(
+                method = %parts.method,
+                path = %parts.uri.path(),
+                actual_scope = %scope,
+                required_scope = %super::app_password::SCOPE_READ_PROGRESS,
+                "auth: progress-scope check failed — app-password lacks `read+progress` scope (re-issue via /me/app-passwords)",
+            );
             return Err(AuthRejection::Forbidden);
         }
         Ok(Self(user))
