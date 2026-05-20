@@ -25,7 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useAppPasswords } from "@/lib/api/queries";
+import { useAppPasswords, useMe } from "@/lib/api/queries";
 import {
   useCreateAppPassword,
   useRevokeAppPassword,
@@ -41,6 +41,7 @@ import { SettingsSection } from "./SettingsSection";
 
 export function AppPasswordsCard() {
   const list = useAppPasswords();
+  const me = useMe();
   const create = useCreateAppPassword();
   const [label, setLabel] = useState("");
   const [scope, setScope] = useState<AppPasswordScope>("read");
@@ -177,6 +178,7 @@ export function AppPasswordsCard() {
 
       <IssuedDialog
         issued={issued}
+        email={me.data?.email ?? null}
         onOpenChange={(open) => {
           if (!open) setIssued(null);
         }}
@@ -421,22 +423,30 @@ function PasswordRow({ p }: { p: AppPasswordView }) {
 
 function IssuedDialog({
   issued,
+  email,
   onOpenChange,
 }: {
   issued: AppPasswordCreatedView | null;
+  /**
+   * Caller's email. When present, we surface a pre-computed
+   * `Basic …` Authorization header value so mobile users don't have
+   * to base64-encode `email:token` on a separate device. Falls back
+   * to just the raw token if email isn't loaded yet (rare — useMe
+   * is fetched at layout time).
+   */
+  email: string | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    if (!issued) return;
-    try {
-      await navigator.clipboard.writeText(issued.plaintext);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
-  }
+  // Pre-compute the Basic header value for clients (Panels iOS in
+  // custom-header mode, Tachiyomi-class) whose UI demands the
+  // already-encoded `Authorization` value instead of accepting raw
+  // username + password fields. `btoa` is browser-native and won't
+  // throw on ASCII; emails with non-ASCII characters fall back to
+  // hiding the row rather than crashing — the user can still use the
+  // raw token in any client that takes username + password.
+  const basicHeader =
+    email && issued ? computeBasicHeader(email, issued.plaintext) : null;
+
   return (
     <Dialog open={!!issued} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -448,26 +458,90 @@ function IssuedDialog({
             as a Bearer header.
           </DialogDescription>
         </DialogHeader>
-        <div className="bg-secondary/40 text-foreground my-2 rounded-md border p-3 font-mono text-xs break-all">
-          {issued?.plaintext}
+
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label className="text-muted-foreground text-xs tracking-wide uppercase">
+              Token
+            </Label>
+            <CopyableValue value={issued?.plaintext ?? ""} />
+          </div>
+
+          {basicHeader && (
+            <div className="space-y-1">
+              <Label className="text-muted-foreground text-xs tracking-wide uppercase">
+                Basic authorization header
+              </Label>
+              <CopyableValue value={basicHeader} />
+              <p className="text-muted-foreground text-xs">
+                Paste this into a client&rsquo;s custom-header field when the
+                client&rsquo;s username/password inputs don&rsquo;t propagate to
+                Komga-style REST writers. Required for Panels iOS to sync
+                reading progress; harmless for clients that use the token
+                directly.
+              </p>
+            </div>
+          )}
         </div>
-        <DialogFooter className="gap-2 sm:gap-2">
-          <Button type="button" variant="outline" onClick={copy}>
-            {copied ? (
-              <>
-                <Check className="size-4" /> Copied
-              </>
-            ) : (
-              <>
-                <Copy className="size-4" /> Copy
-              </>
-            )}
-          </Button>
+
+        <DialogFooter>
           <Button type="button" onClick={() => onOpenChange(false)}>
             Done
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Encode `email:token` as base64 and prepend `Basic `. Returns `null`
+ * if `btoa` rejects (non-ASCII email). The token itself is always
+ * base32-lowercase ASCII, so the encoding can only fail on the email
+ * side.
+ */
+function computeBasicHeader(email: string, token: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return `Basic ${window.btoa(`${email}:${token}`)}`;
+  } catch {
+    return null;
+  }
+}
+
+function CopyableValue({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+  return (
+    <div className="border-border bg-background flex items-start gap-2 rounded-md border p-2">
+      <code className="text-foreground flex-1 font-mono text-xs break-all">
+        {value}
+      </code>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={copy}
+        className="shrink-0"
+      >
+        {copied ? (
+          <>
+            <Check className="size-3.5" /> Copied
+          </>
+        ) : (
+          <>
+            <Copy className="size-3.5" /> Copy
+          </>
+        )}
+      </Button>
+    </div>
   );
 }

@@ -99,7 +99,16 @@ async fn log_inbound(req: Request, next: Next) -> Response {
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    tracing::info!(
+    // v0.3.43: downgraded to DEBUG. The inbound + outbound pair was
+    // essential during M7/M8 debugging (revealed auth_shape,
+    // CSRF-header presence, and final status code per request), but
+    // produces 2 INFO lines per Panels page-flip in steady state and
+    // drowns out real diagnostic signal on a busy server. Operators
+    // who need to investigate flip `observability.log_level = debug`
+    // in /admin/server for a few minutes; the per-branch rejection
+    // logs further down stay at INFO so misconfigurations remain
+    // visible without the level bump.
+    tracing::debug!(
         method = %method,
         path = %path,
         auth_shape = %auth_shape,
@@ -107,15 +116,8 @@ async fn log_inbound(req: Request, next: Next) -> Response {
         content_type = ?content_type,
         "komga_compat: inbound /api/v1/* request",
     );
-    // v0.3.42 — also log the response status for every /api/v1/* hit.
-    // This surfaces the four remaining failure modes the inbound log
-    // can't discriminate: 403 (RequireProgressScope rejection), 404
-    // (issue lookup miss or library ACL deny), 422 (body shape
-    // validation), 500 (upsert error). A 204 confirms the write
-    // landed end-to-end. The TraceLayer logs the same status only at
-    // DEBUG, so this is the bridge for operators running at INFO.
     let resp = next.run(req).await;
-    tracing::info!(
+    tracing::debug!(
         method = %method,
         path = %path,
         status = %resp.status().as_u16(),
@@ -316,10 +318,13 @@ async fn patch_read_progress(
         tracing::warn!(error = %e, book_id = %book_id, "komga_compat: progress upsert failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
-    // v0.3.42: success log so the positive signal is visible at INFO.
-    // Without this, the operator only sees the inbound + outbound 204
-    // lines and has to infer success from the absence of an error log.
-    tracing::info!(
+    // v0.3.43: downgraded to DEBUG. With the upsert path verified
+    // working end-to-end (Panels sync confirmed 2026-05-20), a per-
+    // page-flip success line at INFO is steady-state noise. Errors
+    // (`progress upsert failed`) stay at WARN above, and the per-
+    // branch rejection logs stay at INFO — anything other than 204
+    // is still visible without bumping log level.
+    tracing::debug!(
         book_id = %book_id,
         user_id = %user.0.id,
         db_page = db_page,

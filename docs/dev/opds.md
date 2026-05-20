@@ -118,17 +118,18 @@ one, please update this table.
 
 | Client | Read OPDS v1 | Read OPDS v2 | Write progress | Honors `rel=next` | Honors `pse:last_read` | App-password required |
 | --- | --- | --- | --- | --- | --- | --- |
-| Panels (iOS) | ✓ | partial | implicit (PSE) | manual UI | ✓ | yes — `read+progress` scope |
+| Panels (iOS) **(verified)** | ✓ | partial | Komga REST (compat-mode) | manual UI | ✓ | yes — `read+progress` scope, plus custom-header workaround |
 | Chunky (iOS) | ✓ | no | implicit (PSE) | manual UI | ✓ | yes — `read+progress` scope |
 | KOReader | ✓ | no | explicit (sync.app) | manual UI | ✓ | yes (Basic auth carries app-password) |
 | Calibre Companion | ✓ | no | none | no | no | yes — read scope sufficient |
 
 **Per-client gotchas:**
 
-- **Panels** — Honors the PSE stream and writes implicit progress
-  via that path. The explicit `PUT /opds/v1/issues/{id}/progress`
-  endpoint isn't called; rely on the implicit signal. The
-  M5 `<uri>` drill-in on author chips works.
+- **Panels** — Writes progress via the **Komga REST compat shim**
+  (`PATCH /api/v1/books/{id}/read-progress`), not the explicit
+  per-issue OPDS endpoint or the (removed) implicit-PSE path. Requires
+  three pieces of operator setup; see [Panels iOS setup](#panels-ios-setup)
+  below. The M5 `<uri>` drill-in on author chips works.
 - **Chunky** — Same as Panels for progress. Less complete metadata
   rendering (limited `<category>` support). Requires the
   per-extension MIME on the acquisition link.
@@ -139,6 +140,72 @@ one, please update this table.
   shim is a thin format adapter.
 - **Calibre Companion** — Read-only by design. No progress write
   back; treat it as a discovery client.
+
+### Panels iOS setup
+
+Panels (iOS / macOS) writes progress via Komga's REST API (`PATCH
+/api/v1/books/{id}/read-progress`), not via OPDS itself. Folio
+exposes a Komga-compatible shim at exactly those paths when the
+`compat.opds_panels_mode = komga` runtime flag is on. Activating
+it from a fresh Panels install requires **three operator steps**;
+missing any of them produces a silent failure that Panels surfaces
+no error for.
+
+1. **Toggle Komga mode** in `/admin/server` → "OPDS client
+   compatibility". The OPDS feed's `<author>` element flips to
+   "Komga" and the Komga-canonical `/opds/v1.2/catalog` path becomes
+   the entry point Panels' detection heuristic recognizes.
+2. **Issue an app password** with the **`read + write progress`**
+   scope in `/settings/api-tokens`. The issued-password dialog shows
+   two values: the raw `app_…` token AND a pre-computed `Basic …`
+   Authorization header (base64 of `email:app_token`). Copy the
+   `Basic …` value — that's what Panels needs.
+3. **In Panels' source settings**, configure:
+   - OPDS source URL: `https://YOUR_HOST/opds/v1.2/catalog`
+   - Username + password fields: your email + the raw `app_…` token
+     (these handle OPDS feed reads).
+   - **Custom headers** field: key `Authorization`, value `Basic …`
+     (the pre-computed value from step 2).
+
+The custom-header step is the non-obvious one. Panels' OPDS code
+path uses the username/password fields to construct an
+`Authorization: Basic` header, but its Komga REST writer activates
+as a separate subsystem that doesn't inherit those credentials. The
+custom-header field applies to *every* outgoing request from this
+source, so it covers both the OPDS feed (redundantly) and the Komga
+REST writer (which would otherwise send `auth_shape=none` and be
+rejected by Folio's CSRF + auth gates).
+
+**Verifying it worked.** With `observability.log_level = debug`
+temporarily, navigate forward in Panels. `/admin/logs` should show
+lines like:
+
+```text
+komga_compat: inbound /api/v1/* request  method=PATCH auth_shape=basic-app …
+komga_compat: outbound /api/v1/* response  status=204
+```
+
+At INFO (default), successful writes are silent and only failures
+log — the per-branch rejection lines (`PATCH rejected — body had
+neither page nor completed`, etc.) name exactly which check fired.
+The Folio web UI's progress bar should update to match Panels'
+current page on the next refresh.
+
+**Common mistakes:**
+
+- Pasted base64 includes a trailing `%` (zsh's no-newline prompt
+  marker, not part of the data) → `auth_shape=basic-malformed`, all
+  PATCHes 401.
+- Pasted the raw `app_…` token into the Custom Headers value
+  instead of the full `Basic <base64>` form → `auth_shape=other`
+  or `none`, all PATCHes 401.
+- App-password scope is `read`, not `read+progress` → log shows
+  `auth: progress-scope check failed`, all PATCHes 403.
+- OPDS source URL is `/opds/v1` (Folio-native) instead of
+  `/opds/v1.2/catalog` (Komga-canonical) → Panels may not activate
+  its Komga writer at all. Even if it does, the constructed URL
+  is `…/opds/v1/api/v1/…`, falls through Folio's router to the
+  Next upstream, and 502s.
 
 **Capability auto-detection.** Capable clients can detect Folio's
 write-back support via the catalog-root rel:

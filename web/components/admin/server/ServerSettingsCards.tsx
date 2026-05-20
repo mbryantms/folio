@@ -119,6 +119,63 @@ function CompatibilityCard({ initial }: { initial: string }) {
             1.0) is also active regardless of this flag, but no client
             implements it yet.
           </p>
+          {mode === "komga" && (
+            <div className="border-border bg-background/40 rounded-md border p-3 text-xs">
+              <p className="text-foreground font-medium">
+                Panels iOS / Android — extra setup
+              </p>
+              <p className="text-muted-foreground mt-1">
+                Panels detects Komga via the OPDS fingerprint but does NOT
+                propagate its OPDS username/password to the Komga REST writer
+                that handles progress sync. Operators on Panels-class clients
+                need three things:
+              </p>
+              <ol className="text-muted-foreground mt-2 list-decimal space-y-1 pl-5">
+                <li>
+                  In the client, set the OPDS source URL to{" "}
+                  <code className="bg-secondary/40 rounded px-1 py-0.5">
+                    /opds/v1.2/catalog
+                  </code>{" "}
+                  (Komga&apos;s canonical entry — the catalog alias is
+                  registered regardless of this toggle).
+                </li>
+                <li>
+                  Issue an app password with the{" "}
+                  <span className="font-medium">read + write progress</span>{" "}
+                  scope from{" "}
+                  <a
+                    href="/settings/api-tokens"
+                    className="text-primary underline-offset-2 hover:underline"
+                  >
+                    Settings → API tokens
+                  </a>
+                  . The issued-password dialog now shows a pre-computed{" "}
+                  <code className="bg-secondary/40 rounded px-1 py-0.5">
+                    Basic …
+                  </code>{" "}
+                  header value — copy that.
+                </li>
+                <li>
+                  In Panels&apos; source settings, paste the{" "}
+                  <code className="bg-secondary/40 rounded px-1 py-0.5">
+                    Basic …
+                  </code>{" "}
+                  value into the{" "}
+                  <span className="font-medium">Custom headers</span> field
+                  with key{" "}
+                  <code className="bg-secondary/40 rounded px-1 py-0.5">
+                    Authorization
+                  </code>
+                  .
+                </li>
+              </ol>
+              <p className="text-muted-foreground mt-2">
+                Without step 3 every progress PATCH is rejected by Folio&apos;s
+                CSRF / auth gate and silently 401/403 — Panels won&apos;t
+                surface the failure in its UI.
+              </p>
+            </div>
+          )}
         </div>
         <div className="flex justify-end">
           <Button onClick={onSave} disabled={!dirty || update.isPending}>
