@@ -10465,7 +10465,8 @@
         "required": [
           "auth_mode",
           "oidc_enabled",
-          "registration_open"
+          "registration_open",
+          "password_recovery_enabled"
         ],
         "properties": {
           "auth_mode": {
@@ -10475,6 +10476,10 @@
           "oidc_enabled": {
             "type": "boolean",
             "description": "True when the OIDC provider is wired AND `auth_mode` permits it.\nWhen false, the sign-in page hides the SSO button."
+          },
+          "password_recovery_enabled": {
+            "type": "boolean",
+            "description": "True when SMTP is configured (host non-empty). When false, the\n`/auth/forgot-password` UI renders a \"contact your administrator\"\nbanner instead of the email form — a forgot-password submission\nwould otherwise silently fail when the operator hasn't filled in\nSMTP credentials. Anonymous-safe; just reflects whether\n`smtp.host` is set."
           },
           "registration_open": {
             "type": "boolean",

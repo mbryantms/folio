@@ -6,9 +6,14 @@ Source of truth for the user-facing reader controls. Spec refs in
 ## Keyboard
 
 The keymap is defined in [`web/lib/reader/keybinds.ts`](../../web/lib/reader/keybinds.ts)
-and user-customizable under **Settings → Keybinds**. Press `?` inside
-the reader to see the live bindings (the [`<ShortcutsSheet>`](../../web/app/[locale]/read/[seriesSlug]/[issueSlug]/ShortcutsSheet.tsx)
-reads from the resolved keymap so user overrides are reflected).
+and user-customizable under **Settings → Keybinds**. Press `?` from
+anywhere in the app to see the live bindings — the global help sheet
+([`<GlobalShortcutsSheet>`](../../web/components/GlobalShortcutsSheet.tsx),
+mounted at the root layout) opens the route-aware
+[`<ShortcutsSheet>`](../../web/components/ShortcutsSheet.tsx) with the
+Reader section first when you're at `/read/...` and the Global section
+first elsewhere. Both read from the resolved keymap so user overrides
+are reflected.
 
 Default bindings — reader scope:
 

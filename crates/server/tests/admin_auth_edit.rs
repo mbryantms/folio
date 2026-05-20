@@ -232,6 +232,49 @@ async fn switching_to_oidc_with_all_creds_succeeds() {
         body.get("client_id").is_none(),
         "public /auth/config must not return `client_id`, got: {body}"
     );
+    // Phase C C5: anonymous endpoint exposes `password_recovery_enabled`
+    // so the /forgot-password page can decide whether to render the
+    // reset-link form or a "contact your administrator" banner. The
+    // TestApp harness boots without SMTP configured, so we expect it
+    // false here.
+    assert_eq!(
+        body["password_recovery_enabled"], false,
+        "no SMTP wired in the test harness, so recovery must be off"
+    );
+}
+
+#[tokio::test]
+async fn password_recovery_flag_flips_when_smtp_configured() {
+    // Positive companion to the assertion above: PATCH a smtp.host into
+    // the runtime settings, then re-fetch /auth/config and expect
+    // `password_recovery_enabled: true`. Keeps the flag honest as the
+    // `/forgot-password` UI gates on it.
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    let before = get_anon(&app, "/api/auth/config").await;
+    let before_body = body_json(before.into_body()).await;
+    assert_eq!(before_body["password_recovery_enabled"], false);
+
+    let resp = send_authed(
+        &app,
+        &admin,
+        Method::PATCH,
+        "/api/admin/settings",
+        Some(json!({
+            "smtp.host": "smtp.example.test",
+            "smtp.from": "folio@example.test",
+        })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let after = get_anon(&app, "/api/auth/config").await;
+    let after_body = body_json(after.into_body()).await;
+    assert_eq!(
+        after_body["password_recovery_enabled"], true,
+        "smtp.host set, local auth on → recovery should be enabled"
+    );
 }
 
 #[tokio::test]

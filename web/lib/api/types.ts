@@ -940,6 +940,10 @@ export type PublicAuthConfigView = {
   auth_mode: "oidc" | "local" | "both" | string;
   oidc_enabled: boolean;
   registration_open: boolean;
+  /** True when SMTP is configured and local auth is on. Drives the
+   *  `/forgot-password` UI: false renders an "email recovery is disabled"
+   *  card instead of the reset-link form. */
+  password_recovery_enabled: boolean;
 };
 
 // ---------- Runtime-editable settings (`/admin/settings`) ----------

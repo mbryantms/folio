@@ -128,6 +128,13 @@ pub struct PublicAuthConfigView {
     /// True when local registration is open. False locks the system to
     /// the existing user set + first-user admin bootstrap.
     pub registration_open: bool,
+    /// True when SMTP is configured (host non-empty). When false, the
+    /// `/auth/forgot-password` UI renders a "contact your administrator"
+    /// banner instead of the email form — a forgot-password submission
+    /// would otherwise silently fail when the operator hasn't filled in
+    /// SMTP credentials. Anonymous-safe; just reflects whether
+    /// `smtp.host` is set.
+    pub password_recovery_enabled: bool,
 }
 
 #[utoipa::path(
@@ -151,11 +158,19 @@ pub async fn get_public_config(State(app): State<AppState>) -> Response {
             .map(|s| !s.trim().is_empty())
             .unwrap_or(false);
     let local_enabled = matches!(cfg.auth_mode, AuthMode::Local | AuthMode::Both);
+    let smtp_configured = cfg
+        .smtp_host
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
     Json(PublicAuthConfigView {
         auth_mode: cfg.auth_mode.to_string(),
         oidc_enabled,
         // `registration_open` only makes sense when local mode is on.
         registration_open: local_enabled && cfg.local_registration_open,
+        // Password recovery requires both an SMTP backend and local auth
+        // (OIDC-only deployments never call /auth/forgot-password).
+        password_recovery_enabled: local_enabled && smtp_configured,
     })
     .into_response()
 }

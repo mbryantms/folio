@@ -65,6 +65,7 @@ describe("credential forms — progressive enhancement", () => {
           auth_mode: "local",
           oidc_enabled: false,
           registration_open: true,
+          password_recovery_enabled: false,
         },
         next: null,
         banner: null,

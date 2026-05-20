@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { CheckCircle2, Mail } from "lucide-react";
+import { CheckCircle2, Mail, MailX } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -33,12 +33,19 @@ type Values = z.infer<typeof schema>;
 
 export function ForgotPasswordForm({
   preSubmitted = false,
+  recoveryEnabled = true,
 }: {
   /** True when the page arrived here via the no-JS form-fallback 303
    *  (`/forgot-password?sent=1`). Renders the "check your email" view
    *  without the email-address echo, since the form-encoded body never
    *  reached client state. */
   preSubmitted?: boolean;
+  /** Reflects `PublicAuthConfigView.password_recovery_enabled` — false
+   *  when the operator hasn't configured SMTP (or local auth is off).
+   *  When false we render a "contact your administrator" card instead
+   *  of the form so the user doesn't fill in an email that goes
+   *  nowhere. */
+  recoveryEnabled?: boolean;
 } = {}) {
   const form = useForm<Values>({
     resolver: zodResolver(schema),
@@ -47,6 +54,30 @@ export function ForgotPasswordForm({
   const [submitted, setSubmitted] = useState(preSubmitted);
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  if (!recoveryEnabled) {
+    return (
+      <Card>
+        <CardHeader className="space-y-2 text-center">
+          <MailX className="text-muted-foreground mx-auto size-8" />
+          <CardTitle className="text-xl">Email recovery is disabled</CardTitle>
+          <CardDescription>
+            This Folio instance hasn&rsquo;t been configured to send password-
+            reset emails. Contact your administrator to recover your account, or
+            sign in with another method.
+          </CardDescription>
+        </CardHeader>
+        <CardFooter className="justify-center pt-0">
+          <Link
+            href="/sign-in"
+            className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"
+          >
+            Back to sign-in
+          </Link>
+        </CardFooter>
+      </Card>
+    );
+  }
 
   // Auth forms use inline error banners + <FormMessage> instead of
   // toasts; success is signalled by route navigation or alternate view

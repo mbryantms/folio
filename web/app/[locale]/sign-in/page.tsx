@@ -10,6 +10,7 @@ const DEFAULT_CONFIG: PublicAuthConfigView = {
   auth_mode: "local",
   oidc_enabled: false,
   registration_open: true,
+  password_recovery_enabled: false,
 };
 
 type SearchParams = {
