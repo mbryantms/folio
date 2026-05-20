@@ -104,6 +104,14 @@ pub fn routes() -> Router<AppState> {
         .route("/opds/v1/search", get(search))
         .route("/opds/v1/search.xml", get(search_description))
         .route("/opds/v1/issues/{id}/file", get(download))
+        // v0.3.39: Komga-shape download path. Panels parses this URL
+        // pattern to extract the book id it uses for progress-write
+        // PATCH calls. Always registered; the OPDS feed only emits
+        // URLs in this shape when `compat.opds_panels_mode = komga`.
+        .route(
+            "/opds/v1.2/books/{id}/file/{filename}",
+            get(download_komga_alias),
+        )
         // M4 — personal surfaces
         .route("/opds/v1/wtr", get(wtr))
         .route("/opds/v1/lists", get(cbl_lists_nav))
@@ -788,6 +796,7 @@ async fn series_one(
             next,
             progress_glyphs: glyphs,
             up_next_issue_id: up_next_id,
+            komga_compat: app.cfg().is_komga_compat(),
         }));
     }
     let series_description = render_series_description(s.summary.as_deref());
@@ -1361,6 +1370,26 @@ async fn search_description(State(app): State<AppState>, _user: CurrentUser) -> 
     (StatusCode::OK, hdrs, body).into_response()
 }
 
+/// Komga-shape download alias: `/opds/v1.2/books/{id}/file/{filename}`.
+/// progress-writeback-2.0 v0.3.39 hot-fix. Panels' Komga client looks
+/// for the book id inside the acquisition URL's path (matching
+/// `/books/{id}/file/...`) when deciding which book id to send to the
+/// REST progress endpoint. Our default acquisition path is
+/// `/opds/v1/issues/{id}/file`, which doesn't match. This alias is
+/// registered unconditionally (cheap; harmless when Komga compat is
+/// off — Folio's default OPDS feeds don't emit URLs in this shape) and
+/// the handler simply delegates to [`download`] with the filename
+/// discarded.
+pub(crate) async fn download_komga_alias(
+    state: State<AppState>,
+    user: CurrentUser,
+    ctx: Extension<RequestContext>,
+    AxPath((id, _filename)): AxPath<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    download(state, user, ctx, AxPath(id), headers).await
+}
+
 pub(crate) async fn download(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1557,6 +1586,7 @@ async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -
             next,
             progress_glyphs: glyphs,
             up_next_issue_id,
+            komga_compat: app.cfg().is_komga_compat(),
         }));
     }
     let up_next_link = render_up_next_feed_link(up_next_issue_id);
@@ -1621,6 +1651,16 @@ struct IssueAcqEntryCtx<'a> {
     next: Option<&'a issue::Model>,
     progress_glyphs: bool,
     up_next_issue_id: Option<&'a str>,
+    /// progress-writeback-2.0 v0.3.39 hot-fix: when Komga compat is
+    /// on, emit the entry `<id>` as the bare issue id (no
+    /// `urn:issue:` prefix) and the acquisition link as
+    /// `/opds/v1.2/books/{id}/file/{filename}` — Panels' Komga
+    /// client parses the entry id directly and validates the
+    /// acquisition path matches `/books/{id}/` to derive the
+    /// book id it sends to the progress-write endpoint.
+    /// Without these, Panels detects Komga (via the author
+    /// element) but never calls the REST API.
+    komga_compat: bool,
 }
 
 fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
@@ -1633,6 +1673,7 @@ fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
         next,
         progress_glyphs,
         up_next_issue_id,
+        komga_compat,
     } = ctx;
     let base = i.title.clone().unwrap_or_else(|| {
         i.number_raw
@@ -1656,19 +1697,50 @@ fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
     // via the acquisition link and reads progress hints from the same
     // element. Stream-link emission is unchanged; this is additive.
     let acquisition_progress_attrs = pse_progress_attrs(progress);
+
+    // v0.3.39: Komga-shape emission for ID + acquisition path. Panels'
+    // Komga client extracts the book id from the entry `<id>` AND
+    // validates it against the `/books/{id}/file/...` URL pattern on
+    // the acquisition link. Folio's default shape (`urn:issue:` prefix,
+    // `/opds/v1/issues/{id}/file` path) doesn't match Panels' parser,
+    // so the REST progress endpoint is never called.
+    let id_value = if komga_compat {
+        i.id.clone()
+    } else {
+        format!("urn:issue:{}", i.id)
+    };
+    let acquisition_href = if komga_compat {
+        let filename = std::path::Path::new(&i.file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_owned())
+            .unwrap_or_else(|| format!("{}.cbz", i.id));
+        format!(
+            "/opds/v1.2/books/{}/file/{}",
+            i.id,
+            // Whitespace-safe; further sanitization avoided so the
+            // filename round-trips through Panels' Content-Disposition
+            // parser.
+            xml_escape(&filename),
+        )
+    } else {
+        format!("/opds/v1/issues/{}/file", i.id)
+    };
+
     format!(
         r#"  <entry>
-    <id>urn:issue:{id}</id>
+    <id>{id_value}</id>
     <title>{title}</title>
     <updated>{updated}</updated>
     {summary}
 {metadata}    <link rel="http://opds-spec.org/image/thumbnail" href="/issues/{id}/pages/0/thumb" type="image/webp"/>
     <link rel="http://opds-spec.org/image" href="/issues/{id}/pages/0" type="image/jpeg"/>
-{related}    <link rel="http://opds-spec.org/acquisition" href="/opds/v1/issues/{id}/file" type="{mime}"{acquisition_progress_attrs}/>
+{related}    <link rel="http://opds-spec.org/acquisition" href="{acquisition_href}" type="{mime}"{acquisition_progress_attrs}/>
     <link rel="alternate" href="/api/issues/{id}" type="application/json"/>
     <link rel="http://opds-spec.org/progression" href="/opds/v1/progression/{id}" type="application/opds-progression+json"/>
 {pse}{nav}  </entry>
 "#,
+        id_value = id_value,
         id = i.id,
         title = xml_escape(&label),
         updated = i.updated_at.to_rfc3339(),
@@ -1685,6 +1757,7 @@ fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
             ))
             .unwrap_or_default(),
         mime = mime_for(&i.file_path),
+        acquisition_href = acquisition_href,
         pse = pse_link,
         nav = render_sequential_nav_links(prev, next),
     )
@@ -3226,6 +3299,7 @@ async fn render_collection_acq(
                 next: None,
                 progress_glyphs: glyphs,
                 up_next_issue_id: up_next_id.as_deref(),
+                komga_compat: app.cfg().is_komga_compat(),
             }));
         }
     }

@@ -720,11 +720,17 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             None => bad_type(&row.key, "bool", &row.value),
         },
         "compat.opds_panels_mode" => match row.value.as_str() {
-            // Validation matches the registered values. Unknown strings
-            // fall back to "off" with a warning — operators get the
-            // safe default rather than crashing the overlay.
+            // Validation matches the registered values. Unknown
+            // strings fall back to "off" with a warning — operators
+            // get the safe default rather than crashing the overlay.
+            //
+            // No `warn_if_diverges` call here: this key has no env-var
+            // analog (it's DB-only, set via /admin/server), so the
+            // env-vs-DB divergence check would always fire spuriously
+            // whenever the user picks anything other than the serde
+            // default `"off"`. See v0.3.39 hot-fix notes in
+            // progress-writeback-2.0.
             Some(s @ ("off" | "komga")) => {
-                warn_if_diverges(&row.key, Some(cfg.opds_panels_mode.as_str()), s);
                 cfg.opds_panels_mode = s.to_owned();
             }
             Some(s) => {
