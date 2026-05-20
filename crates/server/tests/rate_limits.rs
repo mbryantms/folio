@@ -190,3 +190,39 @@ async fn rate_limit_envelope_has_retry_after_seconds_field() {
     }
     panic!("never saw a 429 within 15 attempts");
 }
+
+/// Phase B B3 — email-axis lockout. Hammering `record_failure_for_email_value`
+/// past the threshold should set the lockout sentinel so subsequent
+/// `check_lockout_for_email` calls return `Some(_)`. Tests the axis in
+/// isolation; the full integration of "many IPs, one email" can't be
+/// expressed against `oneshot` (always 127.0.0.1), but this proves the
+/// primitive that catches it works.
+#[tokio::test]
+async fn email_axis_lockout_engages_after_threshold() {
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    let target = "victim@example.com";
+    let bystander = "bystander@example.com";
+
+    // 11 failures crosses the threshold (== 10) with one to spare.
+    for _ in 0..(server::auth::failed_auth::FAIL_THRESHOLD + 1) {
+        server::auth::failed_auth::record_failure_for_email_value(state.jobs.redis.clone(), target)
+            .await;
+    }
+
+    let locked = server::auth::failed_auth::check_lockout_for_email(&state, target)
+        .await
+        .expect("redis ok");
+    assert!(
+        matches!(locked, Some(ttl) if ttl > 0),
+        "target email should be locked out, got {locked:?}"
+    );
+
+    let other = server::auth::failed_auth::check_lockout_for_email(&state, bystander)
+        .await
+        .expect("redis ok");
+    assert!(
+        other.is_none(),
+        "unrelated email must not get caught in the axis: {other:?}"
+    );
+}

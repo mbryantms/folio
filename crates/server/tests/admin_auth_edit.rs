@@ -211,6 +211,27 @@ async fn switching_to_oidc_with_all_creds_succeeds() {
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["auth_mode"], "both");
     assert_eq!(body["oidc_enabled"], true);
+    // Phase B B4 (security-audit M-2): anonymous endpoint MUST NOT leak
+    // the OIDC issuer URL or client_id. Either field would tell an
+    // attacker what identity provider this deployment trusts, which on
+    // some IdPs (e.g. enumeration-vulnerable Keycloak realms) is enough
+    // to start probing for user accounts.
+    assert!(
+        body.get("issuer").is_none(),
+        "public /auth/config must not return `issuer`, got: {body}"
+    );
+    assert!(
+        body.get("oidc_issuer").is_none(),
+        "public /auth/config must not return `oidc_issuer`, got: {body}"
+    );
+    assert!(
+        body.get("oidc").is_none(),
+        "public /auth/config must not return the nested `oidc` admin block, got: {body}"
+    );
+    assert!(
+        body.get("client_id").is_none(),
+        "public /auth/config must not return `client_id`, got: {body}"
+    );
 }
 
 #[tokio::test]

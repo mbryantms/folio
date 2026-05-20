@@ -20,4 +20,5 @@ pub mod settings;
 pub mod slug;
 pub mod state;
 pub mod upstream;
+pub mod util;
 pub mod views;

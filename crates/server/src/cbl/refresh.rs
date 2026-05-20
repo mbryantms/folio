@@ -70,12 +70,24 @@ async fn fetch_url_and_apply(
         .as_deref()
         .ok_or_else(|| RefreshError::Http("url source missing source_url".into()))?;
 
+    // SSRF guard. Re-validate on every refresh — a row stored before the
+    // create-time guard landed could still hold a private-range URL.
+    let parsed_url = crate::util::ssrf::validate_outbound_url(url)
+        .map_err(|e| RefreshError::Http(e.to_string()))?;
+    if let Some(host) = parsed_url.host_str() {
+        let port = parsed_url.port_or_known_default().unwrap_or(443);
+        crate::util::ssrf::check_host_resolves_public(host, port)
+            .await
+            .map_err(|e| RefreshError::Http(e.to_string()))?;
+    }
+
     let client = reqwest::Client::builder()
         .user_agent(concat!("Folio/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(crate::util::ssrf::outbound_redirect_policy(2))
         .build()
         .map_err(|e| RefreshError::Http(e.to_string()))?;
-    let mut req = client.get(url);
+    let mut req = client.get(parsed_url.clone());
     if !force {
         if let Some(etag) = list.source_etag.as_deref() {
             req = req.header(reqwest::header::IF_NONE_MATCH, etag);

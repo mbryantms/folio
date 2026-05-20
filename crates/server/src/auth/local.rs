@@ -490,10 +490,14 @@ pub async fn login(
         return fail(StatusCode::NOT_FOUND, "not_found", "local auth disabled");
     }
 
-    // Brute-force lockout check (§17.7 auth.failed bucket). Refuse the
-    // attempt outright if this IP has crossed the threshold in the last
-    // 15 minutes — even credential-validation is skipped, so a continued
-    // burst doesn't keep the password-hash CPU pegged.
+    let email_lower = req.email.trim().to_lowercase();
+
+    // Brute-force lockout check (§17.7 auth.failed bucket). Two axes:
+    //   1. IP-keyed — catches one IP spraying many usernames.
+    //   2. Email-keyed (Phase B B3) — catches many IPs (botnet /
+    //      credential stuffing) targeting one account.
+    // Either trip refuses the attempt outright, before any password
+    // hashing, so a sustained attack can't keep the argon2 CPU pegged.
     if let Some(ip) = ctx.client_ip
         && let Ok(Some(retry)) = super::failed_auth::check_lockout_for(&app, ip).await
     {
@@ -508,8 +512,18 @@ pub async fn login(
             .into_response(),
         };
     }
-
-    let email_lower = req.email.trim().to_lowercase();
+    if let Ok(Some(retry)) = super::failed_auth::check_lockout_for_email(&app, &email_lower).await {
+        return match format {
+            ResponseFormat::Json => super::failed_auth::lockout_response(retry),
+            ResponseFormat::Form => Redirect::to(&redirect_with_error(
+                "/sign-in",
+                "auth.locked",
+                "too many attempts; try again later",
+                safe_next.as_deref(),
+            ))
+            .into_response(),
+        };
+    }
 
     let user_row = UserEntity::find()
         .filter(user::Column::Email.eq(email_lower.clone()))
@@ -527,6 +541,7 @@ pub async fn login(
         let dummy = password::dummy_hash(app.secrets.pepper.as_ref());
         let _ = password::verify(dummy, &req.password, app.secrets.pepper.as_ref());
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        super::failed_auth::record_failure_for_email(&app, &email_lower).await;
         // INFO-level reason so operators tailing logs can see WHY a
         // login failed without having to deduce it from the response
         // body. Today's prod incident (2026-05-16) took an extra hour
@@ -544,11 +559,13 @@ pub async fn login(
 
     if row.state == "disabled" {
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        super::failed_auth::record_failure_for_email(&app, &email_lower).await;
         tracing::info!(reason = "account_disabled", user_id = %row.id, "login rejected");
         return fail(StatusCode::FORBIDDEN, "auth.disabled", "account disabled");
     }
     if row.state == "pending_verification" {
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        super::failed_auth::record_failure_for_email(&app, &email_lower).await;
         tracing::info!(reason = "email_unverified", user_id = %row.id, "login rejected");
         return fail(
             StatusCode::FORBIDDEN,
@@ -558,6 +575,7 @@ pub async fn login(
     }
     let Some(stored) = row.password_hash.as_ref() else {
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        super::failed_auth::record_failure_for_email(&app, &email_lower).await;
         // Account has no local password set — usually an OIDC-only
         // user trying the local form. Distinct from `wrong_password`
         // so the operator can spot config drift (e.g. OIDC user with
@@ -572,6 +590,7 @@ pub async fn login(
     let ok = password::verify(stored, &req.password, app.secrets.pepper.as_ref()).unwrap_or(false);
     if !ok {
         super::failed_auth::record_failure_for(&app, &ctx).await;
+        super::failed_auth::record_failure_for_email(&app, &email_lower).await;
         tracing::info!(reason = "wrong_password", user_id = %row.id, "login rejected");
         return fail(
             StatusCode::UNAUTHORIZED,

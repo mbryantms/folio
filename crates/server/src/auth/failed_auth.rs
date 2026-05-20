@@ -20,6 +20,7 @@ use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use redis::AsyncCommands;
+use sha2::{Digest, Sha256};
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -40,6 +41,33 @@ fn counter_key(ip: IpAddr) -> String {
 
 fn lockout_key(ip: IpAddr) -> String {
     format!("auth_lockout:{ip}")
+}
+
+/// Stable identifier for the email-keyed lockout bucket. SHA-256 of the
+/// lower-cased trimmed email, truncated to 16 hex chars (64 bits — plenty
+/// to distinguish buckets without enumerable plaintext sitting in Redis
+/// keyspace). Lower-cased input is the same form already used for
+/// `users.email` lookups, so the axis catches credential-stuffing
+/// attempts regardless of how the attacker capitalises the address.
+fn email_id(email: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(email.trim().to_lowercase().as_bytes());
+    let digest = hasher.finalize();
+    // 16 hex chars = 8 bytes
+    let mut out = String::with_capacity(16);
+    for b in &digest[..8] {
+        use std::fmt::Write;
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
+fn counter_key_email(email: &str) -> String {
+    format!("auth_fail_email:{}", email_id(email))
+}
+
+fn lockout_key_email(email: &str) -> String {
+    format!("auth_lockout_email:{}", email_id(email))
 }
 
 /// Check whether `ip` is currently in lockout. Returns `Ok(None)` to proceed
@@ -130,6 +158,77 @@ pub async fn check_lockout_for(
         return Ok(None);
     }
     check_lockout(app.jobs.redis.clone(), ip).await
+}
+
+// ─────────────── email-keyed axis (Phase B B3) ──────────────────
+// IP-keyed lockout catches "one IP spraying many usernames" but leaves
+// "many IPs targeting one user" (credential stuffing from a botnet)
+// uncovered. The email axis fills that gap. Keys are SHA-256-truncated
+// digests of the lower-cased email so the Redis keyspace doesn't leak
+// plaintext addresses to anyone with KEYS/SCAN access.
+
+/// Record a failure for `email` (any string the user supplied — we
+/// hash it before storing so unknown-account attempts can't enumerate
+/// real addresses via a Redis dump). Mirrors [`record_failure`].
+pub async fn record_failure_for_email_value(mut redis: redis::aio::ConnectionManager, email: &str) {
+    let counter = counter_key_email(email);
+    let count: i64 = match redis.incr(&counter, 1).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed_auth(email): INCR failed; fail-open");
+            return;
+        }
+    };
+    let _: Result<(), _> = redis.expire(&counter, FAIL_WINDOW.as_secs() as i64).await;
+    if count as u32 >= FAIL_THRESHOLD {
+        let lk = lockout_key_email(email);
+        let set: Result<(), _> = redis.set_ex(&lk, "1", LOCKOUT.as_secs()).await;
+        if let Err(e) = set {
+            tracing::warn!(error = %e, "failed_auth(email): lockout SET failed; fail-open");
+            return;
+        }
+        tracing::warn!(
+            count,
+            "failed_auth(email): account locked out after {} failures",
+            count
+        );
+        metrics::counter!("comic_auth_lockout_email_total").increment(1);
+    }
+}
+
+/// Check email-keyed lockout. Same fail-open semantics as
+/// [`check_lockout`] — Redis flakes never bounce real users.
+pub async fn check_lockout_for_email(
+    app: &AppState,
+    email: &str,
+) -> Result<Option<u64>, redis::RedisError> {
+    if !app.cfg().rate_limit_enabled {
+        return Ok(None);
+    }
+    let mut redis = app.jobs.redis.clone();
+    let key = lockout_key_email(email);
+    let ttl: i64 = match redis.ttl(&key).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed_auth(email): TTL check failed; fail-open");
+            return Ok(None);
+        }
+    };
+    if ttl > 0 {
+        Ok(Some(ttl as u64))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Convenience: record a failure on the email axis. Honours the operator
+/// kill switch. Pair with [`record_failure_for`] so every failed attempt
+/// counts against both axes.
+pub async fn record_failure_for_email(app: &AppState, email: &str) {
+    if !app.cfg().rate_limit_enabled {
+        return;
+    }
+    record_failure_for_email_value(app.jobs.redis.clone(), email).await;
 }
 
 /// Build the 429 response returned when an IP is in lockout. Shares the

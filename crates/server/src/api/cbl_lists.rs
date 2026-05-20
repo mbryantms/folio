@@ -873,9 +873,23 @@ async fn create_from_url(
     description: Option<String>,
     refresh_schedule: Option<String>,
 ) -> axum::response::Response {
+    // SSRF guard. Parse, require https, resolve host, refuse if any
+    // resolved address is loopback / RFC-1918 / link-local / cloud-metadata
+    // / multicast / etc. See `crate::util::ssrf` for the full predicate.
+    let parsed_url = match crate::util::ssrf::validate_outbound_url(&url) {
+        Ok(u) => u,
+        Err(e) => return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string()),
+    };
+    if let Some(host) = parsed_url.host_str() {
+        let port = parsed_url.port_or_known_default().unwrap_or(443);
+        if let Err(e) = crate::util::ssrf::check_host_resolves_public(host, port).await {
+            return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string());
+        }
+    }
     let client = match reqwest::Client::builder()
         .user_agent(concat!("Folio/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(crate::util::ssrf::outbound_redirect_policy(2))
         .build()
     {
         Ok(c) => c,
@@ -887,7 +901,7 @@ async fn create_from_url(
             );
         }
     };
-    let resp = match client.get(&url).send().await {
+    let resp = match client.get(parsed_url.clone()).send().await {
         Ok(r) => r,
         Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
     };

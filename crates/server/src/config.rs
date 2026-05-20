@@ -43,7 +43,7 @@ impl AuthMode {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Config {
     pub database_url: String,
     /// Required since Library Scanner v1 (Milestone 2). Apalis-backed scan
@@ -186,6 +186,68 @@ pub struct Config {
     pub smtp_tls: String,
     #[serde(default)]
     pub smtp_from: Option<String>,
+}
+
+/// Hand-written `Debug` impl that redacts credentials. Stops `dbg!()`,
+/// panic captures, and `tracing::debug!(?cfg)` from spilling
+/// `postgres://user:pass@host/db`, OIDC client secrets, SMTP passwords,
+/// etc. to logs or operator screens. Closes the H-2 finding in
+/// `docs/dev/security-audit.md`.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn redact_opt(v: &Option<String>) -> &'static str {
+            match v {
+                Some(s) if !s.is_empty() => "<redacted>",
+                Some(_) => "<empty>",
+                None => "None",
+            }
+        }
+        f.debug_struct("Config")
+            .field("database_url", &"<redacted>")
+            .field("redis_url", &"<redacted>")
+            .field("library_path", &self.library_path)
+            .field("data_path", &self.data_path)
+            .field("public_url", &self.public_url)
+            .field("bind_addr", &self.bind_addr)
+            .field("log_level", &self.log_level)
+            .field("trusted_proxies", &self.trusted_proxies)
+            .field("auth_mode", &self.auth_mode)
+            .field("web_upstream_url", &self.web_upstream_url)
+            .field("oidc_issuer", &self.oidc_issuer)
+            .field("oidc_client_id", &self.oidc_client_id)
+            .field("oidc_client_secret", &redact_opt(&self.oidc_client_secret))
+            .field(
+                "oidc_trust_unverified_email",
+                &self.oidc_trust_unverified_email,
+            )
+            .field("local_registration_open", &self.local_registration_open)
+            .field("jwt_access_ttl", &self.jwt_access_ttl)
+            .field("jwt_refresh_ttl", &self.jwt_refresh_ttl)
+            .field("rate_limit_enabled", &self.rate_limit_enabled)
+            .field("check_upstream_releases", &self.check_upstream_releases)
+            .field("opds_panels_mode", &self.opds_panels_mode)
+            .field("otlp_endpoint", &self.otlp_endpoint)
+            .field("auto_migrate", &self.auto_migrate)
+            .field("zip_lru_capacity", &self.zip_lru_capacity)
+            .field("scan_worker_count", &self.scan_worker_count)
+            .field("post_scan_worker_count", &self.post_scan_worker_count)
+            .field("scan_batch_size", &self.scan_batch_size)
+            .field("scan_hash_buffer_kb", &self.scan_hash_buffer_kb)
+            .field("archive_work_parallel", &self.archive_work_parallel)
+            .field("thumb_inline_parallel", &self.thumb_inline_parallel)
+            .field("archive_max_entries", &self.archive_max_entries)
+            .field("archive_max_total_bytes", &self.archive_max_total_bytes)
+            .field("archive_max_entry_bytes", &self.archive_max_entry_bytes)
+            .field("archive_max_ratio", &self.archive_max_ratio)
+            .field("archive_max_nesting", &self.archive_max_nesting)
+            .field("smtp_host", &self.smtp_host)
+            .field("smtp_port", &self.smtp_port)
+            .field("smtp_username", &redact_opt(&self.smtp_username))
+            .field("smtp_password", &redact_opt(&self.smtp_password))
+            .field("smtp_tls", &self.smtp_tls)
+            .field("smtp_from", &self.smtp_from)
+            .finish()
+    }
 }
 
 fn default_bind() -> SocketAddr {
@@ -796,6 +858,41 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Auth-hardening Phase B B2 (security-audit.md H-2): `Config`
+    /// must not leak credentials through `{:?}` / `dbg!()` / panic
+    /// captures. Seed every secret field with a unique, easily-grepped
+    /// sentinel and assert the rendered Debug never contains it.
+    #[test]
+    fn debug_impl_redacts_credentials() {
+        let cfg = Config {
+            database_url: "postgres://leak-this-pg-cred@host/db".into(),
+            redis_url: "redis://leak-this-redis-cred@host:6379".into(),
+            oidc_client_secret: Some("leak-this-oidc-secret".into()),
+            smtp_username: Some("leak-this-smtp-user".into()),
+            smtp_password: Some("leak-this-smtp-pass".into()),
+            ..test_config_skeleton()
+        };
+        let rendered = format!("{cfg:?}");
+        for sentinel in [
+            "leak-this-pg-cred",
+            "leak-this-redis-cred",
+            "leak-this-oidc-secret",
+            "leak-this-smtp-user",
+            "leak-this-smtp-pass",
+        ] {
+            assert!(
+                !rendered.contains(sentinel),
+                "Debug output leaked sentinel `{sentinel}`: {rendered}"
+            );
+        }
+        // Non-sensitive fields should still be visible so the impl is
+        // useful for troubleshooting (auth_mode, public_url, etc.).
+        assert!(
+            rendered.contains("auth_mode"),
+            "Debug should expose non-sensitive fields"
+        );
+    }
 
     /// D-10: confirm `Config::archive_limits()` round-trips every
     /// env-tunable field into the `archive::ArchiveLimits` the
