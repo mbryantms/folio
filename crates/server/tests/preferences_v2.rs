@@ -154,8 +154,9 @@ async fn page_animation_round_trips_and_validates() {
         "fresh user defaults to null page animation: {me}"
     );
 
-    // Accept both supported values.
-    for value in ["off", "slide"] {
+    // Accept all three supported values. `fade` was added in
+    // v0.3.45 alongside the original `off` + `slide`.
+    for value in ["off", "slide", "fade"] {
         let body_str = format!(r#"{{ "default_page_animation": "{value}" }}"#);
         let (status, body) = patch_pref(&app, &auth, &body_str).await;
         assert_eq!(status, StatusCode::OK, "value {value} accepted");
@@ -170,13 +171,12 @@ async fn page_animation_round_trips_and_validates() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["default_page_animation"].is_null());
 
-    // Unknown values rejected with 400.
-    let (status, _) = patch_pref(
-        &app,
-        &auth,
-        r#"{ "default_page_animation": "curl" }"#,
-    )
-    .await;
+    // Unknown values rejected with 400. `curl` was considered for
+    // v0.3.45 but the CSS-only rotation didn't match the corner-peel
+    // semantics the visual implies; deferred to a future release
+    // backed by react-pageflip integration.
+    let (status, _) =
+        patch_pref(&app, &auth, r#"{ "default_page_animation": "curl" }"#).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 

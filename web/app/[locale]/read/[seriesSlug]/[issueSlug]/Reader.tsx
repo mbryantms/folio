@@ -93,9 +93,10 @@ export function Reader({
   userDefaultFitMode: FitMode | null;
   userDefaultViewMode: ViewMode | null;
   userDefaultPageStrip: boolean;
-  /** v0.3.44 — `'off' | 'slide' | null`. Null falls back to the
-   *  built-in default of `'slide'`. */
-  userDefaultPageAnimation: "off" | "slide" | null;
+  /** v0.3.44 / v0.3.45 — `'off' | 'slide' | 'fade' | null`. Null
+   *  falls back to the built-in default of `'slide'` (fresh
+   *  users start here). */
+  userDefaultPageAnimation: "off" | "slide" | "fade" | null;
   userDefaultCoverSolo: boolean;
   userKeybinds: Record<string, string>;
   activityTrackingEnabled: boolean;
@@ -404,14 +405,13 @@ export function Reader({
     [groups, currentGroupIdx, currentPage],
   );
 
-  // v0.3.44 page-turn slide. Webtoon mode skips entirely
-  // (continuous scroll is its own animation). The hook gates
-  // on `enabled` AND `prefers-reduced-motion` internally.
-  const animationPref = userDefaultPageAnimation ?? "slide";
+  // v0.3.44 / v0.3.45 page-turn animation. Webtoon mode skips
+  // entirely (continuous scroll is its own animation). The hook
+  // also gates on `prefers-reduced-motion` internally.
   const pageTransition = usePageTransition({
     currentPage,
     direction,
-    enabled: animationPref === "slide" && viewMode !== "webtoon",
+    mode: viewMode === "webtoon" ? "off" : (userDefaultPageAnimation ?? "slide"),
   });
 
   // Direction-aware navigation. In RTL, "next" should respond to ← and the
@@ -769,12 +769,6 @@ function SinglePageView({
   // and narrower — without this ref the overlay would cover (and
   // capture pointer coords from) the empty band on each side.
   const imgRef = useRef<HTMLImageElement>(null);
-  const exitAnim =
-    transition.exitDir === "left"
-      ? "page-slide-out-to-left"
-      : transition.exitDir === "right"
-        ? "page-slide-out-to-right"
-        : "";
   return (
     <main className="relative grid min-h-screen place-items-center">
       <div
@@ -783,18 +777,18 @@ function SinglePageView({
         data-testid="reader-page-wrapper"
       >
         {transition.prevPage !== null && (
-          // v0.3.44: outgoing page slide layer. Absolute-positioned
-          // overlay of the previous page that animates off-screen
-          // in lockstep with the incoming page sliding in below.
-          // Keyed on prevPage so the animation restarts on every
-          // navigation (rapid keypresses cleanly cancel + retrigger).
-          // No MarkerOverlay on the outgoing layer — a slide-off
-          // marker would look broken; the overlay snaps to the new
-          // page below.
+          // v0.3.44 (extended v0.3.45 for fade + curl): outgoing
+          // page overlay. Absolute-positioned image of the previous
+          // page that animates off-screen via the CSS class the
+          // hook selected for the current mode. Keyed on prevPage
+          // so the animation restarts cleanly on rapid navigation.
+          // No MarkerOverlay on the outgoing layer — a sliding /
+          // curling marker would look broken; the overlay snaps to
+          // the new page below.
           <div
             key={`prev-${transition.prevPage}`}
             aria-hidden="true"
-            className={`pointer-events-none absolute inset-0 flex w-full justify-center ${exitAnim}`}
+            className={`pointer-events-none absolute inset-0 flex w-full justify-center ${transition.exitAnimClass ?? ""}`}
           >
             <img
               src={`/issues/${issueId}/pages/${transition.prevPage}`}

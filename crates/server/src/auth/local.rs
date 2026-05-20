@@ -135,9 +135,11 @@ pub struct MeResp {
     /// M4: when true the reader opens with the page strip visible.
     #[serde(default)]
     pub default_page_strip: bool,
-    /// v0.3.44: reader page-turn animation — `'off' | 'slide' | null`.
-    /// Null means "use the reader's built-in default" (currently
-    /// `slide`). Webtoon view ignores this regardless.
+    /// v0.3.44 / v0.3.45: reader page-turn animation — `'off' |
+    /// 'slide' | 'fade' | null`. Null means "use the reader's
+    /// built-in default" (currently `slide`); fresh users start
+    /// here. Webtoon view ignores this regardless. `fade` was
+    /// added in v0.3.45.
     #[serde(default)]
     pub default_page_animation: Option<String>,
     /// Default for the reader's "cover stands alone in double-page view"
@@ -193,7 +195,9 @@ pub struct PreferencesReq {
     #[serde(default, deserialize_with = "deserialize_some")]
     pub default_view_mode: Option<Option<String>>,
     pub default_page_strip: Option<bool>,
-    /// `'off' | 'slide' | null`. `null` clears the preference.
+    /// `'off' | 'slide' | 'fade' | null`. `null` clears the
+    /// preference (server falls back to the reader's built-in
+    /// default of `slide`).
     #[serde(default, deserialize_with = "deserialize_some")]
     pub default_page_animation: Option<Option<String>>,
     /// Default cover-solo toggle; absent leaves the prior value untouched.
@@ -850,12 +854,12 @@ pub async fn update_preferences(
         );
     }
     if let Some(Some(a)) = req.default_page_animation.as_ref()
-        && !matches!(a.as_str(), "off" | "slide")
+        && !matches!(a.as_str(), "off" | "slide" | "fade")
     {
         return error(
             StatusCode::BAD_REQUEST,
             "validation",
-            "default_page_animation must be 'off', 'slide', or null",
+            "default_page_animation must be 'off', 'slide', 'fade', or null",
         );
     }
     if let Some(Some(t)) = req.theme.as_ref()

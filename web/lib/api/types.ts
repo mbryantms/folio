@@ -390,10 +390,11 @@ export type MeView = {
   default_view_mode?: "single" | "double" | "webtoon" | null;
   /** M4: open the reader with the page strip visible. */
   default_page_strip?: boolean;
-  /** v0.3.44: reader page-turn animation preference. `null` falls back
-   *  to the reader's built-in default (currently `slide`). Webtoon
-   *  view ignores this regardless. */
-  default_page_animation?: "off" | "slide" | null;
+  /** v0.3.44 / v0.3.45: reader page-turn animation preference.
+   *  `null` falls back to the reader's built-in default (currently
+   *  `slide`); fresh users start here. Webtoon view ignores this
+   *  regardless. `fade` was added in v0.3.45. */
+  default_page_animation?: "off" | "slide" | "fade" | null;
   /** Default for double-page view's "cover stands alone" toggle.
    *  `true` matches the printed-comic convention. */
   default_cover_solo: boolean;
@@ -435,8 +436,8 @@ export type PreferencesReq = {
   default_fit_mode?: "width" | "height" | "original" | null;
   default_view_mode?: "single" | "double" | "webtoon" | null;
   default_page_strip?: boolean;
-  /** v0.3.44 — reader page-turn animation. */
-  default_page_animation?: "off" | "slide" | null;
+  /** v0.3.44 / v0.3.45 — reader page-turn animation. */
+  default_page_animation?: "off" | "slide" | "fade" | null;
   default_cover_solo?: boolean;
   theme?: "system" | "dark" | "light" | "amber" | null;
   accent_color?: "amber" | "blue" | "emerald" | "rose" | null;

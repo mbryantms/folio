@@ -62,9 +62,11 @@ pub struct Model {
     /// M4: when true, the reader opens with the page strip visible.
     pub default_page_strip: bool,
 
-    /// v0.3.44: reader page-turn animation — `'off' | 'slide'`. Null
-    /// means "use the reader's built-in default" (currently `slide`).
-    /// Webtoon view mode bypasses this regardless of value.
+    /// v0.3.44 / v0.3.45: reader page-turn animation — `'off' |
+    /// 'slide' | 'fade'`. Null means "use the reader's built-in
+    /// default" (currently `slide`); fresh users start here.
+    /// Webtoon view mode bypasses this regardless of value. `fade`
+    /// added in v0.3.45.
     #[sea_orm(nullable)]
     pub default_page_animation: Option<String>,
 

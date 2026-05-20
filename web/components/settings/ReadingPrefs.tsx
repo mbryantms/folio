@@ -19,7 +19,7 @@ import { SettingsSection } from "./SettingsSection";
 type DirectionPref = "auto" | "ltr" | "rtl";
 type FitPref = "auto" | "width" | "height" | "original";
 type ViewPref = "auto" | "single" | "double" | "webtoon";
-type AnimationPref = "auto" | "off" | "slide";
+type AnimationPref = "off" | "slide" | "fade";
 
 const directionOptions: ReadonlyArray<{ value: DirectionPref; label: string }> =
   [
@@ -41,8 +41,8 @@ const viewOptions: ReadonlyArray<{ value: ViewPref; label: string }> = [
 ];
 const animationOptions: ReadonlyArray<{ value: AnimationPref; label: string }> =
   [
-    { value: "auto", label: "Default (slide)" },
     { value: "slide", label: "Slide" },
+    { value: "fade", label: "Fade" },
     { value: "off", label: "Off" },
   ];
 
@@ -55,7 +55,10 @@ function viewFromMe(v: string | null | undefined): ViewPref {
   return v === "single" || v === "double" || v === "webtoon" ? v : "auto";
 }
 function animationFromMe(v: string | null | undefined): AnimationPref {
-  return v === "off" || v === "slide" ? v : "auto";
+  // Null / unknown map to `slide` — the reader's built-in default
+  // and a fresh user's effective behavior. No "auto" entry in the
+  // segmented control: users who want no transition pick Off.
+  return v === "off" || v === "fade" ? v : "slide";
 }
 function directionFromMe(v: string | null | undefined): DirectionPref {
   return v === "ltr" || v === "rtl" ? v : "auto";
