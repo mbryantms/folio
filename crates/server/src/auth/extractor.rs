@@ -235,7 +235,7 @@ fn extract_token(parts: &Parts) -> Option<String> {
         // Basic would be a session-token-in-URL-style footgun (clients log
         // / surface the Authorization header in places they shouldn't).
         if let Some(rest) = v.strip_prefix("Basic ") {
-            return extract_basic_app_password(rest.trim());
+            return extract_basic_app_password(rest.trim(), parts);
         }
     }
     // Cookie: __Host-comic_session=<jwt>
@@ -243,12 +243,25 @@ fn extract_token(parts: &Parts) -> Option<String> {
     jar.get(SESSION_COOKIE).map(|c| c.value().to_owned())
 }
 
-fn extract_basic_app_password(b64: &str) -> Option<String> {
+fn extract_basic_app_password(b64: &str, parts: &Parts) -> Option<String> {
     use base64::Engine;
     let decoded = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
     let s = std::str::from_utf8(&decoded).ok()?;
     let (_user, password) = s.split_once(':')?;
     if !super::app_password::looks_like_app_password(password) {
+        // M7 (v0.3.41): the most likely silent misconfiguration for an
+        // operator setting up an OPDS client (Panels, Tachiyomi-class,
+        // KOReader) is pasting their account password into the client's
+        // password field instead of issuing an app-password via
+        // /me/app-passwords. The extractor returns None here so the
+        // request fails with 401; this info log gives /admin/logs the
+        // signal needed to diagnose without bumping global log level
+        // to debug.
+        tracing::info!(
+            method = %parts.method,
+            path = %parts.uri.path(),
+            "auth: Basic credential rejected — password is not an app-password (issue one via /me/app-passwords)",
+        );
         return None;
     }
     Some(password.to_owned())

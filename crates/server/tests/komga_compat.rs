@@ -587,3 +587,117 @@ async fn endpoints_return_404_when_compat_off() {
         "PATCH /api/v1/books/.. returns 404 when compat is off"
     );
 }
+
+// ────────────── M7 — Diagnostic visibility (v0.3.41) ──────────────
+//
+// The v0.3.40 catchall log was gated on `is_komga_compat()`, which
+// meant "is Panels probing /api/v1/*?" couldn't be answered without
+// first knowing the flag was on. M7 drops the gate. These tests pin
+// the structural change — they do NOT assert log content because the
+// test harness's tracing subscriber isn't wired to the LogRingBuffer
+// (per the comment in tests/common/mod.rs); asserting log lines would
+// require a separate subscriber-install patch outside M7's scope.
+// Manual operator verification: run with `RUST_LOG=info` and `curl
+// /api/v1/users/me` — the `komga_compat: inbound /api/v1/* request`
+// line should appear in /admin/logs in both compat modes.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unmatched_probe_returns_404_in_both_compat_modes() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app, "m7-catchall@example.com").await;
+
+    // Compat OFF — the catchall must still respond (was previously
+    // gated by `is_komga_compat()` internally; only the LOG was
+    // gated, but pinning behavior here documents the contract).
+    let resp = http_with_csrf(&app, &auth, Method::GET, "/api/v1/users/me", None).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "compat-off: unmatched /api/v1/* path returns 404 via catchall"
+    );
+
+    // Flip compat ON.
+    enable_komga_compat(&app, &auth).await;
+
+    // Same path, same expected status. The diagnostic log fires in
+    // both modes after M7 (operator-verifiable via /admin/logs).
+    let resp = http_with_csrf(&app, &auth, Method::GET, "/api/v1/users/me", None).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "compat-on: unmatched /api/v1/* path returns 404 via catchall"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn catchall_covers_all_http_methods_panels_might_use() {
+    // Panels (and Tachiyomi-class clients) issue GET for reads,
+    // PATCH for progress updates, and may probe with POST/PUT/DELETE
+    // on user/series/library endpoints. The catchall route is
+    // registered for all five methods so /admin/logs captures every
+    // shape — proves the chained `.get(catchall).post(catchall)...`
+    // registration didn't drop any method.
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app, "m7-methods@example.com").await;
+    enable_komga_compat(&app, &auth).await;
+
+    for method in [
+        Method::GET,
+        Method::POST,
+        Method::PATCH,
+        Method::PUT,
+        Method::DELETE,
+    ] {
+        let resp = http_with_csrf(
+            &app,
+            &auth,
+            method.clone(),
+            "/api/v1/series/nonexistent-id",
+            Some(json!({})),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "catchall handles {method} on unmatched /api/v1/* path"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicit_routes_still_win_over_catchall() {
+    // Regression guard: M7 added a layer on the router and the
+    // catchall is a wildcard. axum/matchit should still prefer the
+    // explicit `/api/v1/books/{id}` route over the `/api/v1/{*path}`
+    // catchall. If a future refactor accidentally reorders so the
+    // catchall wins, GET /api/v1/books/{seeded-id} would 404 from
+    // catchall instead of returning the Komga-shaped BookDto.
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app, "m7-precedence@example.com").await;
+    enable_komga_compat(&app, &auth).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    let series = seed_series(&db, lib, "M7 precedence").await;
+    let issue_id =
+        seed_issue(&db, lib, series, &tmp.path().join("m7.cbz"), b"m7-1", 1.0).await;
+
+    let resp = http_with_csrf(
+        &app,
+        &auth,
+        Method::GET,
+        &format!("/api/v1/books/{issue_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "explicit /api/v1/books/{{id}} wins over /api/v1/{{*path}} catchall"
+    );
+    let body: serde_json::Value = body_json(resp.into_body()).await;
+    assert_eq!(
+        body["id"], issue_id,
+        "the response is the Komga BookDto, not the catchall's 404"
+    );
+}

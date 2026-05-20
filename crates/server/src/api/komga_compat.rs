@@ -33,8 +33,9 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
-    http::StatusCode,
+    extract::{Path, Request, State},
+    http::{HeaderMap, Method, StatusCode, header::AUTHORIZATION},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, patch},
 };
@@ -54,30 +55,107 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/books/{book_id}/read-progress",
             patch(patch_read_progress),
         )
-        // v0.3.40: diagnostic wildcard. Any Komga-shaped path Panels
-        // probes that we DON'T explicitly handle ends up here so
-        // operators can see in /admin/logs what's actually being
-        // requested. The handler always returns 404 (matching the
-        // axum-default behavior) but emits a `tracing::info!` line
-        // first. Folio's REAL routes win because axum prefers
-        // specific routes over wildcards. Only active when Komga
-        // compat is on; when off the wildcard returns the same 404
-        // axum would have without it.
-        .route("/api/v1/{*path}", get(catchall).post(catchall).patch(catchall).put(catchall).delete(catchall))
+        // v0.3.40 diagnostic wildcard, expanded in M7 (v0.3.41).
+        // Any Komga-shaped path Panels probes that we DON'T explicitly
+        // handle ends up here. The middleware (`log_inbound`) logs every
+        // hit on this Router unconditionally, so /admin/logs records
+        // both matched and unmatched /api/v1/* requests with the
+        // request's auth-shape and CSRF-header presence — diagnostics
+        // that would otherwise be invisible because the per-handler
+        // logs only fire after extractors succeed. Folio's REAL routes
+        // win because axum prefers specific routes over wildcards.
+        .route(
+            "/api/v1/{*path}",
+            get(catchall)
+                .post(catchall)
+                .patch(catchall)
+                .put(catchall)
+                .delete(catchall),
+        )
+        .layer(middleware::from_fn(log_inbound))
 }
 
-async fn catchall(
-    State(app): State<AppState>,
-    Path(path): Path<String>,
-    method: axum::http::Method,
-) -> Response {
-    if app.cfg().is_komga_compat() {
-        tracing::info!(
-            method = %method,
-            path = %path,
-            "komga_compat: unmatched /api/v1/* probe — Panels asked for a Komga endpoint we don't expose",
-        );
+/// Layer-level diagnostic. Logs every `/api/v1/*` request that enters
+/// the komga_compat router at info, BEFORE any extractor runs. The
+/// per-handler `info!` calls inside `patch_read_progress` and
+/// `get_book` (v0.3.40) were extractor-gated, so an auth failure or a
+/// missing `Authorization` header silently produced zero log output —
+/// indistinguishable from "no request arrived." This middleware closes
+/// that gap: any hit Panels makes to a `/api/v1/*` path leaves a
+/// log entry regardless of whether the handler ever ran.
+///
+/// `authorization_shape` is the load-bearing field. It tells an
+/// operator at a glance whether the client sent a bearer, an
+/// app-password Basic credential, a raw-password Basic credential, or
+/// no auth at all — the four buckets that map directly to the M9-A /
+/// M9-B / M9-C decision branches in the Phase 2 plan.
+async fn log_inbound(req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+    let auth_shape = authorization_shape(req.headers());
+    let csrf_header_present = req.headers().contains_key("x-csrf-token");
+    let content_type = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    tracing::info!(
+        method = %method,
+        path = %path,
+        auth_shape = %auth_shape,
+        csrf_header = csrf_header_present,
+        content_type = ?content_type,
+        "komga_compat: inbound /api/v1/* request",
+    );
+    next.run(req).await
+}
+
+/// Classify the `Authorization` header into one of five buckets the
+/// Phase 2 plan's M8 capture table keys off. `basic-app` is the only
+/// shape that survives both CSRF (via `looks_like_app_password`) and
+/// the auth extractor (via `extract_basic_app_password`); the other
+/// shapes are diagnostics for misconfigured clients.
+fn authorization_shape(h: &HeaderMap) -> &'static str {
+    let Some(v) = h.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) else {
+        return "none";
+    };
+    if v.starts_with("Bearer ") {
+        return "bearer";
     }
+    if let Some(rest) = v.strip_prefix("Basic ") {
+        use base64::Engine;
+        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(rest.trim())
+            && let Ok(s) = std::str::from_utf8(&decoded)
+            && let Some((_user, password)) = s.split_once(':')
+        {
+            return if crate::auth::app_password::looks_like_app_password(password) {
+                "basic-app"
+            } else {
+                "basic-raw"
+            };
+        }
+        return "basic-malformed";
+    }
+    "other"
+}
+
+/// Catchall for any `/api/v1/*` path not explicitly handled above.
+/// Returns 404 unconditionally; the `log_inbound` middleware already
+/// recorded the request shape, and this `info!` adds the
+/// distinguishing signal that the path didn't match an explicit route
+/// (vs. matching `/api/v1/books/{id}` etc.). The v0.3.40 compat-mode
+/// gate is gone — even when compat is off, "Panels probed an
+/// unimplemented Komga endpoint" is useful diagnostic signal.
+async fn catchall(
+    State(_app): State<AppState>,
+    Path(path): Path<String>,
+    method: Method,
+) -> Response {
+    tracing::info!(
+        method = %method,
+        path = %path,
+        "komga_compat: unmatched /api/v1/* probe (no explicit route)",
+    );
     not_found()
 }
 
@@ -137,17 +215,12 @@ async fn patch_read_progress(
     Path(book_id): Path<String>,
     Json(body): Json<ReadProgressUpdateDto>,
 ) -> Response {
-    // v0.3.40: explicit info log so Panels hits are visible in
-    // /admin/logs without bumping global log level to debug. The
-    // TraceLayer's per-request events are at DEBUG; this is the
-    // signal an operator scans for when verifying the shim is wired.
-    tracing::info!(
-        book_id = %book_id,
-        user_id = %user.0.id,
-        page = ?body.page,
-        completed = ?body.completed,
-        "komga_compat: PATCH /api/v1/books/{{id}}/read-progress",
-    );
+    // M7 (v0.3.41): per-handler logs removed. The `log_inbound`
+    // middleware records every /api/v1/* hit with auth-shape before
+    // extractors run; the v0.3.40 inline log fired only AFTER
+    // RequireProgressScope + Json<…> extractors succeeded, so it
+    // silently dropped auth failures and body-shape failures — the
+    // exact cases that need visibility.
     if !app.cfg().is_komga_compat() {
         return not_found();
     }
@@ -213,11 +286,7 @@ async fn get_book(
     user: CurrentUser,
     Path(book_id): Path<String>,
 ) -> Response {
-    tracing::info!(
-        book_id = %book_id,
-        user_id = %user.id,
-        "komga_compat: GET /api/v1/books/{{id}}",
-    );
+    // M7 (v0.3.41): see the same note on `patch_read_progress`.
     if !app.cfg().is_komga_compat() {
         return not_found();
     }

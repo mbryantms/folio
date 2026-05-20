@@ -52,12 +52,19 @@ pub async fn require_csrf(req: Request, next: Next) -> Response {
         return next.run(req).await;
     }
 
+    // M7 diagnostics — capture method + path up front so rejection
+    // logs can include them after the request is consumed by
+    // `into_parts`. Without this, CSRF rejections were silent and
+    // indistinguishable from "no request arrived" in /admin/logs.
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+
     let jar = CookieJar::from_headers(req.headers());
     let Some(cookie_value) = jar.get(CSRF_COOKIE).map(|c| c.value().to_owned()) else {
-        return csrf_error();
+        return csrf_error(&method, &path, "missing-cookie");
     };
     if cookie_value.is_empty() {
-        return csrf_error();
+        return csrf_error(&method, &path, "empty-cookie");
     }
 
     // Header path: XHR submits the token in `X-CSRF-Token`.
@@ -84,13 +91,13 @@ pub async fn require_csrf(req: Request, next: Next) -> Response {
         .map(|c| c.starts_with("application/x-www-form-urlencoded"))
         .unwrap_or(false);
     if !is_form {
-        return csrf_error();
+        return csrf_error(&method, &path, "no-token");
     }
 
     let (parts, body) = req.into_parts();
     let bytes = match to_bytes(body, MAX_FORM_BODY_FOR_CSRF).await {
         Ok(b) => b,
-        Err(_) => return csrf_error(),
+        Err(_) => return csrf_error(&method, &path, "body-too-large"),
     };
 
     // Extract `csrf_token=…` via `serde_urlencoded`. Tolerant of any extra
@@ -110,7 +117,7 @@ pub async fn require_csrf(req: Request, next: Next) -> Response {
         .map(|v| constant_time_eq(cookie_value.as_bytes(), v.as_bytes()))
         .unwrap_or(false);
     if !matched {
-        return csrf_error();
+        return csrf_error(&method, &path, "form-mismatch");
     }
 
     // Re-attach the buffered bytes so the inner handler can read the body
@@ -182,7 +189,18 @@ fn path_is_exempt(path: &str) -> bool {
     CSRF_EXEMPT_PATHS.contains(&path)
 }
 
-fn csrf_error() -> Response {
+fn csrf_error(method: &Method, path: &str, reason: &'static str) -> Response {
+    // M7 (v0.3.41): log every rejection at info so /admin/logs makes
+    // CSRF failures visible. Without this, a Panels-style PATCH with a
+    // non-app-password `Authorization: Basic …` header was indistinguishable
+    // from no request at all when investigating the Komga compat
+    // writeback failure.
+    tracing::info!(
+        method = %method,
+        path = %path,
+        reason = %reason,
+        "csrf rejection",
+    );
     let body = serde_json::json!({
         "error": {
             "code": "auth.csrf",
