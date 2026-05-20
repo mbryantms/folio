@@ -1,9 +1,10 @@
 //! Integration tests for opds-richer-feeds 1.1.
 //!
 //! M1: synthetic "Up Next" entries get an `Up Next: ` title prefix.
-//! M2: Continue Reading entries emit `pse:last_read` on the acquisition
-//!     link (not just the PSE stream link) so Panels-class clients can
-//!     resume at the right page on first download.
+//! M2: Continue Reading entries emit `pse:lastRead` (camelCase, per
+//!     OPDS-PSE 1.2 spec) on the acquisition link (not just the PSE
+//!     stream link) so Panels-class clients can resume at the right
+//!     page on first download.
 //! M3: root nav is restructured around user pages — Continue reading +
 //!     On Deck stay top-level, each `user_page` becomes its own folder,
 //!     and dropped entries (All series / Recently added / Read history /
@@ -260,19 +261,16 @@ async fn v1_continue_reading_emits_pse_last_read_on_acquisition_link() {
     // The acquisition link must carry the progress hint so clients
     // that don't consume the PSE stream link (or download the full
     // archive instead of page-streaming) still see the resume target.
-    // Both snake_case and camelCase spellings land — see
-    // `pse_progress_attrs` doc-comment for rationale.
+    // camelCase only — per OPDS-PSE 1.2 spec. M1 of
+    // progress-writeback-2.0 dropped the snake_case alias that
+    // v0.3.36-v0.3.37 carried belt-and-suspenders.
     let acq_line = block
         .lines()
         .find(|l| l.contains(r#"rel="http://opds-spec.org/acquisition""#))
         .expect("acquisition link present");
     assert!(
-        acq_line.contains(r#"pse:last_read="15""#),
-        "snake_case last_read on acquisition link (1-indexed): {acq_line}"
-    );
-    assert!(
         acq_line.contains(r#"pse:lastRead="15""#),
-        "camelCase lastRead on acquisition link (Komga/Panels shape): {acq_line}"
+        "camelCase lastRead on acquisition link (1-indexed): {acq_line}"
     );
     assert!(
         acq_line.contains("pse:lastReadDate=\""),
@@ -284,10 +282,6 @@ async fn v1_continue_reading_emits_pse_last_read_on_acquisition_link() {
         .find(|l| l.contains(r#"rel="http://vaemendis.net/opds-pse/stream""#))
         .expect("stream link present");
     assert!(
-        stream_line.contains(r#"pse:last_read="15""#),
-        "snake_case last_read on stream link: {stream_line}"
-    );
-    assert!(
         stream_line.contains(r#"pse:lastRead="15""#),
         "camelCase lastRead on stream link: {stream_line}"
     );
@@ -296,17 +290,19 @@ async fn v1_continue_reading_emits_pse_last_read_on_acquisition_link() {
 /// Regression for the "Panels opens Continue Reading at the cover even
 /// though the web UI shows progress" bug (reported 2026-05-19). Two
 /// problems compounded:
-///   1. Folio v1 emitted `pse:last_read` raw (0-indexed `last_page`),
+///   1. Folio v1 emitted `pse:lastRead` raw (0-indexed `last_page`),
 ///      so a user just past the cover (`last_page = 1`) got
-///      `pse:last_read="1"`. Panels treats `1` as 1-indexed display
+///      `pse:lastRead="1"`. Panels treats `1` as 1-indexed display
 ///      position → opens at page 1 = cover. Fix: emit `last_page + 1`.
-///   2. Folio emitted snake_case attribute names. Komga / Kavita ship
-///      camelCase and Panels follows that convention — strict parsers
-///      didn't see our attribute at all. Fix: emit both spellings.
+///   2. Folio emitted snake_case attribute names. The spec mandates
+///      camelCase (`pse:lastRead`). Strict parsers ignored our
+///      attribute. v0.3.37 added camelCase alongside snake_case;
+///      M1 of progress-writeback-2.0 dropped the snake_case alias
+///      entirely (spec-compliant, no observed beneficiary).
 ///
 /// Pin both invariants here so this can't silently regress again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pse_progress_attrs_emit_1_indexed_and_both_spellings() {
+async fn pse_progress_attrs_emit_1_indexed_camelcase() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "panels-regress@example.com").await;
     let db = Database::connect(&app.db_url).await.unwrap();
@@ -328,8 +324,9 @@ async fn pse_progress_attrs_emit_1_indexed_and_both_spellings() {
     let body = body_text(resp.into_body()).await;
     let block = entry_block_by_issue(&body, &issue);
 
-    // The literal "2" — last_page (1) + 1 — must appear with BOTH
-    // attribute spellings on both the stream and acquisition links.
+    // The literal "2" — last_page (1) + 1 — must appear with camelCase
+    // attribute spelling on both the stream and acquisition links. No
+    // snake_case alias (dropped in M1 of progress-writeback-2.0).
     let stream_line = block
         .lines()
         .find(|l| l.contains(r#"rel="http://vaemendis.net/opds-pse/stream""#))
@@ -340,16 +337,16 @@ async fn pse_progress_attrs_emit_1_indexed_and_both_spellings() {
         .expect("acquisition link present");
     for line in [stream_line, acq_line] {
         assert!(
-            line.contains(r#"pse:last_read="2""#),
-            "snake_case last_read = last_page + 1: {line}"
-        );
-        assert!(
             line.contains(r#"pse:lastRead="2""#),
             "camelCase lastRead = last_page + 1: {line}"
         );
         assert!(
-            !line.contains(r#"pse:last_read="1""#),
+            !line.contains(r#"pse:lastRead="1""#),
             "must not emit raw last_page: {line}"
+        );
+        assert!(
+            !line.contains("pse:last_read"),
+            "snake_case must not surface in spec-compliant emission: {line}"
         );
         assert!(
             line.contains("pse:lastReadDate=\""),
@@ -385,8 +382,8 @@ async fn v1_acquisition_link_omits_pse_attrs_when_no_progress() {
         .find(|l| l.contains(r#"rel="http://opds-spec.org/acquisition""#))
         .expect("acquisition link present");
     assert!(
-        !acq_line.contains("pse:last_read"),
-        "acquisition link must NOT carry pse:last_read when no progress row: {acq_line}"
+        !acq_line.contains("pse:lastRead"),
+        "acquisition link must NOT carry pse:lastRead when no progress row: {acq_line}"
     );
 }
 

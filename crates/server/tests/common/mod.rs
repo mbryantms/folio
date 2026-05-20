@@ -234,6 +234,11 @@ impl TestApp {
             } else {
                 None
             },
+            // progress-writeback-2.0 M4: OPDS client compat mode.
+            // Default off — TestApp::spawn() preserves Folio identity;
+            // tests that need Komga compat flip it via PATCH
+            // /api/admin/settings.
+            opds_panels_mode: "off".into(),
             zip_lru_capacity: 16,
             scan_worker_count: 2,
             post_scan_worker_count: 1,

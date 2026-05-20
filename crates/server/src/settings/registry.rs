@@ -177,6 +177,22 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Bool,
         is_secret: false,
     },
+    // ───────── Panels compat (progress-writeback-2.0 M4) ─────────
+    SettingDef {
+        // `off` (default) | `komga`. When `komga`, Folio's OPDS feeds
+        // present as Komga (author element + path alias + root title)
+        // and the Komga REST shim at `/api/v1/books/...` becomes
+        // active. Lets Panels (iOS/macOS) and Tachiyomi-class clients
+        // sync reading progress via the Komga REST API they're
+        // hardcoded against. Spec-clean alternative — OPDS Progression
+        // 1.0 — also works regardless of this flag, but no client
+        // implements it yet (May 2026). Deprecate this flag once
+        // major clients ship OPDS Progression support; remove the
+        // shim after a year of no support tickets.
+        key: "compat.opds_panels_mode",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

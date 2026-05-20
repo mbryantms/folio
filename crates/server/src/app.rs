@@ -700,7 +700,19 @@ pub fn router(state: AppState) -> Router {
         .merge(api::page_bytes::routes())
         .merge(api::thumbnails::routes())
         .merge(api::opds::routes())
-        .merge(api::opds_v2::routes());
+        .merge(api::opds_v2::routes())
+        // progress-writeback-2.0 M3: Komga REST shim at literal
+        // `/api/v1/books/...` paths. Mounted in the bare group
+        // because external clients (Panels) hit these directly,
+        // not via the web app's `apiFetch` prefix. The shim's
+        // handlers self-gate on `compat.opds_panels_mode == "komga"`
+        // and return 404 when compat is off.
+        .merge(api::komga_compat::routes())
+        // progress-writeback-2.0 M5: OPDS Progression 1.0 spec-clean
+        // endpoint at `/opds/v1/progression/{issue_id}`. Always
+        // active regardless of compat mode — no client implements
+        // the spec yet (May 2026), but Folio is ready when one does.
+        .merge(api::opds_progression::routes());
 
     let api = Router::<AppState>::new()
         .merge(auth::local::routes())

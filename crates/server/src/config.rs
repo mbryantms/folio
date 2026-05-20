@@ -109,6 +109,18 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub check_upstream_releases: bool,
 
+    /// OPDS client-compat mode. `"off"` (default) is spec-clean Folio.
+    /// `"komga"` makes Folio's OPDS feeds present as Komga (author
+    /// element + path alias + root title) and activates the Komga REST
+    /// shim at `/api/v1/books/...`. Lets Panels (iOS/macOS) and
+    /// Tachiyomi-class clients sync reading progress via the Komga REST
+    /// API they're hardcoded against. Spec-clean alternative — OPDS
+    /// Progression 1.0 — also works regardless of this flag, but as of
+    /// May 2026 no client implements it. DB key
+    /// `compat.opds_panels_mode`.
+    #[serde(default = "default_opds_panels_mode")]
+    pub opds_panels_mode: String,
+
     #[serde(default)]
     pub otlp_endpoint: Option<String>,
 
@@ -212,6 +224,9 @@ fn default_smtp_port() -> u16 {
 fn default_smtp_tls() -> String {
     "starttls".into()
 }
+fn default_opds_panels_mode() -> String {
+    "off".into()
+}
 fn default_zip_lru_capacity() -> usize {
     64
 }
@@ -305,6 +320,13 @@ impl Config {
             .extract()?;
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// True when the OPDS feed should present as Komga (and the
+    /// `/api/v1/books/...` shim be active). progress-writeback-2.0 M2/M3
+    /// consult this; default-off keeps Folio identity preserved.
+    pub fn is_komga_compat(&self) -> bool {
+        self.opds_panels_mode.eq_ignore_ascii_case("komga")
     }
 
     /// Build the `archive::ArchiveLimits` the archive crate consumes,
@@ -697,6 +719,24 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             }
             None => bad_type(&row.key, "bool", &row.value),
         },
+        "compat.opds_panels_mode" => match row.value.as_str() {
+            // Validation matches the registered values. Unknown strings
+            // fall back to "off" with a warning — operators get the
+            // safe default rather than crashing the overlay.
+            Some(s @ ("off" | "komga")) => {
+                warn_if_diverges(&row.key, Some(cfg.opds_panels_mode.as_str()), s);
+                cfg.opds_panels_mode = s.to_owned();
+            }
+            Some(s) => {
+                tracing::warn!(
+                    key = %row.key,
+                    value = %s,
+                    "compat.opds_panels_mode: unknown value, falling back to `off`",
+                );
+                cfg.opds_panels_mode = "off".into();
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
         "observability.log_level" => match row.value.as_str() {
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.log_level.as_str()), s);
@@ -828,6 +868,7 @@ mod tests {
             smtp_password: None,
             smtp_tls: "starttls".into(),
             smtp_from: None,
+            opds_panels_mode: "off".into(),
         }
     }
 }

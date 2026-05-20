@@ -76,6 +76,13 @@ pub(crate) const UP_NEXT_REL: &str = "https://folio.local/rels/up-next";
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/opds/v1", get(root))
+        // progress-writeback-2.0 M2: Komga's canonical catalog path.
+        // Panels probes `/opds/v1.2/catalog` when it sees the Komga
+        // author element to confirm server identity before activating
+        // its Komga client. Alias to the same root handler; the
+        // handler itself decides what to emit based on
+        // `compat.opds_panels_mode`.
+        .route("/opds/v1.2/catalog", get(root))
         .route("/opds/v1/series", get(series_list))
         .route("/opds/v1/series/{id}", get(series_one))
         // M4 of opds-richer-feeds — faceted browse over the series
@@ -241,6 +248,21 @@ pub(crate) const BROWSE_PUBLISHER_FACET_LIMIT: u64 = 20;
 /// here drives the order the client renders the facet group in.
 pub(crate) const BROWSE_STATUSES: &[&str] = &["continuing", "ended", "hiatus", "cancelled"];
 
+/// progress-writeback-2.0 M2: when Komga compat is on, emit the
+/// `<author>Komga</author>` element Panels uses to identify the
+/// server. Empty string when compat is off, so v1 feeds stay
+/// Folio-branded by default. Called from every feed-builder so the
+/// fingerprint is consistent across surfaces; Panels probes the
+/// catalog root first but downstream feeds carry it too for any
+/// client that fingerprints lazily.
+pub(crate) fn komga_compat_author(app: &AppState) -> &'static str {
+    if app.cfg().is_komga_compat() {
+        "  <author>\n    <name>Komga</name>\n    <uri>https://github.com/gotson/komga</uri>\n  </author>\n"
+    } else {
+        ""
+    }
+}
+
 async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -278,13 +300,24 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
         );
     }
 
+    // progress-writeback-2.0 M2: when Komga compat is on, swap the
+    // root feed title to Komga's canonical "Komga OPDS catalog"
+    // string. The author element is emitted via the helper too.
+    // Panels fingerprints on these signals.
+    let feed_title = if app.cfg().is_komga_compat() {
+        "Komga OPDS catalog"
+    } else {
+        "Comic Reader"
+    };
+    let komga_author = komga_compat_author(&app);
+
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog">
   <id>{base}/opds/v1</id>
   <title>{name}</title>
   <updated>{now}</updated>
-  <link rel="self" href="/opds/v1" type="{nav}"/>
+{komga_author}  <link rel="self" href="/opds/v1" type="{nav}"/>
   <link rel="start" href="/opds/v1" type="{nav}"/>
   <link rel="search" href="/opds/v1/search.xml" type="application/opensearchdescription+xml"/>
   <link rel="http://opds-spec.org/sync" href="/opds/v1/issues/{{issue_id}}/progress" type="application/json"/>
@@ -327,11 +360,12 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
 </feed>
 "#,
         base = base,
-        name = xml_escape("Comic Reader"),
+        name = xml_escape(feed_title),
         now = now,
         nav = NAV_CT,
         acq = ACQ_CT,
         page_entries = page_entries,
+        komga_author = komga_author,
     );
     atom(body)
 }
@@ -733,7 +767,7 @@ async fn series_one(
     // M2 of opds-sync-cleanup: default reorder. Move the up-next
     // issue to position 0 unless the series owner opted out via
     // `series.preserve_canonical_order`. The up-next rel + per-entry
-    // pse:last_read attributes still emit; reordering makes the
+    // pse:lastRead attributes still emit; reordering makes the
     // resume target visible to clients that ignore those hints.
     if !s.preserve_canonical_order {
         reorder_issues_up_next_first(&mut issues, up_next_issue.as_ref().map(|i| i.id.as_str()));
@@ -1632,6 +1666,7 @@ fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
     <link rel="http://opds-spec.org/image" href="/issues/{id}/pages/0" type="image/jpeg"/>
 {related}    <link rel="http://opds-spec.org/acquisition" href="/opds/v1/issues/{id}/file" type="{mime}"{acquisition_progress_attrs}/>
     <link rel="alternate" href="/api/issues/{id}" type="application/json"/>
+    <link rel="http://opds-spec.org/progression" href="/opds/v1/progression/{id}" type="application/opds-progression+json"/>
 {pse}{nav}  </entry>
 "#,
         id = i.id,
@@ -1752,7 +1787,7 @@ pub(crate) async fn pick_next_in_collection(
 /// `base` when glyphs are disabled.
 ///
 /// M3 of `opds-sync-cleanup-1.0` — universal "what's left" cue for
-/// clients that ignore the PSE `pse:last_read` attribute (Komga, KOReader,
+/// clients that ignore the PSE `pse:lastRead` attribute (KOReader,
 /// older Tachiyomi). Callers gate this behind the per-user
 /// `users.opds_progress_glyphs` flag.
 pub(crate) fn decorate_title_with_progress(
@@ -1835,30 +1870,24 @@ fn render_sequential_nav_links(prev: Option<&issue::Model>, next: Option<&issue:
 /// an empty string when no progress row exists. Centralized so the two
 /// link variants can't drift apart.
 ///
-/// Wire format: **both** snake_case (`pse:last_read`) and camelCase
-/// (`pse:lastRead`) attribute names land on the same element, with
-/// matching `_date` companions. The Anansi PSE spec is ambiguous on
-/// case; Komga / Kavita ship camelCase and that's what Panels (iOS)
-/// and Chunky read. We emit both so we satisfy strict parsers either
-/// way — XML allows distinct-localname attributes on the same element,
-/// so this is well-formed.
+/// Wire format: camelCase only — `pse:lastRead` + `pse:lastReadDate`
+/// — per the Anansi OPDS-PSE 1.2 spec, which uses camelCase in both
+/// the example block and the example consumers (Komga, Kavita, Codex,
+/// LANraragi all emit camelCase). v0.3.36-v0.3.37 also emitted
+/// snake_case aliases as belt-and-suspenders; M1 of
+/// progress-writeback-2.0 dropped those — the spec is unambiguous,
+/// and dual emission was bloat with no observed beneficiary.
 ///
 /// Value: **1-indexed page number**, i.e. `p.last_page + 1`. The DB
 /// stores `last_page` as a 0-indexed page index (cover = 0); the OPDS
-/// wire convention (and Folio's own v2 `metadata.position`) is 1-indexed
-/// display position. Emitting raw `last_page` is the v0.3.36-and-earlier
-/// bug that caused "Continue Reading opens at the cover": for a user
-/// just past page 1, `last_page=1` was emitted, Panels read it as
-/// "page 1" (1-indexed = cover) and showed the cover.
+/// wire convention (per spec: "numbering starts at 1") and Folio's
+/// v2 `metadata.position` agree on 1-indexed.
 fn pse_progress_attrs(progress: Option<&progress_record::Model>) -> String {
     match progress {
         Some(p) => {
             let page = p.last_page + 1;
             let date = p.updated_at.to_rfc3339();
-            format!(
-                " pse:last_read=\"{page}\" pse:lastRead=\"{page}\" \
-                 pse:last_read_date=\"{date}\" pse:lastReadDate=\"{date}\""
-            )
+            format!(" pse:lastRead=\"{page}\" pse:lastReadDate=\"{date}\"")
         }
         None => String::new(),
     }
@@ -1869,15 +1898,23 @@ fn pse_progress_attrs(progress: Option<&progress_record::Model>) -> String {
 /// when fetching each page. `pse:count` advertises the page total so
 /// clients can build a UI scrubber without a probe round-trip.
 ///
-/// When the caller has a `progress` row, also emit `pse:last_read` +
-/// `pse:last_read_date` attributes on the same link. These are the
-/// **spec-conformant** progress hints per the Anansi OPDS-PSE namespace
-/// (`http://vaemendis.net/opds-pse/ns`) — clients like Panels / Chunky
-/// read them off the stream link's attributes and use them to resume
-/// at the correct page. Folio v0.3.29-31 emitted standalone
-/// `<pse:lastRead>` child elements (camelCase, wrong location); clients
-/// silently ignored them, which is why "open issue from Continue
-/// reading" landed on the cover.
+/// When the caller has a `progress` row, also emit `pse:lastRead` +
+/// `pse:lastReadDate` attributes on the same link. These are the
+/// **spec-conformant** progress hints per OPDS-PSE 1.2 (camelCase,
+/// inline attributes on the stream link). Clients like Panels /
+/// Chunky read them off the stream link and use them to resume at
+/// the correct page.
+///
+/// Wire format history:
+/// - v0.3.29-31 emitted `<pse:lastRead>` as child elements — wrong
+///   location; clients silently ignored.
+/// - v0.3.32-35 moved to inline attributes but with snake_case names
+///   (`pse:last_read`) — wrong case; spec-strict clients still
+///   ignored.
+/// - v0.3.36-37 added camelCase alongside snake_case (belt-and-
+///   suspenders).
+/// - M1 of progress-writeback-2.0 dropped the snake_case alias
+///   entirely; emission is now spec-compliant camelCase only.
 fn render_pse_stream_link(
     i: &issue::Model,
     user_id: Uuid,

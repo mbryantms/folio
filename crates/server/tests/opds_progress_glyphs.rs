@@ -9,9 +9,9 @@
 //!    the prefix and suffix entirely (raw title only).
 //!  - `(N / M)` suffix is omitted when `page_count` is unknown.
 //!
-//! The user-facing pitch: clients that ignore the PSE `pse:last_read`
-//! attribute (Komga, KOReader, older Tachiyomi) still see "where I left
-//! off" because the cue lives in the title string itself.
+//! The user-facing pitch: clients that ignore the PSE `pse:lastRead`
+//! attribute (KOReader, older Tachiyomi) still see "where I left off"
+//! because the cue lives in the title string itself.
 
 mod common;
 

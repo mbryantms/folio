@@ -29,7 +29,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use entity::{issue, library_user_access, progress_record, user};
+use entity::{issue, library_user_access, user};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -235,20 +235,19 @@ pub async fn stream(
         .await;
     }
 
-    // M3 of opds-sync: fire-and-forget implicit progress write.
-    // PSE clients (Panels, Chunky, KOReader) typically don't post
-    // explicit progress; we infer it from page-stream hits. The
-    // helper applies a monotonic-only guard so a prefetch landing on
-    // an earlier page doesn't regress recorded position, and only
-    // sets `finished=true` on the LAST page (matching the web
-    // reader's auto-finish rule). Spawned so the response isn't
-    // blocked on a DB round-trip the client doesn't need to await.
-    let app_clone = app.clone();
-    let issue_clone = issue_row.clone();
-    let page_index_i32 = n as i32;
-    tokio::spawn(async move {
-        record_pse_progress(app_clone, u, issue_clone, page_index_i32).await;
-    });
+    // M1 of progress-writeback-2.0 (was M3 of opds-sync-1.0): no
+    // implicit progress write from PSE hits. The v1 mechanism inferred
+    // progress from every page-stream hit, which is wrong for any
+    // client that prefetches a forward window (Panels prefetches ~10
+    // pages on open) — the prefetch frontier became the recorded
+    // position, jumping users ahead of where they actually were.
+    // The OPDS-PSE 1.2 spec does not define a client→server progress
+    // write mechanism, so this was always a Folio invention with no
+    // spec backing. Progress now flows ONLY through explicit channels:
+    // the web app's POST /progress, the Komga compat shim
+    // (PATCH /api/v1/books/{id}/read-progress, when compat is on), the
+    // KOReader Sync.app shim, and OPDS Progression 1.0
+    // (PUT /opds/v1/progression/{id}).
 
     let mut hdrs = HeaderMap::new();
     hdrs.insert(
@@ -420,45 +419,4 @@ fn error(status: StatusCode, code: &str) -> Response {
         axum::Json(serde_json::json!({"error": {"code": code, "message": code}})),
     )
         .into_response()
-}
-
-/// Record an implicit progress event from a PSE page-stream hit.
-/// Monotonic-only: drops the write if the user already has a higher
-/// `last_page` recorded — KOReader prefetches a few pages ahead, so a
-/// backwards-jump (`n < current`) is almost always a buffered re-fetch
-/// rather than a real reading-position shift. Sets `finished=true`
-/// only at the last page; otherwise passes `None` so the sticky-
-/// finished semantics in `upsert_for` are preserved. M3 of
-/// opds-sync-1.0.
-async fn record_pse_progress(app: AppState, user_id: Uuid, issue_row: issue::Model, page: i32) {
-    let existing = progress_record::Entity::find_by_id((user_id, issue_row.id.clone()))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten();
-    let advancing = match &existing {
-        Some(prev) => page > prev.last_page,
-        None => true,
-    };
-    if !advancing {
-        return;
-    }
-    let total = issue_row.page_count.unwrap_or(0).max(0);
-    let finished = if total > 0 && page == total - 1 {
-        Some(true)
-    } else {
-        None
-    };
-    if let Err(e) = crate::api::progress::upsert_for(
-        &app,
-        user_id,
-        &issue_row,
-        page,
-        finished,
-        Some("opds-pse".into()),
-    )
-    .await
-    {
-        tracing::warn!(error = %e, "pse: implicit progress upsert failed");
-    }
 }

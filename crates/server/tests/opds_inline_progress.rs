@@ -144,28 +144,25 @@ async fn v1_entry_carries_pse_last_read_when_progress_present() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_text(resp.into_body()).await;
     let block = entry_block(&body, &issue_id);
-    // OPDS-PSE: `last_read` / `last_read_date` are ATTRIBUTES on the
-    // stream link, not free-standing child elements. The wire value is
-    // 1-indexed (display page number), so a DB `last_page = 14`
-    // (0-indexed) emits as `"15"`. Both snake_case and camelCase
-    // spellings land on the element so we satisfy strict spec parsers
-    // (snake_case, per Anansi docs) and Komga/Kavita-compatible clients
-    // like Panels (camelCase, which they actually consume).
-    assert!(
-        block.contains(r#"pse:last_read="15""#),
-        "snake_case last_read = last_page + 1: {block}"
-    );
+    // OPDS-PSE 1.2: `lastRead` / `lastReadDate` are camelCase
+    // attributes on the stream link (per spec example block and what
+    // Komga/Kavita/Codex/LANraragi emit). Wire value is 1-indexed
+    // ("numbering starts at 1" in the spec), so DB `last_page = 14`
+    // (0-indexed) emits as `"15"`. M1 of progress-writeback-2.0
+    // dropped the snake_case aliases that v0.3.36-v0.3.37 emitted
+    // belt-and-suspenders — spec is unambiguous, no client needed
+    // the snake_case form.
     assert!(
         block.contains(r#"pse:lastRead="15""#),
         "camelCase lastRead = last_page + 1: {block}"
     );
     assert!(
-        block.contains("pse:last_read_date=\""),
-        "snake_case last_read_date present: {block}"
-    );
-    assert!(
         block.contains("pse:lastReadDate=\""),
         "camelCase lastReadDate present: {block}"
+    );
+    assert!(
+        !block.contains("pse:last_read"),
+        "snake_case dropped in M1 of progress-writeback-2.0: {block}"
     );
     // Regression guard: pse:count must survive on the same link.
     assert!(
@@ -216,8 +213,8 @@ async fn v1_entry_omits_pse_last_read_when_progress_absent() {
         "stream link with count still emitted: {block}"
     );
     assert!(
-        !block.contains("pse:last_read"),
-        "no last_read attribute when no progress row: {block}"
+        !block.contains("pse:lastRead"),
+        "no lastRead attribute when no progress row: {block}"
     );
 }
 
@@ -247,8 +244,8 @@ async fn v1_finished_issue_emits_last_page() {
     let block = entry_block(&body, &issue_id);
     // Finished at page index 19 → emit 1-indexed display page 20.
     assert!(
-        block.contains(r#"pse:last_read="20""#),
-        "finished issue emits last_page + 1 on the stream link: {block}"
+        block.contains(r#"pse:lastRead="20""#),
+        "finished issue emits last_page + 1 (camelCase, per OPDS-PSE 1.2) on the stream link: {block}"
     );
 }
 
@@ -299,17 +296,18 @@ async fn v1_multi_issue_feed_renders_mixed_states() {
     let block_a = entry_block(&body, &a);
     let block_b = entry_block(&body, &b);
     let block_c = entry_block(&body, &c);
-    // last_page + 1: 5 → 6 (in-progress), 29 → 30 (finished).
+    // last_page + 1: 5 → 6 (in-progress), 29 → 30 (finished). All
+    // emitted as camelCase `pse:lastRead` per OPDS-PSE 1.2 spec.
     assert!(
-        block_a.contains(r#"pse:last_read="6""#),
+        block_a.contains(r#"pse:lastRead="6""#),
         "a in-progress (last_page 5 → emit 6): {block_a}"
     );
     assert!(
-        !block_b.contains("pse:last_read"),
-        "b untouched, no last_read attribute: {block_b}"
+        !block_b.contains("pse:lastRead"),
+        "b untouched, no lastRead attribute: {block_b}"
     );
     assert!(
-        block_c.contains(r#"pse:last_read="30""#),
+        block_c.contains(r#"pse:lastRead="30""#),
         "c finished (last_page 29 → emit 30): {block_c}"
     );
 }

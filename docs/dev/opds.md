@@ -87,6 +87,8 @@ Facet groups exposed:
 |---|---|---|
 | `PUT /opds/v1/issues/{id}/progress` | Read → Folio | Per-issue `{page \| position, finished, device}`. Requires `read+progress` app-password scope. Full wire format in [opds-progress-protocol.md](opds-progress-protocol.md). |
 | `PUT /opds/v1/syncs/progress/{hash}` | KOReader → Folio | KOReader Sync.app shim — accepts KOReader's wire format. |
+| `PUT /opds/v1/progression/{id}` | OPDS-Progression-1.0 client → Folio | Standards-track (spec merged into `opds-community/drafts` 2026-03-01). Payload `{modified, device:{id,name}, progression:0..1, references?, title?}`. Errors are RFC 7807 with typed URIs at `https://registry.opds.io/error#progression-*`. Always-on regardless of Komga compat mode. No client implements the spec yet (May 2026), but Folio is ready when one does. |
+| `PATCH /api/v1/books/{id}/read-progress` | Panels / Tachiyomi-class → Folio | Komga-compatible REST shim. Body `{page?, completed?}`, returns 204. Only active when `compat.opds_panels_mode = "komga"` is set in `/admin/server`. Panels detects Komga via the OPDS feed's `<author>Komga</author>` + the `/opds/v1.2/catalog` path alias. Sunsettable: deprecate when Panels (or any major client) ships OPDS Progression 1.0 support. |
 
 ### Sync surfaces (opds-sync-1.0)
 
@@ -104,7 +106,7 @@ Facet groups exposed:
 | `/opds/v1/history` | finished issues, newest-first | Paginated. Powers "what did I read in March" queries. |
 | `<pse:lastReadDate>` at CBL feed root | per-list "last read in this list" | MAX `progress_record.updated_at` across matched issues. |
 | `numberOfRead` / `numberOfFinished` | v2 `/opds/v2/lists` nav entries + CBL acq metadata | "5 of 24 finished" inline on the list summary. |
-| Implicit progress on PSE stream hits | server-side, transparent to client | Every `GET /opds/pse/{id}/{n}` fires a fire-and-forget progress upsert. Monotonic-only — buffered prefetches behind current position are dropped. `finished=true` set on last-page hit. Device tag `"opds-pse"`. |
+| ~~Implicit progress on PSE stream hits~~ | **REMOVED in progress-writeback-2.0 M1** | The original M3 mechanism inferred progress from every PSE stream hit. That broke for prefetching clients (Panels prefetches ~10 pages on issue open, every prefetch was treated as "user reached this page" → recorded position jumped to the prefetch frontier). Replaced by explicit writes: web app's `POST /progress`, OPDS Progression 1.0 `PUT /opds/v1/progression/{id}`, Komga compat `PATCH /api/v1/books/{id}/read-progress`, KOReader Sync.app. |
 | `rel="http://opds-spec.org/sync"` | catalog root (v1 + v2) | Discoverable write-back endpoint advertisement. v2 carries the `profile` URL anchoring the [protocol doc](opds-progress-protocol.md). |
 
 ### Client compatibility matrix

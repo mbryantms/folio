@@ -48,6 +48,9 @@ export function ServerSettingsCards() {
           initial={asString("observability.log_level", "info")}
         />
       </div>
+      <CompatibilityCard
+        initial={asString("compat.opds_panels_mode", "off")}
+      />
       <CachingCard initial={asUint("cache.zip_lru_capacity", 64)} />
       <WorkersCard
         initial={{
@@ -60,6 +63,70 @@ export function ServerSettingsCards() {
         }}
       />
     </div>
+  );
+}
+
+/** progress-writeback-2.0 M4: OPDS client compatibility mode toggle.
+ *  Default off (Folio identity preserved). When `komga`, the OPDS feed
+ *  presents as Komga so Panels (iOS) and Tachiyomi-class clients sync
+ *  reading progress via the Komga REST API they're hardcoded against.
+ *  Live — no restart needed. */
+function CompatibilityCard({ initial }: { initial: string }) {
+  const [mode, setMode] = useState<"off" | "komga">(
+    initial === "komga" ? "komga" : "off",
+  );
+  const update = useUpdateSettings();
+  const dirty = mode !== initial;
+
+  async function onSave() {
+    await update.mutateAsync({ "compat.opds_panels_mode": mode });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">
+          OPDS client compatibility
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={mode === "off" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setMode("off")}
+            >
+              Off (Folio identity)
+            </Button>
+            <Button
+              type="button"
+              variant={mode === "komga" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setMode("komga")}
+            >
+              Komga compatibility
+            </Button>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            Komga mode makes Folio&apos;s OPDS feed present as Komga so apps
+            that hardcode Komga support (Panels on iOS/macOS, Tachiyomi /
+            Mihon / Yokai on Android) can sync reading progress back to the
+            server. The feed&apos;s <code>&lt;author&gt;</code> element will
+            display &ldquo;Komga&rdquo; while this is on — harmless for
+            normal OPDS clients. Spec-clean alternative (OPDS Progression
+            1.0) is also active regardless of this flag, but no client
+            implements it yet.
+          </p>
+        </div>
+        <div className="flex justify-end">
+          <Button onClick={onSave} disabled={!dirty || update.isPending}>
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
