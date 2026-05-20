@@ -9,7 +9,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ShortcutsHelpButton } from "@/components/shell/ShortcutsHelpButton";
 import { UserFooter } from "@/components/shell/UserFooter";
 import { cn } from "@/lib/utils";
 
@@ -109,9 +108,6 @@ export function AdminSidebar({
             </div>
           ))}
         </nav>
-        <div className="px-2 pb-1">
-          <ShortcutsHelpButton collapsed={collapsed} />
-        </div>
       </TooltipProvider>
       <UserFooter user={user} collapsed={collapsed} />
     </div>

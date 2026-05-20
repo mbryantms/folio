@@ -147,7 +147,16 @@ export function MainShell({
           data-collapsed={sidebar.collapsed ? "true" : "false"}
           aria-label="Library sidebar"
         >
-          <div className="sticky top-14 h-[calc(100vh-3.5rem)]">
+          {/* v0.3.46: use `dvh` (dynamic viewport height) instead of
+           * `vh`. On iOS Safari — especially when the app is launched
+           * from a saved home-screen icon in standalone PWA mode —
+           * `100vh` resolves to the "large" viewport (which includes
+           * the area currently hidden behind the browser UI / safe-
+           * area inset), so the sidebar height overshoots and the
+           * UserFooter at its bottom lands below the visible area
+           * until the user scrolls. `100dvh` resizes with the actual
+           * available viewport and keeps the footer on-screen. */}
+          <div className="sticky top-14 h-[calc(100dvh-3.5rem)]">
             <MainSidebar
               sections={sections}
               title="Folio"

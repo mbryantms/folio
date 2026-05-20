@@ -110,7 +110,11 @@ export function AdminShell({
           data-collapsed={sidebar.collapsed ? "true" : "false"}
           aria-label={`${title} sidebar`}
         >
-          <div className="sticky top-14 h-[calc(100vh-3.5rem)]">
+          {/* v0.3.46: see the matching note in MainShell.tsx — `dvh`
+           * keeps the sidebar height tied to the actually-visible
+           * viewport so the UserFooter stays on-screen in iOS PWA
+           * standalone mode. */}
+          <div className="sticky top-14 h-[calc(100dvh-3.5rem)]">
             <AdminSidebar
               sections={sections}
               title={title}

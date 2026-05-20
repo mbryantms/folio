@@ -9,7 +9,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ShortcutsHelpButton } from "@/components/shell/ShortcutsHelpButton";
 import { UserFooter } from "@/components/shell/UserFooter";
 import { useMarkerCount } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
@@ -65,8 +64,8 @@ export function MainSidebar({
             // `min-h-0` lets the nav actually shrink inside the flex
             // column; without it the default `min-height: auto`
             // forces the nav to its content size and shoves the
-            // ShortcutsHelpButton + UserFooter siblings off-screen on
-            // tall sidebars / short viewports.
+            // UserFooter sibling off-screen on tall sidebars /
+            // short viewports.
             "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-6 text-sm",
             collapsed ? "px-2" : "px-3",
           )}
@@ -216,14 +215,6 @@ export function MainSidebar({
             );
           })}
         </nav>
-        <div
-          className={cn(
-            "flex pb-1",
-            collapsed ? "justify-center px-2" : "justify-end px-3",
-          )}
-        >
-          <ShortcutsHelpButton collapsed={collapsed} />
-        </div>
       </TooltipProvider>
       <UserFooter user={user} collapsed={collapsed} />
     </div>
