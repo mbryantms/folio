@@ -74,6 +74,11 @@ jobs:
       - run: pnpm --filter web run lint
       - run: pnpm --filter web run typecheck
       - run: pnpm --filter web run test
+      # Build once explicitly so the bundle-budget script and the
+      # downstream `next start` (Playwright's webServer) both pick up
+      # the same `.next/` output without each invoking `next build`
+      # implicitly.
+      - run: pnpm --filter web run build
       - name: Reader bundle budget
         run: pnpm --filter web run check-bundle-size
       - name: Install Playwright browsers
