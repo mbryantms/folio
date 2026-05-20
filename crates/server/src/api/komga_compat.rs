@@ -54,6 +54,31 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/books/{book_id}/read-progress",
             patch(patch_read_progress),
         )
+        // v0.3.40: diagnostic wildcard. Any Komga-shaped path Panels
+        // probes that we DON'T explicitly handle ends up here so
+        // operators can see in /admin/logs what's actually being
+        // requested. The handler always returns 404 (matching the
+        // axum-default behavior) but emits a `tracing::info!` line
+        // first. Folio's REAL routes win because axum prefers
+        // specific routes over wildcards. Only active when Komga
+        // compat is on; when off the wildcard returns the same 404
+        // axum would have without it.
+        .route("/api/v1/{*path}", get(catchall).post(catchall).patch(catchall).put(catchall).delete(catchall))
+}
+
+async fn catchall(
+    State(app): State<AppState>,
+    Path(path): Path<String>,
+    method: axum::http::Method,
+) -> Response {
+    if app.cfg().is_komga_compat() {
+        tracing::info!(
+            method = %method,
+            path = %path,
+            "komga_compat: unmatched /api/v1/* probe — Panels asked for a Komga endpoint we don't expose",
+        );
+    }
+    not_found()
 }
 
 /// Spec-faithful subset of Komga's `BookDto`. Only the fields Panels
@@ -112,6 +137,17 @@ async fn patch_read_progress(
     Path(book_id): Path<String>,
     Json(body): Json<ReadProgressUpdateDto>,
 ) -> Response {
+    // v0.3.40: explicit info log so Panels hits are visible in
+    // /admin/logs without bumping global log level to debug. The
+    // TraceLayer's per-request events are at DEBUG; this is the
+    // signal an operator scans for when verifying the shim is wired.
+    tracing::info!(
+        book_id = %book_id,
+        user_id = %user.0.id,
+        page = ?body.page,
+        completed = ?body.completed,
+        "komga_compat: PATCH /api/v1/books/{{id}}/read-progress",
+    );
     if !app.cfg().is_komga_compat() {
         return not_found();
     }
@@ -177,6 +213,11 @@ async fn get_book(
     user: CurrentUser,
     Path(book_id): Path<String>,
 ) -> Response {
+    tracing::info!(
+        book_id = %book_id,
+        user_id = %user.id,
+        "komga_compat: GET /api/v1/books/{{id}}",
+    );
     if !app.cfg().is_komga_compat() {
         return not_found();
     }
