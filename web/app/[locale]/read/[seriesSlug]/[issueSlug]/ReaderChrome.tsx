@@ -20,10 +20,7 @@ import { useReaderStore } from "@/lib/reader/store";
 import type { Direction } from "@/lib/reader/detect";
 import { useFullscreen } from "@/lib/reader/fullscreen";
 import { useIssueMarkers } from "@/lib/api/queries";
-import {
-  useCreateMarker,
-  useDeleteMarker,
-} from "@/lib/api/mutations";
+import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import { toast } from "sonner";
@@ -361,8 +358,7 @@ function FavoriteToggleButton({
   const existing = useMemo(
     () =>
       (markers.data?.items ?? []).find(
-        (m) =>
-          m.kind === "favorite" && m.page_index === pageIndex && !m.region,
+        (m) => m.kind === "favorite" && m.page_index === pageIndex && !m.region,
       ),
     [markers.data, pageIndex],
   );

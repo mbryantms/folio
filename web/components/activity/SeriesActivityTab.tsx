@@ -8,7 +8,7 @@ import { TopRankingsList } from "@/components/activity/TopRankings";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTotalHours } from "@/lib/activity";
 import { useReadingStats } from "@/lib/api/queries";
-import type { IssueSummaryView } from "@/lib/api/types";
+import type { IssueSummaryView, ReadingStatsView } from "@/lib/api/types";
 
 const PaceChart = dynamic(
   () => import("@/components/activity/PaceChart").then((m) => m.PaceChart),
@@ -114,7 +114,7 @@ function StatCards({
   data,
   totalIssueCount,
 }: {
-  data: import("@/lib/api/types").ReadingStatsView;
+  data: ReadingStatsView;
   totalIssueCount: number;
 }) {
   const completionPct =

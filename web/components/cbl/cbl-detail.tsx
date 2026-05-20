@@ -338,6 +338,8 @@ function ReadingOrderTab({
             : stats.manual);
 
   const parentRef = React.useRef<HTMLDivElement>(null);
+  // TanStack Virtual returns non-memoizable functions; React Compiler skips.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => parentRef.current,

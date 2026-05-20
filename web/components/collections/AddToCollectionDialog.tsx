@@ -67,9 +67,9 @@ export function AddToCollectionDialog({
   // search filter when the user reopens it.
   React.useEffect(() => {
     if (open) {
+      // Reset to "pick" mode + clear search when the dialog reopens.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setMode("pick");
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearch("");
     }
   }, [open]);

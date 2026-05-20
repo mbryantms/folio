@@ -58,6 +58,10 @@ export function NewLibraryDialog() {
       generate_page_thumbs_on_scan: false,
     },
   });
+  // react-hook-form's `watch()` returns a non-memoizable function; React
+  // Compiler skips this component as a result. Acceptable here — the
+  // dialog body is tiny.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const scanNow = form.watch("scan_now");
 
   const onSubmit = form.handleSubmit((values) => {

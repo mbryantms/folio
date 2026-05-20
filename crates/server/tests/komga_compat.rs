@@ -679,8 +679,7 @@ async fn explicit_routes_still_win_over_catchall() {
     let tmp = tempfile::tempdir().unwrap();
     let lib = seed_library(&db, tmp.path()).await;
     let series = seed_series(&db, lib, "M7 precedence").await;
-    let issue_id =
-        seed_issue(&db, lib, series, &tmp.path().join("m7.cbz"), b"m7-1", 1.0).await;
+    let issue_id = seed_issue(&db, lib, series, &tmp.path().join("m7.cbz"), b"m7-1", 1.0).await;
 
     let resp = http_with_csrf(
         &app,

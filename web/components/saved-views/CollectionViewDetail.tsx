@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -61,7 +60,6 @@ import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
 import { useCollectionEntriesInfinite } from "@/lib/api/queries";
 import {
-  useBulkAddToCollection,
   useBulkMarkProgress,
   useBulkRemoveFromCollection,
   useDeleteCollection,
@@ -656,9 +654,9 @@ function EditCollectionDialog({
   // the next session with stale local state.
   React.useEffect(() => {
     if (open) {
+      // Seed form fields from the saved view when the dialog reopens.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(savedView.name);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDescription(savedView.description ?? "");
     }
   }, [open, savedView.name, savedView.description]);

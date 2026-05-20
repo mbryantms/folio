@@ -9,7 +9,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import * as React from "react";
+import type * as React from "react";
 import { createElement } from "react";
 
 vi.mock("@/lib/api/mutations", () => ({

@@ -139,9 +139,9 @@ function NewCollectionDialog({
 
   React.useEffect(() => {
     if (open) {
+      // Reset form fields each time the dialog reopens.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setName("");
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDescription("");
     }
   }, [open]);

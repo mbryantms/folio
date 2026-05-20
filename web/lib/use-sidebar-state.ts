@@ -47,9 +47,11 @@ export function useSidebarState(initial: SidebarState) {
   // rebind it under Settings → Keybinds. Default is `Mod+B` (VS Code /
   // Cursor / GitHub convention). The shared `shouldSkipHotkey` gate
   // keeps typing "b" in a search field from collapsing the shell.
-  const bindings = React.useMemo(() => {
-    return resolveKeybinds(readMeKeybinds(me));
-  }, [me.data?.keybinds]);
+  const meKeybinds = readMeKeybinds(me);
+  const bindings = React.useMemo(
+    () => resolveKeybinds(meKeybinds),
+    [meKeybinds],
+  );
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;

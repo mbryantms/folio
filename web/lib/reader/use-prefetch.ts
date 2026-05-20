@@ -19,8 +19,14 @@ export function useReaderPrefetch(opts: {
   groups: ReadonlyArray<SpreadGroup>;
   viewMode: ViewMode;
 }): void {
-  const { issueId, totalPages, currentPage, currentGroupIdx, groups, viewMode } =
-    opts;
+  const {
+    issueId,
+    totalPages,
+    currentPage,
+    currentGroupIdx,
+    groups,
+    viewMode,
+  } = opts;
   useEffect(() => {
     if (viewMode === "webtoon") return;
     if (viewMode === "double" && groups.length > 0) {

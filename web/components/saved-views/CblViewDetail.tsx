@@ -122,8 +122,14 @@ function CblViewDetailInner({
   // returns and use empty arrays for selection-relevant state while
   // the detail/entries queries are still loading. Below the early
   // returns we only do plain JSX / derived values.
-  const loadedEntries: CblEntryHydratedView[] =
-    entriesQuery.data?.pages.flatMap((p) => p.items) ?? [];
+  //
+  // Memoised so the downstream useMemo `selectedIssueIds` (deps include
+  // `loadedEntries`) doesn't recompute on every render — flatMap creates
+  // a new array each call.
+  const loadedEntries = React.useMemo<CblEntryHydratedView[]>(
+    () => entriesQuery.data?.pages.flatMap((p) => p.items) ?? [],
+    [entriesQuery.data?.pages],
+  );
 
   // Multi-select on the CBL detail page (M6 extension per user
   // request). Mark-read/unread only — Add-to-collection / Remove

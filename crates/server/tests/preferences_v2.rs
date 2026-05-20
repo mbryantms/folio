@@ -166,8 +166,7 @@ async fn page_animation_round_trips_and_validates() {
     }
 
     // Null clears the preference.
-    let (status, body) =
-        patch_pref(&app, &auth, r#"{ "default_page_animation": null }"#).await;
+    let (status, body) = patch_pref(&app, &auth, r#"{ "default_page_animation": null }"#).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["default_page_animation"].is_null());
 
@@ -175,8 +174,7 @@ async fn page_animation_round_trips_and_validates() {
     // v0.3.45 but the CSS-only rotation didn't match the corner-peel
     // semantics the visual implies; deferred to a future release
     // backed by react-pageflip integration.
-    let (status, _) =
-        patch_pref(&app, &auth, r#"{ "default_page_animation": "curl" }"#).await;
+    let (status, _) = patch_pref(&app, &auth, r#"{ "default_page_animation": "curl" }"#).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 

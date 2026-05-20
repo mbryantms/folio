@@ -363,9 +363,9 @@ function SeriesOverridesCard() {
   // the only orphan signal; transient errors don't trigger pruning.
   // `clearMany` calls `refresh()` which mutates `overrides`, recomputing
   // `missingIds` to `[]` on the next render — the effect fires once.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (missingIds.length > 0) clearMany(missingIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missingIds]);
 
   function clearMany(ids: readonly string[]) {

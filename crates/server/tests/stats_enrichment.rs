@@ -434,7 +434,7 @@ async fn stats_returns_new_enrichment_fields() {
     )
     .await;
 
-    let (s, body) = get(&app, &auth, "/me/reading-stats?range=30d").await;
+    let (s, body) = get(&app, &auth, "/api/me/reading-stats?range=30d").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
 
     // Totals + first/last read.
@@ -545,7 +545,7 @@ async fn completion_honors_progress_records_finished() {
     .await
     .unwrap();
 
-    let (s, body) = get(&app, &auth, "/me/reading-stats?range=30d").await;
+    let (s, body) = get(&app, &auth, "/api/me/reading-stats?range=30d").await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["completion"]["started"], 2);
     assert_eq!(body["completion"]["completed"], 1);
@@ -575,7 +575,7 @@ async fn clear_history_deletes_sessions_and_audits() {
     assert_eq!(body["deleted"], 1);
 
     // Subsequent stats call sees zeros.
-    let (_, stats) = get(&app, &auth, "/me/reading-stats?range=30d").await;
+    let (_, stats) = get(&app, &auth, "/api/me/reading-stats?range=30d").await;
     assert_eq!(stats["totals"]["sessions"], 0);
 
     // Audit row landed.
@@ -594,6 +594,6 @@ async fn clear_history_deletes_sessions_and_audits() {
 async fn range_1y_is_accepted() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "delta@example.com").await;
-    let (s, _) = get(&app, &auth, "/me/reading-stats?range=1y").await;
+    let (s, _) = get(&app, &auth, "/api/me/reading-stats?range=1y").await;
     assert_eq!(s, StatusCode::OK);
 }

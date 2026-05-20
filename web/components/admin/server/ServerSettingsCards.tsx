@@ -48,9 +48,7 @@ export function ServerSettingsCards() {
           initial={asString("observability.log_level", "info")}
         />
       </div>
-      <CompatibilityCard
-        initial={asString("compat.opds_panels_mode", "off")}
-      />
+      <CompatibilityCard initial={asString("compat.opds_panels_mode", "off")} />
       <CachingCard initial={asUint("cache.zip_lru_capacity", 64)} />
       <WorkersCard
         initial={{
@@ -111,13 +109,12 @@ function CompatibilityCard({ initial }: { initial: string }) {
           </div>
           <p className="text-muted-foreground text-xs">
             Komga mode makes Folio&apos;s OPDS feed present as Komga so apps
-            that hardcode Komga support (Panels on iOS/macOS, Tachiyomi /
-            Mihon / Yokai on Android) can sync reading progress back to the
-            server. The feed&apos;s <code>&lt;author&gt;</code> element will
-            display &ldquo;Komga&rdquo; while this is on — harmless for
-            normal OPDS clients. Spec-clean alternative (OPDS Progression
-            1.0) is also active regardless of this flag, but no client
-            implements it yet.
+            that hardcode Komga support (Panels on iOS/macOS, Tachiyomi / Mihon
+            / Yokai on Android) can sync reading progress back to the server.
+            The feed&apos;s <code>&lt;author&gt;</code> element will display
+            &ldquo;Komga&rdquo; while this is on — harmless for normal OPDS
+            clients. Spec-clean alternative (OPDS Progression 1.0) is also
+            active regardless of this flag, but no client implements it yet.
           </p>
           {mode === "komga" && (
             <div className="border-border bg-background/40 rounded-md border p-3 text-xs">
@@ -161,8 +158,8 @@ function CompatibilityCard({ initial }: { initial: string }) {
                     Basic …
                   </code>{" "}
                   value into the{" "}
-                  <span className="font-medium">Custom headers</span> field
-                  with key{" "}
+                  <span className="font-medium">Custom headers</span> field with
+                  key{" "}
                   <code className="bg-secondary/40 rounded px-1 py-0.5">
                     Authorization
                   </code>

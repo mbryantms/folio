@@ -166,6 +166,11 @@ fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<B
         GovernorError::TooManyRequests { wait_time, headers } => {
             metrics::counter!("comic_rate_limit_denied_total", "bucket" => bucket).increment(1);
             tracing::info!(bucket, wait_time, "rate limit denied");
+            // tower_governor floors `wait_time` to integer seconds, which
+            // can be 0 when the bucket trips mid-second. Floor to 1 so the
+            // envelope + Retry-After header never tell the client to retry
+            // instantly.
+            let wait_time = wait_time.max(1);
             envelope_response(
                 StatusCode::TOO_MANY_REQUESTS,
                 "rate_limited",

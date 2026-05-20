@@ -112,7 +112,7 @@ async fn mint_returns_ticket_for_admin() {
     let body = body_json(resp.into_body()).await;
     let ticket = body["ticket"].as_str().expect("ticket field");
     assert!(uuid::Uuid::parse_str(ticket).is_ok(), "ticket is a UUID");
-    assert_eq!(body["expires_in"], 30);
+    assert_eq!(body["expires_in"], 300);
 }
 
 #[tokio::test]

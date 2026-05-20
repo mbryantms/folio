@@ -25,6 +25,8 @@ mod m20260515_000004_sidebar_headers_spacers;
 mod m20260516_000001_issues_content_hash_idx;
 mod m20260518_000001_series_reading_direction;
 mod m20260519_000001_drop_orphan_cbl_lists;
+mod m20260520_000001_marker_kind_favorite;
+mod m20260520_000002_user_default_page_animation;
 mod m20260601_000001_user_reading_direction;
 mod m20260801_000001_scanner_v1;
 mod m20260901_000001_user_preferences;
@@ -56,8 +58,6 @@ mod m20261215_000001_collections;
 mod m20261215_000002_markers;
 mod m20261215_000003_rename_unstarted_template;
 mod m20261216_000001_user_show_marker_count;
-mod m20260520_000001_marker_kind_favorite;
-mod m20260520_000002_user_default_page_animation;
 mod m20261217_000001_marker_favorite_flag;
 mod m20261217_000002_marker_tags;
 mod m20261218_000001_people_search;
@@ -137,5 +137,33 @@ impl MigratorTrait for Migrator {
             Box::new(m20260520_000001_marker_kind_favorite::Migration),
             Box::new(m20260520_000002_user_default_page_animation::Migration),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Guards against out-of-order `mod m<timestamp>` declarations at the
+    /// top of this file. We don't enforce this on `Migrator::migrations()`
+    /// because that vec's order is intentionally non-chronological — some
+    /// migrations were inserted out-of-band and must run after later ones.
+    /// The `mod` block, however, is a flat alphabetical list and a B-class
+    /// gate failure (cargo fmt --check) caught the last time it drifted.
+    #[test]
+    fn migration_mod_declarations_are_sorted() {
+        let src = include_str!("lib.rs");
+        let mods: Vec<&str> = src
+            .lines()
+            .filter_map(|l| l.strip_prefix("mod "))
+            .filter_map(|l| l.strip_suffix(';'))
+            .filter(|l| l.starts_with("m2"))
+            .collect();
+        for w in mods.windows(2) {
+            assert!(
+                w[0] < w[1],
+                "migration mod declarations out of order: `{}` precedes `{}`",
+                w[0],
+                w[1],
+            );
+        }
     }
 }

@@ -33,10 +33,8 @@ export function GlobalHotkeys() {
   const me = useMe();
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const bindings = useMemo(
-    () => resolveKeybinds(readMeKeybinds(me)),
-    [me.data?.keybinds],
-  );
+  const meKeybinds = readMeKeybinds(me);
+  const bindings = useMemo(() => resolveKeybinds(meKeybinds), [meKeybinds]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

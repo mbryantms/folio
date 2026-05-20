@@ -61,10 +61,8 @@ export function GlobalShortcutsSheet({
   const me = useMe();
   const pathname = usePathname() ?? "";
 
-  const bindings = useMemo(
-    () => resolveKeybinds(readMeKeybinds(me)),
-    [me.data?.keybinds],
-  );
+  const meKeybinds = readMeKeybinds(me);
+  const bindings = useMemo(() => resolveKeybinds(meKeybinds), [meKeybinds]);
 
   const open = useCallback(() => setOpen(true), []);
   const close = useCallback(() => setOpen(false), []);

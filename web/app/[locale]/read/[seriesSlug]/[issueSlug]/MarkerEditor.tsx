@@ -76,15 +76,14 @@ export function MarkerEditor({
   const tagSuggestionsQuery = useMarkerTags();
   React.useEffect(() => {
     if (pendingMarker) {
+      // Snapshot the incoming marker into local form state once. React
+      // Compiler can't see this is bounded by `if (pendingMarker)` and
+      // would loop without the guard.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setBody(pendingMarker.body ?? "");
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDetectedText(pendingMarker.selection?.text ?? null);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsFavorite(pendingMarker.is_favorite);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTags(pendingMarker.tags);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTagInput("");
     }
   }, [pendingMarker]);

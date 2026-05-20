@@ -24,10 +24,7 @@ import { useReaderSwipe } from "@/lib/reader/use-swipe";
 import { useReaderKeymap } from "@/lib/reader/use-keymap";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
 import { readerUrl } from "@/lib/urls";
-import {
-  useCreateMarker,
-  useDeleteMarker,
-} from "@/lib/api/mutations";
+import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { PageInfo } from "@/lib/api/types";
@@ -411,7 +408,8 @@ export function Reader({
   const pageTransition = usePageTransition({
     currentPage,
     direction,
-    mode: viewMode === "webtoon" ? "off" : (userDefaultPageAnimation ?? "slide"),
+    mode:
+      viewMode === "webtoon" ? "off" : (userDefaultPageAnimation ?? "slide"),
   });
 
   // Direction-aware navigation. In RTL, "next" should respond to ← and the
@@ -790,6 +788,11 @@ function SinglePageView({
             aria-hidden="true"
             className={`pointer-events-none absolute inset-0 flex w-full justify-center ${transition.exitAnimClass ?? ""}`}
           >
+            {/* Raw <img>: reader page bytes are served by the Rust origin
+                with their own cache headers; next/image's optimizer + URL
+                rewriting buys nothing here and pays a per-request CPU
+                cost. eslint-disable applies only to this element. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={`/issues/${issueId}/pages/${transition.prevPage}`}
               alt=""

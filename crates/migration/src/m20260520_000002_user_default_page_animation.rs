@@ -27,11 +27,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(Users::Table)
-                    .add_column(
-                        ColumnDef::new(Users::DefaultPageAnimation)
-                            .text()
-                            .null(),
-                    )
+                    .add_column(ColumnDef::new(Users::DefaultPageAnimation).text().null())
                     .to_owned(),
             )
             .await

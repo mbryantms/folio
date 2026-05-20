@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Folio 1.0 Readiness</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --bg-card: #1e293b;
+    --bg-card-2: #334155;
+    --fg: #e2e8f0;
+    --fg-muted: #94a3b8;
+    --fg-dim: #64748b;
+    --border: #334155;
+    --accent: #38bdf8;
+    --sev-blocker: #ef4444;
+    --sev-high: #f97316;
+    --sev-medium: #eab308;
+    --sev-low: #3b82f6;
+    --sev-polish: #71717a;
+    --done: #22c55e;
+    --done-bg: rgba(34, 197, 94, 0.08);
+    --decided: #a78bfa;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f8fafc;
+      --bg-card: #ffffff;
+      --bg-card-2: #f1f5f9;
+      --fg: #0f172a;
+      --fg-muted: #475569;
+      --fg-dim: #94a3b8;
+      --border: #e2e8f0;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+  a { color: var(--accent); }
+  header.page {
+    position: sticky; top: 0; z-index: 5;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+  }
+  .title-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .title-row h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
+  .title-row .subtitle { color: var(--fg-muted); font-size: 13px; }
+  .summary {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 16px;
+    align-items: center;
+    margin-top: 10px;
+  }
+  .progress-wrap { display: flex; flex-direction: column; gap: 4px; }
+  .progress-bar {
+    height: 8px;
+    background: var(--bg-card-2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--done));
+    transition: width 200ms ease;
+  }
+  .progress-text { display: flex; justify-content: space-between; font-size: 12px; color: var(--fg-muted); }
+  .stat { font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
+  .stat .num { color: var(--fg); font-weight: 600; font-size: 14px; }
+  .stat.blocker .num { color: var(--sev-blocker); }
+  .actions { display: flex; gap: 8px; }
+  .btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn:hover { background: var(--bg-card-2); }
+  .filters {
+    display: flex; flex-wrap: wrap; gap: 16px;
+    padding: 12px 24px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 113px; z-index: 4;
+  }
+  .filter-group { display: flex; align-items: center; gap: 8px; }
+  .filter-label { font-size: 12px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    background: var(--bg);
+  }
+  .chip input { display: none; }
+  .chip:has(input:checked) { background: var(--bg-card-2); border-color: var(--accent); color: var(--fg); }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .chip[data-sev=blocker] .dot { background: var(--sev-blocker); }
+  .chip[data-sev=high] .dot { background: var(--sev-high); }
+  .chip[data-sev=medium] .dot { background: var(--sev-medium); }
+  .chip[data-sev=low] .dot { background: var(--sev-low); }
+  .chip[data-sev=polish] .dot { background: var(--sev-polish); }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  section { margin-bottom: 28px; }
+  .section-header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    cursor: pointer;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .section-header h2 { margin: 0; font-size: 16px; letter-spacing: -0.005em; }
+  .section-header .section-meta { font-size: 12px; color: var(--fg-muted); }
+  .section-header::after { content: '−'; color: var(--fg-muted); margin-left: 12px; }
+  section.collapsed .section-header::after { content: '+'; }
+  section.collapsed .findings { display: none; }
+  .findings { display: flex; flex-direction: column; gap: 10px; }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--sev-low);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas: "check title meta" "check body body" "check paths paths" "check footer footer";
+    gap: 6px 14px;
+  }
+  .card[data-severity=blocker] { border-left-color: var(--sev-blocker); }
+  .card[data-severity=high] { border-left-color: var(--sev-high); }
+  .card[data-severity=medium] { border-left-color: var(--sev-medium); }
+  .card[data-severity=low] { border-left-color: var(--sev-low); }
+  .card[data-severity=polish] { border-left-color: var(--sev-polish); }
+  .card.done { background: var(--done-bg); }
+  .card.done .title { text-decoration: line-through; color: var(--fg-muted); }
+  .card.decided { border-left-color: var(--decided); opacity: 0.85; }
+  .card .check { grid-area: check; align-self: start; padding-top: 2px; }
+  .card .check input { width: 18px; height: 18px; cursor: pointer; accent-color: var(--done); }
+  .card .title { grid-area: title; font-weight: 600; font-size: 14px; }
+  .card .title .id { color: var(--fg-dim); font-weight: 500; margin-right: 6px; font-family: ui-monospace, monospace; font-size: 0.85em; }
+  .card .meta { grid-area: meta; display: flex; gap: 6px; align-items: center; }
+  .card .body { grid-area: body; color: var(--fg-muted); font-size: 13px; }
+  .card .paths { grid-area: paths; color: var(--fg-dim); font-size: 12px; word-break: break-all; }
+  .card .paths code { background: var(--bg-card-2); padding: 1px 5px; border-radius: 3px; }
+  .card .footer { grid-area: footer; display: flex; gap: 12px; color: var(--fg-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+  .badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .badge.blocker { background: var(--sev-blocker); color: white; }
+  .badge.high { background: var(--sev-high); color: white; }
+  .badge.medium { background: var(--sev-medium); color: #422006; }
+  .badge.low { background: var(--sev-low); color: white; }
+  .badge.polish { background: var(--sev-polish); color: white; }
+  .badge.decided { background: var(--decided); color: white; }
+  .badge.phase { background: transparent; border: 1px solid var(--border); color: var(--fg-muted); }
+  @media print {
+    header.page, .filters, .actions { position: static; }
+    .actions, .btn { display: none; }
+    section.collapsed .findings { display: flex; }
+    .card { break-inside: avoid; }
+    body { background: white; color: black; }
+  }
+  @media (max-width: 700px) {
+    .summary { grid-template-columns: 1fr; }
+    .filters { top: auto; position: static; }
+    .card { grid-template-areas: "check title" "check body" "paths paths" "footer footer" "meta meta"; grid-template-columns: auto 1fr; }
+  }
+</style>
+</head>
+<body>
+<header class="page">
+  <div class="title-row">
+    <h1>Folio 1.0 Readiness</h1>
+    <span class="subtitle">Audit snapshot · 2026-05-20 · <a href="../../.claude/plans/let-s-clean-up-a-giggly-mitten.md">action plan</a></span>
+  </div>
+  <div class="summary">
+    <div class="progress-wrap">
+      <div class="progress-text">
+        <span>Overall progress</span>
+        <span id="progress-text">0 / 0</span>
+      </div>
+      <div class="progress-bar"><div class="progress-bar-fill" id="progress-bar-fill" style="width:0%"></div></div>
+    </div>
+    <div class="stat blocker">Open blockers: <span class="num" id="blocker-count">0</span></div>
+    <div class="stat">Last updated locally: <span class="num" id="last-updated">—</span></div>
+    <div class="actions">
+      <button class="btn" id="export-btn">Export</button>
+      <button class="btn" id="import-btn">Import</button>
+      <button class="btn" id="reset-btn">Reset</button>
+    </div>
+  </div>
+</header>
+<div class="filters">
+  <div class="filter-group">
+    <span class="filter-label">Status</span>
+    <label class="chip"><input type="radio" name="status" value="all" checked /> All</label>
+    <label class="chip"><input type="radio" name="status" value="open" /> Open</label>
+    <label class="chip"><input type="radio" name="status" value="done" /> Done</label>
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Severity</span>
+    <label class="chip" data-sev="blocker"><input type="checkbox" name="severity" value="blocker" /><span class="dot"></span> Blocker</label>
+    <label class="chip" data-sev="high"><input type="checkbox" name="severity" value="high" /><span class="dot"></span> High</label>
+    <label class="chip" data-sev="medium"><input type="checkbox" name="severity" value="medium" /><span class="dot"></span> Medium</label>
+    <label class="chip" data-sev="low"><input type="checkbox" name="severity" value="low" /><span class="dot"></span> Low</label>
+    <label class="chip" data-sev="polish"><input type="checkbox" name="severity" value="polish" /><span class="dot"></span> Polish / Post-1.0</label>
+  </div>
+</div>
+
+<main>
+
+<section data-section="blockers">
+  <div class="section-header"><h2>1 · Critical Release Blockers</h2><span class="section-meta">Must close before v1.0.0 tag</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="B1" data-severity="blocker">
+      <label class="check"><input type="checkbox" data-toggle="B1" /></label>
+      <div class="title"><span class="id">B1</span>SSRF in POST /me/cbl-lists URL form</div>
+      <div class="meta"><span class="badge blocker">Blocker</span></div>
+      <div class="body">Authenticated user can POST a URL that's fetched server-side with no IP filter and default redirect-following — can probe 169.254.169.254, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16. Fix: require https://, resolve hostname, reject loopback/private/link-local IPs, limit redirects to 2 and re-validate each hop. Same guard needed on M5 refresh path. Add 3 integration tests.</div>
+      <div class="paths"><code>crates/server/src/api/cbl_lists.rs:868-920</code> · <code>crates/server/src/util/ssrf.rs</code> (new) · <code>crates/server/tests/cbl_lists_ssrf.rs</code> (new)</div>
+      <div class="footer"><span class="badge phase">Phase B</span><span>Fix size: 2–3 days</span><span>From: security-audit.md H-1</span></div>
+    </div>
+    <div class="card" data-finding-id="B2" data-severity="blocker">
+      <label class="check"><input type="checkbox" data-toggle="B2" /></label>
+      <div class="title"><span class="id">B2</span>cargo fmt --check fails on 4 files</div>
+      <div class="meta"><span class="badge blocker">Blocker</span></div>
+      <div class="body">Mechanical formatting drift. Includes a misordered migration <code>mod</code> entry list — consider adding a sort lint to prevent recurrence.</div>
+      <div class="paths"><code>crates/migration/src/lib.rs</code> (lines 25, 56) · <code>crates/migration/src/m20260520_000002_user_default_page_animation.rs:27</code> · <code>crates/server/tests/komga_compat.rs:679</code> · <code>crates/server/tests/preferences_v2.rs:166,175</code></div>
+      <div class="footer"><span class="badge phase">Phase A</span><span>Fix size: 5 min</span></div>
+    </div>
+    <div class="card" data-finding-id="B3" data-severity="blocker">
+      <label class="check"><input type="checkbox" data-toggle="B3" /></label>
+      <div class="title"><span class="id">B3</span>prettier --check fails on 5 files</div>
+      <div class="meta"><span class="badge blocker">Blocker</span></div>
+      <div class="body">Run <code>pnpm prettier --write .</code>. Also add <code>web/lib/api/types.generated.ts</code> to <code>.prettierignore</code> — it's auto-generated and shouldn't drift the gate.</div>
+      <div class="paths"><code>Reader.tsx</code> · <code>ReaderChrome.tsx</code> · <code>ServerSettingsCards.tsx</code> · <code>types.generated.ts</code> · <code>use-prefetch.ts</code></div>
+      <div class="footer"><span class="badge phase">Phase A</span><span>Fix size: 5 min</span></div>
+    </div>
+    <div class="card decided" data-finding-id="B4" data-severity="blocker">
+      <label class="check"><input type="checkbox" data-toggle="B4" /></label>
+      <div class="title"><span class="id">B4</span>i18n [locale] segment — DEFERRED</div>
+      <div class="meta"><span class="badge decided">Decided</span></div>
+      <div class="body">Decision (2026-05-20): ship as-is and defer entirely. <code>[locale]</code> segment + <code>next-intl</code> bundle remain in tree. Release notes for 1.0 must explicitly call out "English-only; multi-language support planned for a future release." Track real translations as POST-10.</div>
+      <div class="footer"><span class="badge phase">Release notes</span></div>
+    </div>
+    <div class="card" data-finding-id="B5" data-severity="blocker">
+      <label class="check"><input type="checkbox" data-toggle="B5" /></label>
+      <div class="title"><span class="id">B5</span>Rust test gate not verified end-to-end</div>
+      <div class="meta"><span class="badge blocker">Blocker</span></div>
+      <div class="body">Release-mode test run was killed at 2.5h during integration phase (per-crate testcontainers warmup × 91 files is inappropriate for verification). 59/59 passed in the seven crates that completed. Re-run <code>just test</code> (debug, the project's normal workflow) and confirm clean before tagging.</div>
+      <div class="footer"><span class="badge phase">Phase A</span><span>Fix size: 30–60 min</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="features">
+  <div class="section-header"><h2>2 · Feature Completion Checklist</h2><span class="section-meta">Reference — already shipped</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="FEAT-1" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="FEAT-1" /></label>
+      <div class="title">Shipped: Auth, scanner, reader, markers, saved views, multi-page rails, stats v2, OPDS 1.x + 2.0 + PSE + Komga compat, runtime-config-admin, bulk-edit/multi-select, notifications cleanup M1–M7, keyboard shortcuts M1–M6, list-pagination completeness, CSP nonce, targeted thumbnail regen, server-info GitHub links, recovery visibility, archive robustness, scanner content-hash decoupling.</div>
+      <div class="meta"><span class="badge polish">Reference</span></div>
+      <div class="footer"><span>Cross-checked against MEMORY.md done entries</span></div>
+    </div>
+    <div class="card decided" data-finding-id="FEAT-2" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="FEAT-2" /></label>
+      <div class="title">Acceptable for 1.0: items intentionally not shipped</div>
+      <div class="meta"><span class="badge decided">Decided</span></div>
+      <div class="body">CBR/CB7 archive (D-1/D-2 separate plan); real page-curl via react-pageflip; account deletion / data export; 2FA / TOTP; OTLP exporter; command palette (K-4); arrow-rail nav + Mod+S form save (K-5/R-16); live worker-pool restart; helm/systemd. All tracked as POST-* items below.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="admin">
+  <div class="section-header"><h2>3 · Admin + Settings</h2><span class="section-meta">Status: clean</span></div>
+  <div class="findings">
+    <div class="card decided" data-finding-id="ADM-1" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="ADM-1" /></label>
+      <div class="title">No <code>placeholder: true</code> nav entries</div>
+      <div class="meta"><span class="badge decided">Verified</span></div>
+      <div class="body">D-5 dropped the admin search placeholder. <code>/admin/server</code> GitHub-link work shipped (build tag, SHA → commit, upstream-release check toggle).</div>
+      <div class="footer"><span>From: code-quality audit</span></div>
+    </div>
+    <div class="card" data-finding-id="ADM-2" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="ADM-2" /></label>
+      <div class="title">"Restart required" banner for apply-on-restart settings</div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">Worker counts + archive limits change on restart only. A small banner on those settings cards would reduce operator confusion.</div>
+      <div class="paths"><code>web/app/[locale]/(admin)/admin/server/...</code></div>
+      <div class="footer"><span class="badge phase">Backlog</span><span>Fix size: 2 h</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="toasts">
+  <div class="section-header"><h2>4 · Notification / Toast</h2><span class="section-meta">Mostly clean; minor consolidation deferred</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="NOT-1" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="NOT-1" /></label>
+      <div class="title"><span class="id">POST-3</span>Consolidate 34 raw toast.*() call sites</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+      <div class="body">Spot-grep shows 34 ad-hoc <code>toast.success/error/info()</code> calls outside the <code>useApiMutation</code> + <code>successMessage</code> pattern. Some are intentional (form validation, Undo, plan-limit notices) but a sweep would remove the rest.</div>
+      <div class="footer"><span class="badge phase">Backlog</span><span>Fix size: 1–2 days</span></div>
+    </div>
+    <div class="card" data-finding-id="NOT-2" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="NOT-2" /></label>
+      <div class="title">Lock <code>&lt;Toaster&gt;</code> config explicitly</div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">Currently mounts with zero props — inherits sonner defaults (bottom-right, 4s, no close button). Either set explicitly or document the chosen defaults.</div>
+      <div class="paths"><code>web/components/ui/sonner.tsx</code></div>
+      <div class="footer"><span class="badge phase">Backlog</span><span>Fix size: 30 min</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="keybinds">
+  <div class="section-header"><h2>5 · Keybind Findings</h2><span class="section-meta">Discoverability gaps</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="KB-K1" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="KB-K1" /></label>
+      <div class="title"><span class="id">K-1</span>Global help sheet only works in the reader</div>
+      <div class="meta"><span class="badge medium">Medium</span></div>
+      <div class="body">Mount <code>&lt;ShortcutsSheet&gt;</code> on bare <code>?</code> outside the reader (MainShell + AdminShell). Auth shells deliberately skip — those forms shouldn't intercept <code>?</code>.</div>
+      <div class="paths"><code>web/components/help/ShortcutsSheet.tsx</code> · <code>MainShell.tsx</code> · <code>AdminShell.tsx</code></div>
+      <div class="footer"><span class="badge phase">Phase C</span><span>Fix size: 4 h</span></div>
+    </div>
+    <div class="card" data-finding-id="KB-K2" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="KB-K2" /></label>
+      <div class="title"><span class="id">K-2</span>Mod+B (sidebar toggle) not in registry</div>
+      <div class="meta"><span class="badge medium">Medium</span></div>
+      <div class="body">Hard-coded in <code>use-sidebar-state.ts</code>. Promote to <code>keybinds.ts</code> so it shows in the editor and help sheet; users can't rebind it today.</div>
+      <div class="paths"><code>web/lib/keybinds.ts</code> · <code>web/lib/use-sidebar-state.ts</code></div>
+      <div class="footer"><span class="badge phase">Phase C</span><span>Fix size: 2 h</span></div>
+    </div>
+    <div class="card" data-finding-id="KB-K3" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="KB-K3" /></label>
+      <div class="title"><span class="id">K-3</span>reader-shortcuts.md is stale</div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">Doc lists ~7 keys; registry has 15 + 2 global + hard-coded pairs. Either regen from registry or replace with a link to Settings → Keybinds.</div>
+      <div class="paths"><code>docs/dev/reader-shortcuts.md</code> · optional <code>scripts/gen-reader-shortcuts.ts</code></div>
+      <div class="footer"><span class="badge phase">Phase C</span><span>Fix size: 1–2 h</span></div>
+    </div>
+    <div class="card" data-finding-id="KB-SLASH" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="KB-SLASH" /></label>
+      <div class="title">Register <code>/</code> as search alias for Mod+K</div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">Common convention from GitHub/etc.; trivial to add to the registry.</div>
+      <div class="paths"><code>web/lib/keybinds.ts</code></div>
+      <div class="footer"><span class="badge phase">Phase C</span><span>Fix size: 30 min</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="security">
+  <div class="section-header"><h2>6 · Security Findings</h2><span class="section-meta">B1 is the only critical open</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="SEC-H2" data-severity="high">
+      <label class="check"><input type="checkbox" data-toggle="SEC-H2" /></label>
+      <div class="title"><span class="id">H-2</span><code>Config</code> derives Debug — leaks secrets</div>
+      <div class="meta"><span class="badge high">High</span></div>
+      <div class="body">Hand-write <code>impl fmt::Debug for Config</code> redacting <code>database_url</code>, <code>redis_url</code>, <code>oidc_client_secret</code>, <code>smtp_password</code>. Unit test asserting the formatted output omits secret fixtures.</div>
+      <div class="paths"><code>crates/server/src/config.rs</code></div>
+      <div class="footer"><span class="badge phase">Phase B</span><span>Fix size: 1 h</span><span>From: security-audit.md H-2</span></div>
+    </div>
+    <div class="card" data-finding-id="SEC-H3" data-severity="high">
+      <label class="check"><input type="checkbox" data-toggle="SEC-H3" /></label>
+      <div class="title"><span class="id">H-3</span>IP-keyed failed-auth lockout (verify)</div>
+      <div class="meta"><span class="badge high">High</span></div>
+      <div class="body">Verify current lockout in <code>crates/server/src/auth/lockout.rs</code> includes an IP axis alongside the username/email axis. Without it, a brute-forcer spraying many usernames from one IP bypasses the lockout.</div>
+      <div class="paths"><code>crates/server/src/auth/lockout.rs</code> · <code>local.rs</code> call sites</div>
+      <div class="footer"><span class="badge phase">Phase B</span><span>Fix size: 4 h</span><span>From: security-audit.md H-3</span></div>
+    </div>
+    <div class="card" data-finding-id="SEC-M2" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="SEC-M2" /></label>
+      <div class="title"><span class="id">M-2</span>OIDC issuer URL exposed on anonymous /auth/config</div>
+      <div class="meta"><span class="badge medium">Medium</span></div>
+      <div class="body">Strip <code>issuer_url</code> from the public response; only return <code>{auth_mode, local_enabled, oidc_enabled}</code>. Authenticated <code>GET /admin/auth</code> continues to include it for the editor.</div>
+      <div class="paths"><code>crates/server/src/api/auth_config.rs:154</code></div>
+      <div class="footer"><span class="badge phase">Phase B</span><span>Fix size: 1 h</span><span>From: security-audit.md M-2</span></div>
+    </div>
+    <div class="card decided" data-finding-id="SEC-AUTH" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="SEC-AUTH" /></label>
+      <div class="title">Auth hardening 1.0 plan — closed (reference)</div>
+      <div class="meta"><span class="badge decided">Verified</span></div>
+      <div class="body">All 8 milestones shipped 2026-05-12. RequireAdmin extractor, XFF walker, per-route rate limits, Redis lockout, SMTP recovery, sessions list, OIDC polish (RP-logout, discovery cache, mock-OP harness), OPDS app passwords, sign-in rebuild. CSRF + secrets-at-rest + audit log all verified strong.</div>
+      <div class="footer"><span>Reference</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="codequality">
+  <div class="section-header"><h2>7 · Code Quality Findings</h2><span class="section-meta">Lint sweep + minor cleanups</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="CQ-1" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="CQ-1" /></label>
+      <div class="title">23 web lint warnings (0 errors)</div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">Unused imports/vars in <code>MarkersList.tsx</code>, <code>CollectionViewDetail.tsx</code>, <code>edit-metadata-dialog.test.tsx</code>; stale <code>eslint-disable</code> directives in <code>ReadingPrefs.tsx</code>, <code>CollectionViewDetail.tsx</code>; react-hooks/exhaustive-deps in <code>CblViewDetail.tsx</code>, <code>ReadingPrefs.tsx</code>, <code>use-sidebar-state.ts</code>; TanStack Table react-hooks/incompatible-library informational in <code>data-table.tsx</code>.</div>
+      <div class="footer"><span class="badge phase">Phase A</span><span>Fix size: 2 h</span></div>
+    </div>
+    <div class="card" data-finding-id="CQ-2" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="CQ-2" /></label>
+      <div class="title">Remove 3 console.log debug sites</div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">Looks like marker-region / OCR debug code left in.</div>
+      <div class="paths"><code>web/components/reader/MarkerEditor.tsx</code> · <code>web/lib/markers/marker-selection.ts</code> · <code>web/components/reader/MarkerOverlay.tsx</code></div>
+      <div class="footer"><span class="badge phase">Phase A</span><span>Fix size: 30 min</span></div>
+    </div>
+    <div class="card" data-finding-id="CQ-3" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="CQ-3" /></label>
+      <div class="title">Add <code>types.generated.ts</code> to <code>.prettierignore</code></div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">Auto-generated; shouldn't be in the prettier gate.</div>
+      <div class="paths"><code>web/.prettierignore</code></div>
+      <div class="footer"><span class="badge phase">Phase A</span><span>Fix size: 5 min</span></div>
+    </div>
+    <div class="card" data-finding-id="CQ-4" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="CQ-4" /></label>
+      <div class="title">Enforce migration mod-ordering</div>
+      <div class="meta"><span class="badge polish">Polish</span></div>
+      <div class="body">B2 was caused by out-of-order <code>mod</code> entries in <code>migration/src/lib.rs</code>. Add a lint or rustfmt config so it can't recur.</div>
+      <div class="footer"><span class="badge phase">Phase A</span><span>Fix size: 1 h</span></div>
+    </div>
+    <div class="card decided" data-finding-id="CQ-5" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="CQ-5" /></label>
+      <div class="title">unwrap/expect counts acceptable (reference)</div>
+      <div class="meta"><span class="badge decided">Verified</span></div>
+      <div class="body">2–3 per file in slug.rs, observability.rs, secrets.rs, config.rs, nonce.rs, security_headers.rs, admin_ocr.rs, collections.rs, series.rs, reading_sessions.rs — concentrated in boot/one-time paths. 6 println/eprintln — acceptable for pre-tracing init. No unsafe outside warned migration main.</div>
+      <div class="footer"><span>Reference</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="rust">
+  <div class="section-header"><h2>8 · Rust-Specific Findings</h2><span class="section-meta">Mostly clean</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="RUST-1" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="RUST-1" /></label>
+      <div class="title">apalis-redis v0.6.4 future-incompat (upstream)</div>
+      <div class="meta"><span class="badge polish">Upstream</span></div>
+      <div class="body">Notice from transitive crate; document or wait for upstream fix. Not actionable here.</div>
+      <div class="footer"><span>Reference</span></div>
+    </div>
+    <div class="card" data-finding-id="RUST-2" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="RUST-2" /></label>
+      <div class="title">Binary size: 195 MB server + 36 MB migration</div>
+      <div class="meta"><span class="badge polish">Polish</span></div>
+      <div class="body">Reasonable for distroless. Could shrink further with <code>strip = "symbols"</code> + <code>panic = "abort"</code> + LTO if not already set; revisit post-1.0 if image size becomes a complaint.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+    <div class="card decided" data-finding-id="RUST-3" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="RUST-3" /></label>
+      <div class="title">Boot guard: pepper regen vs. user rows (reference)</div>
+      <div class="meta"><span class="badge decided">Verified</span></div>
+      <div class="body">Refuses boot if pepper was regenerated while users exist — prevents silent password invalidation. Worth highlighting in release notes as an operator-safety feature.</div>
+      <div class="paths"><code>crates/server/src/app.rs::serve()</code> · <code>secrets.rs</code></div>
+      <div class="footer"><span>Reference</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="authux">
+  <div class="section-header"><h2>9 · Authentication UX Findings</h2><span class="section-meta">One graceful-failure gap</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="AUTH-1" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="AUTH-1" /></label>
+      <div class="title">SMTP not-configured graceful banner on forgot-password</div>
+      <div class="meta"><span class="badge medium">Medium</span></div>
+      <div class="body">When settings <code>smtp.*</code> are empty, the forgot-password flow fails silently or with a generic error. Render a <code>&lt;Banner&gt;</code> saying "Email recovery is disabled on this server. Contact your administrator." Extend <code>/auth/config</code> with <code>password_recovery_enabled: bool</code>.</div>
+      <div class="paths"><code>web/app/[locale]/(auth)/forgot-password/page.tsx</code> · <code>crates/server/src/api/auth_config.rs</code></div>
+      <div class="footer"><span class="badge phase">Phase C</span><span>Fix size: 2 h</span></div>
+    </div>
+    <div class="card decided" data-finding-id="AUTH-2" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="AUTH-2" /></label>
+      <div class="title">Password strength meter — POST-2</div>
+      <div class="meta"><span class="badge decided">Deferred</span></div>
+      <div class="body">zxcvbn-style meter on register/change-password. Decided post-1.0 per Phase E scope choice.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+    <div class="card decided" data-finding-id="AUTH-3" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="AUTH-3" /></label>
+      <div class="title">2FA / TOTP — POST-9</div>
+      <div class="meta"><span class="badge decided">Deferred</span></div>
+      <div class="body">Intentionally dropped in auth-hardening M3 (2026-05-12). Acceptable for 1.0.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+    <div class="card decided" data-finding-id="AUTH-4" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="AUTH-4" /></label>
+      <div class="title">Account deletion / data export — POST-8</div>
+      <div class="meta"><span class="badge decided">Deferred</span></div>
+      <div class="body">Not in spec; compliance polish. Acceptable for 1.0.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="testing">
+  <div class="section-header"><h2>10 · Testing + CI Findings</h2><span class="section-meta">Strong Rust integration coverage; sparse E2E</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="TEST-1" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="TEST-1" /></label>
+      <div class="title">One Playwright E2E spec for reader flow</div>
+      <div class="meta"><span class="badge medium">Medium</span></div>
+      <div class="body">Current Playwright baseline is one a11y spec on sign-in. Add: register/login → land on Home → first series → first issue → reader opens → arrow-key page advance → progress writeback verified via API. ~50 lines, retries: 2 to keep CI green.</div>
+      <div class="paths"><code>web/tests/e2e/reader.spec.ts</code> (new)</div>
+      <div class="footer"><span class="badge phase">Phase C</span><span>Fix size: 4–6 h</span></div>
+    </div>
+    <div class="card" data-finding-id="TEST-2" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="TEST-2" /></label>
+      <div class="title">Coverage metrics baseline — POST-4</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+      <div class="body">Configure <code>cargo llvm-cov</code> for Rust + <code>vitest --coverage</code> for web; set baseline and ratchet. No coverage today.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+    <div class="card" data-finding-id="TEST-3" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="TEST-3" /></label>
+      <div class="title">Multi-OS / Node / Rust CI matrix</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+      <div class="body">Currently ubuntu-24.04 + Rust 1.91 + Node 22 only. Add Node 20 + Rust 1.90 once stable.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+    <div class="card" data-finding-id="TEST-4" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="TEST-4" /></label>
+      <div class="title">Bundle-size CI gate (Phase E)</div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">Promote <code>pnpm check-bundle-size</code> from script to required gate; set budgets to current + ~10% headroom.</div>
+      <div class="paths"><code>.github/workflows/ci.yml</code> · <code>web/package.json</code> · <code>web/scripts/check-bundle-size.*</code></div>
+      <div class="footer"><span class="badge phase">Phase E</span><span>Fix size: 4 h</span></div>
+    </div>
+    <div class="card decided" data-finding-id="TEST-5" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="TEST-5" /></label>
+      <div class="title">Integration test coverage — strong (reference)</div>
+      <div class="meta"><span class="badge decided">Verified</span></div>
+      <div class="body">91 Rust integration files + 396 unit tests + 426 vitest tests passing. Critical flows verified: registration + email verify, sign-in local + OIDC, library scan, progress writeback, OPDS (15 dedicated files), markers + Komga compat, rate-limit lockout, bulk metadata edit.</div>
+      <div class="footer"><span>Reference</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="deploy">
+  <div class="section-header"><h2>11 · Deployment + Docker Findings</h2><span class="section-meta">Mature; only minor polish</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="DEP-1" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="DEP-1" /></label>
+      <div class="title">Document <code>NEXT_PUBLIC_API_URL</code></div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">Only documented in code comments. Add an <code>.env.example</code> entry clarifying it's derived from <code>COMIC_PUBLIC_URL</code> in production; set at build time for custom upstreams.</div>
+      <div class="paths"><code>.env.example</code></div>
+      <div class="footer"><span class="badge phase">Phase D</span><span>Fix size: 20 min</span></div>
+    </div>
+    <div class="card" data-finding-id="DEP-2" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="DEP-2" /></label>
+      <div class="title">COMIC_ARCHIVE_MAX_* — enforcement vs. doc</div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body"><code>.env.example</code> lists archive limits but they're not yet fully wired to scanner enforcement beyond <code>Config::archive_limits()</code>. Either wire them through or update the doc to say "applies-on-restart, not yet enforced on running scan" so operators aren't misled.</div>
+      <div class="footer"><span class="badge phase">Phase D</span><span>Fix size: 30 min (doc) / 4 h (wire-through)</span></div>
+    </div>
+    <div class="card" data-finding-id="DEP-3" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="DEP-3" /></label>
+      <div class="title">arm64 image — POST-1</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+      <div class="body">Workflow has <code>linux/amd64</code> only. For self-hosters on Raspberry Pi / ARM NAS, add via native <code>ubuntu-24.04-arm</code> runners. Document in 1.0 README that only amd64 is officially supported until then.</div>
+      <div class="paths"><code>.github/workflows/release.yml</code></div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+    <div class="card" data-finding-id="DEP-4" data-severity="low">
+      <label class="check"><input type="checkbox" data-toggle="DEP-4" /></label>
+      <div class="title">Rename <code>docs/install/kubernetes.md</code> → community status</div>
+      <div class="meta"><span class="badge low">Low</span></div>
+      <div class="body">File exists but isn't officially maintained. Rename to <code>kubernetes-community.md</code> with a clear disclaimer ("community-contributed, not CI-tested"), or commit to maintenance.</div>
+      <div class="footer"><span class="badge phase">Phase D</span><span>Fix size: 20 min</span></div>
+    </div>
+    <div class="card" data-finding-id="DEP-5" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="DEP-5" /></label>
+      <div class="title">Container image provenance attestations</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+      <div class="body"><code>attestations: write</code> permission is set but provenance isn't explicitly generated. Add <code>provenance: mode=max</code> to docker/build-push-action.</div>
+      <div class="paths"><code>.github/workflows/release.yml</code></div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+    <div class="card decided" data-finding-id="DEP-6" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="DEP-6" /></label>
+      <div class="title">Deployment story — strong (reference)</div>
+      <div class="meta"><span class="badge decided">Verified</span></div>
+      <div class="body">Multi-stage distroless Dockerfile, compose.prod.yml with health gates, app-init for distroless UID 65532 chown, idempotent migrations, /healthz + /readyz, reverse-proxy templates (Caddy/nginx/Traefik/mkcert/Authentik/Cloudflare), GHCR + cosign + SPDX SBOM, no default admin (first-user-becomes-admin).</div>
+      <div class="footer"><span>Reference</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="refactors">
+  <div class="section-header"><h2>12 · Recommended Refactors</h2><span class="section-meta">Maintainability; not 1.0-blocking</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="REF-1" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="REF-1" /></label>
+      <div class="title">Auto-generate reader-shortcuts.md from registry</div>
+      <div class="meta"><span class="badge polish">Polish</span></div>
+      <div class="body">Eliminate KB-K3 recurrence. Small script + a CI check.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+    <div class="card" data-finding-id="REF-2" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="REF-2" /></label>
+      <div class="title">Promote <code>just openapi</code> drift to required CI gate</div>
+      <div class="meta"><span class="badge polish">Polish</span></div>
+      <div class="body">The <code>openapi-drift</code> workflow exists; verify it does <code>git diff --exit-code</code> on <code>types.generated.ts</code> and fails on drift.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+    <div class="card" data-finding-id="REF-3" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="REF-3" /></label>
+      <div class="title">Hot-path <code>.clone()</code> audit (scanner / OPDS)</div>
+      <div class="meta"><span class="badge polish">Polish</span></div>
+      <div class="body">Run <code>cargo flamegraph</code> against a representative scan; reduce allocations if profile shows hotspots. Not currently a problem.</div>
+      <div class="footer"><span class="badge phase">Backlog</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="release-plan">
+  <div class="section-header"><h2>13 · 1.0 Release Plan — Phase Checkpoints</h2><span class="section-meta">Tag-the-release checklist</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="STAB-1" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="STAB-1" /></label>
+      <div class="title">Phase D1: Full gauntlet green</div>
+      <div class="meta"><span class="badge medium">Phase D</span></div>
+      <div class="body"><code>cargo fmt --check && cargo clippy -D warnings && cargo test && pnpm typecheck && pnpm lint && pnpm prettier --check && pnpm test && pnpm test:e2e && pnpm build && just openapi</code> — all green.</div>
+      <div class="footer"><span class="badge phase">Phase D</span></div>
+    </div>
+    <div class="card" data-finding-id="STAB-2" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="STAB-2" /></label>
+      <div class="title">Phase D2: Manual smoke pass</div>
+      <div class="meta"><span class="badge medium">Phase D</span></div>
+      <div class="body">Fresh <code>compose.prod.yml</code> from clean volumes → register first user → scan a small fixture library → open issue → read with progress → OPDS via Panels iOS or KOReader → verify Komga compat shim → <code>docker compose down</code> + <code>up</code> → state intact.</div>
+      <div class="footer"><span class="badge phase">Phase D</span></div>
+    </div>
+    <div class="card" data-finding-id="STAB-3" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="STAB-3" /></label>
+      <div class="title">Phase D3: Tag v1.0.0-rc.1</div>
+      <div class="meta"><span class="badge medium">Phase D</span></div>
+      <div class="body">Push tag, release workflow publishes GHCR images, deploy to homelab.</div>
+      <div class="footer"><span class="badge phase">Phase D</span></div>
+    </div>
+    <div class="card" data-finding-id="STAB-4" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="STAB-4" /></label>
+      <div class="title">Phase D4: Soak 3–5 days under real reading load</div>
+      <div class="meta"><span class="badge medium">Phase D</span></div>
+      <div class="body">Monitor <code>/admin/logs</code> + <code>/admin/stats</code>; verify cosign signature on GHCR images; smoke-test on a second host if available.</div>
+      <div class="footer"><span class="badge phase">Phase D</span></div>
+    </div>
+    <div class="card" data-finding-id="STAB-5" data-severity="medium">
+      <label class="check"><input type="checkbox" data-toggle="STAB-5" /></label>
+      <div class="title">Phase D5: Draft release notes + tag v1.0.0</div>
+      <div class="meta"><span class="badge medium">Phase D</span></div>
+      <div class="body">Notes cover: feature summary, env→DB config migration guide, secrets backup, known limitations (English-only, amd64-only, CBR/CB7 unsupported, no 2FA). Publish GitHub release.</div>
+      <div class="footer"><span class="badge phase">Phase D</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="backlog">
+  <div class="section-header"><h2>14 · Post-1.0 Backlog</h2><span class="section-meta">Tracked here so nothing's forgotten</span></div>
+  <div class="findings">
+    <div class="card" data-finding-id="POST-1" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-1" /></label>
+      <div class="title"><span class="id">POST-1</span>arm64 container images via native ARM runners</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-2" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-2" /></label>
+      <div class="title"><span class="id">POST-2</span>Password strength meter (zxcvbn) on register</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-3" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-3" /></label>
+      <div class="title"><span class="id">POST-3</span>Consolidate 34 raw toast.*() onto useApiMutation</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-4" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-4" /></label>
+      <div class="title"><span class="id">POST-4</span>Coverage metrics baseline (llvm-cov + vitest --coverage)</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-5" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-5" /></label>
+      <div class="title"><span class="id">POST-5</span>Command palette (K-4) — pick a chord that doesn't collide with Firefox</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-6" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-6" /></label>
+      <div class="title"><span class="id">POST-6</span>Arrow-key rail nav (K-5) — reverted; redesign needed</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-7" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-7" /></label>
+      <div class="title"><span class="id">POST-7</span>Mod+S form save (R-16) — reverted; redesign needed</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-8" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-8" /></label>
+      <div class="title"><span class="id">POST-8</span>Account deletion + data export (compliance)</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-9" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-9" /></label>
+      <div class="title"><span class="id">POST-9</span>2FA / TOTP — re-evaluate after 1.0 ships</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-10" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-10" /></label>
+      <div class="title"><span class="id">POST-10</span>Real i18n translations via next-intl (already bundled)</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-11" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-11" /></label>
+      <div class="title"><span class="id">POST-11</span>CBR / CB7 archive support (D-1 / D-2) — separate plan</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-12" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-12" /></label>
+      <div class="title"><span class="id">POST-12</span>Live worker-pool restart (Scheduler::restart_pools)</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-13" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-13" /></label>
+      <div class="title"><span class="id">POST-13</span>Per-route governor toggle (admin kill switch)</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-14" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-14" /></label>
+      <div class="title"><span class="id">POST-14</span>Helm chart for Kubernetes operators</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-15" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-15" /></label>
+      <div class="title"><span class="id">POST-15</span>systemd unit template for native (non-Docker) installs</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+    <div class="card" data-finding-id="POST-16" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="POST-16" /></label>
+      <div class="title"><span class="id">POST-16</span>Real page-curl via react-pageflip (plan already drafted)</div>
+      <div class="meta"><span class="badge polish">Post-1.0</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-section="verdict">
+  <div class="section-header"><h2>15 · Final Readiness Verdict</h2><span class="section-meta">Almost — 10–15 working days of focused work</span></div>
+  <div class="findings">
+    <div class="card decided" data-finding-id="VERDICT" data-severity="polish">
+      <label class="check"><input type="checkbox" data-toggle="VERDICT" /></label>
+      <div class="title">Ready for 1.0: ALMOST</div>
+      <div class="meta"><span class="badge decided">Verdict</span></div>
+      <div class="body">Architecture, security model, feature set, deployment story are all 1.0-grade. Recent audit cycles closed the heavy lifting. Five release blockers (B1–B5) + three security polish items (H-2, H-3, M-2) + keybind discoverability (K-1/K-2/K-3) + one E2E spec gap stand between the current tree and a clean v1.0.0 tag. Estimated 10–15 working days of focused work (Phases A→E) + 3–5 days rc soak.</div>
+      <div class="footer"><span>Synthesised 2026-05-20 from 4-agent parallel audit</span></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+(function() {
+  var STORAGE_KEY = 'folio-1.0-readiness:v1';
+  var META_KEY = 'folio-1.0-readiness:v1:meta';
+
+  function loadState() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
+    catch (e) { return {}; }
+  }
+  function saveState(s) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    localStorage.setItem(META_KEY, JSON.stringify({ updated: new Date().toISOString() }));
+    updateUI();
+  }
+  function toggle(id) {
+    var s = loadState();
+    if (s[id]) delete s[id]; else s[id] = true;
+    saveState(s);
+  }
+  function updateUI() {
+    var s = loadState();
+    var cards = document.querySelectorAll('[data-finding-id]');
+    cards.forEach(function(card) {
+      var id = card.dataset.findingId;
+      card.classList.toggle('done', !!s[id]);
+      var cb = card.querySelector('input[type=checkbox][data-toggle]');
+      if (cb) cb.checked = !!s[id];
+    });
+    var total = cards.length;
+    var done = Object.keys(s).filter(function(k) { return s[k]; }).length;
+    document.getElementById('progress-text').textContent = done + ' / ' + total;
+    var pct = total ? (100 * done / total) : 0;
+    document.getElementById('progress-bar-fill').style.width = pct.toFixed(1) + '%';
+    var blockers = document.querySelectorAll('[data-severity=blocker]');
+    var blockerOpen = 0;
+    blockers.forEach(function(c) { if (!s[c.dataset.findingId]) blockerOpen++; });
+    document.getElementById('blocker-count').textContent = blockerOpen;
+    var meta = {};
+    try { meta = JSON.parse(localStorage.getItem(META_KEY) || '{}'); } catch (e) {}
+    var lu = document.getElementById('last-updated');
+    if (meta.updated) {
+      var d = new Date(meta.updated);
+      lu.textContent = d.toLocaleString();
+    } else {
+      lu.textContent = '—';
+    }
+    applyFilters();
+  }
+  function applyFilters() {
+    var s = loadState();
+    var statusEl = document.querySelector('input[name=status]:checked');
+    var status = statusEl ? statusEl.value : 'all';
+    var sevs = Array.prototype.map.call(
+      document.querySelectorAll('input[name=severity]:checked'),
+      function(c) { return c.value; }
+    );
+    var cards = document.querySelectorAll('[data-finding-id]');
+    cards.forEach(function(card) {
+      var id = card.dataset.findingId;
+      var isDone = !!s[id];
+      var sev = card.dataset.severity;
+      var visible = true;
+      if (status === 'open' && isDone) visible = false;
+      if (status === 'done' && !isDone) visible = false;
+      if (sevs.length > 0 && sevs.indexOf(sev) === -1) visible = false;
+      card.style.display = visible ? '' : 'none';
+    });
+    document.querySelectorAll('section[data-section]').forEach(function(sec) {
+      var anyVisible = false;
+      sec.querySelectorAll('[data-finding-id]').forEach(function(c) {
+        if (c.style.display !== 'none') anyVisible = true;
+      });
+      sec.style.display = anyVisible ? '' : 'none';
+    });
+  }
+  function exportJSON() {
+    var blob = new Blob([JSON.stringify(loadState(), null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'folio-1.0-readiness-' + new Date().toISOString().slice(0,10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function importJSON() {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.onchange = function(e) {
+      var f = e.target.files[0];
+      if (!f) return;
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        try {
+          var s = JSON.parse(ev.target.result);
+          if (typeof s !== 'object' || s === null) throw new Error('not an object');
+          saveState(s);
+        } catch (err) {
+          alert('Invalid JSON: ' + err.message);
+        }
+      };
+      reader.readAsText(f);
+    };
+    input.click();
+  }
+  document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('input[type=checkbox][data-toggle]').forEach(function(cb) {
+      cb.addEventListener('change', function() { toggle(cb.dataset.toggle); });
+    });
+    document.querySelectorAll('input[name=status], input[name=severity]').forEach(function(c) {
+      c.addEventListener('change', applyFilters);
+    });
+    document.getElementById('export-btn').addEventListener('click', exportJSON);
+    document.getElementById('import-btn').addEventListener('click', importJSON);
+    document.getElementById('reset-btn').addEventListener('click', function() {
+      if (confirm('Clear all progress?')) { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(META_KEY); updateUI(); }
+    });
+    document.querySelectorAll('.section-header').forEach(function(h) {
+      h.addEventListener('click', function() { h.closest('section').classList.toggle('collapsed'); });
+    });
+    updateUI();
+  });
+})();
+</script>
+</body>
+</html>

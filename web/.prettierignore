@@ -8,4 +8,5 @@ test-results/
 pnpm-lock.yaml
 lib/api/openapi.json
 lib/api/types.ts
+lib/api/types.generated.ts
 next-env.d.ts

@@ -517,7 +517,7 @@ async fn custom_pages_appear_after_libraries_by_default() {
         .iter()
         .find(|e| e["ref_id"].as_str() == Some(&marvel))
         .unwrap();
-    assert_eq!(marvel_entry["href"], "/api/pages/marvel");
+    assert_eq!(marvel_entry["href"], "/pages/marvel");
     assert_eq!(marvel_entry["icon"], "LayoutGrid");
     assert_eq!(marvel_entry["label"], "Marvel");
     assert_eq!(marvel_entry["visible"], true);
