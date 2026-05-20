@@ -19,6 +19,7 @@ import { SettingsSection } from "./SettingsSection";
 type DirectionPref = "auto" | "ltr" | "rtl";
 type FitPref = "auto" | "width" | "height" | "original";
 type ViewPref = "auto" | "single" | "double" | "webtoon";
+type AnimationPref = "auto" | "off" | "slide";
 
 const directionOptions: ReadonlyArray<{ value: DirectionPref; label: string }> =
   [
@@ -38,6 +39,12 @@ const viewOptions: ReadonlyArray<{ value: ViewPref; label: string }> = [
   { value: "double", label: "Double" },
   { value: "webtoon", label: "Webtoon" },
 ];
+const animationOptions: ReadonlyArray<{ value: AnimationPref; label: string }> =
+  [
+    { value: "auto", label: "Default (slide)" },
+    { value: "slide", label: "Slide" },
+    { value: "off", label: "Off" },
+  ];
 
 const SERIES_OVERRIDE_PREFIX = "reader:";
 
@@ -46,6 +53,9 @@ function fitFromMe(v: string | null | undefined): FitPref {
 }
 function viewFromMe(v: string | null | undefined): ViewPref {
   return v === "single" || v === "double" || v === "webtoon" ? v : "auto";
+}
+function animationFromMe(v: string | null | undefined): AnimationPref {
+  return v === "off" || v === "slide" ? v : "auto";
 }
 function directionFromMe(v: string | null | undefined): DirectionPref {
   return v === "ltr" || v === "rtl" ? v : "auto";
@@ -126,6 +136,25 @@ export function ReadingPrefs() {
           }
           options={viewOptions}
           ariaLabel="Default view mode"
+          disabled={update.isPending}
+        />
+      </SettingsSection>
+
+      <SettingsSection
+        title="Page-turn animation"
+        description="The transition that plays when you navigate to the next or previous page. Webtoon view ignores this (the continuous scroll is its own animation). Honors prefers-reduced-motion."
+      >
+        <SegmentedControl
+          value={animationFromMe(data.default_page_animation)}
+          onChange={(next) =>
+            patch({
+              default_page_animation: toReq(
+                next,
+              ) as PreferencesReq["default_page_animation"],
+            })
+          }
+          options={animationOptions}
+          ariaLabel="Default page-turn animation"
           disabled={update.isPending}
         />
       </SettingsSection>

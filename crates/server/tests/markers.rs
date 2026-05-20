@@ -822,19 +822,155 @@ async fn favorite_flag_round_trips_and_filters() {
     )
     .await;
     assert!(list["items"].as_array().unwrap().is_empty());
+}
 
-    // The deprecated `kind='favorite'` value is rejected outright.
-    let (status, _) = http(
+/// v0.3.44 — `kind='favorite'` is a first-class marker kind again,
+/// independent of bookmark. Creating one on a brand-new page must
+/// NOT auto-create a companion bookmark row; deleting it must NOT
+/// affect any existing bookmark on the same page. Asserts the
+/// decoupling intent end-to-end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn favorite_kind_is_independent_of_bookmark() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "fav-kind@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_lib, _series, issue_id) = seed_issue(&app, "fav-kind-lib").await;
+
+    // Star page 0 directly (no pre-existing bookmark).
+    let (status, fav) = http(
         &app,
         Method::POST,
         "/api/me/markers",
         Some(&auth),
         Some(serde_json::json!({
-            "issue_id": issue_id, "page_index": 2, "kind": "favorite",
+            "issue_id": issue_id, "page_index": 0, "kind": "favorite",
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::CREATED, "kind='favorite' is accepted");
+    assert_eq!(fav["kind"], "favorite");
+    assert_eq!(fav["is_favorite"], false, "decoupled: no flag on the row");
+    let fav_id = fav["id"].as_str().unwrap().to_owned();
+
+    // Bookmark list filter (`kind=bookmark`) is empty — favoriting
+    // didn't double-create a bookmark.
+    let (_, bookmarks) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers?kind=bookmark",
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert!(
+        bookmarks["items"].as_array().unwrap().is_empty(),
+        "favoriting did NOT create a bookmark side-effect: {bookmarks}"
+    );
+
+    // The favorites filter (is_favorite=true) DOES surface the new
+    // row — the server unions `is_favorite=true OR kind='favorite'`
+    // for backward compat with legacy starred markers.
+    let (_, favs) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers?is_favorite=true",
+        Some(&auth),
+        None,
+    )
+    .await;
+    let items = favs["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], fav_id);
+
+    // Add a regular bookmark on the same page. Both rows coexist.
+    let (status, bm) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(serde_json::json!({
+            "issue_id": issue_id, "page_index": 0, "kind": "bookmark",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let bm_id = bm["id"].as_str().unwrap().to_owned();
+
+    // Deleting the favorite must NOT touch the bookmark.
+    let url = format!("/api/me/markers/{fav_id}");
+    let (status, _) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, bookmarks) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers?kind=bookmark",
+        Some(&auth),
+        None,
+    )
+    .await;
+    let items = bookmarks["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "bookmark survived favorite delete");
+    assert_eq!(items[0]["id"], bm_id);
+}
+
+/// v0.3.44 — the favorites filter (`is_favorite=true`) unions over
+/// both the legacy flag AND the new `kind='favorite'` row. A
+/// `is_favorite=true` highlight (set via MarkerEditor) and a
+/// `kind='favorite'` page star both appear in the list.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn favorites_filter_unions_legacy_flag_and_new_kind() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "fav-union@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_lib, _series, issue_id) = seed_issue(&app, "fav-union-lib").await;
+
+    // Legacy: a highlight with is_favorite=true.
+    let (_, hl) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(serde_json::json!({
+            "issue_id": issue_id,
+            "page_index": 0,
+            "kind": "highlight",
+            "region": { "x": 10.0, "y": 10.0, "w": 20.0, "h": 20.0, "shape": "rect" },
+            "is_favorite": true,
+        })),
+    )
+    .await;
+    let hl_id = hl["id"].as_str().unwrap().to_owned();
+
+    // New shape: standalone kind='favorite'.
+    let (_, fav) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(serde_json::json!({
+            "issue_id": issue_id, "page_index": 1, "kind": "favorite",
+        })),
+    )
+    .await;
+    let fav_id = fav["id"].as_str().unwrap().to_owned();
+
+    let (_, list) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers?is_favorite=true",
+        Some(&auth),
+        None,
+    )
+    .await;
+    let items = list["items"].as_array().unwrap();
+    let ids: std::collections::HashSet<_> = items
+        .iter()
+        .map(|m| m["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(items.len(), 2, "union returns both shapes: {list}");
+    assert!(ids.contains(&hl_id), "legacy is_favorite=true row included");
+    assert!(ids.contains(&fav_id), "new kind='favorite' row included");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

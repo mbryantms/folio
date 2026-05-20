@@ -49,8 +49,10 @@ const FILTER_OPTIONS: { value: KindFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "bookmark", label: "Bookmarks" },
   { value: "note", label: "Notes" },
-  // Favorite is a flag, not a kind — the chip is convenience UX. Wired
-  // below via `is_favorite=true` rather than `kind=favorite`.
+  // v0.3.44: favorite is now a kind again (decoupled from bookmark)
+  // but legacy `is_favorite=true` rows still exist on other kinds.
+  // The chip wires through `is_favorite=true` so the server's union
+  // query (`is_favorite OR kind='favorite'`) covers both shapes.
   { value: "favorite", label: "Favorites" },
   { value: "highlight", label: "Highlights" },
 ];
@@ -887,6 +889,11 @@ const KIND_META: Record<
     icon: StickyNote,
     shortLabel: "Note",
     badge: "bg-sky-500/90 text-sky-50",
+  },
+  favorite: {
+    icon: Star,
+    shortLabel: "Favorite",
+    badge: "bg-amber-500/90 text-amber-50",
   },
   highlight: {
     icon: Highlighter,

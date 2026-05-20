@@ -30,17 +30,23 @@ import { ocrCroppedRegion, sha256CroppedRegion } from "./marker-selection";
 const KIND_FILL: Record<MarkerKind, string> = {
   bookmark: "rgba(245, 158, 11, 0.18)",
   note: "rgba(59, 130, 246, 0.18)",
+  // Favorites are always page-level (no region), so these only apply
+  // if a future surface introduces region favorites. Reuse the star
+  // amber palette to stay consistent with the chrome.
+  favorite: "rgba(245, 158, 11, 0.18)",
   highlight: "rgba(234, 179, 8, 0.22)",
 };
 const KIND_STROKE: Record<MarkerKind, string> = {
   bookmark: "rgb(245, 158, 11)",
   note: "rgb(59, 130, 246)",
+  favorite: "rgb(245, 158, 11)",
   highlight: "rgb(234, 179, 8)",
 };
 
 const KIND_PIN_BG: Record<MarkerKind, string> = {
   bookmark: "bg-amber-500/90 text-white",
   note: "bg-blue-500/90 text-white",
+  favorite: "bg-amber-500/90 text-white",
   highlight: "bg-yellow-500/90 text-black",
 };
 

@@ -142,6 +142,45 @@ async fn fit_view_strip_round_trip() {
 }
 
 #[tokio::test]
+async fn page_animation_round_trips_and_validates() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-anim@example.com").await;
+
+    // Newly registered users have no preference set — null means
+    // "use the reader's built-in default" (currently slide).
+    let me = get_me(&app, &auth).await;
+    assert!(
+        me["default_page_animation"].is_null(),
+        "fresh user defaults to null page animation: {me}"
+    );
+
+    // Accept both supported values.
+    for value in ["off", "slide"] {
+        let body_str = format!(r#"{{ "default_page_animation": "{value}" }}"#);
+        let (status, body) = patch_pref(&app, &auth, &body_str).await;
+        assert_eq!(status, StatusCode::OK, "value {value} accepted");
+        assert_eq!(body["default_page_animation"], value);
+        let me = get_me(&app, &auth).await;
+        assert_eq!(me["default_page_animation"], value);
+    }
+
+    // Null clears the preference.
+    let (status, body) =
+        patch_pref(&app, &auth, r#"{ "default_page_animation": null }"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["default_page_animation"].is_null());
+
+    // Unknown values rejected with 400.
+    let (status, _) = patch_pref(
+        &app,
+        &auth,
+        r#"{ "default_page_animation": "curl" }"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn cover_solo_default_and_round_trip() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "cover@example.com").await;

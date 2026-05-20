@@ -82,7 +82,16 @@ export function PageImage({
           }
         }}
         onError={() => setLoaded(true)}
-        className={`block ${fitClass}`}
+        // v0.3.44 entrance polish: fresh-load images fade in over
+        // 150ms so the spinner-to-image transition has visual
+        // continuity instead of a hard swap. Cached/already-decoded
+        // images set `loaded=true` synchronously in the
+        // useLayoutEffect above, so they paint at full opacity on
+        // the first frame (no flash). `motion-reduce` honors
+        // `prefers-reduced-motion`.
+        className={`block ${fitClass} transition-opacity duration-150 ease-out motion-reduce:transition-none ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
       />
     </span>
   );

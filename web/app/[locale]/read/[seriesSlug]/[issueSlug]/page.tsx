@@ -116,6 +116,7 @@ export default async function ReadPage({
   let userDefaultFitMode: FitMode | null = null;
   let userDefaultViewMode: ViewMode | null = null;
   let userDefaultPageStrip = false;
+  let userDefaultPageAnimation: "off" | "slide" | null = null;
   let userDefaultCoverSolo = true;
   let userKeybinds: Record<string, string> = {};
   let activityTrackingEnabled = true;
@@ -145,6 +146,12 @@ export default async function ReadPage({
       userDefaultViewMode = me.default_view_mode;
     }
     userDefaultPageStrip = me.default_page_strip === true;
+    if (
+      me.default_page_animation === "off" ||
+      me.default_page_animation === "slide"
+    ) {
+      userDefaultPageAnimation = me.default_page_animation;
+    }
     userDefaultCoverSolo = me.default_cover_solo !== false;
     userKeybinds = me.keybinds ?? {};
     activityTrackingEnabled = me.activity_tracking_enabled !== false;
@@ -173,6 +180,7 @@ export default async function ReadPage({
         userDefaultFitMode={userDefaultFitMode}
         userDefaultViewMode={userDefaultViewMode}
         userDefaultPageStrip={userDefaultPageStrip}
+        userDefaultPageAnimation={userDefaultPageAnimation}
         userDefaultCoverSolo={userDefaultCoverSolo}
         userKeybinds={userKeybinds}
         activityTrackingEnabled={activityTrackingEnabled && !isIncognito}

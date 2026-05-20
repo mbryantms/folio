@@ -9471,6 +9471,13 @@
             ],
             "description": "M4: reader default fit mode — `'width' | 'height' | 'original'`."
           },
+          "default_page_animation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "v0.3.44: reader page-turn animation — `'off' | 'slide' | null`.\nNull means \"use the reader's built-in default\" (currently\n`slide`). Webtoon view ignores this regardless."
+          },
           "default_page_strip": {
             "type": "boolean",
             "description": "M4: when true the reader opens with the page strip visible."
@@ -10305,6 +10312,13 @@
               "null"
             ],
             "description": "`'width' | 'height' | 'original' | null`."
+          },
+          "default_page_animation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`'off' | 'slide' | null`. `null` clears the preference."
           },
           "default_page_strip": {
             "type": [

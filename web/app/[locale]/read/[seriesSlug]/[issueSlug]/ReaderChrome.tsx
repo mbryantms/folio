@@ -23,7 +23,6 @@ import { useIssueMarkers } from "@/lib/api/queries";
 import {
   useCreateMarker,
   useDeleteMarker,
-  useUpdateMarker,
 } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
@@ -105,6 +104,19 @@ export function ReaderChrome({
     setVisible: setChromeVisible,
   });
 
+  // v0.3.44 entrance polish: start in the closed state on first
+  // mount and flip to `mounted=true` after the first paint. The
+  // header's existing `data-state=closed:-translate-y-full` +
+  // 300ms transition then animates the chrome down from above the
+  // viewport on reader open. After the first frame this becomes
+  // a no-op and `chromeVisible` drives the open/closed flips for
+  // idle-hide as before.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   const onExit = useCallback(() => {
     router.push(exitUrl);
   }, [exitUrl, router]);
@@ -112,10 +124,10 @@ export function ReaderChrome({
   return (
     <TooltipProvider delayDuration={250}>
       <header
-        data-state={chromeVisible ? "open" : "closed"}
+        data-state={mounted && chromeVisible ? "open" : "closed"}
         data-testid="reader-chrome"
         className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-neutral-800/80 bg-neutral-950/85 px-3 py-2 text-sm text-neutral-100 backdrop-blur transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:-translate-y-full motion-reduce:transition-none"
-        aria-hidden={chromeVisible ? undefined : true}
+        aria-hidden={mounted && chromeVisible ? undefined : true}
       >
         <Tooltip>
           <TooltipTrigger asChild>
@@ -331,12 +343,13 @@ function BookmarkToggleButton({
   );
 }
 
-/** Star toggle for the current page. Markers (any kind) carry an
- *  `is_favorite` flag; this button flips that bit on the page's
- *  page-level bookmark, creating one if there isn't one yet. A page
- *  can therefore be "starred" without explicitly being bookmarked —
- *  starring auto-bookmarks since favorite needs a parent row. Removing
- *  the star un-bookmarks the page so we don't leave orphan rows. */
+/** Star toggle for the current page. As of v0.3.44, favorites are
+ *  their own marker kind — fully decoupled from bookmarks. The button
+ *  toggles a `kind='favorite'` row at the current `(issue, page)`
+ *  pair; no side effect on any existing bookmark. The legacy
+ *  `is_favorite` flag is still respected by `MarkerEditor` for
+ *  starring individual highlights, but the chrome's page-level
+ *  control is purely kind-based now. */
 function FavoriteToggleButton({
   issueId,
   pageIndex,
@@ -345,61 +358,40 @@ function FavoriteToggleButton({
   pageIndex: number;
 }) {
   const markers = useIssueMarkers(issueId);
-  // Use ANY page-level (region NULL) marker as the favorite carrier;
-  // bookmark is the canonical kind but a note or anchored highlight
-  // can also be starred. Lookup order matches the chrome's bookmark
-  // semantics: page-level row only.
   const existing = useMemo(
     () =>
       (markers.data?.items ?? []).find(
-        (m) => m.page_index === pageIndex && !m.region,
+        (m) =>
+          m.kind === "favorite" && m.page_index === pageIndex && !m.region,
       ),
     [markers.data, pageIndex],
   );
   const create = useCreateMarker();
-  const update = useUpdateMarker(existing?.id ?? "", issueId);
   const del = useDeleteMarker(existing?.id ?? "", issueId, { silent: true });
 
   const onClick = () => {
     if (existing) {
-      if (existing.is_favorite) {
-        // Unstar — if the row only existed to carry the star (no body),
-        // delete it. Otherwise just clear the flag so the user's note /
-        // bookmark survives.
-        const hasOtherContent =
-          (existing.body && existing.body.length > 0) ||
-          existing.kind !== "bookmark";
-        if (hasOtherContent) {
-          update.mutate({ is_favorite: false });
-        } else {
-          const snapshot = existing;
-          del.mutate(undefined, {
-            onSuccess: () =>
-              toast.success("Star removed", {
-                duration: UNDO_TOAST_DURATION_MS,
-                action: {
-                  label: "Undo",
-                  onClick: () => create.mutate(markerToCreateReq(snapshot)),
-                },
-              }),
-          });
-        }
-      } else {
-        update.mutate({ is_favorite: true });
-      }
+      const snapshot = existing;
+      del.mutate(undefined, {
+        onSuccess: () =>
+          toast.success("Star removed", {
+            duration: UNDO_TOAST_DURATION_MS,
+            action: {
+              label: "Undo",
+              onClick: () => create.mutate(markerToCreateReq(snapshot)),
+            },
+          }),
+      });
       return;
     }
-    // No page-level marker exists — create a starred bookmark to
-    // carry the flag.
     create.mutate({
       issue_id: issueId,
       page_index: pageIndex,
-      kind: "bookmark",
-      is_favorite: true,
+      kind: "favorite",
     });
   };
 
-  const starred = !!existing?.is_favorite;
+  const starred = !!existing;
   return (
     <ChromeIconButton
       label={starred ? "Unstar this page" : "Favorite this page"}

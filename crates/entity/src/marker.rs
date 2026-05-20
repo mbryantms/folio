@@ -18,11 +18,18 @@ pub struct Model {
     /// schema.
     pub issue_id: String,
     pub page_index: i32,
-    /// `'bookmark' | 'note' | 'highlight'`. Favorite is no longer a
-    /// kind — see `is_favorite` flag below.
+    /// `'bookmark' | 'note' | 'favorite' | 'highlight'`. Favorite was
+    /// briefly a flag (2026-05-12 → 2026-05-20) and is now a kind
+    /// again, this time *independent* of bookmark — the reader's
+    /// page-level star creates a standalone `kind='favorite'` row.
+    /// See [`m20260520_000001_marker_kind_favorite`](../../migration/src/m20260520_000001_marker_kind_favorite.rs).
     pub kind: String,
-    /// Star flag — any marker (any kind) can be favorited. Replaces the
-    /// pre-2026-05-12 `kind='favorite'` arrangement.
+    /// Legacy star flag from the 2026-05-12 "favorite as a boolean"
+    /// architecture. Still set by `MarkerEditor` for per-marker
+    /// starring (e.g. "I want to remember THIS highlight"), but new
+    /// page-level favoriting goes through `kind='favorite'` rows
+    /// instead. The favorites-list query unions both shapes so no
+    /// historical data is lost.
     pub is_favorite: bool,
     /// Per-user freeform tag list. Empty array (not NULL) when unset,
     /// so `tags @> ARRAY[...]` filter queries don't need null guards.

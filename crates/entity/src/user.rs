@@ -62,6 +62,12 @@ pub struct Model {
     /// M4: when true, the reader opens with the page strip visible.
     pub default_page_strip: bool,
 
+    /// v0.3.44: reader page-turn animation — `'off' | 'slide'`. Null
+    /// means "use the reader's built-in default" (currently `slide`).
+    /// Webtoon view mode bypasses this regardless of value.
+    #[sea_orm(nullable)]
+    pub default_page_animation: Option<String>,
+
     /// Phase-double-page: when true (default), the reader's double-page view
     /// renders the front cover solo and pairs from page 2 — matches printed
     /// comic conventions. Per-series localStorage still wins at runtime.

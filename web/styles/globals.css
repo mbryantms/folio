@@ -267,3 +267,78 @@
     animation: none;
   }
 }
+
+/* v0.3.44 reader page-turn slide animation.
+ *
+ * The reader retains the outgoing page in the DOM for ~280ms with an
+ * absolute position + a `translate-x-full` transform applied via
+ * Tailwind (`transition-transform duration-300`). The incoming page
+ * uses one of these one-shot @keyframes animations so it slides in
+ * from the correct edge as it mounts.
+ *
+ * Direction is computed in `use-page-transition.ts`:
+ *   - LTR forward navigation: incoming slides from the right
+ *     (`page-slide-in-from-right`); outgoing slides off to the left.
+ *   - LTR backward, RTL forward, etc. swap the directions.
+ *   - Vertical reading direction translates Y instead of X.
+ *
+ * `prefers-reduced-motion` zeroes the duration so the hook still
+ * unmounts the prevPage on the same timer but visually it's an
+ * instant swap. */
+@keyframes page-slide-in-from-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes page-slide-in-from-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes page-slide-out-to-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+@keyframes page-slide-out-to-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.page-slide-in-from-right {
+  animation: page-slide-in-from-right 280ms ease-out;
+}
+.page-slide-in-from-left {
+  animation: page-slide-in-from-left 280ms ease-out;
+}
+.page-slide-out-to-left {
+  /* forwards keeps the outgoing page parked off-screen until the
+   * hook's timer unmounts it; without it the page would snap back
+   * to translateX(0) on animation end and flash visible. */
+  animation: page-slide-out-to-left 280ms ease-out forwards;
+}
+.page-slide-out-to-right {
+  animation: page-slide-out-to-right 280ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-slide-in-from-right,
+  .page-slide-in-from-left,
+  .page-slide-out-to-left,
+  .page-slide-out-to-right {
+    animation: none;
+  }
+}

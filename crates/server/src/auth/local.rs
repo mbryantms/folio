@@ -135,6 +135,11 @@ pub struct MeResp {
     /// M4: when true the reader opens with the page strip visible.
     #[serde(default)]
     pub default_page_strip: bool,
+    /// v0.3.44: reader page-turn animation — `'off' | 'slide' | null`.
+    /// Null means "use the reader's built-in default" (currently
+    /// `slide`). Webtoon view ignores this regardless.
+    #[serde(default)]
+    pub default_page_animation: Option<String>,
     /// Default for the reader's "cover stands alone in double-page view"
     /// toggle. Per-series localStorage overrides at runtime.
     pub default_cover_solo: bool,
@@ -188,6 +193,9 @@ pub struct PreferencesReq {
     #[serde(default, deserialize_with = "deserialize_some")]
     pub default_view_mode: Option<Option<String>>,
     pub default_page_strip: Option<bool>,
+    /// `'off' | 'slide' | null`. `null` clears the preference.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub default_page_animation: Option<Option<String>>,
     /// Default cover-solo toggle; absent leaves the prior value untouched.
     pub default_cover_solo: Option<bool>,
     /// `'system' | 'dark' | 'light' | 'amber' | null`.
@@ -382,6 +390,7 @@ pub async fn register(
         default_fit_mode: Set(None),
         default_view_mode: Set(None),
         default_page_strip: Set(false),
+        default_page_animation: Set(None),
         default_cover_solo: Set(true),
         theme: Set(None),
         accent_color: Set(None),
@@ -840,6 +849,15 @@ pub async fn update_preferences(
             "default_view_mode must be 'single', 'double', 'webtoon', or null",
         );
     }
+    if let Some(Some(a)) = req.default_page_animation.as_ref()
+        && !matches!(a.as_str(), "off" | "slide")
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            "default_page_animation must be 'off', 'slide', or null",
+        );
+    }
     if let Some(Some(t)) = req.theme.as_ref()
         && !matches!(t.as_str(), "system" | "dark" | "light" | "amber")
     {
@@ -951,6 +969,9 @@ pub async fn update_preferences(
     }
     if let Some(v) = req.default_page_strip {
         am.default_page_strip = Set(v);
+    }
+    if let Some(v) = req.default_page_animation {
+        am.default_page_animation = Set(v);
     }
     if let Some(v) = req.default_cover_solo {
         am.default_cover_solo = Set(v);
@@ -1471,6 +1492,7 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         default_fit_mode: row.default_fit_mode.clone(),
         default_view_mode: row.default_view_mode.clone(),
         default_page_strip: row.default_page_strip,
+        default_page_animation: row.default_page_animation.clone(),
         default_cover_solo: row.default_cover_solo,
         theme: row.theme.clone(),
         accent_color: row.accent_color.clone(),
@@ -1504,6 +1526,7 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             default_fit_mode: None,
             default_view_mode: None,
             default_page_strip: false,
+            default_page_animation: None,
             default_cover_solo: true,
             theme: None,
             accent_color: None,

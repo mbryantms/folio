@@ -63,6 +63,18 @@ export function PageStrip({
   const visible = useReaderStore((s) => s.pageStripVisible);
   const viewMode = useReaderStore((s) => s.viewMode);
   const coverSolo = useReaderStore((s) => s.coverSolo);
+
+  // v0.3.44 entrance polish: gate the open `data-state` on a first-
+  // frame mount flip so the strip slides up from the viewport
+  // bottom on initial reader open (when the user has the strip
+  // preference on) instead of materializing at full height. After
+  // first paint this becomes a no-op and `visible` drives the
+  // toggle as before.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
   // Marker dots per page — one set of kinds per page index. Empty
   // when the user has no markers on this issue yet. Same TanStack
   // Query cache the reader overlay reads from, so the strip refreshes
@@ -232,8 +244,8 @@ export function PageStrip({
     <TooltipProvider delayDuration={350}>
       <nav
         aria-label="Page navigator"
-        data-state={visible ? "open" : "closed"}
-        aria-hidden={visible ? undefined : true}
+        data-state={mounted && visible ? "open" : "closed"}
+        aria-hidden={mounted && visible ? undefined : true}
         className="fixed inset-x-0 bottom-0 z-20 transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:translate-y-full motion-reduce:transition-none"
       >
         {/* Background bar — only as tall as a non-active thumb. The active

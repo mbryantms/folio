@@ -621,6 +621,7 @@ pub async fn callback(
             default_fit_mode: Set(None),
             default_view_mode: Set(None),
             default_page_strip: Set(false),
+            default_page_animation: Set(None),
             default_cover_solo: Set(true),
             theme: Set(None),
             accent_color: Set(None),

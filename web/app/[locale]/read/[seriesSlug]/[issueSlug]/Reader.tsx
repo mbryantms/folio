@@ -27,12 +27,16 @@ import { readerUrl } from "@/lib/urls";
 import {
   useCreateMarker,
   useDeleteMarker,
-  useUpdateMarker,
 } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { PageInfo } from "@/lib/api/types";
 import { EndOfIssueCard } from "./EndOfIssueCard";
+import {
+  usePageTransition,
+  type PageTransitionResult,
+} from "@/lib/reader/use-page-transition";
+
 import { MarkerEditor } from "./MarkerEditor";
 import { MarkerOverlay } from "./MarkerOverlay";
 import { PageStrip } from "./PageStrip";
@@ -54,6 +58,7 @@ export function Reader({
   userDefaultFitMode,
   userDefaultViewMode,
   userDefaultPageStrip,
+  userDefaultPageAnimation,
   userDefaultCoverSolo,
   userKeybinds,
   activityTrackingEnabled,
@@ -88,6 +93,9 @@ export function Reader({
   userDefaultFitMode: FitMode | null;
   userDefaultViewMode: ViewMode | null;
   userDefaultPageStrip: boolean;
+  /** v0.3.44 — `'off' | 'slide' | null`. Null falls back to the
+   *  built-in default of `'slide'`. */
+  userDefaultPageAnimation: "off" | "slide" | null;
   userDefaultCoverSolo: boolean;
   userKeybinds: Record<string, string>;
   activityTrackingEnabled: boolean;
@@ -227,13 +235,14 @@ export function Reader({
       ),
     [issueMarkers.data, currentPage],
   );
-  // Any page-level marker on the current page (bookmark / note) can
-  // carry the favorite star. Picks the same row order as the chrome's
-  // FavoriteToggleButton so keybind + UI stay in lockstep.
-  const existingPageMarkerForFav = useMemo(
+  // v0.3.44: favorites are their own kind, fully decoupled from
+  // bookmarks. The `s` keybind toggles a `kind='favorite'` row at
+  // the current page in lockstep with `FavoriteToggleButton`.
+  const existingPageFavorite = useMemo(
     () =>
       (issueMarkers.data?.items ?? []).find(
-        (m) => m.page_index === currentPage && !m.region,
+        (m) =>
+          m.kind === "favorite" && m.page_index === currentPage && !m.region,
       ),
     [issueMarkers.data, currentPage],
   );
@@ -247,12 +256,8 @@ export function Reader({
     issueId,
     { silent: true },
   );
-  const updateFavoriteMarker = useUpdateMarker(
-    existingPageMarkerForFav?.id ?? "",
-    issueId,
-  );
   const deleteFavoriteMarker = useDeleteMarker(
-    existingPageMarkerForFav?.id ?? "",
+    existingPageFavorite?.id ?? "",
     issueId,
     { silent: true },
   );
@@ -289,59 +294,36 @@ export function Reader({
     currentPage,
   ]);
   // `s` keybind — mirrors FavoriteToggleButton in the chrome.
+  // v0.3.44: favorites are their own kind now; toggling creates or
+  // deletes a `kind='favorite'` row at the current page. No more
+  // is_favorite flag dance, no more bookmark side-effects.
   const toggleFavorite = useCallback(() => {
-    if (existingPageMarkerForFav) {
-      if (existingPageMarkerForFav.is_favorite) {
-        // If the marker only exists to carry the star, drop it.
-        // Otherwise just clear the flag so the user's note stays.
-        const hasOtherContent =
-          (existingPageMarkerForFav.body &&
-            existingPageMarkerForFav.body.length > 0) ||
-          existingPageMarkerForFav.kind !== "bookmark";
-        if (hasOtherContent) {
-          updateFavoriteMarker.mutate(
-            { is_favorite: false },
-            {
-              onSuccess: () =>
-                toast.success(`Unstarred page ${currentPage + 1}`),
+    if (existingPageFavorite) {
+      const snapshot = existingPageFavorite;
+      deleteFavoriteMarker.mutate(undefined, {
+        onSuccess: () =>
+          toast.success(`Unstarred page ${currentPage + 1}`, {
+            duration: UNDO_TOAST_DURATION_MS,
+            action: {
+              label: "Undo",
+              onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
             },
-          );
-        } else {
-          const snapshot = existingPageMarkerForFav;
-          deleteFavoriteMarker.mutate(undefined, {
-            onSuccess: () =>
-              toast.success(`Unstarred page ${currentPage + 1}`, {
-                duration: UNDO_TOAST_DURATION_MS,
-                action: {
-                  label: "Undo",
-                  onClick: () =>
-                    createMarker.mutate(markerToCreateReq(snapshot)),
-                },
-              }),
-          });
-        }
-      } else {
-        updateFavoriteMarker.mutate(
-          { is_favorite: true },
-          { onSuccess: () => toast.success(`Starred page ${currentPage + 1}`) },
-        );
-      }
+          }),
+      });
       return;
     }
     createMarker.mutate(
       {
         issue_id: issueId,
         page_index: currentPage,
-        kind: "bookmark",
-        is_favorite: true,
+        kind: "favorite",
       },
       {
         onSuccess: () => toast.success(`Starred page ${currentPage + 1}`),
       },
     );
   }, [
-    existingPageMarkerForFav,
-    updateFavoriteMarker,
+    existingPageFavorite,
     deleteFavoriteMarker,
     createMarker,
     issueId,
@@ -421,6 +403,16 @@ export function Reader({
     () => groups[currentGroupIdx] ?? [currentPage],
     [groups, currentGroupIdx, currentPage],
   );
+
+  // v0.3.44 page-turn slide. Webtoon mode skips entirely
+  // (continuous scroll is its own animation). The hook gates
+  // on `enabled` AND `prefers-reduced-motion` internally.
+  const animationPref = userDefaultPageAnimation ?? "slide";
+  const pageTransition = usePageTransition({
+    currentPage,
+    direction,
+    enabled: animationPref === "slide" && viewMode !== "webtoon",
+  });
 
   // Direction-aware navigation. In RTL, "next" should respond to ← and the
   // right tap zone (so a swipe-right feels like turning the page forward).
@@ -701,6 +693,7 @@ export function Reader({
             onChromeZone={toggleChrome}
             onNaturalSize={handleNaturalSize}
             pageNaturalSize={pageNaturalSize}
+            transition={pageTransition}
           />
         ) : (
           <SinglePageView
@@ -712,6 +705,7 @@ export function Reader({
             onChromeZone={toggleChrome}
             onNaturalSize={handleNaturalSize}
             pageNaturalSize={pageNaturalSize}
+            transition={pageTransition}
           />
         )}
       </div>
@@ -746,6 +740,7 @@ function SinglePageView({
   onChromeZone,
   onNaturalSize,
   pageNaturalSize,
+  transition,
 }: {
   issueId: string;
   currentPage: number;
@@ -757,6 +752,7 @@ function SinglePageView({
   pageNaturalSize: React.RefObject<
     Map<number, { width: number; height: number }>
   >;
+  transition: PageTransitionResult;
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const markerMode = useReaderStore((s) => s.markerMode);
@@ -773,24 +769,61 @@ function SinglePageView({
   // and narrower — without this ref the overlay would cover (and
   // capture pointer coords from) the empty band on each side.
   const imgRef = useRef<HTMLImageElement>(null);
+  const exitAnim =
+    transition.exitDir === "left"
+      ? "page-slide-out-to-left"
+      : transition.exitDir === "right"
+        ? "page-slide-out-to-right"
+        : "";
   return (
     <main className="relative grid min-h-screen place-items-center">
-      <div ref={wrapperRef} className="relative w-full">
-        <PageImage
-          key={`${issueId}-${currentPage}`}
-          src={`/issues/${issueId}/pages/${currentPage}`}
-          alt={`Page ${currentPage + 1}`}
-          fitClass={fitClass}
-          onNaturalSize={onNaturalSize(currentPage)}
-          imgRef={imgRef}
-        />
-        <MarkerOverlay
-          issueId={issueId}
-          pageIndex={currentPage}
-          wrapperRef={wrapperRef}
-          imgRef={imgRef}
-          naturalSize={natural}
-        />
+      <div
+        ref={wrapperRef}
+        className="relative w-full overflow-hidden"
+        data-testid="reader-page-wrapper"
+      >
+        {transition.prevPage !== null && (
+          // v0.3.44: outgoing page slide layer. Absolute-positioned
+          // overlay of the previous page that animates off-screen
+          // in lockstep with the incoming page sliding in below.
+          // Keyed on prevPage so the animation restarts on every
+          // navigation (rapid keypresses cleanly cancel + retrigger).
+          // No MarkerOverlay on the outgoing layer — a slide-off
+          // marker would look broken; the overlay snaps to the new
+          // page below.
+          <div
+            key={`prev-${transition.prevPage}`}
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-0 flex w-full justify-center ${exitAnim}`}
+          >
+            <img
+              src={`/issues/${issueId}/pages/${transition.prevPage}`}
+              alt=""
+              className={`block ${fitClass}`}
+              decoding="async"
+            />
+          </div>
+        )}
+        <div
+          className={transition.enterAnimClass ?? undefined}
+          key={`enter-${currentPage}`}
+        >
+          <PageImage
+            key={`${issueId}-${currentPage}`}
+            src={`/issues/${issueId}/pages/${currentPage}`}
+            alt={`Page ${currentPage + 1}`}
+            fitClass={fitClass}
+            onNaturalSize={onNaturalSize(currentPage)}
+            imgRef={imgRef}
+          />
+          <MarkerOverlay
+            issueId={issueId}
+            pageIndex={currentPage}
+            wrapperRef={wrapperRef}
+            imgRef={imgRef}
+            naturalSize={natural}
+          />
+        </div>
       </div>
       {markerMode === "idle" ? (
         <TapZones
@@ -814,6 +847,7 @@ function DoublePageView({
   onChromeZone,
   onNaturalSize,
   pageNaturalSize,
+  transition,
 }: {
   issueId: string;
   visiblePages: readonly number[];
@@ -827,6 +861,7 @@ function DoublePageView({
   pageNaturalSize: React.RefObject<
     Map<number, { width: number; height: number }>
   >;
+  transition: PageTransitionResult;
 }) {
   // RTL pairs render right-to-left; reuse `flex-row-reverse` to flip ordering.
   const flexClass =
@@ -837,22 +872,33 @@ function DoublePageView({
   // modes it sizes to the natural image widths.
   const containerWidthClass = paneClass.includes("flex-1") ? "w-screen" : "";
 
+  // v0.3.44: double-page slide is enter-only. Rendering the
+  // outgoing spread as a pair of absolutely-positioned panes adds
+  // a lot of layout complexity (panes can be flex-1 OR
+  // inline-block depending on fit-mode) for marginal UX win — the
+  // overflow-hidden wrapper + new spread sliding in from the
+  // correct edge reads as a page-turn already. Single mode does
+  // the retain-old-page version for the more nuanced single-image
+  // case.
   return (
     <main className="relative grid min-h-screen place-items-center">
-      <div
-        className={`${flexClass} ${containerWidthClass} items-center justify-center gap-1`}
-      >
-        {visiblePages.map((p) => (
-          <DoublePagePane
-            key={`${issueId}-${p}`}
-            issueId={issueId}
-            page={p}
-            fitClass={fitClass}
-            paneClass={paneClass}
-            onNaturalSize={onNaturalSize(p)}
-            naturalSize={pageNaturalSize.current?.get(p) ?? null}
-          />
-        ))}
+      <div className="relative w-full overflow-hidden">
+        <div
+          key={`enter-${visiblePages.join("-")}`}
+          className={`${transition.enterAnimClass ?? ""} ${flexClass} ${containerWidthClass} items-center justify-center gap-1`}
+        >
+          {visiblePages.map((p) => (
+            <DoublePagePane
+              key={`${issueId}-${p}`}
+              issueId={issueId}
+              page={p}
+              fitClass={fitClass}
+              paneClass={paneClass}
+              onNaturalSize={onNaturalSize(p)}
+              naturalSize={pageNaturalSize.current?.get(p) ?? null}
+            />
+          ))}
+        </div>
       </div>
       {markerMode === "idle" ? (
         <TapZones

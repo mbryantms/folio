@@ -78,8 +78,9 @@ const MAX_LIMIT: u64 = 200;
 const DEFAULT_LIMIT: u64 = 50;
 const KIND_BOOKMARK: &str = "bookmark";
 const KIND_NOTE: &str = "note";
+const KIND_FAVORITE: &str = "favorite";
 const KIND_HIGHLIGHT: &str = "highlight";
-const ALL_KINDS: &[&str] = &[KIND_BOOKMARK, KIND_NOTE, KIND_HIGHLIGHT];
+const ALL_KINDS: &[&str] = &[KIND_BOOKMARK, KIND_NOTE, KIND_FAVORITE, KIND_HIGHLIGHT];
 
 const MAX_TAGS_PER_MARKER: usize = 32;
 const MAX_TAG_LEN: usize = 80;
@@ -432,7 +433,7 @@ fn validate_shape(
         return Err(MarkerError::new(
             StatusCode::BAD_REQUEST,
             "validation",
-            "kind must be bookmark | note | highlight",
+            "kind must be bookmark | note | favorite | highlight",
         ));
     }
     if kind == KIND_NOTE {
@@ -598,7 +599,7 @@ pub async fn list(
             return error(
                 StatusCode::BAD_REQUEST,
                 "validation",
-                "kind must be bookmark | note | highlight",
+                "kind must be bookmark | note | favorite | highlight",
             );
         }
         select = select.filter(marker::Column::Kind.eq(kind));
@@ -607,7 +608,19 @@ pub async fn list(
         select = select.filter(marker::Column::IssueId.eq(issue_id));
     }
     if let Some(true) = q.is_favorite {
-        select = select.filter(marker::Column::IsFavorite.eq(true));
+        // v0.3.44: union over the two favorite shapes — the legacy
+        // `is_favorite=true` flag (any kind) AND the new standalone
+        // `kind='favorite'` rows the page-level star button creates.
+        // Without the OR, switching the chrome's star button to
+        // `kind='favorite'` would hide pre-2026-05-20 favorited
+        // highlights/notes from the favorites list. See
+        // [m20260520_000001_marker_kind_favorite].
+        use sea_orm::Condition;
+        select = select.filter(
+            Condition::any()
+                .add(marker::Column::IsFavorite.eq(true))
+                .add(marker::Column::Kind.eq(KIND_FAVORITE)),
+        );
     }
     if let Some(raw_tags) = q.tags.as_deref().filter(|s| !s.trim().is_empty()) {
         let parsed = parse_tag_list(raw_tags);

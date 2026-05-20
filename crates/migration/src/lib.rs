@@ -56,6 +56,8 @@ mod m20261215_000001_collections;
 mod m20261215_000002_markers;
 mod m20261215_000003_rename_unstarted_template;
 mod m20261216_000001_user_show_marker_count;
+mod m20260520_000001_marker_kind_favorite;
+mod m20260520_000002_user_default_page_animation;
 mod m20261217_000001_marker_favorite_flag;
 mod m20261217_000002_marker_tags;
 mod m20261218_000001_people_search;
@@ -132,6 +134,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261220_000001_opds_reorder_opt_outs::Migration),
             Box::new(m20261221_000001_opds_progress_glyphs::Migration),
             Box::new(m20260519_000001_drop_orphan_cbl_lists::Migration),
+            Box::new(m20260520_000001_marker_kind_favorite::Migration),
+            Box::new(m20260520_000002_user_default_page_animation::Migration),
         ]
     }
 }
