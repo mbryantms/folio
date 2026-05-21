@@ -348,10 +348,10 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
   const headline = issueTitle ?? seriesName ?? "Reading event";
 
   const inner = (
-    <div className="hover:bg-muted/50 group/event flex gap-3 rounded-md p-1.5 transition-colors">
+    <div className="hover:bg-muted/50 group/event flex gap-3.5 rounded-md p-2 transition-colors">
       <div
         className={cn(
-          "border-border/60 relative h-14 w-10 shrink-0 overflow-hidden rounded border",
+          "border-border/60 relative aspect-2/3 w-14 shrink-0 overflow-hidden rounded border",
           !cover && "bg-muted",
         )}
         aria-hidden
@@ -366,30 +366,30 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
           />
         ) : null}
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <span
             className={cn(
-              "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide uppercase",
               KIND_TINT[event.kind],
             )}
           >
-            <Icon aria-hidden="true" className="h-3 w-3" />
+            <Icon aria-hidden="true" className="h-3.5 w-3.5" />
             {KIND_LABEL[event.kind]}
           </span>
           {issueLabel ? (
-            <span className="text-muted-foreground text-xs font-medium tabular-nums">
+            <span className="text-muted-foreground text-sm font-medium tabular-nums">
               {issueLabel}
             </span>
           ) : null}
           <time
-            className="text-muted-foreground/80 ml-auto text-xs"
+            className="text-muted-foreground/60 ml-auto text-[10px]"
             title={new Date(event.occurred_at).toLocaleString()}
           >
             {formatRelativeDate(event.occurred_at)}
           </time>
         </div>
-        <div className="truncate text-sm font-medium" title={headline}>
+        <div className="truncate text-base font-medium" title={headline}>
           {headline}
         </div>
         <PayloadLine event={event} />
@@ -410,10 +410,10 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
 
 function SeriesRollupRow({ rollup }: { rollup: RowRollup }) {
   const inner = (
-    <div className="hover:bg-muted/50 group/event flex gap-3 rounded-md p-1.5 transition-colors">
+    <div className="hover:bg-muted/50 group/event flex gap-3.5 rounded-md p-2 transition-colors">
       <div
         className={cn(
-          "border-border/60 relative h-14 w-10 shrink-0 overflow-hidden rounded border",
+          "border-border/60 relative aspect-2/3 w-14 shrink-0 overflow-hidden rounded border",
           !rollup.coverUrl && "bg-muted",
         )}
         aria-hidden
@@ -428,25 +428,28 @@ function SeriesRollupRow({ rollup }: { rollup: RowRollup }) {
           />
         ) : null}
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <span
             className={cn(
-              "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide uppercase",
               KIND_TINT.issue_finished,
             )}
           >
-            <Check aria-hidden="true" className="h-3 w-3" />
+            <Check aria-hidden="true" className="h-3.5 w-3.5" />
             {rollup.issueNumbers.length} finished
           </span>
           <time
-            className="text-muted-foreground/80 ml-auto text-xs"
+            className="text-muted-foreground/60 ml-auto text-[10px]"
             title={new Date(rollup.latestOccurredAt).toLocaleString()}
           >
             {formatRelativeDate(rollup.latestOccurredAt)}
           </time>
         </div>
-        <div className="truncate text-sm font-medium" title={rollup.seriesName}>
+        <div
+          className="truncate text-base font-medium"
+          title={rollup.seriesName}
+        >
           {rollup.seriesName}
         </div>
         <p
@@ -577,11 +580,12 @@ function FeedSkeleton() {
   return (
     <ol className="flex flex-col gap-4">
       {Array.from({ length: 5 }).map((_, i) => (
-        <li key={i} className="flex gap-3">
-          <Skeleton className="h-14 w-10 shrink-0 rounded" />
+        <li key={i} className="flex gap-3.5">
+          <Skeleton className="aspect-2/3 w-14 shrink-0 rounded" />
           <div className="flex-1 space-y-2">
             <Skeleton className="h-3 w-1/3" />
-            <Skeleton className="h-3 w-2/3" />
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-3 w-1/2" />
           </div>
         </li>
       ))}

@@ -480,6 +480,50 @@ pub async fn reading_log(
     let issue_by_id: HashMap<String, issue::Model> =
         issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
 
+    // Representative cover thumbnail per series. `series_finished`
+    // events carry no `event.issue`, so without this the frontend
+    // would render a grey placeholder for every "Series complete"
+    // row. We pick the lowest-`sort_number` active issue per series
+    // as the cover — one extra batched query per page.
+    let series_cover_by_id: HashMap<Uuid, String> = if series_ids.is_empty() {
+        HashMap::new()
+    } else {
+        let candidates_for_cover = match issue::Entity::find()
+            .filter(issue::Column::SeriesId.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
+            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::RemovedAt.is_null())
+            .all(&app.db)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return internal_err(e),
+        };
+        let mut by_series: HashMap<Uuid, (Option<f64>, String)> = HashMap::new();
+        for i in candidates_for_cover {
+            let entry = by_series.entry(i.series_id);
+            // Keep the issue with the lowest `sort_number` (NULLs
+            // sort last); ties broken by whichever we see first
+            // since the query order isn't guaranteed.
+            let url = format!("/issues/{}/pages/0/thumb", i.id);
+            entry
+                .and_modify(|cur| {
+                    let take = match (cur.0, i.sort_number) {
+                        (Some(a), Some(b)) => b < a,
+                        (None, Some(_)) => true,
+                        _ => false,
+                    };
+                    if take {
+                        *cur = (i.sort_number, url.clone());
+                    }
+                })
+                .or_insert_with(|| (i.sort_number, url));
+        }
+        by_series
+            .into_iter()
+            .map(|(k, (_, url))| (k, url))
+            .collect()
+    };
+
     let allowed_libraries: Option<HashSet<Uuid>> = if user.role == "admin" {
         None
     } else {
@@ -507,7 +551,15 @@ pub async fn reading_log(
 
     let events: Vec<ReadingLogEventView> = candidates
         .into_iter()
-        .filter_map(|c| hydrate(c, &series_by_id, &issue_by_id, &visible))
+        .filter_map(|c| {
+            hydrate(
+                c,
+                &series_by_id,
+                &issue_by_id,
+                &series_cover_by_id,
+                &visible,
+            )
+        })
         .collect();
 
     let next_cursor = if has_more {
@@ -542,6 +594,7 @@ fn hydrate(
     c: Candidate,
     series_by_id: &HashMap<Uuid, series::Model>,
     issue_by_id: &HashMap<String, issue::Model>,
+    series_cover_by_id: &HashMap<Uuid, String>,
     visible: &dyn Fn(Uuid) -> bool,
 ) -> Option<ReadingLogEventView> {
     let series = series_by_id.get(&c.series_id)?;
@@ -563,8 +616,11 @@ fn hydrate(
         year: series.year,
         publisher: series.publisher.clone(),
         imprint: series.imprint.clone(),
-        cover_url: None, // series covers come from the first issue
-                         // thumbnail on the web side — leave None here.
+        // Lowest-`sort_number` active issue thumbnail. Used as the
+        // cover for `series_finished` events (no `event.issue`)
+        // and as a fallback for events whose issue happens to lack
+        // a renderable thumbnail.
+        cover_url: series_cover_by_id.get(&series.id).cloned(),
     };
     let event_issue = issue_row.map(|i| EventIssue {
         id: i.id.clone(),
