@@ -15,6 +15,7 @@ export type MainNavIconKey =
   | "Calendar"
   | "Home"
   | "LayoutGrid"
+  | "ScrollText"
   | string;
 
 export type MainNavItem = {

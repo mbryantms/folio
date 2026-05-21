@@ -211,7 +211,13 @@ async fn default_layout_contains_builtins_and_libraries() {
         .collect();
     assert_eq!(
         builtins,
-        vec![&"home", &"bookmarks", &"collections", &"want_to_read"],
+        vec![
+            &"home",
+            &"bookmarks",
+            &"reading_log",
+            &"collections",
+            &"want_to_read",
+        ],
         "default builtin order"
     );
 

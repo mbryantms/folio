@@ -9,6 +9,7 @@ import {
   LayoutGrid,
   Library,
   ListPlus,
+  ScrollText,
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
@@ -29,6 +30,7 @@ export const mainNavIcons: Record<MainNavItem["icon"], LucideIcon> = {
   Library,
   Calendar,
   LayoutGrid,
+  ScrollText,
   Sparkles,
   // The remaining IconName values from admin/nav.ts — not used today by the
   // library shell, but having them in the map keeps `MainNavItem.icon: IconName |

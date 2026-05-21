@@ -688,6 +688,110 @@ export type ReadingSessionListView = {
 
 export type ReadingStatsRange = "7d" | "30d" | "60d" | "90d" | "1y" | "all";
 
+// ---------- Reading log (event feed) ----------
+
+/** Four discrete kinds emitted by `GET /me/reading-log`. Defined as a
+ *  literal union so widget configs can validate against it. */
+export type ReadingLogEventKind =
+  | "issue_finished"
+  | "series_finished"
+  | "session_completed"
+  | "marker_created";
+
+/** Series row hydrated alongside every event. `cover_url` may be
+ *  `null` for series_finished events (the issue cover isn't directly
+ *  available; the client falls back to the first matched issue's
+ *  thumbnail). */
+export type ReadingLogEventSeries = {
+  id: string;
+  slug: string;
+  name: string;
+  year: number | null;
+  publisher: string | null;
+  imprint: string | null;
+  cover_url: string | null;
+};
+
+/** Issue row hydrated for the three issue-anchored event kinds. */
+export type ReadingLogEventIssue = {
+  id: string;
+  slug: string;
+  number: string | null;
+  title: string | null;
+  year: number | null;
+  month: number | null;
+  day: number | null;
+  page_count: number | null;
+  cover_url: string | null;
+  writer: string | null;
+  penciller: string | null;
+  inker: string | null;
+  colorist: string | null;
+  letterer: string | null;
+  cover_artist: string | null;
+  editor: string | null;
+};
+
+/** Kind-discriminated payload. `kind` here is the same value as the
+ *  parent event's `kind`; serde tags both for symmetry. */
+export type ReadingLogPayload =
+  | {
+      kind: "issue_finished";
+      first_read_at: string | null;
+      total_sessions: number;
+      total_active_ms: number;
+      is_reread: boolean;
+    }
+  | {
+      kind: "series_finished";
+      started_at: string | null;
+      total_issues: number;
+      total_active_ms: number;
+      span_days: number | null;
+    }
+  | {
+      kind: "session_completed";
+      started_at: string;
+      ended_at: string;
+      active_ms: number;
+      pages_read: number;
+      device: string | null;
+      view_mode: string | null;
+    }
+  | {
+      kind: "marker_created";
+      marker_id: string;
+      marker_kind: string;
+      page_index: number;
+      tags: string[];
+      body_preview: string | null;
+    };
+
+export type ReadingLogEventView = {
+  id: string;
+  kind: ReadingLogEventKind;
+  occurred_at: string;
+  series: ReadingLogEventSeries | null;
+  issue: ReadingLogEventIssue | null;
+  payload: ReadingLogPayload;
+};
+
+export type ReadingLogPageView = {
+  events: ReadingLogEventView[];
+  next_cursor: string | null;
+};
+
+export type ReadingLogFilters = {
+  kinds?: ReadingLogEventKind[];
+  /** RFC3339 lower bound (inclusive). */
+  from?: string;
+  /** RFC3339 upper bound (exclusive). */
+  to?: string;
+  library_id?: string;
+  series_id?: string;
+  limit?: number;
+};
+
 export type ReadingDayBucket = {
   /** YYYY-MM-DD in user's timezone. */
   date: string;

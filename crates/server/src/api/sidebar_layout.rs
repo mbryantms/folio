@@ -91,6 +91,12 @@ pub const BUILTIN_REGISTRY: &[BuiltinDef] = &[
         href: "/bookmarks",
     },
     BuiltinDef {
+        key: "reading_log",
+        label: "Reading log",
+        icon: "ScrollText",
+        href: "/log",
+    },
+    BuiltinDef {
         key: "collections",
         label: "Collections",
         icon: "Folder",

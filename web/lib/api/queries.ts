@@ -62,6 +62,8 @@ import type {
   LogsResp,
   MeView,
   QueueDepthView,
+  ReadingLogFilters,
+  ReadingLogPageView,
   ReadingSessionListView,
   ReadingStatsRange,
   ReadingStatsView,
@@ -251,6 +253,9 @@ export const queryKeys = {
     ["reading", "sessions", filters] as const,
   readingStats: (scope: ReadingStatsScope, range: ReadingStatsRange) =>
     ["reading", "stats", scope, range] as const,
+  /** Reading log feed — cursor-paginated event union. */
+  readingLog: (filters: ReadingLogFilters) =>
+    ["reading", "log", filters] as const,
   /** Admin dashboard overview — aggregate, never per-user. */
   adminOverview: ["admin", "stats", "overview"] as const,
   /** Stats v2: per-user aggregates list. */
@@ -706,6 +711,31 @@ export function useReadingStats(
     queryKey: queryKeys.readingStats(scope, range),
     queryFn: () =>
       jsonFetch<ReadingStatsView>(`/me/reading-stats${buildQuery(params)}`),
+  });
+}
+
+/** Cursor-paginated walk over the reverse-chronological reading-log
+ *  event feed. Backs the `/log` page's main column. Filters drive the
+ *  server query — never client-side `.filter()` on the (cursor-bound)
+ *  returned set, per CLAUDE.md's list-pagination convention. */
+export function useReadingLogInfinite(filters: ReadingLogFilters = {}) {
+  const params: Record<string, string | number> = {};
+  if (filters.kinds && filters.kinds.length > 0) {
+    params.kind = filters.kinds.join(",");
+  }
+  if (filters.from) params.from = filters.from;
+  if (filters.to) params.to = filters.to;
+  if (filters.library_id) params.library_id = filters.library_id;
+  if (filters.series_id) params.series_id = filters.series_id;
+  if (filters.limit != null) params.limit = filters.limit;
+  return useInfiniteQuery({
+    queryKey: queryKeys.readingLog(filters),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<ReadingLogPageView>(
+        `/me/reading-log${buildQuery({ ...params, cursor: pageParam })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
 }
 
