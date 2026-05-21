@@ -89,7 +89,7 @@ export function CardSizeOptions({
            *  cover art opt out of the overlay. Kebab actions are
            *  unaffected; they're only visible after the user opens
            *  the menu. */}
-          <div className="space-y-1.5 border-t pt-3">
+          <div className="border-border space-y-1.5 border-t pt-3">
             <div className="flex items-center justify-between gap-3">
               <Label
                 htmlFor={collectionFieldId}
