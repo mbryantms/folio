@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Clock,
   FileStack,
+  History,
   Languages,
 } from "lucide-react";
 import Link from "next/link";
@@ -28,7 +29,7 @@ import type {
   IssueLink,
   IssueSummaryView,
   NextInSeriesView,
-  ReadingSessionListView,
+  ReadingStatsView,
   SeriesView,
 } from "@/lib/api/types";
 import {
@@ -90,18 +91,20 @@ export default async function IssuePage({
     /* no progress yet */
   }
 
-  // Activity-tab visibility: hide the tab entirely when the user has no
-  // sessions for this issue. One cheap `?limit=1` round-trip beats
-  // permanently leaving an empty tab on every issue page.
-  let hasActivity = false;
+  // Issue-scoped reading stats — drives the inline "Last read" fact
+  // line, the prominent activity strip above the tabs, and gates the
+  // dedicated Activity tab. One server fetch hydrates all three so
+  // the page never has to wait on a client roundtrip to know whether
+  // there's anything to show.
+  let activityStats: ReadingStatsView | null = null;
   try {
-    const list = await apiGet<ReadingSessionListView>(
-      `/me/reading-sessions?issue_id=${encodeURIComponent(issue.id)}&limit=1`,
+    activityStats = await apiGet<ReadingStatsView>(
+      `/me/reading-stats?range=all&issue_id=${encodeURIComponent(issue.id)}`,
     );
-    hasActivity = list.records.length > 0;
   } catch {
-    /* default false */
+    /* leave null — page degrades to the no-activity layout */
   }
+  const hasActivity = (activityStats?.totals.sessions ?? 0) > 0;
 
   // Next 5 issues in the series, ordered by sort_number. Best-effort —
   // a transient failure simply hides the section.
@@ -223,6 +226,8 @@ export default async function IssuePage({
               series={series}
               publicationDate={publicationDate}
               readingTime={readingTime}
+              lastReadAt={activityStats?.last_read_at ?? null}
+              timesRead={activityStats?.totals.sessions ?? 0}
             />
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {seriesStatus && <Badge variant="outline">{seriesStatus}</Badge>}
@@ -518,11 +523,15 @@ function IssueFactRow({
   series,
   publicationDate,
   readingTime,
+  lastReadAt,
+  timesRead,
 }: {
   issue: IssueDetailView;
   series: SeriesView | null;
   publicationDate: string | null;
   readingTime: string | null;
+  lastReadAt: string | null;
+  timesRead: number;
 }) {
   const publisher = issue.publisher ?? series?.publisher ?? null;
   const facts: { icon: React.ReactNode; label: string }[] = [];
@@ -554,6 +563,19 @@ function IssueFactRow({
     facts.push({
       icon: <Languages className="h-4 w-4" />,
       label: issue.language_code.toUpperCase(),
+    });
+  }
+  // The "Last read" fact sits last so the publication-time row stays
+  // stable for unread issues and only grows when the user has activity.
+  // `× N` suffix appears only on re-reads so single-reads stay clean.
+  const lastReadLabel = formatRelativeDate(lastReadAt);
+  if (lastReadLabel) {
+    facts.push({
+      icon: <History className="h-4 w-4" />,
+      label:
+        timesRead > 1
+          ? `Last read ${lastReadLabel} · ${timesRead}×`
+          : `Last read ${lastReadLabel}`,
     });
   }
   if (facts.length === 0) return null;
