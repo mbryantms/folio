@@ -29,6 +29,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "@/lib/api/auth-refresh";
 
@@ -101,6 +102,7 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
   const startedRef = useRef<boolean>(false);
 
   const pathname = usePathname();
+  const qc = useQueryClient();
 
   // First-render init for the timing/identity refs. Only fires once per
   // mount; the unique server-side `(user_id, client_session_id)` index
@@ -259,15 +261,19 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
     // Best-effort: try sendBeacon (CSRF will reject; that's expected — the
     // dangling-session sweeper finishes the row server-side). We still
     // attempt the regular fetch which has CSRF — typically that succeeds
-    // before the tab dies on desktop.
-    void postSession(payload);
+    // before the tab dies on desktop. Pass `qc` so the activity/stats
+    // surfaces get marked stale when the regular-fetch path completes.
+    // The sendBeacon path commits server-side but has no JS continuation
+    // (tab is unloading); on the next mount of an activity/stats page,
+    // the now-stale cache refetches and picks up the row anyway.
+    void postSession(payload, { invalidateActivityOn: qc });
     if (typeof navigator !== "undefined" && navigator.sendBeacon) {
       const blob = new Blob([JSON.stringify(payload)], {
         type: "application/json",
       });
       navigator.sendBeacon("/me/reading-sessions", blob);
     }
-  }, [buildPayload, minActiveMs, minPages]);
+  }, [buildPayload, minActiveMs, minPages, qc]);
 
   useEffect(() => {
     if (!trackingEnabled) return;
@@ -341,7 +347,10 @@ function getCsrfToken(): string | null {
   return m ? decodeURIComponent(m[1]!) : null;
 }
 
-async function postSession(body: unknown): Promise<void> {
+async function postSession(
+  body: unknown,
+  opts?: { invalidateActivityOn?: QueryClient },
+): Promise<void> {
   try {
     const csrf = getCsrfToken();
     // Routed through `apiFetch` so token-expiry on a long reading
@@ -355,6 +364,25 @@ async function postSession(body: unknown): Promise<void> {
       },
       body: JSON.stringify(body),
     });
+    // Optional cache flush after a successful write. Only the finalize
+    // path passes a `QueryClient` — heartbeats every 30s would invalidate
+    // unnecessarily often, and the user is rarely on activity/stats
+    // pages mid-reading anyway. Marks the activity timeline + stats v2
+    // + admin overview/users/engagement/content/quality keys stale so
+    // the next mount of /settings/activity, /admin/stats, or an admin
+    // viewing a user's stats picks up the just-ended session.
+    if (opts?.invalidateActivityOn) {
+      const qc = opts.invalidateActivityOn;
+      // `["reading", ...]` covers `readingSessions` + `readingStats`.
+      qc.invalidateQueries({ queryKey: ["reading"], exact: false });
+      // `["admin", "stats", ...]` covers overview / users / engagement /
+      // content / quality. Admins inspecting an end-user's activity
+      // hit `["admin", "users", id, "reading-stats", range]`, which
+      // shares the `["admin", "users"]` prefix already invalidated by
+      // unrelated admin flows; we re-invalidate here defensively.
+      qc.invalidateQueries({ queryKey: ["admin", "stats"], exact: false });
+      qc.invalidateQueries({ queryKey: ["admin", "users"], exact: false });
+    }
   } catch {
     /* best-effort; the next heartbeat will retry the same row */
   }
