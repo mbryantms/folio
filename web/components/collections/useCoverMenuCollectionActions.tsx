@@ -4,6 +4,7 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import type { CoverMenuAction } from "@/components/CoverMenuButton";
+import { useCoverCollectionActions } from "@/components/library/use-cover-collection-actions";
 import { useCollections } from "@/lib/api/queries";
 import {
   useAddCollectionEntry,
@@ -35,6 +36,7 @@ export function useCoverMenuCollectionActions(opts: {
   label: string;
 }): { actions: CoverMenuAction[]; dialog: React.ReactNode } {
   const { entry_kind, ref_id, label } = opts;
+  const collectionActionsPref = useCoverCollectionActions();
   const collections = useCollections();
   const wantToRead = collections.data?.find(
     (c) => c.system_key === WANT_TO_READ_KEY,
@@ -45,6 +47,23 @@ export function useCoverMenuCollectionActions(opts: {
   const addToWtr = useAddCollectionEntry(wtrId);
   const removeFromWtr = useRemoveCollectionEntry(wtrId);
   const [dialogOpen, setDialogOpen] = React.useState(false);
+
+  // Empty `actions` short-circuits the kebab item set when the user
+  // has turned off collection actions in CardSizeOptions. The dialog
+  // still renders (mounted-but-closed) so React's hook order is
+  // preserved between toggles — `useState` runs unconditionally.
+  if (!collectionActionsPref.enabled) {
+    return {
+      actions: [],
+      dialog: (
+        <AddToCollectionDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          target={{ entry_kind, ref_id, label }}
+        />
+      ),
+    };
+  }
 
   const actions: CoverMenuAction[] = [
     {

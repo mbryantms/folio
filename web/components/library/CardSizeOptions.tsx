@@ -10,6 +10,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { useCoverCollectionActions } from "@/components/library/use-cover-collection-actions";
 
 /** Reusable popover with a single "Card size" slider — drives the
  *  `minmax` of an auto-fill cover grid. Used by the series Issues
@@ -36,6 +38,8 @@ export function CardSizeOptions({
   triggerLabel?: string;
   fieldId?: string;
 }) {
+  const collectionActions = useCoverCollectionActions();
+  const collectionFieldId = `${fieldId}-collection-actions`;
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -77,6 +81,32 @@ export function CardSizeOptions({
               <span>Compact</span>
               <span>Roomy</span>
             </div>
+          </div>
+          {/* Global preference, persisted in localStorage by
+           *  use-cover-collection-actions.ts. When off, the two
+           *  collection items ("Add to Want to Read", "Add to
+           *  Collection…") are suppressed in every cover-card kebab
+           *  across the app. Toggle here so the choice lives next to
+           *  the other view-level density controls. */}
+          <div className="space-y-1.5 border-t pt-3">
+            <div className="flex items-center justify-between gap-3">
+              <Label
+                htmlFor={collectionFieldId}
+                className="text-xs font-medium"
+              >
+                Collection actions
+              </Label>
+              <Switch
+                id={collectionFieldId}
+                checked={collectionActions.enabled}
+                onCheckedChange={collectionActions.setEnabled}
+                aria-label="Show collection actions in cover menus"
+              />
+            </div>
+            <p className="text-muted-foreground/80 text-[11px] leading-snug">
+              Show “Add to Want to Read” and “Add to Collection…” on cover
+              menus.
+            </p>
           </div>
           <div className="flex justify-end">
             <Button
