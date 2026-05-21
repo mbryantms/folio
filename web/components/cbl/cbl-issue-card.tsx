@@ -162,16 +162,21 @@ export function CblIssueCard({
           {entry.match_status}
         </Badge>
       )}
-      {/* Read state — bottom-right to leave bottom-left for the CBL
-       *  position badge. Mirrors the affordance on `IssueCard`
-       *  (which has no position badge so places its check at
-       *  bottom-left); shape + ring + size kept in lockstep so the
-       *  visual cue is identical across surfaces. */}
+      {/* Read state — `top-2 right-2`. Matches `CblWindowCard`'s
+       *  rail-card placement so detail + rail share one visual idiom.
+       *  Moved off the bottom-right corner because `QuickReadOverlay`
+       *  also lives there: on mobile, tap-triggered `:hover` sticks
+       *  and the yellow play button covered the check.
+       *
+       *  Top-right is mutually exclusive with the match-status badge
+       *  — that badge only renders for unmatched entries
+       *  (`match_status !== "matched" && !== "manual"`), which by
+       *  definition have no `issue` and so never show this check. */}
       {issue && issue.state === "active" && finished && (
         <span
           aria-label="Read"
           title="Read"
-          className="bg-primary/90 text-primary-foreground absolute right-2 bottom-2 inline-flex h-6 w-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
+          className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex h-6 w-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
         >
           <Check aria-hidden="true" className="h-3.5 w-3.5" />
         </span>
