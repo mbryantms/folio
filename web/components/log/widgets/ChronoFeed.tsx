@@ -138,7 +138,7 @@ export function ChronoFeed({
   );
 
   return (
-    <WidgetCard widget={widget} title="Activity">
+    <WidgetCard widget={widget} title="Activity" titleHref="/log/activity">
       <div ref={scrollRef} className="max-h-160 overflow-y-auto pr-1">
         {query.isLoading ? (
           <FeedSkeleton />
@@ -333,7 +333,7 @@ function buildGroups(
 
 function GroupHeader({ label }: { label: string }) {
   return (
-    <div className="text-muted-foreground/80 text-[11px] font-semibold tracking-widest uppercase">
+    <div className="text-foreground border-border/40 border-b pb-1.5 text-lg font-semibold tracking-tight">
       {label}
     </div>
   );

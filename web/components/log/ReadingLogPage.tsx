@@ -21,7 +21,7 @@ export function ReadingLogPage() {
   const widgets = widgetsQuery.data?.widgets ?? [];
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 lg:px-6">
+    <div className="space-y-6">
       <LogHeader range={range} onRangeChange={setRange} widgets={widgets} />
       {widgetsQuery.isLoading ? (
         // Matches the LogWidgetGrid's multicolumn flow so the

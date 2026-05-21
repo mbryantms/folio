@@ -1,7 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { GripVertical, MoreVertical, Settings2, Trash2 } from "lucide-react";
+import Link from "next/link";
+import {
+  ChevronRight,
+  GripVertical,
+  MoreVertical,
+  Settings2,
+  Trash2,
+} from "lucide-react";
 
 import {
   AlertDialog,
@@ -42,6 +49,11 @@ import { useDragInfo } from "./LogWidgetGrid";
 export function WidgetCard({
   widget,
   title,
+  /** Optional href the title links to. When set, the title text
+   *  renders as a `<Link>` with a trailing chevron — used by the
+   *  chrono_feed widget to link out to `/log/activity`, the rich
+   *  activity report. */
+  titleHref,
   subtitle,
   Icon,
   children,
@@ -50,6 +62,7 @@ export function WidgetCard({
 }: {
   widget: LogWidgetView;
   title: string;
+  titleHref?: string;
   subtitle?: string;
   Icon?: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
@@ -93,7 +106,17 @@ export function WidgetCard({
           ) : null}
           <div className="min-w-0">
             <CardTitle className="truncate text-base" title={title}>
-              {title}
+              {titleHref ? (
+                <Link
+                  href={titleHref}
+                  className="hover:text-primary inline-flex items-center gap-1 transition-colors"
+                >
+                  {title}
+                  <ChevronRight aria-hidden="true" className="h-4 w-4" />
+                </Link>
+              ) : (
+                title
+              )}
             </CardTitle>
             {subtitle ? (
               <p
