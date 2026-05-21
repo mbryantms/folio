@@ -164,7 +164,13 @@ export type HeatmapGrid = {
 export function buildHeatmapGrid(
   perDay: ReadonlyArray<{ date: string; active_ms: number }>,
   today: Date = new Date(),
+  /** Number of week columns to render. Defaults to 53 (the year
+   *  view). Reading-log widget configs pass smaller values
+   *  (`4 | 8 | 12 | 26 | 52`) for narrower windows; clamped to a
+   *  minimum of 1 so the grid never collapses to zero. */
+  weeks: number = 53,
 ): HeatmapGrid {
+  const cols = Math.max(1, Math.round(weeks));
   const byDate = new Map<string, number>();
   for (const d of perDay) {
     byDate.set(d.date, (byDate.get(d.date) ?? 0) + d.active_ms);
@@ -176,13 +182,13 @@ export function buildHeatmapGrid(
   const todayMid = startOfDay(today);
   const dow = todayMid.getDay(); // 0..6, Sun = 0
   const sundayThisWeek = addDays(todayMid, -dow);
-  const startSunday = addDays(sundayThisWeek, -52 * 7);
+  const startSunday = addDays(sundayThisWeek, -(cols - 1) * 7);
 
   const cells: HeatmapCell[][] = [];
   const monthLabels: { col: number; label: string }[] = [];
   let lastMonth = -1;
 
-  for (let col = 0; col < 53; col += 1) {
+  for (let col = 0; col < cols; col += 1) {
     const colCells: HeatmapCell[] = [];
     for (let row = 0; row < 7; row += 1) {
       const d = addDays(startSunday, col * 7 + row);

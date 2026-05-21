@@ -19,13 +19,18 @@ import type { ReadingDayBucket } from "@/lib/api/types";
 export function ActivityHeatmap({
   perDay,
   today = new Date(),
+  weeks = 53,
 }: {
   perDay: ReadonlyArray<ReadingDayBucket>;
   /** Override `today` so a series-scoped heatmap can be anchored to the
    *  user's tz-local "now"; the settings page leaves this default. */
   today?: Date;
+  /** Number of week columns to render. Defaults to the full year (53);
+   *  reading-log widgets pass shorter windows so the heatmap can show
+   *  just a recent slice of activity. */
+  weeks?: number;
 }) {
-  const grid = buildHeatmapGrid(perDay, today);
+  const grid = buildHeatmapGrid(perDay, today, weeks);
   const CELL = 12;
   const GAP = 3;
   const STRIDE = CELL + GAP;
@@ -53,7 +58,7 @@ export function ActivityHeatmap({
         style={{ maxWidth: "100%", height: "auto" }}
         className="text-primary block"
         role="img"
-        aria-label="Reading activity, last 53 weeks"
+        aria-label={`Reading activity, last ${weeks} week${weeks === 1 ? "" : "s"}`}
       >
         {/* Month labels along the top edge. */}
         {grid.monthLabels.map((m) => (
