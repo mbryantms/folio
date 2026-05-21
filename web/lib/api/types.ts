@@ -792,6 +792,60 @@ export type ReadingLogFilters = {
   limit?: number;
 };
 
+// ---------- Reading log widgets (M3 backend / M4 frontend) ----------
+
+/** Server-recognized widget kinds. Adding a new kind is a coordinated
+ *  change: extend the const list in `crates/server/src/api/log_widgets.rs`
+ *  AND ship a matching renderer + Zod schema on the web side. */
+export type LogWidgetKind =
+  | "chrono_feed"
+  | "stats_hero"
+  | "heatmap"
+  | "top_creators"
+  | "top_publishers"
+  | "top_imprints"
+  | "series_finishes"
+  | "pace_chart"
+  | "time_of_day"
+  | "recent_bookmarks"
+  | "currently_reading"
+  | "note";
+
+/** One pinned widget on the user's `/log` page. `config` is a JSON
+ *  blob whose shape is determined by `kind`; per-kind config types
+ *  live in `web/components/log/widgets/types.ts`. */
+export type LogWidgetView = {
+  id: string;
+  kind: LogWidgetKind | string;
+  position: number;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LogWidgetListView = {
+  widgets: LogWidgetView[];
+};
+
+export type AddLogWidgetReq = {
+  kind: LogWidgetKind;
+  /** Optional starting config. Omit for `{}` (which is always legal
+   *  — every kind's config schema defaults all fields). */
+  config?: Record<string, unknown>;
+};
+
+export type PatchLogWidgetReq = {
+  /** Replacement config blob — the server stores it as-is. Clients
+   *  merge with the previous value if they want partial updates. */
+  config: Record<string, unknown>;
+};
+
+export type ReorderLogWidgetsReq = {
+  /** Full set of widget ids in the new order. Server 400s when the
+   *  set doesn't match the user's owned ids exactly. */
+  ids: string[];
+};
+
 export type ReadingDayBucket = {
   /** YYYY-MM-DD in user's timezone. */
   date: string;

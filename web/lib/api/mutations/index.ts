@@ -45,6 +45,11 @@ import type {
   LibraryAccessReq,
   CreateRailDismissalReq,
   LibraryView,
+  LogWidgetListView,
+  LogWidgetView,
+  AddLogWidgetReq,
+  PatchLogWidgetReq,
+  ReorderLogWidgetsReq,
   ManualMatchReq,
   MeView,
   PreferencesReq,
@@ -1937,6 +1942,82 @@ export function useTogglePinOnPage() {
         qc.invalidateQueries({ queryKey: ["saved-views"] });
         qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
         router.refresh();
+      },
+    },
+  );
+}
+
+// ---------- Reading-log widgets (M4) ----------
+
+/** Add a new widget at the tail of the user's grid. Server picks
+ *  `position = max + 1`. Invalidates the list query on success so
+ *  the page re-renders. */
+export function useAddLogWidget() {
+  const qc = useQueryClient();
+  return useApiMutation<LogWidgetView, AddLogWidgetReq>(
+    (body) => ({ path: "/me/log/widgets", method: "POST", body }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.logWidgets });
+      },
+    },
+  );
+}
+
+/** Replace one widget's `config`. The server validates against the
+ *  row's kind, so callers can't accidentally rewrite kind via PATCH. */
+export function usePatchLogWidget(id: string) {
+  const qc = useQueryClient();
+  return useApiMutation<LogWidgetView, PatchLogWidgetReq>(
+    (body) => ({ path: `/me/log/widgets/${id}`, method: "PATCH", body }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.logWidgets });
+      },
+    },
+  );
+}
+
+/** Remove a widget from the user's grid. The server compacts the
+ *  surviving positions back to dense `0..N` in the same transaction
+ *  so the next list response has no gaps. */
+export function useRemoveLogWidget(id: string) {
+  const qc = useQueryClient();
+  return useApiMutation<null, void>(
+    () => ({ path: `/me/log/widgets/${id}`, method: "DELETE" }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.logWidgets });
+      },
+    },
+  );
+}
+
+/** Bulk reorder. The body's `ids` array must match the user's owned
+ *  widget set exactly; partial reorders are rejected by the server
+ *  (would leave gaps). M5 wires this to the @dnd-kit drop callback. */
+export function useReorderLogWidgets() {
+  const qc = useQueryClient();
+  return useApiMutation<LogWidgetListView, ReorderLogWidgetsReq>(
+    (body) => ({ path: "/me/log/widgets/reorder", method: "POST", body }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.logWidgets });
+      },
+    },
+  );
+}
+
+/** Wipe + reseed defaults. Used by the page's "Reset" affordance in
+ *  M5 to give users a one-click way back to the stock layout. */
+export function useResetLogWidgets() {
+  const qc = useQueryClient();
+  return useApiMutation<LogWidgetListView, void>(
+    () => ({ path: "/me/log/widgets/reset", method: "POST" }),
+    {
+      successMessage: "Reading log reset to defaults",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.logWidgets });
       },
     },
   );

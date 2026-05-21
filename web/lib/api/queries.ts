@@ -62,6 +62,7 @@ import type {
   LogsResp,
   MeView,
   QueueDepthView,
+  LogWidgetListView,
   ReadingLogFilters,
   ReadingLogPageView,
   ReadingSessionListView,
@@ -256,6 +257,8 @@ export const queryKeys = {
   /** Reading log feed — cursor-paginated event union. */
   readingLog: (filters: ReadingLogFilters) =>
     ["reading", "log", filters] as const,
+  /** Per-user log-widget grid (auto-seeded on first GET). */
+  logWidgets: ["reading", "log", "widgets"] as const,
   /** Admin dashboard overview — aggregate, never per-user. */
   adminOverview: ["admin", "stats", "overview"] as const,
   /** Stats v2: per-user aggregates list. */
@@ -711,6 +714,17 @@ export function useReadingStats(
     queryKey: queryKeys.readingStats(scope, range),
     queryFn: () =>
       jsonFetch<ReadingStatsView>(`/me/reading-stats${buildQuery(params)}`),
+  });
+}
+
+/** The user's pinned log-widget grid in `position` order. The server
+ *  auto-seeds the M2 default layout on the first GET — meaning this
+ *  hook is never going to return an empty array for a freshly
+ *  registered account. */
+export function useLogWidgets() {
+  return useQuery({
+    queryKey: queryKeys.logWidgets,
+    queryFn: () => jsonFetch<LogWidgetListView>("/me/log/widgets"),
   });
 }
 

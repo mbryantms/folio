@@ -12,7 +12,6 @@ import {
   Timer,
 } from "lucide-react";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useReadingLogInfinite } from "@/lib/api/queries";
 import { formatDurationMs } from "@/lib/activity";
@@ -24,7 +23,18 @@ import type {
   ReadingLogEventView,
   ReadingLogFilters,
   ReadingLogPayload,
+  ReadingStatsRange,
 } from "@/lib/api/types";
+
+import { WidgetCard } from "../WidgetCard";
+import type { ChronoFeedConfig, LogWidgetProps } from "./types";
+
+const ALL_KINDS: ReadingLogEventKind[] = [
+  "issue_finished",
+  "series_finished",
+  "session_completed",
+  "marker_created",
+];
 
 const KIND_ICON: Record<ReadingLogEventKind, typeof Check> = {
   issue_finished: Check,
@@ -40,21 +50,61 @@ const KIND_LABEL: Record<ReadingLogEventKind, string> = {
   marker_created: "Bookmark",
 };
 
-const KIND_RING: Record<ReadingLogEventKind, string> = {
+const KIND_TINT: Record<ReadingLogEventKind, string> = {
   issue_finished: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
   series_finished: "bg-primary/15 text-primary",
   session_completed: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
   marker_created: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
 };
 
+function rangeToFrom(range: ReadingStatsRange): string | undefined {
+  if (range === "all") return undefined;
+  const days =
+    range === "7d"
+      ? 7
+      : range === "30d"
+        ? 30
+        : range === "60d"
+          ? 60
+          : range === "90d"
+            ? 90
+            : 365;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  return cutoff.toISOString();
+}
+
 /** Reverse-chronological feed of every reading-activity event the
- *  user has produced. Cursor-paginated via `useReadingLogInfinite`;
- *  an IntersectionObserver sentinel at the tail auto-loads the next
- *  page so the user just keeps scrolling. */
-export function ChronoFeedWidget({ filters }: { filters: ReadingLogFilters }) {
+ *  user has produced — issue finishes, series finishes, sessions,
+ *  marker creations. Cursor-paginated; an IntersectionObserver
+ *  sentinel at the tail auto-loads the next page on scroll.
+ *
+ *  Filter precedence: the page-level kind chips win, falling back to
+ *  the widget's `default_kinds` when the page chips include every
+ *  kind. That lets a user save a "just sessions" feed in their
+ *  layout while still using the page chips to scope further. */
+export function ChronoFeed({
+  widget,
+  scope,
+}: LogWidgetProps<ChronoFeedConfig>) {
+  const filters: ReadingLogFilters = React.useMemo(() => {
+    const pageKindsAll = scope.kinds.length === ALL_KINDS.length;
+    const widgetKinds = widget.config.default_kinds ?? [];
+    const widgetKindsAll = widgetKinds.length === 0;
+    const kinds: ReadingLogEventKind[] | undefined = pageKindsAll
+      ? widgetKindsAll
+        ? undefined
+        : widgetKinds
+      : scope.kinds;
+    return {
+      kinds,
+      from: rangeToFrom(scope.range),
+      limit: 30,
+    };
+  }, [scope.kinds, scope.range, widget.config.default_kinds]);
+
   const query = useReadingLogInfinite(filters);
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-
   React.useEffect(() => {
     const node = sentinelRef.current;
     if (!node) return;
@@ -79,52 +129,52 @@ export function ChronoFeedWidget({ filters }: { filters: ReadingLogFilters }) {
     [query.data],
   );
 
-  // Group consecutive events from the same series on the same day
-  // (user-local). Reduces visual noise when a user clears a 12-issue
-  // arc in one sitting — every issue gets its own row, but they all
-  // sit under a single "Saga of the Swamp Thing · May 19" header.
-  const groups = React.useMemo(() => groupEvents(events), [events]);
+  const groupByDay = widget.config.group_by_day ?? true;
+  const groups = React.useMemo(
+    () => (groupByDay ? groupEvents(events) : flatGroups(events)),
+    [events, groupByDay],
+  );
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">Activity</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {query.isLoading ? (
-          <FeedSkeleton />
-        ) : events.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <ol className="flex flex-col gap-5">
-            {groups.map((g) => (
-              <li key={g.key} className="flex flex-col gap-2">
-                <GroupHeader group={g} />
-                <ul className="border-border/60 flex flex-col gap-3 border-l-2 pl-4">
-                  {g.events.map((e) => (
-                    <li key={e.id}>
-                      <EventRow event={e} />
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            ))}
-          </ol>
-        )}
-        <div ref={sentinelRef} aria-hidden className="h-px" />
-        {query.isFetchingNextPage && (
-          <div className="text-muted-foreground mt-4 flex justify-center text-xs">
-            <ChevronDown className="mr-1 h-3 w-3 animate-pulse" />
-            Loading more…
-          </div>
-        )}
-        {!query.hasNextPage && events.length > 0 && (
-          <p className="text-muted-foreground/70 mt-6 text-center text-xs">
-            That&rsquo;s everything in this range.
-          </p>
-        )}
-      </CardContent>
-    </Card>
+    <WidgetCard widgetId={widget.id} title="Activity">
+      {query.isLoading ? (
+        <FeedSkeleton />
+      ) : events.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <ol className="flex flex-col gap-5">
+          {groups.map((g) => (
+            <li key={g.key} className="flex flex-col gap-2">
+              {groupByDay ? <GroupHeader group={g} /> : null}
+              <ul
+                className={cn(
+                  "flex flex-col gap-3",
+                  groupByDay && "border-border/60 border-l-2 pl-4",
+                )}
+              >
+                {g.events.map((e) => (
+                  <li key={e.id}>
+                    <EventRow event={e} />
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div ref={sentinelRef} aria-hidden className="h-px" />
+      {query.isFetchingNextPage && (
+        <div className="text-muted-foreground mt-4 flex justify-center text-xs">
+          <ChevronDown className="mr-1 h-3 w-3 animate-pulse" />
+          Loading more…
+        </div>
+      )}
+      {!query.hasNextPage && events.length > 0 && (
+        <p className="text-muted-foreground/70 mt-6 text-center text-xs">
+          That&rsquo;s everything in this range.
+        </p>
+      )}
+    </WidgetCard>
   );
 }
 
@@ -165,6 +215,22 @@ function groupEvents(events: ReadingLogEventView[]): Group[] {
     }
   }
   return groups;
+}
+
+/** Single group containing every event in order — used when the
+ *  user turns `group_by_day` off in the widget config. */
+function flatGroups(events: ReadingLogEventView[]): Group[] {
+  if (events.length === 0) return [];
+  return [
+    {
+      key: "flat",
+      seriesId: null,
+      seriesName: null,
+      seriesSlug: null,
+      dayLabel: "",
+      events,
+    },
+  ];
 }
 
 function GroupHeader({ group }: { group: Group }) {
@@ -221,7 +287,7 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
           <span
             className={cn(
               "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
-              KIND_RING[event.kind],
+              KIND_TINT[event.kind],
             )}
           >
             <Icon aria-hidden="true" className="h-3 w-3" />
@@ -247,11 +313,6 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
     </div>
   );
 
-  // Most kinds deep-link to the issue; series_finished deep-links to
-  // the series detail page. Marker events would ideally route to the
-  // marker's anchor page in the reader, but the marker page-index +
-  // reader URL plumbing is a separate concern — M2 routes to the
-  // issue and lets the user open the bookmarks tab there.
   if (event.kind === "series_finished" && event.series) {
     return <Link href={seriesUrl(event.series.slug)}>{inner}</Link>;
   }
@@ -304,27 +365,31 @@ function PayloadLine({ event }: { event: ReadingLogEventView }) {
           <MarkerKindIcon kind={p.marker_kind} />
           <span className="capitalize">{p.marker_kind}</span>
           <span> · page {p.page_index + 1}</span>
-          {p.body_preview ? <span> · “{p.body_preview}”</span> : null}
+          {p.body_preview ? (
+            <span> · &ldquo;{p.body_preview}&rdquo;</span>
+          ) : null}
         </p>
       );
   }
 }
 
 function MarkerKindIcon({ kind }: { kind: string }) {
-  if (kind === "favorite")
+  if (kind === "favorite") {
     return (
       <Star
         aria-hidden="true"
         className="text-muted-foreground mr-1 inline h-3 w-3 align-[-2px]"
       />
     );
-  if (kind === "note")
+  }
+  if (kind === "note") {
     return (
       <MessageSquare
         aria-hidden="true"
         className="text-muted-foreground mr-1 inline h-3 w-3 align-[-2px]"
       />
     );
+  }
   return (
     <BookmarkIcon
       aria-hidden="true"
@@ -333,9 +398,6 @@ function MarkerKindIcon({ kind }: { kind: string }) {
   );
 }
 
-/** Best-effort credit string for the row's secondary line. We surface
- *  the writer when present; pencillers fold in only if there's no
- *  writer, since most rows that have either have both. */
 function creditsLine(event: ReadingLogEventView): string {
   const i = event.issue;
   if (!i) return "";
