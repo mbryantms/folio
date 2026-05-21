@@ -10,12 +10,15 @@ import type {
   ReadingStatsRange,
 } from "@/lib/api/types";
 
-/** Page-level filter state every widget can read but only the chrono
- *  feed (and series-finishes / recent-bookmarks) actually applies.
- *  Carried from `<LogHeader>` through `<ReadingLogPage>`. */
+/** Page-level state every widget can read. Only the `range` is
+ *  page-controlled today; per-widget kind filtering moved into the
+ *  chrono_feed widget's Configure dialog when the page-header chips
+ *  proved redundant. `kinds` stays in the type as a deprecated
+ *  no-op for renderers that might want to follow page-level chip
+ *  state later. */
 export type LogScope = {
   range: ReadingStatsRange;
-  kinds: ReadingLogEventKind[];
+  kinds?: ReadingLogEventKind[];
 };
 
 /** Props every renderer accepts. Generic over the kind-specific
@@ -46,10 +49,22 @@ export type LogWidgetDef<C extends object = Record<string, unknown>> = {
 
 // ─── Per-kind config shapes (mirror server schemas) ───
 
+export type ChronoFeedGroupBy = "day" | "week" | "month" | "none";
+
 export type ChronoFeedConfig = {
-  group_by_day: boolean;
-  /** Empty = all kinds; otherwise narrows the feed. Page-level
-   *  filter still applies on top. */
+  /** Top-level grouping for the rendered feed. `none` is a flat
+   *  list with no headers. */
+  group_by: ChronoFeedGroupBy;
+  /** Grid footprint override. Defaults to `full` (the registry
+   *  default); switching to `half` shrinks the widget so the user
+   *  can pin another half-width widget next to it. */
+  size: "full" | "half";
+  /** Optional range override. Empty string falls back to the
+   *  page-level `LogScope.range`. */
+  range: ReadingStatsRange | "";
+  /** Kind filter — empty array means all four kinds. Replaces the
+   *  former page-header chip row, which was redundant once each
+   *  chrono_feed widget could own its own filter. */
   default_kinds: ReadingLogEventKind[];
 };
 

@@ -1,14 +1,7 @@
 "use client";
 
 import * as React from "react";
-import {
-  BookOpen,
-  Check,
-  ListChecks,
-  MessageSquare,
-  RotateCcw,
-  Timer,
-} from "lucide-react";
+import { BookOpen, RotateCcw } from "lucide-react";
 
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
 import {
@@ -23,60 +16,35 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { useResetLogWidgets } from "@/lib/api/mutations";
-import { cn } from "@/lib/utils";
-import type {
-  LogWidgetView,
-  ReadingLogEventKind,
-  ReadingStatsRange,
-} from "@/lib/api/types";
+import type { LogWidgetView, ReadingStatsRange } from "@/lib/api/types";
 
 import { AddWidgetMenu } from "./AddWidgetMenu";
 
-const KIND_META: ReadonlyArray<{
-  value: ReadingLogEventKind;
-  label: string;
-  Icon: typeof Check;
-}> = [
-  { value: "issue_finished", label: "Issues finished", Icon: Check },
-  { value: "series_finished", label: "Series finished", Icon: ListChecks },
-  { value: "session_completed", label: "Sessions", Icon: Timer },
-  { value: "marker_created", label: "Markers", Icon: MessageSquare },
-];
-
-/** Reading-log page header — title + count blurb, the global range
- *  selector reused from `/settings/activity`, kind-filter chips,
- *  and the customization actions (Add widget + Reset to defaults).
- *  The page owns the state; the header is purely controlled. */
+/** Reading-log page header — title + the range selector reused
+ *  from `/settings/activity`, plus customization actions (Add
+ *  widget + Reset to defaults).
+ *
+ *  The per-event-kind filter chips that originally lived here were
+ *  removed: the chrono_feed widget now owns kind selection in its
+ *  Configure dialog, which is the surface that actually consumes
+ *  the filter. Other widgets either hard-code their kinds
+ *  (SeriesFinishes, RecentBookmarks) or ignore the page-level
+ *  setting, so the page chips were duplicating work that nothing
+ *  observed. */
 export function LogHeader({
   range,
   onRangeChange,
-  kinds,
-  onKindsChange,
   widgets,
 }: {
   range: ReadingStatsRange;
   onRangeChange: (next: ReadingStatsRange) => void;
-  kinds: ReadingLogEventKind[];
-  onKindsChange: (next: ReadingLogEventKind[]) => void;
-  /** Current widget list — drives the Add-widget menu's "already
-   *  there, hide" filtering. Empty array (e.g. while loading) lets
-   *  every kind be addable, which is fine because the mutation
-   *  invalidates the list afterward. */
+  /** Current widget list — drives the Add-widget menu's filtering
+   *  so each kind appears once (except `note`, which is multi-
+   *  instance-permitted). */
   widgets: LogWidgetView[];
 }) {
   const reset = useResetLogWidgets();
   const [resetOpen, setResetOpen] = React.useState(false);
-  const toggle = (k: ReadingLogEventKind) => {
-    if (kinds.includes(k)) {
-      // Leaving the chip set empty would silence the feed; treat the
-      // final unclick as a "reset to all kinds" rather than a wipe so
-      // the user doesn't end up on an unexpectedly empty page.
-      const next = kinds.filter((x) => x !== k);
-      onKindsChange(next.length === 0 ? KIND_META.map((m) => m.value) : next);
-    } else {
-      onKindsChange([...kinds, k]);
-    }
-  };
 
   return (
     <header className="flex flex-col gap-3">
@@ -125,31 +93,6 @@ export function LogHeader({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <div
-        role="group"
-        aria-label="Event kind filters"
-        className="flex flex-wrap items-center gap-1.5"
-      >
-        {KIND_META.map(({ value, label, Icon }) => {
-          const active = kinds.includes(value);
-          return (
-            <Button
-              key={value}
-              variant={active ? "default" : "outline"}
-              size="sm"
-              onClick={() => toggle(value)}
-              aria-pressed={active}
-              className={cn(
-                "h-7 px-2.5 text-xs",
-                !active && "text-muted-foreground",
-              )}
-            >
-              <Icon aria-hidden="true" className="mr-1.5 h-3 w-3" />
-              {label}
-            </Button>
-          );
-        })}
-      </div>
     </header>
   );
 }

@@ -27,14 +27,11 @@ import type {
 } from "@/lib/api/types";
 
 import { WidgetCard } from "../WidgetCard";
-import type { ChronoFeedConfig, LogWidgetProps } from "./types";
-
-const ALL_KINDS: ReadingLogEventKind[] = [
-  "issue_finished",
-  "series_finished",
-  "session_completed",
-  "marker_created",
-];
+import type {
+  ChronoFeedConfig,
+  ChronoFeedGroupBy,
+  LogWidgetProps,
+} from "./types";
 
 const KIND_ICON: Record<ReadingLogEventKind, typeof Check> = {
   issue_finished: Check,
@@ -75,33 +72,37 @@ function rangeToFrom(range: ReadingStatsRange): string | undefined {
 }
 
 /** Reverse-chronological feed of every reading-activity event the
- *  user has produced — issue finishes, series finishes, sessions,
- *  marker creations. Cursor-paginated; an IntersectionObserver
- *  sentinel at the tail auto-loads the next page on scroll.
+ *  user has produced. Cursor-paginated; an IntersectionObserver
+ *  sentinel at the tail auto-loads the next page on scroll inside
+ *  the bounded-height container.
  *
- *  Filter precedence: the page-level kind chips win, falling back to
- *  the widget's `default_kinds` when the page chips include every
- *  kind. That lets a user save a "just sessions" feed in their
- *  layout while still using the page chips to scope further. */
+ *  Grouping is configurable (`day` / `week` / `month` / `none`).
+ *  Within a group, consecutive `issue_finished` events for the same
+ *  series collapse into a single summary row — a 12-issue arc on a
+ *  Saturday shows as one line ("X-Men: Legacy · #5–#16, 12 issues")
+ *  rather than twelve repeating rows. */
 export function ChronoFeed({
   widget,
   scope,
 }: LogWidgetProps<ChronoFeedConfig>) {
+  const groupBy: ChronoFeedGroupBy = widget.config.group_by ?? "day";
+  // Empty-string `range` is the sentinel for "follow the page-level
+  // range selector"; anything else is an explicit per-widget
+  // override and wins.
+  const configuredRange = widget.config.range;
+  const effectiveRange: ReadingStatsRange =
+    configuredRange && configuredRange.length > 0
+      ? (configuredRange as ReadingStatsRange)
+      : scope.range;
   const filters: ReadingLogFilters = React.useMemo(() => {
-    const pageKindsAll = scope.kinds.length === ALL_KINDS.length;
     const widgetKinds = widget.config.default_kinds ?? [];
-    const widgetKindsAll = widgetKinds.length === 0;
-    const kinds: ReadingLogEventKind[] | undefined = pageKindsAll
-      ? widgetKindsAll
-        ? undefined
-        : widgetKinds
-      : scope.kinds;
+    const kinds = widgetKinds.length > 0 ? widgetKinds : undefined;
     return {
       kinds,
-      from: rangeToFrom(scope.range),
+      from: rangeToFrom(effectiveRange),
       limit: 30,
     };
-  }, [scope.kinds, scope.range, widget.config.default_kinds]);
+  }, [effectiveRange, widget.config.default_kinds]);
 
   const query = useReadingLogInfinite(filters);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
@@ -110,11 +111,6 @@ export function ChronoFeed({
     const node = sentinelRef.current;
     const root = scrollRef.current;
     if (!node || !root) return;
-    // Scope the observer to the feed's own scroll container so the
-    // sentinel only triggers when the user scrolls *within* the
-    // widget. Without this, the bounded-height feed would report
-    // the sentinel as already visible (it lives inside a viewport-
-    // visible card) and the observer would auto-walk every page.
     const obs = new IntersectionObserver(
       (entries) => {
         if (
@@ -136,18 +132,13 @@ export function ChronoFeed({
     [query.data],
   );
 
-  const groupByDay = widget.config.group_by_day ?? true;
   const groups = React.useMemo(
-    () => (groupByDay ? groupEvents(events) : flatGroups(events)),
-    [events, groupByDay],
+    () => buildGroups(events, groupBy),
+    [events, groupBy],
   );
 
   return (
     <WidgetCard widget={widget} title="Activity">
-      {/* Fixed-height scroll window. Caps the feed at ~640px (~12
-       *  cards) so the right-rail widgets stay reachable without
-       *  scrolling past the entire history. The inner div is what
-       *  the IntersectionObserver above uses as its root. */}
       <div ref={scrollRef} className="max-h-160 overflow-y-auto pr-1">
         {query.isLoading ? (
           <FeedSkeleton />
@@ -157,16 +148,20 @@ export function ChronoFeed({
           <ol className="flex flex-col gap-5">
             {groups.map((g) => (
               <li key={g.key} className="flex flex-col gap-2">
-                {groupByDay ? <GroupHeader group={g} /> : null}
+                {g.label ? <GroupHeader label={g.label} /> : null}
                 <ul
                   className={cn(
-                    "flex flex-col gap-3",
-                    groupByDay && "border-border/60 border-l-2 pl-4",
+                    "flex flex-col gap-2",
+                    g.label && "border-border/60 border-l-2 pl-4",
                   )}
                 >
-                  {g.events.map((e) => (
-                    <li key={e.id}>
-                      <EventRow event={e} />
+                  {g.rows.map((row) => (
+                    <li key={row.key}>
+                      {row.kind === "single" ? (
+                        <EventRow event={row.event} />
+                      ) : (
+                        <SeriesRollupRow rollup={row} />
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -191,79 +186,155 @@ export function ChronoFeed({
   );
 }
 
-type Group = {
+// ─── Grouping + collapsing ───
+
+type RowSingle = { kind: "single"; key: string; event: ReadingLogEventView };
+type RowRollup = {
+  kind: "rollup";
   key: string;
-  seriesId: string | null;
-  seriesName: string | null;
-  seriesSlug: string | null;
-  dayLabel: string;
-  events: ReadingLogEventView[];
+  seriesId: string;
+  seriesName: string;
+  seriesSlug: string;
+  /** Earliest cover among the collapsed events — first one we see
+   *  walking reverse-chronologically. */
+  coverUrl: string | null;
+  /** Issue numbers in original order (most-recent first). */
+  issueNumbers: string[];
+  /** Most-recent occurrence; drives the relative timestamp. */
+  latestOccurredAt: string;
+  earliestOccurredAt: string;
+};
+type Row = RowSingle | RowRollup;
+
+type Section = {
+  key: string;
+  /** `null` for the flat (no-group) layout. */
+  label: string | null;
+  rows: Row[];
 };
 
-function dayKey(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
+/** Group key per period. Strings sort lexicographically the same as
+ *  the corresponding date does, so we can compare them directly when
+ *  walking events in chrono-DESC order. */
+function periodKey(iso: string, groupBy: ChronoFeedGroupBy): string {
+  if (groupBy === "none") return "all";
+  const d = new Date(iso);
+  if (groupBy === "month") {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+  if (groupBy === "week") {
+    // ISO week-of-year would be nicer; rolling 7-day buckets anchored
+    // to Monday are good enough for the rendering grouping.
+    const monday = new Date(d);
+    const day = monday.getDay();
+    const diff = (day + 6) % 7; // 0 = Mon, 6 = Sun
+    monday.setDate(monday.getDate() - diff);
+    monday.setHours(0, 0, 0, 0);
+    return `wk-${monday.toISOString().slice(0, 10)}`;
+  }
+  // `day`
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  });
+}
+
+function periodLabel(iso: string, groupBy: ChronoFeedGroupBy): string {
+  if (groupBy === "none") return "";
+  const d = new Date(iso);
+  if (groupBy === "month") {
+    return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  }
+  if (groupBy === "week") {
+    const monday = new Date(d);
+    const day = monday.getDay();
+    const diff = (day + 6) % 7;
+    monday.setDate(monday.getDate() - diff);
+    return `Week of ${monday.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    })}`;
+  }
+  return d.toLocaleDateString(undefined, {
     weekday: "long",
     month: "short",
     day: "numeric",
   });
 }
 
-function groupEvents(events: ReadingLogEventView[]): Group[] {
-  const groups: Group[] = [];
+function buildGroups(
+  events: ReadingLogEventView[],
+  groupBy: ChronoFeedGroupBy,
+): Section[] {
+  const sections: Section[] = [];
   for (const e of events) {
-    const day = dayKey(e.occurred_at);
-    const sid = e.series?.id ?? null;
-    const last = groups[groups.length - 1];
-    if (last && last.dayLabel === day && last.seriesId === sid) {
-      last.events.push(e);
-    } else {
-      groups.push({
-        key: `${day}|${sid ?? "none"}|${e.id}`,
-        seriesId: sid,
-        seriesName: e.series?.name ?? null,
-        seriesSlug: e.series?.slug ?? null,
-        dayLabel: day,
-        events: [e],
-      });
+    const key = periodKey(e.occurred_at, groupBy);
+    let section = sections[sections.length - 1];
+    if (!section || section.key !== key) {
+      section = {
+        key,
+        label: groupBy === "none" ? null : periodLabel(e.occurred_at, groupBy),
+        rows: [],
+      };
+      sections.push(section);
     }
+    // Collapse adjacent issue_finished rows from the same series
+    // into a single rollup row. Other kinds (series_finished,
+    // session_completed, marker_created) always render as singles.
+    const lastRow = section.rows[section.rows.length - 1];
+    const isIssueFinished = e.kind === "issue_finished";
+    const sid = e.series?.id ?? null;
+    if (
+      isIssueFinished &&
+      sid &&
+      lastRow &&
+      lastRow.kind === "rollup" &&
+      lastRow.seriesId === sid
+    ) {
+      lastRow.issueNumbers.push(e.issue?.number ?? "?");
+      lastRow.earliestOccurredAt = e.occurred_at;
+      continue;
+    }
+    if (
+      isIssueFinished &&
+      sid &&
+      lastRow &&
+      lastRow.kind === "single" &&
+      lastRow.event.kind === "issue_finished" &&
+      lastRow.event.series?.id === sid
+    ) {
+      // Promote the prior single to a rollup so future siblings can
+      // collapse into it too. Carry the prior event's number first.
+      const prev = lastRow.event;
+      section.rows[section.rows.length - 1] = {
+        kind: "rollup",
+        key: `rollup-${sid}-${prev.id}`,
+        seriesId: sid,
+        seriesName: prev.series?.name ?? "Series",
+        seriesSlug: prev.series?.slug ?? "",
+        coverUrl: prev.issue?.cover_url ?? null,
+        issueNumbers: [prev.issue?.number ?? "?", e.issue?.number ?? "?"],
+        latestOccurredAt: prev.occurred_at,
+        earliestOccurredAt: e.occurred_at,
+      } satisfies RowRollup;
+      continue;
+    }
+    section.rows.push({
+      kind: "single",
+      key: e.id,
+      event: e,
+    });
   }
-  return groups;
+  return sections;
 }
 
-/** Single group containing every event in order — used when the
- *  user turns `group_by_day` off in the widget config. */
-function flatGroups(events: ReadingLogEventView[]): Group[] {
-  if (events.length === 0) return [];
-  return [
-    {
-      key: "flat",
-      seriesId: null,
-      seriesName: null,
-      seriesSlug: null,
-      dayLabel: "",
-      events,
-    },
-  ];
-}
+// ─── Row renderers ───
 
-function GroupHeader({ group }: { group: Group }) {
+function GroupHeader({ label }: { label: string }) {
   return (
-    <div className="text-muted-foreground flex flex-wrap items-baseline gap-x-2 text-xs">
-      {group.seriesSlug && group.seriesName ? (
-        <Link
-          href={seriesUrl(group.seriesSlug)}
-          className="hover:text-foreground text-foreground/80 truncate text-sm font-medium"
-          title={group.seriesName}
-        >
-          {group.seriesName}
-        </Link>
-      ) : group.seriesName ? (
-        <span className="text-foreground/80 truncate text-sm font-medium">
-          {group.seriesName}
-        </span>
-      ) : null}
-      <span>·</span>
-      <time>{group.dayLabel}</time>
+    <div className="text-muted-foreground/80 text-[11px] font-semibold tracking-widest uppercase">
+      {label}
     </div>
   );
 }
@@ -337,6 +408,86 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
   return inner;
 }
 
+function SeriesRollupRow({ rollup }: { rollup: RowRollup }) {
+  const inner = (
+    <div className="hover:bg-muted/50 group/event flex gap-3 rounded-md p-1.5 transition-colors">
+      <div
+        className={cn(
+          "border-border/60 relative h-14 w-10 shrink-0 overflow-hidden rounded border",
+          !rollup.coverUrl && "bg-muted",
+        )}
+        aria-hidden
+      >
+        {rollup.coverUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={rollup.coverUrl}
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : null}
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase",
+              KIND_TINT.issue_finished,
+            )}
+          >
+            <Check aria-hidden="true" className="h-3 w-3" />
+            {rollup.issueNumbers.length} finished
+          </span>
+          <time
+            className="text-muted-foreground/80 ml-auto text-xs"
+            title={new Date(rollup.latestOccurredAt).toLocaleString()}
+          >
+            {formatRelativeDate(rollup.latestOccurredAt)}
+          </time>
+        </div>
+        <div className="truncate text-sm font-medium" title={rollup.seriesName}>
+          {rollup.seriesName}
+        </div>
+        <p
+          className="text-muted-foreground truncate text-xs"
+          title={rollup.issueNumbers.map((n) => `#${n}`).join(", ")}
+        >
+          {summarizeIssueNumbers(rollup.issueNumbers)}
+        </p>
+      </div>
+    </div>
+  );
+  return rollup.seriesSlug ? (
+    <Link href={seriesUrl(rollup.seriesSlug)}>{inner}</Link>
+  ) : (
+    inner
+  );
+}
+
+/** Render a list of issue numbers as a tight range when contiguous,
+ *  otherwise a comma-separated list capped to a few entries. */
+function summarizeIssueNumbers(numbers: string[]): string {
+  if (numbers.length === 0) return "";
+  // Most-recent first → reverse to read low→high before checking
+  // contiguity.
+  const asInts = numbers
+    .map((n) => Number.parseFloat(n))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b);
+  const allContiguous =
+    asInts.length === numbers.length &&
+    asInts.length >= 2 &&
+    asInts.every((n, i) => i === 0 || n === asInts[i - 1]! + 1);
+  if (allContiguous) {
+    return `#${asInts[0]}–#${asInts[asInts.length - 1]}`;
+  }
+  const labels = numbers.map((n) => `#${n}`);
+  if (labels.length <= 4) return labels.join(", ");
+  const head = labels.slice(0, 3).join(", ");
+  return `${head} +${labels.length - 3} more`;
+}
+
 function PayloadLine({ event }: { event: ReadingLogEventView }) {
   const p: ReadingLogPayload = event.payload;
   switch (p.kind) {
@@ -355,23 +506,24 @@ function PayloadLine({ event }: { event: ReadingLogEventView }) {
         </p>
       );
     case "series_finished":
-      return (
-        <p className="text-muted-foreground truncate text-xs">
-          {p.total_issues > 0 ? (
-            <>
-              {p.total_issues} issue{p.total_issues === 1 ? "" : "s"} read
-            </>
-          ) : (
-            <>Series complete</>
-          )}
-          {p.span_days != null && p.span_days > 0 ? (
-            <>
-              {" "}
-              · across {p.span_days} day{p.span_days === 1 ? "" : "s"}
-            </>
-          ) : null}
-        </p>
-      );
+      // The server's payload for series_finished currently stubs
+      // `total_issues = 0`; surfacing "0 issues read" would be
+      // worse than silence, so we only render extra metadata when
+      // we have something meaningful to say.
+      if (p.total_issues > 0) {
+        return (
+          <p className="text-muted-foreground truncate text-xs">
+            {p.total_issues} issue{p.total_issues === 1 ? "" : "s"} read
+            {p.span_days != null && p.span_days > 0 ? (
+              <>
+                {" "}
+                · across {p.span_days} day{p.span_days === 1 ? "" : "s"}
+              </>
+            ) : null}
+          </p>
+        );
+      }
+      return null;
     case "marker_created":
       return (
         <p className="text-muted-foreground truncate text-xs">

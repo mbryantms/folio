@@ -59,7 +59,9 @@ export const WIDGET_REGISTRY: Record<
     Icon: ScrollText,
     size: "full",
     defaultConfig: {
-      group_by_day: true,
+      group_by: "day",
+      size: "full",
+      range: "",
       default_kinds: [],
     } satisfies ChronoFeedConfig,
     Component: ChronoFeed as unknown as LogWidgetDef<

@@ -20,7 +20,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { usePatchLogWidget } from "@/lib/api/mutations";
 import type {
@@ -54,6 +53,13 @@ const RANGE_OPTS: ReadonlyArray<{ value: ReadingStatsRange; label: string }> = [
   { value: "1y", label: "1 year" },
   { value: "all", label: "All time" },
 ];
+
+const CHRONO_GROUP_OPTS = [
+  { value: "day", label: "By day" },
+  { value: "week", label: "By week" },
+  { value: "month", label: "By month" },
+  { value: "none", label: "Flat list" },
+] as const;
 
 const CREATOR_ROLES: ReadonlyArray<{ value: CreatorRole; label: string }> = [
   { value: "writer", label: "Writer" },
@@ -183,17 +189,66 @@ function ConfigureBody({
       return (
         <div className="space-y-4">
           <FieldRow
-            label="Group by day"
-            description="Adds a soft header per day-and-series."
+            label="Width"
+            description="Wide spans both columns; narrow lets you pin another widget next to the feed."
           >
-            <Switch
-              checked={c.group_by_day ?? true}
-              onCheckedChange={(v) => set("group_by_day", v)}
-            />
+            <Select
+              value={c.size ?? "full"}
+              onValueChange={(v) => set("size", v)}
+            >
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="full">Wide</SelectItem>
+                <SelectItem value="half">Narrow</SelectItem>
+              </SelectContent>
+            </Select>
+          </FieldRow>
+          <FieldRow
+            label="Group"
+            description="How events are bucketed. Same-series finishes within a group collapse into one row."
+          >
+            <Select
+              value={c.group_by ?? "day"}
+              onValueChange={(v) => set("group_by", v)}
+            >
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CHRONO_GROUP_OPTS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FieldRow>
+          <FieldRow
+            label="Range"
+            description="Empty follows the page-level range selector."
+          >
+            <Select
+              value={c.range && c.range.length > 0 ? c.range : "__page"}
+              onValueChange={(v) => set("range", v === "__page" ? "" : v)}
+            >
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__page">Page default</SelectItem>
+                {RANGE_OPTS.map((r) => (
+                  <SelectItem key={r.value} value={r.value}>
+                    {r.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </FieldRow>
           <ChipMulti
-            label="Default kinds"
-            description="Empty = all kinds. The page-level filter wins when it's narrowed."
+            label="Event kinds"
+            description="Empty = all four kinds. Replaces the page's old chip row."
             options={EVENT_KINDS}
             value={c.default_kinds ?? []}
             onChange={(next) => set("default_kinds", next)}

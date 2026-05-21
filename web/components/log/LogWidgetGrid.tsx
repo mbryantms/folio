@@ -168,7 +168,12 @@ function SortableWidget({
     );
   }
 
-  const { Component, size } = def;
+  const { Component, size: defaultSize } = def;
+  // Per-widget size override — the chrono_feed widget's config has
+  // a `size` field so users can shrink it to half-width and put
+  // another widget next to it. Other kinds ignore the field today.
+  const cfgSize = (widget.config as { size?: "full" | "half" }).size;
+  const size = cfgSize === "half" || cfgSize === "full" ? cfgSize : defaultSize;
   return (
     <div
       ref={setNodeRef}

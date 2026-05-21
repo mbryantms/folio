@@ -165,15 +165,28 @@ struct EmptyConfig {}
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct ChronoFeedConfig {
-    group_by_day: bool,
-    /// Default kind filter (empty array = all kinds). Validated
-    /// against the four valid event kinds at submit time.
+    /// `"day" | "week" | "month" | "none"`. Drives the section
+    /// headers in the rendered feed. `none` is a flat list with no
+    /// dividers.
+    group_by: String,
+    /// `"full" | "half"`. Overrides the registry's default grid
+    /// footprint so a user who wants the chrono feed to share its
+    /// row with another widget can shrink it.
+    size: String,
+    /// `"7d" | "30d" | ... | "all"` per `ReadingStatsRange`. Empty
+    /// string = follow the page-level range.
+    range: String,
+    /// Default kind filter (empty = all kinds). Server only checks
+    /// the shape; the renderer validates kind strings against the
+    /// four valid event kinds.
     default_kinds: Vec<String>,
 }
 impl Default for ChronoFeedConfig {
     fn default() -> Self {
         Self {
-            group_by_day: true,
+            group_by: "day".to_string(),
+            size: "full".to_string(),
+            range: String::new(),
             default_kinds: Vec::new(),
         }
     }

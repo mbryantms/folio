@@ -4,6 +4,7 @@ import { SegmentedControl } from "@/components/settings/SegmentedControl";
 import type { ReadingStatsRange } from "@/lib/api/types";
 
 const OPTIONS: ReadonlyArray<{ value: ReadingStatsRange; label: string }> = [
+  { value: "7d", label: "7 days" },
   { value: "30d", label: "30 days" },
   { value: "60d", label: "60 days" },
   { value: "90d", label: "90 days" },
