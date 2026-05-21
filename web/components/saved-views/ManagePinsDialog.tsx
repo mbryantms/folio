@@ -118,11 +118,12 @@ export function ManagePinsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* `max-w-2xl` (was `max-w-md`) — wider so long view / CBL names
-       *  don't truncate under the chevron + count chrome on the
-       *  collapsible-section headers. Matches the density tier of the
-       *  CBL Import dialog (`max-w-3xl`) without going full-width. */}
-      <DialogContent className="max-w-2xl">
+      {/* `max-w-3xl` — matches the CBL Import dialog so the three
+       *  picker surfaces (Import CBL list, Add view, Add to sidebar)
+       *  read as one family. Long view / CBL / page names stay
+       *  legible next to the chevron + count chrome on the
+       *  collapsible-section headers. */}
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>
             Manage rails on {thisPage?.name ?? "this page"}
