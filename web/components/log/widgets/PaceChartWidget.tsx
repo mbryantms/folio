@@ -25,11 +25,7 @@ export function PaceChartWidget({
   const range = widget.config.range ?? scope.range;
   const stats = useReadingStats({ type: "all" }, range);
   return (
-    <WidgetCard
-      widgetId={widget.id}
-      title="Reading pace"
-      subtitle={`Last ${range}`}
-    >
+    <WidgetCard widget={widget} title="Reading pace" subtitle={`Last ${range}`}>
       {stats.isLoading ? (
         <Skeleton className="h-48 w-full" />
       ) : stats.data && stats.data.pace_series.length > 0 ? (

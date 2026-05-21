@@ -15,11 +15,7 @@ export function TopImprints({ widget, scope }: LogWidgetProps<RankingConfig>) {
   const stats = useReadingStats({ type: "all" }, range);
   const rows = (stats.data?.top_imprints ?? []).slice(0, limit);
   return (
-    <WidgetCard
-      widgetId={widget.id}
-      title="Top imprints"
-      subtitle={`Last ${range}`}
-    >
+    <WidgetCard widget={widget} title="Top imprints" subtitle={`Last ${range}`}>
       <RankingBody
         loading={stats.isLoading}
         rows={rows}

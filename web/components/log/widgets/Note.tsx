@@ -15,7 +15,7 @@ import type { LogWidgetProps, NoteConfig } from "./types";
 export function Note({ widget }: LogWidgetProps<NoteConfig>) {
   const body = widget.config.body ?? "";
   return (
-    <WidgetCard widgetId={widget.id} title="Note" Icon={StickyNote}>
+    <WidgetCard widget={widget} title="Note" Icon={StickyNote}>
       {body.length === 0 ? (
         <p className="text-muted-foreground text-xs">
           Empty note. Open “Configure…” to add a body.

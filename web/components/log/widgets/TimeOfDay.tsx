@@ -17,7 +17,7 @@ export function TimeOfDay({
   const stats = useReadingStats({ type: "all" }, scope.range);
   return (
     <WidgetCard
-      widgetId={widget.id}
+      widget={widget}
       title="When you read"
       subtitle={`Last ${scope.range}`}
     >

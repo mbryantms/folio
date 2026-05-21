@@ -15,7 +15,7 @@ export function Heatmap({ widget }: LogWidgetProps<HeatmapConfig>) {
   const stats = useReadingStats({ type: "all" }, "1y");
   return (
     <WidgetCard
-      widgetId={widget.id}
+      widget={widget}
       title="Reading heatmap"
       subtitle={
         widget.config.weeks ? `${widget.config.weeks}-week view` : undefined

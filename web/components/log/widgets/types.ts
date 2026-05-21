@@ -37,6 +37,11 @@ export type LogWidgetDef<C extends object = Record<string, unknown>> = {
   defaultConfig: C;
   /** React renderer. */
   Component: React.ComponentType<LogWidgetProps<C>>;
+  /** When true, the "Add widget" menu keeps the kind selectable even
+   *  if one is already on the grid. `note` is the only kind that
+   *  benefits from this today — a user might pin two notes for
+   *  different topics. */
+  allowMultiple?: boolean;
 };
 
 // ─── Per-kind config shapes (mirror server schemas) ───

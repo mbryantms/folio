@@ -38,7 +38,7 @@ export function TopCreators({
 
   return (
     <WidgetCard
-      widgetId={widget.id}
+      widget={widget}
       title={`Top ${ROLE_LABEL[role]?.toLowerCase() ?? role}`}
       subtitle={`Last ${range}`}
     >

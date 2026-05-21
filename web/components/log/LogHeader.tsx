@@ -6,13 +6,31 @@ import {
   Check,
   ListChecks,
   MessageSquare,
+  RotateCcw,
   Timer,
 } from "lucide-react";
 
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { useResetLogWidgets } from "@/lib/api/mutations";
 import { cn } from "@/lib/utils";
-import type { ReadingLogEventKind, ReadingStatsRange } from "@/lib/api/types";
+import type {
+  LogWidgetView,
+  ReadingLogEventKind,
+  ReadingStatsRange,
+} from "@/lib/api/types";
+
+import { AddWidgetMenu } from "./AddWidgetMenu";
 
 const KIND_META: ReadonlyArray<{
   value: ReadingLogEventKind;
@@ -26,19 +44,28 @@ const KIND_META: ReadonlyArray<{
 ];
 
 /** Reading-log page header — title + count blurb, the global range
- *  selector reused from `/settings/activity`, and a row of kind-filter
- *  chips. The page owns the state; the header is purely controlled. */
+ *  selector reused from `/settings/activity`, kind-filter chips,
+ *  and the customization actions (Add widget + Reset to defaults).
+ *  The page owns the state; the header is purely controlled. */
 export function LogHeader({
   range,
   onRangeChange,
   kinds,
   onKindsChange,
+  widgets,
 }: {
   range: ReadingStatsRange;
   onRangeChange: (next: ReadingStatsRange) => void;
   kinds: ReadingLogEventKind[];
   onKindsChange: (next: ReadingLogEventKind[]) => void;
+  /** Current widget list — drives the Add-widget menu's "already
+   *  there, hide" filtering. Empty array (e.g. while loading) lets
+   *  every kind be addable, which is fine because the mutation
+   *  invalidates the list afterward. */
+  widgets: LogWidgetView[];
 }) {
+  const reset = useResetLogWidgets();
+  const [resetOpen, setResetOpen] = React.useState(false);
   const toggle = (k: ReadingLogEventKind) => {
     if (kinds.includes(k)) {
       // Leaving the chip set empty would silence the feed; treat the
@@ -66,8 +93,38 @@ export function LogHeader({
             </p>
           </div>
         </div>
-        <ActivityRangeSelector value={range} onChange={onRangeChange} />
+        <div className="flex flex-wrap items-center gap-2">
+          <ActivityRangeSelector value={range} onChange={onRangeChange} />
+          <AddWidgetMenu current={widgets} />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setResetOpen(true)}
+            title="Reset to default layout"
+          >
+            <RotateCcw aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
+            Reset
+          </Button>
+        </div>
       </div>
+      <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset to default layout?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Removes every widget on your reading log and re-adds the built-in
+              four: activity feed, at-a-glance, heatmap, and top creators. Your
+              reading history isn&rsquo;t touched.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => reset.mutate()}>
+              Reset
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div
         role="group"
         aria-label="Event kind filters"

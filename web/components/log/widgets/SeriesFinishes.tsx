@@ -57,7 +57,7 @@ export function SeriesFinishes({
 
   return (
     <WidgetCard
-      widgetId={widget.id}
+      widget={widget}
       title="Series finished"
       subtitle={`Last ${range}`}
       Icon={ListChecks}

@@ -20,7 +20,7 @@ export function CurrentlyReading({
   const items = (query.data?.items ?? []).slice(0, limit);
 
   return (
-    <WidgetCard widgetId={widget.id} title="Currently reading">
+    <WidgetCard widget={widget} title="Currently reading">
       {query.isLoading ? (
         <div className="space-y-2">
           <Skeleton className="h-12 w-full" />

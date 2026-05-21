@@ -21,7 +21,7 @@ export function TopPublishers({
 
   return (
     <WidgetCard
-      widgetId={widget.id}
+      widget={widget}
       title="Top publishers"
       subtitle={`Last ${range}`}
     >

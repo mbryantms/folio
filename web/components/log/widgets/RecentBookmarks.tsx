@@ -43,7 +43,7 @@ export function RecentBookmarks({
     .slice(0, limit);
 
   return (
-    <WidgetCard widgetId={widget.id} title="Recent bookmarks">
+    <WidgetCard widget={widget} title="Recent bookmarks">
       {query.isLoading ? (
         <div className="space-y-2">
           <Skeleton className="h-3 w-3/4" />

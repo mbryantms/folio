@@ -12,7 +12,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -23,50 +22,67 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useRemoveLogWidget } from "@/lib/api/mutations";
+import type { LogWidgetView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
-/** Uniform shell every reading-log widget renders inside. Provides
- *  the title row, the kebab menu (Configure → M5 dialog stub,
- *  Remove → confirm + mutation), and a drag-handle slot the M5 grid
- *  hooks DnD into. The body renders whatever the kind-specific
- *  component passes as `children`. */
+import { ConfigureWidgetDialog } from "./ConfigureWidgetDialog";
+import { useDragInfo } from "./LogWidgetGrid";
+
+/** Uniform shell every reading-log widget renders inside.
+ *
+ *  Owns three dialog/menu surfaces:
+ *    - Kebab dropdown: `Configure…` / `Remove`
+ *    - Configure dialog: opens a kind-specific form (M5)
+ *    - Remove confirm: AlertDialog → `useRemoveLogWidget`
+ *
+ *  The drag handle (left edge, hover-visible) accepts `dragHandleProps`
+ *  from the parent grid — the grid spreads `@dnd-kit` listeners +
+ *  attributes onto it so the entire card can move from one spot.
+ *  M4 left the slot empty; M5 wires it. */
 export function WidgetCard({
-  widgetId,
+  widget,
   title,
   subtitle,
   Icon,
   children,
-  /** When false, suppresses the kebab menu entirely. Useful for the
-   *  `note` widget where Remove/Configure live inside the body. Off
-   *  by default — every other widget surfaces the menu. */
   showMenu = true,
-  /** Drag-handle render prop. M5 supplies @dnd-kit listeners /
-   *  attributes here; M4 leaves it `undefined` so the handle is a
-   *  visual placeholder without behavior. */
-  dragHandleProps,
   className,
 }: {
-  widgetId: string;
+  widget: LogWidgetView;
   title: string;
   subtitle?: string;
   Icon?: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
   showMenu?: boolean;
-  dragHandleProps?: React.HTMLAttributes<HTMLButtonElement>;
   className?: string;
 }) {
-  const remove = useRemoveLogWidget(widgetId);
+  const remove = useRemoveLogWidget(widget.id);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [configureOpen, setConfigureOpen] = React.useState(false);
+  // Drag handle + state come from the enclosing SortableContext via
+  // `useDragInfo`. Null when the card renders outside a grid (e.g.,
+  // a future read-only embed or test harness).
+  const drag = useDragInfo();
+  const dragHandleProps = drag?.dragHandleProps;
+  const isDragging = drag?.isDragging ?? false;
 
   return (
-    <Card className={cn("group/widget relative", className)}>
+    <Card
+      className={cn(
+        "group/widget relative",
+        isDragging && "opacity-50",
+        className,
+      )}
+    >
       <CardHeader className="flex flex-row items-center gap-2 pb-3">
         <button
           type="button"
           aria-label="Reorder widget"
           {...dragHandleProps}
           className={cn(
-            "text-muted-foreground/40 hover:text-muted-foreground -ml-1 hidden h-6 w-6 cursor-grab items-center justify-center rounded transition-colors group-hover/widget:flex active:cursor-grabbing",
+            "text-muted-foreground/40 hover:text-muted-foreground -ml-1 hidden h-6 w-6 cursor-grab touch-none items-center justify-center rounded transition-colors group-hover/widget:flex active:cursor-grabbing",
+            // Always-visible on mobile so reorder isn't hover-gated.
+            "max-md:flex",
           )}
         >
           <GripVertical aria-hidden="true" className="h-4 w-4" />
@@ -101,7 +117,12 @@ export function WidgetCard({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem disabled title="Configuration UI lands in M5">
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setConfigureOpen(true);
+                }}
+              >
                 <Settings2 aria-hidden="true" className="mr-2 h-4 w-4" />
                 Configure…
               </DropdownMenuItem>
@@ -109,8 +130,8 @@ export function WidgetCard({
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onSelect={(e) => {
-                  // shadcn DropdownMenuItem closes on select; we want
-                  // to keep focus and open the confirm dialog instead.
+                  // shadcn DropdownMenuItem closes on select; keep
+                  // focus and open the confirm dialog instead.
                   e.preventDefault();
                   setConfirmOpen(true);
                 }}
@@ -122,13 +143,13 @@ export function WidgetCard({
           </DropdownMenu>
         ) : null}
         <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-          <AlertDialogTrigger className="sr-only" tabIndex={-1} />
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Remove this widget?</AlertDialogTitle>
               <AlertDialogDescription>
-                You can add it back any time from the “Add widget” menu, or use
-                “Reset to defaults” to restore the original layout.
+                You can add it back any time from the &ldquo;Add widget&rdquo;
+                menu, or use &ldquo;Reset to defaults&rdquo; to restore the
+                original layout.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -142,6 +163,11 @@ export function WidgetCard({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        <ConfigureWidgetDialog
+          widget={widget}
+          open={configureOpen}
+          onOpenChange={setConfigureOpen}
+        />
       </CardHeader>
       <CardContent>{children}</CardContent>
     </Card>

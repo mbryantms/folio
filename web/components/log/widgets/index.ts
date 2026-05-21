@@ -193,6 +193,7 @@ export const WIDGET_REGISTRY: Record<
     Component: Note as unknown as LogWidgetDef<
       Record<string, unknown>
     >["Component"],
+    allowMultiple: true,
   },
 };
 

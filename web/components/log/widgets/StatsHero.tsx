@@ -34,7 +34,7 @@ export function StatsHero({ widget, scope }: LogWidgetProps<StatsHeroConfig>) {
       : DEFAULT_METRICS;
 
   return (
-    <WidgetCard widgetId={widget.id} title="At a glance">
+    <WidgetCard widget={widget} title="At a glance">
       {stats.isLoading ? (
         <div
           className="grid gap-3"

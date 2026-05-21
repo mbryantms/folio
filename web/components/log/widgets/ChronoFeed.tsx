@@ -104,10 +104,17 @@ export function ChronoFeed({
   }, [scope.kinds, scope.range, widget.config.default_kinds]);
 
   const query = useReadingLogInfinite(filters);
+  const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   React.useEffect(() => {
     const node = sentinelRef.current;
-    if (!node) return;
+    const root = scrollRef.current;
+    if (!node || !root) return;
+    // Scope the observer to the feed's own scroll container so the
+    // sentinel only triggers when the user scrolls *within* the
+    // widget. Without this, the bounded-height feed would report
+    // the sentinel as already visible (it lives inside a viewport-
+    // visible card) and the observer would auto-walk every page.
     const obs = new IntersectionObserver(
       (entries) => {
         if (
@@ -118,7 +125,7 @@ export function ChronoFeed({
           void query.fetchNextPage();
         }
       },
-      { rootMargin: "240px" },
+      { root, rootMargin: "120px" },
     );
     obs.observe(node);
     return () => obs.disconnect();
@@ -136,44 +143,50 @@ export function ChronoFeed({
   );
 
   return (
-    <WidgetCard widgetId={widget.id} title="Activity">
-      {query.isLoading ? (
-        <FeedSkeleton />
-      ) : events.length === 0 ? (
-        <EmptyState />
-      ) : (
-        <ol className="flex flex-col gap-5">
-          {groups.map((g) => (
-            <li key={g.key} className="flex flex-col gap-2">
-              {groupByDay ? <GroupHeader group={g} /> : null}
-              <ul
-                className={cn(
-                  "flex flex-col gap-3",
-                  groupByDay && "border-border/60 border-l-2 pl-4",
-                )}
-              >
-                {g.events.map((e) => (
-                  <li key={e.id}>
-                    <EventRow event={e} />
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ol>
-      )}
-      <div ref={sentinelRef} aria-hidden className="h-px" />
-      {query.isFetchingNextPage && (
-        <div className="text-muted-foreground mt-4 flex justify-center text-xs">
-          <ChevronDown className="mr-1 h-3 w-3 animate-pulse" />
-          Loading more…
-        </div>
-      )}
-      {!query.hasNextPage && events.length > 0 && (
-        <p className="text-muted-foreground/70 mt-6 text-center text-xs">
-          That&rsquo;s everything in this range.
-        </p>
-      )}
+    <WidgetCard widget={widget} title="Activity">
+      {/* Fixed-height scroll window. Caps the feed at ~640px (~12
+       *  cards) so the right-rail widgets stay reachable without
+       *  scrolling past the entire history. The inner div is what
+       *  the IntersectionObserver above uses as its root. */}
+      <div ref={scrollRef} className="max-h-160 overflow-y-auto pr-1">
+        {query.isLoading ? (
+          <FeedSkeleton />
+        ) : events.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <ol className="flex flex-col gap-5">
+            {groups.map((g) => (
+              <li key={g.key} className="flex flex-col gap-2">
+                {groupByDay ? <GroupHeader group={g} /> : null}
+                <ul
+                  className={cn(
+                    "flex flex-col gap-3",
+                    groupByDay && "border-border/60 border-l-2 pl-4",
+                  )}
+                >
+                  {g.events.map((e) => (
+                    <li key={e.id}>
+                      <EventRow event={e} />
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ol>
+        )}
+        <div ref={sentinelRef} aria-hidden className="h-px" />
+        {query.isFetchingNextPage && (
+          <div className="text-muted-foreground mt-4 flex justify-center text-xs">
+            <ChevronDown className="mr-1 h-3 w-3 animate-pulse" />
+            Loading more…
+          </div>
+        )}
+        {!query.hasNextPage && events.length > 0 && (
+          <p className="text-muted-foreground/70 mt-6 text-center text-xs">
+            That&rsquo;s everything in this range.
+          </p>
+        )}
+      </div>
     </WidgetCard>
   );
 }
