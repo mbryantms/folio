@@ -118,7 +118,11 @@ export function ManagePinsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      {/* `max-w-2xl` (was `max-w-md`) — wider so long view / CBL names
+       *  don't truncate under the chevron + count chrome on the
+       *  collapsible-section headers. Matches the density tier of the
+       *  CBL Import dialog (`max-w-3xl`) without going full-width. */}
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             Manage rails on {thisPage?.name ?? "this page"}

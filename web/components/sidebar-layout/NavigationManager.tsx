@@ -876,7 +876,10 @@ function AddToSidebarDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      {/* `max-w-2xl` (was `max-w-md`) — same widening as
+       *  `ManagePinsDialog` so long view / CBL / page names stay
+       *  readable next to the chevron + count chrome. */}
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Add to sidebar</DialogTitle>
           <DialogDescription>
