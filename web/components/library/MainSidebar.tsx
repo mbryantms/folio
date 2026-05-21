@@ -11,12 +11,13 @@ import {
 } from "@/components/ui/tooltip";
 import { UserFooter } from "@/components/shell/UserFooter";
 import { useMarkerCount } from "@/lib/api/queries";
+import { useSidebarSectionCollapse } from "@/lib/use-sidebar-section-collapse";
 import { cn } from "@/lib/utils";
 
 import { mainNavIcons } from "./main-nav-icons";
 import type { MainNavSection } from "./main-nav";
 import { railIconByKey } from "./rail-icons";
-import { Sparkles } from "lucide-react";
+import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 
 /**
  * Library sidebar — counterpart to AdminSidebar but for the main reader app.
@@ -48,6 +49,10 @@ export function MainSidebar({
   // Skipped when the user has the badge disabled — keeps a quiet
   // sidebar by default + saves the network round-trip.
   const markerCount = useMarkerCount({ enabled: showMarkerCount });
+  // Per-header collapse state. Sections without a `headerRefId` (the
+  // leading run before the first user-inserted header) intentionally
+  // can't collapse — there's nothing to toggle on.
+  const sectionCollapse = useSidebarSectionCollapse();
 
   return (
     <div className="flex h-full flex-col">
@@ -88,17 +93,55 @@ export function MainSidebar({
                 />
               );
             }
+            // Collapsibility: only sections that came from a real
+            // `kind="header"` row (and so have a stable ref_id we can
+            // key collapse-state by) get the chevron toggle. The
+            // implicit lead-in section (header-less items at the top)
+            // and icon-only sidebar mode both fall through to the
+            // static-label path. Mobile sheet inherits this naturally
+            // — same component, same behavior.
+            const collapsible =
+              !collapsed && !!section.headerRefId && !!section.label;
+            const sectionClosed = collapsible
+              ? sectionCollapse.isCollapsed(section.headerRefId!)
+              : false;
+            const itemsId = collapsible
+              ? `sidebar-section-${section.headerRefId}`
+              : undefined;
             return (
               <div
                 key={`${section.label ?? "untitled"}-${sectionIdx}`}
                 className="flex flex-col gap-1"
               >
-                {!collapsed && section.label && (
-                  <p className="text-muted-foreground/70 px-3 text-[11px] font-medium tracking-widest uppercase">
-                    {section.label}
-                  </p>
-                )}
-                <ul className="flex flex-col gap-0.5">
+                {!collapsed &&
+                  section.label &&
+                  (collapsible ? (
+                    <button
+                      type="button"
+                      aria-expanded={!sectionClosed}
+                      aria-controls={itemsId}
+                      onClick={() =>
+                        sectionCollapse.toggle(section.headerRefId!)
+                      }
+                      className="hover:bg-secondary/30 text-muted-foreground/70 hover:text-foreground/80 group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] font-medium tracking-widest uppercase transition-colors"
+                    >
+                      {sectionClosed ? (
+                        <ChevronRight className="h-3 w-3 shrink-0 transition-transform" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3 shrink-0 transition-transform" />
+                      )}
+                      <span className="truncate">{section.label}</span>
+                    </button>
+                  ) : (
+                    <p className="text-muted-foreground/70 px-3 text-[11px] font-medium tracking-widest uppercase">
+                      {section.label}
+                    </p>
+                  ))}
+                <ul
+                  id={itemsId}
+                  hidden={sectionClosed}
+                  className="flex flex-col gap-0.5"
+                >
                   {section.items.map((item) => {
                     // Icon resolution order:
                     //   1. The fixed main-nav registry (Home / Library /

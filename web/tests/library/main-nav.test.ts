@@ -164,6 +164,7 @@ describe("mainNav default layout", () => {
     expect(sections).toMatchInlineSnapshot(`
       [
         {
+          "headerRefId": "default:browse",
           "items": [
             {
               "href": "/",
@@ -193,6 +194,7 @@ describe("mainNav default layout", () => {
           "label": "Browse",
         },
         {
+          "headerRefId": "default:libraries",
           "items": [
             {
               "href": "/?library=all",

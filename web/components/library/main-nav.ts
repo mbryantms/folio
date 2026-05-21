@@ -42,6 +42,13 @@ export type MainNavSection = {
    *  padding above this section without a label row. Mutually
    *  exclusive with a meaningful `label`. */
   isSpacer?: boolean;
+  /** Stable id of the `kind="header"` row that opened this section,
+   *  when one exists. The sidebar renderer uses this as the
+   *  per-section collapse-state key (persisted in localStorage by
+   *  `useSidebarSectionCollapse`). Sections preceded by no header
+   *  (the implicit lead-in run) intentionally have no id and so
+   *  can't collapse — there's no header to toggle. */
+  headerRefId?: string;
 };
 
 /**
@@ -75,7 +82,11 @@ export function mainNav(
     if (!entry.visible) continue;
     if (entry.kind === "header") {
       flush();
-      current = { label: entry.label, items: [] };
+      current = {
+        label: entry.label,
+        items: [],
+        headerRefId: entry.ref_id,
+      };
       continue;
     }
     if (entry.kind === "spacer") {
