@@ -30,6 +30,7 @@ export function CblIssueCard({
   className,
   selectMode,
   onEnterSelectMode,
+  isCurrent = false,
 }: {
   entry: CblEntryView;
   /** Hydrated issue when `entry.matched_issue_id` resolves to a row in
@@ -51,6 +52,11 @@ export function CblIssueCard({
   };
   /** Long-press sheet "Select" entry callback. */
   onEnterSelectMode?: (id: string) => void;
+  /** True when this entry is the user's next-to-read in the CBL — adds
+   *  the primary ring + "Up next" caption, matching `CblWindowCard`'s
+   *  treatment on the home rail so the detail-page grid and the rail
+   *  use one shared idiom for the anchor card. */
+  isCurrent?: boolean;
 }) {
   const positionLabel = `#${entry.position + 1}`;
   const numberLabel = entry.issue_number ? `#${entry.issue_number}` : "—";
@@ -127,7 +133,16 @@ export function CblIssueCard({
   const coverWrapperProps = inSelectMode ? {} : longPress.wrapperProps;
 
   const cover = (showActions: boolean) => (
-    <div className="relative" {...coverWrapperProps}>
+    <div
+      className={cn(
+        "relative rounded-md transition-all",
+        // Match `CblWindowCard`'s anchor ring — same primary tint,
+        // same ring-2 + ring-offset-2 so the detail page and the
+        // home rail share one "this is your up-next" idiom.
+        isCurrent && "ring-primary ring-offset-background ring-2 ring-offset-2",
+      )}
+      {...coverWrapperProps}
+    >
       {selectMode && (
         <SelectionCheckbox
           isSelected={selectMode.isSelected}
@@ -211,6 +226,11 @@ export function CblIssueCard({
       <div className="text-muted-foreground text-xs font-medium">
         {numberLabel}
         {entry.year ? ` · ${entry.year}` : null}
+        {isCurrent && (
+          <span className="text-primary ml-1.5 text-[10px] font-semibold tracking-wider uppercase">
+            Up next
+          </span>
+        )}
       </div>
       <div className="truncate text-sm font-medium" title={heading}>
         {heading}

@@ -33,7 +33,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useCblList, useCblListEntriesInfinite } from "@/lib/api/queries";
+import {
+  useCblList,
+  useCblListEntriesInfinite,
+  useCblListWindow,
+} from "@/lib/api/queries";
 import { useBulkMarkProgress, useRefreshCblList } from "@/lib/api/mutations";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
@@ -82,6 +86,20 @@ function CblViewDetailInner({
   const entriesQuery = useCblListEntriesInfinite(listId, {
     status: hideMissing ? "matched,ambiguous,manual" : undefined,
   });
+  // Tiny piggy-back on the rail's window query so the detail page
+  // highlights the same "Up next" anchor card as the home rail.
+  // before=0 keeps the response cheap — we only need `current_index`
+  // and the position of the entry it points at. `after=1` because the
+  // server clamps `after` to [1, 40]; an `after=0` request would
+  // round up anyway. The full window endpoint already filters by
+  // library ACL + ignores unmatched entries, matching the
+  // up-next-resolution rules.
+  const upNextWindow = useCblListWindow(listId, { before: 0, after: 1 });
+  const upNextPosition = (() => {
+    const data = upNextWindow.data;
+    if (!data || data.current_index == null) return null;
+    return data.items[data.current_index]?.position ?? null;
+  })();
   const refresh = useRefreshCblList(listId);
   const [editOpen, setEditOpen] = React.useState(false);
   // Re-anchors `ManualMatchPopover` (and any other descendant popover)
@@ -380,6 +398,10 @@ function CblViewDetailInner({
                     entry={item.entry}
                     issue={item.entry.issue ?? undefined}
                     cblSavedViewId={savedView.id}
+                    isCurrent={
+                      upNextPosition != null &&
+                      item.entry.position === upNextPosition
+                    }
                     selectMode={
                       selection.selectMode
                         ? {
