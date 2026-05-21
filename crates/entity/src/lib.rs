@@ -28,6 +28,7 @@ pub mod issue_team;
 pub mod library;
 pub mod library_health_issue;
 pub mod library_user_access;
+pub mod log_widget;
 pub mod marker;
 pub mod progress_record;
 pub mod rail_dismissal;

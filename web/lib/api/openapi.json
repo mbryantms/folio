@@ -4330,6 +4330,180 @@
         }
       }
     },
+    "/me/log/widgets": {
+      "get": {
+        "tags": [
+          "api::log_widgets"
+        ],
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogWidgetListView"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "api::log_widgets"
+        ],
+        "operationId": "add",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddWidgetReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogWidgetView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "unknown kind or invalid config"
+          }
+        }
+      }
+    },
+    "/me/log/widgets/reorder": {
+      "post": {
+        "tags": [
+          "api::log_widgets"
+        ],
+        "operationId": "reorder",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogWidgetListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ids don't match owned set"
+          }
+        }
+      }
+    },
+    "/me/log/widgets/reset": {
+      "post": {
+        "tags": [
+          "api::log_widgets"
+        ],
+        "operationId": "reset",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogWidgetListView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/log/widgets/{id}": {
+      "delete": {
+        "tags": [
+          "api::log_widgets"
+        ],
+        "operationId": "remove",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "not found / not yours"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "api::log_widgets"
+        ],
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchWidgetReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogWidgetView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid config"
+          },
+          "404": {
+            "description": "not found / not yours"
+          }
+        }
+      }
+    },
     "/me/markers": {
       "get": {
         "tags": [
@@ -6502,6 +6676,20 @@
           "ref_id": {
             "type": "string",
             "description": "Series UUID or issue id (TEXT). Validated against the\ndeclared `entry_kind`."
+          }
+        }
+      },
+      "AddWidgetReq": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "config": {
+            "description": "Optional starting config. Defaults to `{}`, which is always\na legal blob — the per-kind renderer fills in defaults."
+          },
+          "kind": {
+            "type": "string"
           }
         }
       },
@@ -9745,6 +9933,50 @@
           }
         }
       },
+      "LogWidgetListView": {
+        "type": "object",
+        "required": [
+          "widgets"
+        ],
+        "properties": {
+          "widgets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogWidgetView"
+            }
+          }
+        }
+      },
+      "LogWidgetView": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "position",
+          "config",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "config": {},
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
       "LoginReq": {
         "type": "object",
         "required": [
@@ -10749,6 +10981,17 @@
           },
           "updated_at": {
             "type": "string"
+          }
+        }
+      },
+      "PatchWidgetReq": {
+        "type": "object",
+        "required": [
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "description": "Replacement config blob. Replaces the entire `config` column\n— clients merge with the previous value client-side. The\nPATCH name is preserved because the row's other fields stay\nthe same and config is what the form actually edits."
           }
         }
       },

@@ -109,6 +109,12 @@ use utoipa::OpenApi;
         api::reading_sessions::stats,
         api::reading_sessions::clear_history,
         api::reading_log::reading_log,
+        api::log_widgets::list,
+        api::log_widgets::add,
+        api::log_widgets::update,
+        api::log_widgets::remove,
+        api::log_widgets::reorder,
+        api::log_widgets::reset,
         api::admin_stats::overview,
         api::admin_stats::user_reading_stats,
         api::admin_stats::users_list,
@@ -285,6 +291,11 @@ use utoipa::OpenApi;
         api::reading_log::EventSeries,
         api::reading_log::EventIssue,
         api::reading_log::EventPayload,
+        api::log_widgets::LogWidgetView,
+        api::log_widgets::LogWidgetListView,
+        api::log_widgets::AddWidgetReq,
+        api::log_widgets::PatchWidgetReq,
+        api::log_widgets::ReorderReq,
         api::reading_sessions::UpsertReq,
         api::reading_sessions::ReadingSessionView,
         api::reading_sessions::ReadingSessionListView,
@@ -743,6 +754,7 @@ pub fn router(state: AppState) -> Router {
         .merge(api::ratings::routes())
         .merge(api::reading_sessions::routes())
         .merge(api::reading_log::routes())
+        .merge(api::log_widgets::routes())
         .merge(api::admin_stats::routes())
         .merge(api::saved_views::routes())
         .merge(api::sidebar_layout::routes())

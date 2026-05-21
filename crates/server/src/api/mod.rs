@@ -23,6 +23,7 @@ pub mod issue_ocr;
 pub mod issues;
 pub mod komga_compat;
 pub mod libraries;
+pub mod log_widgets;
 pub mod markers;
 pub mod meta;
 pub mod next_up;
