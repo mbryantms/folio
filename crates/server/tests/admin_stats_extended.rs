@@ -374,13 +374,24 @@ async fn engagement_returns_90_day_series_and_devices() {
     let reader = register(&app, "reader@example.com").await;
     let (lib, series, issues) = seed_library_with_issues(&app, "demo", 1, None).await;
     grant_library(&app, reader.user_id, lib).await;
-    let now = Utc::now().fixed_offset();
+    // Anchor on today-noon UTC instead of `now - Nh` so a test run that
+    // happens early in the UTC day (CI runs at all hours) doesn't push
+    // the "today" session backwards into yesterday-UTC. The 90-day
+    // bucket boundaries are UTC days, so the assertion below depends
+    // on the seeded session landing on the same UTC date as the
+    // server's "today."
+    let today_noon = Utc::now()
+        .date_naive()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+        .and_utc()
+        .fixed_offset();
     insert_session(
         &app,
         reader.user_id,
         &issues[0],
         series,
-        now - Duration::hours(2),
+        today_noon,
         90_000,
         10,
         9,
@@ -392,7 +403,7 @@ async fn engagement_returns_90_day_series_and_devices() {
         reader.user_id,
         &issues[0],
         series,
-        now - Duration::days(8),
+        today_noon - Duration::days(8),
         90_000,
         10,
         9,
@@ -425,12 +436,21 @@ async fn engagement_respects_exclude_flag() {
     let reader = register(&app, "reader@example.com").await;
     let (lib, series, issues) = seed_library_with_issues(&app, "demo", 1, None).await;
     grant_library(&app, reader.user_id, lib).await;
+    // Same UTC-anchor pattern as `engagement_returns_90_day_series_and_devices`
+    // — pin to today-noon so the session can't slip to yesterday on
+    // pre-midnight test runs.
+    let today_noon = Utc::now()
+        .date_naive()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+        .and_utc()
+        .fixed_offset();
     insert_session(
         &app,
         reader.user_id,
         &issues[0],
         series,
-        Utc::now().fixed_offset() - Duration::hours(1),
+        today_noon,
         60_000,
         10,
         9,
