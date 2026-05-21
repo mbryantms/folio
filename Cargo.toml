@@ -14,6 +14,11 @@ edition = "2024"
 rust-version = "1.91"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/example/comic-reader"
+# Internal-only crates — `publish = false` so cargo-deny's wildcard-path
+# exemption (`allow-wildcard-paths`) applies. Without this, deny flags
+# every `{ path = "../foo" }` workspace dependency as a wildcard violation
+# because crates.io would reject path-only deps on a public crate.
+publish = false
 
 # Lints applied to every workspace member. Member crates opt in with
 # `[lints] workspace = true`. Levels chosen to enforce hygiene without

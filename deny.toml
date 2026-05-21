@@ -8,7 +8,44 @@ all-features = true
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "warn"
-ignore = []
+# Each entry below documents (a) which crate the advisory hits, (b)
+# how it reaches our graph, (c) why we can accept it for now. Revisit
+# on every dep-bump pass.
+ignore = [
+    # `instant` unmaintained — transitive via parking_lot / wasm-clock
+    # paths. Compile-time only; the crate just wraps platform clock
+    # APIs. No upstream replacement we can apply at the edge.
+    "RUSTSEC-2024-0384",
+    # `number_prefix` unmaintained — transitive via indicatif (CLI
+    # progress bars in scanner). Cosmetic formatter; no security
+    # surface.
+    "RUSTSEC-2025-0119",
+    # `paste` no longer maintained — proc-macro used at build time by
+    # several macro crates. Doesn't ship to runtime. Tracked upstream.
+    "RUSTSEC-2024-0436",
+    # `rustls-pemfile` unmaintained — dev-only via `testcontainers ←
+    # bollard`. Not in the production binary; only the integration
+    # test harness pulls it.
+    "RUSTSEC-2025-0134",
+    # `tokio-tar` PAX-header smuggling (CVE-2025-62518) — dev-only via
+    # `testcontainers`. Real CVE but only reachable from the test
+    # harness when reading a maliciously-crafted tar; our tests
+    # consume known-good fixtures + the bollard-side container layer
+    # tarballs come from a trusted source. Track upgrade to
+    # `astral-tokio-tar` when testcontainers ships it.
+    "RUSTSEC-2025-0111",
+    # `lru 0.12` IterMut Stacked Borrows soundness — fixed upstream in
+    # 0.13+. Tracked as a follow-up dep-bump (PR scope: ZipLru +
+    # callers in archive/cbz). Soundness only triggers under Miri's
+    # Stacked Borrows model; safe under Tree Borrows + in practice.
+    "RUSTSEC-2026-0002",
+    # `rsa 0.9.10` Marvin Attack timing sidechannel — transitive via
+    # `jsonwebtoken`. Folio signs JWTs with Ed25519 (see
+    # `secrets::Secrets::jwt_signing`); the `rsa` crate ships in the
+    # graph but our code path never exercises RSA primitives.
+    # Advisory has "No safe upgrade available" upstream.
+    "RUSTSEC-2023-0071",
+]
 
 [licenses]
 allow = [
@@ -27,6 +64,14 @@ allow = [
     "CDLA-Permissive-2.0",   # webpki-roots (rustls cert store); LF permissive
     "AGPL-3.0",
     "AGPL-3.0-or-later",
+    # comic-text-detector ships under GPL-3.0-or-later. Folio is
+    # AGPL-3.0-or-later; the GPL family is one-way compatible into AGPL
+    # (AGPL is GPL + the network-use clause).
+    "GPL-3.0-or-later",
+    # `libfuzzer-sys` carries the trifecta `(MIT OR Apache-2.0) AND
+    # NCSA`. NCSA is the University of Illinois open-source license
+    # used by LLVM-adjacent projects; OSI-approved + FSF-free.
+    "NCSA",
 ]
 confidence-threshold = 0.9
 
