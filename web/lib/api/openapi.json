@@ -4891,6 +4891,89 @@
         }
       }
     },
+    "/me/reading-log": {
+      "get": {
+        "tags": [
+          "api::reading_log"
+        ],
+        "operationId": "reading_log",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "library_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "series_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingLogPageView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "validation"
+          }
+        }
+      }
+    },
     "/me/reading-sessions": {
       "get": {
         "tags": [
@@ -8397,6 +8480,321 @@
           }
         }
       },
+      "EventIssue": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug"
+        ],
+        "properties": {
+          "colorist": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cover_artist": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "editor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "inker": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "letterer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "month": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "penciller": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "writer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "EventPayload": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "total_sessions",
+              "total_active_ms",
+              "is_reread",
+              "kind"
+            ],
+            "properties": {
+              "first_read_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Best-effort first-read timestamp (earliest reading_session\n`started_at` for this user+issue). `None` when no session\nrows survived for the issue."
+              },
+              "is_reread": {
+                "type": "boolean",
+                "description": "Heuristic: `total_sessions > 1` is a reread. Refined in M6+."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "issue_finished"
+                ]
+              },
+              "total_active_ms": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Sum of `active_ms` across those sessions."
+              },
+              "total_sessions": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Count of finalized reading_sessions for this user+issue."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "total_issues",
+              "total_active_ms",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "series_finished"
+                ]
+              },
+              "span_days": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "`(finished_at - started_at)` whole days. `None` when\n`started_at` is missing."
+              },
+              "started_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Earliest `finished_at` across the series's matched issues —\nwhen the user first finished any issue in the series."
+              },
+              "total_active_ms": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Sum of all `active_ms` across the series's sessions."
+              },
+              "total_issues": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Active issues in the series. Always > 0 (you can't finish\na series with zero issues)."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "started_at",
+              "ended_at",
+              "active_ms",
+              "pages_read",
+              "kind"
+            ],
+            "properties": {
+              "active_ms": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "device": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "ended_at": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "session_completed"
+                ]
+              },
+              "pages_read": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "started_at": {
+                "type": "string"
+              },
+              "view_mode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "marker_id",
+              "marker_kind",
+              "page_index",
+              "tags",
+              "kind"
+            ],
+            "properties": {
+              "body_preview": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "First ~80 chars of the marker body. `None` when the marker\nhas no body (bookmarks / favorites typically don't)."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "marker_created"
+                ]
+              },
+              "marker_id": {
+                "type": "string"
+              },
+              "marker_kind": {
+                "type": "string"
+              },
+              "page_index": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "EventSeries": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "imprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slug": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "Field": {
         "type": "string",
         "description": "All filterable fields. Per-field metadata (kind, allowed ops, SQL\ncolumn) lives in [`super::registry`]. Adding a field is a two-step:\nadd a variant here + a registry entry. The OpenAPI schema mirrors this\nenum so the M5 field-picker can iterate variants without a separate\nJSON constant.",
@@ -10733,6 +11131,75 @@
               "null"
             ],
             "format": "double"
+          }
+        }
+      },
+      "ReadingLogEventView": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "occurred_at",
+          "payload"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Synthetic stable id: `{kind-prefix}:{underlying-id}`. Same id\nacross pages — clients dedupe with it."
+          },
+          "issue": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventIssue",
+                "description": "Hydrated issue row (when the event has one). `series_finished`\nis the only kind with `issue = None`; the others always\nresolve."
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "One of `issue_finished` / `series_finished` / `session_completed`\n/ `marker_created`."
+          },
+          "occurred_at": {
+            "type": "string",
+            "description": "RFC3339 — the canonical sort key for the feed."
+          },
+          "payload": {
+            "$ref": "#/components/schemas/EventPayload",
+            "description": "Kind-specific metadata. Different schema per kind, see\n`EventPayload` variants."
+          },
+          "series": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventSeries",
+                "description": "Hydrated series row (when the event has one). All four kinds\nhave a series; `None` only on the very rare case where the\nreferenced series was deleted between event capture and the\nhydrate query."
+              }
+            ]
+          }
+        }
+      },
+      "ReadingLogPageView": {
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadingLogEventView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

@@ -108,6 +108,7 @@ use utoipa::OpenApi;
         api::reading_sessions::list,
         api::reading_sessions::stats,
         api::reading_sessions::clear_history,
+        api::reading_log::reading_log,
         api::admin_stats::overview,
         api::admin_stats::user_reading_stats,
         api::admin_stats::users_list,
@@ -279,6 +280,11 @@ use utoipa::OpenApi;
         api::rails::CreateDismissalReq,
         api::next_up::NextUpView,
         api::next_up::NextUpSource,
+        api::reading_log::ReadingLogPageView,
+        api::reading_log::ReadingLogEventView,
+        api::reading_log::EventSeries,
+        api::reading_log::EventIssue,
+        api::reading_log::EventPayload,
         api::reading_sessions::UpsertReq,
         api::reading_sessions::ReadingSessionView,
         api::reading_sessions::ReadingSessionListView,
@@ -736,6 +742,7 @@ pub fn router(state: AppState) -> Router {
         .merge(api::next_up::routes())
         .merge(api::ratings::routes())
         .merge(api::reading_sessions::routes())
+        .merge(api::reading_log::routes())
         .merge(api::admin_stats::routes())
         .merge(api::saved_views::routes())
         .merge(api::sidebar_layout::routes())

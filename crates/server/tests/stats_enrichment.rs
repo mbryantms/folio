@@ -538,6 +538,7 @@ async fn completion_honors_progress_records_finished() {
         last_page: Set(4),
         percent: Set(1.0),
         finished: Set(true),
+        finished_at: Set(Some(now)),
         updated_at: Set(now),
         device: Set(None),
     }

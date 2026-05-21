@@ -356,6 +356,7 @@ pub async fn seed_progress<C: ConnectionTrait>(
         last_page: Set(last_page),
         percent: Set(percent),
         finished: Set(finished),
+        finished_at: Set(if finished { Some(now) } else { None }),
         updated_at: Set(now),
         device: Set(None),
     }
@@ -381,6 +382,7 @@ pub async fn seed_progress_at<C: ConnectionTrait>(
         last_page: Set(last_page),
         percent: Set(if finished { 1.0 } else { 0.5 }),
         finished: Set(finished),
+        finished_at: Set(if finished { Some(when) } else { None }),
         updated_at: Set(when),
         device: Set(None),
     }

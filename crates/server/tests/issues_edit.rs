@@ -870,6 +870,7 @@ async fn series_view_includes_progress_summary_and_year_range() {
         last_page: Set(19),
         percent: Set(100.0),
         finished: Set(true),
+        finished_at: Set(Some(now)),
         updated_at: Set(now),
         device: Set(None),
     }
@@ -882,6 +883,7 @@ async fn series_view_includes_progress_summary_and_year_range() {
         last_page: Set(8),
         percent: Set(50.0),
         finished: Set(false),
+        finished_at: Set(None),
         updated_at: Set(now),
         device: Set(None),
     }

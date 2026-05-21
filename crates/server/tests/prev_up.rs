@@ -446,6 +446,7 @@ async fn finish_issue(app: &TestApp, user_id: Uuid, issue_id: &str) {
         last_page: Set(19),
         percent: Set(1.0),
         finished: Set(true),
+        finished_at: Set(Some(now)),
         updated_at: Set(now),
         device: Set(None),
     }

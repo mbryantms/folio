@@ -65,6 +65,9 @@ pub struct ProgressView {
     pub percent: f64,
     pub finished: bool,
     pub updated_at: String,
+    /// Authoritative timestamp the issue was flipped to finished;
+    /// `None` for in-progress / unread rows.
+    pub finished_at: Option<String>,
 }
 
 impl From<progress_record::Model> for ProgressView {
@@ -75,7 +78,31 @@ impl From<progress_record::Model> for ProgressView {
             percent: m.percent,
             finished: m.finished,
             updated_at: m.updated_at.to_rfc3339(),
+            finished_at: m.finished_at.map(|t| t.to_rfc3339()),
         }
+    }
+}
+
+/// Resolve the new `finished_at` value for an upsert. Centralized so
+/// the four write paths (`upsert_for`, `upsert_series`, `upsert_bulk`,
+/// `upsert_series_bulk`) can't drift on the flip semantics.
+///
+///   - false → true:  stamp `now`
+///   - true  → false: clear to `None`
+///   - true  → true:  keep the previous timestamp (backfilled rows
+///     may have inherited their `updated_at`; respect that)
+///   - false → false: stay `None`
+pub(crate) fn resolve_finished_at(
+    prev_finished: bool,
+    next_finished: bool,
+    prev_finished_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    match (prev_finished, next_finished) {
+        (false, true) => Some(now),
+        (true, false) => None,
+        (true, true) => prev_finished_at.or(Some(now)),
+        (false, false) => None,
     }
 }
 
@@ -155,24 +182,29 @@ pub(crate) async fn upsert_for(
             // explicit value, so user-intended toggles still flow
             // through.
             let next_finished = finished.unwrap_or(prev.finished);
+            let next_finished_at =
+                resolve_finished_at(prev.finished, next_finished, prev.finished_at, now);
             let am = ProgressAM {
                 user_id: Unchanged(user_id),
                 issue_id: Unchanged(issue_row.id.clone()),
                 last_page: Set(page),
                 percent: Set(percent),
                 finished: Set(next_finished),
+                finished_at: Set(next_finished_at),
                 updated_at: Set(now),
                 device: Set(device),
             };
             am.update(&app.db).await
         }
         None => {
+            let next_finished = finished.unwrap_or(false);
             let am = ProgressAM {
                 user_id: Set(user_id),
                 issue_id: Set(issue_row.id.clone()),
                 last_page: Set(page),
                 percent: Set(percent),
-                finished: Set(finished.unwrap_or(false)),
+                finished: Set(next_finished),
+                finished_at: Set(if next_finished { Some(now) } else { None }),
                 updated_at: Set(now),
                 device: Set(device),
             };
@@ -311,13 +343,16 @@ pub async fn upsert_series(
                 skipped += 1;
                 continue;
             }
-            Some(_) => {
+            Some(prev) => {
+                let next_finished_at =
+                    resolve_finished_at(prev.finished, req.finished, prev.finished_at, now);
                 let am = ProgressAM {
                     user_id: Unchanged(user.id),
                     issue_id: Unchanged(iss.id.clone()),
                     last_page: Set(target_page),
                     percent: Set(target_percent),
                     finished: Set(req.finished),
+                    finished_at: Set(next_finished_at),
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                 };
@@ -334,6 +369,7 @@ pub async fn upsert_series(
                     last_page: Set(target_page),
                     percent: Set(target_percent),
                     finished: Set(req.finished),
+                    finished_at: Set(if req.finished { Some(now) } else { None }),
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                 };
@@ -511,13 +547,16 @@ pub async fn upsert_bulk(
             Some(row) if row.finished == req.finished && row.last_page == target_page => {
                 skipped += 1;
             }
-            Some(_) => {
+            Some(prev) => {
+                let next_finished_at =
+                    resolve_finished_at(prev.finished, req.finished, prev.finished_at, now);
                 let am = ProgressAM {
                     user_id: Unchanged(user.id),
                     issue_id: Unchanged(iss.id.clone()),
                     last_page: Set(target_page),
                     percent: Set(target_percent),
                     finished: Set(req.finished),
+                    finished_at: Set(next_finished_at),
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                 };
@@ -534,6 +573,7 @@ pub async fn upsert_bulk(
                     last_page: Set(target_page),
                     percent: Set(target_percent),
                     finished: Set(req.finished),
+                    finished_at: Set(if req.finished { Some(now) } else { None }),
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                 };
@@ -720,13 +760,16 @@ pub async fn upsert_series_bulk(
                 Some(row) if row.finished == req.finished && row.last_page == target_page => {
                     skipped += 1;
                 }
-                Some(_) => {
+                Some(prev) => {
+                    let next_finished_at =
+                        resolve_finished_at(prev.finished, req.finished, prev.finished_at, now);
                     let am = ProgressAM {
                         user_id: Unchanged(user.id),
                         issue_id: Unchanged(iss.id.clone()),
                         last_page: Set(target_page),
                         percent: Set(target_percent),
                         finished: Set(req.finished),
+                        finished_at: Set(next_finished_at),
                         updated_at: Set(now),
                         device: Set(req.device.clone()),
                     };
@@ -743,6 +786,7 @@ pub async fn upsert_series_bulk(
                         last_page: Set(target_page),
                         percent: Set(target_percent),
                         finished: Set(req.finished),
+                        finished_at: Set(if req.finished { Some(now) } else { None }),
                         updated_at: Set(now),
                         device: Set(req.device.clone()),
                     };

@@ -2289,6 +2289,7 @@ async fn seed_progress(
         last_page: Set(last_page),
         percent: Set(if finished { 100.0 } else { 50.0 }),
         finished: Set(finished),
+        finished_at: Set(if finished { Some(now) } else { None }),
         updated_at: Set(now),
         device: Set(None),
     }

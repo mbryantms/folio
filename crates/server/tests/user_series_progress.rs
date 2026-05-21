@@ -226,6 +226,7 @@ async fn fetch_for_series_returns_finished_count_and_percent() {
             last_page: Set(last_page),
             percent: Set(if finished { 100.0 } else { 50.0 }),
             finished: Set(finished),
+            finished_at: Set(if finished { Some(now) } else { None }),
             updated_at: Set(now),
             device: Set(None),
         }
@@ -259,6 +260,7 @@ async fn last_read_at_tracks_max_heartbeat() {
         last_page: Set(5),
         percent: Set(50.0),
         finished: Set(false),
+        finished_at: Set(None),
         updated_at: Set(now),
         device: Set(None),
     }
@@ -386,6 +388,7 @@ async fn batch_fetch_keys_by_series_id() {
             last_page: Set(20),
             percent: Set(100.0),
             finished: Set(true),
+            finished_at: Set(Some(now)),
             updated_at: Set(now),
             device: Set(None),
         }

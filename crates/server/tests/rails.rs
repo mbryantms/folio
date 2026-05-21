@@ -474,6 +474,7 @@ async fn write_progress(
         // Match the percent the production handler would compute (page / 20).
         percent: Set((last_page as f64 / 20.0).clamp(0.0, 1.0)),
         finished: Set(finished),
+        finished_at: Set(if finished { Some(when) } else { None }),
         updated_at: Set(when),
         device: Set(None),
     };

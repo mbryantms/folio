@@ -2355,7 +2355,9 @@ pub async fn reading_window_paginated(
         Vec::new()
     } else {
         match entity::series::Entity::find()
-            .filter(entity::series::Column::Id.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
+            .filter(
+                entity::series::Column::Id.is_in(series_ids.iter().copied().collect::<Vec<_>>()),
+            )
             .all(&app.db)
             .await
         {
@@ -2421,15 +2423,29 @@ pub async fn reading_window_paginated(
             // Empty page after ACL — fall back to "ask again from
             // whatever the client asked for". For initial / empty
             // matched set both sides are empty.
-            "after" => (false, matched_entries.iter().any(|e| e.position > q.cursor.unwrap())),
-            "before" => (matched_entries.iter().any(|e| e.position < q.cursor.unwrap()), false),
+            "after" => (
+                false,
+                matched_entries
+                    .iter()
+                    .any(|e| e.position > q.cursor.unwrap()),
+            ),
+            "before" => (
+                matched_entries
+                    .iter()
+                    .any(|e| e.position < q.cursor.unwrap()),
+                false,
+            ),
             _ => (false, false),
         },
     };
 
     let (current_index, total_matched_out, total_entries_out) = match &anchor_meta {
         Some(m) => (
-            if m.all_done { None } else { current_output_index },
+            if m.all_done {
+                None
+            } else {
+                current_output_index
+            },
             Some(m.total_matched),
             Some(m.total_entries),
         ),

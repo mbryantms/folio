@@ -219,6 +219,7 @@ async fn retag_preserves_id_and_fks() {
         last_page: Set(5),
         percent: Set(0.25),
         finished: Set(false),
+        finished_at: Set(None),
         updated_at: Set(Utc::now().fixed_offset()),
         device: Set(Some("phone".into())),
     }

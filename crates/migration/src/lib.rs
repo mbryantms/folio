@@ -27,6 +27,7 @@ mod m20260518_000001_series_reading_direction;
 mod m20260519_000001_drop_orphan_cbl_lists;
 mod m20260520_000001_marker_kind_favorite;
 mod m20260520_000002_user_default_page_animation;
+mod m20260522_000001_progress_records_finished_at;
 mod m20260601_000001_user_reading_direction;
 mod m20260801_000001_scanner_v1;
 mod m20260901_000001_user_preferences;
@@ -136,6 +137,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260519_000001_drop_orphan_cbl_lists::Migration),
             Box::new(m20260520_000001_marker_kind_favorite::Migration),
             Box::new(m20260520_000002_user_default_page_animation::Migration),
+            Box::new(m20260522_000001_progress_records_finished_at::Migration),
         ]
     }
 }

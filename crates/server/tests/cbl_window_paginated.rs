@@ -16,7 +16,9 @@ use axum::{
 use chrono::Utc;
 use common::TestApp;
 use entity::{
-    cbl_entry, cbl_list, issue::ActiveModel as IssueAM, library, progress_record,
+    cbl_entry, cbl_list,
+    issue::ActiveModel as IssueAM,
+    library, progress_record,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
 use sea_orm::{ActiveModelTrait, Database, Set};
@@ -317,6 +319,7 @@ async fn mark_finished(app: &TestApp, user: Uuid, issue_ids: &[String], position
             last_page: Set(20),
             percent: Set(1.0),
             finished: Set(true),
+            finished_at: Set(Some(now)),
             updated_at: Set(now),
             device: Set(None),
         }
@@ -383,9 +386,8 @@ async fn after_cursor_paginates_forward() {
     let auth = register(&app, "carol@window.test").await;
     let (list_id, _) = seed_cbl_with_matched_entries(&app, auth.user_id, 40).await;
 
-    let url = format!(
-        "/api/me/cbl-lists/{list_id}/window-paginated?direction=after&cursor=10&limit=5"
-    );
+    let url =
+        format!("/api/me/cbl-lists/{list_id}/window-paginated?direction=after&cursor=10&limit=5");
     let (status, body) = get_json(&app, &url, &auth).await;
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().unwrap();
@@ -408,9 +410,8 @@ async fn before_cursor_paginates_backward_in_ascending_order() {
     let auth = register(&app, "dave@window.test").await;
     let (list_id, _) = seed_cbl_with_matched_entries(&app, auth.user_id, 40).await;
 
-    let url = format!(
-        "/api/me/cbl-lists/{list_id}/window-paginated?direction=before&cursor=10&limit=4"
-    );
+    let url =
+        format!("/api/me/cbl-lists/{list_id}/window-paginated?direction=before&cursor=10&limit=4");
     let (status, body) = get_json(&app, &url, &auth).await;
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().unwrap();
@@ -431,9 +432,8 @@ async fn after_at_tail_returns_empty_with_no_more() {
     let auth = register(&app, "eve@window.test").await;
     let (list_id, _) = seed_cbl_with_matched_entries(&app, auth.user_id, 10).await;
 
-    let url = format!(
-        "/api/me/cbl-lists/{list_id}/window-paginated?direction=after&cursor=9&limit=10"
-    );
+    let url =
+        format!("/api/me/cbl-lists/{list_id}/window-paginated?direction=after&cursor=9&limit=10");
     let (status, body) = get_json(&app, &url, &auth).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["items"].as_array().unwrap().len(), 0);
@@ -449,9 +449,8 @@ async fn before_at_head_returns_empty_with_no_more() {
     let auth = register(&app, "frank@window.test").await;
     let (list_id, _) = seed_cbl_with_matched_entries(&app, auth.user_id, 10).await;
 
-    let url = format!(
-        "/api/me/cbl-lists/{list_id}/window-paginated?direction=before&cursor=0&limit=10"
-    );
+    let url =
+        format!("/api/me/cbl-lists/{list_id}/window-paginated?direction=before&cursor=0&limit=10");
     let (status, body) = get_json(&app, &url, &auth).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["items"].as_array().unwrap().len(), 0);

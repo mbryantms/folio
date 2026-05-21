@@ -19,6 +19,13 @@ pub struct Model {
     pub updated_at: DateTimeWithTimeZone,
     #[sea_orm(nullable)]
     pub device: Option<String>,
+    /// Authoritative timestamp for when the user flipped this issue
+    /// to `finished = TRUE`. Distinct from `updated_at`, which gets
+    /// bumped on every per-page write. Set to `Some(now)` on the
+    /// flip; cleared to `None` when the user un-finishes. Powers the
+    /// reading-log event feed.
+    #[sea_orm(nullable)]
+    pub finished_at: Option<DateTimeWithTimeZone>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

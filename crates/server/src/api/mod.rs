@@ -36,6 +36,7 @@ pub mod people;
 pub mod progress;
 pub mod rails;
 pub mod ratings;
+pub mod reading_log;
 pub mod reading_sessions;
 pub mod reconcile;
 pub mod saved_views;
