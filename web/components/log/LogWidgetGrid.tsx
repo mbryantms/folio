@@ -109,7 +109,17 @@ export function LogWidgetGrid({
       onDragEnd={handleDragEnd}
     >
       <SortableContext items={ids} strategy={rectSortingStrategy}>
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        {/* CSS multicolumn instead of an explicit 2-col grid: CSS Grid
+         *  locks each row's height to its tallest item, leaving big
+         *  gaps under short widgets (e.g. "When you read" beside a
+         *  long Activity feed). Multicolumn balances heights across
+         *  columns by flowing items top-to-bottom in column 1, then
+         *  column 2 — short widgets pack underneath their column
+         *  neighbours without padding. `break-inside-avoid` keeps
+         *  each card intact across the column boundary; `column-span:
+         *  all` lets `size: "full"` widgets cut across the flow as a
+         *  full-width band. */}
+        <div className="columns-1 gap-x-6 md:columns-2">
           {ids.map((id) => {
             const w = widgetById.get(id);
             if (!w) return null;
@@ -161,7 +171,7 @@ function SortableWidget({
       <div
         ref={setNodeRef}
         style={style}
-        className="border-border/60 text-muted-foreground rounded-md border border-dashed p-4 text-sm"
+        className="border-border/60 text-muted-foreground mb-6 break-inside-avoid rounded-md border border-dashed p-4 text-sm"
       >
         Unknown widget kind: <code>{widget.kind}</code>
       </div>
@@ -178,7 +188,16 @@ function SortableWidget({
     <div
       ref={setNodeRef}
       style={style}
-      className={cn(size === "full" && "md:col-span-2")}
+      className={cn(
+        // Bottom margin + break-inside-avoid keep each card a
+        // single integral block inside the CSS multicolumn flow.
+        // `gap` doesn't apply to multicolumn children, so margin
+        // does the spacing work; `inline-block w-full` shores up
+        // some browser quirks around column-item sizing.
+        "mb-6 inline-block w-full break-inside-avoid",
+        // Full-size widgets cut across both columns as a band.
+        size === "full" && "[column-span:all]",
+      )}
     >
       <DragInfoContext.Provider value={dragInfo}>
         <Component

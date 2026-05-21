@@ -24,10 +24,12 @@ export function ReadingLogPage() {
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 lg:px-6">
       <LogHeader range={range} onRangeChange={setRange} widgets={widgets} />
       {widgetsQuery.isLoading ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <Skeleton className="h-64 w-full md:col-span-2" />
-          <Skeleton className="h-48 w-full" />
-          <Skeleton className="h-48 w-full" />
+        // Matches the LogWidgetGrid's multicolumn flow so the
+        // loading state doesn't visibly reflow on data arrival.
+        <div className="columns-1 gap-x-6 md:columns-2">
+          <Skeleton className="mb-6 inline-block h-64 w-full break-inside-avoid" />
+          <Skeleton className="mb-6 inline-block h-48 w-full break-inside-avoid" />
+          <Skeleton className="mb-6 inline-block h-32 w-full break-inside-avoid" />
         </div>
       ) : widgetsQuery.data ? (
         <LogWidgetGrid widgets={widgets} scope={scope} />
