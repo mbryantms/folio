@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { useCoverCollectionActions } from "@/components/library/use-cover-collection-actions";
+import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
 
 /** Reusable popover with a single "Card size" slider — drives the
  *  `minmax` of an auto-fill cover grid. Used by the series Issues
@@ -38,8 +38,8 @@ export function CardSizeOptions({
   triggerLabel?: string;
   fieldId?: string;
 }) {
-  const collectionActions = useCoverCollectionActions();
-  const collectionFieldId = `${fieldId}-collection-actions`;
+  const collectionDot = useCoverCollectionDot();
+  const collectionFieldId = `${fieldId}-collection-dot`;
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -83,29 +83,30 @@ export function CardSizeOptions({
             </div>
           </div>
           {/* Global preference, persisted in localStorage by
-           *  use-cover-collection-actions.ts. When off, the two
-           *  collection items ("Add to Want to Read", "Add to
-           *  Collection…") are suppressed in every cover-card kebab
-           *  across the app. Toggle here so the choice lives next to
-           *  the other view-level density controls. */}
+           *  use-cover-collection-dot.ts. When off, series cards
+           *  stop painting the small ownership dot in their
+           *  bottom-left corner — letting readers who prefer pure
+           *  cover art opt out of the overlay. Kebab actions are
+           *  unaffected; they're only visible after the user opens
+           *  the menu. */}
           <div className="space-y-1.5 border-t pt-3">
             <div className="flex items-center justify-between gap-3">
               <Label
                 htmlFor={collectionFieldId}
                 className="text-xs font-medium"
               >
-                Collection actions
+                Collection dot
               </Label>
               <Switch
                 id={collectionFieldId}
-                checked={collectionActions.enabled}
-                onCheckedChange={collectionActions.setEnabled}
-                aria-label="Show collection actions in cover menus"
+                checked={collectionDot.enabled}
+                onCheckedChange={collectionDot.setEnabled}
+                aria-label="Show the collection ownership dot on series covers"
               />
             </div>
             <p className="text-muted-foreground/80 text-[11px] leading-snug">
-              Show “Add to Want to Read” and “Add to Collection…” on cover
-              menus.
+              Show a small green or amber dot on series covers to mark
+              collection ownership.
             </p>
           </div>
           <div className="flex justify-end">

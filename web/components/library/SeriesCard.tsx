@@ -12,6 +12,7 @@ import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { SeriesPlayOverlay } from "@/components/QuickReadOverlay";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
+import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
 import { Badge } from "@/components/ui/badge";
 import { jsonFetch } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";
@@ -259,10 +260,15 @@ export function SeriesCardSkeleton({ size = "md" }: { size?: Size }) {
 /** Small green/amber dot in the cover's bottom-left corner. Lives opposite
  *  the play overlay so the 32px hover button doesn't cover it. The
  *  symmetric bottom-left slot on issue cards hosts the "finished"
- *  check badge — same idiom, different axis (ownership vs. read state). */
+ *  check badge — same idiom, different axis (ownership vs. read state).
+ *
+ *  Suppressed entirely when the user has disabled
+ *  `useCoverCollectionDot` from the CardSizeOptions popover — gives
+ *  readers who want pristine covers an opt-out. */
 function CollectionDot({ series }: { series: SeriesView }) {
+  const dotPref = useCoverCollectionDot();
   const state = collectionStatus(series);
-  if (!state) return null;
+  if (!state || !dotPref.enabled) return null;
   const have = series.issue_count ?? 0;
   const total = series.total_issues ?? 0;
   const tooltip =

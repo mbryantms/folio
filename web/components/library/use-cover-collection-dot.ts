@@ -3,14 +3,19 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 /**
- * Global toggle for the two "Add to Want to Read" / "Add to Collection…"
- * actions on cover-card kebab menus.
+ * Global toggle for the small green/amber **collection dot** that the
+ * `SeriesCard` paints in its bottom-left corner. The dot signals
+ * collection-ownership state (active / complete) so users browsing
+ * series rails can see at a glance which books they already own — but
+ * some users prefer covers without any overlays at all, and there's
+ * no other surface for them to opt out of just the dot.
  *
- * Default is ON — preserves existing behavior for users who haven't
- * touched the toggle. When OFF, both collection actions are omitted
- * from every `<CoverMenuButton>` across the app (issue cards, series
- * cards, CBL cards, progress cards). Used by readers who don't keep
- * collections and want a slimmer kebab.
+ * Default is ON — preserves existing behavior. When OFF the dot is
+ * suppressed on every series card across the app, leaving the cover
+ * art unobstructed in the bottom-left corner. The kebab menu's
+ * "Add to Want to Read" / "Add to Collection…" actions are unaffected
+ * by this preference — they're not visible in the resting state, only
+ * after the user opens the kebab.
  *
  * Same `useSyncExternalStore` shape as `use-sidebar-section-collapse`:
  * SSR-safe with a stable server snapshot, multi-subscriber updates
@@ -23,7 +28,7 @@ import { useCallback, useSyncExternalStore } from "react";
  * behavior.
  */
 
-const STORAGE_KEY = "folio:cover-collection-actions:v1";
+const STORAGE_KEY = "folio:cover-collection-dot:v1";
 
 let cachedEnabled = true;
 let lastRawRead: string | null | undefined = undefined;
@@ -74,14 +79,14 @@ function getServerSnapshot(): boolean {
   return true;
 }
 
-export interface CoverCollectionActionsApi {
-  /** True iff the kebab menus should include the two collection items. */
+export interface CoverCollectionDotApi {
+  /** True iff series cards should render their collection-ownership dot. */
   enabled: boolean;
   /** Imperative setter — used by the `CardSizeOptions` toggle. */
   setEnabled: (next: boolean) => void;
 }
 
-export function useCoverCollectionActions(): CoverCollectionActionsApi {
+export function useCoverCollectionDot(): CoverCollectionDotApi {
   const enabled = useSyncExternalStore(
     subscribe,
     readFromStorage,

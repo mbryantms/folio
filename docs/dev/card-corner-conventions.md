@@ -49,7 +49,9 @@ Three card-type-specific occupants, but each card only uses one:
   Always present.
 - **`SeriesCard`** — `CollectionDot` (green / amber dot) showing
   collection ownership state. Present when `collectionStatus(series)`
-  returns a value.
+  returns a value AND the global "Collection dot" preference
+  (`useCoverCollectionDot`, toggle in the `CardSizeOptions` popover)
+  is enabled. Readers who want pristine covers can hide it.
 - **`IssueCard`, `ProgressIssueCard`, `OnDeckCard`** — empty today.
   Available for future indicators (downloaded badge, queue marker,
   age rating, …).
