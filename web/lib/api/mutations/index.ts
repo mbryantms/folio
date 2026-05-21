@@ -822,7 +822,12 @@ export function useSetSavedViewIcon() {
  *  results, the CBL list rail/grid variants, the collection rail/grid
  *  variants, the marker + bookmarks listing, and the bookmarks badge.
  *
- *  Used by every progress-mutating hook (upsert / bulk-mark / dismiss).
+ *  Used by every progress-mutating hook (upsert / bulk-mark / dismiss)
+ *  AND by the reader's raw-apiFetch progress writer
+ *  (`useReaderProgressWrite`) — both need the same invalidation set
+ *  so navigating back from `/read/...` to a paginated detail page
+ *  doesn't show stale "unread" state on a just-finished issue.
+ *
  *  The previous narrower helper missed `cbl-lists/window`, `cbl-lists/
  *  entries`, `collections/entries`, and the bookmark surfaces, which
  *  caused stale cards after a kebab "Mark as read" on the home rails
@@ -830,7 +835,7 @@ export function useSetSavedViewIcon() {
  *  [docs/dev/multi-select.md](docs/dev/multi-select.md) for the rail
  *  inventory that drove the broadening.
  */
-function invalidateRails(qc: ReturnType<typeof useQueryClient>) {
+export function invalidateRails(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: queryKeys.continueReading });
   qc.invalidateQueries({ queryKey: queryKeys.onDeck });
   qc.invalidateQueries({ queryKey: ["saved-views"], exact: false });
