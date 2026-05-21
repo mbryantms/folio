@@ -74,17 +74,19 @@ jobs:
       - run: pnpm --filter web run lint
       - run: pnpm --filter web run typecheck
       - run: pnpm --filter web run test
-      # Build once explicitly so the bundle-budget script and the
-      # downstream `next start` (Playwright's webServer) both pick up
-      # the same `.next/` output without each invoking `next build`
-      # implicitly.
+      # Build once so the bundle-budget script reads a real `.next/`
+      # output rather than triggering an implicit build itself.
       - run: pnpm --filter web run build
       - name: Reader bundle budget
         run: pnpm --filter web run check-bundle-size
-      - name: Install Playwright browsers
-        run: pnpm --filter web exec playwright install --with-deps chromium
-      - name: a11y (axe-core)
-        run: pnpm --filter web run test:e2e
+      # Playwright is intentionally not run in CI. The current specs
+      # only cover two static-degradation a11y checks (sign-in,
+      # forgot-password); the reader-flow walk-through that would
+      # justify the ~3-min CI cost is `test.skip`-ed pending a
+      # fixture harness (live Rust origin + seeded library). Spec
+      # files stay in `web/tests/e2e/` so contributors can still run
+      # them locally via `pnpm --filter web run test:e2e`. Restore
+      # this step once the harness lands.
       - name: pnpm audit
         run: pnpm audit --audit-level=high || true
 
