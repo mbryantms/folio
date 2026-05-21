@@ -77,10 +77,9 @@ function rangeToFrom(range: ReadingStatsRange): string | undefined {
  *  the bounded-height container.
  *
  *  Grouping is configurable (`day` / `week` / `month` / `none`).
- *  Within a group, consecutive `issue_finished` events for the same
- *  series collapse into a single summary row — a 12-issue arc on a
- *  Saturday shows as one line ("X-Men: Legacy · #5–#16, 12 issues")
- *  rather than twelve repeating rows. */
+ *  Every event renders as its own row — same-series runs no longer
+ *  collapse into a summary line because the rolled-up rows hid the
+ *  per-issue cadence we want to surface here. */
 export function ChronoFeed({
   widget,
   scope,
@@ -145,23 +144,19 @@ export function ChronoFeed({
         ) : events.length === 0 ? (
           <EmptyState />
         ) : (
-          <ol className="flex flex-col gap-5">
+          <ol className="flex flex-col gap-4">
             {groups.map((g) => (
               <li key={g.key} className="flex flex-col gap-2">
                 {g.label ? <GroupHeader label={g.label} /> : null}
                 <ul
                   className={cn(
-                    "flex flex-col gap-2",
+                    "flex flex-col gap-1.5",
                     g.label && "border-border/60 border-l-2 pl-4",
                   )}
                 >
-                  {g.rows.map((row) => (
-                    <li key={row.key}>
-                      {row.kind === "single" ? (
-                        <EventRow event={row.event} />
-                      ) : (
-                        <SeriesRollupRow rollup={row} />
-                      )}
+                  {g.rows.map((event) => (
+                    <li key={event.id}>
+                      <EventRow event={event} />
                     </li>
                   ))}
                 </ul>
@@ -186,31 +181,13 @@ export function ChronoFeed({
   );
 }
 
-// ─── Grouping + collapsing ───
-
-type RowSingle = { kind: "single"; key: string; event: ReadingLogEventView };
-type RowRollup = {
-  kind: "rollup";
-  key: string;
-  seriesId: string;
-  seriesName: string;
-  seriesSlug: string;
-  /** Earliest cover among the collapsed events — first one we see
-   *  walking reverse-chronologically. */
-  coverUrl: string | null;
-  /** Issue numbers in original order (most-recent first). */
-  issueNumbers: string[];
-  /** Most-recent occurrence; drives the relative timestamp. */
-  latestOccurredAt: string;
-  earliestOccurredAt: string;
-};
-type Row = RowSingle | RowRollup;
+// ─── Grouping ───
 
 type Section = {
   key: string;
   /** `null` for the flat (no-group) layout. */
   label: string | null;
-  rows: Row[];
+  rows: ReadingLogEventView[];
 };
 
 /** Group key per period. Strings sort lexicographically the same as
@@ -279,52 +256,7 @@ function buildGroups(
       };
       sections.push(section);
     }
-    // Collapse adjacent issue_finished rows from the same series
-    // into a single rollup row. Other kinds (series_finished,
-    // session_completed, marker_created) always render as singles.
-    const lastRow = section.rows[section.rows.length - 1];
-    const isIssueFinished = e.kind === "issue_finished";
-    const sid = e.series?.id ?? null;
-    if (
-      isIssueFinished &&
-      sid &&
-      lastRow &&
-      lastRow.kind === "rollup" &&
-      lastRow.seriesId === sid
-    ) {
-      lastRow.issueNumbers.push(e.issue?.number ?? "?");
-      lastRow.earliestOccurredAt = e.occurred_at;
-      continue;
-    }
-    if (
-      isIssueFinished &&
-      sid &&
-      lastRow &&
-      lastRow.kind === "single" &&
-      lastRow.event.kind === "issue_finished" &&
-      lastRow.event.series?.id === sid
-    ) {
-      // Promote the prior single to a rollup so future siblings can
-      // collapse into it too. Carry the prior event's number first.
-      const prev = lastRow.event;
-      section.rows[section.rows.length - 1] = {
-        kind: "rollup",
-        key: `rollup-${sid}-${prev.id}`,
-        seriesId: sid,
-        seriesName: prev.series?.name ?? "Series",
-        seriesSlug: prev.series?.slug ?? "",
-        coverUrl: prev.issue?.cover_url ?? null,
-        issueNumbers: [prev.issue?.number ?? "?", e.issue?.number ?? "?"],
-        latestOccurredAt: prev.occurred_at,
-        earliestOccurredAt: e.occurred_at,
-      } satisfies RowRollup;
-      continue;
-    }
-    section.rows.push({
-      kind: "single",
-      key: e.id,
-      event: e,
-    });
+    section.rows.push(e);
   }
   return sections;
 }
@@ -345,13 +277,19 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
   const issueLabel = event.issue?.number ? `#${event.issue.number}` : null;
   const issueTitle = event.issue?.title ?? null;
   const seriesName = event.series?.name ?? null;
-  const headline = issueTitle ?? seriesName ?? "Reading event";
+  // Prefer the series name as the headline whenever we have one — the
+  // feed scans much more naturally as a list of series + issue numbers
+  // than as a list of (often empty) issue titles. Issue title moves
+  // into the subtitle slot when present.
+  const headline = seriesName ?? issueTitle ?? "Reading event";
+  const subtitle =
+    seriesName && issueTitle && issueTitle !== seriesName ? issueTitle : null;
 
   const inner = (
-    <div className="hover:bg-muted/50 group/event flex gap-3.5 rounded-md p-2 transition-colors">
+    <div className="hover:bg-muted/50 group/event flex gap-4 rounded-md p-2 transition-colors">
       <div
         className={cn(
-          "border-border/60 relative aspect-2/3 w-14 shrink-0 overflow-hidden rounded border",
+          "border-border/60 relative aspect-2/3 w-20 shrink-0 self-start overflow-hidden rounded border",
           !cover && "bg-muted",
         )}
         aria-hidden
@@ -367,7 +305,35 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
         ) : null}
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="truncate text-base font-semibold" title={headline}>
+                {headline}
+              </span>
+              {issueLabel ? (
+                <span className="text-muted-foreground text-sm font-medium tabular-nums">
+                  {issueLabel}
+                </span>
+              ) : null}
+            </div>
+            {subtitle ? (
+              <p
+                className="text-muted-foreground/90 truncate text-sm"
+                title={subtitle}
+              >
+                {subtitle}
+              </p>
+            ) : null}
+          </div>
+          <time
+            className="text-muted-foreground/60 shrink-0 text-[11px]"
+            title={new Date(event.occurred_at).toLocaleString()}
+          >
+            {formatRelativeDate(event.occurred_at)}
+          </time>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span
             className={cn(
               "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide uppercase",
@@ -377,22 +343,8 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
             <Icon aria-hidden="true" className="h-3.5 w-3.5" />
             {KIND_LABEL[event.kind]}
           </span>
-          {issueLabel ? (
-            <span className="text-muted-foreground text-sm font-medium tabular-nums">
-              {issueLabel}
-            </span>
-          ) : null}
-          <time
-            className="text-muted-foreground/60 ml-auto text-[10px]"
-            title={new Date(event.occurred_at).toLocaleString()}
-          >
-            {formatRelativeDate(event.occurred_at)}
-          </time>
+          <PayloadLine event={event} />
         </div>
-        <div className="truncate text-base font-medium" title={headline}>
-          {headline}
-        </div>
-        <PayloadLine event={event} />
       </div>
     </div>
   );
@@ -408,106 +360,26 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
   return inner;
 }
 
-function SeriesRollupRow({ rollup }: { rollup: RowRollup }) {
-  const inner = (
-    <div className="hover:bg-muted/50 group/event flex gap-3.5 rounded-md p-2 transition-colors">
-      <div
-        className={cn(
-          "border-border/60 relative aspect-2/3 w-14 shrink-0 overflow-hidden rounded border",
-          !rollup.coverUrl && "bg-muted",
-        )}
-        aria-hidden
-      >
-        {rollup.coverUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={rollup.coverUrl}
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
-          />
-        ) : null}
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide uppercase",
-              KIND_TINT.issue_finished,
-            )}
-          >
-            <Check aria-hidden="true" className="h-3.5 w-3.5" />
-            {rollup.issueNumbers.length} finished
-          </span>
-          <time
-            className="text-muted-foreground/60 ml-auto text-[10px]"
-            title={new Date(rollup.latestOccurredAt).toLocaleString()}
-          >
-            {formatRelativeDate(rollup.latestOccurredAt)}
-          </time>
-        </div>
-        <div
-          className="truncate text-base font-medium"
-          title={rollup.seriesName}
-        >
-          {rollup.seriesName}
-        </div>
-        <p
-          className="text-muted-foreground truncate text-xs"
-          title={rollup.issueNumbers.map((n) => `#${n}`).join(", ")}
-        >
-          {summarizeIssueNumbers(rollup.issueNumbers)}
-        </p>
-      </div>
-    </div>
-  );
-  return rollup.seriesSlug ? (
-    <Link href={seriesUrl(rollup.seriesSlug)}>{inner}</Link>
-  ) : (
-    inner
-  );
-}
-
-/** Render a list of issue numbers as a tight range when contiguous,
- *  otherwise a comma-separated list capped to a few entries. */
-function summarizeIssueNumbers(numbers: string[]): string {
-  if (numbers.length === 0) return "";
-  // Most-recent first → reverse to read low→high before checking
-  // contiguity.
-  const asInts = numbers
-    .map((n) => Number.parseFloat(n))
-    .filter((n) => Number.isFinite(n))
-    .sort((a, b) => a - b);
-  const allContiguous =
-    asInts.length === numbers.length &&
-    asInts.length >= 2 &&
-    asInts.every((n, i) => i === 0 || n === asInts[i - 1]! + 1);
-  if (allContiguous) {
-    return `#${asInts[0]}–#${asInts[asInts.length - 1]}`;
-  }
-  const labels = numbers.map((n) => `#${n}`);
-  if (labels.length <= 4) return labels.join(", ");
-  const head = labels.slice(0, 3).join(", ");
-  return `${head} +${labels.length - 3} more`;
-}
-
 function PayloadLine({ event }: { event: ReadingLogEventView }) {
   const p: ReadingLogPayload = event.payload;
   switch (p.kind) {
     case "session_completed":
       return (
-        <p className="text-muted-foreground truncate text-xs">
+        <span className="text-muted-foreground min-w-0 truncate text-xs">
           {formatDurationMs(p.active_ms)} · {p.pages_read} page
           {p.pages_read === 1 ? "" : "s"}
           {p.device ? <span> · {p.device}</span> : null}
-        </p>
+        </span>
       );
-    case "issue_finished":
+    case "issue_finished": {
+      const credits = creditsLine(event);
+      if (!credits) return null;
       return (
-        <p className="text-muted-foreground truncate text-xs">
-          {creditsLine(event)}
-        </p>
+        <span className="text-muted-foreground min-w-0 truncate text-xs">
+          {credits}
+        </span>
       );
+    }
     case "series_finished":
       // The server's payload for series_finished currently stubs
       // `total_issues = 0`; surfacing "0 issues read" would be
@@ -515,7 +387,7 @@ function PayloadLine({ event }: { event: ReadingLogEventView }) {
       // we have something meaningful to say.
       if (p.total_issues > 0) {
         return (
-          <p className="text-muted-foreground truncate text-xs">
+          <span className="text-muted-foreground min-w-0 truncate text-xs">
             {p.total_issues} issue{p.total_issues === 1 ? "" : "s"} read
             {p.span_days != null && p.span_days > 0 ? (
               <>
@@ -523,20 +395,20 @@ function PayloadLine({ event }: { event: ReadingLogEventView }) {
                 · across {p.span_days} day{p.span_days === 1 ? "" : "s"}
               </>
             ) : null}
-          </p>
+          </span>
         );
       }
       return null;
     case "marker_created":
       return (
-        <p className="text-muted-foreground truncate text-xs">
+        <span className="text-muted-foreground min-w-0 truncate text-xs">
           <MarkerKindIcon kind={p.marker_kind} />
           <span className="capitalize">{p.marker_kind}</span>
           <span> · page {p.page_index + 1}</span>
           {p.body_preview ? (
             <span> · &ldquo;{p.body_preview}&rdquo;</span>
           ) : null}
-        </p>
+        </span>
       );
   }
 }
@@ -578,13 +450,13 @@ function creditsLine(event: ReadingLogEventView): string {
 
 function FeedSkeleton() {
   return (
-    <ol className="flex flex-col gap-4">
+    <ol className="flex flex-col gap-3">
       {Array.from({ length: 5 }).map((_, i) => (
-        <li key={i} className="flex gap-3.5">
-          <Skeleton className="aspect-2/3 w-14 shrink-0 rounded" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-3 w-1/3" />
+        <li key={i} className="flex gap-4">
+          <Skeleton className="aspect-2/3 w-20 shrink-0 rounded" />
+          <div className="flex-1 space-y-2 pt-1">
             <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-3 w-1/3" />
             <Skeleton className="h-3 w-1/2" />
           </div>
         </li>
