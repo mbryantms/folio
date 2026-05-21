@@ -180,6 +180,15 @@ export function IssueCard({
           fallback={numberLabel}
           className="w-full transition group-hover:brightness-110"
         />
+        {/* Top-right priority cascade (the cover-card standard, see
+         *  docs/dev/card-corner-conventions.md):
+         *    1. match-status badge — CBL detail page only, doesn't apply here
+         *    2. state badge       — when `state !== "active"` (archived/withdrawn)
+         *    3. finished check    — when `state === "active" && finished`
+         *  These three are mutually exclusive; only one ever renders.
+         *  Bottom-left stays empty on this card (used to host the
+         *  finished check; freed up for future indicators — downloaded
+         *  badge, age rating, queue marker, etc.). */}
         {issue.state !== "active" && (
           <Badge
             variant="destructive"
@@ -188,15 +197,11 @@ export function IssueCard({
             {issue.state}
           </Badge>
         )}
-        {/* Read state — bottom-left mirrors `CollectionDot` on series
-         *  cards (one "status indicator" slot per card type). No
-         *  cover dimming on browse surfaces: the library/home rails
-         *  want covers to stay vibrant. */}
         {issue.state === "active" && finished && (
           <span
             aria-label="Read"
             title="Read"
-            className="bg-primary/90 text-primary-foreground absolute bottom-2 left-2 inline-flex h-6 w-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
+            className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex h-6 w-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
           >
             <Check aria-hidden="true" className="h-3.5 w-3.5" />
           </span>
