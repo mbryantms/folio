@@ -43,6 +43,7 @@ import type {
   CblDetailView,
   CblEntryListView,
   CblListListView,
+  CblWindowPageView,
   CblWindowView,
   ContinueReadingView,
   HealthIssueView,
@@ -320,6 +321,13 @@ export const queryKeys = {
    *  entry. Powers the home rail's progress-centered view. */
   cblListWindow: (id: string, opts?: { before?: number; after?: number }) =>
     ["cbl-lists", "window", id, opts ?? {}] as const,
+  /** Bidirectional infinite-scroll window — same anchor band, but
+   *  with cursor-paginated before/after extensions. Distinct from
+   *  `cblListWindow` so the two hooks' caches don't collide. */
+  cblListWindowInfinite: (
+    id: string,
+    opts?: { before?: number; after?: number; limit?: number },
+  ) => ["cbl-lists", "window-infinite", id, opts ?? {}] as const,
   cblRefreshLog: (id: string) => ["cbl-lists", "refresh-log", id] as const,
   /** Markers + Collections M2 — user collections (kind='collection') with
    *  Want to Read auto-seeded on first GET. */
@@ -1241,6 +1249,56 @@ export function useCblListWindow(
         `/me/cbl-lists/${id}/window${buildQuery(params)}`,
       ),
     enabled: !!id,
+  });
+}
+
+/** Page param shape for `useCblListWindowInfinite`. The initial fetch
+ *  carries no cursor; subsequent forward/backward pages carry the
+ *  position cursor returned by the previous edge page. */
+type CblWindowPageParam =
+  | { direction: "initial" }
+  | { direction: "after"; cursor: number }
+  | { direction: "before"; cursor: number };
+
+/** Bidirectional infinite-scroll variant of `useCblListWindow`. The
+ *  initial page anchors on the user's next-unfinished entry (same
+ *  `before` / `after` defaults as `useCblListWindow`); subsequent
+ *  pages walk forward or backward from the cursor edges so a rail can
+ *  load surrounding entries asynchronously as the user scrolls
+ *  without disturbing the already-rendered anchor band. */
+export function useCblListWindowInfinite(
+  id: string,
+  opts?: { before?: number; after?: number; limit?: number },
+) {
+  const initialParams: Record<string, number> = {};
+  if (opts?.before != null) initialParams.before = opts.before;
+  if (opts?.after != null) initialParams.after = opts.after;
+  const pageLimit = opts?.limit ?? 24;
+  return useInfiniteQuery({
+    queryKey: queryKeys.cblListWindowInfinite(id, opts),
+    enabled: !!id,
+    initialPageParam: { direction: "initial" } as CblWindowPageParam,
+    queryFn: ({ pageParam }) => {
+      const params: Record<string, string | number> = {};
+      if (pageParam.direction === "initial") {
+        Object.assign(params, initialParams);
+      } else {
+        params.direction = pageParam.direction;
+        params.cursor = pageParam.cursor;
+        params.limit = pageLimit;
+      }
+      return jsonFetch<CblWindowPageView>(
+        `/me/cbl-lists/${id}/window-paginated${buildQuery(params)}`,
+      );
+    },
+    getNextPageParam: (last) =>
+      last.has_more_after && last.max_position != null
+        ? ({ direction: "after", cursor: last.max_position } as const)
+        : undefined,
+    getPreviousPageParam: (first) =>
+      first.has_more_before && first.min_position != null
+        ? ({ direction: "before", cursor: first.min_position } as const)
+        : undefined,
   });
 }
 

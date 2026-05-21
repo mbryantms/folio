@@ -3751,6 +3751,91 @@
         }
       }
     },
+    "/me/cbl-lists/{id}/window-paginated": {
+      "get": {
+        "tags": [
+          "api::cbl_lists"
+        ],
+        "summary": "Bidirectional paginated window over a CBL. Same anchor-aware\ninitial slice as `/window`, plus `direction=before|after` modes the\nhome rail uses to lazy-load surrounding entries as the user scrolls\nwithout disturbing the already-rendered anchor band.",
+        "description": "Library-ACL filtering happens at hydrate time: an entry whose issue\nlives in a library the user can't see is silently dropped from the\npage (matching `/window`). `min_position` / `max_position` are\ncomputed from the *kept* entries so the cursor returned to the\nclient never re-fetches an entry it just received.",
+        "operationId": "reading_window_paginated",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CblWindowPageView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid direction or missing cursor"
+          },
+          "404": {
+            "description": "list not found"
+          }
+        }
+      }
+    },
     "/me/collections": {
       "get": {
         "tags": [
@@ -7365,6 +7450,71 @@
             "type": "integer",
             "format": "int32",
             "description": "0-based position within the CBL — matches the `#N` badge other\nsurfaces use."
+          }
+        }
+      },
+      "CblWindowPageView": {
+        "type": "object",
+        "description": "One page of a CBL reading window. `current_index` / `total_*`\nfields are populated **only** on the initial page so subsequent\nbefore/after fetches stay cheap and don't re-emit anchor-shaped\ndata the client already has.",
+        "required": [
+          "items",
+          "has_more_before",
+          "has_more_after"
+        ],
+        "properties": {
+          "current_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`initial` only: index of the user's current entry inside `items`\n(after ACL filtering); `None` when every matched entry is\nfinished."
+          },
+          "has_more_after": {
+            "type": "boolean",
+            "description": "True iff at least one matched entry exists with `position >\nmax_position`. Drives the rail's right-edge sentinel."
+          },
+          "has_more_before": {
+            "type": "boolean",
+            "description": "True iff at least one matched entry exists with `position <\nmin_position`. Drives the rail's left-edge sentinel."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CblWindowEntry"
+            }
+          },
+          "max_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Largest `position` value among the matched entries on this\npage. Null when the page is empty. Used as the `after` cursor\nfor the next forward fetch."
+          },
+          "min_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Smallest `position` value among the matched entries on this\npage. Null when the page is empty. Used as the `before` cursor\nfor the next backward fetch."
+          },
+          "total_entries": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`initial` only: count of all entries (incl. unmatched)."
+          },
+          "total_matched": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`initial` only: count of matched entries in the full list."
           }
         }
       },

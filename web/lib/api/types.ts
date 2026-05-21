@@ -528,6 +528,24 @@ export type CblWindowView = {
   total_entries: number;
 };
 
+/** One page of a CBL reading window from `/window-paginated`. Anchor
+ *  metadata (`current_index`, `total_*`) is populated **only** on the
+ *  initial page so subsequent before/after fetches stay cheap. */
+export type CblWindowPageView = {
+  items: CblWindowEntry[];
+  current_index: number | null;
+  total_matched: number | null;
+  total_entries: number | null;
+  /** Smallest `position` in `items`; `null` when the page is empty.
+   *  Used as the `before` cursor for the next backward fetch. */
+  min_position: number | null;
+  /** Largest `position` in `items`; `null` when the page is empty.
+   *  Used as the `after` cursor for the next forward fetch. */
+  max_position: number | null;
+  has_more_before: boolean;
+  has_more_after: boolean;
+};
+
 // ---------- Home rails (Continue reading / On deck) ----------
 
 /** Per-issue progress overlay attached to rail cards. Mirrors `ProgressView`

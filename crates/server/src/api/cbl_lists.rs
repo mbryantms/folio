@@ -59,6 +59,10 @@ pub fn routes() -> Router<AppState> {
         .route("/me/cbl-lists/{id}/entries", get(entries))
         .route("/me/cbl-lists/{id}/issues", get(issues))
         .route("/me/cbl-lists/{id}/window", get(reading_window))
+        .route(
+            "/me/cbl-lists/{id}/window-paginated",
+            get(reading_window_paginated),
+        )
         .route("/me/cbl-lists/{id}/export", get(export))
         .route(
             "/me/cbl-lists/{id}/entries/{entry_id}/match",
@@ -2079,4 +2083,375 @@ pub async fn reading_window(
         total_entries,
     })
     .into_response()
+}
+
+// ───────── Bidirectional paginated reading window ─────────
+
+/// Query for `GET /me/cbl-lists/{id}/window-paginated`. Three modes
+/// keyed by `direction`:
+///   * `initial` (or omitted) — anchor-aware slice around the user's
+///     next-unfinished entry, identical to `/window`. `before` /
+///     `after` set the surrounding hydration sizes.
+///   * `after`  — entries with position strictly greater than `cursor`,
+///     ascending, up to `limit`. Used when the rail scrolls past its
+///     right edge.
+///   * `before` — entries with position strictly less than `cursor`,
+///     returned in ascending order (the server reverses internally) up
+///     to `limit`. Used when the rail scrolls past its left edge.
+#[derive(Debug, serde::Deserialize)]
+pub struct WindowPaginatedQuery {
+    /// `"initial"`, `"after"`, or `"before"`. Defaults to `"initial"`.
+    #[serde(default)]
+    pub direction: Option<String>,
+    /// Anchor position for `after` / `before` pages.
+    #[serde(default)]
+    pub cursor: Option<i32>,
+    /// Max items for `after` / `before` pages. Clamped to [1, 60],
+    /// default 24.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// `initial`-only: finished entries to include left of the anchor.
+    /// Clamped to [0, 20], default 3.
+    #[serde(default)]
+    pub before: Option<u32>,
+    /// `initial`-only: upcoming entries to include right of the anchor.
+    /// Clamped to [1, 40], default 24.
+    #[serde(default)]
+    pub after: Option<u32>,
+}
+
+/// One page of a CBL reading window. `current_index` / `total_*`
+/// fields are populated **only** on the initial page so subsequent
+/// before/after fetches stay cheap and don't re-emit anchor-shaped
+/// data the client already has.
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct CblWindowPageView {
+    pub items: Vec<CblWindowEntry>,
+    /// `initial` only: index of the user's current entry inside `items`
+    /// (after ACL filtering); `None` when every matched entry is
+    /// finished.
+    pub current_index: Option<i32>,
+    /// `initial` only: count of matched entries in the full list.
+    pub total_matched: Option<i32>,
+    /// `initial` only: count of all entries (incl. unmatched).
+    pub total_entries: Option<i32>,
+    /// Smallest `position` value among the matched entries on this
+    /// page. Null when the page is empty. Used as the `before` cursor
+    /// for the next backward fetch.
+    pub min_position: Option<i32>,
+    /// Largest `position` value among the matched entries on this
+    /// page. Null when the page is empty. Used as the `after` cursor
+    /// for the next forward fetch.
+    pub max_position: Option<i32>,
+    /// True iff at least one matched entry exists with `position <
+    /// min_position`. Drives the rail's left-edge sentinel.
+    pub has_more_before: bool,
+    /// True iff at least one matched entry exists with `position >
+    /// max_position`. Drives the rail's right-edge sentinel.
+    pub has_more_after: bool,
+}
+
+/// Bidirectional paginated window over a CBL. Same anchor-aware
+/// initial slice as `/window`, plus `direction=before|after` modes the
+/// home rail uses to lazy-load surrounding entries as the user scrolls
+/// without disturbing the already-rendered anchor band.
+///
+/// Library-ACL filtering happens at hydrate time: an entry whose issue
+/// lives in a library the user can't see is silently dropped from the
+/// page (matching `/window`). `min_position` / `max_position` are
+/// computed from the *kept* entries so the cursor returned to the
+/// client never re-fetches an entry it just received.
+#[utoipa::path(
+    get,
+    path = "/me/cbl-lists/{id}/window-paginated",
+    params(
+        ("id"        = String,      Path,),
+        ("direction" = Option<String>, Query,),
+        ("cursor"    = Option<i32>, Query,),
+        ("limit"     = Option<u32>, Query,),
+        ("before"    = Option<u32>, Query,),
+        ("after"     = Option<u32>, Query,),
+    ),
+    responses(
+        (status = 200, body = CblWindowPageView),
+        (status = 400, description = "invalid direction or missing cursor"),
+        (status = 404, description = "list not found"),
+    )
+)]
+pub async fn reading_window_paginated(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+    Query(q): Query<WindowPaginatedQuery>,
+) -> impl IntoResponse {
+    use crate::library::access;
+    use entity::progress_record;
+
+    let direction = q.direction.as_deref().unwrap_or("initial");
+    if !matches!(direction, "initial" | "before" | "after") {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "invalid_direction",
+            "direction must be 'initial', 'before', or 'after'",
+        );
+    }
+    if direction != "initial" && q.cursor.is_none() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "missing_cursor",
+            "cursor is required for before/after pagination",
+        );
+    }
+
+    let list = match fetch_list(&app.db, id).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if let Err(resp) = ensure_owner(&list, &user).await {
+        return resp;
+    }
+
+    let acl = access::for_user(&app, &user).await;
+
+    // Fetch the full ordered entry set once. CBL lists max out at low
+    // thousands of entries (vs. a series' tens of thousands of issues),
+    // so the full read here is the simpler design and costs less than
+    // the per-page DB round-trips the indexed alternative would need.
+    let all_entries = match cbl_entry::Entity::find()
+        .filter(cbl_entry::Column::CblListId.eq(id))
+        .order_by_asc(cbl_entry::Column::Position)
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+    };
+    let total_entries = all_entries.len() as i32;
+    let matched_entries: Vec<_> = all_entries
+        .into_iter()
+        .filter(|e| e.matched_issue_id.is_some())
+        .collect();
+    let total_matched = matched_entries.len() as i32;
+
+    // Progress map for every matched issue — used to find the anchor
+    // on `initial` and to overlay finished / last_page on every page.
+    let matched_issue_ids: Vec<String> = matched_entries
+        .iter()
+        .filter_map(|e| e.matched_issue_id.clone())
+        .collect();
+    let progress_rows = if matched_issue_ids.is_empty() {
+        Vec::new()
+    } else {
+        progress_record::Entity::find()
+            .filter(progress_record::Column::UserId.eq(user.id))
+            .filter(progress_record::Column::IssueId.is_in(matched_issue_ids))
+            .all(&app.db)
+            .await
+            .unwrap_or_default()
+    };
+    let progress_by_issue: std::collections::HashMap<String, progress_record::Model> =
+        progress_rows
+            .into_iter()
+            .map(|p| (p.issue_id.clone(), p))
+            .collect();
+
+    // Slice selection per direction.
+    let (slice_entries, anchor_meta): (Vec<&cbl_entry::Model>, Option<AnchorMeta>) = match direction
+    {
+        "initial" => {
+            let before_n = q.before.unwrap_or(3).min(20) as usize;
+            let after_n = q.after.unwrap_or(24).min(40) as usize;
+            if matched_entries.is_empty() {
+                return Json(CblWindowPageView {
+                    items: Vec::new(),
+                    current_index: None,
+                    total_matched: Some(0),
+                    total_entries: Some(total_entries),
+                    min_position: None,
+                    max_position: None,
+                    has_more_before: false,
+                    has_more_after: false,
+                })
+                .into_response();
+            }
+            let current_pos: usize = matched_entries
+                .iter()
+                .position(|e| {
+                    let Some(issue_id) = &e.matched_issue_id else {
+                        return false;
+                    };
+                    progress_by_issue
+                        .get(issue_id)
+                        .map(|p| !p.finished)
+                        .unwrap_or(true)
+                })
+                .unwrap_or(matched_entries.len().saturating_sub(1));
+            let all_done = matched_entries.iter().all(|e| {
+                e.matched_issue_id
+                    .as_ref()
+                    .and_then(|id| progress_by_issue.get(id))
+                    .map(|p| p.finished)
+                    .unwrap_or(false)
+            });
+            let start = current_pos.saturating_sub(before_n);
+            let end = (current_pos + after_n + 1).min(matched_entries.len());
+            let slice: Vec<&cbl_entry::Model> = matched_entries[start..end].iter().collect();
+            (
+                slice,
+                Some(AnchorMeta {
+                    current_slice_offset: current_pos - start,
+                    all_done,
+                    total_matched,
+                    total_entries,
+                }),
+            )
+        }
+        "after" => {
+            let cursor = q.cursor.unwrap();
+            let limit = q.limit.unwrap_or(24).clamp(1, 60) as usize;
+            let slice: Vec<&cbl_entry::Model> = matched_entries
+                .iter()
+                .filter(|e| e.position > cursor)
+                .take(limit)
+                .collect();
+            (slice, None)
+        }
+        "before" => {
+            let cursor = q.cursor.unwrap();
+            let limit = q.limit.unwrap_or(24).clamp(1, 60) as usize;
+            // Take the LAST `limit` entries with position < cursor, kept
+            // in ascending order so the client can prepend without
+            // re-sorting.
+            let mut bucket: Vec<&cbl_entry::Model> = matched_entries
+                .iter()
+                .filter(|e| e.position < cursor)
+                .collect();
+            let drop = bucket.len().saturating_sub(limit);
+            bucket.drain(0..drop);
+            (bucket, None)
+        }
+        _ => unreachable!(),
+    };
+
+    // Hydrate the slice — issues + their parent series for slug + name.
+    let slice_issue_ids: Vec<String> = slice_entries
+        .iter()
+        .filter_map(|e| e.matched_issue_id.clone())
+        .collect();
+    let issues = if slice_issue_ids.is_empty() {
+        Vec::new()
+    } else {
+        match entity::issue::Entity::find()
+            .filter(entity::issue::Column::Id.is_in(slice_issue_ids))
+            .all(&app.db)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        }
+    };
+    let series_ids: std::collections::HashSet<Uuid> = issues.iter().map(|i| i.series_id).collect();
+    let series_rows = if series_ids.is_empty() {
+        Vec::new()
+    } else {
+        match entity::series::Entity::find()
+            .filter(entity::series::Column::Id.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
+            .all(&app.db)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        }
+    };
+    let series_by_id: std::collections::HashMap<Uuid, entity::series::Model> =
+        series_rows.into_iter().map(|s| (s.id, s)).collect();
+    let issue_by_id: std::collections::HashMap<String, entity::issue::Model> =
+        issues.into_iter().map(|i| (i.id.clone(), i)).collect();
+
+    let mut items: Vec<CblWindowEntry> = Vec::with_capacity(slice_entries.len());
+    let mut current_output_index: Option<i32> = None;
+    let mut min_pos: Option<i32> = None;
+    let mut max_pos: Option<i32> = None;
+    for (offset, entry) in slice_entries.iter().enumerate() {
+        let Some(issue_id) = entry.matched_issue_id.clone() else {
+            continue;
+        };
+        let Some(issue) = issue_by_id.get(&issue_id) else {
+            continue;
+        };
+        let Some(series) = series_by_id.get(&issue.series_id) else {
+            continue;
+        };
+        if !acl.contains(series.library_id) {
+            continue;
+        }
+        let progress = progress_by_issue.get(&issue_id);
+        let finished = progress.map(|p| p.finished).unwrap_or(false);
+        let last_page = progress.map(|p| p.last_page).unwrap_or(0);
+        let percent = progress.map(|p| p.percent).unwrap_or(0.0);
+
+        if let Some(anchor) = &anchor_meta
+            && offset == anchor.current_slice_offset
+        {
+            current_output_index = Some(items.len() as i32);
+        }
+        min_pos = Some(min_pos.map_or(entry.position, |m| m.min(entry.position)));
+        max_pos = Some(max_pos.map_or(entry.position, |m| m.max(entry.position)));
+
+        items.push(CblWindowEntry {
+            issue: crate::api::series::IssueSummaryView::from_model(issue.clone(), &series.slug)
+                .with_series_name(series.name.clone()),
+            position: entry.position,
+            finished,
+            last_page,
+            percent,
+        });
+    }
+
+    // has_more_* is computed against the matched-entry positions we
+    // never had to consult ACL for. An ACL-dropped entry at the edge
+    // doesn't suppress the flag — the next fetch will resolve to the
+    // next visible one (possibly empty if ACL is broad).
+    let (has_more_before, has_more_after) = match (min_pos, max_pos) {
+        (Some(lo), Some(hi)) => (
+            matched_entries.iter().any(|e| e.position < lo),
+            matched_entries.iter().any(|e| e.position > hi),
+        ),
+        _ => match direction {
+            // Empty page after ACL — fall back to "ask again from
+            // whatever the client asked for". For initial / empty
+            // matched set both sides are empty.
+            "after" => (false, matched_entries.iter().any(|e| e.position > q.cursor.unwrap())),
+            "before" => (matched_entries.iter().any(|e| e.position < q.cursor.unwrap()), false),
+            _ => (false, false),
+        },
+    };
+
+    let (current_index, total_matched_out, total_entries_out) = match &anchor_meta {
+        Some(m) => (
+            if m.all_done { None } else { current_output_index },
+            Some(m.total_matched),
+            Some(m.total_entries),
+        ),
+        None => (None, None, None),
+    };
+
+    Json(CblWindowPageView {
+        items,
+        current_index,
+        total_matched: total_matched_out,
+        total_entries: total_entries_out,
+        min_position: min_pos,
+        max_position: max_pos,
+        has_more_before,
+        has_more_after,
+    })
+    .into_response()
+}
+
+struct AnchorMeta {
+    current_slice_offset: usize,
+    all_done: bool,
+    total_matched: i32,
+    total_entries: i32,
 }

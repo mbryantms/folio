@@ -13,7 +13,7 @@ import {
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { RailIconPicker } from "@/components/library/RailIconPicker";
 import {
-  useCblListWindow,
+  useCblListWindowInfinite,
   useCollectionEntries,
   useSavedViewResults,
 } from "@/lib/api/queries";
@@ -202,14 +202,60 @@ function CblRailBody({
   listId: string;
   itemStyle: React.CSSProperties;
 }) {
-  void view;
   // Reading-window query: 3 finished entries on the left for context,
   // a wider upcoming tail on the right so users can browse several
-  // issues ahead without bouncing to the detail page. The window
-  // endpoint already filters out unmatched entries + library-ACL
-  // gaps server-side.
-  const window = useCblListWindow(listId, { before: 3, after: 24 });
-  if (window.isLoading) {
+  // issues ahead without bouncing to the detail page. The infinite
+  // variant lets the rail asynchronously extend in either direction
+  // as the user scrolls past the edge sentinels, without disturbing
+  // the anchored slice that landed first.
+  const query = useCblListWindowInfinite(listId, {
+    before: 3,
+    after: 24,
+    limit: 24,
+  });
+  // Sentinels fire ~2 cards before the rail edge so the fetch starts
+  // before the user actually reaches the end — the new cards slide in
+  // continuously rather than after a perceptible pause.
+  const leftSentinel = React.useRef<HTMLDivElement | null>(null);
+  const rightSentinel = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    const node = leftSentinel.current;
+    if (!node) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (
+          entries.some((e) => e.isIntersecting) &&
+          query.hasPreviousPage &&
+          !query.isFetchingPreviousPage
+        ) {
+          void query.fetchPreviousPage();
+        }
+      },
+      { rootMargin: "0px 0px 0px 0px", threshold: 0 },
+    );
+    obs.observe(node);
+    return () => obs.disconnect();
+  }, [query]);
+  React.useEffect(() => {
+    const node = rightSentinel.current;
+    if (!node) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (
+          entries.some((e) => e.isIntersecting) &&
+          query.hasNextPage &&
+          !query.isFetchingNextPage
+        ) {
+          void query.fetchNextPage();
+        }
+      },
+      { rootMargin: "0px 0px 0px 0px", threshold: 0 },
+    );
+    obs.observe(node);
+    return () => obs.disconnect();
+  }, [query]);
+
+  if (query.isLoading) {
     return (
       <>
         {Array.from({ length: 6 }).map((_, i) => (
@@ -220,39 +266,80 @@ function CblRailBody({
       </>
     );
   }
-  const data = window.data;
-  const items = data?.items ?? [];
+  const pages = query.data?.pages ?? [];
+  // Flatten + de-dupe by position. ACL filtering can make two adjacent
+  // pages share an entry at the boundary in rare cases; the Set guard
+  // keeps the rendered set unique without re-sorting.
+  const seen = new Set<number>();
+  const items = pages.flatMap((p) =>
+    p.items.filter((e) => {
+      if (seen.has(e.position)) return false;
+      seen.add(e.position);
+      return true;
+    }),
+  );
   if (items.length === 0) {
+    const initialPage = pages[0];
     return (
       <RailEmptyState
         message={
-          (data?.total_matched ?? 0) === 0
+          (initialPage?.total_matched ?? 0) === 0
             ? "No matched entries in this list."
             : "Nothing to show in this window."
         }
       />
     );
   }
-  const currentIndex = data?.current_index ?? null;
+  // Anchor info lives on the initial (first-loaded) page. As the user
+  // walks backward via fetchPreviousPage, the initial page slides into
+  // the middle of the array — anchorPos lets us recompute its slot.
+  const initialPage = pages.find((p) => p.current_index != null);
+  const anchorPos =
+    initialPage && initialPage.current_index != null
+      ? initialPage.items[initialPage.current_index]?.position
+      : undefined;
+  // Sentinels sit ~2 cards in from each end so the fetch starts while
+  // the user still has runway between them and the data edge.
+  // IntersectionObserver respects the rail's `overflow-x` clipping —
+  // a sentinel placed at the absolute end wouldn't fire until the
+  // edge is fully in view, defeating the "anticipatory load" intent.
+  const sentinelOffset = Math.min(2, Math.max(0, items.length - 1));
+  const leftSentinelIdx = sentinelOffset;
+  const rightSentinelIdx = items.length - 1 - sentinelOffset;
   return (
     <>
       {items.map((entry, i) => {
-        const isCurrent = i === currentIndex;
+        const isCurrent = anchorPos != null && entry.position === anchorPos;
         return (
-          <div
-            key={entry.issue.id}
-            style={itemStyle}
-            className="shrink-0"
-            // The rail wrapper looks for this attribute on mount to
-            // auto-scroll the current entry into view.
-            data-rail-current={isCurrent ? "true" : undefined}
-          >
-            <CblWindowCard
-              entry={entry}
-              isCurrent={isCurrent}
-              cblSavedViewId={view.id}
-            />
-          </div>
+          <React.Fragment key={entry.issue.id}>
+            {i === leftSentinelIdx && (
+              <div
+                ref={leftSentinel}
+                aria-hidden
+                className="pointer-events-none w-0 shrink-0"
+              />
+            )}
+            <div
+              style={itemStyle}
+              className="shrink-0"
+              // The rail wrapper looks for this attribute on mount to
+              // auto-scroll the current entry into view.
+              data-rail-current={isCurrent ? "true" : undefined}
+            >
+              <CblWindowCard
+                entry={entry}
+                isCurrent={isCurrent}
+                cblSavedViewId={view.id}
+              />
+            </div>
+            {i === rightSentinelIdx && i !== leftSentinelIdx && (
+              <div
+                ref={rightSentinel}
+                aria-hidden
+                className="pointer-events-none w-0 shrink-0"
+              />
+            )}
+          </React.Fragment>
         );
       })}
     </>
