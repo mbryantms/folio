@@ -213,59 +213,92 @@ function CblRailBody({
     after: 24,
     limit: 24,
   });
-  // Sentinels fire ~2 cards before the rail edge so the fetch starts
-  // before the user actually reaches the end — the new cards slide in
-  // continuously rather than after a perceptible pause.
-  const leftSentinel = React.useRef<HTMLDivElement | null>(null);
-  const rightSentinel = React.useRef<HTMLDivElement | null>(null);
-  React.useEffect(() => {
-    const node = leftSentinel.current;
-    if (!node) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (
-          entries.some((e) => e.isIntersecting) &&
-          query.hasPreviousPage &&
-          !query.isFetchingPreviousPage
-        ) {
-          void query.fetchPreviousPage();
-        }
-      },
-      { rootMargin: "0px 0px 0px 0px", threshold: 0 },
-    );
-    obs.observe(node);
-    return () => obs.disconnect();
-  }, [query]);
-  React.useEffect(() => {
-    const node = rightSentinel.current;
-    if (!node) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (
-          entries.some((e) => e.isIntersecting) &&
-          query.hasNextPage &&
-          !query.isFetchingNextPage
-        ) {
-          void query.fetchNextPage();
-        }
-      },
-      { rootMargin: "0px 0px 0px 0px", threshold: 0 },
-    );
-    obs.observe(node);
-    return () => obs.disconnect();
-  }, [query]);
 
-  if (query.isLoading) {
-    return (
-      <>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} style={itemStyle} className="shrink-0">
-            <IssueCardSkeleton />
-          </div>
-        ))}
-      </>
+  // Latest query stashed in a ref so the IntersectionObserver callbacks
+  // can read `hasNextPage` / `isFetching*` without us having to rebuild
+  // the observer (and re-fire its initial intersection check) every
+  // time TanStack swaps in a new query object. The ref is updated in
+  // an effect, not at render time — writing during render would trip
+  // react-hooks/refs (and risks stale closures during concurrent
+  // renders); the callbacks are always async so the brief
+  // render-to-effect gap is invisible.
+  const queryRef = React.useRef(query);
+  React.useEffect(() => {
+    queryRef.current = query;
+  });
+
+  // Each rendered sentinel is keyed inside the items map by its
+  // neighbour's `issue.id`, so React unmounts and remounts the DOM
+  // node whenever pages prepend or append. Callback refs let us
+  // re-attach the IntersectionObserver to the fresh node without
+  // tearing down the entire effect on every fetch.
+  const railScrollRef = React.useRef<HTMLElement | null>(null);
+  const leftObsRef = React.useRef<IntersectionObserver | null>(null);
+  const rightObsRef = React.useRef<IntersectionObserver | null>(null);
+
+  const setLeftSentinel = React.useCallback((node: HTMLDivElement | null) => {
+    leftObsRef.current?.disconnect();
+    leftObsRef.current = null;
+    if (!node) return;
+    // Cache the closest horizontally-scrolling ancestor once — that's
+    // the `<div>` inside HorizontalScrollRail whose `scrollLeft` we'll
+    // bump on every prepend to keep the user's visible cards anchored.
+    if (!railScrollRef.current) {
+      let cur: HTMLElement | null = node.parentElement;
+      while (cur) {
+        const overflow = window.getComputedStyle(cur).overflowX;
+        if (overflow === "auto" || overflow === "scroll") {
+          railScrollRef.current = cur;
+          break;
+        }
+        cur = cur.parentElement;
+      }
+    }
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        const q = queryRef.current;
+        if (q.hasPreviousPage && !q.isFetchingPreviousPage) {
+          void q.fetchPreviousPage();
+        }
+      },
+      { threshold: 0 },
     );
-  }
+    obs.observe(node);
+    leftObsRef.current = obs;
+  }, []);
+
+  const setRightSentinel = React.useCallback((node: HTMLDivElement | null) => {
+    rightObsRef.current?.disconnect();
+    rightObsRef.current = null;
+    if (!node) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        const q = queryRef.current;
+        if (q.hasNextPage && !q.isFetchingNextPage) {
+          void q.fetchNextPage();
+        }
+      },
+      { threshold: 0 },
+    );
+    obs.observe(node);
+    rightObsRef.current = obs;
+  }, []);
+
+  // Final disconnect on unmount — callback refs handle re-attachment
+  // mid-life, but the last node is unmounted without firing the
+  // ref(null) callback in StrictMode dev cleanups.
+  React.useEffect(() => {
+    return () => {
+      leftObsRef.current?.disconnect();
+      rightObsRef.current?.disconnect();
+    };
+  }, []);
+
+  // Derive the rendered item list before any early returns so the
+  // layout-effect below has its dependency on every render — hooks
+  // must run in a stable order across renders.
   const pages = query.data?.pages ?? [];
   // Flatten + de-dupe by position. ACL filtering can make two adjacent
   // pages share an entry at the boundary in rare cases; the Set guard
@@ -278,6 +311,49 @@ function CblRailBody({
       return true;
     }),
   );
+
+  // Compensate scrollLeft on prepends. When fetchPreviousPage lands
+  // and 24 new entries land before items[0], the rail's `scrollLeft`
+  // is numerically unchanged but visually now points at the newly
+  // prepended content — the user's visible cards appear to leap
+  // rightward. Bumping `scrollLeft` by the total width of the
+  // prepended content (card width + the rail's `gap-3` 12px gutter)
+  // keeps the previously visible cards anchored to the same screen
+  // position. Append (fetchNextPage) doesn't need compensation:
+  // adding content past the right edge doesn't shift anything
+  // currently visible. Lives in a `useLayoutEffect` so the fix
+  // commits before the next paint — no perceptible jump.
+  const lowestPosRef = React.useRef<number | null>(null);
+  const cardSize = parseFloat(String(itemStyle.width ?? "0"));
+  React.useLayoutEffect(() => {
+    if (items.length === 0) return;
+    const newLowest = items[0]!.position;
+    const prev = lowestPosRef.current;
+    lowestPosRef.current = newLowest;
+    if (prev == null || newLowest >= prev) return;
+    let prepended = 0;
+    for (const it of items) {
+      if (it.position >= prev) break;
+      prepended++;
+    }
+    if (prepended === 0) return;
+    const scroller = railScrollRef.current;
+    if (!scroller || !Number.isFinite(cardSize) || cardSize <= 0) return;
+    // gap-3 = 12px between flex children inside HorizontalScrollRail.
+    scroller.scrollLeft += prepended * (cardSize + 12);
+  }, [items, cardSize]);
+
+  if (query.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={itemStyle} className="shrink-0">
+            <IssueCardSkeleton />
+          </div>
+        ))}
+      </>
+    );
+  }
   if (items.length === 0) {
     const initialPage = pages[0];
     return (
@@ -306,6 +382,7 @@ function CblRailBody({
   const sentinelOffset = Math.min(2, Math.max(0, items.length - 1));
   const leftSentinelIdx = sentinelOffset;
   const rightSentinelIdx = items.length - 1 - sentinelOffset;
+
   return (
     <>
       {items.map((entry, i) => {
@@ -314,7 +391,7 @@ function CblRailBody({
           <React.Fragment key={entry.issue.id}>
             {i === leftSentinelIdx && (
               <div
-                ref={leftSentinel}
+                ref={setLeftSentinel}
                 aria-hidden
                 className="pointer-events-none w-0 shrink-0"
               />
@@ -334,7 +411,7 @@ function CblRailBody({
             </div>
             {i === rightSentinelIdx && i !== leftSentinelIdx && (
               <div
-                ref={rightSentinel}
+                ref={setRightSentinel}
                 aria-hidden
                 className="pointer-events-none w-0 shrink-0"
               />
