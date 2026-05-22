@@ -421,20 +421,27 @@ async fn per_user_and_global_system_key_uniqueness() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn want_to_read_template_renamed_to_unstarted() {
+async fn unstarted_and_stale_templates_dropped() {
+    // The M9 templates "Unstarted" (id `…0004`, formerly "Want to
+    // Read") and "Stale" (id `…0005`) were removed by the
+    // m20261224 migration — Unstarted overlapped with the per-user
+    // "Want to Read" collection, and Stale was a curator tool that
+    // didn't belong in the user catalog. Confirm both rows are gone.
     let app = TestApp::spawn().await;
     let db = Database::connect(&app.db_url).await.unwrap();
     let row = db
         .query_one(Statement::from_string(
             sea_orm::DatabaseBackend::Postgres,
-            "SELECT name FROM saved_views \
-             WHERE id = '00000000-0000-0000-0000-000000000004'::uuid",
+            "SELECT COUNT(*)::bigint AS n FROM saved_views \
+             WHERE id IN (\
+                '00000000-0000-0000-0000-000000000004'::uuid, \
+                '00000000-0000-0000-0000-000000000005'::uuid)",
         ))
         .await
         .unwrap()
-        .expect("M9 template row present");
-    let name: String = row.try_get("", "name").unwrap();
-    assert_eq!(name, "Unstarted");
+        .expect("count row");
+    let n: i64 = row.try_get("", "n").unwrap();
+    assert_eq!(n, 0, "Unstarted + Stale templates must be gone");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -96,6 +96,14 @@ function ViewRow({ view }: { view: SavedViewView }) {
   const [pinOpen, setPinOpen] = React.useState(false);
   const isCbl = view.kind === "cbl";
   const pinnedCount = view.pinned_on_pages.length;
+  // The per-user Want to Read collection (kind='collection',
+  // system_key='want_to_read') is auto-seeded for every account and
+  // backend-guarded against deletion. Surface it as built-in in the
+  // catalog: lock chip + no Delete affordance. Edit stays visible
+  // because the user still curates its contents from the detail page.
+  const isWantToRead =
+    view.kind === "collection" && view.system_key === "want_to_read";
+  const isBuiltIn = view.is_system || isWantToRead;
 
   return (
     <li className="bg-background flex items-center gap-3 px-3 py-2">
@@ -107,10 +115,14 @@ function ViewRow({ view }: { view: SavedViewView }) {
         >
           {view.name}
         </Link>
-        {view.is_system ? (
+        {isBuiltIn ? (
           <span
             className="text-muted-foreground bg-muted/40 inline-flex shrink-0 items-center rounded-md border px-2 py-0.5 text-xs"
-            title="Built-in views can't be edited or deleted"
+            title={
+              isWantToRead
+                ? "Built-in collection. Manage its contents on the detail page; the list itself can't be deleted."
+                : "Built-in views can't be edited or deleted"
+            }
           >
             <Lock className="mr-1 h-3 w-3" /> Built-in
           </span>
@@ -120,7 +132,13 @@ function ViewRow({ view }: { view: SavedViewView }) {
       {/* Edit + Delete render first (left of the toggles) so the
        *  trailing `[On home] [In sidebar]` pair lines up on the right
        *  edge across every row, regardless of whether a row carries
-       *  Edit/Delete (user views) or not (system views). */}
+       *  Edit/Delete (user views) or not (system views).
+       *
+       *  Three states:
+       *  - `is_system`        → no Edit, no Delete  (read-only system rails)
+       *  - `isWantToRead`     → Edit, no Delete     (built-in, but contents are curated)
+       *  - otherwise          → Edit + Delete       (regular user view)
+       */}
       {view.is_system ? null : (
         <>
           <Button type="button" variant="ghost" size="sm" asChild>
@@ -129,34 +147,38 @@ function ViewRow({ view }: { view: SavedViewView }) {
               <span className="hidden sm:inline">Edit</span>
             </Link>
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => setConfirmOpen(true)}
-            aria-label="Delete view"
-            className="text-destructive hover:text-destructive"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-          <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete this view?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {isCbl
-                    ? "Removes the saved view but keeps the underlying CBL list. You can re-import or re-pin later."
-                    : "Removes the filter view permanently."}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={() => del.mutate()}>
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          {isWantToRead ? null : (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setConfirmOpen(true)}
+                aria-label="Delete view"
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+              <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this view?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {isCbl
+                        ? "Removes the saved view but keeps the underlying CBL list. You can re-import or re-pin later."
+                        : "Removes the filter view permanently."}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => del.mutate()}>
+                      Delete
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
+          )}
         </>
       )}
 

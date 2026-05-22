@@ -353,6 +353,22 @@ async fn want_to_read_cannot_be_deleted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn want_to_read_cannot_be_deleted_via_saved_views() {
+    // The `/settings/views` catalog hits `DELETE /me/saved-views/{id}`,
+    // not the collections endpoint. Same guard must apply there or
+    // the catalog can bypass the protection that
+    // `/me/collections/{id}` enforces.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "claudia@example.com").await;
+    let (_, items) = http(&app, Method::GET, "/api/me/collections", Some(&auth), None).await;
+    let wtr_id = items[0]["id"].as_str().unwrap().to_owned();
+    let url = format!("/api/me/saved-views/{wtr_id}");
+    let (status, body) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "body: {body:#?}");
+    assert_eq!(body["error"]["code"], "want_to_read_undeletable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_series_and_issue_entries_mixed() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "dan@example.com").await;

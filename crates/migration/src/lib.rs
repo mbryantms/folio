@@ -68,6 +68,7 @@ mod m20261220_000001_opds_reorder_opt_outs;
 mod m20261221_000001_opds_progress_glyphs;
 mod m20261222_000001_user_max_rails_per_page;
 mod m20261223_000001_person;
+mod m20261224_000001_drop_stale_unstarted_templates;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -144,6 +145,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260522_000002_log_widgets::Migration),
             Box::new(m20261222_000001_user_max_rails_per_page::Migration),
             Box::new(m20261223_000001_person::Migration),
+            Box::new(m20261224_000001_drop_stale_unstarted_templates::Migration),
         ]
     }
 }

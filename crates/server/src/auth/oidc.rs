@@ -1,7 +1,7 @@
 //! OIDC code+PKCE flow (§17.1).
 //!
 //! Routes:
-//!   GET  /auth/oidc/start    → 302 to issuer with PKCE; sets `__Host-comic_oidc` (state+verifier)
+//!   GET  /auth/oidc/start    → 302 to issuer with PKCE; sets `__Secure-comic_oidc` (state+verifier)
 //!   GET  /auth/oidc/callback → exchange code, validate ID token, upsert user, set session cookies
 //!
 //! The OpenID Connect Core 1.0 flow is implemented via the `openidconnect` crate, which
@@ -45,7 +45,14 @@ use super::jwt::JwtKeys;
 use entity::auth_session::ActiveModel as SessionAM;
 use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 
-const OIDC_STATE_COOKIE: &str = "__Host-comic_oidc";
+// `__Secure-`, NOT `__Host-`: the `__Host-` prefix requires Path=/ per
+// the cookie-prefix spec, but we deliberately scope this cookie to
+// `/auth/oidc/callback` so it isn't sent on every request. The same
+// rename was applied to the refresh cookie (see `cookies.rs`) after
+// the spec violation caused browsers to silently reject the
+// Set-Cookie header and leave the cookie unset — manifesting as
+// "missing oidc state cookie" at the callback.
+const OIDC_STATE_COOKIE: &str = "__Secure-comic_oidc";
 const OIDC_STATE_TTL_SECS: u64 = 5 * 60;
 // Access + refresh TTLs come from config (`COMIC_JWT_ACCESS_TTL` / `_REFRESH_TTL`).
 // Defaults: 24h / 30d. Validated at startup so unwrapping in handlers is safe.

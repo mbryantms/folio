@@ -1107,6 +1107,20 @@ pub async fn delete_one(
     if row.user_id != Some(user.id) {
         return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
     }
+    // Want to Read is the per-user system collection — undeletable.
+    // Same guard as the /me/collections/{id} delete handler so a
+    // delete through the saved-views catalog can't bypass it. Matches
+    // that endpoint's response shape (409 + want_to_read_undeletable)
+    // so the client toast strings are shared.
+    if row.kind == KIND_COLLECTION
+        && row.system_key.as_deref() == Some(SYSTEM_KEY_WANT_TO_READ)
+    {
+        return error(
+            StatusCode::CONFLICT,
+            "want_to_read_undeletable",
+            "Want to Read cannot be deleted",
+        );
+    }
     // For kind='cbl' the saved view is just a wrapper around a row in
     // `cbl_lists`. OPDS feeds (`/opds/v1/lists`) and the On Deck rail
     // both query `cbl_lists` directly, so deleting only the wrapper

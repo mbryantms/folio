@@ -242,7 +242,7 @@ async fn start_oidc_flow(app: &TestApp, redirect_after: Option<&str>) -> (String
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER, "/start should 302");
     let state_cookie =
-        extract_set_cookie(&resp, "__Host-comic_oidc").expect("state cookie present after /start");
+        extract_set_cookie(&resp, "__Secure-comic_oidc").expect("state cookie present after /start");
     // Pull the state param out of the Location header to feed back to /callback.
     let location = resp
         .headers()
@@ -283,7 +283,7 @@ async fn callback_with(
             Request::builder()
                 .method(Method::GET)
                 .uri(uri)
-                .header(header::COOKIE, format!("__Host-comic_oidc={state_cookie}"))
+                .header(header::COOKIE, format!("__Secure-comic_oidc={state_cookie}"))
                 .body(Body::empty())
                 .unwrap(),
         )
