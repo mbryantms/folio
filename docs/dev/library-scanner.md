@@ -103,8 +103,8 @@ reconcile so unscanned siblings stay untouched.
 | Trigger | Endpoint / source | Notes |
 |---|---|---|
 | Manual library scan | `POST /libraries/{slug}/scan` ([api/libraries.rs:480](../../crates/server/src/api/libraries.rs#L480)) | 202 + `{ scan_id, state, coalesced, mode, coalesced_into, queued_followup, reason }`. `mode=normal | metadata_refresh | content_verify`; `?force=true` remains a content-verify alias. Coalesces on an existing in-flight scan. |
-| Manual series scan | `POST /series/{id}/scan` | Per-folder rescan via [`jobs/scan_series.rs`](../../crates/server/src/jobs/scan_series.rs) with `JobKind::Series`. Manual clicks set `force=true`. |
-| Manual issue scan | `POST /issues/{id}/scan` | Same job type, `JobKind::Issue` — runs [`scan_issue_file`](../../crates/server/src/library/scanner/mod.rs#L376). |
+| Manual series scan | `POST /series/{slug}/scan` | Per-folder rescan via [`jobs/scan_series.rs`](../../crates/server/src/jobs/scan_series.rs) with `JobKind::Series`. Manual clicks set `force=true`. |
+| Manual issue scan | `POST /series/{series_slug}/issues/{issue_slug}/scan` | Same job type, `JobKind::Issue` — runs [`scan_issue_file`](../../crates/server/src/library/scanner/mod.rs#L376). |
 | Scheduled scan | `library.scan_schedule_cron` per-library | [`jobs/scheduler.rs:224`](../../crates/server/src/jobs/scheduler.rs#L224) — `coalesce_scan(.., false)`. 5- or 6-field cron via `tokio_cron_scheduler`. |
 | File-watch | `notify-debouncer-full` (30 s window) | Per-library, only when `library.file_watch_enabled=true`. Enqueues `scan_series` jobs with `force=false`. |
 | Startup scan | `COMIC_SCAN_ON_STARTUP=true` | Enqueues a full scan of every library at boot. |
@@ -394,7 +394,7 @@ the DB:
   match. One-shot self-heal
   ([process.rs:540–556](../../crates/server/src/library/scanner/process.rs#L540-L556)).
 - **`user_edited` stickiness on update** — fields the user has edited
-  via `PATCH /issues/{id}` are not refreshed from ComicInfo. The set is
+  via `PATCH /series/{series_slug}/issues/{issue_slug}` are not refreshed from ComicInfo. The set is
   consulted at [process.rs:333](../../crates/server/src/library/scanner/process.rs#L333),
   guarding `sort_number`, `language_code`, `age_rating`, `tags`,
   `genre`, `comicvine_id`, `metron_id` (others as listed in the source).
@@ -475,7 +475,7 @@ opaque JSON so adding variants doesn't need a migration.
 - **Manual dismiss** — `dismissed_at` is permanent; auto-resolve never
   clears it
   ([health.rs:331](../../crates/server/src/library/health.rs#L331)).
-  Endpoint: `POST /libraries/{id}/health-issues/{issue_id}/dismiss`.
+  Endpoint: `POST /libraries/{slug}/health-issues/{issue_id}/dismiss`.
 
 ### Actively emitted (10 variants)
 
@@ -553,7 +553,7 @@ durable side of the live channel. Fields:
 | `series_id` | uuid? | For `kind in ('series','issue')`. |
 | `issue_id` | text? | For `kind = 'issue'` — links the History row back to the issue page. |
 
-History view: `GET /libraries/{id}/scan-runs` reads this table; the
+History view: `GET /libraries/{slug}/scan-runs` reads this table; the
 admin "Scan history" tab paginates it.
 
 ## Adjacent systems triggered by a scan
@@ -617,7 +617,7 @@ waiting for the scheduled refresh window.
 
 ## Configuration reference
 
-### Per-library settings (`PATCH /libraries/{id}`)
+### Per-library settings (`PATCH /libraries/{slug}`)
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
@@ -642,12 +642,12 @@ waiting for the scheduled refresh window.
 
 ### Soft-delete admin endpoints
 
-- `GET /libraries/{id}/scan-preview` — admin-only preflight for the
+- `GET /libraries/{slug}/scan-preview` — admin-only preflight for the
   scan button: estimated mode, dirty-folder count, known issue count,
   cover backlog, last scan duration/state, watcher status, and reason.
-- `GET /libraries/{id}/removed` — list pending removals
-- `POST /issues/{id}/restore` — reverse the soft-delete (file must be back)
-- `POST /issues/{id}/confirm-removal` — admin confirmation now (skip the wait)
+- `GET /libraries/{slug}/removed` — list pending removals
+- `POST /series/{series_slug}/issues/{issue_slug}/restore` — reverse the soft-delete (file must be back)
+- `POST /series/{series_slug}/issues/{issue_slug}/confirm-removal` — admin confirmation now (skip the wait)
 - The auto-confirm sweep at 04:00 UTC stamps `removal_confirmed_at` on
   rows older than `library.soft_delete_days`
   ([scheduler.rs:357](../../crates/server/src/jobs/scheduler.rs#L357)).

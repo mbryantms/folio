@@ -6,7 +6,7 @@ detector + recognizer pipeline that ships with the Rust binary.
 
 ## Endpoint
 
-`POST /api/me/issues/{id}/ocr`
+`POST /me/issues/{id}/ocr`
 
 ```json
 // Request
@@ -110,7 +110,9 @@ Two Redis-backed layers, both fail-open on every operation.
 
 Stores the final recognized text per region.
 
-**Key**: `ocr:cache:{content_hash}:{page}:{lang}:{region_hash}`
+**Key**: `ocr:cache:{content_hash}:{page}:{lang}:{d|r}:{region_hash}` —
+the `{d|r}` byte is `d` when run with the detector enabled, `r` for
+recognizer-only.
 
 - `content_hash` (the issue's mutable BLAKE3 of on-disk bytes, not
   the stable `issue.id`) makes invalidation automatic — a rescan
@@ -308,5 +310,4 @@ endpoint.
   Western quality than `tessdata_best`.
 - Page-level text-region indexing (apalis job): pre-detect on scan
   so the reader can hover-to-highlight bubbles without re-running
-  the detector. See plan §"Phase 3" in
-  [`~/.claude/plans/text-detection-1.0.md`](../../../.claude/plans/text-detection-1.0.md).
+  the detector.
