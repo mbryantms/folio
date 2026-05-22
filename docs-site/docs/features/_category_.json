@@ -1,0 +1,8 @@
+{
+  "label": "Features",
+  "position": 2,
+  "link": {
+    "type": "generated-index",
+    "description": "Spotlight on every user-facing feature in Folio. Each page is a self-contained tour of one part of the app — what it does, what it looks like, and how the pieces fit together."
+  }
+}
