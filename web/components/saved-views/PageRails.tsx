@@ -7,9 +7,9 @@ import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
 import { useSavedViews } from "@/lib/api/queries";
 
+import { LazyRail } from "./LazyRail";
 import { PageActionsMenu } from "./PageActionsMenu";
 import { PageHeading } from "./PageHeading";
-import { SavedViewRail } from "./SavedViewRail";
 
 /** Card-size bounds for the page rails. Mirrors the library-grid bounds
  *  so toggling between a page and a library grid feels consistent, but
@@ -109,7 +109,7 @@ export function PageRails({
           style={{ gap: "var(--density-rail-gap)" }}
         >
           {items.map((view) => (
-            <SavedViewRail key={view.id} view={view} cardSize={cardSize} />
+            <LazyRail key={view.id} view={view} cardSize={cardSize} />
           ))}
         </div>
       )}

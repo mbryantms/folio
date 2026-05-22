@@ -16,11 +16,13 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useSavedViews, useMePages } from "@/lib/api/queries";
+import { useMe, useSavedViews, useMePages } from "@/lib/api/queries";
 import { useTogglePinOnPage } from "@/lib/api/mutations";
 import type { SavedViewView } from "@/lib/api/types";
 
-const RAIL_CAP = 12;
+// Fallback when /auth/me is still resolving. Mirrors the column
+// default in m20261222_000001_user_max_rails_per_page.
+const DEFAULT_RAIL_CAP = 12;
 
 /** Bucket order in the picker: built-in rails at the top so they're
  *  easy to surface on a fresh page, then filter views, then CBL lists,
@@ -53,7 +55,8 @@ function groupLabel(kind: SavedViewView["kind"]): string {
  *  page-pin state"). Opened from the page-detail kebab to manage
  *  WHICH SAVED VIEWS are pinned ON THIS page. Toggling a checkbox
  *  pins or unpins via `useTogglePinOnPage` immediately so the
- *  server's 12-rail per-page cap surfaces inline.
+ *  server's per-page rail cap (the user's `max_rails_per_page`
+ *  preference; default 12, max 50) surfaces inline.
  *
  *  Long-list ergonomics: a search input at the top filters by name
  *  and description; rows are grouped by saved-view kind under sticky
@@ -69,6 +72,8 @@ export function ManagePinsDialog({
 }) {
   const viewsQ = useSavedViews();
   const pagesQ = useMePages();
+  const me = useMe();
+  const railCap = me.data?.max_rails_per_page ?? DEFAULT_RAIL_CAP;
   const toggle = useTogglePinOnPage();
   const [query, setQuery] = React.useState("");
 
@@ -90,7 +95,7 @@ export function ManagePinsDialog({
   }, [viewsQ.data]);
   const thisPage = pagesQ.data?.find((p) => p.id === pageId);
   const railCount = thisPage?.pin_count ?? 0;
-  const atCap = railCount >= RAIL_CAP;
+  const atCap = railCount >= railCap;
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -129,7 +134,7 @@ export function ManagePinsDialog({
             Manage rails on {thisPage?.name ?? "this page"}
           </DialogTitle>
           <DialogDescription>
-            {railCount} / {RAIL_CAP} rails pinned. Toggle a saved view to add or
+            {railCount} / {railCap} rails pinned. Toggle a saved view to add or
             remove it from this page.
           </DialogDescription>
         </DialogHeader>

@@ -145,6 +145,14 @@ pub struct Model {
     /// so clients that ignore PSE attributes still surface "what's
     /// left". Default true.
     pub opds_progress_glyphs: bool,
+
+    /// Per-user override of the home-page rail cap. Defaults to 12;
+    /// the DB CHECK + PATCH validation both pin the range to
+    /// 1..=50. Replaces the previous hard-coded `MAX_PIN_COUNT`
+    /// constant in `saved_views.rs::pin`. The client-side rail
+    /// surface lazy-mounts off-screen rails so a higher value does
+    /// not load every rail at hydration.
+    pub max_rails_per_page: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

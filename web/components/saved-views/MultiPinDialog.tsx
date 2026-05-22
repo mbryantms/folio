@@ -13,9 +13,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { useMePages } from "@/lib/api/queries";
+import { useMe, useMePages } from "@/lib/api/queries";
 import { useTogglePinOnPage } from "@/lib/api/mutations";
 import type { SavedViewView } from "@/lib/api/types";
+
+// Fallback when /auth/me is still resolving. Mirrors the column
+// default in m20261222_000001_user_max_rails_per_page.
+const DEFAULT_RAIL_CAP = 12;
 
 /** Multi-page rails M6 — multi-pin picker.
  *
@@ -23,10 +27,13 @@ import type { SavedViewView } from "@/lib/api/types";
  *  detail page. Shows every user page (system + custom) with a
  *  checkbox; the current pin state pre-fills via `view.pinned_on_pages`
  *  on the saved view, and each toggle fires `useTogglePinOnPage`
- *  immediately so the server's 12-rail per-page cap surfaces inline.
+ *  immediately so the server's per-page rail cap (the user's
+ *  `max_rails_per_page` preference; default 12, max 50) surfaces
+ *  inline.
  *
- *  Cap-disabled state: when a target page is already at 12 pins and
- *  the view isn't on it, the checkbox renders disabled with a hint. */
+ *  Cap-disabled state: when a target page is already at the user's
+ *  cap and the view isn't on it, the checkbox renders disabled with
+ *  a hint. */
 export function MultiPinDialog({
   view,
   open,
@@ -37,6 +44,8 @@ export function MultiPinDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const pagesQ = useMePages();
+  const me = useMe();
+  const railCap = me.data?.max_rails_per_page ?? DEFAULT_RAIL_CAP;
   const toggle = useTogglePinOnPage();
   const pinnedSet = React.useMemo(
     () => new Set(view.pinned_on_pages),
@@ -51,8 +60,8 @@ export function MultiPinDialog({
         <DialogHeader>
           <DialogTitle>Pin to pages</DialogTitle>
           <DialogDescription>
-            Each page holds up to 12 pinned rails. Toggle a page to add or
-            remove this view from it.
+            Each page holds up to {railCap} pinned rails. Toggle a page to add
+            or remove this view from it.
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[50vh] space-y-1 overflow-y-auto py-1">
@@ -65,7 +74,7 @@ export function MultiPinDialog({
           ) : (
             pages.map((p) => {
               const isPinned = pinnedSet.has(p.id);
-              const capReached = !isPinned && p.pin_count >= 12;
+              const capReached = !isPinned && p.pin_count >= railCap;
               return (
                 <label
                   key={p.id}
@@ -95,7 +104,7 @@ export function MultiPinDialog({
                       ) : null}
                     </p>
                     <p className="text-muted-foreground text-xs">
-                      {p.pin_count} / 12 rails
+                      {p.pin_count} / {railCap} rails
                       {capReached ? " — full" : ""}
                     </p>
                   </div>

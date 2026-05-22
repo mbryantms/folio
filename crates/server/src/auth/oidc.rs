@@ -637,6 +637,7 @@ pub async fn callback(
             show_marker_count: Set(false),
             opds_wtr_reorder: Set(true),
             opds_progress_glyphs: Set(true),
+            max_rails_per_page: Set(12),
         };
         match am.insert(&app.db).await {
             Ok(m) => m,

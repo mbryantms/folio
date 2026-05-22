@@ -66,6 +66,7 @@ mod m20261218_000001_people_search;
 mod m20261219_000001_character_team_location_junctions;
 mod m20261220_000001_opds_reorder_opt_outs;
 mod m20261221_000001_opds_progress_glyphs;
+mod m20261222_000001_user_max_rails_per_page;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -140,6 +141,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260520_000002_user_default_page_animation::Migration),
             Box::new(m20260522_000001_progress_records_finished_at::Migration),
             Box::new(m20260522_000002_log_widgets::Migration),
+            Box::new(m20261222_000001_user_max_rails_per_page::Migration),
         ]
     }
 }

@@ -178,6 +178,10 @@ pub struct MeResp {
     /// Markers M8: when true, /settings renders a count badge on the
     /// Bookmarks sidebar row. Default false.
     pub show_marker_count: bool,
+    /// Per-user override of the home-page rail cap. Replaces the
+    /// previous hard-coded `MAX_PIN_COUNT = 12` constant. Range
+    /// 1..=50 enforced by DB CHECK + PATCH validation. Default 12.
+    pub max_rails_per_page: i32,
 }
 
 /// `PATCH /me/preferences` request body. Every field is optional; when a key
@@ -234,6 +238,10 @@ pub struct PreferencesReq {
     /// Markers M8: per-user toggle for the Bookmarks sidebar count
     /// badge. Default false.
     pub show_marker_count: Option<bool>,
+    /// Override the home-page rail cap. 1..=50; validated server-
+    /// side and at the DB CHECK constraint. Default 12 preserves
+    /// the prior behaviour for users who never touch this.
+    pub max_rails_per_page: Option<i32>,
 }
 
 /// `serde` helper: distinguish "absent" (None) from "explicit null"
@@ -410,6 +418,7 @@ pub async fn register(
         show_marker_count: Set(false),
         opds_wtr_reorder: Set(true),
         opds_progress_glyphs: Set(true),
+        max_rails_per_page: Set(12),
     };
 
     let inserted = match am.insert(&app.db).await {
@@ -975,6 +984,15 @@ pub async fn update_preferences(
             "reading_idle_ms must be between 30000 and 1800000",
         );
     }
+    if let Some(v) = req.max_rails_per_page
+        && !(1..=50).contains(&v)
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            "max_rails_per_page must be between 1 and 50",
+        );
+    }
 
     let row = match UserEntity::find_by_id(user.id).one(&app.db).await {
         Ok(Some(r)) => r,
@@ -1034,6 +1052,9 @@ pub async fn update_preferences(
     }
     if let Some(v) = req.show_marker_count {
         am.show_marker_count = Set(v);
+    }
+    if let Some(v) = req.max_rails_per_page {
+        am.max_rails_per_page = Set(v);
     }
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
     let updated = match am.update(&app.db).await {
@@ -1529,6 +1550,7 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         language: row.language.clone(),
         exclude_from_aggregates: row.exclude_from_aggregates,
         show_marker_count: row.show_marker_count,
+        max_rails_per_page: row.max_rails_per_page,
     }
 }
 
@@ -1563,6 +1585,7 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             language: "en".into(),
             exclude_from_aggregates: false,
             show_marker_count: false,
+            max_rails_per_page: 12,
         }
     }
 }

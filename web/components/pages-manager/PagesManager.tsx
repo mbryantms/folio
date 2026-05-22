@@ -63,12 +63,22 @@ import {
   useTogglePageSidebar,
   useTogglePinOnPage,
   useUpdatePage,
+  useUpdatePreferences,
 } from "@/lib/api/mutations";
-import { useMePages, useSavedViews } from "@/lib/api/queries";
+import { useMe, useMePages, useSavedViews } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { PageView, SavedViewView } from "@/lib/api/types";
+import { Label } from "@/components/ui/label";
 
-const RAIL_CAP = 12;
+/** Server-side fallback when the `/auth/me` lookup hasn't resolved
+ *  yet. Matches the column default in
+ *  `m20261222_000001_user_max_rails_per_page`; keeping it in sync
+ *  with that migration's `.default(12)` is enforced visually rather
+ *  than programmatically.
+ */
+const DEFAULT_RAIL_CAP = 12;
+const RAIL_CAP_MIN = 1;
+const RAIL_CAP_MAX = 50;
 
 /** Settings → Pages.
  *
@@ -79,6 +89,8 @@ const RAIL_CAP = 12;
  *  visibility, delete) live in a kebab menu inside each panel. */
 export function PagesManager() {
   const pagesQ = useMePages();
+  const me = useMe();
+  const railCap = me.data?.max_rails_per_page ?? DEFAULT_RAIL_CAP;
   const allPages = React.useMemo(() => pagesQ.data ?? [], [pagesQ.data]);
   const sortedPages = React.useMemo(() => {
     // System Home first, then custom pages in their stored order.
@@ -122,11 +134,13 @@ export function PagesManager() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground text-sm">
-          Each page holds up to {RAIL_CAP} pinned saved-view rails. Drag rows to
+          Each page holds up to {railCap} pinned saved-view rails. Drag rows to
           reorder; use the kebab menu for page settings.
         </p>
         <NewPageButton />
       </div>
+
+      <RailCapControl value={railCap} />
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
@@ -360,6 +374,8 @@ function PageRailsList({
   pageId: string;
   pageName: string;
 }) {
+  const me = useMe();
+  const railCap = me.data?.max_rails_per_page ?? DEFAULT_RAIL_CAP;
   const railsQ = useSavedViews({ pinnedOn: pageId });
   const reorder = useReorderSavedViews();
   const toggle = useTogglePinOnPage();
@@ -408,13 +424,13 @@ function PageRailsList({
     );
   };
 
-  const atCap = pinned.length >= RAIL_CAP;
+  const atCap = pinned.length >= railCap;
 
   return (
     <div className="flex flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2 p-3">
         <p className="text-muted-foreground text-xs">
-          {pinned.length} / {RAIL_CAP} rails
+          {pinned.length} / {railCap} rails
         </p>
         <Button
           type="button"
@@ -579,4 +595,50 @@ function kindLabel(kind: SavedViewView["kind"]): string {
     default:
       return "View";
   }
+}
+
+/** Adjust the maximum number of pinned saved-view rails per page.
+ *  PATCH on blur (matches the activity-tracking-thresholds form). The
+ *  server enforces the same 1..=50 range — invalid inputs are dropped
+ *  client-side without an attempted PATCH so the field doesn't flicker. */
+function RailCapControl({ value }: { value: number }) {
+  const update = useUpdatePreferences({ silent: true });
+  return (
+    <div className="border-border/60 bg-card/40 flex flex-wrap items-center gap-3 rounded-md border p-3">
+      <div className="min-w-0 flex-1">
+        <Label
+          htmlFor="rail-cap-input"
+          className="text-foreground text-sm font-medium"
+        >
+          Maximum rails per page
+        </Label>
+        <p className="text-muted-foreground mt-0.5 text-xs">
+          Off-screen rails lazy-load as you scroll, so higher values stay
+          responsive. Range {RAIL_CAP_MIN}–{RAIL_CAP_MAX}; default{" "}
+          {DEFAULT_RAIL_CAP}.
+        </p>
+      </div>
+      <Input
+        id="rail-cap-input"
+        type="number"
+        min={RAIL_CAP_MIN}
+        max={RAIL_CAP_MAX}
+        step={1}
+        defaultValue={value}
+        onBlur={(e) => {
+          const v = Number(e.currentTarget.value);
+          if (!Number.isFinite(v) || v < RAIL_CAP_MIN || v > RAIL_CAP_MAX) {
+            // Reset the field to the last-saved value so the user sees the
+            // rejection rather than a phantom edit.
+            e.currentTarget.value = String(value);
+            return;
+          }
+          if (v === value) return;
+          update.mutate({ max_rails_per_page: v });
+        }}
+        disabled={update.isPending}
+        className="w-20"
+      />
+    </div>
+  );
 }

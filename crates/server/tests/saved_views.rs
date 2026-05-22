@@ -892,6 +892,106 @@ async fn pin_cap_enforced() {
     assert_eq!(body["error"]["code"], "pin_cap_reached");
 }
 
+/// v0.5.x: the rail cap is per-user (`users.max_rails_per_page`),
+/// not a hard-coded constant. Raising the preference lifts the
+/// 409 immediately on the next pin call.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pin_cap_respects_per_user_override() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cap-override@example.com").await;
+    // Trigger the lazy seed so the 4 auto-pinned system rails land.
+    let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
+
+    // Fill to the default cap of 12 (4 auto + 8 user pins).
+    for i in 0..8 {
+        let body = serde_json::json!({
+            "kind": "filter_series",
+            "name": format!("View {i}"),
+            "filter": { "match_mode": "all", "conditions": [] },
+            "sort_field": "created_at",
+            "sort_order": "desc",
+            "result_limit": 12,
+        });
+        let (status, view) = http(
+            &app,
+            Method::POST,
+            "/api/me/saved-views",
+            Some(&auth),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "i={i}");
+        let view_id = view["id"].as_str().unwrap();
+        let pin_url = format!("/api/me/saved-views/{view_id}/pin");
+        let (status, _) = http(&app, Method::POST, &pin_url, Some(&auth), None).await;
+        assert_eq!(status, StatusCode::OK, "pin {i}");
+    }
+
+    // Create one more view; pinning it now must 409 at the default cap.
+    let body = serde_json::json!({
+        "kind": "filter_series",
+        "name": "Overflow",
+        "filter": { "match_mode": "all", "conditions": [] },
+        "sort_field": "created_at",
+        "sort_order": "desc",
+        "result_limit": 12,
+    });
+    let (_, overflow) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    let overflow_id = overflow["id"].as_str().unwrap();
+    let pin_url = format!("/api/me/saved-views/{overflow_id}/pin");
+    let (status, _) = http(&app, Method::POST, &pin_url, Some(&auth), None).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "pin must 409 at default cap before override",
+    );
+
+    // Raise the user's cap to 20 via PATCH /me/preferences.
+    let body = serde_json::json!({ "max_rails_per_page": 20 });
+    let (status, _) = http(
+        &app,
+        Method::PATCH,
+        "/api/me/preferences",
+        Some(&auth),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "preference update should succeed");
+
+    // The same pin call now succeeds.
+    let (status, _) = http(&app, Method::POST, &pin_url, Some(&auth), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "raising max_rails_per_page should immediately allow the next pin",
+    );
+
+    // Out-of-range values are rejected on PATCH.
+    for invalid in [0, 51, -1] {
+        let body = serde_json::json!({ "max_rails_per_page": invalid });
+        let (status, _) = http(
+            &app,
+            Method::PATCH,
+            "/api/me/preferences",
+            Some(&auth),
+            Some(body),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "max_rails_per_page={invalid} must be rejected",
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reorder_rewrites_positions() {
     let app = TestApp::spawn().await;

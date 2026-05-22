@@ -23,7 +23,7 @@ use axum::{
     routing::{get, patch, post},
 };
 use chrono::Utc;
-use entity::{cbl_list, saved_view, user_view_pin};
+use entity::{cbl_list, saved_view, user as user_entity, user_view_pin};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult,
     ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, Statement, TransactionTrait,
@@ -71,7 +71,12 @@ pub const DEFAULT_HOME_PIN_ORDER: &[&str] = &[
 
 const MAX_RESULT_LIMIT: u64 = 200;
 const MIN_RESULT_LIMIT: u64 = 1;
-const MAX_PIN_COUNT: i64 = 12;
+/// Default home-page rail cap for users on a fresh row. Each user
+/// can override via `users.max_rails_per_page` (PATCH
+/// /me/preferences), with a DB CHECK constraint clamping the range
+/// to 1..=50. Used as the fallback when a user row lookup fails
+/// (the pin handler still resolves a sane cap rather than 5xx-ing).
+const DEFAULT_MAX_RAILS_PER_PAGE: i64 = 12;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -1314,6 +1319,21 @@ pub async fn pin(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+
+    // Resolve the caller's per-user rail cap once for the whole
+    // multi-pin call. Pulled out of the per-page loop so the cap
+    // applies to all target pages uniformly even if the user's
+    // preferences change mid-request, and so we don't fan out N
+    // identical lookups. Falls back to the default if the lookup
+    // fails — better to allow the pin under the lenient default
+    // than to 5xx the user out of their own preferences.
+    let max_rails_per_page: i64 = match user_entity::Entity::find_by_id(user.id)
+        .one(&app.db)
+        .await
+    {
+        Ok(Some(u)) => u.max_rails_per_page as i64,
+        _ => DEFAULT_MAX_RAILS_PER_PAGE,
+    };
     for page_id in &target_pages {
         if !owned_pages.contains(page_id) {
             return error(StatusCode::NOT_FOUND, "not_found", "page not found");
@@ -1346,7 +1366,7 @@ pub async fn pin(
             .count(&app.db)
             .await
             .unwrap_or(0) as i64;
-        if active_count >= MAX_PIN_COUNT {
+        if active_count >= max_rails_per_page {
             return error(
                 StatusCode::CONFLICT,
                 "pin_cap_reached",

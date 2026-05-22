@@ -16,6 +16,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCreatePage } from "@/lib/api/mutations";
+import { useMe } from "@/lib/api/queries";
+
+// Fallback when /auth/me is still resolving. Mirrors the column
+// default in m20261222_000001_user_max_rails_per_page.
+const DEFAULT_RAIL_CAP = 12;
 
 const MAX_NAME_LEN = 80;
 
@@ -28,6 +33,8 @@ const MAX_NAME_LEN = 80;
 export function NewPageButton() {
   const router = useRouter();
   const create = useCreatePage();
+  const me = useMe();
+  const railCap = me.data?.max_rails_per_page ?? DEFAULT_RAIL_CAP;
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
@@ -80,8 +87,8 @@ export function NewPageButton() {
           <DialogHeader>
             <DialogTitle>New page</DialogTitle>
             <DialogDescription>
-              Pages hold up to 12 pinned saved-view rails. You can rename or
-              delete them later from the page header.
+              Pages hold up to {railCap} pinned saved-view rails. You can
+              rename or delete them later from the page header.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onSubmit} className="space-y-3">

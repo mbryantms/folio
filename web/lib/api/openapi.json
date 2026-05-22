@@ -10223,7 +10223,8 @@
           "reading_idle_ms",
           "language",
           "exclude_from_aggregates",
-          "show_marker_count"
+          "show_marker_count",
+          "max_rails_per_page"
         ],
         "properties": {
           "accent_color": {
@@ -10305,6 +10306,11 @@
           "language": {
             "type": "string",
             "description": "Human-URLs M3: BCP-47 language tag used for the `NEXT_LOCALE` cookie\nand next-intl message bundle selection."
+          },
+          "max_rails_per_page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Per-user override of the home-page rail cap. Replaces the\nprevious hard-coded `MAX_PIN_COUNT = 12` constant. Range\n1..=50 enforced by DB CHECK + PATCH validation. Default 12."
           },
           "reading_idle_ms": {
             "type": "integer",
@@ -11154,6 +11160,14 @@
               "null"
             ],
             "description": "Human-URLs M3: BCP-47 language tag. Validated against the supported\nlocale list — sending an unknown value 400s rather than silently\nfalling back."
+          },
+          "max_rails_per_page": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Override the home-page rail cap. 1..=50; validated server-\nside and at the DB CHECK constraint. Default 12 preserves\nthe prior behaviour for users who never touch this."
           },
           "reading_idle_ms": {
             "type": [

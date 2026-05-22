@@ -426,6 +426,10 @@ export type MeView = {
   /** Markers M8: when true, the Bookmarks sidebar row renders a count
    *  badge sourced from /me/markers/count. Default false. */
   show_marker_count: boolean;
+  /** Per-user override of the home-page rail cap. 1..=50. Default 12.
+   *  Off-screen rails lazy-mount so a higher value does not force the
+   *  whole home page to load at hydration. */
+  max_rails_per_page: number;
 };
 
 /** PATCH /me/preferences body. Each field independently optional; `null`
@@ -460,6 +464,8 @@ export type PreferencesReq = {
   exclude_from_aggregates?: boolean;
   /** Markers M8: per-user toggle for the sidebar Bookmarks count badge. */
   show_marker_count?: boolean;
+  /** Per-user override of the home-page rail cap. 1..=50. */
+  max_rails_per_page?: number;
 };
 
 /** Body for `POST /progress` (per-issue). */
