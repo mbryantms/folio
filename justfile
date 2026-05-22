@@ -547,6 +547,14 @@ openapi-check:
     diff -q /tmp/openapi.json web/lib/api/openapi.json || \
         (echo "==> OpenAPI spec drifted. Run 'just openapi'." && exit 1)
 
+# ───── docs site ─────
+
+docs:
+    cd docs-site && pnpm start
+
+docs-build:
+    cd docs-site && pnpm build
+
 # ───── docker ─────
 
 # Build both production images locally. Tags them with the `:dev` suffix so

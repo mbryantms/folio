@@ -90,6 +90,20 @@ jobs:
       - name: pnpm audit
         run: pnpm audit --audit-level=high || true
 
+  docs-build:
+    name: Docs site — build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter docs-site run build
+
   openapi-drift:
     name: OpenAPI — snapshot + breaking-change check
     runs-on: ubuntu-24.04
