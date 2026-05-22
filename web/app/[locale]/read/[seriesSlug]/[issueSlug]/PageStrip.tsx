@@ -250,15 +250,20 @@ export function PageStrip({
       >
         {/* Background bar — only as tall as a non-active thumb. The active
          * thumb scales upward (origin-bottom) and overflows above this bar
-         * into transparent space, so it visually pops out of the strip. */}
+         * into transparent space, so it visually pops out of the strip.
+         * Height grows by `--safe-bottom` so the bar still visually
+         * fills the home-indicator area on iPhones in standalone
+         * mode (where `viewport-fit: cover` lets us paint behind it). */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-48 border-t border-neutral-800/80 bg-neutral-950/85 backdrop-blur"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-[calc(12rem+var(--safe-bottom))] border-t border-neutral-800/80 bg-neutral-950/85 backdrop-blur"
         />
         <ol
           ref={stripRef}
           onScroll={updateVisibleRange}
-          className="relative flex items-end gap-3 overflow-x-auto px-3 pt-28 pb-3"
+          // `pb-3` floor + `--safe-bottom` so thumbnails sit above the
+          // home indicator. Horizontal insets clear landscape notches.
+          className="relative flex items-end gap-3 overflow-x-auto pl-[max(0.75rem,var(--safe-left))] pr-[max(0.75rem,var(--safe-right))] pt-28 pb-[calc(0.75rem+var(--safe-bottom))]"
         >
           {indices.map((i, p) => {
             const isActive = activePages.includes(i);

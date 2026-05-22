@@ -123,7 +123,16 @@ export function ReaderChrome({
       <header
         data-state={mounted && chromeVisible ? "open" : "closed"}
         data-testid="reader-chrome"
-        className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-neutral-800/80 bg-neutral-950/85 px-3 py-2 text-sm text-neutral-100 backdrop-blur transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:-translate-y-full motion-reduce:transition-none"
+        // Safe-area insets keep the interactive content clear of the
+        // iOS status bar / Dynamic Island when the app is launched
+        // in standalone mode (status bar style: black-translucent,
+        // which paints content under the bar). Same `--safe-*` CSS
+        // variables MainShell + AdminShell use in `globals.css`;
+        // horizontal insets matter in landscape on notched iPhones
+        // and on iPads with rounded corners. Background still
+        // extends to the very top edge so the chrome looks
+        // continuous behind the status bar.
+        className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-neutral-800/80 bg-neutral-950/85 pl-[max(0.75rem,var(--safe-left))] pr-[max(0.75rem,var(--safe-right))] pt-[max(0.5rem,var(--safe-top))] pb-2 text-sm text-neutral-100 backdrop-blur transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:-translate-y-full motion-reduce:transition-none"
         aria-hidden={mounted && chromeVisible ? undefined : true}
       >
         <Tooltip>
