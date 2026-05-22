@@ -5,7 +5,9 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 
+import { AddToHomeScreenBanner } from "@/components/AddToHomeScreenBanner";
 import { LibrarySearch } from "@/components/LibrarySearch";
+import { PullToRefresh } from "@/components/PullToRefresh";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -71,7 +73,9 @@ export function MainShell({
   return (
     <div className="bg-background text-foreground min-h-screen">
       <SkipToContent />
-      <header className="border-border bg-background/80 sticky top-0 z-30 flex h-14 items-center gap-3 border-b px-4 backdrop-blur md:px-6">
+      <PullToRefresh />
+      <AddToHomeScreenBanner />
+      <header className="border-border bg-background/80 sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pl-[max(1rem,var(--safe-left))] pr-[max(1rem,var(--safe-right))] backdrop-blur md:pl-[max(1.5rem,var(--safe-left))] md:pr-[max(1.5rem,var(--safe-right))]">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
             <Button
@@ -156,7 +160,7 @@ export function MainShell({
            * UserFooter at its bottom lands below the visible area
            * until the user scrolls. `100dvh` resizes with the actual
            * available viewport and keeps the footer on-screen. */}
-          <div className="sticky top-14 h-[calc(100dvh-3.5rem)]">
+          <div className="sticky top-(--topbar-h) h-[calc(100dvh-var(--topbar-h))]">
             <MainSidebar
               sections={sections}
               title="Folio"

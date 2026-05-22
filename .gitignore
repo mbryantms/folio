@@ -11,6 +11,11 @@ out/
 .turbo/
 *.tsbuildinfo
 
+# Serwist-emitted service worker bundle (regenerated on each
+# production build of the web workspace).
+web/public/sw.js
+web/public/swe-worker-*.js
+
 # Env / secrets
 .env
 .env.local

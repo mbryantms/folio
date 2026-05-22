@@ -1,7 +1,23 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
+import withSerwistInit from "@serwist/next";
 
 const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
+
+// Service-worker pipeline. Serwist compiles `web/app/sw.ts` into a
+// public `sw.js` at build time, precaches the routes listed at the
+// compile entry point, and registers the SW automatically on the
+// client side via its provided register snippet. The SW is gated to
+// production builds — running it in `next dev` introduces a stale-
+// cache layer that hides edits and is more annoying than helpful.
+const withSerwist = withSerwistInit({
+  swSrc: "app/sw.ts",
+  swDest: "public/sw.js",
+  // Skip the dev SW: serwist's dev mode caches transformed dev
+  // bundles, which masks file edits. Production builds register
+  // normally via the SW the user loads from `/sw.js`.
+  disable: process.env.NODE_ENV !== "production",
+});
 
 // Server Actions are stable in Next 15 (no boolean disable available); we keep
 // our single auth path by simply not using them (§15.7, §17.3). Edge runtime
@@ -40,4 +56,4 @@ const config: NextConfig = {
   // apply.
 };
 
-export default withNextIntl(config);
+export default withSerwist(withNextIntl(config));

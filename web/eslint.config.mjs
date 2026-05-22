@@ -21,6 +21,10 @@ export default defineConfig([
       "lib/api/openapi.json",
       "lib/api/types.ts",
       "next-env.d.ts",
+      // serwist emits a minified service-worker bundle here on
+      // each production build; it's generated, not source.
+      "public/sw.js",
+      "public/swe-worker-*.js",
     ],
   },
   {
