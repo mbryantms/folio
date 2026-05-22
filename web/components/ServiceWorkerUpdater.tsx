@@ -1,76 +1,63 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-
-import { SerwistProvider, useSerwist } from "@serwist/next/react";
+import { Serwist } from "@serwist/window";
 
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
 /**
- * Service-worker bootstrap and update notifier.
+ * Service-worker bootstrap + update notifier.
  *
- * Mounted from the root layout. Wraps its children in
- * `SerwistProvider`, which is responsible for registering the
- * compiled `/sw.js` on first page load in production. Inside the
- * provider, `<UpdateToast>` listens for the `waiting` event the
- * Serwist client emits when a newer service worker has installed
- * but is being held back from activating (because the current SW
- * still controls open clients), and surfaces it as a sonner toast
- * with a "Reload" action.
+ * Mounted as a sibling (not a wrapper) inside the root layout so
+ * its import chain doesn't get pulled into every route's first-load
+ * bundle. Earlier versions wrapped children via
+ * `SerwistProvider` from `@serwist/next/react`; that worked but
+ * dragged ~100 KB of Serwist's React context layer into the reader
+ * route's bundle, which is gated by the §18.1 budget check in
+ * `scripts/check-bundle-size.mjs`. This version uses
+ * `@serwist/window`'s `Serwist` class directly — same registration
+ * + event surface, no React context — and is paired with a
+ * `next/dynamic` shim at the import site so the chunk is split out
+ * of first-load entirely.
  *
- * The toast is the user's chance to apply the new bundle on their
- * own terms. Skipping `skipWaiting` in the SW means a deploy
- * mid-read never silently swaps the bundle out from under the
- * reader; the user has to click Reload (or close the tab and come
- * back) for the new SW to take over.
+ * Behaviour:
+ * - Registers the compiled `/sw.js` on mount (production only;
+ *   the `@serwist/next` build is `disable: true` in dev).
+ * - When a newer SW is installed but held back from activating
+ *   (because the current SW still controls open clients), surfaces
+ *   a sonner toast with a "Reload" action.
+ * - Clicking Reload posts `SKIP_WAITING` to the waiting worker;
+ *   the `controlling` listener reloads the page once the new SW
+ *   takes over. `skipWaiting: false` in `app/sw.ts` keeps deploys
+ *   from silently swapping the bundle out from under an active
+ *   reader.
  */
-export function ServiceWorkerUpdater({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <SerwistProvider
-      swUrl="/sw.js"
-      // `register: true` and `disable: false` are the defaults but
-      // pinned here so a future Serwist default change doesn't
-      // quietly disable registration.
-      register
-      disable={false}
-    >
-      <UpdateToast />
-      {children}
-    </SerwistProvider>
-  );
-}
-
-const TOAST_ID = "service-worker-update";
-
-function UpdateToast() {
-  const { serwist } = useSerwist();
+export function ServiceWorkerUpdater() {
   // React strict mode mounts effects twice in dev; the ref guards
-  // against double-binding the listener in that case.
+  // against double-binding the listener (and a duplicate
+  // registration call against the navigator).
   const boundRef = useRef(false);
 
   useEffect(() => {
-    if (!serwist) return;
     if (boundRef.current) return;
+    if (typeof window === "undefined") return;
+    if (!("serviceWorker" in navigator)) return;
     boundRef.current = true;
+
+    const sw = new Serwist("/sw.js");
 
     const onWaiting = () => {
       toast.message("A new version of Folio is available.", {
-        id: TOAST_ID,
+        id: "service-worker-update",
         duration: Infinity,
         action: (
           <Button
             size="sm"
             onClick={() => {
-              // Tell the waiting SW to take over, then reload once
-              // it does. `messageSkipWaiting` posts `SKIP_WAITING`
-              // to the waiting worker; the `controlling` listener
-              // below reloads when the new SW assumes control.
-              serwist.messageSkipWaiting();
+              // Tell the waiting SW to take over. The `controlling`
+              // listener below reloads when it assumes control.
+              sw.messageSkipWaiting();
             }}
           >
             Reload
@@ -80,14 +67,13 @@ function UpdateToast() {
     };
 
     const onControlling = () => {
-      // The new SW has taken control. Reload to pick up the new
-      // bundle. The toast is dismissed by the reload itself.
       window.location.reload();
     };
 
-    serwist.addEventListener("waiting", onWaiting);
-    serwist.addEventListener("controlling", onControlling);
-  }, [serwist]);
+    sw.addEventListener("waiting", onWaiting);
+    sw.addEventListener("controlling", onControlling);
+    sw.register();
+  }, []);
 
   return null;
 }

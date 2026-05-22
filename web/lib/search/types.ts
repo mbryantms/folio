@@ -11,7 +11,7 @@
 
 import type { ComponentType } from "react";
 
-export type SearchCategory = "series" | "issues" | "people";
+export type SearchCategory = "series" | "issues" | "markers" | "people";
 
 export interface SearchCategoryDef {
   /** Stable key used as the discriminator on `SearchHit.kind` and the
@@ -27,6 +27,10 @@ export interface SearchCategoryDef {
 export const SEARCH_CATEGORIES: readonly SearchCategoryDef[] = [
   { key: "series", label: "Series", labelPlural: "series" },
   { key: "issues", label: "Issue", labelPlural: "issues" },
+  // Markers (bookmarks, notes, highlights) sit between issues and
+  // people so the modal lists content surfaces first, then the
+  // user's saved annotations, then the people facet.
+  { key: "markers", label: "Bookmark", labelPlural: "bookmarks" },
   { key: "people", label: "Person", labelPlural: "people" },
 ] as const;
 
@@ -40,6 +44,11 @@ export interface SearchHit {
   /** Optional inline icon for hits that don't have a cover image
    *  (people, …). */
   icon?: ComponentType<{ className?: string }>;
+  /** Optional search-result excerpt with `<mark>…</mark>` around
+   *  matched terms. Set by the backend's `ts_headline()` output for
+   *  series + issues; render via `renderSearchSnippet` so the strict
+   *  sanitiser strips anything outside the `<mark>` allowlist. */
+  snippet?: string | null;
 }
 
 export type SearchGroups = Record<SearchCategory, SearchHit[]>;
@@ -47,6 +56,7 @@ export type SearchGroups = Record<SearchCategory, SearchHit[]>;
 export const EMPTY_SEARCH_GROUPS: SearchGroups = {
   series: [],
   issues: [],
+  markers: [],
   people: [],
 };
 

@@ -3,10 +3,11 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { cookies } from "next/headers";
 import { GlobalHotkeys } from "@/components/GlobalHotkeys";
+import { SearchModalProvider } from "@/lib/search/use-search-modal";
 import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
 import { QueryProvider } from "@/components/QueryProvider";
 import { ScanResultListener } from "@/components/ScanResultListener";
-import { ServiceWorkerUpdater } from "@/components/ServiceWorkerUpdater";
+import { ServiceWorkerLoader } from "@/components/ServiceWorkerLoader";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { Toaster } from "@/components/ui/sonner";
 import {
@@ -154,11 +155,12 @@ export default async function RootLayout({
         <ThemeProvider defaultTheme={theme}>
           <NextIntlClientProvider messages={messages}>
             <QueryProvider>
-              <ServiceWorkerUpdater>
+              <SearchModalProvider>
                 <ScanResultListener />
                 <GlobalHotkeys />
+                <ServiceWorkerLoader />
                 <GlobalShortcutsSheet>{children}</GlobalShortcutsSheet>
-              </ServiceWorkerUpdater>
+              </SearchModalProvider>
             </QueryProvider>
           </NextIntlClientProvider>
           <Toaster />

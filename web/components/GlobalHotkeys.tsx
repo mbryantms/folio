@@ -1,9 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 
-import { SearchModal } from "@/components/SearchModal";
 import { useMe } from "@/lib/api/queries";
 import {
   KEYBIND_SCOPES,
@@ -12,6 +11,7 @@ import {
   resolveKeybinds,
   shouldSkipHotkey,
 } from "@/lib/reader/keybinds";
+import { useSearchModal } from "@/lib/search/use-search-modal";
 
 /**
  * Mounted once at the root layout. Listens for keypresses globally and
@@ -19,9 +19,9 @@ import {
  * `openSearch`). Reader-scoped actions are dispatched by the reader's own
  * listener; this component is a no-op for them.
  *
- * Also owns the `<SearchModal />` since it controls the open-state — the
- * search hotkey toggles the same dialog wherever the user is in the app,
- * so search-from-anywhere doesn't navigate the page.
+ * The `<SearchModal />` itself is owned by `<SearchModalProvider>` so a
+ * topbar trigger can open it without prop-drilling; this hook just flips
+ * the shared open-state.
  *
  * Modifier chords (`Ctrl+K`, `Mod+,`, …) reach `actionForKey` directly:
  * the chord parser handles modifier matching. Pressing `Ctrl+K` would
@@ -31,7 +31,7 @@ import {
 export function GlobalHotkeys() {
   const router = useRouter();
   const me = useMe();
-  const [searchOpen, setSearchOpen] = useState(false);
+  const { setOpen } = useSearchModal();
 
   const meKeybinds = readMeKeybinds(me);
   const bindings = useMemo(() => resolveKeybinds(meKeybinds), [meKeybinds]);
@@ -54,7 +54,7 @@ export function GlobalHotkeys() {
         !e.shiftKey
       ) {
         e.preventDefault();
-        setSearchOpen(true);
+        setOpen(true);
         return;
       }
 
@@ -67,7 +67,7 @@ export function GlobalHotkeys() {
           break;
         case "openSearch":
           e.preventDefault();
-          setSearchOpen(true);
+          setOpen(true);
           break;
         // `toggleSidebar` is global-scoped for discoverability (so it
         // appears in Settings → Keybinds + the shortcuts sheet) but the
@@ -79,7 +79,7 @@ export function GlobalHotkeys() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [bindings, router]);
+  }, [bindings, router, setOpen]);
 
-  return <SearchModal open={searchOpen} onOpenChange={setSearchOpen} />;
+  return null;
 }

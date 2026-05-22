@@ -62,6 +62,38 @@ export function ChipList({
               </Badge>
             );
             if (!filterField) return chip;
+            // Credit-role chips now point at the creator detail page
+            // — the `/by-name/<name>` route resolves the canonical
+            // slug + redirects, falling back to the legacy filtered-
+            // library grid if no `person` row exists yet (e.g. a
+            // freshly-scanned credit). Other facets (genres / tags /
+            // characters) stay as direct library-grid deep-links
+            // since they don't have detail pages.
+            if (isCreditRole(filterField)) {
+              // Manually re-encode dots as `%2E`. `encodeURIComponent`
+              // leaves `.` alone (it's a reserved-as-unreserved
+              // character per RFC 3986), and Next.js's app-router
+              // routing layer treats a trailing dot-separated chunk
+              // in a dynamic segment as if it were a file extension
+              // — so "Brian K. Vaughan" routes as if "Vaughan" were
+              // the extension and never reaches the page handler.
+              // Encoding the dot survives `decodeURIComponent` on the
+              // page side without provoking the file-extension
+              // heuristic.
+              const encoded = encodeURIComponent(item).replace(
+                /\./g,
+                "%2E",
+              );
+              return (
+                <Link
+                  key={item}
+                  href={`/creators/by-name/${encoded}`}
+                  title={`Open ${item}'s creator page`}
+                >
+                  {chip}
+                </Link>
+              );
+            }
             const param = libraryParamFor(filterField);
             const mode = libraryModeFor(filterField);
             const href =
@@ -110,6 +142,26 @@ function libraryParamFor(filterField: string): string {
       return "translators";
     default:
       return filterField;
+  }
+}
+
+/** Credit-role facets get a dedicated creator detail page —
+ *  everything else (genres / tags / characters / teams / locations)
+ *  stays on the filtered library grid. Keep this list aligned with
+ *  the backend's ROLE_ORDER + the registry in `api/creators.rs`. */
+function isCreditRole(filterField: string): boolean {
+  switch (filterField) {
+    case "writer":
+    case "penciller":
+    case "inker":
+    case "colorist":
+    case "letterer":
+    case "cover_artist":
+    case "editor":
+    case "translator":
+      return true;
+    default:
+      return false;
   }
 }
 

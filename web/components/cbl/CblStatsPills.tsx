@@ -45,7 +45,11 @@ export function CblStatsPills({
   const { matched, total, read_count } = list.data.stats;
   const sizeClass =
     size === "header"
-      ? "text-sm px-2.5 py-1 [&_svg]:h-3.5 [&_svg]:w-3.5"
+      ? // Toolbar-row convention: h-9 (36px) to line up with the
+        // `<Input>` + `<Button>` siblings in the ViewHeader actions
+        // row. The badges sit flush as a single horizontal band
+        // instead of orphan smaller chips. See `docs/dev/search.md`.
+        "text-sm h-9 px-3 [&_svg]:h-3.5 [&_svg]:w-3.5"
       : "text-xs";
   return (
     <div className={cn("flex shrink-0 items-center gap-2", className)}>

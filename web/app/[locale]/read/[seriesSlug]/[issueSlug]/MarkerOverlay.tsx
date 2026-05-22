@@ -68,21 +68,22 @@ const KIND_PIN_BG: Record<MarkerKind, string> = {
 export function MarkerOverlay({
   issueId,
   pageIndex,
-  wrapperRef,
   imgRef,
   naturalSize,
 }: {
   issueId: string;
   pageIndex: number;
-  /** The wrapper element. SVG is positioned absolutely INSIDE this
-   *  element, but offset/sized to match the image (not the wrapper)
-   *  so coord percentages are image-relative. Critical when the
-   *  wrapper is wider than the rendered image — e.g. fit=height with
-   *  a tall comic page centered in a wide viewport. */
-  wrapperRef: React.RefObject<HTMLElement | null>;
   /** The actually-rendered `<img>` element. Used to compute the SVG's
    *  position + dimensions so it overlays the image exactly. Pointer
-   *  coordinates are taken relative to this image's bounds. */
+   *  coordinates are taken relative to this image's bounds.
+   *
+   *  The SVG's positioning context (its CSS containing block) is
+   *  resolved at runtime by walking up from the SVG's own DOM
+   *  parent until we find an element with `position != static`. This
+   *  avoids a React 19 commit-phase race where a parent's
+   *  `ref={...}` attribute is still null at the time a descendant's
+   *  layout effect fires — the bug that left webtoon-mode overlays
+   *  stuck at `inset:0`. */
   imgRef: React.RefObject<HTMLImageElement | null>;
   /** Image's natural pixel dimensions — fed to the OCR / image-hash
    *  paths so they sample the source image at native resolution. */
@@ -145,46 +146,54 @@ export function MarkerOverlay({
   // before the browser paints — avoids a frame where the SVG is at
   // the wrong place because `imgRect` hasn't updated yet from the
   // previous issue's bounds.
+  //
+  // Positioning approach: read `img.offsetTop/Left/Width/Height`,
+  // not `getBoundingClientRect`. The two siblings (img + svg) share
+  // the same `offsetParent`, so the offsets align them in the same
+  // coordinate space — including during the reader's slide
+  // page-turn, which puts a `transform` on a static ancestor and
+  // would otherwise make `getBoundingClientRect` (viewport-relative)
+  // disagree with the SVG's actual containing block (the transformed
+  // ancestor, per CSS containing-block rules). Using `offsetLeft`
+  // sidesteps that entirely: it never includes ancestor transforms.
   React.useLayoutEffect(() => {
-    const wrap = wrapperRef.current;
     const img = imgRef.current;
-    if (!wrap || !img) {
-      // No image yet (page just remounted) — clear the stale rect so
-      // the SVG falls back to `inset-0` until the new image lays out,
-      // instead of pinning the overlay at the old issue's bounds.
+    if (!img) {
       setImgRect(null);
       return;
     }
     // Clear immediately on rebind so a stale rect from the previous
     // issue can't flash through during the (sub-frame) window before
-    // `recompute()` writes the new value. Setting to null is cheap;
-    // the SVG's inset-0 fallback covers the wrapper for that brief
-    // moment, and that's only visible if measurement returns 0×0
-    // (image still loading).
+    // `recompute()` writes the new value.
     setImgRect(null);
     const recompute = () => {
-      const wr = wrap.getBoundingClientRect();
-      const ir = img.getBoundingClientRect();
-      // Skip while either element hasn't laid out yet — emitting
-      // zeros here would render the overlay as a 0×0 box and the
-      // first real measurement on the next observer tick would
-      // create a visible jump.
-      if (ir.width <= 0 || ir.height <= 0) return;
+      // Skip while the img hasn't laid out yet — emitting zeros
+      // would render the overlay as a 0×0 box and the first real
+      // measurement on the next observer tick would create a
+      // visible jump.
+      if (img.offsetWidth <= 0 || img.offsetHeight <= 0) return;
       setImgRect({
-        top: ir.top - wr.top,
-        left: ir.left - wr.left,
-        width: ir.width,
-        height: ir.height,
+        top: img.offsetTop,
+        left: img.offsetLeft,
+        width: img.offsetWidth,
+        height: img.offsetHeight,
       });
     };
     recompute();
     const ro = new ResizeObserver(() => recompute());
-    ro.observe(wrap);
     ro.observe(img);
     // Browsers don't fire ResizeObserver for late-arriving image
     // bytes that change the `<img>` element's intrinsic size, so
     // we also hook the load event explicitly.
     img.addEventListener("load", recompute);
+    // Cached-image race: when an `<img>` is already in the
+    // browser's disk/memory cache, its `load` event fires BEFORE
+    // this layout effect attaches the listener. Without this
+    // synchronous probe the overlay's `imgRect` stays null and the
+    // SVG falls back to its intrinsic-aspect fallback.
+    if (img.complete && img.naturalWidth > 0) {
+      recompute();
+    }
     return () => {
       ro.disconnect();
       img.removeEventListener("load", recompute);
@@ -192,7 +201,7 @@ export function MarkerOverlay({
     // pageIndex/issueId are the implicit identity of the rendered
     // <img> — when they change, PageImage remounts a new element and
     // we must rebind the observer to it.
-  }, [wrapperRef, imgRef, pageIndex, issueId]);
+  }, [imgRef, pageIndex, issueId]);
 
   const enabled = markerMode !== "idle";
   React.useEffect(() => {

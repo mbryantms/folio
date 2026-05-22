@@ -95,6 +95,8 @@ use utoipa::OpenApi;
         api::issues::search,
         api::issues::list,
         api::people::list,
+        api::creators::get_one,
+        api::creators::resolve,
         api::ratings::set_series_rating,
         api::ratings::set_issue_rating,
         api::progress::upsert_series,
@@ -177,6 +179,7 @@ use utoipa::OpenApi;
         api::markers::list,
         api::markers::create,
         api::markers::count,
+        api::markers::search,
         api::markers::tags_index,
         api::markers::update,
         api::markers::delete_one,
@@ -266,6 +269,9 @@ use utoipa::OpenApi;
         api::issues::IssueSearchHit,
         api::people::PeopleListView,
         api::people::PersonHit,
+        api::creators::CreatorDetailView,
+        api::creators::CreatorRoleRail,
+        api::creators::ResolveResp,
         api::ratings::SetRatingReq,
         api::ratings::RatingView,
         api::progress::UpsertSeriesReq,
@@ -387,6 +393,8 @@ use utoipa::OpenApi;
         api::markers::MarkerView,
         api::markers::MarkerListView,
         api::markers::MarkerCountView,
+        api::markers::MarkerSearchView,
+        api::markers::MarkerSearchHit,
         api::markers::MarkerTagsView,
         api::markers::TagEntryView,
         api::markers::IssueMarkersView,
@@ -748,6 +756,7 @@ pub fn router(state: AppState) -> Router {
         .merge(api::series::routes())
         .merge(api::issues::routes())
         .merge(api::people::routes())
+        .merge(api::creators::routes())
         .merge(api::progress::routes())
         .merge(api::rails::routes())
         .merge(api::next_up::routes())

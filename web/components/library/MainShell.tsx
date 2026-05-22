@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 
 import { AddToHomeScreenBanner } from "@/components/AddToHomeScreenBanner";
-import { LibrarySearch } from "@/components/LibrarySearch";
 import { PullToRefresh } from "@/components/PullToRefresh";
+import { TopbarSearchInline } from "@/components/TopbarSearchInline";
+import { TopbarSearchTrigger } from "@/components/TopbarSearchTrigger";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -52,7 +52,6 @@ export function MainShell({
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const sidebar = useSidebarState(defaultSidebar);
-  const pathname = usePathname();
   // Radix Dialog/Sheet sets `pointer-events: none` on <body> while
   // open. When the mobile sheet closes simultaneously with a cross
   // layout-group navigation (e.g. `/` → `/admin` → `/settings`), the
@@ -64,12 +63,6 @@ export function MainShell({
       document.body.style.pointerEvents = "";
     }
   }, []);
-  // Mobile header search: surface only on the home page so it doesn't
-  // crowd the topbar on every series/issue page (search routes to "/?q="
-  // anyway). Strip the locale prefix before matching since
-  // `usePathname()` returns it (e.g. `/en`, `/fr-CA`).
-  const stripped = pathname.replace(/^\/[a-z]{2}(?:-[A-Z]{2})?(?=\/|$)/i, "");
-  const onHome = stripped === "" || stripped === "/";
   return (
     <div className="bg-background text-foreground min-h-screen">
       <SkipToContent />
@@ -103,7 +96,6 @@ export function MainShell({
             <SheetTitle className="sr-only">Library navigation</SheetTitle>
             <MainSidebar
               sections={sections}
-              title="Folio"
               user={user}
               showMarkerCount={showMarkerCount}
             />
@@ -115,29 +107,28 @@ export function MainShell({
         />
         <Link
           href={homeHref}
-          // On mobile when the header search is showing, the brand label
-          // would crowd the input — hide it. The hamburger left of it is
-          // already a strong anchor.
-          className={cn(
-            "font-semibold tracking-tight",
-            onHome && "hidden sm:inline",
-          )}
+          // Hide on the smallest viewports so the search trigger can
+          // claim the row width; the hamburger to the left is already
+          // a strong anchor.
+          className="hidden font-semibold tracking-tight sm:inline"
         >
           Folio
         </Link>
-        <span className="text-muted-foreground ml-2 hidden text-xs font-medium tracking-widest uppercase sm:inline">
-          Library
-        </span>
-        {onHome && (
-          <LibrarySearch
-            initial=""
-            basePath={homeHref}
-            compact
-            className="md:hidden"
-          />
-        )}
+        {/* Topbar search.
+            - sm+: real `<input>` that types inline and opens a
+              dropdown panel beneath. Categories + snippets +
+              recents + commands render in the dropdown so the user
+              never context-switches to a centered modal on
+              desktop.
+            - <sm: icon button that opens the rich `<SearchModal>`.
+              The dropdown is too cramped at phone widths; the
+              fullscreen Dialog is the right shape there. */}
+        <div className="ml-1 hidden flex-1 sm:block sm:max-w-md">
+          <TopbarSearchInline />
+        </div>
+        <TopbarSearchTrigger className="ml-1 sm:hidden" />
         {user.role === "admin" ? (
-          <div className={cn("flex items-center", onHome ? "" : "ml-auto")}>
+          <div className="flex shrink-0 items-center">
             <ScanEventBeacon />
           </div>
         ) : null}
@@ -163,7 +154,6 @@ export function MainShell({
           <div className="sticky top-(--topbar-h) h-[calc(100dvh-var(--topbar-h))]">
             <MainSidebar
               sections={sections}
-              title="Folio"
               user={user}
               collapsed={sidebar.collapsed}
               showMarkerCount={showMarkerCount}

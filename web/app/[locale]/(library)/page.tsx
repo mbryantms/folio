@@ -1,4 +1,3 @@
-import { LibrarySearch } from "@/components/LibrarySearch";
 import { LibraryGridView } from "@/components/library/LibraryGridView";
 import { parseLibraryGridFilters } from "@/components/library/library-grid-filters";
 import { SeriesCard } from "@/components/library/SeriesCard";
@@ -118,19 +117,16 @@ async function SearchView({
 
   return (
     <>
-      <div className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Search</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {libraries?.length ?? 0}{" "}
-            {libraries?.length === 1 ? "library" : "libraries"} · {items.length}{" "}
-            {items.length === 1 ? "match" : "matches"} for{" "}
-            <span className="text-foreground font-medium">
-              &ldquo;{query}&rdquo;
-            </span>
-          </p>
-        </div>
-        <LibrarySearch initial={query} basePath="/" />
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold tracking-tight">Search</h1>
+        <p className="text-muted-foreground mt-1 text-sm">
+          {libraries?.length ?? 0}{" "}
+          {libraries?.length === 1 ? "library" : "libraries"} · {items.length}{" "}
+          {items.length === 1 ? "match" : "matches"} for{" "}
+          <span className="text-foreground font-medium">
+            &ldquo;{query}&rdquo;
+          </span>
+        </p>
       </div>
       {items.length === 0 ? (
         <p className="text-muted-foreground text-sm">

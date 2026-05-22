@@ -5,6 +5,7 @@ import Link from "next/link";
 import { BookmarkPlus, Folder, Plus } from "lucide-react";
 import { toast } from "sonner";
 
+import { PageHeader } from "@/components/admin/PageHeader";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,18 +36,15 @@ export function CollectionsIndex() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Collections</h1>
-          <p className="text-muted-foreground text-sm">
-            Manual reading lists of mixed series and issues. Use the kebab menu
-            on any cover to add items.
-          </p>
-        </div>
-        <Button type="button" onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-1 h-4 w-4" /> New collection
-        </Button>
-      </header>
+      <PageHeader
+        title="Collections"
+        description="Manual reading lists of mixed series and issues. Use the kebab menu on any cover to add items."
+        actions={
+          <Button type="button" onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-1 h-4 w-4" /> New collection
+          </Button>
+        }
+      />
 
       {collectionsQ.isLoading ? (
         <div className="text-muted-foreground py-12 text-sm">Loading…</div>

@@ -4,6 +4,7 @@ import * as React from "react";
 import { RotateCcw } from "lucide-react";
 
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
+import { PageHeader } from "@/components/admin/PageHeader";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,27 +48,26 @@ export function LogHeader({
   const [resetOpen, setResetOpen] = React.useState(false);
 
   return (
-    <header className="flex flex-wrap items-end justify-between gap-3">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Reading log</h1>
-        <p className="text-muted-foreground text-sm">
-          Every issue read, series finished, session, and bookmark — in order,
-          with everything Folio knows about each one.
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <ActivityRangeSelector value={range} onChange={onRangeChange} />
-        <AddWidgetMenu current={widgets} />
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setResetOpen(true)}
-          title="Reset to default layout"
-        >
-          <RotateCcw aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
-          Reset
-        </Button>
-      </div>
+    <>
+      <PageHeader
+        title="Reading log"
+        description="Every issue read, series finished, session, and bookmark — in order, with everything Folio knows about each one."
+        actions={
+          <>
+            <ActivityRangeSelector value={range} onChange={onRangeChange} />
+            <AddWidgetMenu current={widgets} />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setResetOpen(true)}
+              title="Reset to default layout"
+            >
+              <RotateCcw aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
+              Reset
+            </Button>
+          </>
+        }
+      />
       <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -86,6 +86,6 @@ export function LogHeader({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </header>
+    </>
   );
 }

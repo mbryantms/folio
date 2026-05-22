@@ -106,6 +106,11 @@ export type SeriesView = {
    *  `"ttb"` or `null` for "Auto (inherit from user pref / library)".
    *  See manga-and-bulk-metadata-1.0 M2. */
   reading_direction?: string | null;
+  /** Search-result excerpt with `<mark>…</mark>` around matched terms.
+   *  Populated only on search-mode list responses; absent on every
+   *  other surface that returns a `SeriesView`. Render via the shared
+   *  `renderSnippet` helper which sanitises to a strict allowlist. */
+  snippet?: string | null;
 };
 
 export type SeriesProgressSummary = {
@@ -196,6 +201,10 @@ export type IssueListView = {
 /** Cross-library issue-search hit (manual-match popover backbone). */
 export type IssueSearchHit = IssueSummaryView & {
   series_name: string;
+  /** Same shape as [`SeriesView.snippet`] — `<mark>`-wrapped excerpt
+   *  rendered via the shared sanitiser. Omitted when none of the
+   *  issue's free-text fields produced a highlight for the query. */
+  snippet?: string | null;
 };
 
 export type IssueSearchView = {
@@ -203,11 +212,34 @@ export type IssueSearchView = {
 };
 
 /** Global-search M4: distinct creator-name hit, with role rollup +
- *  credit count across both series and issue credit junctions. */
+ *  credit count across both series and issue credit junctions.
+ *  Search-improvements M8 added `slug`, populated from the `person`
+ *  backfill — present when the creator has been allocated a stable
+ *  URL identity, omitted when they're a freshly-scanned credit that
+ *  the next backfill hasn't covered yet. */
 export type PersonHit = {
   person: string;
+  slug?: string | null;
   roles: string[];
   credit_count: number;
+};
+
+/** Search-improvements M8: creator detail page payload. Returned by
+ *  `GET /creators/{slug}`. Lists series the creator touched, grouped
+ *  per role they held on each — so a writer/artist/cover combo shows
+ *  three rails, not one merged grid. */
+export type CreatorRoleRail = {
+  role: string;
+  series: SeriesView[];
+};
+
+export type CreatorDetailView = {
+  id: string;
+  slug: string;
+  name: string;
+  roles: string[];
+  credit_count: number;
+  rails: CreatorRoleRail[];
 };
 
 export type PeopleListView = {
@@ -2221,6 +2253,29 @@ export type MarkerListView = {
 
 export type MarkerCountView = {
   total: number;
+};
+
+/** Global-search hit shape returned by `/me/markers/search`. Lighter
+ *  than `MarkerView` (search rails don't need color / tags /
+ *  timestamps) and carries the `<mark>`-wrapped snippet that the
+ *  modal renders via the shared `renderSearchSnippet` sanitiser. */
+export type MarkerSearchHit = {
+  id: string;
+  kind: MarkerKind;
+  issue_id: string;
+  series_id: string;
+  page_index: number;
+  region?: MarkerRegion | null;
+  snippet?: string | null;
+  series_name?: string | null;
+  series_slug?: string | null;
+  issue_slug?: string | null;
+  issue_title?: string | null;
+  issue_number?: string | null;
+};
+
+export type MarkerSearchView = {
+  items: MarkerSearchHit[];
 };
 
 export type IssueMarkersView = {

@@ -678,6 +678,7 @@ export function Reader({
             issueId={issueId}
             totalPages={totalPages}
             fitClass={fitClass}
+            onChromeZone={toggleChrome}
           />
         ) : viewMode === "double" ? (
           <DoublePageView
@@ -752,7 +753,6 @@ function SinglePageView({
   >;
   transition: PageTransitionResult;
 }) {
-  const wrapperRef = useRef<HTMLDivElement>(null);
   const markerMode = useReaderStore((s) => s.markerMode);
   const natural = pageNaturalSize.current?.get(currentPage) ?? null;
   // The wrapper is a block-level <div> rather than the previous
@@ -770,7 +770,6 @@ function SinglePageView({
   return (
     <main className="relative grid min-h-screen place-items-center">
       <div
-        ref={wrapperRef}
         className="relative w-full overflow-hidden"
         data-testid="reader-page-wrapper"
       >
@@ -816,7 +815,6 @@ function SinglePageView({
           <MarkerOverlay
             issueId={issueId}
             pageIndex={currentPage}
-            wrapperRef={wrapperRef}
             imgRef={imgRef}
             naturalSize={natural}
           />
@@ -931,10 +929,9 @@ function DoublePagePane({
   // `align-top` (kept for the inline-block path) kills the inline-baseline
   // descender so the SVG overlay's `absolute inset-0` covers the img box
   // exactly.
-  const wrapperRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   return (
-    <div ref={wrapperRef} className={`relative align-top ${paneClass}`}>
+    <div className={`relative align-top ${paneClass}`}>
       <PageImage
         src={`/issues/${issueId}/pages/${page}`}
         alt={`Page ${page + 1}`}
@@ -945,7 +942,6 @@ function DoublePagePane({
       <MarkerOverlay
         issueId={issueId}
         pageIndex={page}
-        wrapperRef={wrapperRef}
         imgRef={imgRef}
         naturalSize={naturalSize}
       />
@@ -957,11 +953,20 @@ function WebtoonView({
   issueId,
   totalPages,
   fitClass,
+  onChromeZone,
 }: {
   issueId: string;
   totalPages: number;
   fitClass: string;
+  /** Called when the user taps to toggle the reader chrome. Mirrors
+   *  the middle-tap behavior of `<TapZones>` in single / double
+   *  view; webtoon mode handles its own left/right (vertical scroll
+   *  is the navigation), so we only need the chrome path. Without
+   *  this, touch users in webtoon had no way to bring back the
+   *  auto-hidden chrome short of pressing the `c` keybind. */
+  onChromeZone: () => void;
 }) {
+  const markerMode = useReaderStore((s) => s.markerMode);
   const currentPage = useReaderStore((s) => s.currentPage);
   const setPage = useReaderStore((s) => s.setPage);
   const containerRef = useRef<HTMLElement>(null);
@@ -1035,16 +1040,89 @@ function WebtoonView({
       className="flex min-h-screen flex-col items-center"
     >
       {Array.from({ length: totalPages }, (_, i) => (
-        <div key={`${issueId}-${i}`} data-page-idx={i}>
-          <PageImage
-            src={`/issues/${issueId}/pages/${i}`}
-            alt={`Page ${i + 1}`}
-            fitClass={fitClass}
-            loading={i < 3 ? "eager" : "lazy"}
-          />
-        </div>
+        <WebtoonPage
+          key={`${issueId}-${i}`}
+          issueId={issueId}
+          pageIndex={i}
+          fitClass={fitClass}
+          eager={i < 3}
+        />
       ))}
+      {markerMode === "idle" ? (
+        // Chrome-toggle tap region for webtoon. `<TapZones>` in
+        // single/double covers the page with three columns
+        // (prev / chrome / next) — webtoon doesn't need
+        // left/right because native vertical scroll handles
+        // navigation, but it still needs a touch path to the
+        // chrome since auto-hide leaves no other way back on
+        // mobile. `fixed inset-0` covers the viewport regardless
+        // of how far the user has scrolled. `touch-action: pan-y`
+        // tells the browser to keep handling vertical pans (so
+        // native scroll continues to work) while still firing
+        // click on a tap. `z-10` keeps it behind the marker
+        // SVGs (z-20) and behind the chrome itself (z-30).
+        // Hidden in marker mode so highlight-drag has unimpeded
+        // access to the SVG overlays.
+        <button
+          type="button"
+          aria-label="Toggle controls"
+          onClick={onChromeZone}
+          className="pointer-events-auto fixed inset-0 z-10 touch-pan-y cursor-pointer bg-transparent"
+        />
+      ) : null}
     </main>
+  );
+}
+
+/** One page in `WebtoonView`. Wraps `<PageImage>` with a relative
+ *  positioning context and mounts `<MarkerOverlay>` per page so saved
+ *  highlights / notes render at their stored coordinates and the
+ *  highlight-mode drag affordance works on whichever page the user
+ *  starts dragging on. Without this, the webtoon view rendered bare
+ *  `<PageImage>`s and had no marker surface at all — saved highlights
+ *  didn't show and the highlight keybind / chrome menu silently did
+ *  nothing because there was no overlay to drag on.
+ */
+function WebtoonPage({
+  issueId,
+  pageIndex,
+  fitClass,
+  eager,
+}: {
+  issueId: string;
+  pageIndex: number;
+  fitClass: string;
+  eager: boolean;
+}) {
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [naturalSize, setNaturalSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  return (
+    <div
+      data-page-idx={pageIndex}
+      // `relative` so the overlay's `position: absolute` resolves to
+      // this wrapper rather than the scrolling `<main>`. The overlay
+      // walks up from its own SVG to find this positioned ancestor
+      // and uses its bounding box to align with the image.
+      className="relative"
+    >
+      <PageImage
+        src={`/issues/${issueId}/pages/${pageIndex}`}
+        alt={`Page ${pageIndex + 1}`}
+        fitClass={fitClass}
+        loading={eager ? "eager" : "lazy"}
+        imgRef={imgRef}
+        onNaturalSize={(w, h) => setNaturalSize({ width: w, height: h })}
+      />
+      <MarkerOverlay
+        issueId={issueId}
+        pageIndex={pageIndex}
+        imgRef={imgRef}
+        naturalSize={naturalSize}
+      />
+    </div>
   );
 }
 

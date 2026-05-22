@@ -89,6 +89,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/me/markers", get(list).post(create))
         .route("/me/markers/count", get(count))
+        .route("/me/markers/search", get(search))
         .route("/me/markers/tags", get(tags_index))
         .route("/me/markers/{id}", patch(update).delete(delete_one))
         .route("/me/issues/{issue_id}/markers", get(list_for_issue))
@@ -157,6 +158,47 @@ pub struct IssueMarkersView {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MarkerCountView {
     pub total: u64,
+}
+
+/// Global-search M2 — markers as a 4th category. The hit shape is
+/// trimmed of fields the modal / `/search` page don't need
+/// (color, tags, full timestamps) and carries the `<mark>`-wrapped
+/// snippet inline. ACL is per-caller (`/me/...`), so a hit lists
+/// only markers the user owns.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MarkerSearchView {
+    pub items: Vec<MarkerSearchHit>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MarkerSearchHit {
+    pub id: String,
+    /// `'bookmark' | 'note' | 'favorite' | 'highlight'`.
+    pub kind: String,
+    pub issue_id: String,
+    pub series_id: String,
+    pub page_index: i32,
+    /// `{ x, y, w, h, shape }` when the marker is region-scoped;
+    /// `None` for page-level markers. Used by the modal to render a
+    /// crop thumbnail.
+    pub region: Option<serde_json::Value>,
+    /// `ts_headline()` excerpt over `body` and `selection->>'text'`
+    /// with `<mark>…</mark>` around matched terms. Same sanitiser as
+    /// the series + issue snippets on the client.
+    pub snippet: Option<String>,
+    /// Hydrated series + issue context so a marker hit knows enough
+    /// to render a "Jump to page" link + a series label without a
+    /// second round-trip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series_slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_number: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -717,6 +759,178 @@ pub async fn count(State(app): State<AppState>, user: CurrentUser) -> impl IntoR
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
     }
+}
+
+#[utoipa::path(
+    get,
+    path = "/me/markers/search",
+    params(
+        ("q" = String, Query,),
+        ("limit" = Option<u64>, Query,),
+    ),
+    responses((status = 200, body = MarkerSearchView))
+)]
+pub async fn search(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<SearchQueryParams>,
+) -> impl IntoResponse {
+    // Same minimum-length contract as the modal/page surfaces.
+    let text = q.q.trim();
+    if text.len() < 2 {
+        return Json(MarkerSearchView { items: Vec::new() }).into_response();
+    }
+    if text.len() > MARKER_SEARCH_MAX_QUERY_LEN {
+        return error(StatusCode::BAD_REQUEST, "validation", "q too long");
+    }
+    let limit = q
+        .limit
+        .unwrap_or(MARKER_SEARCH_DEFAULT_LIMIT)
+        .clamp(1, MARKER_SEARCH_MAX_LIMIT);
+
+    // ILIKE pattern shared with the `/me/markers?q=` path. We escape
+    // the user's `%` / `_` so a query like "10_things" doesn't get
+    // misread as an LIKE wildcard. The escape is then forwarded to
+    // ts_headline as a websearch query for highlighting.
+    let pattern = format!("%{}%", text.replace('%', "\\%").replace('_', "\\_"));
+    let pattern_for_sel = pattern.clone();
+
+    let rows = match marker::Entity::find()
+        .filter(marker::Column::UserId.eq(user.id))
+        .filter(
+            sea_orm::Condition::any()
+                .add(marker::Column::Body.like(pattern.as_str()))
+                .add(sea_orm::sea_query::Expr::cust_with_values(
+                    "(selection->>'text') ILIKE $1",
+                    [pattern_for_sel],
+                )),
+        )
+        .order_by_desc(marker::Column::UpdatedAt)
+        .order_by_desc(marker::Column::Id)
+        .limit(limit)
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "markers: search failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if rows.is_empty() {
+        return Json(MarkerSearchView { items: Vec::new() }).into_response();
+    }
+
+    // Second pass: ts_headline excerpts. Cheap PK lookup over already-
+    // fetched ids. Failures degrade silently — hit still renders with
+    // body/selection text in its place.
+    let snippets = fetch_marker_snippets(&app, &rows, text)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "markers: snippet fetch failed");
+            std::collections::HashMap::new()
+        });
+
+    // Hydrate series + issue context.
+    let hydrated = match hydrate_views(&app.db, rows).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    let items: Vec<MarkerSearchHit> = hydrated
+        .into_iter()
+        .map(|m| {
+            let snippet = snippets.get(&m.id).cloned();
+            MarkerSearchHit {
+                snippet,
+                id: m.id,
+                kind: m.kind,
+                issue_id: m.issue_id,
+                series_id: m.series_id,
+                page_index: m.page_index,
+                region: m.region,
+                series_name: m.series_name,
+                series_slug: m.series_slug,
+                issue_slug: m.issue_slug,
+                issue_title: m.issue_title,
+                issue_number: m.issue_number,
+            }
+        })
+        .collect();
+    Json(MarkerSearchView { items }).into_response()
+}
+
+const MARKER_SEARCH_DEFAULT_LIMIT: u64 = 20;
+const MARKER_SEARCH_MAX_LIMIT: u64 = 50;
+const MARKER_SEARCH_MAX_QUERY_LEN: usize = 200;
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SearchQueryParams {
+    pub q: String,
+    #[serde(default)]
+    pub limit: Option<u64>,
+}
+
+/// `ts_headline` excerpt per marker over the concatenation of `body`
+/// and `selection->>'text'`. Same shape as the series + issues
+/// snippet helpers. Returns a `(marker_id → snippet)` map; markers
+/// whose searchable text doesn't yield a highlight are omitted.
+async fn fetch_marker_snippets(
+    app: &AppState,
+    rows: &[marker::Model],
+    q_text: &str,
+) -> Result<std::collections::HashMap<String, String>, sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
+    if rows.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct SnippetRow {
+        // `markers.id` is a Postgres `uuid`, so deserialise it as
+        // `Uuid` and convert to `String` for the HashMap key — that
+        // matches `to_view`'s `m.id.to_string()` stringification used
+        // throughout the marker DTOs.
+        id: Uuid,
+        snippet: Option<String>,
+    }
+
+    let mut params: Vec<Value> = Vec::with_capacity(rows.len() + 1);
+    params.push(Value::from(q_text.to_string()));
+    let id_placeholders: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            params.push(Value::from(r.id));
+            format!("${}", params.len())
+        })
+        .collect();
+    let sql = format!(
+        r#"SELECT id,
+                  ts_headline(
+                    'simple',
+                    COALESCE(body, '') || ' ' || COALESCE(selection->>'text', ''),
+                    websearch_to_tsquery('simple', $1),
+                    'MaxFragments=1, MaxWords=18, MinWords=5, ShortWord=2, StartSel=<mark>, StopSel=</mark>, HighlightAll=false'
+                  ) AS snippet
+             FROM markers
+             WHERE id IN ({})"#,
+        id_placeholders.join(",")
+    );
+
+    let backend = app.db.get_database_backend();
+    let stmt = Statement::from_sql_and_values(backend, sql, params);
+    let rows: Vec<SnippetRow> = SnippetRow::find_by_statement(stmt).all(&app.db).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let s = r.snippet?;
+            if s.contains("<mark>") {
+                Some((r.id.to_string(), s))
+            } else {
+                None
+            }
+        })
+        .collect())
 }
 
 #[utoipa::path(

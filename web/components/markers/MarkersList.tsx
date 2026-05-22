@@ -19,6 +19,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
+import { PageHeader } from "@/components/admin/PageHeader";
 import { Input } from "@/components/ui/input";
 import { useMarkersInfinite, useMarkerTags } from "@/lib/api/queries";
 import {
@@ -154,13 +155,38 @@ export function MarkersList() {
 
   return (
     <div className="space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Bookmarks</h1>
-        <p className="text-muted-foreground text-sm">
-          Every page bookmark, note, favorite, and highlight you&rsquo;ve saved
-          across your library.
-        </p>
-      </header>
+      <PageHeader
+        title="Bookmarks"
+        description="Every page bookmark, note, favorite, and highlight you’ve saved across your library."
+        actions={
+          <>
+            <div className="relative w-full max-w-xs">
+              <SearchIcon
+                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2"
+                aria-hidden="true"
+              />
+              <Input
+                type="search"
+                value={rawSearch}
+                onChange={(e) => setRawSearch(e.target.value)}
+                placeholder="Filter saved markers"
+                aria-label="Filter saved markers"
+                className="pl-8"
+              />
+            </div>
+            <CardSizeOptions
+              cardSize={cardSize}
+              onCardSize={setCardSize}
+              min={CARD_SIZE_MIN}
+              max={CARD_SIZE_MAX}
+              step={CARD_SIZE_STEP}
+              defaultSize={CARD_SIZE_DEFAULT}
+              fieldId="bookmarks-card-size"
+              description="Tighten or loosen the bookmarks grid. Saved per browser."
+            />
+          </>
+        }
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         <div
@@ -185,35 +211,6 @@ export function MarkersList() {
               {opt.label}
             </button>
           ))}
-        </div>
-        {/* Search input + card-size button share the trailing edge of
-         *  the toolbar row so the controls flow as one cluster instead
-         *  of stacking the size adjuster on its own line above. */}
-        <div className="ml-auto flex items-center gap-2">
-          <div className="relative w-full max-w-xs">
-            <SearchIcon
-              className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2"
-              aria-hidden="true"
-            />
-            <Input
-              type="search"
-              value={rawSearch}
-              onChange={(e) => setRawSearch(e.target.value)}
-              placeholder="Search notes &amp; highlights"
-              aria-label="Search markers"
-              className="pl-8"
-            />
-          </div>
-          <CardSizeOptions
-            cardSize={cardSize}
-            onCardSize={setCardSize}
-            min={CARD_SIZE_MIN}
-            max={CARD_SIZE_MAX}
-            step={CARD_SIZE_STEP}
-            defaultSize={CARD_SIZE_DEFAULT}
-            fieldId="bookmarks-card-size"
-            description="Tighten or loosen the bookmarks grid. Saved per browser."
-          />
         </div>
       </div>
 

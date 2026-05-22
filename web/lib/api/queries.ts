@@ -25,6 +25,7 @@ import type {
   MarkerKind,
   MarkerCountView,
   MarkerListView,
+  MarkerSearchView,
   MarkerTagMatch,
   MarkerTagsView,
   AdminOverviewView,
@@ -146,6 +147,12 @@ export type SeriesListFilters = {
   cover_artists?: string;
   editors?: string;
   translators?: string;
+  /** Any-role credit filter — CSV of person names. Matches series
+   *  where the person holds *any* credit role. Use this rather than
+   *  stacking per-role facets when surfacing a single creator's full
+   *  body of work (per-role facets AND-combine and drop creators with
+   *  mixed roles). */
+  credits?: string;
   /** Cast / setting facets — CSV, includes-any against the
    *  same-named CSV columns on the issues table. Server-side
    *  matching is case-insensitive and splits on `[,;]`. */
@@ -177,6 +184,14 @@ export type IssueSearchFilters = {
 
 /** People search shape (global-search M4). */
 export type PeopleSearchFilters = {
+  q?: string;
+  limit?: number;
+};
+
+/** Marker search shape (global-search M2 of the search-improvements
+ *  plan). Backed by `/me/markers/search`. Per-caller scoped so only
+ *  the user's own bookmarks / notes / highlights surface. */
+export type MarkerSearchFilters = {
   q?: string;
   limit?: number;
 };
@@ -242,6 +257,9 @@ export const queryKeys = {
   /** Cross-credits people search (`/people`). Global-search M4. */
   peopleSearch: (filters: PeopleSearchFilters) =>
     ["people", "search", filters] as const,
+  /** Marker search (`/me/markers/search`). 4th global-search category. */
+  markerSearch: (filters: MarkerSearchFilters) =>
+    ["markers", "search", filters] as const,
   queueDepth: ["admin", "queue-depth"] as const,
   thumbnailsStatus: (libraryId: string) =>
     ["admin", "libraries", libraryId, "thumbnails-status"] as const,
@@ -1081,6 +1099,20 @@ export function usePeopleSearch(filters: PeopleSearchFilters = {}) {
   return useQuery({
     queryKey: queryKeys.peopleSearch(filters),
     queryFn: () => jsonFetch<PeopleListView>(`/people${buildQuery(filters)}`),
+    enabled,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Global-search marker hook. Same 2-char min as the other category
+ *  searches so the modal doesn't fire a request after a single
+ *  keystroke. Per-caller scoped via the `/me/...` route prefix. */
+export function useMarkerSearch(filters: MarkerSearchFilters = {}) {
+  const enabled = !!filters.q && filters.q.length >= 2;
+  return useQuery({
+    queryKey: queryKeys.markerSearch(filters),
+    queryFn: () =>
+      jsonFetch<MarkerSearchView>(`/me/markers/search${buildQuery(filters)}`),
     enabled,
     placeholderData: keepPreviousData,
   });

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  BookOpen,
   Check,
   Circle,
   Download,
@@ -9,6 +10,7 @@ import {
   ListChecks,
   Loader2,
   RefreshCw,
+  Search as SearchIcon,
 } from "lucide-react";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
@@ -19,6 +21,7 @@ import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { PopoverPortalContainer } from "@/components/ui/popover";
 import {
   Sheet,
@@ -39,6 +42,7 @@ import {
   useCblListWindow,
 } from "@/lib/api/queries";
 import { useBulkMarkProgress, useRefreshCblList } from "@/lib/api/mutations";
+import { cn } from "@/lib/utils";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
@@ -86,6 +90,30 @@ function CblViewDetailInner({
   const entriesQuery = useCblListEntriesInfinite(listId, {
     status: hideMissing ? "matched,ambiguous,manual" : undefined,
   });
+  // Page-local search (M5 of search-improvements). Filters the CBL's
+  // entries client-side by series name / issue title / number. To
+  // give a stable, correct result-set we eagerly walk all pages
+  // whenever a search is active — same pattern used by the
+  // drag-reorder surfaces (per CLAUDE.md list-pagination conventions),
+  // so the filter never lies by missing rows that exist on a
+  // not-yet-loaded page.
+  const [q, setQ] = React.useState("");
+  const [debouncedQ, setDebouncedQ] = React.useState("");
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim().toLowerCase()), 200);
+    return () => clearTimeout(t);
+  }, [q]);
+  React.useEffect(() => {
+    if (debouncedQ.length === 0) return;
+    if (entriesQuery.hasNextPage && !entriesQuery.isFetchingNextPage) {
+      void entriesQuery.fetchNextPage();
+    }
+  }, [
+    debouncedQ,
+    entriesQuery,
+    entriesQuery.hasNextPage,
+    entriesQuery.isFetchingNextPage,
+  ]);
   // Tiny piggy-back on the rail's window query so the detail page
   // highlights the same "Up next" anchor card as the home rail.
   // before=0 keeps the response cheap — we only need `current_index`
@@ -219,6 +247,37 @@ function CblViewDetailInner({
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   };
 
+  // Jump the page to the Up Next anchor card. If an active search is
+  // filtering rows out, the target `<li>` may not be rendered — clear
+  // the search first, then defer the scroll a tick so React commits
+  // the unfiltered list before we look up the element. Same approach
+  // used by Reader's "jump to bookmark" path.
+  function scrollToUpNext() {
+    if (upNextPosition == null) return;
+    const doScroll = () => {
+      const el = document.getElementById(`cbl-entry-${upNextPosition}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    if (q.length > 0) {
+      setQ("");
+      // Two rAFs: one for state→DOM commit, one for the layout that
+      // follows. Cheaper than a setTimeout and avoids racing the
+      // 200ms debounce that runs the row-filter effect.
+      requestAnimationFrame(() => requestAnimationFrame(doScroll));
+    } else {
+      doScroll();
+    }
+  }
+
+  // When a search is active, filter loaded entries by series name /
+  // issue title / issue number. Gap markers are dropped while
+  // searching — they'd be meaningless against a free-text filter
+  // (we're no longer walking the canonical position sequence).
+  const filteredEntries =
+    debouncedQ.length === 0
+      ? loadedEntries
+      : loadedEntries.filter((e) => entryMatchesQuery(e, debouncedQ));
+
   // Build the render plan. When `hideMissing` is on, the server has
   // already filtered out missing entries; we still walk loaded
   // positions to insert a `gap` placeholder where the canonical CBL
@@ -228,9 +287,9 @@ function CblViewDetailInner({
     | { kind: "entry"; entry: CblEntryHydratedView }
     | { kind: "gap"; key: string; count: number };
   const items: RenderItem[] = [];
-  if (hideMissing) {
+  if (hideMissing && debouncedQ.length === 0) {
     let prevPos: number | null = null;
-    for (const entry of loadedEntries) {
+    for (const entry of filteredEntries) {
       if (prevPos !== null) {
         const gap = entry.position - prevPos - 1;
         if (gap > 0) {
@@ -245,7 +304,7 @@ function CblViewDetailInner({
       prevPos = entry.position;
     }
   } else {
-    for (const entry of loadedEntries) {
+    for (const entry of filteredEntries) {
       items.push({ kind: "entry", entry });
     }
   }
@@ -265,6 +324,39 @@ function CblViewDetailInner({
              *  `size="header"` bumps padding/typography so the pills
              *  line up with the adjacent `size="sm"` icon button. */}
             <CblStatsPills cblListId={list.id} size="header" />
+            {upNextPosition != null && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={scrollToUpNext}
+                className="h-9"
+                aria-label="Scroll to Up Next entry"
+                title="Scroll to Up Next entry"
+              >
+                <BookOpen className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                Up Next
+              </Button>
+            )}
+            {/* Page-local search input. Folded into the header's
+             *  actions row alongside card-size + select so the
+             *  toolbar reads as one cluster. Auto-walks pages while
+             *  active (see effect above) so the filter sees the
+             *  full list. */}
+            <div className="relative w-56">
+              <SearchIcon
+                aria-hidden="true"
+                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+              />
+              <Input
+                type="search"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search this list…"
+                aria-label="Search entries in this list"
+                className="h-9 pl-8"
+              />
+            </div>
             <CardSizeOptions
               cardSize={cardSize}
               onCardSize={setCardSize}
@@ -283,11 +375,13 @@ function CblViewDetailInner({
                 aria-hidden={selection.selectMode}
                 tabIndex={selection.selectMode ? -1 : 0}
                 disabled={selection.selectMode}
-                className={
-                  selection.selectMode
-                    ? "pointer-events-none invisible opacity-0 transition-opacity duration-150"
-                    : "transition-opacity duration-150"
-                }
+                className={cn(
+                  // Toolbar convention: h-9 to align with the
+                  // adjacent `<Input>` + CardSizeOptions trigger.
+                  "h-9 transition-opacity duration-150",
+                  selection.selectMode &&
+                    "pointer-events-none invisible opacity-0",
+                )}
               >
                 <ListChecks className="mr-1.5 h-4 w-4" />
                 Select
@@ -393,7 +487,10 @@ function CblViewDetailInner({
           <ul role="list" className="grid gap-3" style={gridStyle}>
             {items.map((item) =>
               item.kind === "entry" ? (
-                <li key={item.entry.id}>
+                <li
+                  key={item.entry.id}
+                  id={`cbl-entry-${item.entry.position}`}
+                >
                   <CblIssueCard
                     entry={item.entry}
                     issue={item.entry.issue ?? undefined}
@@ -526,4 +623,26 @@ function renderYearRangeBadge(
       </Tooltip>
     </TooltipProvider>
   );
+}
+
+/** Case-insensitive substring match against the visible facets of a
+ *  CBL entry: series name, issue title, issue number (raw + sort
+ *  representations). Caller passes a pre-lowercased needle so we
+ *  don't re-lowercase on every entry. */
+function entryMatchesQuery(
+  entry: CblEntryHydratedView,
+  lowerQ: string,
+): boolean {
+  if (!lowerQ) return true;
+  const buckets: Array<string | null | undefined> = [
+    entry.series_name,
+    entry.issue_number,
+    entry.issue?.title,
+    entry.issue?.number,
+    entry.issue?.series_name,
+  ];
+  for (const v of buckets) {
+    if (v && v.toLowerCase().includes(lowerQ)) return true;
+  }
+  return false;
 }

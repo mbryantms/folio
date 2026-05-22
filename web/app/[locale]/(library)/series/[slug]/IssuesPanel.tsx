@@ -57,15 +57,20 @@ const CARD_SIZE_STORAGE_KEY = "folio.series.cardSize";
 export function IssuesPanel({
   seriesSlug,
   issueCount,
+  initialQuery = "",
 }: {
   /** Slug of the parent series — drives the `/series/{slug}/issues` fetch. */
   seriesSlug: string;
   issueCount: number | null;
+  /** URL-derived initial value for the search input. Lets refresh +
+   *  share preserve the in-page search ("issue 3" filter) the user had
+   *  typed. Server-rendered into the page via `?q=`. */
+  initialQuery?: string;
 }) {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery);
   const [sort, setSort] = useState<IssueSort>("number");
   const [order, setOrder] = useState<SortOrder>("asc");
-  const [debouncedQ, setDebouncedQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState(initialQuery.trim());
 
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
@@ -79,6 +84,18 @@ export function IssuesPanel({
     const t = setTimeout(() => setDebouncedQ(q.trim()), 200);
     return () => clearTimeout(t);
   }, [q]);
+
+  // Mirror the debounced query into the URL via `replaceState` so a
+  // refresh restores the search without forcing a full RSC navigation
+  // on every keystroke. Same pattern the `/search` page uses; ignored
+  // by the App-Router cache since the URL doesn't re-key the route.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (debouncedQ.length > 0) url.searchParams.set("q", debouncedQ);
+    else url.searchParams.delete("q");
+    window.history.replaceState({}, "", url.toString());
+  }, [debouncedQ]);
 
   const filters = debouncedQ
     ? { q: debouncedQ, limit: 60 }

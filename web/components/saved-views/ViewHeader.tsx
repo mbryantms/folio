@@ -126,7 +126,9 @@ export function ViewHeader({
                 type="button"
                 variant="outline"
                 size="icon"
-                className="h-8 w-8"
+                // Toolbar-row convention: h-9 square button matches
+                // the adjacent search input + CardSizeOptions trigger.
+                className="h-9 w-9"
                 aria-label="More actions"
                 title="More actions"
               >

@@ -150,6 +150,9 @@ export function LibraryGridView({
     ...EMPTY_CREDITS,
     ...(init.credits ?? {}),
   }));
+  const [anyCredits, setAnyCredits] = React.useState<string[]>(
+    init.anyCredits ?? [],
+  );
   const [characters, setCharacters] = React.useState<string[]>(
     init.characters ?? [],
   );
@@ -205,6 +208,7 @@ export function LibraryGridView({
     cover_artists: csvOrUndef(credits.cover_artists),
     editors: csvOrUndef(credits.editors),
     translators: csvOrUndef(credits.translators),
+    credits: csvOrUndef(anyCredits),
     characters: csvOrUndef(characters),
     teams: csvOrUndef(teams),
     locations: csvOrUndef(locations),
@@ -274,6 +278,7 @@ export function LibraryGridView({
     genres.length +
     tags.length +
     creditCount +
+    anyCredits.length +
     characters.length +
     teams.length +
     locations.length;
@@ -289,6 +294,7 @@ export function LibraryGridView({
     setGenres([]);
     setTags([]);
     setCredits(EMPTY_CREDITS);
+    setAnyCredits([]);
     setCharacters([]);
     setTeams([]);
     setLocations([]);
@@ -345,6 +351,7 @@ export function LibraryGridView({
           size="sm"
           aria-pressed={mode === "series"}
           onClick={() => setMode("series")}
+          className="h-9"
         >
           Series
         </Button>
@@ -354,6 +361,7 @@ export function LibraryGridView({
           size="sm"
           aria-pressed={mode === "issues"}
           onClick={() => setMode("issues")}
+          className="h-9"
         >
           Issues
         </Button>
@@ -362,14 +370,14 @@ export function LibraryGridView({
           placeholder={mode === "series" ? "Search series…" : "Search issues…"}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          className="w-72"
+          className="h-9 w-72"
         />
         {mode === "series" ? (
           <Select
             value={seriesSort}
             onValueChange={(v) => setSeriesSort(v as SeriesSort)}
           >
-            <SelectTrigger className="w-44" disabled={!!trimmedQ}>
+            <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -385,7 +393,7 @@ export function LibraryGridView({
             value={issueSort}
             onValueChange={(v) => setIssueSort(v as IssueSort)}
           >
-            <SelectTrigger className="w-44" disabled={!!trimmedQ}>
+            <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -404,6 +412,7 @@ export function LibraryGridView({
           disabled={!!trimmedQ}
           onClick={() => setOrder((o) => (o === "asc" ? "desc" : "asc"))}
           title={`Order: ${order === "asc" ? "Ascending" : "Descending"}`}
+          className="h-9 w-9"
         >
           {order === "asc" ? "↑" : "↓"}
         </Button>
@@ -413,6 +422,7 @@ export function LibraryGridView({
           variant="outline"
           size="sm"
           onClick={() => setFilterOpen(true)}
+          className="h-9"
         >
           <Filter className="mr-1 h-3.5 w-3.5" />
           Filters
@@ -431,6 +441,7 @@ export function LibraryGridView({
           variant="outline"
           size="sm"
           disabled={facetCount === 0}
+          className="h-9"
           onClick={() => {
             const today = new Date().toISOString().slice(0, 10);
             const result = libraryGridStateToFilterBuilderState(
@@ -472,7 +483,7 @@ export function LibraryGridView({
             variant="ghost"
             size="sm"
             onClick={clearFacets}
-            className="text-muted-foreground"
+            className="text-muted-foreground h-9"
           >
             <X className="mr-1 h-3 w-3" /> Clear filters
           </Button>
@@ -502,6 +513,7 @@ export function LibraryGridView({
           genres={genres}
           tags={tags}
           credits={credits}
+          anyCredits={anyCredits}
           characters={characters}
           teams={teams}
           locations={locations}
@@ -527,6 +539,9 @@ export function LibraryGridView({
               role,
               credits[role].filter((x) => x !== v),
             )
+          }
+          onRemoveAnyCredit={(v) =>
+            setAnyCredits(anyCredits.filter((x) => x !== v))
           }
           onRemoveCharacter={(v) =>
             setCharacters(characters.filter((x) => x !== v))
@@ -963,6 +978,7 @@ function ActiveChips({
   genres,
   tags,
   credits,
+  anyCredits,
   characters,
   teams,
   locations,
@@ -975,6 +991,7 @@ function ActiveChips({
   onRemoveGenre,
   onRemoveTag,
   onRemoveCredit,
+  onRemoveAnyCredit,
   onRemoveCharacter,
   onRemoveTeam,
   onRemoveLocation,
@@ -989,6 +1006,7 @@ function ActiveChips({
   genres: string[];
   tags: string[];
   credits: CreditState;
+  anyCredits: string[];
   characters: string[];
   teams: string[];
   locations: string[];
@@ -1001,6 +1019,7 @@ function ActiveChips({
   onRemoveGenre: (v: string) => void;
   onRemoveTag: (v: string) => void;
   onRemoveCredit: (role: CreditKey, v: string) => void;
+  onRemoveAnyCredit: (v: string) => void;
   onRemoveCharacter: (v: string) => void;
   onRemoveTeam: (v: string) => void;
   onRemoveLocation: (v: string) => void;
@@ -1069,6 +1088,13 @@ function ActiveChips({
           />
         )),
       )}
+      {anyCredits.map((v) => (
+        <Chip
+          key={`credits-${v}`}
+          label={`Credits: ${v}`}
+          onRemove={() => onRemoveAnyCredit(v)}
+        />
+      ))}
       {characters.map((v) => (
         <Chip
           key={`char-${v}`}

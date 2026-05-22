@@ -52,10 +52,13 @@ type ProgressDelta = { records: ProgressLike[] };
 
 export default async function SeriesPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ q?: string }>;
 }) {
   const { slug } = await params;
+  const { q: initialQuery } = await searchParams;
 
   let series: SeriesView;
   let firstPage: IssueListView;
@@ -371,6 +374,7 @@ export default async function SeriesPage({
       <IssuesPanel
         seriesSlug={series.slug}
         issueCount={series.issue_count ?? series.total_issues ?? null}
+        initialQuery={initialQuery ?? ""}
       />
     </div>
   );

@@ -1135,3 +1135,80 @@ async fn delete_removes_marker() {
     let (status, _) = http(&app, Method::DELETE, &url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "second delete is 404");
 }
+
+/// `/me/markers/search` returns hits with `<mark>`-wrapped snippets,
+/// scoped to the calling user. Backs the 4th global-search category.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_returns_mark_highlighted_snippets_scoped_to_user() {
+    let app = TestApp::spawn().await;
+    let alice = register(&app, "alice-search@example.com").await;
+    promote_to_admin(&app, alice.user_id).await;
+    let (_lib, _series, issue_id) = seed_issue(&app, "alice-search-lib").await;
+
+    // One note body and one highlight with OCR text. Both include the
+    // search term; both should produce `<mark>`-highlighted snippets.
+    http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&alice),
+        Some(serde_json::json!({
+            "issue_id": issue_id,
+            "page_index": 0,
+            "kind": "note",
+            "body": "Detective notebook about a moonlight chase scene.",
+        })),
+    )
+    .await;
+    http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&alice),
+        Some(serde_json::json!({
+            "issue_id": issue_id,
+            "page_index": 1,
+            "kind": "highlight",
+            "region": { "x": 10.0, "y": 10.0, "w": 20.0, "h": 20.0, "shape": "rect" },
+            "selection": { "text": "Under the moonlight he ran." },
+        })),
+    )
+    .await;
+    // Decoy: a bookmark on a different page with no relevant text.
+    // Must not appear in the search results.
+    http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&alice),
+        Some(serde_json::json!({
+            "issue_id": issue_id,
+            "page_index": 2,
+            "kind": "bookmark",
+        })),
+    )
+    .await;
+
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers/search?q=moonlight",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    let items = json["items"].as_array().unwrap();
+    assert_eq!(
+        items.len(),
+        2,
+        "two markers contain 'moonlight'; decoy is excluded"
+    );
+    for item in items {
+        let snippet = item["snippet"].as_str().expect("snippet present");
+        assert!(
+            snippet.contains("<mark>moonlight</mark>"),
+            "snippet should highlight the matched term: {snippet}"
+        );
+    }
+}

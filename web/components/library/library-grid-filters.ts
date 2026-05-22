@@ -56,6 +56,12 @@ export type LibraryGridInitialFilters = {
   genres?: string[];
   tags?: string[];
   credits?: Partial<Record<CreditKey, string[]>>;
+  /** Any-role credit filter (the `?credits=<name>` query param). Matches
+   *  series where the named person holds *any* credit role — used by
+   *  the people-search click-through so creators with mixed roles
+   *  (writer + cover artist + …) surface every series they touched
+   *  rather than only the intersection of their roles. */
+  anyCredits?: string[];
   characters?: string[];
   teams?: string[];
   locations?: string[];
@@ -111,6 +117,7 @@ export function parseLibraryGridFilters(
     genres: csv("genres"),
     tags: csv("tags"),
     credits: Object.keys(credits).length ? credits : undefined,
+    anyCredits: csv("credits"),
     characters: csv("characters"),
     teams: csv("teams"),
     locations: csv("locations"),

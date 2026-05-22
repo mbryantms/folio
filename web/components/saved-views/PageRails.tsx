@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 
-import { LibrarySearch } from "@/components/LibrarySearch";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
 import { useSavedViews } from "@/lib/api/queries";
@@ -70,12 +69,9 @@ export function PageRails({
           isSystem={isSystem}
         />
         <div className="flex flex-wrap items-center gap-2">
-          {/* On mobile the search lives in the topbar (see `MainShell`)
-              so it doesn't push the rails down. Desktop keeps it inline
-              in the page toolbar alongside the density toggle. */}
-          <div className="hidden md:block">
-            <LibrarySearch initial="" basePath="/" />
-          </div>
+          {/* Universal search lives in the topbar (see `MainShell`) at
+              every width, so no inline search input here. Keep the
+              page actions + card-size toggle as the toolbar contents. */}
           <CardSizeOptions
             cardSize={cardSize}
             onCardSize={setCardSize}

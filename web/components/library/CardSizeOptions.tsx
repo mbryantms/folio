@@ -48,6 +48,11 @@ export function CardSizeOptions({
           size="sm"
           aria-label={triggerLabel}
           title={triggerLabel}
+          // Toolbar-row convention: every inline control aligns at
+          // h-9 (36px) so the row reads as a single horizontal band
+          // alongside the `<Input>` siblings. Search docs:
+          // `docs/dev/search.md`.
+          className="h-9 px-2.5"
         >
           <LayoutGrid className="h-4 w-4" />
         </Button>

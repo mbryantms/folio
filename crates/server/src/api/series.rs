@@ -482,6 +482,13 @@ pub struct SeriesView {
     /// declare manga.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reading_direction: Option<String>,
+    /// Search-result excerpt with `<mark>…</mark>` tags around matched
+    /// terms. Populated only on search-mode list responses; `None`
+    /// everywhere else. The frontend renders this as HTML with a small
+    /// allowlist sanitiser so future field changes can't introduce
+    /// XSS surface area.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
 }
 
 /// Per-user, server-computed read progress for the whole series. Sidesteps
@@ -541,6 +548,7 @@ impl From<series::Model> for SeriesView {
             progress_summary: None,
             user_rating: None,
             reading_direction: m.reading_direction,
+            snippet: None,
         }
     }
 }
@@ -858,6 +866,15 @@ pub struct ListSeriesQuery {
     pub editors: Option<String>,
     #[serde(default)]
     pub translators: Option<String>,
+    /// Any-role credit filter — CSV of person names. Matches series
+    /// where the person has at least one credit in `series_credits`,
+    /// regardless of role. Used by the people-search click-through so
+    /// landing on a creator surfaces every series they touched, not
+    /// just the slice under one role. Use this rather than stacking
+    /// per-role facets, which AND-combine and produce empty result
+    /// sets for creators who hold different roles on different series.
+    #[serde(default)]
+    pub credits: Option<String>,
     /// Cast / setting facets — includes-any against the CSV columns on
     /// the issues table. Series-level lists (`SeriesView.characters`,
     /// etc.) are aggregated from these issue rows, so filtering on
@@ -1082,6 +1099,19 @@ fn apply_series_credit_role_filters(
             "EXISTS (SELECT 1 FROM series_credits sc WHERE sc.series_id = series.id AND sc.role = $1 AND sc.person = ANY($2))",
             [Value::from(role), Value::from(values)],
         ));
+    }
+    // Any-role credits filter (the `credits` query param). Matches
+    // series where the person has *any* credit role, sidestepping the
+    // AND-combining problem that the per-role facets above create when
+    // a creator holds different roles on different series.
+    if let Some(raw) = q.credits.as_deref() {
+        let values = split_csv(raw);
+        if !values.is_empty() {
+            select = select.filter(Expr::cust_with_values(
+                "EXISTS (SELECT 1 FROM series_credits sc WHERE sc.series_id = series.id AND sc.person = ANY($1))",
+                [Value::from(values)],
+            ));
+        }
     }
     select
 }
@@ -1327,28 +1357,50 @@ pub async fn list(
     let limit = clamp_limit(q.limit);
     let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
 
-    // Search mode: rank by ts_rank_cd; cursor + sort options are ignored
-    // (search results are always ranked, returned as a single page —
-    // total equals items.len()).
+    // Search mode: filter by tsvector match (or trigram similarity
+    // fallback for fuzzy spellings). Cursor pagination is single-page
+    // for now (search-result sets are bounded by `clamp_limit`); the
+    // sort path is chosen by the caller:
+    //
+    // - `?sort` absent → relevance (ts_rank_cd), the modal default.
+    // - `?sort=name` / `year` / `created_at` / `updated_at` → respect
+    //   the explicit ordering. Used by the dedicated `/search` page
+    //   when the user picks a sort option (M4 of the search-
+    //   improvements plan).
     if let Some(text) = q_text {
-        let ranked = select
-            .filter(
-                Condition::any()
-                    .add(Expr::cust_with_values(
-                        "search_doc @@ websearch_to_tsquery('simple', $1)",
-                        [text],
-                    ))
-                    .add(Expr::cust_with_values(
-                        "normalized_name % $1",
-                        [entity::series::normalize_name(text)],
-                    )),
-            )
-            .order_by_desc(Expr::cust_with_values(
-                "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
-                [text],
-            ))
-            .order_by_asc(series::Column::NormalizedName)
-            .limit(limit);
+        let filtered = select.filter(
+            Condition::any()
+                .add(Expr::cust_with_values(
+                    "search_doc @@ websearch_to_tsquery('simple', $1)",
+                    [text],
+                ))
+                .add(Expr::cust_with_values(
+                    "normalized_name % $1",
+                    [entity::series::normalize_name(text)],
+                )),
+        );
+        let ranked = if let Some(sort) = q.sort {
+            // Explicit sort overrides relevance. Honour the order
+            // param too (defaults match the non-search branch:
+            // Name ASC, others DESC). `apply_series_sort_ordering`
+            // handles the NULL-aware order semantics for `year`.
+            let order = q.order.unwrap_or(match sort {
+                SeriesSort::Name => SortOrder::Asc,
+                SeriesSort::CreatedAt | SeriesSort::UpdatedAt | SeriesSort::Year => {
+                    SortOrder::Desc
+                }
+            });
+            let asc = matches!(order, SortOrder::Asc);
+            apply_series_sort_ordering(filtered, sort, asc).limit(limit)
+        } else {
+            filtered
+                .order_by_desc(Expr::cust_with_values(
+                    "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
+                    [text],
+                ))
+                .order_by_asc(series::Column::NormalizedName)
+                .limit(limit)
+        };
         let rows = match ranked.all(&app.db).await {
             Ok(v) => v,
             Err(e) => {
@@ -1356,7 +1408,27 @@ pub async fn list(
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         };
-        let items = hydrate_series(&app, rows).await;
+        // Second pass: fetch per-row `ts_headline` excerpts so result
+        // rows render with a snippet showing *why* the row matched.
+        // Cheap PK lookup on already-fetched IDs, scoped to whichever
+        // free-text fields we want to highlight (currently summary —
+        // name is in the row title, publisher/year already show as
+        // metadata badges, so summary is the high-signal target).
+        let snippets = match fetch_series_snippets(&app, &rows, text).await {
+            Ok(map) => map,
+            Err(e) => {
+                tracing::warn!(error = %e, "series snippet fetch failed; continuing without");
+                std::collections::HashMap::new()
+            }
+        };
+        let mut items = hydrate_series(&app, rows).await;
+        for item in items.iter_mut() {
+            if let Ok(uuid) = Uuid::parse_str(&item.id)
+                && let Some(s) = snippets.get(&uuid).cloned()
+            {
+                item.snippet = Some(s);
+            }
+        }
         let total = Some(items.len() as i64);
         return Json(SeriesListView {
             items,
@@ -1790,6 +1862,74 @@ pub async fn get_one(
         lookup_user_rating(&app, user.id, "series", &series_id_for_lookups.to_string()).await;
 
     Json(v).into_response()
+}
+
+/// Fetch `ts_headline()` excerpts for a set of series rows that matched
+/// a search query. Returns a `(series_id → snippet)` map; series whose
+/// summary doesn't yield any highlightable fragment are simply omitted
+/// (caller leaves `snippet` as `None`).
+///
+/// We highlight against `summary` only — the series name already shows
+/// in the row title, and publisher / year render as separate metadata
+/// chips, so summary is the high-signal target. Markup is constrained
+/// to `<mark>…</mark>` so the frontend sanitiser can use a tight
+/// allowlist.
+pub(crate) async fn fetch_series_snippets(
+    app: &AppState,
+    rows: &[series::Model],
+    q_text: &str,
+) -> Result<HashMap<Uuid, String>, sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, Statement, Value};
+    if rows.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct SnippetRow {
+        id: Uuid,
+        snippet: Option<String>,
+    }
+
+    // $1 holds the query; the remaining placeholders ($2..) bind each
+    // ID individually. This mirrors `filter_options.rs`'s pattern —
+    // sea_orm's raw-statement layer doesn't expose Postgres array
+    // params nicely, and result-set sizes here are bounded by
+    // `clamp_limit` so the placeholder count stays small.
+    let mut params: Vec<Value> = Vec::with_capacity(rows.len() + 1);
+    params.push(Value::from(q_text.to_string()));
+    let id_placeholders: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            params.push(Value::from(r.id));
+            format!("${}", params.len())
+        })
+        .collect();
+    let sql = format!(
+        r#"SELECT id,
+                  ts_headline(
+                    'simple',
+                    COALESCE(summary, ''),
+                    websearch_to_tsquery('simple', $1),
+                    'MaxFragments=1, MaxWords=18, MinWords=5, ShortWord=2, StartSel=<mark>, StopSel=</mark>, HighlightAll=false'
+                  ) AS snippet
+             FROM series
+             WHERE id IN ({})"#,
+        id_placeholders.join(",")
+    );
+
+    let backend = app.db.get_database_backend();
+    let stmt = Statement::from_sql_and_values(backend, sql, params);
+    let rows: Vec<SnippetRow> = SnippetRow::find_by_statement(stmt).all(&app.db).await?;
+    // Keep only snippets that actually contain a highlight; otherwise
+    // we'd render the first 18 words of the summary unchanged, which
+    // adds noise without conveying "why this matched".
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let s = r.snippet?;
+            if s.contains("<mark>") { Some((r.id, s)) } else { None }
+        })
+        .collect())
 }
 
 /// Count finished / in-progress active issues for `user_id` within

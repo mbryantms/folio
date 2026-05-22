@@ -27,6 +27,7 @@ pub mod log_widgets;
 pub mod markers;
 pub mod meta;
 pub mod next_up;
+pub mod creators;
 pub mod opds;
 pub mod opds_progression;
 pub mod opds_pse;

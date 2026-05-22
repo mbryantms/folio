@@ -1,3 +1,4 @@
+import { parseSeriesSearchFilters } from "@/lib/search/series-search-filters";
 import { SEARCH_CATEGORIES, type SearchCategory } from "@/lib/search/types";
 
 import { SearchView } from "./SearchView";
@@ -18,19 +19,33 @@ import { SearchView } from "./SearchView";
 export default async function SearchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; category?: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const { q, category } = await searchParams;
-  const validCategory = isSearchCategory(category) ? category : null;
+  const params = await searchParams;
+  const q = params.q ?? "";
+  const validCategory = isSearchCategory(params.category)
+    ? params.category
+    : null;
+  // Parse sort + facets from the URL so a deep-linked
+  // `/search?q=geiger&sort=year&status=continuing` hydrates with the
+  // filter state pre-applied. Default values match
+  // `EMPTY_SERIES_SEARCH_FILTERS` so the SearchView's initial state
+  // remains stable.
+  const initialFilters = parseSeriesSearchFilters(params);
   // `key` makes SearchView remount whenever the URL query or category
   // changes (e.g. the user clicks a rail's "View all" → `category=series`).
   // Without it the client component reuses its previous `raw`/`debounced`
   // state and the old results stick around. Typing inside SearchView
   // itself uses `history.replaceState`, which bypasses Next's router and
   // doesn't re-key — so we don't pay for a remount on each keystroke.
-  const key = `${q ?? ""}|${validCategory ?? ""}`;
+  const key = `${q}|${validCategory ?? ""}`;
   return (
-    <SearchView key={key} initialQuery={q ?? ""} category={validCategory} />
+    <SearchView
+      key={key}
+      initialQuery={q}
+      category={validCategory}
+      initialFilters={initialFilters}
+    />
   );
 }
 

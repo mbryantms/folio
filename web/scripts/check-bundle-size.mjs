@@ -6,16 +6,24 @@
  * Reader route: `/[locale]/read/[seriesSlug]/[issueSlug]` First Load JS.
  *
  * The §18.1 spec target is 150 KB gzip. As of 2026-05-20 the current
- * measured size is ~156 KB (no accidental large imports — chunks are
- * uniformly distributed; the growth is real feature weight from marker
- * mode, multi-page rails, and saved views that landed after the spec).
+ * measured size is ~158 KB under Turbopack — no accidental large
+ * imports, chunks are uniformly distributed; the growth is real
+ * feature weight from marker mode, multi-page rails, and saved
+ * views that landed after the spec.
  *
- * The gate is set 9% above the current measurement (`170 KB`) so it
+ * The gate is set 8% above the current measurement (`170 KB`) so it
  * fires on regressions, not on the current state. The intent is to
  * **ratchet this back down to the spec target in 1.0.x** once we've
  * lazy-loaded the marker editor / saved-view picker — both of which
  * are only used on a subset of reader sessions yet ship in the
  * initial bundle today.
+ *
+ * Bundler note: production builds use Turbopack (Next 16 default).
+ * The PWA service worker is compiled in a separate post-`next build`
+ * step via `@serwist/cli` (see `web/serwist.config.js`) because
+ * `@serwist/next` requires Webpack and Webpack's chunk topology
+ * roughly doubles the reader-bundle measurement (224 KB / 38 chunks)
+ * for the same source code, blowing this ceiling cosmetically.
  *
  * Excluded libraries (must NOT appear in the chunk graph for this route):
  *   - framer-motion

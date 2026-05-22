@@ -1,15 +1,29 @@
 "use client";
 
-import { User } from "lucide-react";
+import {
+  Bookmark,
+  Highlighter,
+  Star,
+  StickyNote,
+  User,
+  type LucideIcon,
+} from "lucide-react";
 import { useMemo } from "react";
 
 import {
   useIssueSearch,
+  useMarkerSearch,
   usePeopleSearch,
   useSeriesList,
+  type SeriesListFilters,
 } from "@/lib/api/queries";
-import type { IssueSearchHit, SeriesView } from "@/lib/api/types";
-import { issueUrl, seriesUrl } from "@/lib/urls";
+import type {
+  IssueSearchHit,
+  MarkerKind,
+  MarkerSearchHit,
+  SeriesView,
+} from "@/lib/api/types";
+import { issueUrl, seriesUrl, readerUrl } from "@/lib/urls";
 
 import {
   EMPTY_SEARCH_GROUPS,
@@ -27,6 +41,12 @@ interface GlobalSearchOpts {
    *  silently clamping (e.g., the issues backend caps at 50 regardless
    *  of `limit`, so the old shared `75` lied about its real ceiling). */
   perCategory?: number;
+  /** Additional series-side filter params forwarded to `useSeriesList`
+   *  — sort, year-range, status, publisher, library, etc. Used by the
+   *  dedicated `/search?category=series` grid (M4 facets + sort);
+   *  ignored by every other surface. The hook merges these on top of
+   *  `q` + `limit` so callers don't need to construct the full shape. */
+  seriesFilters?: Partial<SeriesListFilters>;
 }
 
 /** Server-side max per backend. Mirrors the `MAX_LIMIT` constants in
@@ -36,6 +56,7 @@ interface GlobalSearchOpts {
 const BACKEND_MAX = {
   series: 100,
   issues: 50,
+  markers: 50,
   people: 100,
 } as const;
 
@@ -63,35 +84,25 @@ const EMPTY_PAYLOADS: GlobalSearchPayloads = {
   issues: [],
 };
 
-/** Map a credit role to the matching `SeriesListFilters` CSV facet so
- *  clicking a person hit lands on a series list pre-filtered to their
- *  work. People who only show up under roles the library grid doesn't
- *  expose (only `writer` / `penciller` / etc. are facets today) fall
- *  back to the writers facet which still ranks the person's flagship
- *  work near the top. */
-function hrefForPerson(p: {
-  person: string;
-  roles: readonly string[];
-}): string {
-  const FACET_BY_ROLE: Record<string, string> = {
-    writer: "writers",
-    penciller: "pencillers",
-    inker: "inkers",
-    colorist: "colorists",
-    letterer: "letterers",
-    cover_artist: "cover_artists",
-    editor: "editors",
-    translator: "translators",
-  };
-  const facet =
-    p.roles.map((r) => FACET_BY_ROLE[r]).find((v) => v !== undefined) ??
-    "writers";
-  return `/?library=all&${facet}=${encodeURIComponent(p.person)}`;
+/** Build the URL a person hit links to.
+ *
+ *  Preferred: `/creators/<slug>` — the M8 detail page. Returns a
+ *  proper entity page with per-role series rails, replacing the
+ *  earlier any-role library-grid URL. When the backend hit is missing
+ *  a `slug` (a freshly-scanned credit the `person` backfill hasn't
+ *  caught yet), fall back to the older `?library=all&credits=<name>`
+ *  shape so the user still lands somewhere useful. */
+function hrefForPerson(p: { person: string; slug?: string | null }): string {
+  if (p.slug) return `/creators/${encodeURIComponent(p.slug)}`;
+  return `/?library=all&credits=${encodeURIComponent(p.person)}`;
 }
 
 function peopleSubtitle(roles: readonly string[], credits: number): string {
-  const labels = roles.map(formatRole).slice(0, 3);
-  const roleStr = labels.join(", ");
+  // Show every role rather than capping at 3. Creators with many
+  // roles (cover artists who also write) were losing visible roles
+  // before; the truncation hid the breadth of their credits.
+  const labels = roles.map(formatRole);
+  const roleStr = labels.join(" · ");
   const creditStr = `${credits} ${credits === 1 ? "credit" : "credits"}`;
   return roleStr ? `${roleStr} · ${creditStr}` : creditStr;
 }
@@ -101,6 +112,58 @@ function formatRole(role: string): string {
     .split("_")
     .map((s) => (s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1)))
     .join(" ");
+}
+
+/** Per-kind icon for the markers section. Mirrors the chrome icons
+ *  used in the reader's marker UI so a bookmark renders with the
+ *  same bookmark glyph the user originally created it with. */
+const MARKER_KIND_ICON: Record<MarkerKind, LucideIcon> = {
+  bookmark: Bookmark,
+  note: StickyNote,
+  favorite: Star,
+  highlight: Highlighter,
+};
+
+const MARKER_KIND_LABEL: Record<MarkerKind, string> = {
+  bookmark: "Bookmark",
+  note: "Note",
+  favorite: "Favorite",
+  highlight: "Highlight",
+};
+
+/** Turn a marker search hit into the generic `SearchHit` shape the
+ *  modal + `/search` rails consume. The hit's link jumps to the
+ *  reader at the right page, mirroring the `buildJumpHref` pattern
+ *  on the `/bookmarks` page. Falls back to a relative no-op when
+ *  the row is missing slugs (defensive — `/me/markers/search`
+ *  hydrates them server-side, but a stale cache row shouldn't
+ *  navigate the user to "/"). */
+function markerToSearchHit(m: MarkerSearchHit): SearchHit {
+  const seriesLabel = m.series_name ?? "Unknown series";
+  const issueChunk = m.issue_number
+    ? `#${m.issue_number}`
+    : (m.issue_title ?? "");
+  const subtitle = [
+    MARKER_KIND_LABEL[m.kind] ?? "Marker",
+    seriesLabel,
+    issueChunk || null,
+    `Page ${m.page_index + 1}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const href =
+    m.series_slug && m.issue_slug
+      ? `${readerUrl(m.series_slug, m.issue_slug)}?page=${m.page_index}`
+      : "#";
+  return {
+    kind: "markers" as const,
+    id: m.id,
+    title: m.issue_title || (m.issue_number ? `#${m.issue_number}` : seriesLabel),
+    subtitle,
+    href,
+    snippet: m.snippet ?? null,
+    icon: MARKER_KIND_ICON[m.kind] ?? Bookmark,
+  };
 }
 
 /**
@@ -123,11 +186,19 @@ export function useGlobalSearch(
   // don't silently clamp.
   const seriesLimit = opts.perCategory ?? BACKEND_MAX.series;
   const issuesLimit = opts.perCategory ?? BACKEND_MAX.issues;
+  const markersLimit = opts.perCategory ?? BACKEND_MAX.markers;
   const peopleLimit = opts.perCategory ?? BACKEND_MAX.people;
 
-  const series = useSeriesList(enabled ? { q: query, limit: seriesLimit } : {});
+  const series = useSeriesList(
+    enabled
+      ? { q: query, limit: seriesLimit, ...(opts.seriesFilters ?? {}) }
+      : {},
+  );
   const issues = useIssueSearch(
     enabled ? { q: query, limit: issuesLimit } : {},
+  );
+  const markers = useMarkerSearch(
+    enabled ? { q: query, limit: markersLimit } : {},
   );
   const people = usePeopleSearch(
     enabled ? { q: query, limit: peopleLimit } : {},
@@ -154,6 +225,7 @@ export function useGlobalSearch(
           .join(" · ") || null,
       href: seriesUrl(s),
       thumbUrl: s.cover_url,
+      snippet: s.snippet ?? null,
     }));
     const issueHits: SearchHit[] = issueItems.map((i) => ({
       kind: "issues" as const,
@@ -168,7 +240,11 @@ export function useGlobalSearch(
           .join(" · ") || null,
       href: issueUrl(i),
       thumbUrl: i.cover_url,
+      snippet: i.snippet ?? null,
     }));
+    const markerHits: SearchHit[] = (markers.data?.items ?? []).map((m) =>
+      markerToSearchHit(m),
+    );
     const peopleHits: SearchHit[] = (people.data?.items ?? []).map((p) => ({
       kind: "people" as const,
       id: p.person,
@@ -181,9 +257,10 @@ export function useGlobalSearch(
       ...EMPTY_SEARCH_GROUPS,
       series: seriesHits,
       issues: issueHits,
+      markers: markerHits,
       people: peopleHits,
     };
-  }, [enabled, seriesItems, issueItems, people.data]);
+  }, [enabled, seriesItems, issueItems, markers.data, people.data]);
 
   const payloads = useMemo<GlobalSearchPayloads>(() => {
     if (!enabled) return EMPTY_PAYLOADS;
@@ -193,7 +270,11 @@ export function useGlobalSearch(
   // Future: aggregate `isFetching` across each backend so the spinner is
   // honest about what's still pending.
   const isLoading =
-    enabled && (series.isFetching || issues.isFetching || people.isFetching);
+    enabled &&
+    (series.isFetching ||
+      issues.isFetching ||
+      markers.isFetching ||
+      people.isFetching);
 
   return {
     enabled,

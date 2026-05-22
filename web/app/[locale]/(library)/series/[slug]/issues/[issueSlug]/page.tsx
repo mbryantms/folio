@@ -46,6 +46,7 @@ import {
   readStateFor,
 } from "@/lib/reading-state";
 
+import { InlineNotesEditor } from "./InlineNotesEditor";
 import { IssueActions } from "./IssueActions";
 
 export default async function IssuePage({
@@ -276,7 +277,7 @@ export default async function IssuePage({
           <TabsTrigger value="credits">Credits</TabsTrigger>
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
           <TabsTrigger value="genres">Genres &amp; Tags</TabsTrigger>
-          {issue.notes && <TabsTrigger value="notes">Notes</TabsTrigger>}
+          <TabsTrigger value="notes">Notes</TabsTrigger>
           {hasActivity && <TabsTrigger value="activity">Activity</TabsTrigger>}
         </TabsList>
 
@@ -485,17 +486,17 @@ export default async function IssuePage({
             )}
           </TabsContent>
 
-          {issue.notes && (
-            <TabsContent
-              forceMount
-              value="notes"
-              className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
-            >
-              <p className="text-foreground/90 max-w-prose text-sm leading-6 whitespace-pre-wrap">
-                {issue.notes}
-              </p>
-            </TabsContent>
-          )}
+          <TabsContent
+            forceMount
+            value="notes"
+            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
+          >
+            <InlineNotesEditor
+              seriesSlug={seriesSlug}
+              issueSlug={issue.slug}
+              initial={issue.notes ?? null}
+            />
+          </TabsContent>
           {hasActivity && (
             <TabsContent
               value="activity"

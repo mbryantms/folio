@@ -20,7 +20,7 @@ use sea_orm::{
 
 use crate::library::access;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
 use crate::api::libraries::{ScanMode, ScanResp};
@@ -1164,6 +1164,12 @@ pub struct IssueSearchHit {
     #[serde(flatten)]
     pub issue: IssueSummaryView,
     pub series_name: String,
+    /// Search-result excerpt with `<mark>…</mark>` tags around matched
+    /// terms — same shape as `SeriesView.snippet`. Omitted when the
+    /// issue's free-text fields (summary / story_arc / characters)
+    /// contain no highlightable fragment for the query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
 }
 
 /// Cross-library issue search backed by `issues.search_doc`. Used by
@@ -1872,19 +1878,84 @@ pub async fn search(
     };
     let series_lookup: std::collections::HashMap<Uuid, series::Model> =
         series_rows.into_iter().map(|s| (s.id, s)).collect();
+    // Second pass for ts_headline excerpts. Failures degrade silently —
+    // a hit without a snippet still renders, just without the "why
+    // it matched" callout.
+    let snippets = fetch_issue_snippets(&app, &rows, text)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "issue snippet fetch failed; continuing without");
+            std::collections::HashMap::new()
+        });
     let items = rows
         .into_iter()
         .filter_map(|i| {
             let s = series_lookup.get(&i.series_id)?;
             let series_slug = s.slug.clone();
             let series_name = s.name.clone();
+            let snippet = snippets.get(&i.id).cloned();
             Some(IssueSearchHit {
                 issue: IssueSummaryView::from_model(i, &series_slug),
                 series_name,
+                snippet,
             })
         })
         .collect();
     Json(IssueSearchView { items }).into_response()
+}
+
+/// Issue-level companion to `series::fetch_series_snippets`. Highlights
+/// against `summary` (highest-signal free-text field on an issue). We
+/// could also dig into story_arc / characters / locations later, but
+/// summary covers ~all real-world matches and keeps the SQL simple.
+async fn fetch_issue_snippets(
+    app: &AppState,
+    rows: &[issue::Model],
+    q_text: &str,
+) -> Result<HashMap<String, String>, sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
+    if rows.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct SnippetRow {
+        id: String,
+        snippet: Option<String>,
+    }
+
+    let mut params: Vec<Value> = Vec::with_capacity(rows.len() + 1);
+    params.push(Value::from(q_text.to_string()));
+    let id_placeholders: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            params.push(Value::from(r.id.clone()));
+            format!("${}", params.len())
+        })
+        .collect();
+    let sql = format!(
+        r#"SELECT id,
+                  ts_headline(
+                    'simple',
+                    COALESCE(summary, ''),
+                    websearch_to_tsquery('simple', $1),
+                    'MaxFragments=1, MaxWords=18, MinWords=5, ShortWord=2, StartSel=<mark>, StopSel=</mark>, HighlightAll=false'
+                  ) AS snippet
+             FROM issues
+             WHERE id IN ({})"#,
+        id_placeholders.join(",")
+    );
+
+    let backend = app.db.get_database_backend();
+    let stmt = Statement::from_sql_and_values(backend, sql, params);
+    let rows: Vec<SnippetRow> = SnippetRow::find_by_statement(stmt).all(&app.db).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let s = r.snippet?;
+            if s.contains("<mark>") { Some((r.id, s)) } else { None }
+        })
+        .collect())
 }
 
 // ───── helpers ─────

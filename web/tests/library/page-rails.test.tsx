@@ -34,9 +34,6 @@ vi.mock("@/components/library/use-card-size", () => ({
   },
 }));
 
-vi.mock("@/components/LibrarySearch", () => ({
-  LibrarySearch: () => null,
-}));
 vi.mock("@/components/library/CardSizeOptions", () => ({
   CardSizeOptions: () => null,
 }));

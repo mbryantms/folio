@@ -2109,6 +2109,74 @@
         }
       }
     },
+    "/creators/resolve": {
+      "get": {
+        "tags": [
+          "api::creators"
+        ],
+        "summary": "Name → slug resolver. Used by the `/creators/by-name/<name>`\nfront-end redirect so credit pills can route to creator detail\npages without the caller having to know the allocated slug.",
+        "description": "Auth: same `CurrentUser` gate as the rest of the API — we don't\nwant unauthenticated callers enumerating the `person` table.",
+        "operationId": "resolve",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveResp"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/creators/{slug}": {
+      "get": {
+        "tags": [
+          "api::creators"
+        ],
+        "operationId": "get_one",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatorDetailView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/filter-options/age_ratings": {
       "get": {
         "tags": [
@@ -4633,6 +4701,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MarkerCountView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/markers/search": {
+      "get": {
+        "tags": [
+          "api::markers"
+        ],
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkerSearchView"
                 }
               }
             }
@@ -8365,6 +8473,67 @@
           }
         }
       },
+      "CreatorDetailView": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "roles",
+          "credit_count",
+          "rails"
+        ],
+        "properties": {
+          "credit_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total visible credit count across both junction tables (each\ndistinct (series_id) or (issue_id) counted once)."
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rails": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CreatorRoleRail"
+            },
+            "description": "Series rails — one per role the creator held. Order matches\n`roles`; each rail is sorted by series name. Empty when the\ncreator only has credits in libraries the caller can't see."
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct roles the creator holds across visible credits, ordered\ncanonically (writer → penciller → inker → colorist → letterer →\ncover_artist → editor → translator → anything else alphabetical)."
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "CreatorRoleRail": {
+        "type": "object",
+        "required": [
+          "role",
+          "series"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "Canonical role name as stored on the credit rows (e.g. `\"writer\"`,\n`\"penciller\"`, `\"cover_artist\"`)."
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesView"
+            },
+            "description": "Series the creator touched in this role, hydrated with the same\nfields the library grid renders so the page can show full cards."
+          }
+        }
+      },
       "DataQualityView": {
         "type": "object",
         "required": [
@@ -9619,6 +9788,13 @@
             "properties": {
               "series_name": {
                 "type": "string"
+              },
+              "snippet": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Search-result excerpt with `<mark>…</mark>` tags around matched\nterms — same shape as `SeriesView.snippet`. Omitted when the\nissue's free-text fields (summary / story_arc / characters)\ncontain no highlightable fragment for the query."
               }
             }
           }
@@ -10079,6 +10255,91 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "MarkerSearchHit": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "issue_id",
+          "series_id",
+          "page_index"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "issue_id": {
+            "type": "string"
+          },
+          "issue_number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`'bookmark' | 'note' | 'favorite' | 'highlight'`."
+          },
+          "page_index": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "region": {
+            "description": "`{ x, y, w, h, shape }` when the marker is region-scoped;\n`None` for page-level markers. Used by the modal to render a\ncrop thumbnail."
+          },
+          "series_id": {
+            "type": "string"
+          },
+          "series_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hydrated series + issue context so a marker hit knows enough\nto render a \"Jump to page\" link + a series label without a\nsecond round-trip."
+          },
+          "series_slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snippet": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`ts_headline()` excerpt over `body` and `selection->>'text'`\nwith `<mark>…</mark>` around matched terms. Same sanitiser as\nthe series + issue snippets on the client."
+          }
+        }
+      },
+      "MarkerSearchView": {
+        "type": "object",
+        "description": "Global-search M2 — markers as a 4th category. The hit shape is\ntrimmed of fields the modal / `/search` page don't need\n(color, tags, full timestamps) and carries the `<mark>`-wrapped\nsnippet inline. ACL is per-caller (`/me/...`), so a hit lists\nonly markers the user owns.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarkerSearchHit"
+            }
           }
         }
       },
@@ -11035,6 +11296,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable URL slug for `/creators/<slug>`. Populated from the\n`person` table (M8 of the search-improvements plan). `None`\nwhen the name hasn't been backfilled yet — caller falls back\nto the legacy `?library=all&credits=<name>` URL."
           }
         }
       },
@@ -12096,6 +12364,17 @@
           }
         }
       },
+      "ResolveResp": {
+        "type": "object",
+        "required": [
+          "slug"
+        ],
+        "properties": {
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "ResolvedEntry": {
         "type": "object",
         "required": [
@@ -12750,6 +13029,13 @@
           },
           "slug": {
             "type": "string"
+          },
+          "snippet": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Search-result excerpt with `<mark>…</mark>` tags around matched\nterms. Populated only on search-mode list responses; `None`\neverywhere else. The frontend renders this as HTML with a small\nallowlist sanitiser so future field changes can't introduce\nXSS surface area."
           },
           "status": {
             "type": "string"

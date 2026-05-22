@@ -27,13 +27,11 @@ import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
  */
 export function MainSidebar({
   sections,
-  title,
   user,
   collapsed = false,
   showMarkerCount = false,
 }: {
   sections: MainNavSection[];
-  title: string;
   user: { display_name: string; email: string | null; role: string };
   /** When true, the sidebar shrinks to icon-only mode with hover tooltips. */
   collapsed?: boolean;
@@ -58,7 +56,7 @@ export function MainSidebar({
     <div className="flex h-full flex-col">
       <TooltipProvider delayDuration={200}>
         <nav
-          aria-label={`${title} navigation`}
+          aria-label="Library navigation"
           className={cn(
             // Section-to-section gap kept compact — the uppercase
             // header rows give visual separation on their own, and a
@@ -75,13 +73,6 @@ export function MainSidebar({
             collapsed ? "px-2" : "px-3",
           )}
         >
-          {!collapsed && (
-            <div className="px-3">
-              <p className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
-                {title}
-              </p>
-            </div>
-          )}
           {sections.map((section, sectionIdx) => {
             // Spacer rows: small visual gap, no header, no items.
             if (section.isSpacer) {

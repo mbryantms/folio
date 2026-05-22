@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Search, User } from "lucide-react";
+import { ArrowLeft, ChevronRight, Filter, Search, User, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -9,6 +9,23 @@ import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail"
 import { IssueCard } from "@/components/library/IssueCard";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { useCardSize } from "@/components/library/use-card-size";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import type { IssueSearchHit, SeriesView } from "@/lib/api/types";
 import {
   useGlobalSearch,
@@ -20,6 +37,16 @@ import {
   type SearchCategoryDef,
   type SearchHit,
 } from "@/lib/search/types";
+import {
+  EMPTY_SERIES_SEARCH_FILTERS,
+  SERIES_SEARCH_SORT_OPTIONS,
+  SERIES_STATUS_OPTIONS,
+  countActiveSeriesFilters,
+  seriesSearchFiltersToHook,
+  seriesSearchFiltersToParams,
+  type SeriesSearchFilterState,
+  type SeriesSearchSort,
+} from "@/lib/search/series-search-filters";
 
 const QUERY_DEBOUNCE_MS = 250;
 
@@ -49,12 +76,23 @@ const CARD_SIZE_STORAGE_KEY = "folio.search.cardSize";
 export function SearchView({
   initialQuery,
   category,
+  initialFilters,
 }: {
   initialQuery: string;
   category: SearchCategory | null;
+  /** Server-parsed initial filter state (sort + facets) for the
+   *  series category. Null when no filter params were on the URL. */
+  initialFilters?: SeriesSearchFilterState;
 }) {
   const [raw, setRaw] = useState(initialQuery);
   const [debounced, setDebounced] = useState(initialQuery.trim());
+  const [filters, setFilters] = useState<SeriesSearchFilterState>(
+    () => initialFilters ?? EMPTY_SERIES_SEARCH_FILTERS,
+  );
+  const [filterOpen, setFilterOpen] = useState(false);
+  // Filters apply only on the series category grid. Anywhere else the
+  // hook ignores them, so we just hide the Sort/Filter affordances.
+  const filtersActive = category === "series";
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
     min: CARD_SIZE_MIN,
@@ -68,24 +106,43 @@ export function SearchView({
   }, [raw]);
 
   // Keep the URL in sync without forcing an RSC re-render on every
-  // keystroke. `history.replaceState` updates the address bar in place;
-  // a hard refresh still hydrates from `?q=` because the page reads
-  // `searchParams` at request time. We preserve the `?category=` param
-  // so deep-link to a category grid still updates `?q=` cleanly as the
-  // user retypes.
+  // keystroke. `history.replaceState` updates the address bar in
+  // place; a hard refresh still hydrates from the query string
+  // because the page reads `searchParams` at request time. The
+  // filter params join the same dance so deep-linking a sorted /
+  // filtered grid works on reload.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     if (debounced.length > 0) url.searchParams.set("q", debounced);
     else url.searchParams.delete("q");
+    // Filter params only mean something on the series category grid;
+    // strip them otherwise to keep URLs clean across category nav.
+    const filterParams = filtersActive
+      ? seriesSearchFiltersToParams(filters)
+      : {};
+    for (const key of [
+      "sort",
+      "year_from",
+      "year_to",
+      "status",
+      "publisher",
+      "library",
+    ] as const) {
+      const value = filterParams[key];
+      if (value) url.searchParams.set(key, value);
+      else url.searchParams.delete(key);
+    }
     window.history.replaceState({}, "", url.toString());
-  }, [debounced]);
+  }, [debounced, filters, filtersActive]);
 
   // Omit `perCategory` so each backend serves its server-side max (the
   // old single `75` quietly clamped to 50 on the issues backend,
   // hiding rows from the rail). Modal usage still passes a small N.
-  const { enabled, isLoading, groups, payloads, total } =
-    useGlobalSearch(debounced);
+  const { enabled, isLoading, groups, payloads, total } = useGlobalSearch(
+    debounced,
+    filtersActive ? { seriesFilters: seriesSearchFiltersToHook(filters) } : {},
+  );
 
   const activeDef = category
     ? SEARCH_CATEGORIES.find((c) => c.key === category)
@@ -109,15 +166,32 @@ export function SearchView({
               {activeDef ? activeDef.labelPlural : "Search"}
             </h1>
           </div>
-          <CardSizeOptions
-            cardSize={cardSize}
-            onCardSize={setCardSize}
-            min={CARD_SIZE_MIN}
-            max={CARD_SIZE_MAX}
-            step={CARD_SIZE_STEP}
-            defaultSize={CARD_SIZE_DEFAULT}
-            description="Adjust card size for Series, Issues, and People rails."
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            {filtersActive ? (
+              <SeriesSortDropdown
+                value={filters.sort}
+                onChange={(sort) => setFilters((f) => ({ ...f, sort }))}
+              />
+            ) : null}
+            {filtersActive ? (
+              <SeriesFilterSheet
+                open={filterOpen}
+                onOpenChange={setFilterOpen}
+                filters={filters}
+                onChange={setFilters}
+                activeCount={countActiveSeriesFilters(filters)}
+              />
+            ) : null}
+            <CardSizeOptions
+              cardSize={cardSize}
+              onCardSize={setCardSize}
+              min={CARD_SIZE_MIN}
+              max={CARD_SIZE_MAX}
+              step={CARD_SIZE_STEP}
+              defaultSize={CARD_SIZE_DEFAULT}
+              description="Adjust card size for Series, Issues, and People rails."
+            />
+          </div>
         </div>
         {activeDef ? null : (
           <p className="text-muted-foreground text-sm">
@@ -172,6 +246,19 @@ export function SearchView({
               cardSize={cardSize}
             />
           ))}
+          {/* All-empty fallback. The per-rail null-returns above hide
+           *  empty categories individually; if EVERY rail was empty
+           *  this band tells the user something rather than leaving
+           *  the page silent. */}
+          {enabled &&
+          !isLoading &&
+          total === 0 &&
+          payloads.series.length === 0 &&
+          payloads.issues.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              No matches for &ldquo;{debounced}&rdquo; in any category.
+            </p>
+          ) : null}
         </div>
       )}
     </div>
@@ -249,6 +336,17 @@ function CategoryRail({
   cardSize: number;
 }) {
   const count = categoryCountForRail(def.key, payloads, hits);
+  // Hide empty rails once we have results to compare against. Before
+  // the query runs (enabled=false) we keep the placeholders so the
+  // page doesn't visually collapse on every keystroke — the body's
+  // own empty-state row reads "Awaiting query…" in that mode.
+  if (enabled && count === 0) return null;
+  // Promote the "View all" tile out of the rail's trailing slot into
+  // the section header when the rail couldn't fit every match — the
+  // horizontal-arrow tile alone is easy to miss past the first 8
+  // cards, especially on touch.
+  const viewAllHref = `/search?q=${encodeURIComponent(query)}&category=${def.key}`;
+  const showViewAllLink = enabled && count > 0;
   return (
     <section className="space-y-3" data-category={def.key}>
       <header className="flex items-center gap-2">
@@ -259,6 +357,15 @@ function CategoryRail({
           <span className="text-muted-foreground text-xs">
             {count} {count === 1 ? "match" : "matches"}
           </span>
+        ) : null}
+        {showViewAllLink ? (
+          <Link
+            href={viewAllHref}
+            className="text-muted-foreground hover:text-foreground ml-auto inline-flex items-center gap-1 text-xs font-medium"
+          >
+            View all
+            <ChevronRight className="size-3" aria-hidden="true" />
+          </Link>
         ) : null}
       </header>
       <CategoryRailBody
@@ -308,7 +415,7 @@ function CategoryRailBody({
   const empty =
     (def.key === "series" && payloads.series.length === 0) ||
     (def.key === "issues" && payloads.issues.length === 0) ||
-    (def.key === "people" && hits.length === 0);
+    ((def.key === "people" || def.key === "markers") && hits.length === 0);
   if (empty) {
     return <NoMatches query={query} labelPlural={def.labelPlural} />;
   }
@@ -384,6 +491,15 @@ function CategoryGrid({
       return <NoMatches query={query} labelPlural={def.labelPlural} />;
     }
     return <IssuesGrid issues={payloads.issues} gridStyle={gridStyle} />;
+  }
+  if (def.key === "markers") {
+    if (groups.markers.length === 0) {
+      return <NoMatches query={query} labelPlural={def.labelPlural} />;
+    }
+    // Markers reuse `PeopleGrid`'s rendering — same icon-fallback
+    // tile shape — until M4's facet layout introduces a richer
+    // marker card with the actual region crop.
+    return <PeopleGrid hits={groups.markers} gridStyle={gridStyle} />;
   }
   if (groups.people.length === 0) {
     return <NoMatches query={query} labelPlural={def.labelPlural} />;
@@ -492,5 +608,188 @@ function PersonCard({ hit }: { hit: SearchHit }) {
         )}
       </div>
     </Link>
+  );
+}
+
+/** Inline `<Select>` that surfaces the available series-search sort
+ *  orders. "Best match" is the relevance default (no `sort=` param on
+ *  the URL). The visible label is short so the trigger fits next to
+ *  the card-size + filter buttons without wrapping. */
+function SeriesSortDropdown({
+  value,
+  onChange,
+}: {
+  value: SeriesSearchSort;
+  onChange: (next: SeriesSearchSort) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={(v) => onChange(v as SeriesSearchSort)}>
+      <SelectTrigger
+        // Toolbar-row convention: h-9 to align with the CardSize +
+        // Filters sibling controls. See `docs/dev/search.md`.
+        className="h-9 min-w-36"
+        aria-label="Sort search results"
+      >
+        <SelectValue placeholder="Sort" />
+      </SelectTrigger>
+      <SelectContent>
+        {SERIES_SEARCH_SORT_OPTIONS.map((o) => (
+          <SelectItem key={o.value} value={o.value}>
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** Series-search facet sheet. Lighter than the full library-grid
+ *  filter sheet — surfaces year range + status + publisher CSV +
+ *  library on a single column, with an "Apply" + "Clear" footer.
+ *  Filter state lives on the parent so the URL-sync effect picks
+ *  up every mutation. */
+function SeriesFilterSheet({
+  open,
+  onOpenChange,
+  filters,
+  onChange,
+  activeCount,
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  filters: SeriesSearchFilterState;
+  onChange: React.Dispatch<React.SetStateAction<SeriesSearchFilterState>>;
+  activeCount: number;
+}) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9"
+          aria-label={
+            activeCount > 0 ? `Filters (${activeCount} active)` : "Filters"
+          }
+        >
+          <Filter className="mr-1 size-3.5" aria-hidden="true" />
+          Filters
+          {activeCount > 0 ? (
+            <span className="bg-foreground text-background ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-medium tabular-nums">
+              {activeCount}
+            </span>
+          ) : null}
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="w-full max-w-sm space-y-6 px-5">
+        <SheetHeader className="space-y-1 px-0">
+          <SheetTitle>Refine series results</SheetTitle>
+          <SheetDescription>
+            Narrow the matches by year, status, publisher, or library.
+            Filters apply only on the series category grid.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="space-y-5">
+          <fieldset className="space-y-2">
+            <legend className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              Year
+            </legend>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                inputMode="numeric"
+                placeholder="From"
+                value={filters.yearFrom}
+                onChange={(e) =>
+                  onChange((f) => ({ ...f, yearFrom: e.target.value }))
+                }
+                aria-label="Year from"
+                className="h-9"
+              />
+              <span className="text-muted-foreground text-xs">to</span>
+              <Input
+                type="number"
+                inputMode="numeric"
+                placeholder="To"
+                value={filters.yearTo}
+                onChange={(e) =>
+                  onChange((f) => ({ ...f, yearTo: e.target.value }))
+                }
+                aria-label="Year to"
+                className="h-9"
+              />
+            </div>
+          </fieldset>
+          <fieldset className="space-y-2">
+            <legend className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              Status
+            </legend>
+            <Select
+              value={filters.status}
+              onValueChange={(v) => onChange((f) => ({ ...f, status: v }))}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SERIES_STATUS_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </fieldset>
+          <fieldset className="space-y-2">
+            <legend className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              Publisher
+            </legend>
+            <Input
+              type="text"
+              placeholder="Comma-separated (e.g. Marvel, DC)"
+              value={filters.publishers.join(", ")}
+              onChange={(e) =>
+                onChange((f) => ({
+                  ...f,
+                  publishers: e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                }))
+              }
+              aria-label="Publishers"
+              className="h-9"
+            />
+          </fieldset>
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={activeCount === 0}
+            onClick={() =>
+              onChange((f) => ({
+                ...EMPTY_SERIES_SEARCH_FILTERS,
+                // Keep the sort selection independent of filters —
+                // clearing facets shouldn't snap sort back to relevance.
+                sort: f.sort,
+              }))
+            }
+          >
+            <X className="mr-1 size-3" aria-hidden="true" />
+            Clear filters
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+          >
+            Done
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
