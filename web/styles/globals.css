@@ -144,6 +144,33 @@
   --density-rail-pb: 0.75rem;
   --density-section-gap: 1.5rem;
   --density-page-pad-y: 1.5rem;
+
+  /*
+   * PWA safe-area insets. `viewport-fit: cover` (set on the root
+   * layout's viewport export) lets the app paint behind the iOS
+   * notch / Dynamic Island and the rounded corners. Interactive
+   * surfaces — chiefly the sticky topbar and the reader chrome —
+   * read these variables from their padding so their content
+   * stays clear of the non-rectangular cutouts. `--topbar-h` is
+   * the canonical height of the sticky topbar including its
+   * safe-area pad; the topbars in MainShell + AdminShell and the
+   * sticky sidebars reference it as a single source of truth so
+   * the offsets stay coherent.
+   *
+   * Declared at `:root` (not under a density variant) because the
+   * sidebar's sticky-height calc depends on `--topbar-h` resolving
+   * for every density. On non-notched devices and outside
+   * standalone mode, the env() values resolve to 0 (the fallback),
+   * so this is a no-op at runtime. The fallback values are
+   * explicit so older browsers that don't recognise `env()` still
+   * get sensible numbers.
+   */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --topbar-content-h: 3.5rem;
+  --topbar-h: calc(var(--topbar-content-h) + var(--safe-top));
 }
 
 [data-density="compact"] {
@@ -156,29 +183,6 @@
   --density-rail-pb: 0.25rem;
   --density-section-gap: 0.5rem;
   --density-page-pad-y: 0.5rem;
-
-  /*
-   * PWA safe-area insets. `viewport-fit: cover` (set on the root
-   * layout's viewport export) lets the app paint behind the iOS
-   * notch / Dynamic Island and the rounded corners. Interactive
-   * surfaces — chiefly the sticky topbar — read these variables
-   * from their padding so their content stays clear of the
-   * non-rectangular cutouts. `--topbar-h` is the canonical height
-   * of the sticky topbar including its safe-area pad; the topbars
-   * in MainShell + AdminShell and the sticky sidebars reference
-   * it as a single source of truth so the offsets stay coherent.
-   *
-   * On non-notched devices and outside standalone mode, the env()
-   * values resolve to 0 (the fallback), so this is a no-op. The
-   * fallback values are explicit so older browsers that don't
-   * recognise `env()` still get sensible numbers.
-   */
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-right: env(safe-area-inset-right, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
-  --safe-left: env(safe-area-inset-left, 0px);
-  --topbar-content-h: 3.5rem;
-  --topbar-h: calc(var(--topbar-content-h) + var(--safe-top));
 }
 
 @theme inline {
