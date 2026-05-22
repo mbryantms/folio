@@ -558,3 +558,105 @@ async fn v1_cbl_feed_per_entry_rel_next_honors_cbl_position_with_mixed_states() 
         "b→c rel=next: {b_block}"
     );
 }
+
+/// v0.5: every entry in a CBL acquisition feed has its 1-indexed
+/// position prefixed to its title (`5. <title>`). The prefix lets
+/// clients that render the feed as a flat list show the reader
+/// their place in the list at a glance. The position is the
+/// canonical CBL position regardless of any default up-next reorder
+/// — i.e. when the second entry is hoisted to the front of the
+/// rendered feed because it's the resume target, its prefix is
+/// still "2." rather than "1.".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v1_cbl_feed_prefixes_entry_titles_with_canonical_position() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cbl-pos@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Positioned").await;
+    let a = seed_issue(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("a.cbz"),
+        b"pos-a",
+        1.0,
+    )
+    .await;
+    let b = seed_issue(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("b.cbz"),
+        b"pos-b",
+        2.0,
+    )
+    .await;
+    let c = seed_issue(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("c.cbz"),
+        b"pos-c",
+        3.0,
+    )
+    .await;
+
+    let list_id = seed_cbl_list(&db, auth.user_id, "Position Test").await;
+    seed_cbl_entry(&db, list_id, 0, Some(&a)).await;
+    seed_cbl_entry(&db, list_id, 1, Some(&b)).await;
+    seed_cbl_entry(&db, list_id, 2, Some(&c)).await;
+
+    // Mark `a` finished and `b` in-progress so `b` is the resolved
+    // up-next target. With default reorder on, `b` gets hoisted to
+    // the front of the rendered feed — but its title prefix should
+    // still be "2." (its canonical CBL position), not "1.".
+    let t_a = chrono::DateTime::parse_from_rfc3339("2026-05-01T10:00:00+00:00").unwrap();
+    let t_b = chrono::DateTime::parse_from_rfc3339("2026-05-02T10:00:00+00:00").unwrap();
+    seed_progress(&db, auth.user_id, &a, 19, true, t_a).await;
+    seed_progress(&db, auth.user_id, &b, 5, false, t_b).await;
+
+    let resp = get_cookie(&app, &format!("/opds/v1/lists/{list_id}"), &auth).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+
+    let extract_title = |urn_id: &str| -> String {
+        let marker = format!("urn:issue:{urn_id}");
+        let idx = body
+            .find(&marker)
+            .unwrap_or_else(|| panic!("entry for {urn_id} not present:\n{body}"));
+        let block_end = body[idx..]
+            .find("</entry>")
+            .map(|i| idx + i)
+            .unwrap_or_else(|| panic!("entry for {urn_id} unclosed:\n{body}"));
+        let block = &body[idx..block_end];
+        let title_open = block
+            .find("<title>")
+            .unwrap_or_else(|| panic!("entry for {urn_id} has no <title>:\n{block}"));
+        let title_close = block[title_open..]
+            .find("</title>")
+            .map(|i| title_open + i)
+            .unwrap_or_else(|| panic!("entry for {urn_id} has no </title>:\n{block}"));
+        block[title_open + "<title>".len()..title_close].to_owned()
+    };
+
+    // The up-next target (b) carries position 2 alongside the
+    // Up Next prefix. Position sits first because it's the
+    // structural identity of the row.
+    assert_eq!(
+        extract_title(&b),
+        "2. Up Next: \u{25D0} Issue 2",
+        "b is at CBL position 2 and is the up-next target:\n{body}"
+    );
+    assert_eq!(
+        extract_title(&a),
+        "1. \u{25CF} Issue 1",
+        "a is at CBL position 1 and finished:\n{body}"
+    );
+    assert_eq!(
+        extract_title(&c),
+        "3. \u{25CB} Issue 3",
+        "c is at CBL position 3 and unread:\n{body}"
+    );
+}

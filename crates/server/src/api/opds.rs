@@ -796,6 +796,7 @@ async fn series_one(
             next,
             progress_glyphs: glyphs,
             up_next_issue_id: up_next_id,
+            position: None,
             komga_compat: app.cfg().is_komga_compat(),
         }));
     }
@@ -863,6 +864,7 @@ async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
             sequential_nav: false,
             up_next_issue_id: None,
             feed_last_read_date: None,
+            entry_positions: None,
         },
     )
     .await;
@@ -960,6 +962,7 @@ async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Res
             sequential_nav: false,
             up_next_issue_id: up_next_id.as_deref(),
             feed_last_read_date: None,
+            entry_positions: None,
         },
     )
     .await;
@@ -1006,6 +1009,7 @@ async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response {
             sequential_nav: false,
             up_next_issue_id: up_next_id.as_deref(),
             feed_last_read_date: None,
+            entry_positions: None,
         },
     )
     .await;
@@ -1097,6 +1101,7 @@ async fn history(
             sequential_nav: false,
             up_next_issue_id: None,
             feed_last_read_date: None,
+            entry_positions: None,
         },
     )
     .await;
@@ -1139,6 +1144,7 @@ async fn new_this_month(State(app): State<AppState>, user: CurrentUser) -> Respo
             sequential_nav: false,
             up_next_issue_id: None,
             feed_last_read_date: None,
+            entry_positions: None,
         },
     )
     .await;
@@ -1283,6 +1289,7 @@ async fn search(
                     sequential_nav: false,
                     up_next_issue_id: None,
                     feed_last_read_date: None,
+                    entry_positions: None,
                 },
             )
             .await,
@@ -1546,6 +1553,13 @@ pub(crate) struct AcquisitionFeedArgs<'a> {
     pub sequential_nav: bool,
     pub up_next_issue_id: Option<&'a str>,
     pub feed_last_read_date: Option<&'a chrono::DateTime<chrono::FixedOffset>>,
+    /// Optional `issue_id → 1-indexed position` map. Set by
+    /// reading-list feeds (CBL `cbl_list_acq`) so the renderer can
+    /// prefix each entry title with its position (e.g. `5. Issue
+    /// Title`). Clients that surface CBL entries as a flat list use
+    /// this to show "I'm on #5 of this reading list" without having
+    /// to compute it themselves. `None` for every other feed.
+    pub entry_positions: Option<&'a HashMap<String, i32>>,
 }
 
 async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -> String {
@@ -1559,6 +1573,7 @@ async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -
         sequential_nav,
         up_next_issue_id,
         feed_last_read_date,
+        entry_positions,
     } = args;
     let now = chrono::Utc::now().to_rfc3339();
     let slugs = fetch_series_slugs(&app.db, issues).await;
@@ -1586,6 +1601,7 @@ async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -
             next,
             progress_glyphs: glyphs,
             up_next_issue_id,
+            position: entry_positions.and_then(|m| m.get(&i.id).copied()),
             komga_compat: app.cfg().is_komga_compat(),
         }));
     }
@@ -1651,6 +1667,13 @@ struct IssueAcqEntryCtx<'a> {
     next: Option<&'a issue::Model>,
     progress_glyphs: bool,
     up_next_issue_id: Option<&'a str>,
+    /// 1-indexed position for reading-list feeds (CBL). When `Some`,
+    /// the title is prefixed with `"{position}. "` so a client
+    /// rendering the entry as a flat list item shows the reader's
+    /// place in the list at a glance. `None` for every non-reading-
+    /// list feed (series, recent, search, etc.) so their titles stay
+    /// untouched.
+    position: Option<i32>,
     /// progress-writeback-2.0 v0.3.39 hot-fix: when Komga compat is
     /// on, emit the entry `<id>` as the bare issue id (no
     /// `urn:issue:` prefix) and the acquisition link as
@@ -1673,6 +1696,7 @@ fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
         next,
         progress_glyphs,
         up_next_issue_id,
+        position,
         komga_compat,
     } = ctx;
     let base = i.title.clone().unwrap_or_else(|| {
@@ -1681,11 +1705,20 @@ fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
             .map(|n| format!("Issue #{n}"))
             .unwrap_or_else(|| "Issue".into())
     });
-    let decorated = decorate_title_with_progress(&base, progress, i.page_count, progress_glyphs);
+    let decorated = decorate_title_with_progress(&base, progress, progress_glyphs);
     let label = if up_next_issue_id == Some(i.id.as_str()) {
         format!("Up Next: {decorated}")
     } else {
         decorated
+    };
+    // CBL reading-list feeds prefix every entry's title with its
+    // 1-indexed position so clients show "5. <title>" at a glance.
+    // Position sits in front of `Up Next:` because the position is
+    // the structural identity of the row; `Up Next:` is a state
+    // overlay on top of it.
+    let label = match position {
+        Some(p) => format!("{p}. {label}"),
+        None => label,
     };
     let pse_link = match pse_ctx {
         Some((user_id, key)) => render_pse_stream_link(i, user_id, key, progress),
@@ -1854,33 +1887,35 @@ pub(crate) async fn pick_next_in_collection(
     None
 }
 
-/// Append the user-visible progress decoration to an OPDS entry title:
-/// a state glyph (`◯`/`◐`/`●`) plus a `(N / M)` page-count suffix when
-/// the page total is known. Returns the full decorated label or just
-/// `base` when glyphs are disabled.
+/// Prefix the user-visible OPDS entry title with a state glyph
+/// (`◯` unread, `◐` in-progress, `●` finished). Returns the
+/// glyph-prefixed label, or just `base` when glyphs are disabled.
 ///
 /// M3 of `opds-sync-cleanup-1.0` — universal "what's left" cue for
 /// clients that ignore the PSE `pse:lastRead` attribute (KOReader,
 /// older Tachiyomi). Callers gate this behind the per-user
 /// `users.opds_progress_glyphs` flag.
+///
+/// The numeric `(N / M)` page-count suffix that this helper used to
+/// append was dropped: the same numbers are already available to the
+/// client as `pse:lastRead` + `pse:lastReadDate` attributes on every
+/// acquisition entry, and the inline title noise was making list
+/// surfaces (CBL detail pages, series detail pages) hard to scan —
+/// especially once the CBL position prefix landed alongside.
 pub(crate) fn decorate_title_with_progress(
     base: &str,
     progress: Option<&progress_record::Model>,
-    page_count: Option<i32>,
     glyphs: bool,
 ) -> String {
     if !glyphs {
         return base.to_owned();
     }
-    let (glyph, current) = match progress {
-        Some(p) if p.finished => ("\u{25CF}", page_count),
-        Some(p) if p.last_page > 0 => ("\u{25D0}", Some(p.last_page + 1)),
-        _ => ("\u{25CB}", None),
+    let glyph = match progress {
+        Some(p) if p.finished => "\u{25CF}",
+        Some(p) if p.last_page > 0 => "\u{25D0}",
+        _ => "\u{25CB}",
     };
-    match (current, page_count) {
-        (Some(n), Some(m)) if m > 0 => format!("{glyph} {base} ({n} / {m})"),
-        _ => format!("{glyph} {base}"),
-    }
+    format!("{glyph} {base}")
 }
 
 /// One-shot DB lookup for the caller's `opds_progress_glyphs` flag.
@@ -2737,6 +2772,19 @@ async fn cbl_list_acq(
         .iter()
         .filter_map(|e| e.matched_issue_id.clone())
         .collect();
+    // Build the `issue_id → 1-indexed position` map the renderer
+    // uses to prefix each entry title with `"{position}. "`. The
+    // map is keyed by issue id, not by index, so reorder-to-up-next
+    // below cannot lose track of the canonical CBL position.
+    // `cbl_entry.position` is stored 0-indexed; add 1 for display.
+    let entry_positions: HashMap<String, i32> = entries
+        .iter()
+        .filter_map(|e| {
+            e.matched_issue_id
+                .as_ref()
+                .map(|iid| (iid.clone(), e.position + 1))
+        })
+        .collect();
     let visible = access::for_user(&app, &user).await;
     let mut issues = fetch_visible_issues_preserving_order(&app, &issue_ids, &visible).await;
     let self_href = format!("/opds/v1/lists/{id}");
@@ -2773,6 +2821,7 @@ async fn cbl_list_acq(
             sequential_nav: true,
             up_next_issue_id: up_next_id.as_deref(),
             feed_last_read_date: cbl_summary.last_read_at.as_ref(),
+            entry_positions: Some(&entry_positions),
         },
     )
     .await;
@@ -3299,6 +3348,7 @@ async fn render_collection_acq(
                 next: None,
                 progress_glyphs: glyphs,
                 up_next_issue_id: up_next_id.as_deref(),
+                position: None,
                 komga_compat: app.cfg().is_komga_compat(),
             }));
         }

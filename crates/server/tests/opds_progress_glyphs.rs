@@ -179,23 +179,25 @@ async fn v1_series_feed_decorates_each_state_with_glyph_and_page_count() {
     let blocks = entry_blocks_by_id(&body);
     assert_eq!(
         title_of(&blocks, &a),
-        "\u{25CF} First Strike (32 / 32)",
-        "finished should be ● with (M / M):\n{body}"
+        "\u{25CF} First Strike",
+        "finished should be ● (page-count suffix is no longer emitted; \
+         the same numbers are exposed as pse:lastRead attributes):\n{body}"
     );
     assert_eq!(
         title_of(&blocks, &b),
-        "Up Next: \u{25D0} Second Strike (14 / 32)",
-        "in-progress should be ◐ with (N+1 / M), prefixed because it's the up-next target:\n{body}"
+        "Up Next: \u{25D0} Second Strike",
+        "in-progress should be ◐, prefixed because it's the up-next \
+         target; numeric N/M suffix dropped:\n{body}"
     );
     assert_eq!(
         title_of(&blocks, &c),
         "\u{25CB} Third Strike",
-        "unread should be ◯ with no page suffix (no progress row):\n{body}"
+        "unread should be ◯ (no progress row):\n{body}"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn v1_series_feed_omits_page_count_suffix_when_unknown() {
+async fn v1_series_feed_emits_glyph_only_title_regardless_of_page_count() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "glyph-v1-nopagect@example.com").await;
     let db = Database::connect(&app.db_url).await.unwrap();
@@ -215,7 +217,8 @@ async fn v1_series_feed_omits_page_count_suffix_when_unknown() {
     assert_eq!(
         title_of(&blocks, &i),
         "Up Next: \u{25D0} Mystery",
-        "unknown page_count should drop the (N / M) suffix; sole unfinished issue is the up-next target:\n{body}"
+        "title carries the glyph + up-next prefix; the numeric (N / M) \
+         page-count suffix is no longer emitted in any state:\n{body}"
     );
 }
 
@@ -293,6 +296,8 @@ async fn v2_series_feed_decorates_publication_title() {
         .to_owned();
     // Issue A is unread (no progress row) at position 1.0, so it's the
     // first unfinished issue and the up-next target — Issue B carries
-    // progress glyphs but no prefix.
-    assert_eq!(title_b, "\u{25D0} Issue B (5 / 20)");
+    // progress glyphs but no prefix. The numeric (N / M) page-count
+    // suffix that v0.4 versions of this assertion expected is no
+    // longer emitted; pse:lastRead exposes the same numbers.
+    assert_eq!(title_b, "\u{25D0} Issue B");
 }

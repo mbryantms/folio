@@ -574,6 +574,7 @@ async fn series_one(
         &user,
         &issues,
         up_next_issue.as_ref().map(|i| i.id.as_str()),
+        None,
     )
     .await;
     let mut links = vec![json!({
@@ -1158,6 +1159,18 @@ async fn cbl_list_acq(
         .iter()
         .filter_map(|e| e.matched_issue_id.clone())
         .collect();
+    // Build the `issue_id → 1-indexed position` map the renderer
+    // uses to prefix each publication title with `"{position}. "`.
+    // Mirrors the v1 cbl_list_acq handler so the two surfaces emit
+    // identical labels. `cbl_entry.position` is stored 0-indexed.
+    let entry_positions: HashMap<String, i32> = entries
+        .iter()
+        .filter_map(|e| {
+            e.matched_issue_id
+                .as_ref()
+                .map(|iid| (iid.clone(), e.position + 1))
+        })
+        .collect();
     let visible = access::for_user(&app, &user).await;
     let mut issues = opds::fetch_visible_issues_preserving_order(&app, &issue_ids, &visible).await;
 
@@ -1179,6 +1192,7 @@ async fn cbl_list_acq(
         &user,
         &issues,
         up_next_full.as_ref().map(|i| i.id.as_str()),
+        Some(&entry_positions),
     )
     .await;
 
@@ -1607,7 +1621,7 @@ async fn build_publications(
     user: &CurrentUser,
     issues: &[issue::Model],
 ) -> Vec<Value> {
-    build_publications_inner(app, user, issues, false, None).await
+    build_publications_inner(app, user, issues, false, None, None).await
 }
 
 /// Like [`build_publications`], but threads an `up_next_id` for title-
@@ -1621,7 +1635,7 @@ async fn build_publications_with_up_next(
     issues: &[issue::Model],
     up_next_id: Option<&str>,
 ) -> Vec<Value> {
-    build_publications_inner(app, user, issues, false, up_next_id).await
+    build_publications_inner(app, user, issues, false, up_next_id, None).await
 }
 
 /// Like [`build_publications`], but emits sequential `rel="next"` and
@@ -1630,14 +1644,17 @@ async fn build_publications_with_up_next(
 /// reading sequence (per-series sort, CBL position). Discovery feeds
 /// (Recent, Search, New this month) leave them off. `up_next_id` is
 /// the resume-target issue whose title gets the `Up Next: ` prefix
-/// (opds-richer-feeds 1.1 M1).
+/// (opds-richer-feeds 1.1 M1). `entry_positions` — when present —
+/// is the CBL `issue_id → 1-indexed position` map the renderer uses
+/// to prefix each publication title with `"{position}. "`.
 async fn build_publications_sequential(
     app: &AppState,
     user: &CurrentUser,
     issues: &[issue::Model],
     up_next_id: Option<&str>,
+    entry_positions: Option<&HashMap<String, i32>>,
 ) -> Vec<Value> {
-    build_publications_inner(app, user, issues, true, up_next_id).await
+    build_publications_inner(app, user, issues, true, up_next_id, entry_positions).await
 }
 
 async fn build_publications_inner(
@@ -1646,6 +1663,7 @@ async fn build_publications_inner(
     issues: &[issue::Model],
     sequential_nav: bool,
     up_next_id: Option<&str>,
+    entry_positions: Option<&HashMap<String, i32>>,
 ) -> Vec<Value> {
     if issues.is_empty() {
         return Vec::new();
@@ -1677,6 +1695,7 @@ async fn build_publications_inner(
                 next,
                 progress_glyphs: glyphs,
                 up_next_id,
+                position: entry_positions.and_then(|m| m.get(&i.id).copied()),
             })
         })
         .collect()
@@ -1695,6 +1714,11 @@ struct PublicationCtx<'a> {
     next: Option<&'a issue::Model>,
     progress_glyphs: bool,
     up_next_id: Option<&'a str>,
+    /// 1-indexed CBL position; mirrors the v1
+    /// `IssueAcqEntryCtx::position`. When `Some`, the publication
+    /// title is prefixed with `"{position}. "`. `None` for every
+    /// non-reading-list feed.
+    position: Option<i32>,
 }
 
 fn publication_for(ctx: PublicationCtx<'_>) -> Value {
@@ -1708,6 +1732,7 @@ fn publication_for(ctx: PublicationCtx<'_>) -> Value {
         next,
         progress_glyphs,
         up_next_id,
+        position,
     } = ctx;
     let base = i.title.clone().unwrap_or_else(|| {
         i.number_raw
@@ -1715,12 +1740,15 @@ fn publication_for(ctx: PublicationCtx<'_>) -> Value {
             .map(|n| format!("Issue #{n}"))
             .unwrap_or_else(|| "Issue".into())
     });
-    let decorated =
-        opds::decorate_title_with_progress(&base, progress, i.page_count, progress_glyphs);
+    let decorated = opds::decorate_title_with_progress(&base, progress, progress_glyphs);
     let label = if up_next_id == Some(i.id.as_str()) {
         format!("Up Next: {decorated}")
     } else {
         decorated
+    };
+    let label = match position {
+        Some(p) => format!("{p}. {label}"),
+        None => label,
     };
     let mut metadata = serde_json::Map::new();
     metadata.insert("@type".into(), Value::from("http://schema.org/Periodical"));
