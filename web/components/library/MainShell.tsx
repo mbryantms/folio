@@ -82,7 +82,17 @@ export function MainShell({
           </SheetTrigger>
           <SheetContent
             side="left"
-            className="w-72 p-0"
+            // Safe-area insets: the sheet covers the full viewport
+            // height on mobile, so its content reads UNDER the
+            // iPhone clock + notch and the home indicator without
+            // explicit padding. `pt-(--safe-top)` clears the
+            // status bar / Dynamic Island; `pb-(--safe-bottom)` keeps
+            // the UserFooter above the home indicator; `pl-(--safe-left)`
+            // handles landscape where the notch sits on the left edge.
+            // `p-0` is preserved on the right because the right edge
+            // is always covered by the screen interior in left-side
+            // sheets.
+            className="w-72 p-0 pt-(--safe-top) pb-(--safe-bottom) pl-(--safe-left)"
             onClick={(e) => {
               // Mobile UX: clicking a link inside the drawer should close
               // the drawer along with navigating. Buttons (theme toggle,

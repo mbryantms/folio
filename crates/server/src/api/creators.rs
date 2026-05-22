@@ -12,13 +12,13 @@
 
 use axum::{
     Json, Router,
-    extract::{Path as AxPath, Query, State},
+    extract::{Path as AxPath, State},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
 };
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -30,58 +30,7 @@ use crate::state::AppState;
 use entity::{person, series};
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/creators/resolve", get(resolve))
-        .route("/creators/{slug}", get(get_one))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ResolveQuery {
-    pub name: String,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ResolveResp {
-    pub slug: String,
-}
-
-/// Name → slug resolver. Used by the `/creators/by-name/<name>`
-/// front-end redirect so credit pills can route to creator detail
-/// pages without the caller having to know the allocated slug.
-///
-/// Auth: same `CurrentUser` gate as the rest of the API — we don't
-/// want unauthenticated callers enumerating the `person` table.
-#[utoipa::path(
-    get,
-    path = "/creators/resolve",
-    params(("name" = String, Query,)),
-    responses(
-        (status = 200, body = ResolveResp),
-        (status = 404,),
-    )
-)]
-pub async fn resolve(
-    State(app): State<AppState>,
-    _user: CurrentUser,
-    Query(q): Query<ResolveQuery>,
-) -> impl IntoResponse {
-    let needle = q.name.trim();
-    if needle.is_empty() {
-        return error(StatusCode::BAD_REQUEST, "validation", "name required");
-    }
-    let normalized = needle.to_lowercase();
-    match person::Entity::find()
-        .filter(person::Column::NormalizedName.eq(normalized))
-        .one(&app.db)
-        .await
-    {
-        Ok(Some(row)) => Json(ResolveResp { slug: row.slug }).into_response(),
-        Ok(None) => error(StatusCode::NOT_FOUND, "not_found", "creator not found"),
-        Err(e) => {
-            tracing::error!(error = %e, "creators: resolve failed");
-            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
-        }
-    }
+    Router::new().route("/creators/{slug}", get(get_one))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

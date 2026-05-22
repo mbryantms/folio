@@ -21,6 +21,7 @@ export function ChipList({
   emptyLabel,
   variant = "secondary",
   filterField,
+  creatorSlugs,
   className,
 }: {
   label?: string;
@@ -31,6 +32,11 @@ export function ChipList({
    *  Accepts saved-view field ids (`"writer"`, `"genres"`, etc.); the
    *  component maps each to its corresponding `/series` query param. */
   filterField?: string;
+  /** Name → creator slug map. When `filterField` is a credit role and
+   *  `creatorSlugs[item]` is set, the chip links directly to
+   *  `/creators/<slug>` instead of the legacy library-grid filter.
+   *  Series + issue detail endpoints both surface this map. */
+  creatorSlugs?: Record<string, string>;
   className?: string;
 }) {
   const list = items ?? [];
@@ -62,33 +68,32 @@ export function ChipList({
               </Badge>
             );
             if (!filterField) return chip;
-            // Credit-role chips now point at the creator detail page
-            // — the `/by-name/<name>` route resolves the canonical
-            // slug + redirects, falling back to the legacy filtered-
-            // library grid if no `person` row exists yet (e.g. a
-            // freshly-scanned credit). Other facets (genres / tags /
-            // characters) stay as direct library-grid deep-links
-            // since they don't have detail pages.
+            // Credit-role chips link to `/creators/<slug>` when the
+            // parent surface (series / issue detail) hands us a slug
+            // for the chip's name in `creatorSlugs`. The slug is
+            // resolved server-side via the `series_credits.person_id`
+            // FK — same primary-key lookup every other detail-page
+            // chip uses. Names without a slug (a freshly-scanned
+            // credit between rollups) fall back to the legacy
+            // library-grid `?credits=<name>` filter.
             if (isCreditRole(filterField)) {
-              // Manually re-encode dots as `%2E`. `encodeURIComponent`
-              // leaves `.` alone (it's a reserved-as-unreserved
-              // character per RFC 3986), and Next.js's app-router
-              // routing layer treats a trailing dot-separated chunk
-              // in a dynamic segment as if it were a file extension
-              // — so "Brian K. Vaughan" routes as if "Vaughan" were
-              // the extension and never reaches the page handler.
-              // Encoding the dot survives `decodeURIComponent` on the
-              // page side without provoking the file-extension
-              // heuristic.
-              const encoded = encodeURIComponent(item).replace(
-                /\./g,
-                "%2E",
-              );
+              const slug = creatorSlugs?.[item];
+              if (slug) {
+                return (
+                  <Link
+                    key={item}
+                    href={`/creators/${encodeURIComponent(slug)}`}
+                    title={`Open ${item}'s creator page`}
+                  >
+                    {chip}
+                  </Link>
+                );
+              }
               return (
                 <Link
                   key={item}
-                  href={`/creators/by-name/${encoded}`}
-                  title={`Open ${item}'s creator page`}
+                  href={`/?library=all&credits=${encodeURIComponent(item)}`}
+                  title={`View all "${item}" series`}
                 >
                   {chip}
                 </Link>

@@ -20,10 +20,13 @@ use entity::{
     series_character, series_credit, series_genre, series_location, series_tag, series_team,
 };
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Statement,
-    sea_query::OnConflict,
+    ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter,
+    Statement, Value, sea_query::OnConflict,
 };
+use std::collections::HashSet;
 use uuid::Uuid;
+
+use crate::slug::allocate_person_slug;
 
 /// The eight ComicInfo credit roles, in display order. Keep this list in
 /// lockstep with the values used by the saved-views filter registry — the
@@ -246,6 +249,12 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                     issue_id: Set(issue_id.to_string()),
                     role: Set(role),
                     person: Set(person),
+                    // person_id is populated during the series-level
+                    // rollup (see `ensure_persons_for_series`), which
+                    // runs after this per-issue write. Leaving it
+                    // NULL here keeps this hot path off the slug
+                    // allocator.
+                    person_id: Set(None),
                 })
                 .collect();
             issue_credit::Entity::insert_many(rows)
@@ -421,14 +430,37 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
     ))
     .await?;
 
+    // Person upsert: ensure a `person` row exists for every distinct
+    // creator name in this series's credits, then propagate
+    // `person_id` onto the `issue_credits` rows so the about-to-rebuild
+    // `series_credits` carries the FK along. The cost is bounded by
+    // distinct-creators-in-this-series (typically <50); freshly-scanned
+    // issues are the only path that introduces unknown names, so most
+    // calls do zero inserts and just refresh the issue_credits join.
+    ensure_persons_for_series(db, series_id).await?;
+    db.execute(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "UPDATE issue_credits ic \
+         SET person_id = p.id \
+         FROM person p, issues i \
+         WHERE ic.issue_id = i.id \
+           AND i.series_id = $1 \
+           AND i.state = 'active' \
+           AND i.removed_at IS NULL \
+           AND ic.person_id IS DISTINCT FROM p.id \
+           AND p.normalized_name = btrim(lower(ic.person))",
+        [series_id.into()],
+    ))
+    .await?;
+
     series_credit::Entity::delete_many()
         .filter(series_credit::Column::SeriesId.eq(series_id))
         .exec(db)
         .await?;
     db.execute(Statement::from_sql_and_values(
         db.get_database_backend(),
-        r"INSERT INTO series_credits (series_id, role, person)
-            SELECT DISTINCT $1, ic.role, ic.person
+        r"INSERT INTO series_credits (series_id, role, person, person_id)
+            SELECT DISTINCT $1, ic.role, ic.person, ic.person_id
             FROM issue_credits ic
             JOIN issues i ON i.id = ic.issue_id
             WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
@@ -547,6 +579,72 @@ async fn auto_set_reading_direction<C: ConnectionTrait>(
         total,
         "scanner heuristic: auto-set series.reading_direction = rtl",
     );
+    Ok(())
+}
+
+/// Ensure a `person` row exists for every distinct creator name in
+/// this series's issue credits. New names get a slug allocated via
+/// [`allocate_person_slug`] (same scheme the M8 backfill migration
+/// used) and inserted with `ON CONFLICT (normalized_name) DO NOTHING`
+/// so concurrent rollups racing on the same name don't error.
+///
+/// Cheap when every name is already present (one SELECT, zero
+/// INSERTs); pays the slug-allocation cost only for fresh creators.
+async fn ensure_persons_for_series<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
+    #[derive(FromQueryResult)]
+    struct NameRow {
+        person: String,
+    }
+    // Distinct names in this series's active-issue credits that
+    // aren't yet represented in `person`. Normalisation matches what
+    // `m20261223_000001_person` uses (btrim + lower).
+    let rows = NameRow::find_by_statement(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "SELECT DISTINCT ic.person AS person \
+         FROM issue_credits ic \
+         JOIN issues i ON i.id = ic.issue_id \
+         WHERE i.series_id = $1 \
+           AND i.state = 'active' \
+           AND i.removed_at IS NULL \
+           AND ic.person IS NOT NULL \
+           AND ic.person <> '' \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM person p \
+               WHERE p.normalized_name = btrim(lower(ic.person)) \
+           )",
+        [Value::Uuid(Some(Box::new(series_id)))],
+    ))
+    .all(db)
+    .await?;
+
+    // Dedupe by normalized form before allocating — protects against
+    // two issues in the same series spelling the same creator
+    // slightly differently (whitespace / case). The first variant
+    // wins as the display_name; both will resolve to the same person
+    // via the JOIN above.
+    let mut seen = HashSet::<String>::new();
+    for row in rows {
+        let display_name = row.person.trim().to_owned();
+        if display_name.is_empty() {
+            continue;
+        }
+        let normalized = display_name.to_lowercase();
+        if !seen.insert(normalized.clone()) {
+            continue;
+        }
+        let slug = allocate_person_slug(db, &display_name).await?;
+        db.execute(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "INSERT INTO person (slug, name, normalized_name) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (normalized_name) DO NOTHING",
+            [slug.into(), display_name.into(), normalized.into()],
+        ))
+        .await?;
+    }
     Ok(())
 }
 

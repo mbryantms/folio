@@ -1619,6 +1619,7 @@ async fn add_series_writer(db: &DatabaseConnection, series_id: Uuid, person: &st
         series_id: Set(series_id),
         role: Set("writer".into()),
         person: Set(person.into()),
+        person_id: Set(None),
     }
     .insert(db)
     .await

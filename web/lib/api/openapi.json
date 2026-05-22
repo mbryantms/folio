@@ -2109,41 +2109,6 @@
         }
       }
     },
-    "/creators/resolve": {
-      "get": {
-        "tags": [
-          "api::creators"
-        ],
-        "summary": "Name → slug resolver. Used by the `/creators/by-name/<name>`\nfront-end redirect so credit pills can route to creator detail\npages without the caller having to know the allocated slug.",
-        "description": "Auth: same `CurrentUser` gate as the rest of the API — we don't\nwant unauthenticated callers enumerating the `person` table.",
-        "operationId": "resolve",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResolveResp"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
     "/creators/{slug}": {
       "get": {
         "tags": [
@@ -9460,6 +9425,16 @@
           "created_at": {
             "type": "string"
           },
+          "creator_slugs": {
+            "type": "object",
+            "description": "Creator-name → slug map covering every credit name listed in\nthe per-role CSV fields above (writer/penciller/inker/…). Built\nfrom `issue_credits.person_id` joined to `person`; missing\nentries fall back to the legacy library-grid filter in the UI.\nEmpty until the get_one handler populates it.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "day": {
             "type": [
               "integer",
@@ -12364,17 +12339,6 @@
           }
         }
       },
-      "ResolveResp": {
-        "type": "object",
-        "required": [
-          "slug"
-        ],
-        "properties": {
-          "slug": {
-            "type": "string"
-          }
-        }
-      },
       "ResolvedEntry": {
         "type": "object",
         "required": [
@@ -12918,6 +12882,16 @@
           "created_at": {
             "type": "string",
             "description": "RFC3339 timestamps from the series row."
+          },
+          "creator_slugs": {
+            "type": "object",
+            "description": "Name → creator slug map covering every credit listed in the\n`writers / pencillers / inkers / colorists / letterers /\ncover_artists` arrays above (and the editor/translator roles\nwhen they're surfaced). Populated server-side from a single\nJOIN onto `person` via `series_credits.person_id`, so the\nweb's `ChipList` can build `/creators/<slug>` links in O(1)\nper chip without a per-pill name-resolution round-trip.\nMissing entries fall back to the legacy\n`/?library=all&credits=<name>` filter — typically only\nhappens for credits scanned between rollups.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "earliest_year": {
             "type": [

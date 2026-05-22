@@ -291,6 +291,7 @@ async fn seed_library_with_metadata(
             series_id: Set(series_id),
             role: Set("writer".into()),
             person: Set((*w).into()),
+            person_id: Set(None),
         }
         .insert(&db)
         .await
@@ -841,6 +842,7 @@ async fn seed_series_full(
             series_id: Set(series_id),
             role: Set((*role).into()),
             person: Set((*person).into()),
+            person_id: Set(None),
         }
         .insert(&db)
         .await

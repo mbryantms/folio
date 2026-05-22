@@ -442,6 +442,18 @@ pub struct SeriesView {
     pub letterers: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cover_artists: Vec<String>,
+    /// Name → creator slug map covering every credit listed in the
+    /// `writers / pencillers / inkers / colorists / letterers /
+    /// cover_artists` arrays above (and the editor/translator roles
+    /// when they're surfaced). Populated server-side from a single
+    /// JOIN onto `person` via `series_credits.person_id`, so the
+    /// web's `ChipList` can build `/creators/<slug>` links in O(1)
+    /// per chip without a per-pill name-resolution round-trip.
+    /// Missing entries fall back to the legacy
+    /// `/?library=all&credits=<name>` filter — typically only
+    /// happens for credits scanned between rollups.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub creator_slugs: std::collections::HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub genres: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -535,6 +547,7 @@ impl From<series::Model> for SeriesView {
             colorists: Vec::new(),
             letterers: Vec::new(),
             cover_artists: Vec::new(),
+            creator_slugs: std::collections::HashMap::new(),
             genres: Vec::new(),
             tags: Vec::new(),
             characters: Vec::new(),
@@ -666,6 +679,13 @@ pub struct IssueDetailView {
     #[schema(value_type = Vec<serde_json::Value>)]
     pub pages: Vec<parsers::comicinfo::PageInfo>,
     pub comic_info_raw: serde_json::Value,
+    /// Creator-name → slug map covering every credit name listed in
+    /// the per-role CSV fields above (writer/penciller/inker/…). Built
+    /// from `issue_credits.person_id` joined to `person`; missing
+    /// entries fall back to the legacy library-grid filter in the UI.
+    /// Empty until the get_one handler populates it.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub creator_slugs: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -774,6 +794,7 @@ impl IssueDetailView {
             // already copes with no per-page metadata.
             pages: serde_json::from_value(m.pages).unwrap_or_default(),
             comic_info_raw: m.comic_info_raw,
+            creator_slugs: std::collections::HashMap::new(),
         }
     }
 }
@@ -1831,6 +1852,7 @@ pub async fn get_one(
     v.colorists = metadata_facets.credits_for("colorist");
     v.letterers = metadata_facets.credits_for("letterer");
     v.cover_artists = metadata_facets.credits_for("cover_artist");
+    v.creator_slugs = metadata_facets.creator_slugs;
     v.genres = metadata_facets.genres;
     v.tags = metadata_facets.tags;
     v.characters = aggregate_csv(agg_rows.iter().map(|r| r.characters.as_deref()));
@@ -2046,6 +2068,11 @@ struct SeriesMetadataFacets {
     /// Indexed by role — one entry per `CREDIT_ROLES`. Lookup via
     /// [`SeriesMetadataFacets::credits_for`].
     credits_by_role: std::collections::HashMap<String, Vec<String>>,
+    /// Creator name → canonical slug. Built from the same JOIN that
+    /// produces the per-role buckets; populated only for credits whose
+    /// `series_credits.person_id` resolves on `person`. Names without a
+    /// slug fall back to the legacy library-grid filter in the UI.
+    creator_slugs: std::collections::HashMap<String, String>,
 }
 
 impl SeriesMetadataFacets {
@@ -2068,6 +2095,10 @@ async fn aggregate_series_metadata(app: &AppState, series_id: Uuid) -> SeriesMet
     struct CreditRow {
         role: String,
         person: String,
+        // NULL when the credit's `person_id` hasn't been backfilled
+        // yet (a freshly-scanned issue between rollups). The UI falls
+        // back to a legacy library-grid filter in that case.
+        slug: Option<String>,
         // Used by the SQL `ORDER BY ... cnt DESC`; not surfaced in Rust.
         #[allow(dead_code)]
         cnt: i64,
@@ -2113,13 +2144,19 @@ async fn aggregate_series_metadata(app: &AppState, series_id: Uuid) -> SeriesMet
     // One credits query, bucket by role in Rust. The 8*12=96-row cap below
     // matches the per-role display cap; over-fetch is tiny so a single
     // query is cheaper than eight role-specific ones.
+    // LEFT JOIN on `person` via the FK so the slug rides along
+    // alongside the display name. `person_id` is normally populated by
+    // the series rollup right after each scan; the LEFT JOIN
+    // gracefully degrades to a NULL slug for credits that haven't
+    // been rolled up yet.
     let credit_rows: Vec<CreditRow> = CreditRow::find_by_statement(Statement::from_sql_and_values(
         backend,
-        r"SELECT ic.role, ic.person, COUNT(*)::bigint AS cnt
+        r"SELECT ic.role, ic.person, p.slug AS slug, COUNT(*)::bigint AS cnt
             FROM issue_credits ic
             JOIN issues i ON i.id = ic.issue_id
+            LEFT JOIN person p ON p.id = ic.person_id
             WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
-            GROUP BY ic.role, ic.person
+            GROUP BY ic.role, ic.person, p.slug
             ORDER BY ic.role ASC, cnt DESC, ic.person ASC",
         [series_id.into()],
     ))
@@ -2129,7 +2166,14 @@ async fn aggregate_series_metadata(app: &AppState, series_id: Uuid) -> SeriesMet
 
     let mut credits_by_role: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
+    let mut creator_slugs: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for row in credit_rows {
+        if let Some(slug) = &row.slug
+            && !creator_slugs.contains_key(&row.person)
+        {
+            creator_slugs.insert(row.person.clone(), slug.clone());
+        }
         let bucket = credits_by_role.entry(row.role).or_default();
         if (bucket.len() as u64) < FACET_RESULT_CAP {
             bucket.push(row.person);
@@ -2140,6 +2184,7 @@ async fn aggregate_series_metadata(app: &AppState, series_id: Uuid) -> SeriesMet
         genres,
         tags,
         credits_by_role,
+        creator_slugs,
     }
 }
 

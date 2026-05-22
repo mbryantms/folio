@@ -82,6 +82,14 @@ export type SeriesView = {
   colorists?: string[];
   letterers?: string[];
   cover_artists?: string[];
+  /** Name → canonical creator slug for every credit listed above.
+   *  Populated server-side from `series_credits.person_id` → `person`
+   *  on `GET /series/{slug}`. Credit chips on the series detail page
+   *  use this to link directly to `/creators/<slug>` (matching every
+   *  other entity navigation). Missing entries (a freshly-scanned
+   *  credit between rollups) fall back to the legacy
+   *  `/?library=all&credits=<name>` filter. */
+  creator_slugs?: Record<string, string>;
   genres?: string[];
   tags?: string[];
   characters?: string[];
@@ -330,6 +338,11 @@ export type IssueDetailView = {
   user_edited: string[];
   pages: PageInfo[];
   comic_info_raw: Record<string, unknown>;
+  /** Name → canonical creator slug for every credit listed in the
+   *  per-role CSVs (writer / penciller / inker / colorist / letterer
+   *  / cover_artist). Built server-side from `issue_credits.person_id`.
+   *  ChipList uses this to link credit chips to `/creators/<slug>`. */
+  creator_slugs?: Record<string, string>;
 };
 
 export type IssueLink = {

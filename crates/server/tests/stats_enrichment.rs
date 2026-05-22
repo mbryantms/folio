@@ -363,6 +363,7 @@ async fn add_series_credit(app: &TestApp, series_id: Uuid, role: &str, person: &
         series_id: Set(series_id),
         role: Set(role.into()),
         person: Set(person.into()),
+        person_id: Set(None),
     }
     .insert(&db)
     .await

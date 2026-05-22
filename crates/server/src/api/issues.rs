@@ -147,11 +147,43 @@ pub async fn get_one(
         .ok()
         .flatten()
         .map(|lib| lib.default_reading_direction);
+    // Creator-slug map for this issue's credits. One JOIN against
+    // `person` — the FK populated by the scanner's series rollup. The
+    // UI uses this so credit chips link to /creators/<slug> directly
+    // (matching how every other detail-page chip resolves).
+    let creator_slugs = build_issue_creator_slugs(&app, &row.id).await;
     let mut view = IssueDetailView::from_model(row, &series_slug);
     view.user_rating = rating;
     view.series_reading_direction = series_dir;
     view.library_default_reading_direction = library_default_dir;
+    view.creator_slugs = creator_slugs;
     Json(view).into_response()
+}
+
+async fn build_issue_creator_slugs(
+    app: &AppState,
+    issue_id: &str,
+) -> std::collections::HashMap<String, String> {
+    use sea_orm::{ConnectionTrait, FromQueryResult, Statement};
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        person: String,
+        slug: String,
+    }
+    Row::find_by_statement(Statement::from_sql_and_values(
+        app.db.get_database_backend(),
+        "SELECT DISTINCT ic.person AS person, p.slug AS slug \
+         FROM issue_credits ic \
+         JOIN person p ON p.id = ic.person_id \
+         WHERE ic.issue_id = $1",
+        [issue_id.into()],
+    ))
+    .all(&app.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| (r.person, r.slug))
+    .collect()
 }
 
 // ───── PATCH /issues/{id} ─────

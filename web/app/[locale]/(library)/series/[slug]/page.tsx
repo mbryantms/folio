@@ -178,7 +178,11 @@ export default async function SeriesPage({
           <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
             <FactBlock label="Writers">
               {series.writers && series.writers.length > 0 ? (
-                <ChipList items={series.writers} filterField="writer" />
+                <ChipList
+                  items={series.writers}
+                  filterField="writer"
+                  creatorSlugs={series.creator_slugs}
+                />
               ) : (
                 <p className="text-muted-foreground text-sm">—</p>
               )}
@@ -228,31 +232,37 @@ export default async function SeriesPage({
               label="Writers"
               items={series.writers}
               filterField="writer"
+              creatorSlugs={series.creator_slugs}
             />
             <ChipList
               label="Pencillers"
               items={series.pencillers}
               filterField="penciller"
+              creatorSlugs={series.creator_slugs}
             />
             <ChipList
               label="Inkers"
               items={series.inkers}
               filterField="inker"
+              creatorSlugs={series.creator_slugs}
             />
             <ChipList
               label="Colorists"
               items={series.colorists}
               filterField="colorist"
+              creatorSlugs={series.creator_slugs}
             />
             <ChipList
               label="Letterers"
               items={series.letterers}
               filterField="letterer"
+              creatorSlugs={series.creator_slugs}
             />
             <ChipList
               label="Cover artists"
               items={series.cover_artists}
               filterField="cover_artist"
+              creatorSlugs={series.creator_slugs}
             />
           </div>
           {!hasAny(

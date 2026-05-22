@@ -74,7 +74,10 @@ export function AdminShell({
           </SheetTrigger>
           <SheetContent
             side="left"
-            className="w-72 p-0"
+            // Safe-area insets — mirrors `MainShell`. Without these
+            // the iPhone clock / Dynamic Island sits on top of the
+            // drawer's first nav row in PWA standalone mode.
+            className="w-72 p-0 pt-(--safe-top) pb-(--safe-bottom) pl-(--safe-left)"
             onClick={(e) => {
               // Mobile UX: clicking a link inside the drawer should close
               // it along with navigating. Buttons stay click-through.

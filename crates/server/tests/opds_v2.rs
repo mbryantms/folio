@@ -984,6 +984,7 @@ async fn v2_add_writer(db: &DatabaseConnection, series_id: Uuid, person: &str) {
         series_id: Set(series_id),
         role: Set("writer".into()),
         person: Set(person.into()),
+        person_id: Set(None),
     }
     .insert(db)
     .await
@@ -1387,6 +1388,7 @@ async fn v2_add_writer_to_series(db: &DatabaseConnection, series_id: Uuid, perso
         series_id: Set(series_id),
         role: Set("writer".into()),
         person: Set(person.into()),
+        person_id: Set(None),
     }
     .insert(db)
     .await

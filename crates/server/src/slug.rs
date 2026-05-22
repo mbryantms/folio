@@ -6,7 +6,7 @@
 //! at insert/scan time and is *persisted*, so URLs stay stable across
 //! renames; admin override paths re-allocate on demand.
 
-use entity::{issue, library, series, user_page};
+use entity::{issue, library, person, series, user_page};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DbErr, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
 };
@@ -192,6 +192,25 @@ impl<C: ConnectionTrait> SlugAllocator for IssueSlugAllocator<'_, C> {
     }
 }
 
+/// SlugAllocator for the `person` table. Scope: global.
+/// `excluding` lets a future rename path skip the row's own current slug.
+pub struct PersonSlugAllocator<'a, C: ConnectionTrait> {
+    pub db: &'a C,
+    pub excluding: Option<Uuid>,
+}
+
+#[async_trait::async_trait]
+impl<C: ConnectionTrait> SlugAllocator for PersonSlugAllocator<'_, C> {
+    type Error = DbErr;
+    async fn is_taken(&self, candidate: &str) -> Result<bool, DbErr> {
+        let mut q = person::Entity::find().filter(person::Column::Slug.eq(candidate));
+        if let Some(id) = self.excluding {
+            q = q.filter(person::Column::Id.ne(id));
+        }
+        Ok(q.count(self.db).await? > 0)
+    }
+}
+
 /// SlugAllocator for the `user_page` table. Scope: a single user.
 /// `excluding` lets the rename path skip the page's own current slug so
 /// renaming "Marvel" to itself doesn't always collide.
@@ -262,6 +281,24 @@ pub async fn allocate_series_slug<C: ConnectionTrait>(
         name,
         &disambiguators,
         &SeriesSlugAllocator {
+            db,
+            excluding: None,
+        },
+    )
+    .await
+}
+
+/// Allocate a globally-unique slug for a new creator. No natural
+/// disambiguator today (could later be birth-year if we ever collect
+/// it); falls back to numeric suffixes.
+pub async fn allocate_person_slug<C: ConnectionTrait>(
+    db: &C,
+    name: &str,
+) -> Result<String, DbErr> {
+    allocate_slug(
+        name,
+        &[],
+        &PersonSlugAllocator {
             db,
             excluding: None,
         },

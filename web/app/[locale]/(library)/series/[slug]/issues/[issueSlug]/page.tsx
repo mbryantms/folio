@@ -393,31 +393,37 @@ export default async function IssuePage({
                 label="Writer"
                 items={splitCsv(issue.writer)}
                 filterField="writer"
+                creatorSlugs={issue.creator_slugs}
               />
               <ChipList
                 label="Penciller"
                 items={splitCsv(issue.penciller)}
                 filterField="penciller"
+                creatorSlugs={issue.creator_slugs}
               />
               <ChipList
                 label="Inker"
                 items={splitCsv(issue.inker)}
                 filterField="inker"
+                creatorSlugs={issue.creator_slugs}
               />
               <ChipList
                 label="Colorist"
                 items={splitCsv(issue.colorist)}
                 filterField="colorist"
+                creatorSlugs={issue.creator_slugs}
               />
               <ChipList
                 label="Letterer"
                 items={splitCsv(issue.letterer)}
                 filterField="letterer"
+                creatorSlugs={issue.creator_slugs}
               />
               <ChipList
                 label="Cover artist"
                 items={splitCsv(issue.cover_artist)}
                 filterField="cover_artist"
+                creatorSlugs={issue.creator_slugs}
               />
             </div>
             {!hasAnyCredit(issue) && (
