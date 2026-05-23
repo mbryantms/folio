@@ -60,6 +60,7 @@ export function Reader({
   userKeybinds,
   activityTrackingEnabled,
   incognito = false,
+  initialPeek = false,
   readingMinActiveMs,
   readingMinPages,
   readingIdleMs,
@@ -100,6 +101,12 @@ export function Reader({
   /** When true, suppress per-page progress writes and the reading-session
    *  tracker for this read. Set by `?incognito=1` on the read page. */
   incognito?: boolean;
+  /** When true on mount, the reader starts in **peek mode** — like
+   *  incognito but flippable by the user via the peek banner's
+   *  "Continue from here" button. Used by bookmark "Jump to page"
+   *  navigation (`?peek=1`) so glancing at a marker doesn't generate
+   *  activity. No timeout; the user controls when peek ends. */
+  initialPeek?: boolean;
   readingMinActiveMs: number;
   readingMinPages: number;
   readingIdleMs: number;
@@ -543,7 +550,35 @@ export function Reader({
     onDismissEndCard: dismissEndCard,
   });
 
-  useReaderProgressWrite({ issueId, currentPage, totalPages, incognito });
+  // Peek mode: when on, both the progress write and the session
+  // tracker no-op. Starts from the `?peek=1` URL flag (set by bookmark
+  // "Jump to page" navigation) and stays on until the user clicks
+  // "Continue from here" in the peek banner — no timeout, fully
+  // user-controlled. Flipping it off re-runs the progress effect
+  // (peek is in its deps), which fires a fresh write at the current
+  // page so the user's resume position is captured immediately.
+  const [peekActive, setPeekActive] = useState<boolean>(initialPeek);
+  const exitPeek = useCallback(() => {
+    setPeekActive(false);
+    // Drop `?peek=1` from the URL so a refresh / shared link doesn't
+    // re-enable peek for the same session. `router.replace` keeps the
+    // browser history clean.
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("peek")) {
+        url.searchParams.delete("peek");
+        router.replace(url.pathname + url.search);
+      }
+    }
+  }, [router]);
+  const suppressWrites = incognito || peekActive;
+
+  useReaderProgressWrite({
+    issueId,
+    currentPage,
+    totalPages,
+    incognito: suppressWrites,
+  });
 
   // M6a — capture the reading session (idempotent 30s heartbeat + final
   // flush). Coexists with the per-page progress write above; one source
@@ -556,7 +591,7 @@ export function Reader({
     currentPage,
     viewMode,
     visiblePages,
-    trackingEnabled: activityTrackingEnabled,
+    trackingEnabled: activityTrackingEnabled && !suppressWrites,
     minActiveMs: readingMinActiveMs,
     minPages: readingMinPages,
     idleMs: readingIdleMs,
@@ -658,6 +693,35 @@ export function Reader({
         progressTotal={viewMode === "double" ? groups.length : totalPages}
         incognito={incognito}
       />
+
+      {peekActive && (
+        // Peek-mode banner. Fixed at the top, below the safe-area
+        // inset so it clears the iPhone notch / Dynamic Island. z-30
+        // keeps it above the reader content but below modals
+        // (MarkerEditor uses z-50). `pointer-events-auto` on the
+        // banner so clicks reach the button even when the outer
+        // wrapper sets pointer-events for the chrome.
+        <div
+          className="pointer-events-none fixed inset-x-0 top-0 z-30 flex justify-center px-3 pt-(--safe-top)"
+          aria-live="polite"
+        >
+          <div className="border-border bg-background/95 text-foreground pointer-events-auto mt-3 flex w-full max-w-md items-center gap-3 rounded-lg border px-3 py-2 shadow-lg backdrop-blur">
+            <p className="flex-1 text-xs leading-tight">
+              <span className="font-medium">Peek mode.</span>{" "}
+              <span className="text-muted-foreground">
+                Your reading isn&apos;t being tracked.
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={exitPeek}
+              className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0 rounded-md px-3 py-1.5 text-xs font-medium"
+            >
+              Continue from here
+            </button>
+          </div>
+        </div>
+      )}
 
       <div aria-live="polite" aria-atomic="true" className="sr-only">
         {viewMode === "double" && visiblePages.length === 2

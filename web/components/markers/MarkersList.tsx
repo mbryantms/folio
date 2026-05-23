@@ -618,9 +618,9 @@ function MarkerCard({
   const update = useUpdateMarker(marker.id, marker.issue_id);
   const router = useRouter();
   const jumpHref = buildJumpHref(marker);
+  const issueHref = buildIssueHref(marker);
   const kindMeta = KIND_META[marker.kind];
   const KindIcon = kindMeta.icon;
-  const snippet = marker.body?.trim() || marker.selection?.text?.trim() || null;
   const issueLabel = formatIssueLabel(marker);
   // Image-bearing markers — anything with a region — get Copy/Save
   // affordances. We only want them for crops where the user
@@ -748,7 +748,7 @@ function MarkerCard({
       ) : (
         cardBody
       )}
-      <div className="min-w-0 space-y-0.5 px-1">
+      <div className="min-w-0 space-y-1 px-1">
         <div className="text-muted-foreground text-xs font-medium">
           {issueLabel}
         </div>
@@ -758,14 +758,14 @@ function MarkerCard({
         >
           Page {marker.page_index + 1}
         </div>
-        {snippet ? (
-          <p className="text-muted-foreground line-clamp-2 text-xs">
-            {snippet}
-          </p>
-        ) : null}
+        <MarkerCardContent marker={marker} />
         {marker.tags.length > 0 ? (
+          // Show every tag — no `+N` truncation. The row-packed grid
+          // expands each card vertically as needed, so a heavily-
+          // tagged marker can take more height without disturbing
+          // siblings (each row aligns to `flex-start`).
           <div className="flex flex-wrap gap-1 pt-1">
-            {marker.tags.slice(0, 4).map((t) => (
+            {marker.tags.map((t) => (
               <span
                 key={t}
                 className="bg-muted text-muted-foreground inline-flex items-center rounded px-1.5 py-0.5 text-[10px]"
@@ -773,14 +773,48 @@ function MarkerCard({
                 {t}
               </span>
             ))}
-            {marker.tags.length > 4 ? (
-              <span className="text-muted-foreground text-[10px]">
-                +{marker.tags.length - 4}
-              </span>
-            ) : null}
           </div>
         ) : null}
+        {/* Pair the reader "Jump to page" (peek mode) with a
+         *  read-only "View issue" link. The issue detail page does
+         *  no progress writes / session tracking, so users who just
+         *  want to glance at full metadata or the issue's other
+         *  bookmarks can do so with zero activity-feed
+         *  contamination. */}
+        {issueHref ? (
+          <Link
+            href={issueHref}
+            className="text-muted-foreground hover:text-foreground inline-block pt-1 text-[11px] underline-offset-2 hover:underline"
+          >
+            View issue page →
+          </Link>
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+/** Marker content under the thumbnail — quoted `selection.text` (the
+ *  highlighted passage), then the user's note `body` if present.
+ *  Both render in full so users don't need to open the reader to see
+ *  the marker contents. `whitespace-pre-wrap` preserves the user's
+ *  paragraph breaks in notes. */
+function MarkerCardContent({ marker }: { marker: MarkerView }) {
+  const highlightText = marker.selection?.text?.trim() ?? null;
+  const noteBody = marker.body?.trim() ?? null;
+  if (!highlightText && !noteBody) return null;
+  return (
+    <div className="space-y-1.5">
+      {highlightText ? (
+        <blockquote className="border-primary/40 text-foreground/80 border-l-2 pl-2 text-xs italic">
+          &ldquo;{highlightText}&rdquo;
+        </blockquote>
+      ) : null}
+      {noteBody ? (
+        <p className="text-foreground/90 text-xs leading-relaxed break-words whitespace-pre-wrap">
+          {noteBody}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -848,13 +882,29 @@ async function saveMarkerRegion(
 }
 
 /** Build the reader URL with `?page=<n>` so "Jump to page" lands on the
- *  exact panel/page the marker references. Returns null when the marker
- *  is missing the slug fields (shouldn't happen via /me/markers — the
- *  server hydrates them — but defensive against stale cache rows). */
+ *  exact panel/page the marker references. Adds `?peek=1` so the
+ *  reader opens in peek mode — progress writes and session tracking
+ *  stay suppressed until the user clicks "Continue from here" in the
+ *  peek banner. Keeps a quick glance at a bookmark from polluting On
+ *  Deck, last-read state, or the reading log feed.
+ *
+ *  Returns null when the marker is missing the slug fields (shouldn't
+ *  happen via /me/markers — the server hydrates them — but defensive
+ *  against stale cache rows). */
 export function buildJumpHref(m: MarkerView): string | null {
   if (!m.series_slug || !m.issue_slug) return null;
   const base = readerUrl(m.series_slug, m.issue_slug);
-  return `${base}?page=${m.page_index}`;
+  return `${base}?page=${m.page_index}&peek=1`;
+}
+
+/** Build the issue-detail URL for a marker. Unlike `buildJumpHref`,
+ *  this lands on the read-only issue page (no progress writes, no
+ *  session tracking) so the user can review notes / metadata
+ *  without generating reading activity. Returns null when the
+ *  marker is missing slug fields. */
+export function buildIssueHref(m: MarkerView): string | null {
+  if (!m.series_slug || !m.issue_slug) return null;
+  return `/series/${encodeURIComponent(m.series_slug)}/issues/${encodeURIComponent(m.issue_slug)}`;
 }
 
 export function formatIssueLabel(m: MarkerView): string {

@@ -80,7 +80,10 @@ describe("groupBySeries", () => {
 });
 
 describe("buildJumpHref", () => {
-  it("produces a reader URL with ?page=<n>", () => {
+  it("produces a reader URL with ?page=<n>&peek=1", () => {
+    // `&peek=1` opens the reader in peek mode so the bookmark click
+    // doesn't generate progress writes / sessions until the user
+    // clicks "Continue from here" inside the reader.
     const href = buildJumpHref(
       marker({
         series_slug: "invincible",
@@ -88,7 +91,7 @@ describe("buildJumpHref", () => {
         page_index: 12,
       }),
     );
-    expect(href).toBe("/read/invincible/invincible-7?page=12");
+    expect(href).toBe("/read/invincible/invincible-7?page=12&peek=1");
   });
 
   it("encodes slugs that contain spaces or special characters", () => {
@@ -99,7 +102,7 @@ describe("buildJumpHref", () => {
         page_index: 0,
       }),
     );
-    expect(href).toBe("/read/spider%20man/issue%2F2?page=0");
+    expect(href).toBe("/read/spider%20man/issue%2F2?page=0&peek=1");
   });
 
   it("returns null when slug hydration is missing", () => {

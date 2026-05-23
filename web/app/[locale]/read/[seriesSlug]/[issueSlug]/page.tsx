@@ -28,10 +28,18 @@ export default async function ReadPage({
      *  surface. Forwarded to the next-up resolver so "next" picks the
      *  next list entry rather than the next series issue. */
     cbl?: string;
+    /** `?peek=1` puts the reader in peek mode — both progress writes
+     *  and session tracking are suppressed until the user explicitly
+     *  clicks "Continue from here" in the peek banner. Set by
+     *  `buildJumpHref` so a bookmark click doesn't generate
+     *  reading-activity noise when the user is just glancing at the
+     *  marker's context. No timeout; the user controls when peek
+     *  ends. */
+    peek?: string;
   }>;
 }) {
   const { seriesSlug, issueSlug } = await params;
-  const { from, incognito, page, cbl } = await searchParams;
+  const { from, incognito, page, cbl, peek } = await searchParams;
   // Trust the URL contract: a malformed `?cbl=` just falls through to
   // series-next on the server. No client-side validation needed — the
   // resolver fails soft.
@@ -45,6 +53,12 @@ export default async function ReadPage({
   // per-page progress writes for this open. Saved progress is still
   // honored as a starting point unless `?from=start` is also set.
   const isIncognito = incognito === "1";
+  // `?peek=1` is like incognito but user-toggleable from inside the
+  // reader (the peek banner's "Continue from here" button flips it
+  // off and starts normal tracking). Used by bookmark "Jump to page"
+  // navigation so glancing at a marker doesn't pollute the reading
+  // log / On Deck / last-read state.
+  const initialPeek = peek === "1";
   // `?page=<n>` is the "Jump to page" deep-link used by /bookmarks. Like
   // `?from=start`, it overrides the saved-progress prefetch so the
   // bookmark's exact page wins — otherwise users with prior progress
@@ -186,6 +200,7 @@ export default async function ReadPage({
         userKeybinds={userKeybinds}
         activityTrackingEnabled={activityTrackingEnabled && !isIncognito}
         incognito={isIncognito}
+        initialPeek={initialPeek}
         readingMinActiveMs={readingMinActiveMs}
         readingMinPages={readingMinPages}
         readingIdleMs={readingIdleMs}
