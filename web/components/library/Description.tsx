@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
 
+import { ProseClamp } from "@/components/library/ProseClamp";
 import {
   Table,
   TableBody,
@@ -32,11 +33,11 @@ export function Description({
   const parsed = parseDescription(text);
 
   if (!parsed.hasStructuredContent) {
-    return (
-      <p className="text-foreground/90 max-w-prose text-sm leading-6">
-        {parsed.intro}
-      </p>
-    );
+    // Wrap in `<ProseClamp>` (client) so the description clamps to 3
+    // lines on mobile with a "Read more" toggle. sm+ renders the
+    // full paragraph; short summaries skip the toggle entirely
+    // (see `ProseClamp`).
+    return <ProseClamp text={parsed.intro ?? ""} />;
   }
 
   const firstTable = parsed.tables[0];
@@ -53,11 +54,7 @@ export function Description({
 
   return (
     <div className="space-y-3">
-      {parsed.intro && (
-        <p className="text-foreground/90 max-w-prose text-sm leading-6">
-          {parsed.intro}
-        </p>
-      )}
+      {parsed.intro && <ProseClamp text={parsed.intro} />}
       <details className="group">
         <summary className="border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium select-none [&::-webkit-details-marker]:hidden">
           <ChevronDown

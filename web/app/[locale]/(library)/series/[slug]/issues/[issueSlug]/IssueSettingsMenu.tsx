@@ -245,13 +245,24 @@ export function IssueSettingsMenu({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" disabled={busy}>
+          {/* Responsive trigger:
+              - Mobile: icon-only 48 × 48 square that sits next to the
+                primary `Read` button on a single row (issue-page hero
+                reshape, 2026-05-23). No label text.
+              - sm+: full-width outlined button with label "Actions",
+                stacked below `Read` in the sidebar column. */}
+          <Button
+            variant="outline"
+            disabled={busy}
+            aria-label="Issue actions"
+            className="grid h-12 w-12 place-items-center p-0 sm:flex sm:h-9 sm:w-full sm:px-3"
+          >
             {busy ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
             ) : (
-              <Settings2 className="mr-2 h-4 w-4" />
+              <Settings2 className="h-4 w-4 sm:mr-2" />
             )}
-            Actions
+            <span className="hidden sm:inline">Actions</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-60">

@@ -2,6 +2,7 @@ import {
   ArrowRight,
   Building2,
   Calendar,
+  ChevronLeft,
   ChevronRight,
   Clock,
   FileStack,
@@ -136,37 +137,55 @@ export default async function IssuePage({
 
   return (
     <div className="space-y-10">
-      <nav
-        aria-label="Breadcrumb"
-        className="text-muted-foreground flex flex-wrap items-center gap-1.5 text-xs"
-      >
-        <Link
-          href={`/`}
-          className="hover:text-foreground underline-offset-2 hover:underline"
-        >
-          Library
-        </Link>
-        {series && (
-          <>
-            <ChevronRight className="h-3 w-3" />
-            <Link
-              href={seriesUrl(series)}
-              className="hover:text-foreground underline-offset-2 hover:underline"
-            >
-              {series.name}
-            </Link>
-          </>
-        )}
-        <ChevronRight className="h-3 w-3" />
-        <span className="text-foreground/80">{heading}</span>
+      <nav aria-label="Breadcrumb" className="text-muted-foreground text-xs">
+        {/* Mobile: a back chevron + parent series name only. The H1
+            already announces the issue title, so the breadcrumb's
+            trailing "All Hope Lies in Doom" was just visual noise on
+            a phone-width screen. Hides on sm+ where the full
+            breadcrumb fits comfortably. */}
+        <div className="flex items-center gap-1.5 sm:hidden">
+          <Link
+            href={series ? seriesUrl(series) : `/`}
+            className="hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
+            aria-label={series ? `Back to ${series.name}` : "Back to library"}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            <span>{series?.name ?? "Library"}</span>
+          </Link>
+        </div>
+        {/* sm+ : full breadcrumb (unchanged from pre-v0.5.10). */}
+        <div className="hidden flex-wrap items-center gap-1.5 sm:flex">
+          <Link
+            href={`/`}
+            className="hover:text-foreground underline-offset-2 hover:underline"
+          >
+            Library
+          </Link>
+          {series && (
+            <>
+              <ChevronRight className="h-3 w-3" />
+              <Link
+                href={seriesUrl(series)}
+                className="hover:text-foreground underline-offset-2 hover:underline"
+              >
+                {series.name}
+              </Link>
+            </>
+          )}
+          <ChevronRight className="h-3 w-3" />
+          <span className="text-foreground/80">{heading}</span>
+        </div>
       </nav>
 
       <header className="grid grid-cols-1 gap-6 sm:gap-8 lg:grid-cols-[18rem_1fr]">
-        {/* Mobile: cover shrinks to ~44 (176px) to leave room for the
-            primary CTA + the title block above the fold. Scales up to
-            56 (224px) at sm, full 72 (288px) at lg. */}
+        {/* v0.5.10 mobile hero reshape: cover grows to ~82% viewport
+            width on phones so it actually reads as the page's
+            primary visual; Read + Actions collapse to a single row
+            with the menu as a 48 × 48 kebab. sm+ keeps the prior
+            sidebar layout (cover 14rem/18rem column, buttons stacked
+            below). */}
         <div className="flex flex-col gap-3 sm:gap-4">
-          <div className="mx-auto w-44 max-w-full sm:w-56 lg:mx-0 lg:w-72">
+          <div className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72">
             <Cover
               src={
                 issue.state === "active"
@@ -177,15 +196,15 @@ export default async function IssuePage({
               fallback={issue.state === "active" ? "Cover" : issue.state}
             />
           </div>
-          <div className="mx-auto flex w-full max-w-xs flex-col gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
+          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm sm:flex-col lg:mx-0 lg:max-w-72">
             {issue.state === "active" ? (
-              <Button asChild size="lg" className="w-full">
+              <Button asChild size="lg" className="flex-1 sm:w-full">
                 <Link href={readerUrl(issue, { cbl: cblSavedViewId })}>
                   {readLabel}
                 </Link>
               </Button>
             ) : (
-              <p className="border-border text-muted-foreground rounded-md border border-dashed px-4 py-2 text-center text-xs">
+              <p className="border-border text-muted-foreground flex-1 rounded-md border border-dashed px-4 py-2 text-center text-xs sm:flex-initial">
                 Cannot read — issue state: {issue.state}
               </p>
             )}
@@ -587,10 +606,14 @@ function IssueFactRow({
   }
   if (facts.length === 0) return null;
   return (
-    <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+    <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:gap-x-4 sm:gap-y-2 sm:text-sm">
       {facts.map((f, i) => (
         <span key={i} className="inline-flex items-center gap-1.5">
-          <span className="text-muted-foreground/80">{f.icon}</span>
+          {/* Icons drop on mobile to keep the row compact and on a
+              single visual line; sm+ keeps the iconed treatment. */}
+          <span className="text-muted-foreground/80 hidden sm:inline">
+            {f.icon}
+          </span>
           <span>{f.label}</span>
         </span>
       ))}
