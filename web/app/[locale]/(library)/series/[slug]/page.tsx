@@ -1,4 +1,5 @@
 import {
+  ChevronLeft,
   ChevronRight,
   Building2,
   FileStack,
@@ -100,43 +101,61 @@ export default async function SeriesPage({
 
   return (
     <div className="space-y-10">
-      <nav
-        aria-label="Breadcrumb"
-        className="text-muted-foreground flex items-center gap-1.5 text-xs"
-      >
-        <Link
-          href={`/`}
-          className="hover:text-foreground underline-offset-2 hover:underline"
-        >
-          Library
-        </Link>
-        <ChevronRight className="h-3 w-3" />
-        <span className="text-foreground/80">{series.name}</span>
+      <nav aria-label="Breadcrumb" className="text-muted-foreground text-xs">
+        {/* Mobile: back chevron + "Library" parent only. The H1
+            already announces the series name, so the trailing
+            "{series.name}" was just visual noise on phones. */}
+        <div className="flex items-center gap-1.5 sm:hidden">
+          <Link
+            href={`/`}
+            className="hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
+            aria-label="Back to library"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            <span>Library</span>
+          </Link>
+        </div>
+        {/* sm+: full `Library › Series` trail. */}
+        <div className="hidden items-center gap-1.5 sm:flex">
+          <Link
+            href={`/`}
+            className="hover:text-foreground underline-offset-2 hover:underline"
+          >
+            Library
+          </Link>
+          <ChevronRight className="h-3 w-3" />
+          <span className="text-foreground/80">{series.name}</span>
+        </div>
       </nav>
 
       <header className="grid grid-cols-1 gap-6 sm:gap-8 lg:grid-cols-[18rem_1fr]">
-        {/* Cover column — bigger than before, with the primary CTA stacked
-            directly underneath so it falls within natural eye-flow from
-            cover → action. On mobile the cover shrinks (w-44) so the
-            title + CTA + status badges stay above the fold. */}
+        {/* v0.5.10 mobile hero reshape — mirrors the issue page so
+            the two surfaces feel consistent on phones. Cover grows
+            to ~82% viewport width on mobile; Read + Actions collapse
+            to a single 48px-tall row with Actions as an icon-only
+            kebab. sm+ keeps the prior stacked sidebar layout. */}
         <div className="flex flex-col gap-3 sm:gap-4">
-          <div className="mx-auto w-44 max-w-full sm:w-56 lg:mx-0 lg:w-72">
+          <div className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72">
             <Cover
               src={series.cover_url}
               alt={`Cover of ${series.name}`}
               fallback={series.publisher ?? "—"}
             />
           </div>
-          <div className="mx-auto flex w-full max-w-xs flex-col gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
+          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm sm:flex-col lg:mx-0 lg:max-w-72">
             {next.target ? (
-              <Button asChild size="lg" className="w-full">
+              <Button
+                asChild
+                size="lg"
+                className="h-12 flex-1 sm:h-10 sm:w-full"
+              >
                 <Link href={readerUrl(next.target)}>
                   {readButtonLabel(next.state)}
                   {next.target.number ? ` · #${next.target.number}` : ""}
                 </Link>
               </Button>
             ) : (
-              <p className="border-border text-muted-foreground rounded-md border border-dashed px-4 py-2 text-center text-xs">
+              <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-auto sm:flex-initial sm:py-2">
                 No active issues to read.
               </p>
             )}
@@ -436,10 +455,14 @@ function SeriesFactRow({
   }
   if (facts.length === 0) return null;
   return (
-    <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+    <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:gap-x-4 sm:gap-y-2 sm:text-sm">
       {facts.map((f, i) => (
         <span key={i} className="inline-flex items-center gap-1.5">
-          <span className="text-muted-foreground/80">{f.icon}</span>
+          {/* Icons drop on mobile so the row stays compact and on a
+              single visual line. Matches the issue page's `IssueFactRow`. */}
+          <span className="text-muted-foreground/80 hidden sm:inline">
+            {f.icon}
+          </span>
           <span>{f.label}</span>
         </span>
       ))}

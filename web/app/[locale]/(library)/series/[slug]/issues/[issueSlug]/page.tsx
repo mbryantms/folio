@@ -198,13 +198,21 @@ export default async function IssuePage({
           </div>
           <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm sm:flex-col lg:mx-0 lg:max-w-72">
             {issue.state === "active" ? (
-              <Button asChild size="lg" className="flex-1 sm:w-full">
+              // h-12 on mobile so the button matches the Actions
+              // kebab's 48 × 48 footprint exactly; sm+ falls back to
+              // size="lg"'s native h-10 (Actions reverts to h-9 too,
+              // so they stay flush there as well).
+              <Button
+                asChild
+                size="lg"
+                className="h-12 flex-1 sm:h-10 sm:w-full"
+              >
                 <Link href={readerUrl(issue, { cbl: cblSavedViewId })}>
                   {readLabel}
                 </Link>
               </Button>
             ) : (
-              <p className="border-border text-muted-foreground flex-1 rounded-md border border-dashed px-4 py-2 text-center text-xs sm:flex-initial">
+              <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-auto sm:flex-initial sm:py-2">
                 Cannot read — issue state: {issue.state}
               </p>
             )}

@@ -167,13 +167,22 @@ export function SeriesSettingsMenu({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" disabled={busy}>
+          {/* Responsive trigger — mirrors `IssueSettingsMenu`. Mobile
+              is icon-only 48 × 48 so it sits flush next to the
+              primary `Read` button on the hero row; sm+ keeps the
+              labeled outline button in the stacked sidebar layout. */}
+          <Button
+            variant="outline"
+            disabled={busy}
+            aria-label="Series actions"
+            className="grid h-12 w-12 place-items-center p-0 sm:flex sm:h-9 sm:w-full sm:px-3"
+          >
             {busy ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
             ) : (
-              <Settings2 className="mr-2 h-4 w-4" />
+              <Settings2 className="h-4 w-4 sm:mr-2" />
             )}
-            Actions
+            <span className="hidden sm:inline">Actions</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-60">
