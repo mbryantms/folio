@@ -58,6 +58,7 @@ export function WidgetCard({
   Icon,
   children,
   showMenu = true,
+  extraMenuItems,
   className,
 }: {
   widget: LogWidgetView;
@@ -67,6 +68,12 @@ export function WidgetCard({
   Icon?: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
   showMenu?: boolean;
+  /** Optional renderer for widget-specific menu items. Rendered above
+   *  the standard `Configure… / Remove` block, with a separator in
+   *  between when present. Use this for toggles like "Show hidden"
+   *  on the chrono feed so per-widget preferences live alongside
+   *  the widget's other actions instead of cluttering the card body. */
+  extraMenuItems?: React.ReactNode;
   className?: string;
 }) {
   const remove = useRemoveLogWidget(widget.id);
@@ -140,6 +147,12 @@ export function WidgetCard({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {extraMenuItems ? (
+                <>
+                  {extraMenuItems}
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
               <DropdownMenuItem
                 onSelect={(e) => {
                   e.preventDefault();

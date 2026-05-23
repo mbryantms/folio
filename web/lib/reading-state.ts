@@ -72,7 +72,25 @@ export function pickNextIssue(
     return { target: null, state: "unread" };
   }
 
-  // 1. Most-recently-updated in-progress issue.
+  // "Main" run = issues at or after #1 (or unnumbered ones we
+  // can't classify). Preludes — #0, #1/2, FCBD specials and any
+  // other `sort_number < 1` entry — are usually opt-in extras the
+  // user seeks out later; they shouldn't anchor the Read CTA's
+  // starting point. Same partition the server's series-cover-pick
+  // uses to anchor on issue #1 (m20261225 / hydrate_series). The
+  // preludes still appear in the issue listing in their natural
+  // order — only the auto-pick changes.
+  const isMain = (i: IssueSummaryView) =>
+    i.sort_number == null || i.sort_number >= 1;
+  const main = active.filter(isMain);
+  const isUnread = (i: IssueSummaryView) => {
+    const p = progressByIssueId.get(i.id);
+    return !p || !p.finished;
+  };
+
+  // 1. Most-recently-updated in-progress issue. Preludes count here —
+  // if the user opened #1/2 deliberately, the resume should take them
+  // back there.
   let bestInProgress: { issue: IssueSummaryView; updatedAt: string } | null =
     null;
   for (const issue of active) {
@@ -92,17 +110,24 @@ export function pickNextIssue(
     return { target: bestInProgress.issue, state: "in_progress" };
   }
 
-  // 2. First not-finished issue (no record OR record with page=0).
-  const firstUnread = active.find((i) => {
-    const p = progressByIssueId.get(i.id);
-    return !p || !p.finished;
-  });
-  if (firstUnread) {
-    return { target: firstUnread, state: "unread" };
+  // 2. First not-finished MAIN issue. Skips preludes so a series
+  // with #1/2 + #1 + … gets a Read button that lands on #1.
+  const firstMainUnread = main.find(isUnread);
+  if (firstMainUnread) {
+    return { target: firstMainUnread, state: "unread" };
   }
 
-  // 3. Every active issue is finished — restart from the top.
-  return { target: active[0] ?? null, state: "finished" };
+  // 2b. Every main issue is finished. Fall back to any unread prelude
+  // so the user can mop up the specials before the series is truly
+  // done.
+  const firstPreludeUnread = active.find(isUnread);
+  if (firstPreludeUnread) {
+    return { target: firstPreludeUnread, state: "unread" };
+  }
+
+  // 3. Every active issue is finished — restart from the canonical
+  // start (#1) when one exists, otherwise from whatever comes first.
+  return { target: main[0] ?? active[0] ?? null, state: "finished" };
 }
 
 /** Build a `Map<issue_id, ProgressLike>` from a `/progress` delta payload. */

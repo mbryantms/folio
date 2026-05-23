@@ -16,6 +16,7 @@ import {
 
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
@@ -156,21 +157,26 @@ export function ChronoFeed({
   );
 
   return (
-    <WidgetCard widget={widget} title="Activity" titleHref="/log/activity">
-      {/* "Show hidden" toggle. Tiny, low-contrast — most users will
-       *  never touch it; appears only when the underlying feature is
-       *  available. Toggling repolls the feed with `include_hidden`. */}
-      <div className="mb-2 flex items-center justify-end gap-1.5 text-[11px]">
-        <label className="text-muted-foreground inline-flex cursor-pointer items-center gap-1.5 select-none">
-          <input
-            type="checkbox"
-            checked={showHidden}
-            onChange={(e) => setShowHidden(e.target.checked)}
-            className="accent-primary h-3 w-3"
-          />
+    <WidgetCard
+      widget={widget}
+      title="Activity"
+      titleHref="/log/activity"
+      extraMenuItems={
+        // Lives in the widget's kebab so the feed body stays
+        // chrome-free — most users never touch this toggle, and an
+        // always-visible row of controls above the feed felt heavier
+        // than the affordance warranted. Checkbox state is the same
+        // `showHidden` that drives the underlying `include_hidden`
+        // filter; flipping it repolls the feed.
+        <DropdownMenuCheckboxItem
+          checked={showHidden}
+          onCheckedChange={(v) => setShowHidden(v === true)}
+          onSelect={(e) => e.preventDefault()}
+        >
           Show hidden
-        </label>
-      </div>
+        </DropdownMenuCheckboxItem>
+      }
+    >
       <div ref={scrollRef} className="max-h-160 overflow-y-auto pr-1">
         {query.isLoading ? (
           <FeedSkeleton />

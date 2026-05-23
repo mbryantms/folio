@@ -135,6 +135,63 @@ describe("pickNextIssue", () => {
     expect(out.target?.id).toBe("i1");
     expect(out.state).toBe("unread");
   });
+
+  it("skips preludes (sort_number < 1) when picking the first unread", () => {
+    // Series with a #1/2 special prefixing #1 + #2. The Read button
+    // should land on #1, not the prelude.
+    const issues = [
+      issue({ id: "half", number: "1/2", sort_number: 0.5 }),
+      issue({ id: "one", number: "1", sort_number: 1 }),
+      issue({ id: "two", number: "2", sort_number: 2 }),
+    ];
+    const out = pickNextIssue(issues, new Map());
+    expect(out.target?.id).toBe("one");
+    expect(out.state).toBe("unread");
+  });
+
+  it("falls back to a prelude only when every main issue is finished", () => {
+    const issues = [
+      issue({ id: "half", number: "1/2", sort_number: 0.5 }),
+      issue({ id: "one", number: "1", sort_number: 1 }),
+    ];
+    const map = indexProgress([
+      progress({ issue_id: "one", finished: true, page: 21 }),
+    ]);
+    const out = pickNextIssue(issues, map);
+    expect(out.target?.id).toBe("half");
+    expect(out.state).toBe("unread");
+  });
+
+  it("restarts from main #1 when everything is finished, ignoring preludes", () => {
+    const issues = [
+      issue({ id: "half", number: "1/2", sort_number: 0.5 }),
+      issue({ id: "one", number: "1", sort_number: 1 }),
+      issue({ id: "two", number: "2", sort_number: 2 }),
+    ];
+    const map = indexProgress([
+      progress({ issue_id: "half", finished: true, page: 21 }),
+      progress({ issue_id: "one", finished: true, page: 21 }),
+      progress({ issue_id: "two", finished: true, page: 21 }),
+    ]);
+    const out = pickNextIssue(issues, map);
+    expect(out.target?.id).toBe("one");
+    expect(out.state).toBe("finished");
+  });
+
+  it("still honors in-progress preludes (resume beats anchor)", () => {
+    // If the user opened #1/2 deliberately, the Continue reading
+    // target should take them back there rather than jumping to #1.
+    const issues = [
+      issue({ id: "half", number: "1/2", sort_number: 0.5 }),
+      issue({ id: "one", number: "1", sort_number: 1 }),
+    ];
+    const map = indexProgress([
+      progress({ issue_id: "half", page: 4, updated_at: "2025-04-01T00:00:00Z" }),
+    ]);
+    const out = pickNextIssue(issues, map);
+    expect(out.target?.id).toBe("half");
+    expect(out.state).toBe("in_progress");
+  });
 });
 
 describe("indexProgress", () => {
