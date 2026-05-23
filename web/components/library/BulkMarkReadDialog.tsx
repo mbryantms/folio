@@ -63,6 +63,36 @@ export function BulkMarkReadDialog({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) setBackfill(true);
   }, [open]);
+  // Radix sets `pointer-events: none` on the body while the modal is
+  // open and removes it on close. When the close happens during an
+  // async mutation (the typical "click Mark read" → mutation pending
+  // → onSuccess closes the dialog + router.refresh()) the cleanup
+  // sometimes loses the race with the re-render storm and the body
+  // ends up interaction-locked indefinitely.
+  //
+  // Defensive cleanup: every time `open` transitions to false,
+  // explicitly restore `document.body.style.pointerEvents` on the
+  // next microtask (after Radix's own cleanup would have run in the
+  // happy path — so this is a no-op there). Encapsulated in the
+  // dialog itself rather than the four parent surfaces so the fix
+  // can't be missed at a new call site.
+  React.useEffect(() => {
+    if (open) return;
+    if (typeof document === "undefined") return;
+    const restore = () => {
+      // Only clear if Radix left it stuck — don't stomp a legitimate
+      // `pointer-events: none` set by another component.
+      if (document.body.style.pointerEvents === "none") {
+        document.body.style.pointerEvents = "";
+      }
+    };
+    // Two passes: one immediately after the close transition kicks
+    // off (microtask), one after the typical Radix close animation
+    // duration (200ms). Belt + suspenders for the common race shapes.
+    queueMicrotask(restore);
+    const t = window.setTimeout(restore, 250);
+    return () => window.clearTimeout(t);
+  }, [open]);
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
