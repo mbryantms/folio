@@ -26,6 +26,18 @@ pub struct Model {
     /// reading-log event feed.
     #[sea_orm(nullable)]
     pub finished_at: Option<DateTimeWithTimeZone>,
+    /// "This finish came from a catalog/sync write, not active
+    /// reading." Flipped to true only by bulk-mark endpoints (when the
+    /// caller passes `backfill: true`) and by sync clients writing
+    /// historical progress. Per-issue reader writes always set
+    /// `false`. Any "unread" write clears it back to `false`.
+    ///
+    /// Read-side effect: time-bound activity surfaces (reading log,
+    /// heatmap, daily-pages stat, streak, Just Finished sort) filter
+    /// `WHERE is_backfill = false`. Lifetime/cumulative metrics
+    /// (total read count, completion %, On Deck, badges) ignore the
+    /// flag — a backfilled issue is still read.
+    pub is_backfill: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

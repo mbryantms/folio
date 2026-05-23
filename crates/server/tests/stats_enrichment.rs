@@ -542,6 +542,7 @@ async fn completion_honors_progress_records_finished() {
         finished_at: Set(Some(now)),
         updated_at: Set(now),
         device: Set(None),
+        is_backfill: Set(false),
     }
     .insert(&db)
     .await

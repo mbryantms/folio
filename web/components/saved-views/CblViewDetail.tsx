@@ -16,6 +16,10 @@ import {
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
 import { CblStatsPills } from "@/components/cbl/CblStatsPills";
+import {
+  BulkMarkReadDialog,
+  BULK_BACKFILL_PROMPT_THRESHOLD,
+} from "@/components/library/BulkMarkReadDialog";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
@@ -219,6 +223,11 @@ function CblViewDetailInner({
     return out;
   }, [loadedEntries, selection]);
 
+  // Hooks must run unconditionally — declared above the early
+  // returns so the loading / error branches don't break the
+  // rules-of-hooks invariant.
+  const [markReadOpen, setMarkReadOpen] = React.useState(false);
+
   if (detail.isLoading) {
     return (
       <div className="text-muted-foreground py-12 text-sm">Loading view…</div>
@@ -236,8 +245,27 @@ function CblViewDetailInner({
   const filterTotal = entriesQuery.data?.pages[0]?.total ?? null;
   const missingCount = list.stats.missing;
   const canRefresh = list.source_kind !== "upload";
+  const submitMarkRead = (backfill: boolean) => {
+    if (selectedIssueIds.length === 0) return;
+    bulkMark.mutate(
+      { issue_ids: selectedIssueIds, finished: true, backfill },
+      {
+        onSuccess: () => {
+          selection.clear();
+          setMarkReadOpen(false);
+        },
+      },
+    );
+  };
   const runBulkMark = (finished: boolean) => {
     if (selectedIssueIds.length === 0) return;
+    if (
+      finished
+      && selectedIssueIds.length >= BULK_BACKFILL_PROMPT_THRESHOLD
+    ) {
+      setMarkReadOpen(true);
+      return;
+    }
     bulkMark.mutate(
       { issue_ids: selectedIssueIds, finished },
       { onSuccess: () => selection.clear() },
@@ -574,6 +602,13 @@ function CblViewDetailInner({
           </PopoverPortalContainer>
         </SheetContent>
       </Sheet>
+      <BulkMarkReadDialog
+        open={markReadOpen}
+        onOpenChange={setMarkReadOpen}
+        count={selectedIssueIds.length}
+        onConfirm={submitMarkRead}
+        isPending={bulkMark.isPending}
+      />
     </div>
   );
 }

@@ -4,6 +4,10 @@ import * as React from "react";
 import { BookOpenCheck, BookOpen, FolderPlus, ListChecks } from "lucide-react";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
+import {
+  BulkMarkReadDialog,
+  BULK_BACKFILL_PROMPT_THRESHOLD,
+} from "@/components/library/BulkMarkReadDialog";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import {
   SeriesCard,
@@ -55,6 +59,20 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const selection = useSelection(items);
   const bulkMark = useBulkMarkSeriesProgress();
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [markReadOpen, setMarkReadOpen] = React.useState(false);
+  const submitMarkRead = (backfill: boolean) => {
+    const series_ids = Array.from(selection.selected);
+    if (series_ids.length === 0) return;
+    bulkMark.mutate(
+      { series_ids, finished: true, backfill },
+      {
+        onSuccess: () => {
+          selection.exit();
+          setMarkReadOpen(false);
+        },
+      },
+    );
+  };
   const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const wasSelectModeRef = React.useRef(false);
   // Esc exits select mode; Cmd/Ctrl+A selects every loaded card.
@@ -145,6 +163,15 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
             onClick: () => {
               const series_ids = Array.from(selection.selected);
               if (series_ids.length === 0) return;
+              // Each series expands to many issues server-side, so
+              // even a small series-selection is a large write. Prompt
+              // at the same series-count threshold so accidental
+              // "mark 10 series read" doesn't silently spike the
+              // reading log with hundreds of fake entries.
+              if (series_ids.length >= BULK_BACKFILL_PROMPT_THRESHOLD) {
+                setMarkReadOpen(true);
+                return;
+              }
               bulkMark.mutate(
                 { series_ids, finished: true },
                 { onSuccess: () => selection.exit() },
@@ -235,6 +262,13 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
           if (!next) selection.clear();
         }}
         targets={selectedTargets}
+      />
+      <BulkMarkReadDialog
+        open={markReadOpen}
+        onOpenChange={setMarkReadOpen}
+        count={selection.count}
+        onConfirm={submitMarkRead}
+        isPending={bulkMark.isPending}
       />
     </div>
   );

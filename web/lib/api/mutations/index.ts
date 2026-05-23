@@ -418,7 +418,20 @@ export function useBulkMarkProgress() {
   const qc = useQueryClient();
   return useApiMutation<
     BulkProgressResp,
-    { issue_ids: string[]; finished: boolean }
+    {
+      issue_ids: string[];
+      finished: boolean;
+      /** "Updating my collection — don't count toward today's reading
+       *  activity." When true and `finished` is true, the resulting
+       *  progress rows carry `is_backfill = true` and are excluded
+       *  from the reading log feed, Just Finished saved view, and
+       *  similar activity-bound surfaces. Ignored when `finished` is
+       *  false (the server clears the flag on every unread write).
+       *  Defaults to `false` so the bare mutation matches the
+       *  pre-v0.5.7 shape; callers (today: only `SelectionToolbar`)
+       *  opt in via the dialog checkbox. */
+      backfill?: boolean;
+    }
   >(
     (input) => ({
       path: `/me/progress/bulk`,
@@ -526,7 +539,13 @@ export function useBulkMarkSeriesProgress() {
   const qc = useQueryClient();
   return useApiMutation<
     BulkSeriesProgressResp,
-    { series_ids: string[]; finished: boolean }
+    {
+      series_ids: string[];
+      finished: boolean;
+      /** See [`useBulkMarkProgress`]'s `backfill` doc — same flag,
+       *  same semantics, propagated through the multi-series endpoint. */
+      backfill?: boolean;
+    }
   >(
     (input) => ({
       path: `/me/progress/series-bulk`,

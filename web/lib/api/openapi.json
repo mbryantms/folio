@@ -14381,6 +14381,10 @@
           "finished"
         ],
         "properties": {
+          "backfill": {
+            "type": "boolean",
+            "description": "See [`UpsertSeriesReq::backfill`] — same semantics: when\n`true` and `finished == true`, every row written carries\n`is_backfill = true` and is excluded from time-bound activity\nsurfaces. Defaults to `false` for back-compat."
+          },
           "device": {
             "type": [
               "string",
@@ -14508,6 +14512,10 @@
           "finished"
         ],
         "properties": {
+          "backfill": {
+            "type": "boolean",
+            "description": "See [`UpsertSeriesReq::backfill`]."
+          },
           "device": {
             "type": [
               "string",
@@ -14568,6 +14576,10 @@
           "finished"
         ],
         "properties": {
+          "backfill": {
+            "type": "boolean",
+            "description": "\"Updating my collection — don't count toward today's reading\nactivity.\" When `true` and `finished == true`, every written\nrow carries `is_backfill = true` and is filtered out of the\nreading log, heatmap, daily-pages stat, streak counter, and\nthe Just Finished sort. `false` (default) preserves the\npre-v0.5.7 behaviour of treating bulk-marks as active reading.\nIgnored when `finished == false` — unread writes always clear\nthe flag."
+          },
           "device": {
             "type": [
               "string",

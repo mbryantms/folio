@@ -359,6 +359,7 @@ pub async fn seed_progress<C: ConnectionTrait>(
         finished_at: Set(if finished { Some(now) } else { None }),
         updated_at: Set(now),
         device: Set(None),
+        is_backfill: Set(false),
     }
     .insert(db)
     .await
@@ -385,6 +386,7 @@ pub async fn seed_progress_at<C: ConnectionTrait>(
         finished_at: Set(if finished { Some(when) } else { None }),
         updated_at: Set(when),
         device: Set(None),
+        is_backfill: Set(false),
     }
     .insert(db)
     .await

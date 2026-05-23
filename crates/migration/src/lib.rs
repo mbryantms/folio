@@ -70,6 +70,7 @@ mod m20261222_000001_user_max_rails_per_page;
 mod m20261223_000001_person;
 mod m20261224_000001_drop_stale_unstarted_templates;
 mod m20261225_000001_credit_person_id;
+mod m20261226_000001_progress_is_backfill;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -148,6 +149,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261223_000001_person::Migration),
             Box::new(m20261224_000001_drop_stale_unstarted_templates::Migration),
             Box::new(m20261225_000001_credit_person_id::Migration),
+            Box::new(m20261226_000001_progress_is_backfill::Migration),
         ]
     }
 }

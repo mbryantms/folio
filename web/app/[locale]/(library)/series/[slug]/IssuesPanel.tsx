@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Circle, FolderPlus, ListChecks, Pencil } from "lucide-react";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
+import {
+  BulkMarkReadDialog,
+  BULK_BACKFILL_PROMPT_THRESHOLD,
+} from "@/components/library/BulkMarkReadDialog";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { EditMetadataDialog } from "@/components/library/EditMetadataDialog";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
@@ -117,10 +121,35 @@ export function IssuesPanel({
   const bulkMark = useBulkMarkProgress();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editMetadataOpen, setEditMetadataOpen] = useState(false);
+  const [markReadOpen, setMarkReadOpen] = useState(false);
+  const submitMarkRead = useCallback(
+    (backfill: boolean) => {
+      const ids = Array.from(selection.selected);
+      if (ids.length === 0) return;
+      bulkMark.mutate(
+        { issue_ids: ids, finished: true, backfill },
+        {
+          onSuccess: () => {
+            selection.clear();
+            setMarkReadOpen(false);
+          },
+        },
+      );
+    },
+    [bulkMark, selection],
+  );
   const runBulk = useCallback(
     (finished: boolean) => {
       const ids = Array.from(selection.selected);
       if (ids.length === 0) return;
+      // Mark-read at scale (>= threshold) is overwhelmingly catalog
+      // maintenance, not active reading — prompt before writing so the
+      // user can choose. Mark-unread + small mark-read selections
+      // skip the prompt and proceed directly (no activity to mislead).
+      if (finished && ids.length >= BULK_BACKFILL_PROMPT_THRESHOLD) {
+        setMarkReadOpen(true);
+        return;
+      }
       bulkMark.mutate(
         { issue_ids: ids, finished },
         {
@@ -322,6 +351,13 @@ export function IssuesPanel({
           if (!next) selection.clear();
         }}
         issueIds={Array.from(selection.selected)}
+      />
+      <BulkMarkReadDialog
+        open={markReadOpen}
+        onOpenChange={setMarkReadOpen}
+        count={selection.selected.size}
+        onConfirm={submitMarkRead}
+        isPending={bulkMark.isPending}
       />
 
       {query.isError && (

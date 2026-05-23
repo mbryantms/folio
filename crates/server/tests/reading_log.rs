@@ -254,6 +254,25 @@ async fn mark_finished_at(
     issue_id: &str,
     at: chrono::DateTime<chrono::FixedOffset>,
 ) {
+    mark_finished_at_inner(app, user, issue_id, at, false).await;
+}
+
+async fn mark_backfill_at(
+    app: &TestApp,
+    user: Uuid,
+    issue_id: &str,
+    at: chrono::DateTime<chrono::FixedOffset>,
+) {
+    mark_finished_at_inner(app, user, issue_id, at, true).await;
+}
+
+async fn mark_finished_at_inner(
+    app: &TestApp,
+    user: Uuid,
+    issue_id: &str,
+    at: chrono::DateTime<chrono::FixedOffset>,
+    is_backfill: bool,
+) {
     let db = Database::connect(&app.db_url).await.unwrap();
     ProgressAM {
         user_id: Set(user),
@@ -264,6 +283,7 @@ async fn mark_finished_at(
         finished_at: Set(Some(at)),
         updated_at: Set(at),
         device: Set(None),
+        is_backfill: Set(is_backfill),
     }
     .insert(&db)
     .await
@@ -629,4 +649,57 @@ async fn unknown_kind_filter_returns_empty_not_error() {
     let (status, body) = get_json(&app, "/api/me/reading-log?kind=sneeze", &auth).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["events"].as_array().unwrap().len(), 0);
+}
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backfill_finishes_excluded_from_feed() {
+    // A bulk-mark catalog write lands as `progress_records.is_backfill =
+    // true` and `finished = true`. The reading-log feed should ignore
+    // it so it doesn't pollute the user's "what I just read" history
+    // with a stack of catalog updates.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "backfill@rl.test").await;
+    let (lib_id, _sid, ids) = seed_library_with_issues(&app, "bf", 2).await;
+    grant_library(&app, auth.user_id, lib_id).await;
+
+    let real_t =
+        chrono::DateTime::parse_from_rfc3339("2030-01-01T08:00:00Z").unwrap();
+    let backfill_t =
+        chrono::DateTime::parse_from_rfc3339("2030-01-02T08:00:00Z").unwrap();
+    // Issue 0: a genuine read. Issue 1: a backfill catalog write
+    // (later timestamp — would normally sort first in DESC).
+    mark_finished_at(&app, auth.user_id, &ids[0], real_t).await;
+    mark_backfill_at(&app, auth.user_id, &ids[1], backfill_t).await;
+
+    let (_, body) =
+        get_json(&app, "/api/me/reading-log?kind=issue_finished", &auth).await;
+    let events = body["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "backfill row must not appear; got {body:#?}");
+    assert_eq!(events[0]["issue"]["id"].as_str().unwrap(), ids[0]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backfill_only_series_excluded_from_series_finished() {
+    // Series-level "finished" derives from MAX(finished_at) over the
+    // user's finished issues in the series. When every issue's finish
+    // is a backfill, the derived series-finish event must not surface
+    // — the user didn't "just finish" the series; they recorded
+    // catalog state.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bf-series@rl.test").await;
+    let (lib_id, _sid, ids) = seed_library_with_issues(&app, "bf-ser", 2).await;
+    grant_library(&app, auth.user_id, lib_id).await;
+
+    let t = chrono::DateTime::parse_from_rfc3339("2030-03-01T08:00:00Z").unwrap();
+    mark_backfill_at(&app, auth.user_id, &ids[0], t).await;
+    mark_backfill_at(&app, auth.user_id, &ids[1], t).await;
+
+    let (_, body) =
+        get_json(&app, "/api/me/reading-log?kind=series_finished", &auth).await;
+    let events = body["events"].as_array().unwrap();
+    assert!(
+        events.is_empty(),
+        "series-finished derived from backfill-only finishes must be suppressed; got {body:#?}",
+    );
 }

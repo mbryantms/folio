@@ -458,6 +458,7 @@ async fn finish_issue(app: &TestApp, user_id: Uuid, issue_id: &str) {
         finished_at: Set(Some(now)),
         updated_at: Set(now),
         device: Set(None),
+        is_backfill: Set(false),
     }
     .insert(&db)
     .await

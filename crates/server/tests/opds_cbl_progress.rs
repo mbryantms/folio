@@ -285,6 +285,7 @@ async fn seed_progress(
         finished_at: Set(if finished { Some(when) } else { None }),
         updated_at: Set(when),
         device: Set(None),
+        is_backfill: Set(false),
     }
     .insert(db)
     .await

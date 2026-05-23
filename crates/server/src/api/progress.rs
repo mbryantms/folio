@@ -106,6 +106,21 @@ pub(crate) fn resolve_finished_at(
     }
 }
 
+/// Resolve the `is_backfill` value for a write. The flag means "this
+/// finish came from a catalog/sync write, not active reading"; it's
+/// `true` only when (a) the new state is finished and (b) the caller
+/// explicitly opted in via `backfill: true`. Every unread write
+/// clears it back to `false`, regardless of the previous row's flag
+/// — the user just said this issue isn't done, so the catalog/sync
+/// origin is no longer load-bearing.
+///
+/// Per-issue reader writes pass `req_backfill = false` unconditionally
+/// (the reader is by definition active reading). Only the bulk-mark
+/// and whole-series endpoints expose the toggle.
+pub(crate) fn resolve_is_backfill(next_finished: bool, req_backfill: bool) -> bool {
+    next_finished && req_backfill
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
     /// RFC 3339 timestamp; only rows updated strictly after this are returned.
@@ -193,6 +208,9 @@ pub(crate) async fn upsert_for(
                 finished_at: Set(next_finished_at),
                 updated_at: Set(now),
                 device: Set(device),
+                // Per-issue reader writes are always active reading
+                // — clear any previously-set backfill flag.
+                is_backfill: Set(false),
             };
             am.update(&app.db).await
         }
@@ -207,6 +225,7 @@ pub(crate) async fn upsert_for(
                 finished_at: Set(if next_finished { Some(now) } else { None }),
                 updated_at: Set(now),
                 device: Set(device),
+                is_backfill: Set(false),
             };
             am.insert(&app.db).await
         }
@@ -261,6 +280,16 @@ pub struct UpsertSeriesReq {
     /// device label rolls through for sync-aware UIs.
     #[serde(default)]
     pub device: Option<String>,
+    /// "Updating my collection — don't count toward today's reading
+    /// activity." When `true` and `finished == true`, every written
+    /// row carries `is_backfill = true` and is filtered out of the
+    /// reading log, heatmap, daily-pages stat, streak counter, and
+    /// the Just Finished sort. `false` (default) preserves the
+    /// pre-v0.5.7 behaviour of treating bulk-marks as active reading.
+    /// Ignored when `finished == false` — unread writes always clear
+    /// the flag.
+    #[serde(default)]
+    pub backfill: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -355,6 +384,7 @@ pub async fn upsert_series(
                     finished_at: Set(next_finished_at),
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
+                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                 };
                 if let Err(e) = am.update(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series-progress update failed");
@@ -372,6 +402,7 @@ pub async fn upsert_series(
                     finished_at: Set(if req.finished { Some(now) } else { None }),
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
+                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                 };
                 if let Err(e) = am.insert(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series-progress insert failed");
@@ -405,6 +436,12 @@ pub struct UpsertBulkReq {
     pub finished: bool,
     #[serde(default)]
     pub device: Option<String>,
+    /// See [`UpsertSeriesReq::backfill`] — same semantics: when
+    /// `true` and `finished == true`, every row written carries
+    /// `is_backfill = true` and is excluded from time-bound activity
+    /// surfaces. Defaults to `false` for back-compat.
+    #[serde(default)]
+    pub backfill: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -559,6 +596,7 @@ pub async fn upsert_bulk(
                     finished_at: Set(next_finished_at),
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
+                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                 };
                 if let Err(e) = am.update(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress update failed");
@@ -576,6 +614,7 @@ pub async fn upsert_bulk(
                     finished_at: Set(if req.finished { Some(now) } else { None }),
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
+                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                 };
                 if let Err(e) = am.insert(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress insert failed");
@@ -617,6 +656,9 @@ pub struct UpsertSeriesBulkReq {
     pub finished: bool,
     #[serde(default)]
     pub device: Option<String>,
+    /// See [`UpsertSeriesReq::backfill`].
+    #[serde(default)]
+    pub backfill: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -772,6 +814,7 @@ pub async fn upsert_series_bulk(
                         finished_at: Set(next_finished_at),
                         updated_at: Set(now),
                         device: Set(req.device.clone()),
+                        is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                     };
                     if let Err(e) = am.update(&app.db).await {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk update failed");
@@ -789,6 +832,7 @@ pub async fn upsert_series_bulk(
                         finished_at: Set(if req.finished { Some(now) } else { None }),
                         updated_at: Set(now),
                         device: Set(req.device.clone()),
+                        is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                     };
                     if let Err(e) = am.insert(&app.db).await {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk insert failed");

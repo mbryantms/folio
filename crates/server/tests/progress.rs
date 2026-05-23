@@ -875,3 +875,130 @@ async fn series_bulk_dedupes_series_ids() {
     // 1 issue × dedup means a single update.
     assert_eq!(json["updated"].as_u64(), Some(1));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_mark_backfill_flag_is_persisted() {
+    // `POST /me/progress/bulk` accepts a `backfill` field. When the
+    // user sets it true alongside `finished = true`, the resulting
+    // progress_records carry `is_backfill = true` and are excluded
+    // from time-bound activity surfaces (reading log feed, Just
+    // Finished sort, etc).
+    use entity::progress_record;
+    use sea_orm::{Database, EntityTrait};
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-bf@example.com").await;
+    let id = seed_issue(&app).await;
+
+    let (status, _) = post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({
+            "issue_ids": [id],
+            "finished": true,
+            "backfill": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    use entity::progress_record::Column as Pc;
+    use sea_orm::{ColumnTrait, QueryFilter};
+    let row = progress_record::Entity::find()
+        .filter(Pc::IssueId.eq(id.clone()))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("row exists after backfill bulk write");
+    assert!(row.finished);
+    assert!(row.is_backfill, "backfill flag must persist");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_mark_unread_clears_backfill_flag() {
+    // Any unread write must clear `is_backfill`, regardless of what
+    // the caller passes. The user just said "this isn't done"; the
+    // catalog/sync origin is no longer load-bearing.
+    use entity::progress_record;
+    use sea_orm::{Database, EntityTrait};
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-bf-clear@example.com").await;
+    let id = seed_issue(&app).await;
+
+    // First, bulk-mark as backfill (is_backfill = true).
+    post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({"issue_ids": [id], "finished": true, "backfill": true}),
+    )
+    .await;
+
+    // Then bulk-mark unread — even with backfill=true in the body,
+    // is_backfill must clear because finished is now false.
+    let (status, _) = post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({"issue_ids": [id], "finished": false, "backfill": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    use entity::progress_record::Column as Pc;
+    use sea_orm::{ColumnTrait, QueryFilter};
+    let row = progress_record::Entity::find()
+        .filter(Pc::IssueId.eq(id.clone()))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("row exists after unread write");
+    assert!(!row.finished);
+    assert!(
+        !row.is_backfill,
+        "unread write must clear is_backfill regardless of caller flag",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn per_issue_reader_write_always_clears_backfill() {
+    // Per-issue progress writes from the reader (POST /me/progress)
+    // are by definition active reading. They must always set
+    // is_backfill = false, even when the user previously bulk-marked
+    // the issue as backfill.
+    use entity::progress_record;
+    use sea_orm::{Database, EntityTrait};
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "reader-clear@example.com").await;
+    let id = seed_issue(&app).await;
+
+    // Seed via bulk-mark backfill so the row starts is_backfill=true.
+    post_bulk(
+        &app,
+        &auth,
+        serde_json::json!({"issue_ids": [id], "finished": true, "backfill": true}),
+    )
+    .await;
+
+    // Per-issue reader write — bumps a page without changing finished.
+    let (status, _) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": id, "page": 5}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    use entity::progress_record::Column as Pc;
+    use sea_orm::{ColumnTrait, QueryFilter};
+    let row = progress_record::Entity::find()
+        .filter(Pc::IssueId.eq(id.clone()))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("row exists");
+    assert!(
+        !row.is_backfill,
+        "reader writes always clear the backfill flag",
+    );
+}

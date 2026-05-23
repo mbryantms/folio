@@ -229,6 +229,7 @@ async fn fetch_for_series_returns_finished_count_and_percent() {
             finished_at: Set(if finished { Some(now) } else { None }),
             updated_at: Set(now),
             device: Set(None),
+            is_backfill: Set(false),
         }
         .insert(&db)
         .await
@@ -263,6 +264,7 @@ async fn last_read_at_tracks_max_heartbeat() {
         finished_at: Set(None),
         updated_at: Set(now),
         device: Set(None),
+        is_backfill: Set(false),
     }
     .insert(&db)
     .await
@@ -391,6 +393,7 @@ async fn batch_fetch_keys_by_series_id() {
             finished_at: Set(Some(now)),
             updated_at: Set(now),
             device: Set(None),
+            is_backfill: Set(false),
         }
         .insert(&db)
         .await

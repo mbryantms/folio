@@ -717,7 +717,13 @@ async fn fetch_issue_finished(
     // we don't over-fetch.
     let mut query = progress_record::Entity::find()
         .filter(progress_record::Column::UserId.eq(user_id))
-        .filter(progress_record::Column::FinishedAt.is_not_null());
+        .filter(progress_record::Column::FinishedAt.is_not_null())
+        // Catalog/sync writes (`is_backfill = true`) are
+        // intentionally excluded from the reading-log feed — they
+        // represent issues the user is *recording* as read, not
+        // *just read*, and conflating the two produced misleading
+        // activity spikes / heatmap noise on bulk-import days.
+        .filter(progress_record::Column::IsBackfill.eq(false));
     if let Some(t) = from {
         query = query.filter(progress_record::Column::FinishedAt.gte(*t));
     }
@@ -981,6 +987,9 @@ async fn fetch_series_finished(
             WHERE  pr.user_id = $1
               AND  pr.finished = TRUE
               AND  pr.finished_at IS NOT NULL
+              -- Mirror the issue-side filter: backfill rows shouldn't
+              -- crown a series as "just finished" in the reading log.
+              AND  pr.is_backfill = FALSE
               AND  i.state = 'active'
               AND  i.removed_at IS NULL
             GROUP BY i.series_id

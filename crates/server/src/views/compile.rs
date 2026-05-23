@@ -454,10 +454,26 @@ fn sort_expression(field: SortField, order: SortOrder) -> (SimpleExpr, Order) {
         SortField::Year => Expr::col((series::Entity, series::Column::Year)).into(),
         SortField::CreatedAt => Expr::col((series::Entity, series::Column::CreatedAt)).into(),
         SortField::UpdatedAt => Expr::col((series::Entity, series::Column::UpdatedAt)).into(),
-        SortField::LastRead => Expr::col((
-            series_progress::subquery_alias(),
-            Alias::new("last_read_at"),
-        ))
+        // `last_read_at` from `user_series_progress` sources from
+        // `reading_sessions.last_heartbeat_at` only — so a series
+        // touched solely by bulk-mark / sync writes (which don't
+        // emit sessions) has `last_read_at = NULL`. Postgres' default
+        // NULLs-first ordering on DESC would push every fully-
+        // bulk-marked series to the *top* of "Just Finished", which is
+        // precisely the misleading-stats case the backfill scope
+        // exists to address. COALESCE to epoch so those series sort
+        // last in DESC (and first in ASC), naturally matching the
+        // user's mental model of "no real reading activity = least
+        // recent". The original column value returned to the client
+        // is unaffected.
+        SortField::LastRead => Func::coalesce([
+            Expr::col((
+                series_progress::subquery_alias(),
+                Alias::new("last_read_at"),
+            ))
+            .into(),
+            Expr::cust("TIMESTAMPTZ '1970-01-01'"),
+        ])
         .into(),
         SortField::ReadProgress => Func::coalesce([
             Expr::col((series_progress::subquery_alias(), Alias::new("percent"))).into(),
