@@ -208,6 +208,7 @@ fn marker_am(
         color: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
+        hidden_from_log: Set(false),
     }
 }
 

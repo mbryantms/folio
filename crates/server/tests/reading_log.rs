@@ -320,6 +320,7 @@ async fn insert_session(
         device: Set(Some("desktop".into())),
         view_mode: Set(Some("single".into())),
         client_meta: Set(serde_json::json!({})),
+        hidden_from_log: Set(false),
     }
     .insert(&db)
     .await
@@ -352,6 +353,7 @@ async fn insert_marker(
         color: Set(None),
         created_at: Set(at),
         updated_at: Set(at),
+        hidden_from_log: Set(false),
     }
     .insert(&db)
     .await
@@ -702,4 +704,123 @@ async fn backfill_only_series_excluded_from_series_finished() {
         events.is_empty(),
         "series-finished derived from backfill-only finishes must be suppressed; got {body:#?}",
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hide_marker_event_drops_it_from_feed_by_default() {
+    // POST /me/reading-log/hide with kind=marker_created flips the
+    // marker's `hidden_from_log` flag. The feed excludes it on a
+    // normal fetch and surfaces it (with is_hidden:true) only when
+    // the caller passes include_hidden=true.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "hide-marker@rl.test").await;
+    let (lib_id, sid, ids) = seed_library_with_issues(&app, "hm", 1).await;
+    grant_library(&app, auth.user_id, lib_id).await;
+    let t = chrono::DateTime::parse_from_rfc3339("2030-04-01T10:00:00Z").unwrap();
+    let marker_id = insert_marker(&app, auth.user_id, sid, &ids[0], "bookmark", None, t).await;
+
+    // Hide it.
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/me/reading-log/hide")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &auth.csrf)
+        .body(Body::from(
+            serde_json::json!({"kind": "marker_created", "source_id": marker_id.to_string()})
+                .to_string(),
+        ))
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Default feed: marker hidden.
+    let (_, body) =
+        get_json(&app, "/api/me/reading-log?kind=marker_created", &auth).await;
+    assert_eq!(body["events"].as_array().unwrap().len(), 0, "hidden marker must be filtered out by default");
+
+    // include_hidden=true: marker surfaces with is_hidden=true.
+    let (_, body) = get_json(
+        &app,
+        "/api/me/reading-log?kind=marker_created&include_hidden=true",
+        &auth,
+    )
+    .await;
+    let events = body["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "include_hidden must surface the marker");
+    assert_eq!(events[0]["is_hidden"], true);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unhide_marker_event_restores_it_to_feed() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "unhide@rl.test").await;
+    let (lib_id, sid, ids) = seed_library_with_issues(&app, "uh", 1).await;
+    grant_library(&app, auth.user_id, lib_id).await;
+    let t = chrono::DateTime::parse_from_rfc3339("2030-05-01T10:00:00Z").unwrap();
+    let marker_id = insert_marker(&app, auth.user_id, sid, &ids[0], "bookmark", None, t).await;
+
+    // Hide then unhide.
+    for endpoint in &["hide", "unhide"] {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/me/reading-log/{endpoint}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(
+                header::COOKIE,
+                format!(
+                    "__Host-comic_session={}; __Host-comic_csrf={}",
+                    auth.session, auth.csrf
+                ),
+            )
+            .header("X-CSRF-Token", &auth.csrf)
+            .body(Body::from(
+                serde_json::json!({"kind": "marker_created", "source_id": marker_id.to_string()})
+                    .to_string(),
+            ))
+            .unwrap();
+        let resp = app.router.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{endpoint}");
+    }
+
+    let (_, body) =
+        get_json(&app, "/api/me/reading-log?kind=marker_created", &auth).await;
+    let events = body["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "unhide must restore marker to default feed");
+    // is_hidden flag is elided when false on the wire.
+    assert!(events[0].get("is_hidden").is_none() || events[0]["is_hidden"] == false);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hide_series_finished_is_rejected_as_validation_error() {
+    // series_finished is derived; rejecting client requests to hide it
+    // prevents confusion about why the toggle "doesn't work" for that
+    // kind.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "hide-sf@rl.test").await;
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/me/reading-log/hide")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &auth.csrf)
+        .body(Body::from(
+            serde_json::json!({"kind": "series_finished", "source_id": Uuid::new_v4().to_string()})
+                .to_string(),
+        ))
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

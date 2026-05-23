@@ -54,6 +54,14 @@ pub struct Model {
     pub color: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    /// "Hide this event from the reading-log feed." User-controlled
+    /// per-row flag set by `POST /me/reading-log/hide`. Reading-log
+    /// queries filter `hidden_from_log = false` by default; users can
+    /// opt in to seeing hidden rows via `?include_hidden=true` so they
+    /// can audit / unhide. The marker itself stays available on the
+    /// reader overlay + `/bookmarks` regardless of this flag — hiding
+    /// only affects activity-feed visibility.
+    pub hidden_from_log: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

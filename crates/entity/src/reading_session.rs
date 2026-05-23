@@ -63,6 +63,15 @@ pub struct Model {
 
     /// Free-form client metadata (client version, viewport, etc.).
     pub client_meta: Json,
+    /// "Hide this session from the reading-log feed AND from
+    /// activity-derived stats (heatmap, daily pages, streak,
+    /// dow_hour)." User-controlled per-row flag set by
+    /// `POST /me/reading-log/hide`. Sessions stay in the DB
+    /// (preserves cumulative totals + audit trail); they're filtered
+    /// out of every time-bound surface so the user's intent ("this
+    /// didn't really happen as reading activity") is honored
+    /// consistently.
+    pub hidden_from_log: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

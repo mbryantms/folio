@@ -71,6 +71,7 @@ mod m20261223_000001_person;
 mod m20261224_000001_drop_stale_unstarted_templates;
 mod m20261225_000001_credit_person_id;
 mod m20261226_000001_progress_is_backfill;
+mod m20261227_000001_hide_from_log;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -150,6 +151,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261224_000001_drop_stale_unstarted_templates::Migration),
             Box::new(m20261225_000001_credit_person_id::Migration),
             Box::new(m20261226_000001_progress_is_backfill::Migration),
+            Box::new(m20261227_000001_hide_from_log::Migration),
         ]
     }
 }

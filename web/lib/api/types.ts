@@ -833,6 +833,12 @@ export type ReadingLogEventView = {
   series: ReadingLogEventSeries | null;
   issue: ReadingLogEventIssue | null;
   payload: ReadingLogPayload;
+  /** `true` when the event was hidden via `POST /me/reading-log/hide`
+   *  and is only being returned because the caller passed
+   *  `include_hidden=true`. Default false; UI renders faded + offers
+   *  "Show again". Field is `skip_serializing_if`-elided on the wire
+   *  when false. */
+  is_hidden?: boolean;
 };
 
 export type ReadingLogPageView = {
@@ -849,6 +855,9 @@ export type ReadingLogFilters = {
   library_id?: string;
   series_id?: string;
   limit?: number;
+  /** When true, fetch hidden events alongside visible ones. UI uses
+   *  it to power the "Show hidden" toggle on the reading log. */
+  include_hidden?: boolean;
 };
 
 // ---------- Reading log widgets (M3 backend / M4 frontend) ----------

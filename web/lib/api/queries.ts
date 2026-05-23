@@ -760,6 +760,7 @@ export function useReadingLogInfinite(filters: ReadingLogFilters = {}) {
   if (filters.library_id) params.library_id = filters.library_id;
   if (filters.series_id) params.series_id = filters.series_id;
   if (filters.limit != null) params.limit = filters.limit;
+  if (filters.include_hidden) params.include_hidden = "true";
   return useInfiniteQuery({
     queryKey: queryKeys.readingLog(filters),
     initialPageParam: undefined as string | undefined,

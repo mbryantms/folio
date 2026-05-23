@@ -303,6 +303,7 @@ async fn insert_session(
         device: Set(device.map(str::to_owned)),
         view_mode: Set(Some("single".into())),
         client_meta: Set(serde_json::json!({})),
+        hidden_from_log: Set(false),
     }
     .insert(&db)
     .await

@@ -1534,6 +1534,16 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
         .collect::<HashMap<_, _>>();
 
     let mut covers: HashMap<Uuid, String> = HashMap::new();
+    // Prefer issue #1 as the series cover even when a preceding
+    // entry (e.g. #1/2, #0, "Free Comic Book Day" specials with
+    // sort_number < 1) exists. Those preludes stay in the issue
+    // listing — only the cover anchor changes. CASE-WHEN pushes
+    // `sort_number = 1` to the top of the per-series order; the
+    // rest falls back to natural ascending so series without a
+    // canonical #1 (start at #0 or skip numbering entirely) still
+    // pick a sensible cover. NULLS-LAST on `sort_number` avoids an
+    // unnumbered ALWAYS-LAST file dragging in front of real
+    // numbered issues. M5/series-cover-issue-1 (2026-05-23 ask).
     let cover_rows = issue::Entity::find()
         .filter(issue::Column::SeriesId.is_in(series_ids))
         .filter(issue::Column::State.eq("active"))
@@ -1542,6 +1552,10 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
         .column(issue::Column::SeriesId)
         .column(issue::Column::Id)
         .order_by_asc(issue::Column::SeriesId)
+        .order_by_asc(Expr::cust(
+            "CASE WHEN sort_number = 1 THEN 0 ELSE 1 END",
+        ))
+        .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::FilePath)
         .into_model::<SeriesCoverRow>()
@@ -1762,10 +1776,19 @@ pub async fn get_one(
         .count(&app.db)
         .await
         .ok();
+    // Match `hydrate_series`'s cover-pick rule: prefer issue #1,
+    // fall back to natural sort_number ascending. Keeps the
+    // detail-page hero cover consistent with what the grid card on
+    // /library and home rails shows. See `hydrate_series` for the
+    // full rationale.
     let cover_issue = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.id))
         .filter(issue::Column::State.eq("active"))
         .filter(issue::Column::RemovedAt.is_null())
+        .order_by_asc(Expr::cust(
+            "CASE WHEN sort_number = 1 THEN 0 ELSE 1 END",
+        ))
+        .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::FilePath)
         .one(&app.db)

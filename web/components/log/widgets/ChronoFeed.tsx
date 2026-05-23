@@ -6,13 +6,26 @@ import {
   BookmarkIcon,
   Check,
   ChevronDown,
+  EyeOff,
   ListChecks,
   MessageSquare,
+  MoreVertical,
   Star,
   Timer,
 } from "lucide-react";
 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  eventIdToSourceId,
+  useHideReadingLogEvent,
+  useUnhideReadingLogEvent,
+} from "@/lib/api/mutations";
 import { useReadingLogInfinite } from "@/lib/api/queries";
 import { formatDurationMs } from "@/lib/activity";
 import { formatRelativeDate } from "@/lib/format";
@@ -93,6 +106,11 @@ export function ChronoFeed({
     configuredRange && configuredRange.length > 0
       ? (configuredRange as ReadingStatsRange)
       : scope.range;
+  // "Show hidden" lives in client-only state — it's a viewing
+  // preference, not a config value worth persisting per-widget /
+  // per-user. Toggling it re-fires the underlying infinite query
+  // because `include_hidden` is part of the filter cache key.
+  const [showHidden, setShowHidden] = React.useState(false);
   const filters: ReadingLogFilters = React.useMemo(() => {
     const widgetKinds = widget.config.default_kinds ?? [];
     const kinds = widgetKinds.length > 0 ? widgetKinds : undefined;
@@ -100,8 +118,9 @@ export function ChronoFeed({
       kinds,
       from: rangeToFrom(effectiveRange),
       limit: 30,
+      include_hidden: showHidden,
     };
-  }, [effectiveRange, widget.config.default_kinds]);
+  }, [effectiveRange, showHidden, widget.config.default_kinds]);
 
   const query = useReadingLogInfinite(filters);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
@@ -138,6 +157,20 @@ export function ChronoFeed({
 
   return (
     <WidgetCard widget={widget} title="Activity" titleHref="/log/activity">
+      {/* "Show hidden" toggle. Tiny, low-contrast — most users will
+       *  never touch it; appears only when the underlying feature is
+       *  available. Toggling repolls the feed with `include_hidden`. */}
+      <div className="mb-2 flex items-center justify-end gap-1.5 text-[11px]">
+        <label className="text-muted-foreground inline-flex cursor-pointer items-center gap-1.5 select-none">
+          <input
+            type="checkbox"
+            checked={showHidden}
+            onChange={(e) => setShowHidden(e.target.checked)}
+            className="accent-primary h-3 w-3"
+          />
+          Show hidden
+        </label>
+      </div>
       <div ref={scrollRef} className="max-h-160 overflow-y-auto pr-1">
         {query.isLoading ? (
           <FeedSkeleton />
@@ -283,12 +316,21 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
   const headline = seriesName ?? issueTitle ?? "Reading event";
   const subtitle =
     seriesName && issueTitle && issueTitle !== seriesName ? issueTitle : null;
+  const isHidden = event.is_hidden === true;
 
   const inner = (
     // gap-3 (was gap-4) between thumb and content; p-1.5 (was p-2)
     // around the card. Tightens vertical rhythm so more rows fit
     // above the fold without the chrome competing with the content.
-    <div className="hover:bg-muted/50 group/event flex gap-3 rounded-md p-1.5 transition-colors">
+    // `opacity-60` for hidden rows (only surfaced when the "Show
+    // hidden" toggle is on) so the user can scan them at a glance and
+    // distinguish from active ones.
+    <div
+      className={cn(
+        "hover:bg-muted/50 group/event flex gap-3 rounded-md p-1.5 transition-colors",
+        isHidden && "opacity-60",
+      )}
+    >
       <div
         className={cn(
           "border-border/60 relative aspect-2/3 w-16 shrink-0 self-start overflow-hidden rounded border",
@@ -356,15 +398,83 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
     </div>
   );
 
-  if (event.kind === "series_finished" && event.series) {
-    return <Link href={seriesUrl(event.series.slug)}>{inner}</Link>;
-  }
-  if (event.issue && event.series) {
-    return (
-      <Link href={issueUrl(event.series.slug, event.issue.slug)}>{inner}</Link>
+  // Navigation target — derived event has no issue, so it routes to
+  // the series; everything else routes to the issue detail.
+  const navHref =
+    event.kind === "series_finished" && event.series
+      ? seriesUrl(event.series.slug)
+      : event.issue && event.series
+        ? issueUrl(event.series.slug, event.issue.slug)
+        : null;
+
+  // Kebab menu adjacent to the link (not nested — `<button>` inside
+  // `<a>` is invalid HTML). `series_finished` doesn't expose hide
+  // because the event is derived from MAX(finished_at); there's no
+  // single row to flag.
+  const menu =
+    event.kind === "series_finished" ? null : (
+      <RowKebab event={event} />
     );
-  }
-  return inner;
+
+  return (
+    <div className="group/event-row relative">
+      {navHref ? <Link href={navHref}>{inner}</Link> : inner}
+      {menu ? (
+        <div className="absolute top-1.5 right-1.5">{menu}</div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Per-row kebab menu — currently exposes Hide / Show again for the
+ *  three hideable event kinds. Sits absolutely at the top-right of
+ *  the row, fades in on hover (or always when focused). */
+function RowKebab({ event }: { event: ReadingLogEventView }) {
+  const hide = useHideReadingLogEvent();
+  const unhide = useUnhideReadingLogEvent();
+  const isHidden = event.is_hidden === true;
+  const kind = event.kind as
+    | "issue_finished"
+    | "session_completed"
+    | "marker_created";
+  const sourceId = eventIdToSourceId(event.id);
+  if (!sourceId) return null;
+  const pending = hide.isPending || unhide.isPending;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Activity event actions"
+        disabled={pending}
+        className={cn(
+          "bg-background/80 text-muted-foreground hover:text-foreground inline-flex h-7 w-7 items-center justify-center rounded-md backdrop-blur transition-opacity focus-visible:opacity-100 focus-visible:outline-none",
+          // Always visible on touch; fade in on hover (desktop) so
+          // resting state stays clean.
+          "opacity-0 group-hover/event-row:opacity-100",
+        )}
+      >
+        <MoreVertical aria-hidden="true" className="h-4 w-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        {isHidden ? (
+          <DropdownMenuItem
+            onSelect={() => unhide.mutate({ kind, source_id: sourceId })}
+            disabled={pending}
+          >
+            <EyeOff className="mr-2 h-4 w-4" aria-hidden="true" />
+            Show again
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem
+            onSelect={() => hide.mutate({ kind, source_id: sourceId })}
+            disabled={pending}
+          >
+            <EyeOff className="mr-2 h-4 w-4" aria-hidden="true" />
+            Hide from activity
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 function PayloadLine({ event }: { event: ReadingLogEventView }) {

@@ -11647,6 +11647,10 @@
             "type": "string",
             "description": "Synthetic stable id: `{kind-prefix}:{underlying-id}`. Same id\nacross pages — clients dedupe with it."
           },
+          "is_hidden": {
+            "type": "boolean",
+            "description": "`true` when this event was hidden via\n`POST /me/reading-log/hide` and is only being surfaced\nbecause the caller passed `?include_hidden=true`. UI uses it\nto render a faded card + an \"Unhide\" affordance. Default\n`false` is `skip_serializing_if`-elided so the wire payload\nstays the same shape for clients that don't use the feature."
+          },
           "issue": {
             "oneOf": [
               {

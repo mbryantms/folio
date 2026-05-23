@@ -2041,3 +2041,71 @@ export function useResetLogWidgets() {
     },
   );
 }
+
+// ───────── Reading log hide / unhide ─────────
+
+/** Source-id payload for `POST /me/reading-log/hide` (and /unhide).
+ *  `kind` is the event kind from the feed; `source_id` is the raw
+ *  underlying id WITHOUT the event-id prefix (`iss-fin:`, `ses:`,
+ *  `mrk:`) — `eventIdToSourceId` below strips it. */
+export type HideReadingLogEventInput = {
+  kind: "issue_finished" | "session_completed" | "marker_created";
+  source_id: string;
+};
+
+/** Strip the synthetic event-id prefix to get the underlying source
+ *  row id. The wire IDs are `iss-fin:<issueId>`, `ses:<sessionUuid>`,
+ *  `mrk:<markerUuid>`, `ser-fin:<seriesId>`. Returns `null` for the
+ *  derived `ser-fin:` kind (which can't be hidden). */
+export function eventIdToSourceId(eventId: string): string | null {
+  if (eventId.startsWith("iss-fin:")) return eventId.slice("iss-fin:".length);
+  if (eventId.startsWith("ses:")) return eventId.slice("ses:".length);
+  if (eventId.startsWith("mrk:")) return eventId.slice("mrk:".length);
+  return null;
+}
+
+/** Hide an individual reading-log event from the feed. Same shape as
+ *  the v0.5.7 `is_backfill` filter for issue_finished but extended to
+ *  markers and sessions via the new `hidden_from_log` flags. */
+export function useHideReadingLogEvent() {
+  const qc = useQueryClient();
+  return useApiMutation<void, HideReadingLogEventInput>(
+    (input) => ({
+      path: `/me/reading-log/hide`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: () => "Hidden from activity",
+      onSuccess: () => {
+        // Invalidate every reading-log variant (each `?filters=`
+        // combination has its own cache entry); prefix match catches
+        // them all so the feed re-renders with the updated state.
+        qc.invalidateQueries({ queryKey: ["reading", "log"] });
+      },
+    },
+  );
+}
+
+/** Reverse of `useHideReadingLogEvent`. Used by the "Show again"
+ *  action on hidden rows when the user has the `Show hidden` toggle
+ *  enabled. */
+export function useUnhideReadingLogEvent() {
+  const qc = useQueryClient();
+  return useApiMutation<void, HideReadingLogEventInput>(
+    (input) => ({
+      path: `/me/reading-log/unhide`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: () => "Visible again",
+      onSuccess: () => {
+        // Invalidate every reading-log variant (each `?filters=`
+        // combination has its own cache entry); prefix match catches
+        // them all so the feed re-renders with the updated state.
+        qc.invalidateQueries({ queryKey: ["reading", "log"] });
+      },
+    },
+  );
+}

@@ -550,6 +550,7 @@ pub async fn upsert(
                 device: Set(req.device.clone()),
                 view_mode: Set(view_mode),
                 client_meta: Set(client_meta),
+                hidden_from_log: Set(false),
             };
             match am.insert(&app.db).await {
                 Ok(m) => (StatusCode::CREATED, m),

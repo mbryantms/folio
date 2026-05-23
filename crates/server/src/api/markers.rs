@@ -1083,6 +1083,7 @@ pub async fn create(
             .filter(|s| !s.is_empty())),
         created_at: Set(now),
         updated_at: Set(now),
+        hidden_from_log: Set(false),
     };
     let saved = match am.insert(&app.db).await {
         Ok(m) => m,

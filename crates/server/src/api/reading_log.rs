@@ -28,13 +28,13 @@ use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use chrono::{DateTime, FixedOffset};
 use entity::{issue, library_user_access, marker, progress_record, reading_session, series};
 use sea_orm::{
-    ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
-    sea_query::Expr,
+    ActiveValue::Set, ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder,
+    QuerySelect, Statement, sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -45,7 +45,10 @@ use crate::auth::CurrentUser;
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/me/reading-log", get(reading_log))
+    Router::new()
+        .route("/me/reading-log", get(reading_log))
+        .route("/me/reading-log/hide", post(hide))
+        .route("/me/reading-log/unhide", post(unhide))
 }
 
 // ───────── Request / response shapes ─────────
@@ -69,6 +72,15 @@ pub struct ReadingLogQuery {
     pub library_id: Option<Uuid>,
     /// Restrict to events for issues in this series. Optional.
     pub series_id: Option<Uuid>,
+    /// When `true`, include events the user has hidden via
+    /// `POST /me/reading-log/hide`. Defaults to `false` so the
+    /// regular feed reads as the user expects ("only what I haven't
+    /// asked to hide"). Hidden events carry `is_hidden: true` in the
+    /// response so the UI can render them differently (faded + an
+    /// unhide affordance). Used by the `/log` page's "Show hidden"
+    /// toggle.
+    #[serde(default)]
+    pub include_hidden: Option<bool>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -99,6 +111,14 @@ pub struct ReadingLogEventView {
     /// Kind-specific metadata. Different schema per kind, see
     /// `EventPayload` variants.
     pub payload: EventPayload,
+    /// `true` when this event was hidden via
+    /// `POST /me/reading-log/hide` and is only being surfaced
+    /// because the caller passed `?include_hidden=true`. UI uses it
+    /// to render a faded card + an "Unhide" affordance. Default
+    /// `false` is `skip_serializing_if`-elided so the wire payload
+    /// stays the same shape for clients that don't use the feature.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_hidden: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -237,6 +257,13 @@ struct Candidate {
     series_id: Uuid,
     /// Carries kind-specific raw data through the hydration step.
     raw: CandidateRaw,
+    /// `true` when this event was hidden by the user (via
+    /// `POST /me/reading-log/hide`) and is only being included in
+    /// the merged candidate list because the caller passed
+    /// `?include_hidden=true`. Surfaces as `is_hidden` on the wire
+    /// payload. Always `false` for non-include-hidden requests since
+    /// the hidden rows are filtered out by the source queries.
+    is_hidden: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -361,6 +388,7 @@ pub async fn reading_log(
         Some(Err(_)) => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
         None => None,
     };
+    let include_hidden = q.include_hidden.unwrap_or(false);
 
     // ── Per-source candidate harvest ──
     // Each source pulls `limit` rows (the worst-case feed contribution
@@ -394,6 +422,7 @@ pub async fn reading_log(
             from.as_ref(),
             to.as_ref(),
             q.series_id,
+            include_hidden,
         ));
     }
     if kinds_requested.contains(&EventKind::SessionCompleted) {
@@ -405,6 +434,7 @@ pub async fn reading_log(
             from.as_ref(),
             to.as_ref(),
             q.series_id,
+            include_hidden,
         ));
     }
     if kinds_requested.contains(&EventKind::MarkerCreated) {
@@ -416,9 +446,14 @@ pub async fn reading_log(
             from.as_ref(),
             to.as_ref(),
             q.series_id,
+            include_hidden,
         ));
     }
     if kinds_requested.contains(&EventKind::SeriesFinished) {
+        // Series-finished is a derived event (MAX(finished_at) per
+        // series); there's no single row to flag as hidden. The
+        // fetcher continues to filter `is_backfill = false` so the
+        // event surfaces consistently with the issue-finished side.
         collect_from!(fetch_series_finished(
             &app,
             user.id,
@@ -697,11 +732,13 @@ fn hydrate(
         series: Some(event_series),
         issue: event_issue,
         payload,
+        is_hidden: c.is_hidden,
     })
 }
 
 // ───────── Per-source harvesters ─────────
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_issue_finished(
     app: &AppState,
     user_id: Uuid,
@@ -710,6 +747,7 @@ async fn fetch_issue_finished(
     from: Option<&DateTime<FixedOffset>>,
     to: Option<&DateTime<FixedOffset>>,
     series_id: Option<Uuid>,
+    include_hidden: bool,
 ) -> Result<Vec<Candidate>, sea_orm::DbErr> {
     // Pull `progress_records` for the user where `finished_at IS NOT
     // NULL`, then join to `issues` for the series id (needed for ACL
@@ -717,13 +755,19 @@ async fn fetch_issue_finished(
     // we don't over-fetch.
     let mut query = progress_record::Entity::find()
         .filter(progress_record::Column::UserId.eq(user_id))
-        .filter(progress_record::Column::FinishedAt.is_not_null())
-        // Catalog/sync writes (`is_backfill = true`) are
-        // intentionally excluded from the reading-log feed — they
-        // represent issues the user is *recording* as read, not
-        // *just read*, and conflating the two produced misleading
-        // activity spikes / heatmap noise on bulk-import days.
-        .filter(progress_record::Column::IsBackfill.eq(false));
+        .filter(progress_record::Column::FinishedAt.is_not_null());
+    // Catalog/sync writes (`is_backfill = true`) are intentionally
+    // excluded from the reading-log feed by default — they represent
+    // issues the user is *recording* as read, not *just read*. The
+    // same flag also doubles as the per-event hide marker for
+    // issue_finished events (the `/me/reading-log/hide` endpoint
+    // sets `is_backfill = true` on the underlying progress_records
+    // row), so `?include_hidden=true` surfaces both kinds: bulk-
+    // catalog rows AND user-hidden rows, with `is_hidden: true` on
+    // the wire payload.
+    if !include_hidden {
+        query = query.filter(progress_record::Column::IsBackfill.eq(false));
+    }
     if let Some(t) = from {
         query = query.filter(progress_record::Column::FinishedAt.gte(*t));
     }
@@ -784,11 +828,18 @@ async fn fetch_issue_finished(
             issue_id: Some(row.issue_id),
             series_id: sid,
             raw: CandidateRaw::IssueFinished,
+            // Reuse `is_backfill` as the hide flag for issue-finished
+            // events. When include_hidden=true, rows with
+            // `is_backfill = true` (whether from bulk-mark cataloging
+            // or from a manual `POST /me/reading-log/hide` call) are
+            // surfaced with `is_hidden: true` on the wire.
+            is_hidden: row.is_backfill,
         });
     }
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_sessions(
     app: &AppState,
     user_id: Uuid,
@@ -797,12 +848,16 @@ async fn fetch_sessions(
     from: Option<&DateTime<FixedOffset>>,
     to: Option<&DateTime<FixedOffset>>,
     series_id: Option<Uuid>,
+    include_hidden: bool,
 ) -> Result<Vec<Candidate>, sea_orm::DbErr> {
     let mut query = reading_session::Entity::find()
         .filter(reading_session::Column::UserId.eq(user_id))
         .filter(reading_session::Column::EndedAt.is_not_null())
         .filter(reading_session::Column::ActiveMs.gte(SESSION_MIN_ACTIVE_MS))
         .filter(reading_session::Column::DistinctPagesRead.gt(0));
+    if !include_hidden {
+        query = query.filter(reading_session::Column::HiddenFromLog.eq(false));
+    }
     if let Some(s) = series_id {
         query = query.filter(reading_session::Column::SeriesId.eq(s));
     }
@@ -847,11 +902,13 @@ async fn fetch_sessions(
                 device: r.device,
                 view_mode: r.view_mode,
             },
+            is_hidden: r.hidden_from_log,
         });
     }
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_markers(
     app: &AppState,
     user_id: Uuid,
@@ -860,8 +917,12 @@ async fn fetch_markers(
     from: Option<&DateTime<FixedOffset>>,
     to: Option<&DateTime<FixedOffset>>,
     series_id: Option<Uuid>,
+    include_hidden: bool,
 ) -> Result<Vec<Candidate>, sea_orm::DbErr> {
     let mut query = marker::Entity::find().filter(marker::Column::UserId.eq(user_id));
+    if !include_hidden {
+        query = query.filter(marker::Column::HiddenFromLog.eq(false));
+    }
     if let Some(s) = series_id {
         query = query.filter(marker::Column::SeriesId.eq(s));
     }
@@ -890,12 +951,14 @@ async fn fetch_markers(
         .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
+        let is_hidden = r.hidden_from_log;
         out.push(Candidate {
             occurred_at: r.created_at,
             kind: EventKind::MarkerCreated,
             id: format!("mrk:{}", r.id),
             issue_id: Some(r.issue_id),
             series_id: r.series_id,
+            is_hidden,
             raw: CandidateRaw::Marker {
                 marker_id: r.id,
                 marker_kind: r.kind,
@@ -1025,6 +1088,169 @@ async fn fetch_series_finished(
             issue_id: None,
             series_id: r.series_id,
             raw: CandidateRaw::SeriesFinished,
+            // series_finished is derived (MAX over progress_records);
+            // there's no source row to mark hidden. Always false.
+            is_hidden: false,
         })
         .collect())
+}
+
+// ───────── Hide / unhide endpoints ─────────
+
+/// Body for `POST /me/reading-log/hide` and `/unhide`. Identifies a
+/// single event in the feed by its `kind` and the raw source id
+/// (without the `iss-fin:` / `ses:` / `mrk:` prefix the wire payload
+/// uses on `ReadingLogEventView.id` — clients strip that before
+/// calling).
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct HideEventReq {
+    /// One of `issue_finished | session_completed | marker_created`.
+    /// `series_finished` is rejected (derived event with no source
+    /// row to flag).
+    pub kind: String,
+    /// For `issue_finished`: the `issues.id` BLAKE3 hex.
+    /// For `session_completed`: the `reading_sessions.id` UUID.
+    /// For `marker_created`: the `markers.id` UUID.
+    pub source_id: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/me/reading-log/hide",
+    request_body = HideEventReq,
+    responses(
+        (status = 204, description = "hidden"),
+        (status = 400, description = "validation"),
+        (status = 404, description = "no such event for this user"),
+    )
+)]
+pub async fn hide(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<HideEventReq>,
+) -> Response {
+    set_hidden(&app, user.id, &req, true).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/me/reading-log/unhide",
+    request_body = HideEventReq,
+    responses(
+        (status = 204, description = "unhidden"),
+        (status = 400, description = "validation"),
+        (status = 404, description = "no such event for this user"),
+    )
+)]
+pub async fn unhide(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<HideEventReq>,
+) -> Response {
+    set_hidden(&app, user.id, &req, false).await
+}
+
+/// Shared implementation for hide + unhide. Routes the flag flip to
+/// the correct source table based on `kind`. All updates filter on
+/// `user_id` so a caller can't toggle another user's events.
+async fn set_hidden(
+    app: &AppState,
+    user_id: Uuid,
+    req: &HideEventReq,
+    hidden: bool,
+) -> Response {
+    match req.kind.as_str() {
+        "issue_finished" => {
+            // Issue-finished uses `progress_records.is_backfill` as
+            // the hide flag (same semantic: exclude from the feed +
+            // every time-bound activity surface). The source_id is
+            // the issue id; we update every row for (user, issue)
+            // since a user could have multiple progress rows in the
+            // future (re-read sessions), and the feed currently keys
+            // off the latest one anyway.
+            let res = progress_record::Entity::update_many()
+                .col_expr(progress_record::Column::IsBackfill, Expr::value(hidden))
+                .filter(progress_record::Column::UserId.eq(user_id))
+                .filter(progress_record::Column::IssueId.eq(req.source_id.clone()))
+                .filter(progress_record::Column::FinishedAt.is_not_null())
+                .exec(&app.db)
+                .await;
+            handle_update_result(res, "issue_finished")
+        }
+        "session_completed" => {
+            let session_uuid = match Uuid::parse_str(&req.source_id) {
+                Ok(u) => u,
+                Err(_) => {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        "validation",
+                        "source_id must be a session UUID",
+                    );
+                }
+            };
+            let am = reading_session::ActiveModel {
+                id: Set(session_uuid),
+                hidden_from_log: Set(hidden),
+                ..Default::default()
+            };
+            // `update` returns 404 when no row matches the PK — but
+            // we also need to enforce the user_id ACL. Do it via
+            // `update_many` with the filter.
+            let res = reading_session::Entity::update_many()
+                .col_expr(reading_session::Column::HiddenFromLog, Expr::value(hidden))
+                .filter(reading_session::Column::UserId.eq(user_id))
+                .filter(reading_session::Column::Id.eq(session_uuid))
+                .exec(&app.db)
+                .await;
+            drop(am);
+            handle_update_result(res, "session_completed")
+        }
+        "marker_created" => {
+            let marker_uuid = match Uuid::parse_str(&req.source_id) {
+                Ok(u) => u,
+                Err(_) => {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        "validation",
+                        "source_id must be a marker UUID",
+                    );
+                }
+            };
+            let res = marker::Entity::update_many()
+                .col_expr(marker::Column::HiddenFromLog, Expr::value(hidden))
+                .filter(marker::Column::UserId.eq(user_id))
+                .filter(marker::Column::Id.eq(marker_uuid))
+                .exec(&app.db)
+                .await;
+            handle_update_result(res, "marker_created")
+        }
+        "series_finished" => error(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            "series_finished is a derived event and can't be hidden directly",
+        ),
+        _ => error(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            "kind must be issue_finished | session_completed | marker_created",
+        ),
+    }
+}
+
+fn handle_update_result(
+    res: Result<sea_orm::UpdateResult, sea_orm::DbErr>,
+    kind: &'static str,
+) -> Response {
+    match res {
+        Ok(r) if r.rows_affected == 0 => error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no matching event for this user",
+        ),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, kind, "reading-log hide/unhide update failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        }
+    }
 }

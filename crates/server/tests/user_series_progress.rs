@@ -292,6 +292,7 @@ async fn last_read_at_tracks_max_heartbeat() {
             device: Set(None),
             view_mode: Set(None),
             client_meta: Set(serde_json::json!({})),
+            hidden_from_log: Set(false),
         }
         .insert(&db)
         .await
