@@ -478,7 +478,7 @@ function Thumb({ hit }: { hit: SearchHit }) {
         alt={hit.title}
         loading="lazy"
         decoding="async"
-        className={`${cls} object-cover`}
+        className={cn(cls, "object-cover")}
       />
     );
   }
@@ -486,7 +486,7 @@ function Thumb({ hit }: { hit: SearchHit }) {
   return (
     <div
       aria-hidden="true"
-      className={`${cls} text-muted-foreground grid place-items-center`}
+      className={cn(cls, "text-muted-foreground grid place-items-center")}
     >
       <Icon className="size-4" />
     </div>

@@ -26,6 +26,7 @@ import {
   flattenGroups,
   type SearchHit,
 } from "@/lib/search/types";
+import { cn } from "@/lib/utils";
 
 const MAX_PER_CATEGORY = 5;
 const QUERY_DEBOUNCE_MS = 200;
@@ -332,11 +333,12 @@ function ResultsBody({
                     aria-selected={idx === highlighted}
                     onMouseEnter={() => onHover(idx)}
                     onClick={() => onSelect(idx)}
-                    className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors ${
+                    className={cn(
+                      "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
                       idx === highlighted
                         ? "bg-accent text-accent-foreground"
-                        : "text-foreground"
-                    }`}
+                        : "text-foreground",
+                    )}
                   >
                     <span
                       aria-hidden="true"
@@ -380,11 +382,12 @@ function ResultsBody({
                       aria-selected={idx === highlighted}
                       onMouseEnter={() => onHover(idx)}
                       onClick={() => onSelect(idx)}
-                      className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors ${
+                      className={cn(
+                        "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
                         idx === highlighted
                           ? "bg-accent text-accent-foreground"
-                          : "text-foreground"
-                      }`}
+                          : "text-foreground",
+                      )}
                     >
                       <Thumb hit={hit} />
                       <span className="min-w-0 flex-1">
@@ -521,7 +524,7 @@ function Thumb({ hit }: { hit: SearchHit }) {
         alt={hit.title}
         loading="lazy"
         decoding="async"
-        className={`${cls} object-cover`}
+        className={cn(cls, "object-cover")}
       />
     );
   }
@@ -529,7 +532,7 @@ function Thumb({ hit }: { hit: SearchHit }) {
   return (
     <div
       aria-hidden="true"
-      className={`${cls} text-muted-foreground grid place-items-center`}
+      className={cn(cls, "text-muted-foreground grid place-items-center")}
     >
       <Icon className="size-4" />
     </div>

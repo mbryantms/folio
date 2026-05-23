@@ -263,7 +263,9 @@ function CachingCard({ initial }: { initial: number }) {
             value={capacity}
             onChange={(e) => setCapacity(e.target.value)}
           />
-          {bad && <p className="text-xs text-red-400">Must be in [1, 4096].</p>}
+          {bad && (
+            <p className="text-destructive text-xs">Must be in [1, 4096].</p>
+          )}
           <RestartHint />
         </div>
         <div className="flex justify-end">
@@ -408,7 +410,7 @@ function WorkersCard({
                 }
               />
               {!valid[field] && (
-                <p className="text-xs text-red-400">Range: {range}</p>
+                <p className="text-destructive text-xs">Range: {range}</p>
               )}
               <p className="text-muted-foreground text-xs">{hint}</p>
             </div>

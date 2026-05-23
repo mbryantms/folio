@@ -6,6 +6,11 @@ import { AlertTriangle, Search, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SegmentedControl } from "@/components/settings/SegmentedControl";
@@ -277,7 +282,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
               />
             </div>
             {state.oidc_trust_unverified_email && (
-              <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+              <div className="border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-md border p-3 text-xs">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
                   OIDC users with unverified email will be accepted. Any
@@ -314,9 +319,7 @@ function FieldHint({
   return (
     <p
       className={
-        tone === "error"
-          ? "text-xs text-red-400"
-          : "text-muted-foreground text-xs"
+        tone === "error" ? "text-destructive text-xs" : "text-muted-foreground text-xs"
       }
     >
       {children}
@@ -335,21 +338,23 @@ function DiscoverResult({
   if (result.kind === "idle") return null;
   if (result.kind === "err") {
     return (
-      <span className="text-xs text-red-400">
+      <span className="text-destructive text-xs">
         Discovery failed: {result.message}
       </span>
     );
   }
   const d = result.data;
   return (
-    <details className="text-xs">
-      <summary className="cursor-pointer text-emerald-300">
+    <Collapsible className="text-xs">
+      <CollapsibleTrigger className="cursor-pointer text-emerald-300">
         Discovered — {countEndpoints(d)} endpoint(s)
-      </summary>
-      <pre className="bg-muted text-foreground mt-2 max-w-full overflow-auto rounded p-2 text-[11px]">
-        {JSON.stringify(d, null, 2)}
-      </pre>
-    </details>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <pre className="bg-muted text-foreground mt-2 max-w-full overflow-auto rounded p-2 text-[11px]">
+          {JSON.stringify(d, null, 2)}
+        </pre>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

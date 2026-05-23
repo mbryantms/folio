@@ -13,6 +13,14 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   useBulkUpdateMetadata,
   type BulkMetadataPatch,
@@ -209,39 +217,51 @@ export function EditMetadataForm({
       <div className="grid gap-4 py-4">
         <div className="grid gap-1.5">
           <Label htmlFor="emd-field">Field</Label>
-          <select
-            id="emd-field"
+          <Select
             value={field}
-            onChange={(e) => {
-              setField(e.target.value as FieldId);
+            onValueChange={(next) => {
+              setField(next as FieldId);
               setValue("");
             }}
-            className="border-input bg-background focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none"
           >
-            {FIELDS.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.label}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id="emd-field">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FIELDS.map((f) => (
+                <SelectItem key={f.id} value={f.id}>
+                  {f.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="grid gap-1.5">
           <Label htmlFor="emd-value">New value</Label>
           {def.kind === "enum" ? (
-            <select
-              id="emd-value"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              className="border-input bg-background focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none"
+            // Radix Select can't model an empty-string value (it's
+            // reserved for "no selection"), so the clear sentinel is
+            // mapped to `__clear__` in the trigger and back to `""`
+            // in state.
+            <Select
+              value={value === "" ? "__clear__" : value}
+              onValueChange={(next) =>
+                setValue(next === "__clear__" ? "" : next)
+              }
             >
-              <option value="">— Clear —</option>
-              {def.options.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id="emd-value">
+                <SelectValue placeholder="— Clear —" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__clear__">— Clear —</SelectItem>
+                {def.options.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           ) : (
             <Input
               id="emd-value"
@@ -254,39 +274,46 @@ export function EditMetadataForm({
 
         <fieldset className="grid gap-2">
           <legend className="text-foreground text-sm font-medium">Mode</legend>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="radio"
-              name="emd-mode"
-              value="skip_if_set"
-              checked={mode === "skip_if_set"}
-              onChange={() => setMode("skip_if_set")}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="font-medium">Skip already-set</span>
-              <span className="text-muted-foreground block text-xs">
-                Only update issues where the field is currently empty.
-                Recommended.
+          <RadioGroup
+            name="emd-mode"
+            value={mode}
+            onValueChange={(v) => setMode(v as "skip_if_set" | "replace")}
+            className="gap-2"
+          >
+            <Label
+              htmlFor="emd-mode-skip"
+              className="flex items-start gap-2 text-sm font-normal"
+            >
+              <RadioGroupItem
+                id="emd-mode-skip"
+                value="skip_if_set"
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium">Skip already-set</span>
+                <span className="text-muted-foreground block text-xs">
+                  Only update issues where the field is currently empty.
+                  Recommended.
+                </span>
               </span>
-            </span>
-          </label>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="radio"
-              name="emd-mode"
-              value="replace"
-              checked={mode === "replace"}
-              onChange={() => setMode("replace")}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="font-medium">Replace existing values</span>
-              <span className="text-muted-foreground block text-xs">
-                Overwrite every selected issue regardless of current value.
+            </Label>
+            <Label
+              htmlFor="emd-mode-replace"
+              className="flex items-start gap-2 text-sm font-normal"
+            >
+              <RadioGroupItem
+                id="emd-mode-replace"
+                value="replace"
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium">Replace existing values</span>
+                <span className="text-muted-foreground block text-xs">
+                  Overwrite every selected issue regardless of current value.
+                </span>
               </span>
-            </span>
-          </label>
+            </Label>
+          </RadioGroup>
         </fieldset>
       </div>
 
