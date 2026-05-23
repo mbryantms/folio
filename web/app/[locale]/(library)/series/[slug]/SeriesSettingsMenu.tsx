@@ -175,7 +175,7 @@ export function SeriesSettingsMenu({
             variant="outline"
             disabled={busy}
             aria-label="Series actions"
-            className="grid h-12 w-12 place-items-center p-0 sm:flex sm:h-9 sm:w-full sm:px-3"
+            className="grid h-12 w-12 place-items-center p-0 sm:flex sm:h-10 sm:w-full sm:px-3"
           >
             {busy ? (
               <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
