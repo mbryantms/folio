@@ -522,6 +522,116 @@ pub(crate) async fn pick_next_in_series(
     Ok(None)
 }
 
+/// "Next unread issue after the user's *latest finished* issue in this
+/// series." Differs from [`pick_next_in_series`] (which returns the first
+/// unread issue anywhere) by using the user's actual reading position
+/// as the anchor — so a user who finished #20 (e.g. via a CBL) sees #21
+/// as on-deck instead of #1.
+///
+/// Falls back to [`pick_next_in_series`] semantics in two cases:
+///   - no finished issue exists in the series (first-time reader); the
+///     "earliest unread" pick is the right starting place.
+///   - every issue after the latest finished is also finished (user
+///     has nothing left forward); reach back for earlier gaps so the
+///     user can still complete the series.
+///
+/// Used by the On Deck rail to match the "continue reading from where
+/// I am" mental model. The in-reader sequential resolver still uses
+/// [`pick_next_in_series_after`] which anchors on the *currently open*
+/// issue rather than the latest finished one.
+pub(crate) async fn pick_next_in_series_continue(
+    app: &AppState,
+    user_id: Uuid,
+    series_id: Uuid,
+) -> Result<Option<issue::Model>, Response> {
+    let issues: Vec<issue::Model> = match issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(series_id))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .order_by_asc(Expr::cust("sort_number IS NULL"))
+        .order_by_asc(issue::Column::SortNumber)
+        .order_by_asc(issue::Column::Id)
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "next_up: pick_next_in_series_continue issues lookup failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
+    if issues.is_empty() {
+        return Ok(None);
+    }
+    let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
+    let progress_rows = match progress_record::Entity::find()
+        .filter(progress_record::Column::UserId.eq(user_id))
+        .filter(progress_record::Column::IssueId.is_in(issue_ids))
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "next_up: pick_next_in_series_continue progress lookup failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
+    let progress_by_id: std::collections::HashMap<String, progress_record::Model> = progress_rows
+        .into_iter()
+        .map(|p| (p.issue_id.clone(), p))
+        .collect();
+
+    // Walk the ordered list once: track the index of the latest
+    // finished issue and the first unread issue overall (the
+    // fallback target).
+    let mut latest_finished_idx: Option<usize> = None;
+    let mut first_unread_idx: Option<usize> = None;
+    for (idx, iss) in issues.iter().enumerate() {
+        let finished = progress_by_id
+            .get(&iss.id)
+            .map(|p| p.finished)
+            .unwrap_or(false);
+        if finished {
+            latest_finished_idx = Some(idx);
+        } else if first_unread_idx.is_none() {
+            first_unread_idx = Some(idx);
+        }
+    }
+
+    // No finished issue → fall back to the earliest-unread pick
+    // (first-time reader entering the series).
+    let Some(latest_idx) = latest_finished_idx else {
+        let pick = first_unread_idx.map(|i| issues[i].clone());
+        return Ok(pick);
+    };
+
+    // Walk forward from after the latest finished; pick the first
+    // unread.
+    for iss in &issues[latest_idx + 1..] {
+        let finished = progress_by_id
+            .get(&iss.id)
+            .map(|p| p.finished)
+            .unwrap_or(false);
+        if !finished {
+            return Ok(Some(iss.clone()));
+        }
+    }
+
+    // Nothing forward — fall back to "first unread anywhere" so the
+    // user can still mop up earlier gaps before the series is truly
+    // caught up. Returns `None` only when literally every issue is
+    // finished.
+    Ok(first_unread_idx.map(|i| issues[i].clone()))
+}
+
 /// "Next unread issue *strictly after* the given one" within the same
 /// series. Differs from [`pick_next_in_series`]: that helper returns the
 /// first unread issue anywhere in the series (used by On Deck, where the

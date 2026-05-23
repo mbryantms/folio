@@ -1117,12 +1117,14 @@ async fn on_deck_excludes_fully_unread_series() {
 }
 
 #[tokio::test]
-async fn on_deck_cbl_carve_out_for_fully_unread_series() {
-    // The single carve-out from the mark-all-unread filter: if the series'
-    // first issue is the next-up in a CBL list the user has progress in,
-    // the CBL card still surfaces (the series_next path is suppressed,
-    // but the CBL path runs independently and shows the issue with its
-    // list/position framing).
+async fn on_deck_excludes_fully_unread_cbls() {
+    // Symmetric with `on_deck_excludes_fully_unread_series`: a CBL
+    // whose only progress rows are zeroed (`finished=false,
+    // last_page=0`, the shape "mark all unread" leaves behind) must
+    // drop off On Deck rather than keep surfacing its first entry as
+    // a stale starting point. Pre-v0.5.6 there was a carve-out that
+    // kept the CBL alive in this state; that asymmetry confused
+    // users who expected mark-all-unread to clear *both* surfaces.
     let app = TestApp::spawn().await;
     let user = register(&app, "rail-od-cbl-unread@example.com").await;
     demote_to_user(&app, user.user_id).await;
@@ -1132,35 +1134,137 @@ async fn on_deck_cbl_carve_out_for_fully_unread_series() {
     grant_access(&app, user.user_id, lib_id).await;
     let _ = series_id;
 
-    let list_id = seed_cbl_list(&app, "CBL Carve", &[(0, &issue1_id), (1, &_issue2_id)]).await;
+    let _list_id = seed_cbl_list(&app, "CBL Reset", &[(0, &issue1_id), (1, &_issue2_id)]).await;
 
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
 
-    // Now "mark all unread" the series → both issues end up at zeroed
-    // progress rows.
+    // "Mark all unread" the series → zeroed progress on every issue.
     let t1 = chrono::DateTime::parse_from_rfc3339("2030-02-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 0, false, t1).await;
 
     let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    assert_eq!(
+        body["items"].as_array().unwrap().len(),
+        0,
+        "fully-unread CBL must not appear in On Deck",
+    );
+}
+
+#[tokio::test]
+async fn on_deck_series_with_cbl_yields_to_cbl_card_only() {
+    // While a CBL is actively surfacing in On Deck, the bare
+    // SeriesNext for any series the CBL touches gets suppressed —
+    // even when the SeriesNext's first-unread pick disagrees with
+    // the CBL's curated position. The user signalled "read this
+    // body of work in CBL order" by reading a CBL issue; the
+    // SeriesNext just adds noise (often pointing at the earliest
+    // issue while the CBL points at issue 20).
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-cbl-owns@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    // Library: issues 1..3. CBL only contains issue 2 (the
+    // mid-series "selected reading" case). User finishes the CBL's
+    // pick (issue 2). The bare series's first-unread is issue 1.
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-cbl-owns").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-cbl-owns-2").await;
+    let _issue3_id = seed_extra_issue(&app, lib_id, series_id, 3.0, "od-cbl-owns-3").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    // CBL has TWO entries, both pointing at issue 2 and issue 3 —
+    // so finishing issue 2 leaves issue 3 as the CBL's pick (CBL
+    // still surfaces in On Deck), and series 1 (unread, sort_number=1)
+    // would otherwise also surface as SeriesNext.
+    let list_id = seed_cbl_list(
+        &app,
+        "Owns Series",
+        &[(0, &issue2_id), (1, &_issue3_id)],
+    )
+    .await;
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue2_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
     let items = body["items"].as_array().unwrap();
-    let cbl_cards: Vec<_> = items.iter().filter(|i| i["kind"] == "cbl_next").collect();
     let series_cards: Vec<_> = items
         .iter()
         .filter(|i| i["kind"] == "series_next")
         .collect();
+    let cbl_cards: Vec<_> = items.iter().filter(|i| i["kind"] == "cbl_next").collect();
     assert!(
         series_cards.is_empty(),
-        "fully-unread series must not surface as series_next, got {series_cards:?}"
+        "SeriesNext for a CBL-owned series must be suppressed entirely; got {series_cards:?}",
     );
-    assert_eq!(
-        cbl_cards.len(),
-        1,
-        "CBL carve-out: list still surfaces its next-unfinished entry"
-    );
+    assert_eq!(cbl_cards.len(), 1, "CBL card stays as the canonical entry");
     assert_eq!(cbl_cards[0]["cbl_list_id"], list_id.to_string());
-    assert_eq!(cbl_cards[0]["issue"]["id"], issue1_id);
-    assert_eq!(cbl_cards[0]["position"], 1);
+    // CBL's next pick is issue 3 (position 2).
+    assert_eq!(cbl_cards[0]["issue"]["id"], _issue3_id);
+    let _ = issue1_id;
+}
+
+#[tokio::test]
+async fn on_deck_series_continues_from_latest_finished_not_earliest() {
+    // After finishing a mid-series issue (e.g. via a CBL), On Deck's
+    // SeriesNext pick should be the next issue *after* the user's
+    // latest finished one — not the earliest unread anywhere in the
+    // series. Pre-v0.5.6 the latter behaviour produced surprising
+    // suggestions like "read #1 next" right after the user finished
+    // #20.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-continue@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-continue").await;
+    let _issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-continue-2").await;
+    let issue3_id = seed_extra_issue(&app, lib_id, series_id, 3.0, "od-continue-3").await;
+    let issue4_id = seed_extra_issue(&app, lib_id, series_id, 4.0, "od-continue-4").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    // Finish issue 3 (skipping 1, 2). Pre-v0.5.6 the SeriesNext
+    // card pointed at issue 1; post-v0.5.6 it points at issue 4
+    // (next after the latest finished).
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue3_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "exactly one series_next card");
+    assert_eq!(items[0]["kind"], "series_next");
+    assert_eq!(
+        items[0]["issue"]["id"], issue4_id,
+        "after-latest-finished: #4 wins over the earliest-unread #1",
+    );
+    let _ = issue1_id;
+}
+
+#[tokio::test]
+async fn on_deck_series_falls_back_to_earlier_gap_when_caught_up_forward() {
+    // Edge case for after-latest-finished: when the user is caught
+    // up everything forward of their latest finished but has older
+    // gaps, the pick falls back to the earliest unread so the
+    // series can still be completed.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-gap-fallback@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-gap").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-gap-2").await;
+    let issue3_id = seed_extra_issue(&app, lib_id, series_id, 3.0, "od-gap-3").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    // Finished: 2 and 3. Unread: 1 (older gap).
+    write_progress(&app, user.user_id, &issue2_id, 19, true, t0).await;
+    write_progress(&app, user.user_id, &issue3_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0]["issue"]["id"], issue1_id,
+        "no issue after the latest finished → fall back to the earliest unread (#1)",
+    );
 }
 
 // ───── B-2: cbl_saved_view_id on CblNext ─────

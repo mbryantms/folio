@@ -282,14 +282,19 @@ pub(crate) async fn compute_on_deck(
 ) -> Result<Vec<OnDeckCard>, Response> {
     let mut items: Vec<(chrono::DateTime<chrono::FixedOffset>, OnDeckCard)> = Vec::new();
     // SeriesNext cards are deferred into this buffer and filtered against
-    // the CBL set after both queries run. CBL framing wins on overlap: the
-    // "currently next" issue often coincides between a user's series and a
-    // CBL list containing that series, and the CBL card carries strictly
-    // more context (list name + 1-based position). The series card will
-    // resurface naturally once the user finishes the CBL position or no
-    // longer has a CBL covering the issue.
+    // the CBL set after both queries run. CBL framing wins on overlap and
+    // the dedup is series-wide, not issue-exact: if a series has *any*
+    // issue inside a CBL that's currently surfacing in On Deck, the user
+    // has signalled "I want to read this body of work in the CBL's order"
+    // and the SeriesNext card just adds noise (especially when its
+    // first-unread pick disagrees with the CBL's curated position — e.g.,
+    // CBL points at #20 while the bare series points at #1 for a user
+    // who has 1..50 on disk but only #20 in the CBL). The SeriesNext
+    // resurfaces naturally once every CBL covering that series leaves
+    // On Deck.
     let mut series_buf: Vec<(chrono::DateTime<chrono::FixedOffset>, OnDeckCard)> = Vec::new();
-    let mut cbl_issue_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut cbl_owned_series_ids: std::collections::HashSet<Uuid> =
+        std::collections::HashSet::new();
 
     // ───── series_next candidates ─────
     //
@@ -366,7 +371,20 @@ pub(crate) async fn compute_on_deck(
         if !acl.contains(row.library_id) {
             continue;
         }
-        let next = match crate::api::next_up::pick_next_in_series(app, user_id, row.series_id).await
+        // `pick_next_in_series_continue` anchors on the user's latest
+        // finished issue in the series, so finishing #20 surfaces #21
+        // as on-deck instead of #1 (the bare "first unread anywhere"
+        // pick used pre-v0.5.6). Falls back to the earliest-unread
+        // pick when no finished issue exists, but the `started` CTE
+        // above guarantees we always have at least one finished
+        // issue here, so the fallback only matters for the helper's
+        // other call sites.
+        let next = match crate::api::next_up::pick_next_in_series_continue(
+            app,
+            user_id,
+            row.series_id,
+        )
+        .await
         {
             Ok(opt) => opt,
             Err(resp) => return Err(resp),
@@ -447,6 +465,13 @@ pub(crate) async fn compute_on_deck(
     let cbl_candidates: Vec<CblCandidate> =
         match CblCandidate::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
+            // `(p.finished = true OR p.last_page > 0)` mirrors the
+            // series-side meaningful-progress filter. Without it,
+            // "mark all unread" leaves zeroed progress_records rows
+            // on the formerly-read CBL entries and the CBL keeps
+            // surfacing in On Deck (asymmetric with the series-side
+            // reset behaviour). With it, a fully-reset CBL drops off
+            // the rail the same way a fully-reset series does.
             r#"
                 SELECT cl.id AS cbl_list_id, cl.parsed_name AS cbl_list_name,
                        MAX(p.updated_at) AS last_activity
@@ -458,6 +483,7 @@ pub(crate) async fn compute_on_deck(
                  AND d.target_kind = 'cbl'
                  AND d.target_id = cl.id::text
                 WHERE p.user_id = $1
+                  AND (p.finished = true OR p.last_page > 0)
                   AND (cl.owner_user_id IS NULL OR cl.owner_user_id = $1)
                 GROUP BY cl.id, cl.parsed_name, d.dismissed_at
                 HAVING d.dismissed_at IS NULL OR MAX(p.updated_at) > d.dismissed_at
@@ -491,7 +517,16 @@ pub(crate) async fn compute_on_deck(
         let Some((issue_model, series_slug, series_name, position)) = next else {
             continue;
         };
-        cbl_issue_ids.insert(issue_model.id.clone());
+        // Series-wide ownership: every series with any entry in this
+        // CBL gets shadowed from the SeriesNext list, not just the
+        // exact issue the CBL is pointing at right now (see comment
+        // on `cbl_owned_series_ids` above). Cheap lookup against
+        // `cbl_entries.matched_series_id` per surviving CBL.
+        if let Ok(series_ids) =
+            series_ids_in_cbl(app, cand.cbl_list_id).await
+        {
+            cbl_owned_series_ids.extend(series_ids);
+        }
         let cbl_saved_view_id = cbl_saved_view_by_list_id
             .get(&cand.cbl_list_id)
             .map(|id| id.to_string());
@@ -509,11 +544,20 @@ pub(crate) async fn compute_on_deck(
         ));
     }
 
-    // Drain the deferred SeriesNext buffer, skipping any whose issue is
-    // already covered by a CBL card.
+    // Drain the deferred SeriesNext buffer, skipping any whose series
+    // is already owned by a CBL card on this rail.
     for (ts, card) in series_buf {
-        let dup = matches!(&card, OnDeckCard::SeriesNext { issue, .. } if cbl_issue_ids.contains(&issue.id));
-        if dup {
+        let OnDeckCard::SeriesNext { issue, .. } = &card else {
+            items.push((ts, card));
+            continue;
+        };
+        // `issue.series_id` is a UUID string on the view; parse to
+        // match the CBL ownership set's key type.
+        let Ok(sid) = Uuid::parse_str(&issue.series_id) else {
+            items.push((ts, card));
+            continue;
+        };
+        if cbl_owned_series_ids.contains(&sid) {
             continue;
         }
         items.push((ts, card));
@@ -550,6 +594,34 @@ pub(crate) async fn top_on_deck_card(
 // `pick_next_in_series` and `pick_next_in_cbl` live in `crate::api::next_up`
 // so the new `/issues/{id}/next-up` resolver and this rail share one
 // definition. See [`next_up::pick_next_in_series`] / [`next_up::pick_next_in_cbl`].
+
+/// Return every distinct series id that any matched entry in this CBL
+/// references. Used by [`compute_on_deck`] to suppress SeriesNext cards
+/// for series that a surviving CBL card already represents. Joins
+/// through `issues` rather than reading `cbl_entries.matched_series_id`
+/// directly so the dedup works regardless of whether the matcher
+/// populated the denormalised column (which has historically been
+/// sometimes-set, sometimes-NULL depending on the match path).
+async fn series_ids_in_cbl(
+    app: &AppState,
+    cbl_list_id: Uuid,
+) -> Result<Vec<Uuid>, sea_orm::DbErr> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        series_id: Uuid,
+    }
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT DISTINCT i.series_id AS series_id \
+         FROM cbl_entries e \
+         JOIN issues i ON i.id = e.matched_issue_id \
+         WHERE e.cbl_list_id = $1",
+        [cbl_list_id.into()],
+    ))
+    .all(&app.db)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.series_id).collect())
+}
 
 #[utoipa::path(
     post,
