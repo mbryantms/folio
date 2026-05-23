@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 import { Cover } from "@/components/Cover";
 import {
@@ -11,6 +12,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { SeriesPlayOverlay } from "@/components/QuickReadOverlay";
+import { BulkMarkReadDialog } from "@/components/library/BulkMarkReadDialog";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
 import { Badge } from "@/components/ui/badge";
@@ -79,6 +81,7 @@ export function SeriesCard({
   const issueCount = series.issue_count ?? series.total_issues ?? null;
   const router = useRouter();
   const upsertSeriesProgress = useUpsertSeriesProgress(series.id);
+  const [markAllReadOpen, setMarkAllReadOpen] = useState(false);
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "series",
     ref_id: series.id,
@@ -87,7 +90,9 @@ export function SeriesCard({
   const menuActions: CoverMenuAction[] = [
     {
       label: "Mark all read",
-      onSelect: () => upsertSeriesProgress.mutate({ finished: true }),
+      // Whole-series mark-all is almost always cataloging — prompt
+      // so the user picks whether it counts toward reading activity.
+      onSelect: () => setMarkAllReadOpen(true),
     },
     {
       label: "Mark all unread",
@@ -240,6 +245,19 @@ export function SeriesCard({
       )}
       {collectionActions.dialog}
       {!inSelectMode && longPress.sheet}
+      <BulkMarkReadDialog
+        open={markAllReadOpen}
+        onOpenChange={setMarkAllReadOpen}
+        count={issueCount ?? 0}
+        title={`Mark every issue in ${series.name} as read?`}
+        onConfirm={(backfill) =>
+          upsertSeriesProgress.mutate(
+            { finished: true, backfill },
+            { onSuccess: () => setMarkAllReadOpen(false) },
+          )
+        }
+        isPending={upsertSeriesProgress.isPending}
+      />
     </>
   );
 }

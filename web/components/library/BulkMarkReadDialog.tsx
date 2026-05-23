@@ -39,12 +39,20 @@ export function BulkMarkReadDialog({
   open,
   onOpenChange,
   count,
+  title,
   onConfirm,
   isPending = false,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
+  /** Number of issues in the selection. Used in the default title
+   *  ("Mark N issues as read?"). Ignored when `title` is provided
+   *  (the whole-series "Mark all" path doesn't always know the count
+   *  ahead of time). */
   count: number;
+  /** Optional title override — typically "Mark all issues in <Series>
+   *  as read?" for the series-level mark-all action. */
+  title?: string;
   onConfirm: (backfill: boolean) => void;
   isPending?: boolean;
 }) {
@@ -61,7 +69,7 @@ export function BulkMarkReadDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            Mark {count.toLocaleString()} issues as read?
+            {title ?? `Mark ${count.toLocaleString()} issues as read?`}
           </AlertDialogTitle>
           <AlertDialogDescription>
             Choose whether this counts as reading activity for today, or

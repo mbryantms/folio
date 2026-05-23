@@ -21,6 +21,7 @@ import {
   AddToCollectionDialog,
   type AddToCollectionTarget,
 } from "@/components/collections/AddToCollectionDialog";
+import { BulkMarkReadDialog } from "@/components/library/BulkMarkReadDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -128,8 +129,22 @@ export function SeriesSettingsMenu({
     label: seriesName,
   };
 
-  const markAllRead = () =>
-    progress.mutate({ finished: true }, { onSuccess: () => router.refresh() });
+  // "Mark all as read" on a whole series is almost always cataloging
+  // ("I read this years ago"), not active reading — prompt before
+  // writing so the user can choose whether it should count toward
+  // reading activity. Unread + per-issue paths skip the prompt.
+  const [markAllReadOpen, setMarkAllReadOpen] = useState(false);
+  const markAllRead = () => setMarkAllReadOpen(true);
+  const submitMarkAllRead = (backfill: boolean) =>
+    progress.mutate(
+      { finished: true, backfill },
+      {
+        onSuccess: () => {
+          setMarkAllReadOpen(false);
+          router.refresh();
+        },
+      },
+    );
   const markAllUnread = () =>
     progress.mutate({ finished: false }, { onSuccess: () => router.refresh() });
   const triggerScan = () =>
@@ -256,6 +271,14 @@ export function SeriesSettingsMenu({
         open={collectionDialogOpen}
         onOpenChange={setCollectionDialogOpen}
         target={collectionTarget}
+      />
+      <BulkMarkReadDialog
+        open={markAllReadOpen}
+        onOpenChange={setMarkAllReadOpen}
+        count={0}
+        title={`Mark every issue in ${seriesName} as read?`}
+        onConfirm={submitMarkAllRead}
+        isPending={progress.isPending}
       />
     </>
   );

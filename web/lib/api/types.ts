@@ -534,6 +534,14 @@ export type ProgressView = {
 export type UpsertSeriesProgressReq = {
   finished: boolean;
   device?: string | null;
+  /** "Updating my collection — don't count toward today's reading
+   *  activity." When `true` and `finished == true`, every written
+   *  progress row carries `is_backfill = true` and is excluded from
+   *  the reading log, Just Finished sort, and similar activity
+   *  surfaces. Ignored when `finished` is false (the server clears
+   *  the flag on every unread write). Default `false` mirrors the
+   *  pre-v0.5.7 shape; UI callers opt in via the bulk-mark dialog. */
+  backfill?: boolean;
 };
 
 /** Response from `POST /series/{id}/progress`. */
