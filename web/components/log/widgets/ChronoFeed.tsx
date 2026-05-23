@@ -148,12 +148,11 @@ export function ChronoFeed({
             {groups.map((g) => (
               <li key={g.key} className="flex flex-col gap-2">
                 {g.label ? <GroupHeader label={g.label} /> : null}
-                <ul
-                  className={cn(
-                    "flex flex-col gap-1.5",
-                    g.label && "border-border/60 border-l-2 pl-4",
-                  )}
-                >
+                {/* Tighter row gap and no leading timeline border —
+                 *  the day header already groups visually, and the
+                 *  per-row hover background is the affordance the
+                 *  user reads as "selectable". */}
+                <ul className="flex flex-col gap-1">
                   {g.rows.map((event) => (
                     <li key={event.id}>
                       <EventRow event={event} />
@@ -286,10 +285,13 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
     seriesName && issueTitle && issueTitle !== seriesName ? issueTitle : null;
 
   const inner = (
-    <div className="hover:bg-muted/50 group/event flex gap-4 rounded-md p-2 transition-colors">
+    // gap-3 (was gap-4) between thumb and content; p-1.5 (was p-2)
+    // around the card. Tightens vertical rhythm so more rows fit
+    // above the fold without the chrome competing with the content.
+    <div className="hover:bg-muted/50 group/event flex gap-3 rounded-md p-1.5 transition-colors">
       <div
         className={cn(
-          "border-border/60 relative aspect-2/3 w-20 shrink-0 self-start overflow-hidden rounded border",
+          "border-border/60 relative aspect-2/3 w-16 shrink-0 self-start overflow-hidden rounded border",
           !cover && "bg-muted",
         )}
         aria-hidden
@@ -304,26 +306,20 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
           />
         ) : null}
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-start gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="truncate text-base font-semibold" title={headline}>
-                {headline}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        {/* Top row: headline + issue number on the left (flex-1
+         *  truncating), timestamp pinned to the right with a baseline
+         *  alignment so it sits on the headline's text baseline
+         *  instead of free-floating at the top edge. */}
+        <div className="flex items-baseline gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+            <span className="truncate text-sm font-semibold" title={headline}>
+              {headline}
+            </span>
+            {issueLabel ? (
+              <span className="text-muted-foreground text-xs font-medium tabular-nums">
+                {issueLabel}
               </span>
-              {issueLabel ? (
-                <span className="text-muted-foreground text-sm font-medium tabular-nums">
-                  {issueLabel}
-                </span>
-              ) : null}
-            </div>
-            {subtitle ? (
-              <p
-                className="text-muted-foreground/90 truncate text-sm"
-                title={subtitle}
-              >
-                {subtitle}
-              </p>
             ) : null}
           </div>
           <time
@@ -333,14 +329,25 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
             {formatRelativeDate(event.occurred_at)}
           </time>
         </div>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {subtitle ? (
+          <p
+            className="text-muted-foreground/90 truncate text-xs"
+            title={subtitle}
+          >
+            {subtitle}
+          </p>
+        ) : null}
+        {/* Bottom row: kind chip + payload line. `min-w-0` on the
+         *  PayloadLine wrapper lets it truncate instead of pushing
+         *  the chip off-screen on narrow widths. */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-0.5">
           <span
             className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide uppercase",
+              "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase",
               KIND_TINT[event.kind],
             )}
           >
-            <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+            <Icon aria-hidden="true" className="h-3 w-3" />
             {KIND_LABEL[event.kind]}
           </span>
           <PayloadLine event={event} />

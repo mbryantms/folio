@@ -144,10 +144,14 @@ export default async function SeriesPage({
           </div>
           <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm sm:flex-col lg:mx-0 lg:max-w-72">
             {next.target ? (
+              // `sm:flex-none` cancels mobile's `flex-1` once the
+              // container flips to `sm:flex-col` — otherwise
+              // flex-grow stretches the button vertically along the
+              // column's main axis and visually overrides sm:h-10.
               <Button
                 asChild
                 size="lg"
-                className="h-12 flex-1 sm:h-10 sm:w-full"
+                className="h-12 flex-1 sm:h-10 sm:w-full sm:flex-none"
               >
                 <Link href={readerUrl(next.target)}>
                   {readButtonLabel(next.state)}
@@ -155,7 +159,7 @@ export default async function SeriesPage({
                 </Link>
               </Button>
             ) : (
-              <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-auto sm:flex-initial sm:py-2">
+              <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-auto sm:flex-none sm:py-2">
                 No active issues to read.
               </p>
             )}
