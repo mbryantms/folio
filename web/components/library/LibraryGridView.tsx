@@ -35,6 +35,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PopoverPortalContainer } from "@/components/ui/popover";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -927,11 +932,6 @@ function FacetMultiSection({
   );
 }
 
-/** Native-`<details>` collapsible section. We avoid Radix Accordion
- *  because it isn't installed and the markup here is tiny — the
- *  built-in disclosure widget gives us animation-free expand/collapse
- *  without adding a dep. The summary is styled to match the screenshot
- *  in the design brief: uppercase label, chevron on the right. */
 function Section({
   title,
   badge,
@@ -944,11 +944,11 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <details
-      open={defaultOpen}
+    <Collapsible
+      defaultOpen={defaultOpen}
       className="group border-border/60 border-b last:border-b-0"
     >
-      <summary className="hover:bg-accent/40 flex cursor-pointer list-none items-center justify-between px-6 py-3 text-xs font-semibold tracking-wider uppercase select-none [&::-webkit-details-marker]:hidden">
+      <CollapsibleTrigger className="hover:bg-accent/40 flex w-full cursor-pointer items-center justify-between px-6 py-3 text-xs font-semibold tracking-wider uppercase select-none">
         <span className="flex items-center gap-2">
           {title}
           {badge && badge > 0 ? (
@@ -960,10 +960,12 @@ function Section({
             </Badge>
           ) : null}
         </span>
-        <ChevronDown className="text-muted-foreground h-4 w-4 transition-transform group-open:rotate-180" />
-      </summary>
-      <div className="space-y-2 px-6 pb-4">{children}</div>
-    </details>
+        <ChevronDown className="text-muted-foreground h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-2 px-6 pb-4">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

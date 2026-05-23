@@ -26,6 +26,14 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useCreateLibrary } from "@/lib/api/mutations";
 
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -142,15 +150,17 @@ export function NewLibraryDialog() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Reading direction</FormLabel>
-                    <FormControl>
-                      <select
-                        className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
-                        {...field}
-                      >
-                        <option value="ltr">Left to right</option>
-                        <option value="rtl">Right to left</option>
-                      </select>
-                    </FormControl>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="ltr">Left to right</SelectItem>
+                        <SelectItem value="rtl">Right to left</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -182,10 +192,10 @@ export function NewLibraryDialog() {
               name="generate_page_thumbs_on_scan"
               render={({ field }) => (
                 <FormItem
-                  className={
-                    "border-border flex items-start gap-3 rounded-md border p-3 " +
-                    (scanNow ? "" : "opacity-60")
-                  }
+                  className={cn(
+                    "border-border flex items-start gap-3 rounded-md border p-3",
+                    !scanNow && "opacity-60",
+                  )}
                 >
                   <FormControl>
                     <Checkbox

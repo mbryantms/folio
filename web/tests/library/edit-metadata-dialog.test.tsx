@@ -38,6 +38,53 @@ vi.mock("@/components/ui/dialog", () => ({
     createElement("p", null, children),
 }));
 
+// Stub Select primitives so SelectContent/SelectItem render inline
+// instead of through Radix's portal — `renderToStaticMarkup` skips
+// portals, so without this stub the field-name labels inside the
+// dropdown wouldn't appear in the rendered HTML.
+vi.mock("@/components/ui/select", () => ({
+  Select: ({ children }: { children: React.ReactNode }) =>
+    createElement("div", null, children),
+  SelectTrigger: ({ children }: { children: React.ReactNode }) =>
+    createElement("button", { type: "button" }, children),
+  SelectValue: ({ placeholder }: { placeholder?: string }) =>
+    createElement("span", null, placeholder ?? ""),
+  SelectContent: ({ children }: { children: React.ReactNode }) =>
+    createElement("ul", null, children),
+  SelectItem: ({
+    value,
+    children,
+  }: {
+    value: string;
+    children: React.ReactNode;
+  }) =>
+    createElement(
+      "li",
+      { "data-value": value, role: "option" },
+      children,
+    ),
+}));
+
+// Stub RadioGroup so RadioGroupItem renders an inspectable button
+// element with the value carried as a data attribute.
+vi.mock("@/components/ui/radio-group", () => ({
+  RadioGroup: ({
+    value,
+    children,
+  }: {
+    value?: string;
+    children: React.ReactNode;
+  }) =>
+    createElement("div", { role: "radiogroup", "data-value": value }, children),
+  RadioGroupItem: ({ value, id }: { value: string; id?: string }) =>
+    createElement("button", {
+      type: "button",
+      role: "radio",
+      "data-value": value,
+      id,
+    }),
+}));
+
 import { EditMetadataForm } from "@/components/library/EditMetadataDialog";
 
 const noop = () => undefined;
@@ -90,10 +137,14 @@ describe("<EditMetadataForm>", () => {
     const html = render(["a"]);
     expect(html).toContain("Skip already-set");
     expect(html).toContain("Replace existing values");
-    // Default radio: skip_if_set is `checked`. React serializes
-    // attributes in declaration order which puts `checked` before
-    // `value`, so just check both appear inside one `<input>`.
-    expect(html).toMatch(/<input[^>]*checked[^>]*value="skip_if_set"/);
+    // Default selection: skip_if_set. The radio group itself carries
+    // the current value as `data-value`, and both radio items are
+    // present with their own `data-value`.
+    expect(html).toMatch(
+      /role="radiogroup"[^>]*data-value="skip_if_set"/,
+    );
+    expect(html).toMatch(/role="radio"[^>]*data-value="skip_if_set"/);
+    expect(html).toMatch(/role="radio"[^>]*data-value="replace"/);
   });
 
   it("describes the credit-field exclusion in the dialog body", () => {

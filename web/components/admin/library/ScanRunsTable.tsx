@@ -5,6 +5,11 @@ import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -192,14 +197,16 @@ function ScanRunDetails({ run }: { run: ScanRunView }) {
           </div>
         )}
       </div>
-      <details className="group">
-        <summary className="text-muted-foreground cursor-pointer text-xs font-semibold tracking-widest uppercase">
+      <Collapsible>
+        <CollapsibleTrigger className="text-muted-foreground hover:text-foreground cursor-pointer text-xs font-semibold tracking-widest uppercase">
           Developer details
-        </summary>
-        <pre className="bg-background/80 mt-2 overflow-x-auto rounded p-3 font-mono text-[11px] leading-relaxed">
-          {JSON.stringify(run.stats ?? {}, null, 2)}
-        </pre>
-      </details>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <pre className="bg-background/80 mt-2 overflow-x-auto rounded p-3 font-mono text-[11px] leading-relaxed">
+            {JSON.stringify(run.stats ?? {}, null, 2)}
+          </pre>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }

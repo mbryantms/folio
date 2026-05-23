@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sparklinePoints } from "@/lib/activity";
+import { cn } from "@/lib/utils";
 import {
   useAdminOverview,
   useQueueDepth,
@@ -165,7 +166,10 @@ function SeverityRow({
     <li className="flex items-center justify-between">
       <span className="text-muted-foreground">{label}</span>
       <span
-        className={`text-base font-semibold tabular-nums ${count > 0 ? tone : "text-foreground/60"}`}
+        className={cn(
+          "text-base font-semibold tabular-nums",
+          count > 0 ? tone : "text-foreground/60",
+        )}
       >
         {count}
       </span>
