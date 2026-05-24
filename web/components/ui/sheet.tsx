@@ -53,22 +53,46 @@ interface SheetContentProps
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   SheetContentProps
->(({ side = "right", className, children, ...props }, ref) => (
-  <SheetPortal>
-    <SheetOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(sheetVariants({ side }), className)}
-      {...props}
-    >
-      {children}
-      <DialogPrimitive.Close className="ring-offset-background focus:ring-ring absolute top-4 right-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none">
-        <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </SheetPortal>
-));
+>(({ side = "right", className, children, ...props }, ref) => {
+  // Sides that anchor against the top edge of the screen (top / left /
+  // right at full height) need the close button pushed below the iOS
+  // notch / Dynamic Island in PWA standalone mode. Bottom sheets sit
+  // mid-screen so their `top-4` is already clear of the inset.
+  const closeTopClass =
+    side === "bottom"
+      ? "top-4"
+      : "top-[max(1rem,calc(var(--safe-top)+0.5rem))]";
+  // Sides whose close button sits at the right edge of the screen
+  // (top / right) need the same treatment for the landscape notch.
+  // For left-side sheets the close sits at the sheet's right edge
+  // (mid-screen), so the safe-right inset doesn't apply.
+  const closeRightClass =
+    side === "top" || side === "right"
+      ? "right-[max(1rem,var(--safe-right))]"
+      : "right-4";
+  return (
+    <SheetPortal>
+      <SheetOverlay />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(sheetVariants({ side }), className)}
+        {...props}
+      >
+        {children}
+        <DialogPrimitive.Close
+          className={cn(
+            "ring-offset-background focus:ring-ring absolute rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none",
+            closeTopClass,
+            closeRightClass,
+          )}
+        >
+          <X className="h-4 w-4" />
+          <span className="sr-only">Close</span>
+        </DialogPrimitive.Close>
+      </DialogPrimitive.Content>
+    </SheetPortal>
+  );
+});
 SheetContent.displayName = DialogPrimitive.Content.displayName;
 
 const SheetHeader = ({

@@ -71,8 +71,8 @@ export function Chrome({
 }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-10 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-6 py-3">
+      <header className="sticky top-0 z-10 border-b border-neutral-800 bg-neutral-950/80 pt-(--safe-top) backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center gap-4 px-[max(1.5rem,var(--safe-left))] py-3 pr-[max(1.5rem,var(--safe-right))]">
           <Link
             href="/"
             className="font-semibold tracking-tight text-neutral-100 hover:text-white"

@@ -18,6 +18,20 @@ const Toaster = ({ ...props }: ToasterProps) => {
       // Notifications cleanup M0 finalization.
       hotkey={["altKey", "KeyT"]}
       position="bottom-right"
+      // Push the toast stack inside the iOS home-indicator + landscape
+      // notch in PWA standalone mode. Sonner positions its container
+      // via these CSS custom properties — overriding here keeps the
+      // 16px floor while expanding as the safe-area inset grows.
+      style={
+        {
+          "--offset-bottom": "max(16px, var(--safe-bottom))",
+          "--offset-right": "max(16px, var(--safe-right))",
+          "--offset-left": "max(16px, var(--safe-left))",
+          "--mobile-offset-bottom": "max(16px, var(--safe-bottom))",
+          "--mobile-offset-right": "max(16px, var(--safe-right))",
+          "--mobile-offset-left": "max(16px, var(--safe-left))",
+        } as React.CSSProperties
+      }
       duration={4000}
       expand={false}
       // Cap queue depth so a scan-completion burst (10+ thumbnail
