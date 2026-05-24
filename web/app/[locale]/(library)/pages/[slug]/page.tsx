@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { PageRails } from "@/components/saved-views/PageRails";
 import { apiGet, ApiError } from "@/lib/api/fetch";
-import type { PageView } from "@/lib/api/types";
+import type { PageListView } from "@/lib/api/types";
 
 /** Multi-page rails M5: per-page detail. Renders the same
  *  `<PageRails>` component as `/` but scoped to the page identified by
@@ -20,16 +20,18 @@ export default async function PageDetailRoute({
 }) {
   const { slug } = await params;
 
-  let pages: PageView[];
+  // Audit-remediation M4 wrapped `/me/pages` in `CursorPage<PageView>`;
+  // pages are bounded per-user so `.items` holds the full list.
+  let pages: PageListView;
   try {
-    pages = await apiGet<PageView[]>("/me/pages");
+    pages = await apiGet<PageListView>("/me/pages");
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       redirect("/sign-in");
     }
     throw e;
   }
-  const page = pages.find((p) => p.slug === slug);
+  const page = pages.items.find((p) => p.slug === slug);
   if (!page) notFound();
   if (page.is_system) redirect("/");
 

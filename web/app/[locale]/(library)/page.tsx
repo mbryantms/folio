@@ -3,7 +3,11 @@ import { parseLibraryGridFilters } from "@/components/library/library-grid-filte
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { PageRails } from "@/components/saved-views/PageRails";
 import { apiGet, ApiError } from "@/lib/api/fetch";
-import type { LibraryView, PageView, SeriesListView } from "@/lib/api/types";
+import type {
+  LibraryView,
+  PageListView,
+  SeriesListView,
+} from "@/lib/api/types";
 
 /** App-Router resolves `searchParams` to this shape; the library grid
  *  funnels every filter dimension through the URL (chip deep-links,
@@ -68,11 +72,13 @@ export default async function HomePage({
   // old client-only path produced. `/me/pages` lazy-creates the system
   // row on first access, so we're guaranteed to find one — the fallback
   // is defensive for failed/unauthed fetches where middleware will be
-  // redirecting anyway.
-  const pages = await apiGet<PageView[]>("/me/pages").catch(
-    () => [] as PageView[],
+  // redirecting anyway. Audit-remediation M4 wrapped the endpoint in
+  // `CursorPage<PageView>`; pages are bounded per-user so we just read
+  // `.items`.
+  const pages = await apiGet<PageListView>("/me/pages").catch(
+    () => ({ items: [], total: 0, next_cursor: null }) as PageListView,
   );
-  const system = pages.find((p) => p.is_system);
+  const system = pages.items.find((p) => p.is_system);
   if (!system) {
     return (
       <div className="text-muted-foreground py-12 text-sm">
