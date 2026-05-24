@@ -359,7 +359,10 @@ async fn series_json_volume_is_authoritative_over_filename_inference() {
     // Mylar3-style filenames with `V<year>` (the contamination
     // source) and the year in a bracket group.
     write_cbz(&folder_v1.join("Series Xi V2016 001 (April 2016).cbz"), 1);
-    write_cbz(&folder_v2.join("Series Xi V2016 001 (September 2016).cbz"), 2);
+    write_cbz(
+        &folder_v2.join("Series Xi V2016 001 (September 2016).cbz"),
+        2,
+    );
 
     // Mylar3 series.json sidecars carry the canonical volume.
     std::fs::write(

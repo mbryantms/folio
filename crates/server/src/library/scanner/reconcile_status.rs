@@ -189,10 +189,9 @@ where
          GROUP BY series_id",
         [ids.clone().into()],
     );
-    let mode_rows: Vec<VolumeModeBySeriesRow> =
-        VolumeModeBySeriesRow::find_by_statement(mode_stmt)
-            .all(db)
-            .await?;
+    let mode_rows: Vec<VolumeModeBySeriesRow> = VolumeModeBySeriesRow::find_by_statement(mode_stmt)
+        .all(db)
+        .await?;
     let volume_modes: HashMap<Uuid, Option<i32>> = mode_rows
         .into_iter()
         .map(|r| (r.series_id, r.mode_volume))

@@ -74,6 +74,58 @@ fn looks_like_year(s: &str) -> Option<i32> {
     }
 }
 
+/// Extract a plausible `V<N>` volume token from a folder-leaf name.
+///
+/// Folder names commonly encode the volume separately from the
+/// containing filename, e.g. `Deadpool & The Mercs For Money V2 (2016)`.
+/// When a `series.json` sidecar is absent and ComicInfo / filename
+/// inference can't tell sibling folders apart, this is the last signal
+/// available before falling back to NULL.
+///
+/// Walks whitespace-separated tokens, looking for the first one shaped
+/// like `V<digits>` / `v<digits>`. Filters through [`plausible_volume`]
+/// so Mylar3's `V<year>` stamps (`V2016`, `V2023`, …) are silently
+/// rejected — same rule applied everywhere a V-token is read.
+pub fn folder_volume_token(folder_leaf: &str) -> Option<i32> {
+    for token in folder_leaf.split_whitespace() {
+        if let Some(rest) = token.strip_prefix('v').or_else(|| token.strip_prefix('V'))
+            && let Ok(v) = rest.parse::<i32>()
+            && plausible_volume(v, None)
+        {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// Plausibility filter for a parsed `V<N>` volume token.
+///
+/// Real comic-series volumes are small positive integers — in mainstream
+/// publishing, single digits and rarely above ~25. Mylar3 and similar
+/// metadata fillers commonly stamp the publication year here as `V2016`,
+/// `V2023`, etc., which contaminates the volume field if accepted at face
+/// value. The filter:
+///
+///   - Rejects anything outside `[1, 99]` (year-range values, junk).
+///   - Optionally rejects values that match the publication year, as a
+///     final tie-breaker for the rare "Volume == Year" coincidence.
+///     Pass `year: None` when no year context is available.
+///
+/// Used by every source that reads a `V<N>` token — filename inference
+/// here, folder-name inference in the scanner, and the issue-level
+/// majority vote during the post-ingest reconcile.
+pub fn plausible_volume(v: i32, year: Option<i32>) -> bool {
+    if !(1..=99).contains(&v) {
+        return false;
+    }
+    if let Some(y) = year
+        && v == y
+    {
+        return false;
+    }
+    true
+}
+
 pub fn infer(filename: &str) -> InferredName {
     let stem = strip_extension(filename);
     let (mut base, groups) = pull_groups(stem);
@@ -95,7 +147,18 @@ pub fn infer(filename: &str) -> InferredName {
             && let Ok(v) = rest.parse::<i32>()
             && out.volume.is_none()
         {
-            out.volume = Some(v);
+            // Apply the same plausibility filter the resolver uses
+            // downstream (see `plausible_volume`). Year context is
+            // not known here yet, so we only check the [1, 99]
+            // range — that alone rejects the Mylar3 `V<year>`
+            // pattern (`V2016`, `V1995`, …) which is the dominant
+            // contamination source.
+            if plausible_volume(v, None) {
+                out.volume = Some(v);
+            }
+            // Pop the token either way — leaving an implausible
+            // `V2016` in the series-name run would be worse than
+            // dropping it.
             tokens.pop();
             continue;
         }
@@ -127,7 +190,10 @@ pub fn infer(filename: &str) -> InferredName {
             && let Ok(n) = trimmed[1..].parse::<i32>()
             && out.volume.is_none()
         {
-            out.volume = Some(n);
+            // Same plausibility gate as the inline-token branch above.
+            if plausible_volume(n, None) {
+                out.volume = Some(n);
+            }
             continue;
         }
         // Common publisher hints (deliberately small; can grow):
@@ -195,6 +261,91 @@ mod tests {
         let i = infer("Berserk v01.cbz");
         assert_eq!(i.series, "Berserk");
         assert_eq!(i.volume, Some(1));
+    }
+
+    #[test]
+    fn plausible_volume_filter() {
+        // Real volumes pass.
+        assert!(plausible_volume(1, None));
+        assert!(plausible_volume(2, None));
+        assert!(plausible_volume(25, None));
+        assert!(plausible_volume(99, None));
+        // Year-range Mylar3 stamps are rejected.
+        assert!(!plausible_volume(1900, None));
+        assert!(!plausible_volume(2016, None));
+        assert!(!plausible_volume(2100, None));
+        // Out-of-range junk.
+        assert!(!plausible_volume(0, None));
+        assert!(!plausible_volume(-5, None));
+        assert!(!plausible_volume(100, None));
+        // Year-equality tie-breaker — the rare Vol=Year coincidence
+        // is treated as ambiguous and dropped.
+        assert!(!plausible_volume(2, Some(2)));
+        assert!(plausible_volume(2, Some(2016)));
+    }
+
+    #[test]
+    fn vyear_token_rejected_as_volume() {
+        // Mylar3 stamps `V<year>` in the filename to satisfy schemas
+        // that want a V-token. It must NOT be promoted to the volume
+        // field — that single bug poisoned 99.9% of one user's series
+        // rows and caused sibling-folder collisions on same-year
+        // multi-volume releases (e.g. Deadpool & The Mercs For Money
+        // 2016 vs V2 (2016)).
+        let i = infer("Deadpool & The Mercs For Money V2016 001 (April 2016).cbz");
+        assert_eq!(i.series, "Deadpool & The Mercs For Money");
+        assert_eq!(i.number.as_deref(), Some("001"));
+        assert_eq!(i.volume, None, "V2016 must not be parsed as volume");
+        // The `(April 2016)` bracket group doesn't match `looks_like_year`
+        // (requires bare 4 digits), so year stays None — that's the
+        // existing inference behavior, unchanged by the volume fix.
+    }
+
+    #[test]
+    fn folder_volume_token_extracts_plausible_v() {
+        assert_eq!(
+            folder_volume_token("Deadpool & The Mercs For Money V2 (2016)"),
+            Some(2),
+        );
+        assert_eq!(folder_volume_token("Howard the Duck V4 (2015)"), Some(4));
+        assert_eq!(folder_volume_token("Berserk v3"), Some(3));
+    }
+
+    #[test]
+    fn folder_volume_token_rejects_year_stamp() {
+        assert_eq!(
+            folder_volume_token("Green Arrow V2010 (2010)"),
+            None,
+            "V<year> must be rejected",
+        );
+        assert_eq!(folder_volume_token("Silk V2015 (2015)"), None);
+    }
+
+    #[test]
+    fn folder_volume_token_returns_none_when_absent() {
+        assert_eq!(
+            folder_volume_token("Deadpool & The Mercs For Money (2016)"),
+            None,
+        );
+        assert_eq!(folder_volume_token("Saga"), None);
+        assert_eq!(folder_volume_token(""), None);
+    }
+
+    #[test]
+    fn vyear_in_bracket_group_rejected_as_volume() {
+        // Same Mylar3 stamp, but inside a bracket group: `(V2016)`.
+        // Must also be rejected by the plausibility filter.
+        let i = infer("Some Series (2014) (V2016).cbz");
+        assert_eq!(i.year, Some(2014));
+        assert_eq!(i.volume, None);
+    }
+
+    #[test]
+    fn small_volume_in_bracket_group_still_works() {
+        // `(v2)` in brackets still passes the plausibility filter.
+        let i = infer("Wolverine #1 (v2) (2014).cbz");
+        assert_eq!(i.volume, Some(2));
+        assert_eq!(i.year, Some(2014));
     }
 
     #[test]
