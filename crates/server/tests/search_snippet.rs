@@ -13,8 +13,7 @@ use axum::{
 use chrono::Utc;
 use common::TestApp;
 use entity::{
-    issue::ActiveModel as IssueAM, library, series::ActiveModel as SeriesAM,
-    series::normalize_name,
+    issue::ActiveModel as IssueAM, library, series::ActiveModel as SeriesAM, series::normalize_name,
 };
 use sea_orm::{ActiveModelTrait, Database, Set};
 use tower::ServiceExt;

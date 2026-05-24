@@ -1,9 +1,12 @@
 //! `/healthz` (liveness) and `/readyz` (readiness) — §12.1.
 
-use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::state::AppState;
+use server_macros::handler;
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct Health {
@@ -22,17 +25,18 @@ pub struct Health {
 const BUILD_SHA: &str = env!("COMIC_BUILD_SHA");
 const BUILD_EPOCH: &str = env!("COMIC_BUILD_EPOCH");
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(healthz))
+        .routes(routes!(readyz))
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "health_healthz",    get,
     path = "/healthz",
     responses((status = 200, body = Health))
 )]
+#[handler]
 pub async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
     let uptime = (chrono::Utc::now() - state.started_at).num_seconds();
     Json(Health {
@@ -45,13 +49,14 @@ pub async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "health_readyz",    get,
     path = "/readyz",
     responses(
         (status = 200, body = Health),
         (status = 503, description = "dependency unreachable")
     )
 )]
+#[handler]
 pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     // Probe both Postgres and Redis in parallel. The server hard-requires
     // both at boot (apalis fails-fast on Redis at startup) but a Redis

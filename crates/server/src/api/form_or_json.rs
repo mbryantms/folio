@@ -19,7 +19,6 @@
 //! credentials into a GET.
 
 use axum::{
-    Json,
     body::Bytes,
     extract::{FromRequest, Request},
     http::{StatusCode, header::CONTENT_TYPE},
@@ -60,11 +59,7 @@ where
 
         if is_form {
             let data = serde_urlencoded::from_bytes::<T>(&body).map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": {"code": "validation", "message": e.to_string()}})),
-                )
-                    .into_response()
+                super::error(StatusCode::BAD_REQUEST, "validation", &e.to_string())
             })?;
             Ok(FormOrJson {
                 data,
@@ -72,11 +67,7 @@ where
             })
         } else {
             let data = serde_json::from_slice::<T>(&body).map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": {"code": "validation", "message": e.to_string()}})),
-                )
-                    .into_response()
+                super::error(StatusCode::BAD_REQUEST, "validation", &e.to_string())
             })?;
             Ok(FormOrJson {
                 data,

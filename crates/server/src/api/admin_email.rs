@@ -11,13 +11,14 @@
 //! audit-logs as `admin.email.test`.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use serde::Serialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use super::error;
 use crate::audit::{self, AuditEntry};
@@ -25,11 +26,12 @@ use crate::auth::RequireAdmin;
 use crate::email::Email;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/admin/email/status", get(status))
-        .route("/admin/email/test", post(test_send))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(status))
+        .routes(routes!(test_send))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -51,13 +53,14 @@ pub struct TestEmailResp {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_email_status",    get,
     path = "/admin/email/status",
     responses(
         (status = 200, body = EmailStatusView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn status(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     let s = app.email_status.read().await.clone();
     Json(EmailStatusView {
@@ -71,7 +74,7 @@ pub async fn status(State(app): State<AppState>, _admin: RequireAdmin) -> Respon
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "admin_email_test_send",    post,
     path = "/admin/email/test",
     responses(
         (status = 200, body = TestEmailResp),
@@ -80,6 +83,7 @@ pub async fn status(State(app): State<AppState>, _admin: RequireAdmin) -> Respon
         (status = 502, description = "transport error"),
     )
 )]
+#[handler]
 pub async fn test_send(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -87,7 +91,7 @@ pub async fn test_send(
 ) -> Response {
     let Some(to) = actor.email.clone() else {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "email.no_recipient",
             "your admin account has no email address; set one before testing",
         );

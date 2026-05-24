@@ -26,15 +26,16 @@
 //! single source of truth.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
 };
 use entity::{cbl_entry, cbl_list, issue, progress_record, saved_view, series};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::Expr};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
@@ -44,11 +45,12 @@ use crate::api::series::IssueSummaryView;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/issues/{issue_id}/next-up", get(next_up))
-        .route("/issues/{issue_id}/prev-up", get(prev_up))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(next_up))
+        .routes(routes!(prev_up))
 }
 
 // ───── Response shapes ─────
@@ -122,7 +124,7 @@ pub struct NextUpQuery {
 /// CBL > series; returns `source: "none"` when neither branch has a
 /// viable target.
 #[utoipa::path(
-    get,
+    operation_id = "next_up_next_up",    get,
     path = "/issues/{issue_id}/next-up",
     params(
         ("issue_id" = String, Path, description = "Current issue id"),
@@ -133,6 +135,7 @@ pub struct NextUpQuery {
         (status = 404, description = "current issue not found or invisible to caller")
     )
 )]
+#[handler]
 pub async fn next_up(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -835,7 +838,7 @@ pub(crate) async fn pick_next_in_cbl(
 /// viable target (e.g., user is on the first issue of the series and
 /// no CBL context).
 #[utoipa::path(
-    get,
+    operation_id = "next_up_prev_up",    get,
     path = "/issues/{issue_id}/prev-up",
     params(
         ("issue_id" = String, Path, description = "Current issue id"),
@@ -846,6 +849,7 @@ pub(crate) async fn pick_next_in_cbl(
         (status = 404, description = "current issue not found or invisible to caller")
     )
 )]
+#[handler]
 pub async fn prev_up(
     State(app): State<AppState>,
     user: CurrentUser,

@@ -12,15 +12,16 @@
 //! [`fetch_visible_issue`]. No rate-limit yet (lands with M4).
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxPath, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
 };
 use entity::{issue, library_user_access};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use super::error;
 use crate::auth::CurrentUser;
@@ -29,12 +30,12 @@ use crate::ocr::cache;
 use crate::ocr::pipeline::{OcrInput, Rect, run_ocr};
 use crate::ocr::recognizer::Language;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route(
-        "/me/issues/{id}/ocr",
-        post(serve).route_layer(rate_limit::OCR.build()),
-    )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(serve))
+        .route_layer(rate_limit::OCR.build())
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -97,7 +98,7 @@ pub struct OcrResponse {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "issue_ocr_serve",    post,
     path = "/me/issues/{id}/ocr",
     params(("id" = String, Path, description = "issue UUID")),
     request_body = OcrRequest,
@@ -108,6 +109,7 @@ pub struct OcrResponse {
         (status = 500, description = "ocr pipeline failure"),
     )
 )]
+#[handler]
 pub async fn serve(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -117,7 +119,7 @@ pub async fn serve(
     // ─── Validate ────────────────────────────────────────────────
     if req.region.w == 0 || req.region.h == 0 {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_region",
             "region w/h must be > 0",
         );
@@ -127,7 +129,7 @@ pub async fn serve(
         "manga" => Language::Manga,
         other => {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "invalid_lang",
                 &format!("unknown lang {other:?}; expected western|manga"),
             );
@@ -236,7 +238,7 @@ pub async fn serve(
         || req.region.y.saturating_add(req.region.h) > page_h
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_region",
             "region extends outside page bounds",
         );

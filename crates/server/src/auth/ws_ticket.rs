@@ -17,19 +17,20 @@
 //! `auth/csrf` + global rate-limit middleware already gates this endpoint;
 //! a dedicated bucket on top is a follow-up.
 
-use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
+use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::middleware::rate_limit;
 use crate::state::AppState;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route(
-        "/auth/ws-ticket",
-        post(mint).route_layer(rate_limit::WS_TICKET.build()),
-    )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(mint))
+        .route_layer(rate_limit::WS_TICKET.build())
 }
 
 /// Ticket lifetime. The original 30s was too tight for tunneled deployments
@@ -51,7 +52,7 @@ fn redis_key(ticket: &str) -> String {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "ws_ticket_mint",    post,
     path = "/auth/ws-ticket",
     responses(
         (status = 200, body = WsTicketResp),
@@ -79,11 +80,11 @@ pub async fn mint(
         .await;
     if let Err(e) = res {
         tracing::error!(error = %e, "ws_ticket: redis SET failed");
-        return (
+        return crate::api::error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": {"code": "internal", "message": "internal"}})),
-        )
-            .into_response();
+            "internal",
+            "internal",
+        );
     }
     Json(WsTicketResp {
         ticket,

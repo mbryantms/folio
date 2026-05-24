@@ -445,7 +445,7 @@ async fn patch_validation_rejects_bad_input() {
         serde_json::json!({ "year": 1500 }),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Invalid month.
     let (s, _) = patch(
@@ -455,7 +455,7 @@ async fn patch_validation_rejects_bad_input() {
         serde_json::json!({ "month": 13 }),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Manga must be one of the canonical values.
     let (s, _) = patch(
@@ -465,7 +465,7 @@ async fn patch_validation_rejects_bad_input() {
         serde_json::json!({ "manga": "Maybe" }),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -641,7 +641,7 @@ async fn series_status_and_external_ids_editable() {
         serde_json::json!({ "status": "wat" }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -780,7 +780,7 @@ async fn series_and_issue_ratings_round_trip() {
         serde_json::json!({ "rating": 3.7 }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Issue rating round-trip.
     let (status, _) = put_json(

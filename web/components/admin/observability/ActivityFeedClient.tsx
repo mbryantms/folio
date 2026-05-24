@@ -167,7 +167,7 @@ function formatDetail(entry: ActivityEntryView): string | null {
       // alongside the raw IDs. Prefer the human form; fall back to the
       // truncated ID only for deleted entities the resolver couldn't
       // resolve.
-      const p = entry.payload;
+      const p = entry.payload as Record<string, unknown>;
       const actorName = (p.actor_name as string | undefined) ?? null;
       const actorType = (p.actor_type as string | undefined) ?? "user";
       const actor = actorName ?? actorType;
@@ -180,7 +180,7 @@ function formatDetail(entry: ActivityEntryView): string | null {
       return `${actor}${tail}`;
     }
     case "scan": {
-      const p = entry.payload;
+      const p = entry.payload as Record<string, unknown>;
       const libName = (p.library_name as string | undefined) ?? null;
       const lib = p.library_id as string | undefined;
       const seriesName = (p.series_name as string | undefined) ?? null;
@@ -195,14 +195,15 @@ function formatDetail(entry: ActivityEntryView): string | null {
       return subject;
     }
     case "health": {
-      const libName =
-        (entry.payload.library_name as string | undefined) ?? null;
-      const lib = entry.payload.library_id as string | undefined;
+      const p = entry.payload as Record<string, unknown>;
+      const libName = (p.library_name as string | undefined) ?? null;
+      const lib = p.library_id as string | undefined;
       return libName ?? (lib ? `library ${lib.slice(0, 8)}…` : null);
     }
     case "reading": {
-      const ms = numberOr(entry.payload.active_ms, 0);
-      const pages = numberOr(entry.payload.pages, 0);
+      const p = entry.payload as Record<string, unknown>;
+      const ms = numberOr(p.active_ms, 0);
+      const pages = numberOr(p.pages, 0);
       return `${formatDurationMs(ms)} · ${pages} pages`;
     }
     default:

@@ -12,7 +12,7 @@
 //! opts in to the workaround.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Router,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
@@ -451,7 +451,14 @@ pub async fn callback(
     {
         Ok(t) => t,
         Err(e) => {
-            tracing::warn!(error = %e, "oidc token exchange failed");
+            // `RequestTokenError` from openidconnect may carry the full
+            // upstream response body, which can include `access_token=...`
+            // or `client_secret=...` substrings on misconfigured providers.
+            // Run through the sanitizer to redact known secret shapes.
+            tracing::warn!(
+                error = %crate::observability::sanitize_error(&e),
+                "oidc token exchange failed"
+            );
             super::failed_auth::record_failure_for(&app, &ctx).await;
             return error(
                 StatusCode::UNAUTHORIZED,
@@ -715,11 +722,7 @@ pub async fn callback(
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
+    crate::api::error(status, code, message)
 }
 
 /// True if `s` is a safe path-only redirect target. Mirrors the checks in

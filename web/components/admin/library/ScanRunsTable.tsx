@@ -277,7 +277,7 @@ function KindCell({ run }: { run: ScanRunView }) {
   return (
     <div className="flex flex-col gap-1">
       <Badge
-        variant={kindVariant(run.kind)}
+        variant={kindVariant(run.kind as ScanRunKind)}
         className="w-fit text-[10px] uppercase"
       >
         {label}

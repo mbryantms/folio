@@ -475,6 +475,9 @@ async fn rejects_clock_skew_and_invalid_inputs() {
     let auth = register(&app, "dave@example.com").await;
     let (_lib, _series, issue_id) = seed_one(&app, "dave").await;
 
+    // Audit-remediation M9.3: semantic-validation failures (future
+    // start_at, too-old start_at, empty client_session_id, inverted
+    // page range) come back as 422.
     let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
     let (s, _) = post(
         &app,
@@ -483,7 +486,7 @@ async fn rejects_clock_skew_and_invalid_inputs() {
         &upsert_body("c-future", &issue_id, &future),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 
     let too_old = (Utc::now() - Duration::days(60)).to_rfc3339();
     let (s, _) = post(
@@ -493,7 +496,7 @@ async fn rejects_clock_skew_and_invalid_inputs() {
         &upsert_body("c-old", &issue_id, &too_old),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Empty client_session_id.
     let started = (Utc::now() - Duration::seconds(60)).to_rfc3339();
@@ -504,7 +507,7 @@ async fn rejects_clock_skew_and_invalid_inputs() {
         &upsert_body("", &issue_id, &started),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Inverted page range.
     let body = serde_json::json!({
@@ -519,7 +522,7 @@ async fn rejects_clock_skew_and_invalid_inputs() {
     })
     .to_string();
     let (s, _) = post(&app, &auth, "/api/me/reading-sessions", &body).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
@@ -692,7 +695,7 @@ async fn stats_aggregates_totals_per_day_and_streak() {
 
     // Bad range → 400.
     let (s, _) = get(&app, &auth, "/api/me/reading-stats?range=bogus").await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
@@ -873,5 +876,5 @@ async fn timezone_validation_rejects_unknown_zone() {
         r#"{"timezone": "Mars/Olympus_Mons"}"#,
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "body={body}");
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "body={body}");
 }

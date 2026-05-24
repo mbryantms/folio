@@ -291,10 +291,7 @@ pub async fn allocate_series_slug<C: ConnectionTrait>(
 /// Allocate a globally-unique slug for a new creator. No natural
 /// disambiguator today (could later be birth-year if we ever collect
 /// it); falls back to numeric suffixes.
-pub async fn allocate_person_slug<C: ConnectionTrait>(
-    db: &C,
-    name: &str,
-) -> Result<String, DbErr> {
+pub async fn allocate_person_slug<C: ConnectionTrait>(db: &C, name: &str) -> Result<String, DbErr> {
     allocate_slug(
         name,
         &[],

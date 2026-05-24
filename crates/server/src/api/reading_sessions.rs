@@ -9,11 +9,10 @@
 //! active duration / pages and host the opt-out kill switch.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use base64::Engine;
 use chrono::{DateTime, Duration, FixedOffset, NaiveDate, Utc};
@@ -30,18 +29,22 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
 use crate::auth::CurrentUser;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/me/reading-sessions", post(upsert).get(list))
-        .route("/me/reading-sessions/clear", post(clear_history))
-        .route("/me/reading-stats", get(stats))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(upsert))
+        .routes(routes!(list))
+        .routes(routes!(clear_history))
+        .routes(routes!(stats))
 }
 
 const MAX_CLIENT_SESSION_ID_LEN: usize = 64;
@@ -335,7 +338,7 @@ pub struct DayBucket {
 // ────────────── Handlers ──────────────
 
 #[utoipa::path(
-    post,
+    operation_id = "reading_sessions_upsert",    post,
     path = "/me/reading-sessions",
     request_body = UpsertReq,
     responses(
@@ -346,30 +349,41 @@ pub struct DayBucket {
         (status = 404, description = "issue not visible to user"),
     )
 )]
+#[handler]
 pub async fn upsert(
     State(app): State<AppState>,
     user: CurrentUser,
     Json(req): Json<UpsertReq>,
 ) -> Response {
+    // Audit-remediation M9.3: semantic-validation failures (range,
+    // length, enum, future-time, RFC3339 content) return 422.
     if req.client_session_id.is_empty() || req.client_session_id.len() > MAX_CLIENT_SESSION_ID_LEN {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "client_session_id required (1-64 chars)",
         );
     }
     if req.start_page < 0 || req.end_page < req.start_page {
-        return error(StatusCode::BAD_REQUEST, "validation", "page range invalid");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "page range invalid",
+        );
     }
     if req.distinct_pages_read < 0 || req.page_turns < 0 || req.active_ms < 0 {
-        return error(StatusCode::BAD_REQUEST, "validation", "negative counter");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "negative counter",
+        );
     }
 
     let started_at = match DateTime::parse_from_rfc3339(&req.started_at) {
         Ok(t) => t,
         Err(_) => {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "started_at must be RFC3339",
             );
@@ -380,7 +394,7 @@ pub async fn upsert(
             Ok(t) => Some(t),
             Err(_) => {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "ended_at must be RFC3339",
                 );
@@ -391,31 +405,39 @@ pub async fn upsert(
     let now = Utc::now();
     if started_at.with_timezone(&Utc) > now + Duration::seconds(FUTURE_SLACK_START_SECS) {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "started_at in future",
         );
     }
     if started_at.with_timezone(&Utc) < now - Duration::seconds(PAST_LIMIT_SECS) {
-        return error(StatusCode::BAD_REQUEST, "validation", "started_at too old");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "started_at too old",
+        );
     }
     if let Some(et) = ended_at {
         if et < started_at {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "ended_at before started_at",
             );
         }
         if et.with_timezone(&Utc) > now + Duration::seconds(FUTURE_SLACK_END_SECS) {
-            return error(StatusCode::BAD_REQUEST, "validation", "ended_at in future");
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                "ended_at in future",
+            );
         }
     }
     let view_mode = match req.view_mode.as_deref() {
         Some(v) if matches!(v, "single" | "double" | "webtoon") => Some(v.to_owned()),
         Some(_) => {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "view_mode must be 'single', 'double', 'webtoon', or null",
             );
@@ -430,7 +452,7 @@ pub async fn upsert(
         let s = req.client_meta.to_string();
         if s.len() > 1024 {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "client_meta too large (>1KB)",
             );
@@ -438,7 +460,7 @@ pub async fn upsert(
         req.client_meta
     } else {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "client_meta must be an object",
         );
@@ -568,7 +590,7 @@ pub async fn upsert(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "reading_sessions_list",    get,
     path = "/me/reading-sessions",
     params(
         ("issue_id" = Option<String>, Query, description = "filter to one issue"),
@@ -581,6 +603,7 @@ pub async fn upsert(
         (status = 400, description = "validation error"),
     )
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -689,7 +712,7 @@ pub async fn list(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "reading_sessions_stats",    get,
     path = "/me/reading-stats",
     params(
         ("range" = Option<String>, Query, description = "'7d', '30d', '90d', 'all'"),
@@ -701,6 +724,7 @@ pub async fn list(
         (status = 400, description = "validation error"),
     )
 )]
+#[handler]
 pub async fn stats(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -718,13 +742,14 @@ pub struct ClearHistoryResp {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "reading_sessions_clear_history",    post,
     path = "/me/reading-sessions/clear",
     responses(
         (status = 200, body = ClearHistoryResp),
     ),
     description = "Destructive — deletes ALL of the caller's reading_sessions rows. Audited."
 )]
+#[handler]
 pub async fn clear_history(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1000,7 +1025,7 @@ pub struct StatsError {
 impl StatsError {
     pub fn bad(code: &'static str, message: impl Into<String>) -> Self {
         Self {
-            status: StatusCode::BAD_REQUEST,
+            status: StatusCode::UNPROCESSABLE_ENTITY,
             code,
             message: message.into(),
         }

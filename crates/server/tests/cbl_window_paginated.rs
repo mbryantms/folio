@@ -482,7 +482,7 @@ async fn invalid_direction_returns_400() {
 
     let url = format!("/api/me/cbl-lists/{list_id}/window-paginated?direction=sideways");
     let (status, body) = get_json(&app, &url, &auth).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "invalid_direction");
 }
 
@@ -494,6 +494,6 @@ async fn after_without_cursor_returns_400() {
 
     let url = format!("/api/me/cbl-lists/{list_id}/window-paginated?direction=after");
     let (status, body) = get_json(&app, &url, &auth).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "missing_cursor");
 }

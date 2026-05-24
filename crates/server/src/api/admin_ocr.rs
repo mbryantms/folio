@@ -31,14 +31,17 @@
 
 use std::path::{Path, PathBuf};
 
-use axum::{Json, Router, response::IntoResponse, routing::get};
+use axum::{Json, response::IntoResponse};
 use serde::Serialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/admin/ocr/models", get(list))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -82,13 +85,14 @@ pub struct OcrModelsView {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_ocr_list",    get,
     path = "/admin/ocr/models",
     responses(
         (status = 200, body = OcrModelsView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn list(_admin: RequireAdmin) -> impl IntoResponse {
     let hf_home = hf_home_dir();
     let tessdata_dir = tessdata_dir();

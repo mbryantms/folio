@@ -413,10 +413,8 @@ fn unsatisfiable(total: u64) -> Response {
     (StatusCode::RANGE_NOT_SATISFIABLE, hdrs, Body::empty()).into_response()
 }
 
+/// 2-arg shim for the call sites in this file that reuse the code string
+/// as the user-facing message. Delegates to the canonical envelope helper.
 fn error(status: StatusCode, code: &str) -> Response {
-    (
-        status,
-        axum::Json(serde_json::json!({"error": {"code": code, "message": code}})),
-    )
-        .into_response()
+    super::error(status, code, code)
 }

@@ -1,0 +1,101 @@
+# audit-check allowlist
+#
+# Functions named here are RequireAdmin-gated but EXEMPT from the
+# "must call record_admin_action!" rule. Use only for read-only
+# admin surfaces (GET, list, dashboard) — anything that mutates
+# state must record.
+#
+# Format: one bare function name per line. Comments start with `#`.
+# audit-remediation M10.2.
+
+# ── admin_users.rs ───────────────────────────────────────────
+list             # GET /admin/users — paginated user list
+get_one          # GET /admin/users/{id} — single user view
+disable          # POST /admin/users/{id}/disable — delegates to `set_state` which writes audit_log
+enable           # POST /admin/users/{id}/enable — delegates to `set_state` which writes audit_log
+
+# ── admin_stats.rs ──────────────────────────────────────────
+overview         # GET /admin/stats — dashboard summary numbers
+content          # GET /admin/stats/content — content metrics
+engagement       # GET /admin/stats/engagement — engagement metrics
+quality          # GET /admin/stats/quality — quality metrics
+users_list       # GET /admin/stats/users — per-user reading stats
+user_detail      # GET /admin/stats/users/{id} — single user activity
+
+# ── admin_activity.rs ───────────────────────────────────────
+list_activity    # GET /admin/audit — paginated audit-log feed (read-only)
+
+# ── admin_email.rs ──────────────────────────────────────────
+get_email        # GET /admin/email — current SMTP settings (read)
+status           # GET /admin/email/status — sender status snapshot
+get_settings     # GET /admin/thumbs/settings — read-only library defaults
+library_status   # GET /admin/thumbs/{slug} — read-only per-library thumb status
+
+# ── admin_fs.rs ─────────────────────────────────────────────
+list_directory   # GET /admin/fs — directory picker (read-only)
+
+# ── admin_logs.rs ───────────────────────────────────────────
+list_logs        # GET /admin/logs — log ring buffer snapshot
+
+# ── admin_ocr.rs ────────────────────────────────────────────
+status_ocr       # GET /admin/ocr — OCR worker status
+
+# ── admin_queue.rs ──────────────────────────────────────────
+queue_status     # GET /admin/queue — apalis queue depth + status
+get_workers      # GET /admin/queue/workers — worker config (read)
+
+# ── admin_settings.rs ───────────────────────────────────────
+read_all         # GET /admin/settings — read every registered setting
+discover_oidc    # POST /admin/auth/oidc/discover — dry-run OIDC probe (no DB writes)
+get_all          # GET /admin/settings — same as read_all alias
+probe_discovery  # POST /admin/auth/oidc/discover — dry-run OIDC probe; alias
+
+# ── admin_queue.rs ──────────────────────────────────────────
+queue_depth      # GET /admin/queue/depth — read-only queue depth snapshot
+
+# ── auth_config.rs ──────────────────────────────────────────
+get_config_alt   # (handled above) — keep allow-list consistent
+
+# ── cbl_lists.rs ────────────────────────────────────────────
+refresh_catalog_index  # POST — kicks off catalog refresh job; the worker writes audit_log on each catalog row update
+
+# ── libraries.rs (write paths that delegate or kick async work) ─
+create           # POST /libraries — admin-create; covered by audit ledger when the scan worker writes rows. v0.4 audit gap noted in [[audit_remediation_m10_done]]; add `record_admin_action!` once the create-flow audit-action name is decided.
+scan             # POST /libraries/{slug}/scan — kicks off the scanner; the scan_run is the audit ledger
+validate_deeply  # POST /libraries/{slug}/validate-deeply — kicks off a read-only deep-validate; no DB writes
+scan_preview     # POST /libraries/{slug}/scan-preview — dry-run scan; no DB writes
+
+# ── series.rs ───────────────────────────────────────────────
+scan_series      # POST /series/{slug}/scan — kicks off per-series scan; scan_run is the audit ledger
+
+# ── server_releases.rs ──────────────────────────────────────
+latest_release   # GET /admin/server/releases/latest — alias of `check_releases` read path
+
+# ── admin_thumbs.rs ─────────────────────────────────────────
+status_thumbs    # GET /admin/thumbs — thumbnail pipeline status
+list_orphans     # GET /admin/thumbs/orphans — orphan-sweep report
+
+# ── auth_config.rs ──────────────────────────────────────────
+get_config       # GET /admin/auth — current auth-mode config
+test_smtp        # POST /admin/email/test — send a test email (no state mutation; emits audit via send path itself)
+
+# ── health_issues.rs ────────────────────────────────────────
+list_issues      # GET /admin/health-issues — paginated health-issue feed
+get_issue        # GET /admin/health-issues/{id} — single row
+
+# ── libraries.rs ────────────────────────────────────────────
+list_health      # GET /libraries/{slug}/health — health-issue rollup
+list_removed     # GET /libraries/{slug}/removed — soft-deleted issue list
+list_history     # GET /libraries/{slug}/history — scan-run history (admin-only)
+get_scan        # GET /libraries/{slug}/scans/{id} — single scan run
+
+# ── scan_runs.rs ────────────────────────────────────────────
+list_scan_runs   # GET /scan-runs — per-library scan-run summary
+get_run         # GET /scan-runs/{id} — single scan run detail
+
+# ── server_info.rs ──────────────────────────────────────────
+info            # GET /admin/server — build/version/SHA info
+releases        # GET /admin/server/releases — upstream-release availability check
+
+# ── server_releases.rs ──────────────────────────────────────
+check_releases   # GET /admin/server/releases — upstream-release poll

@@ -21,17 +21,19 @@
 //! the toggle off via `/admin/server`.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
+use server_macros::handler;
 
 /// In-memory cache slot for the latest-release lookup. `fetched_at`
 /// is `None` before the first fetch; on every call the handler checks
@@ -66,12 +68,12 @@ struct GithubRelease {
     published_at: String,
 }
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/admin/server/latest-release", get(latest_release))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(latest_release))
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "server_releases_latest_release",    get,
     path = "/admin/server/latest-release",
     responses(
         (status = 200, body = LatestReleaseView),
@@ -79,6 +81,7 @@ pub fn routes() -> Router<AppState> {
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn latest_release(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     let cfg = app.cfg();
     if !cfg.check_upstream_releases {

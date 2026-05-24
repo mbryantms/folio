@@ -18,18 +18,18 @@
 //! All three endpoints emit an audit-log row.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, post},
 };
 use axum_extra::extract::CookieJar;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, Set,
 };
 use serde::Serialize;
-use sha2::{Digest, Sha256};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use entity::auth_session::{self, Entity as SessionEntity};
@@ -38,15 +38,16 @@ use entity::user::{ActiveModel as UserAM, Entity as UserEntity};
 use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::CurrentUser;
-use crate::auth::cookies::REFRESH_COOKIE;
+use crate::auth::cookies::{REFRESH_COOKIE, sha256_hex};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/me/sessions", get(list))
-        .route("/me/sessions/{id}", delete(revoke_one))
-        .route("/me/sessions/revoke-all", post(revoke_all))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(revoke_one))
+        .routes(routes!(revoke_all))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -73,20 +74,15 @@ pub struct RevokeAllResp {
     pub revoked: u64,
 }
 
-fn sha256_hex(input: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(input.as_bytes());
-    format!("{:x}", h.finalize())
-}
-
 #[utoipa::path(
-    get,
+    operation_id = "sessions_list",    get,
     path = "/me/sessions",
     responses(
         (status = 200, body = SessionListView),
         (status = 401, description = "not authenticated"),
     )
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -128,7 +124,7 @@ pub async fn list(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "sessions_revoke_one",    delete,
     path = "/me/sessions/{id}",
     params(("id" = Uuid, Path)),
     responses(
@@ -136,6 +132,7 @@ pub async fn list(
         (status = 404, description = "session not found or not owned by caller"),
     )
 )]
+#[handler]
 pub async fn revoke_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -182,13 +179,14 @@ pub async fn revoke_one(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "sessions_revoke_all",    post,
     path = "/me/sessions/revoke-all",
     responses(
         (status = 200, body = RevokeAllResp),
         (status = 401, description = "not authenticated"),
     )
 )]
+#[handler]
 pub async fn revoke_all(
     State(app): State<AppState>,
     user: CurrentUser,

@@ -238,11 +238,15 @@ async fn two_volumes_of_same_series_get_distinct_rows_and_dont_cycle() {
     let folder_v2 = tmp.path().join("Series Mu (2014)");
     std::fs::create_dir_all(&folder_v1).unwrap();
     std::fs::create_dir_all(&folder_v2).unwrap();
-    // Filenames carry V-tokens so the parser infers different `volume`
-    // values per folder. Matches the real-world Mylar3 naming
-    // convention (`<Series> V<YYYY> <issue>.cbz`).
-    write_cbz(&folder_v1.join("Series Mu V2011 001.cbz"), 1);
-    write_cbz(&folder_v2.join("Series Mu V2014 001.cbz"), 2);
+    // Filenames carry the year in a Mylar-style bracket group so the
+    // parser populates `year` per folder. The dedup tuple
+    // `(name, year, volume)` then differs on `year` alone, which is
+    // the disambiguator most real-world sibling-volume releases rely
+    // on. (`V<year>` tokens used to disambiguate by accidentally
+    // landing in `volume`, but that pattern was a 99.9 %-pollution
+    // bug — see `parsers::filename::plausible_volume`.)
+    write_cbz(&folder_v1.join("Series Mu 001 (2011).cbz"), 1);
+    write_cbz(&folder_v2.join("Series Mu 001 (2014).cbz"), 2);
 
     let lib_id = create_library(&app, tmp.path()).await;
     let state = app.state();
@@ -281,6 +285,184 @@ async fn two_volumes_of_same_series_get_distinct_rows_and_dont_cycle() {
     assert_eq!(
         stats2.issues_restored, 0,
         "stable library: nothing should be restored on rescan: {stats2:?}",
+    );
+}
+
+#[tokio::test]
+async fn folder_name_v_token_disambiguates_same_year_siblings() {
+    // Two sibling folders, identical series name AND identical
+    // publication year, distinguished only by a `V<N>` token in one
+    // folder leaf. This is the "Howard the Duck V4 (2015) vs Howard
+    // the Duck (2015)" pattern — common for series with multiple
+    // runs that happened to launch in the same year as a relaunch.
+    //
+    // Pre-fix, both folders' filename inference produced
+    // `volume = None`, the dedup tuple collided on
+    // `(name, year, NULL)`, and the unique constraint
+    // `series_library_normalized_uniq` swallowed the second insert
+    // silently — the second folder's issues were dropped on the floor.
+    //
+    // The folder-leaf V-token fallback (`parsers::filename::folder_volume_token`)
+    // catches `V2` here and feeds it into the identity hint, so the
+    // tuples differ on `volume` and both folders create distinct rows.
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    let folder_a = tmp.path().join("Series Nu (2015)");
+    let folder_b = tmp.path().join("Series Nu V2 (2015)");
+    std::fs::create_dir_all(&folder_a).unwrap();
+    std::fs::create_dir_all(&folder_b).unwrap();
+    write_cbz(&folder_a.join("Series Nu 001 (2015).cbz"), 1);
+    write_cbz(&folder_b.join("Series Nu 001 (2015).cbz"), 2);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    let stats = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(
+        stats.series_created, 2,
+        "folder-leaf V-token must disambiguate same-year siblings: {stats:?}",
+    );
+
+    let mut series = SeriesEntity::find()
+        .filter(SeriesCol::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    series.sort_by_key(|s| s.volume);
+    assert_eq!(series.len(), 2);
+    assert_eq!(series[0].volume, None, "non-V folder gets NULL volume");
+    assert_eq!(series[1].volume, Some(2), "V2 folder gets volume = 2");
+}
+
+#[tokio::test]
+async fn series_json_volume_is_authoritative_over_filename_inference() {
+    // Real-world case from one user's library (Deadpool & The Mercs
+    // For Money, 2026-05-24). Both folders carry `series.json`
+    // sidecars with the canonical volume, but the CBZ filenames are
+    // Mylar3-stamped `V<year>` ("V2016") — pre-fix this poisoned
+    // `issue.volume = 2016` for every file and propagated up to
+    // `series.volume = 2016`, causing both folders to collide on
+    // `(name, year=2016, volume=2016)`.
+    //
+    // With the fixes layered: filename `V2016` is rejected by the
+    // plausibility filter; series.json overrides filename inference
+    // for volume; the two folders' identity hints differ on volume
+    // (NULL vs 2) and both rows are created.
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    let folder_v1 = tmp.path().join("Series Xi (2016)");
+    let folder_v2 = tmp.path().join("Series Xi V2 (2016)");
+    std::fs::create_dir_all(&folder_v1).unwrap();
+    std::fs::create_dir_all(&folder_v2).unwrap();
+
+    // Mylar3-style filenames with `V<year>` (the contamination
+    // source) and the year in a bracket group.
+    write_cbz(&folder_v1.join("Series Xi V2016 001 (April 2016).cbz"), 1);
+    write_cbz(&folder_v2.join("Series Xi V2016 001 (September 2016).cbz"), 2);
+
+    // Mylar3 series.json sidecars carry the canonical volume.
+    std::fs::write(
+        folder_v1.join("series.json"),
+        r#"{"version":"1.0.2","metadata":{"type":"comicSeries","name":"Series Xi","year":2016,"volume":null,"publisher":"Marvel"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        folder_v2.join("series.json"),
+        r#"{"version":"1.0.2","metadata":{"type":"comicSeries","name":"Series Xi","year":2016,"volume":2,"publisher":"Marvel"}}"#,
+    )
+    .unwrap();
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    let stats = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(
+        stats.series_created, 2,
+        "sidecar volume must override filename V-token: {stats:?}",
+    );
+
+    let mut series = SeriesEntity::find()
+        .filter(SeriesCol::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    series.sort_by_key(|s| s.volume);
+    assert_eq!(series.len(), 2);
+    assert_eq!(
+        series[0].volume, None,
+        "sidecar volume=null is preserved (not the filename's V2016)",
+    );
+    assert_eq!(
+        series[1].volume,
+        Some(2),
+        "sidecar volume=2 wins over filename V2016",
+    );
+    // Both rows should also have publisher set from sidecar.
+    assert_eq!(series[0].publisher.as_deref(), Some("Marvel"));
+    assert_eq!(series[1].publisher.as_deref(), Some("Marvel"));
+}
+
+#[tokio::test]
+async fn rescan_self_heals_stale_year_stamped_volume_from_sidecar() {
+    // A series row that earlier-buggy scans stamped with
+    // `volume = 2016` (the publication year, picked up from the
+    // Mylar3 `V2016` filename token) should self-heal on rescan once
+    // a `series.json` sidecar is present. The reconcile pass reads
+    // the sidecar's `volume` and writes it through, overriding the
+    // year-stamped value. No DB migration required.
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    let folder = tmp.path().join("Series Omicron (2017)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz(&folder.join("Series Omicron 001 (2017).cbz"), 1);
+    std::fs::write(
+        folder.join("series.json"),
+        r#"{"version":"1.0.2","metadata":{"type":"comicSeries","name":"Series Omicron","year":2017,"volume":3,"publisher":"Marvel"}}"#,
+    )
+    .unwrap();
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+
+    // Initial scan picks up volume from sidecar (= 3).
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let row = SeriesEntity::find()
+        .filter(SeriesCol::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.volume, Some(3));
+
+    // Simulate the pre-fix state: manually corrupt the row's volume
+    // to the year value, as if a buggy earlier scan had stamped it.
+    let mut am: entity::series::ActiveModel = row.clone().into();
+    am.volume = Set(Some(2017));
+    am.update(&state.db).await.unwrap();
+
+    // Re-touch the folder so the scanner doesn't fast-path-skip it.
+    let new_mtime = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    let f = std::fs::File::open(&folder).unwrap();
+    f.set_modified(new_mtime).ok();
+    std::fs::write(
+        folder.join("series.json"),
+        r#"{"version":"1.0.2","metadata":{"type":"comicSeries","name":"Series Omicron","year":2017,"volume":3,"publisher":"Marvel"}}"#,
+    )
+    .unwrap();
+
+    // Rescan should heal the stale volume back to 3.
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let healed = SeriesEntity::find()
+        .filter(SeriesCol::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        healed.volume,
+        Some(3),
+        "sidecar volume must overwrite year-stamped value on rescan",
     );
 }
 

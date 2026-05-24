@@ -177,9 +177,14 @@ export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
  * shape in three files. M5 of code-quality-cleanup-1.0.
  */
 export function readMeKeybinds(me: {
-  data?: { keybinds?: Record<string, string> | null } | null;
+  // `MeView.keybinds` codegen-types as `unknown` (Rust source is
+  // `serde_json::Value`). At runtime the server always emits
+  // `Record<string, string>`; cast at this boundary.
+  data?: { keybinds?: unknown } | null;
 }): Record<string, string> | null {
-  return me.data?.keybinds ?? null;
+  const v = me.data?.keybinds;
+  if (v == null) return null;
+  return v as Record<string, string>;
 }
 
 /**

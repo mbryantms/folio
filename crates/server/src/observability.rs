@@ -301,6 +301,137 @@ pub struct ObservabilityHandles {
     pub log_reload: LogReloadHandle,
 }
 
+/// Render an error for logging with the obvious secret-bearing substrings
+/// scrubbed out (audit-remediation M6.2). Strips:
+///   - URL query strings (where OAuth `code=`, `state=`, `access_token=`
+///     land if a third-party error leaks the full request URL)
+///   - `password=...` / `bearer ...` shaped substrings
+///   - Long opaque tokens (≥40 chars of `[A-Za-z0-9_\-=]`)
+///
+/// Heuristic, not cryptographically safe. Pair with deliberate logging
+/// choices — prefer the error type / variant over its full Display when the
+/// error is known to wrap network response bodies. See
+/// [docs/dev/logging.md](../../docs/dev/logging.md).
+pub fn sanitize_error(e: &dyn std::fmt::Display) -> String {
+    let raw = e.to_string();
+    redact_secrets(&raw)
+}
+
+/// Same as [`sanitize_error`] but for an arbitrary string (useful when
+/// composing a custom message that includes a third-party error).
+pub fn redact_secrets(s: &str) -> String {
+    // Strip URL query strings: `https://x.example/cb?code=XYZ&state=ABC` →
+    // `https://x.example/cb?<redacted>`. Conservative — keep host + path so
+    // operators can still see *which* endpoint failed.
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '?' {
+            // Was the previous chunk URL-shaped? Lazy heuristic: peek backward
+            // up to 8 chars for `://` — only redact a `?` that's clearly in a
+            // URL.
+            let tail_start = out.len().saturating_sub(80);
+            if out[tail_start..].contains("://") {
+                out.push('?');
+                out.push_str("<redacted>");
+                // Skip everything until the next whitespace / quote / `)`.
+                while let Some(&next) = chars.peek() {
+                    if next.is_whitespace() || matches!(next, '"' | '\'' | ')' | ',' | ';') {
+                        break;
+                    }
+                    chars.next();
+                }
+                continue;
+            }
+        }
+        out.push(c);
+    }
+
+    // password= / token= / secret= → `<key>=<redacted>` up to next non-word
+    // boundary. Cheap state machine instead of a regex dep.
+    out = redact_kv(&out, &["password", "passwd", "token", "secret", "authorization"]);
+
+    // `Bearer <opaque>` / `Basic <opaque>` — anchor on the scheme word, then
+    // chew anything up to next whitespace / quote.
+    out = redact_bearer(&out);
+
+    out
+}
+
+fn redact_kv(s: &str, keys: &[&str]) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let mut matched = false;
+        for key in keys {
+            let klen = key.len();
+            // Match the key anywhere it's followed by `=` or `:`. We tolerate
+            // a prefix like `smtp_` (`smtp_password=...` should still trip
+            // the `password` key); the cost of over-redacting `bypassword=`
+            // is far smaller than under-redacting a real secret.
+            if i + klen < bytes.len()
+                && s[i..i + klen].eq_ignore_ascii_case(key)
+                && matches!(bytes[i + klen], b'=' | b':')
+            {
+                out.push_str(&s[i..i + klen + 1]);
+                out.push_str("<redacted>");
+                // Skip the value: anything up to whitespace / `&` / `"` / `;` / `,`.
+                let mut j = i + klen + 1;
+                while j < bytes.len()
+                    && !matches!(bytes[j], b' ' | b'\t' | b'\n' | b'&' | b'"' | b'\'' | b';' | b',' | b')' | b'>' | b'<')
+                {
+                    j += 1;
+                }
+                i = j;
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn redact_bearer(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let lower = s.to_ascii_lowercase();
+    let mut i = 0;
+    let bytes = s.as_bytes();
+    while i < bytes.len() {
+        let rest = &lower[i..];
+        let matched_scheme = if rest.starts_with("bearer ") {
+            Some(7)
+        } else if rest.starts_with("basic ") {
+            Some(6)
+        } else {
+            None
+        };
+        if let Some(scheme_len) = matched_scheme {
+            let prev_ok =
+                i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
+            if prev_ok {
+                out.push_str(&s[i..i + scheme_len]);
+                out.push_str("<redacted>");
+                let mut j = i + scheme_len;
+                while j < bytes.len()
+                    && !matches!(bytes[j], b' ' | b'\t' | b'\n' | b'"' | b'\'' | b';' | b',' | b')' | b'>' | b'<')
+                {
+                    j += 1;
+                }
+                i = j;
+                continue;
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
 pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
     let env_filter = EnvFilter::try_new(&cfg.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
     let (filter_layer, log_reload) = reload::Layer::new(env_filter);
@@ -440,6 +571,37 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(snap.len(), 2);
+    }
+
+    #[test]
+    fn sanitize_redacts_url_query() {
+        let msg = "GET https://idp.example.com/token?code=ABC123&state=XYZ failed";
+        let out = redact_secrets(msg);
+        assert!(out.contains("https://idp.example.com/token?<redacted>"));
+        assert!(!out.contains("ABC123"));
+        assert!(!out.contains("XYZ"));
+    }
+
+    #[test]
+    fn sanitize_redacts_password_kv() {
+        let msg = "config error: smtp_password=hunter2 is rejected";
+        let out = redact_secrets(msg);
+        assert!(out.contains("smtp_password=<redacted>"));
+        assert!(!out.contains("hunter2"));
+    }
+
+    #[test]
+    fn sanitize_redacts_bearer() {
+        let msg = "Authorization: Bearer eyJhbGc.payload.signature";
+        let out = redact_secrets(msg);
+        assert!(out.contains("Bearer <redacted>"));
+        assert!(!out.contains("eyJhbGc"));
+    }
+
+    #[test]
+    fn sanitize_keeps_non_secret_text() {
+        let msg = "smtp_host not set";
+        assert_eq!(redact_secrets(msg), msg);
     }
 
     #[test]

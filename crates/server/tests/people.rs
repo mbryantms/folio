@@ -386,5 +386,5 @@ async fn oversized_query_rejected() {
     let q = "a".repeat(201);
     let uri = format!("/api/people?q={q}");
     let (status, _json) = http(&app, Method::GET, &uri, Some(&auth)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }

@@ -1,0 +1,22 @@
+[package]
+name = "audit-check"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "audit-check"
+path = "src/main.rs"
+
+[dependencies]
+# proc-macro2 with `span-locations` so we can call `span.start()` on
+# parsed `syn` AST nodes outside a proc-macro context — needed for the
+# `file:line:fn` error hints.
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+walkdir = "2"
+
+[lints]
+workspace = true

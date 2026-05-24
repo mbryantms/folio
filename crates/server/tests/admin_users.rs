@@ -429,7 +429,10 @@ async fn library_access_rejects_unknown_library() {
         Some(serde_json::json!({ "library_ids": [bogus] })),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // Audit-remediation M10 follow-up: referencing a well-formed UUID
+    // that names a non-existent library is semantic-validation (422),
+    // not parse-shape (400).
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

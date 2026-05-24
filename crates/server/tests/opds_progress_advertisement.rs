@@ -423,7 +423,7 @@ async fn put_rejects_missing_both_page_and_position() {
         serde_json::json!({ "device": "test" }),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "validation");
 }
@@ -455,7 +455,7 @@ async fn put_position_with_unknown_page_count_is_rejected() {
         serde_json::json!({ "position": 0.5 }),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     let msg = body["error"]["message"].as_str().unwrap_or("");
     assert!(

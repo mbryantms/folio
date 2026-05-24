@@ -542,7 +542,7 @@ export default async function IssuePage({
             >
               <IssueActivityTab
                 issueId={issue.id}
-                pageCount={issue.page_count}
+                pageCount={issue.page_count ?? null}
               />
             </TabsContent>
           )}

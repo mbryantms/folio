@@ -127,7 +127,7 @@ async fn refresh_shorter_than_access_rejected_pre_write() {
         json!({ "auth.jwt.access_ttl": "24h", "auth.jwt.refresh_ttl": "1h" }),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_combination");
 
@@ -148,7 +148,7 @@ async fn malformed_ttl_string_rejected_pre_write() {
         json!({ "auth.jwt.access_ttl": "five hours please" }),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_combination");
 }
@@ -217,7 +217,7 @@ async fn invalid_log_level_rejected_pre_write() {
         json!({ "observability.log_level": "target=not_a_real_level" }),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     let code = body["error"]["code"].as_str().unwrap_or_default();
     assert!(

@@ -4,9 +4,18 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiFetch } from "@/lib/api/auth-refresh";
 import { queryKeys } from "@/lib/api/queries";
+import type { components } from "@/lib/api/types.generated";
 import type { OptionsEndpoint } from "./field-registry";
 
-type OptionsResp = { values: string[] };
+/**
+ * Server returns `CursorPage<String>` (audit-remediation M4-residual,
+ * 2026-05-23). The hook unwraps `.items` so this surface stays
+ * `string[]` for consumers. Pagination tokens (`next_cursor`) are
+ * dropped here — autocomplete UX is refine-by-prefix rather than
+ * load-more; if a deployment ever needs deep walking the hook can
+ * upgrade to `useInfiniteQuery` without breaking call sites.
+ */
+type OptionsPage = components["schemas"]["CursorPage_String"];
 
 function endpointKey(endpoint: OptionsEndpoint): string {
   switch (endpoint.kind) {
@@ -72,15 +81,16 @@ export function useFilterOptions(
           q: opts?.q,
         })
       : ["filter-options", "noop"],
-    queryFn: async () => {
-      if (!endpoint) return { values: [] } as OptionsResp;
+    queryFn: async (): Promise<string[]> => {
+      if (!endpoint) return [];
       const res = await apiFetch(endpointPath(endpoint, qs), {
         headers: { Accept: "application/json" },
       });
       if (!res.ok) {
         throw new Error(`filter-options ${endpoint.kind} → ${res.status}`);
       }
-      return (await res.json()) as OptionsResp;
+      const page = (await res.json()) as OptionsPage;
+      return page.items ?? [];
     },
     enabled: !!endpoint,
     staleTime: 60_000,

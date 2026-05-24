@@ -32,7 +32,7 @@ export function MainSidebar({
   showMarkerCount = false,
 }: {
   sections: MainNavSection[];
-  user: { display_name: string; email: string | null; role: string };
+  user: { display_name: string; email?: string | null; role: string };
   /** When true, the sidebar shrinks to icon-only mode with hover tooltips. */
   collapsed?: boolean;
   /** Mirrors `me.show_marker_count`. When false (default), the Bookmarks

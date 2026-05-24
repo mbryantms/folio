@@ -112,6 +112,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
       - uses: dtolnay/rust-toolchain@1.91.1
       - uses: Swatinem/rust-cache@v2
       - name: Generate spec from PR
@@ -122,6 +128,16 @@ jobs:
             diff -q /tmp/pr-openapi.json web/lib/api/openapi.json || \
               (echo "::error::OpenAPI spec drifted from web/lib/api/openapi.json. Run 'just openapi'." && exit 1)
           fi
+      # Audit-remediation M10.1 spec-drift gate: regen the generated
+      # types and fail if they disagree with the checked-in copy.
+      # Catches the case where a contributor commits openapi.json
+      # but forgets to run `pnpm openapi:gen`.
+      - name: Generated TS types match
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec openapi-typescript web/lib/api/openapi.json -o /tmp/pr-types.generated.ts >/dev/null 2>&1
+          diff -q /tmp/pr-types.generated.ts web/lib/api/types.generated.ts || \
+            (echo "::error::web/lib/api/types.generated.ts is stale. Run 'just openapi'." && exit 1)
       - name: oasdiff vs main
         if: github.event_name == 'pull_request'
         run: |
@@ -134,6 +150,21 @@ jobs:
             ([[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}" == "true" ]] && \
               echo "::warning::Breaking changes detected (acknowledged via label)" || \
               (echo "::error::Breaking API changes — add 'breaking-change' label and update CHANGELOG.md" && exit 1))
+
+  audit-check:
+    name: Rust — audit-log enforcement (M10.2)
+    runs-on: ubuntu-24.04
+    needs: [rust-check]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.1
+      - uses: Swatinem/rust-cache@v2
+      # AST-walks every handler under crates/server/src/api/ and
+      # fails if any RequireAdmin-gated function returns success
+      # without calling `record_admin_action!` (or its `audit::record`
+      # equivalent). Exemptions in crates/tools/audit-check/allowlist.txt
+      # cover read-only admin GETs + delegate-pattern wrappers.
+      - run: cargo run -p audit-check --release
 
   docker-build:
     name: Docker — amd64 build

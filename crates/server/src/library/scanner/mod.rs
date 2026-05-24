@@ -1614,18 +1614,44 @@ async fn process_planned_folder(
         series_id
     } else {
         let mut hint = process::peek_identity_hint(&archives[0], state.cfg().archive_limits());
+
+        // Folder-leaf `V<N>` fallback. Filename inference rejects
+        // `V<year>` after the plausibility fix; the folder leaf is the
+        // last heuristic source before NULL. Applied BEFORE series.json
+        // so a curated sidecar value still overrides it.
+        if hint.volume.is_none()
+            && let Some(leaf) = folder.file_name().map(|n| n.to_string_lossy().into_owned())
+            && let Some(v) = parsers::filename::folder_volume_token(&leaf)
+        {
+            hint.volume = Some(v);
+        }
+
         if let Some(meta) = series_json.as_ref() {
-            // series.json fills gaps where ComicInfo is silent.
+            // series.json is the authoritative source for curated
+            // per-series fields when present. For `name`, `volume`, and
+            // `publisher` we *replace* the inferred hint — the sidecar
+            // was written deliberately by a metadata tool and outranks
+            // filename/folder heuristics, which are the dominant source
+            // of contamination (Mylar3 `V<year>` stamps, etc.).
+            //
+            // The remaining fields (`year`, `imprint`, …) still fall
+            // back to fill-if-empty because ComicInfo carries them
+            // reliably and overriding adds little value.
             if let Some(name) = meta.name.as_deref()
-                && (hint.series_name == "Unknown Series" || hint.series_name.trim().is_empty())
+                && !name.trim().is_empty()
             {
                 hint.series_name = name.to_string();
             }
+            if let Some(v) = meta.volume {
+                hint.volume = Some(v);
+            }
+            if let Some(publisher) = meta.publisher.as_deref()
+                && !publisher.trim().is_empty()
+            {
+                hint.publisher = Some(publisher.to_string());
+            }
             if hint.year.is_none() {
                 hint.year = meta.year_began;
-            }
-            if hint.publisher.is_none() {
-                hint.publisher = meta.publisher.clone();
             }
             if hint.imprint.is_none() {
                 hint.imprint = meta.imprint.clone();
@@ -1635,9 +1661,6 @@ async fn process_planned_folder(
             }
             if hint.total_issues.is_none() {
                 hint.total_issues = meta.total_issues;
-            }
-            if hint.volume.is_none() {
-                hint.volume = meta.volume;
             }
             if hint.comicvine_id.is_none() {
                 hint.comicvine_id = meta.comicid;

@@ -14,7 +14,9 @@ pub mod audit;
 pub mod auth_config;
 pub mod cbl_lists;
 pub mod collections;
+pub mod creators;
 pub mod csp;
+pub mod extractors;
 pub mod filter_options;
 pub mod form_or_json;
 pub mod health;
@@ -27,7 +29,6 @@ pub mod log_widgets;
 pub mod markers;
 pub mod meta;
 pub mod next_up;
-pub mod creators;
 pub mod opds;
 pub mod opds_progression;
 pub mod opds_pse;
@@ -54,13 +55,45 @@ pub mod ws_scan_events;
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use shared::error::{ApiError, ApiErrorCode};
 
-/// Canonical error-envelope helper. Every mutating handler returns
-/// errors via this shape per the project convention documented in
-/// CLAUDE.md: `{"error": {"code": "...", "message": "..."}}`.
+/// Build an error response from a typed [`ApiErrorCode`] + free-form message.
 ///
-/// Promoted from `api/libraries.rs` during code-quality-cleanup M1
-/// (was duplicated verbatim across 36 sibling files).
+/// This is the canonical helper. Every new mutating handler should reach
+/// for this; the legacy [`error`] / [`not_found`] helpers below remain only
+/// as an incremental-migration aid.
+pub(crate) fn respond(
+    status: StatusCode,
+    code: ApiErrorCode,
+    message: impl Into<String>,
+) -> Response {
+    (status, Json(ApiError::new(code, message))).into_response()
+}
+
+/// 422 with the canonical envelope. Use for semantic validation failures
+/// (rule violations, business-logic constraints). Reach for [`respond`]
+/// with `StatusCode::BAD_REQUEST` when the input is malformed/unparseable.
+///
+/// M3 of the audit-remediation plan adopts this across handlers.
+#[allow(dead_code)]
+pub(crate) fn validation(message: impl Into<String>) -> Response {
+    respond(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        ApiErrorCode::Validation,
+        message,
+    )
+}
+
+/// 404 with the canonical envelope and a caller-provided message.
+///
+/// M3 of the audit-remediation plan adopts this across handlers.
+#[allow(dead_code)]
+pub(crate) fn not_found_msg(message: impl Into<String>) -> Response {
+    respond(StatusCode::NOT_FOUND, ApiErrorCode::NotFound, message)
+}
+
+/// Legacy error helper retained during M0/M3 migration. New code uses
+/// [`respond`] with an [`ApiErrorCode`] variant.
 pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {
     (
         status,
@@ -69,8 +102,7 @@ pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {
         .into_response()
 }
 
-/// 404 with the standard envelope. Used by feed/page handlers that
-/// don't want to spell out the `not_found` code inline.
+/// 404 with the standard envelope and a generic "Not found" message.
 pub(crate) fn not_found() -> Response {
-    error(StatusCode::NOT_FOUND, "not_found", "Not found")
+    respond(StatusCode::NOT_FOUND, ApiErrorCode::NotFound, "Not found")
 }

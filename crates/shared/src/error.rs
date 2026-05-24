@@ -1,4 +1,10 @@
 //! Wire-level error envelope (§15.3).
+//!
+//! The on-the-wire shape is `{"error": {"code": "...", "message": "...", "details": ...}}`.
+//! Error codes are stable identifiers drawn from [`ApiErrorCode`]; new codes are
+//! added here, never invented at the call site.
+
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,32 +23,224 @@ pub struct ApiErrorBody {
     pub details: Option<Value>,
 }
 
+impl ApiError {
+    /// Construct an envelope from a stable code + free-form message.
+    pub fn new(code: ApiErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            error: ApiErrorBody {
+                code: code.as_str().to_owned(),
+                message: message.into(),
+                details: None,
+            },
+        }
+    }
+
+    /// As [`Self::new`] but attaches structured details for the client.
+    pub fn with_details(code: ApiErrorCode, message: impl Into<String>, details: Value) -> Self {
+        Self {
+            error: ApiErrorBody {
+                code: code.as_str().to_owned(),
+                message: message.into(),
+                details: Some(details),
+            },
+        }
+    }
+}
+
 /// Stable error codes surfaced to clients. Categories follow `<resource>.<reason>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// **Adding a code:** add a variant here, map it in [`Self::as_str`], use it
+/// at the call site via [`crate::api::respond`]. Never pass a raw string code
+/// — the enum exists to keep client-facing codes exhaustive and grep-able.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ApiErrorCode {
+    // --- Authentication / authorization -------------------------------------
     AuthRequired,
     AuthInvalid,
     AuthEmailUnverified,
+    AuthCsrf,
+    AuthDisabled,
+    AuthLockedOut,
+    AuthOidcError,
     PermissionDenied,
+    LibraryAccessDenied,
+    SelfDemote,
+    SelfDisable,
+
+    // --- Generic ------------------------------------------------------------
     NotFound,
     Conflict,
     RateLimited,
-    Validation,
     Internal,
+    Database,
+    ServiceUnavailable,
+
+    // --- Validation ---------------------------------------------------------
+    Validation,
+    ValidationRating,
+    ValidationState,
+    BadCursor,
+    BadFilter,
+    PatchEmpty,
+    InvalidUrl,
+
+    // --- Resource-specific (more precise than the generic above) -----------
+    UserNotFound,
+    UserInactive,
+    PageNotFound,
+    ConflictSlug,
+
+    // --- Operations ---------------------------------------------------------
+    ArchiveUnreadable,
+    ParseFailed,
+    FetchFailed,
+    RefreshFailed,
+
+    // --- Settings -----------------------------------------------------------
+    SettingsInvalidCombination,
+
+    // --- Email --------------------------------------------------------------
+    EmailSendFailed,
+
+    // --- HTTP semantics -----------------------------------------------------
+    RangeNotSatisfiable,
+    TooLarge,
+    UnsupportedMediaType,
+
+    // --- Pipeline-specific --------------------------------------------------
+    ThumbBusy,
+    PseMissingParams,
 }
 
 impl ApiErrorCode {
+    /// Stable wire representation. Frontends key on this string; do not
+    /// change a variant's mapping without coordinating a client release.
     pub fn as_str(self) -> &'static str {
         match self {
+            // Auth
             Self::AuthRequired => "auth.required",
             Self::AuthInvalid => "auth.invalid",
             Self::AuthEmailUnverified => "auth.email_unverified",
+            Self::AuthCsrf => "auth.csrf",
+            Self::AuthDisabled => "auth.disabled",
+            Self::AuthLockedOut => "auth.locked_out",
+            Self::AuthOidcError => "auth.oidc_error",
             Self::PermissionDenied => "auth.permission_denied",
+            Self::LibraryAccessDenied => "library_access_denied",
+            Self::SelfDemote => "self_demote",
+            Self::SelfDisable => "self_disable",
+
+            // Generic
             Self::NotFound => "not_found",
             Self::Conflict => "conflict",
             Self::RateLimited => "rate_limited",
-            Self::Validation => "validation",
             Self::Internal => "internal",
+            Self::Database => "db",
+            Self::ServiceUnavailable => "service_unavailable",
+
+            // Validation
+            Self::Validation => "validation",
+            Self::ValidationRating => "validation.rating",
+            Self::ValidationState => "validation.state",
+            Self::BadCursor => "bad_cursor",
+            Self::BadFilter => "filter_invalid",
+            Self::PatchEmpty => "patch_empty",
+            Self::InvalidUrl => "invalid_url",
+
+            // Resource-specific
+            Self::UserNotFound => "user_not_found",
+            Self::UserInactive => "user_inactive",
+            Self::PageNotFound => "page_not_found",
+            Self::ConflictSlug => "conflict.slug",
+
+            // Operations
+            Self::ArchiveUnreadable => "archive_unreadable",
+            Self::ParseFailed => "parse_failed",
+            Self::FetchFailed => "fetch_failed",
+            Self::RefreshFailed => "refresh_failed",
+
+            // Settings
+            Self::SettingsInvalidCombination => "settings.invalid_combination",
+
+            // Email
+            Self::EmailSendFailed => "email.send_failed",
+
+            // HTTP semantics
+            Self::RangeNotSatisfiable => "range_not_satisfiable",
+            Self::TooLarge => "too_large",
+            Self::UnsupportedMediaType => "unsupported_media_type",
+
+            // Pipeline-specific
+            Self::ThumbBusy => "thumb.busy",
+            Self::PseMissingParams => "pse_missing_params",
+        }
+    }
+}
+
+impl fmt::Display for ApiErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<ApiErrorCode> for &'static str {
+    fn from(code: ApiErrorCode) -> Self {
+        code.as_str()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codes_round_trip_through_display() {
+        for code in [
+            ApiErrorCode::AuthRequired,
+            ApiErrorCode::NotFound,
+            ApiErrorCode::Validation,
+            ApiErrorCode::ConflictSlug,
+            ApiErrorCode::SettingsInvalidCombination,
+        ] {
+            assert_eq!(code.to_string(), code.as_str());
+        }
+    }
+
+    #[test]
+    fn envelope_serializes_with_optional_details_omitted() {
+        let err = ApiError::new(ApiErrorCode::NotFound, "missing");
+        let json = serde_json::to_string(&err).unwrap();
+        assert_eq!(
+            json,
+            r#"{"error":{"code":"not_found","message":"missing"}}"#
+        );
+    }
+
+    #[test]
+    fn envelope_includes_details_when_provided() {
+        let err = ApiError::with_details(
+            ApiErrorCode::Validation,
+            "bad input",
+            serde_json::json!({"field": "name"}),
+        );
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains(r#""details":{"field":"name"}"#));
+    }
+
+    #[test]
+    fn codes_are_dotted_or_snake_case_only() {
+        // Convention guard: no spaces, no camelCase, no slashes.
+        for code in [
+            ApiErrorCode::AuthCsrf,
+            ApiErrorCode::ValidationRating,
+            ApiErrorCode::SettingsInvalidCombination,
+        ] {
+            let s = code.as_str();
+            assert!(
+                s.chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '.' || c == '_'),
+                "code {s:?} violates lowercase/./_ convention"
+            );
         }
     }
 }

@@ -14,11 +14,10 @@
 //! the rest of the layout-resolver work.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, patch, post},
 };
 use chrono::Utc;
 use entity::{user_page, user_sidebar_entry, user_view_pin};
@@ -30,14 +29,18 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::api::sidebar_layout::KIND_PAGE;
 
 use super::error;
+use super::extractors::Validated;
 use crate::auth::CurrentUser;
 use crate::slug::allocate_user_page_slug;
 use crate::state::AppState;
+use server_macros::handler;
 
 /// Soft cap on custom pages per user (excludes the system Home row).
 /// Enforced in the API; not a DB constraint.
@@ -46,12 +49,14 @@ const MAX_PAGES_PER_USER: u64 = 20;
 /// ("Marvel — Ultimate Universe") while keeping the sidebar legible.
 const MAX_NAME_LEN: usize = 80;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/me/pages", get(list).post(create))
-        .route("/me/pages/reorder", post(reorder))
-        .route("/me/pages/{id}", patch(update).delete(delete_one))
-        .route("/me/pages/{id}/sidebar", post(set_sidebar))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(create))
+        .routes(routes!(reorder))
+        .routes(routes!(update))
+        .routes(routes!(delete_one))
+        .routes(routes!(set_sidebar))
 }
 
 // ───── wire types ─────
@@ -79,14 +84,16 @@ pub struct PageView {
     pub updated_at: String,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct CreatePageReq {
+    #[garde(custom(non_empty_after_trim_80))]
     pub name: String,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct UpdatePageReq {
     #[serde(default)]
+    #[garde(inner(custom(non_empty_after_trim_80)))]
     pub name: Option<String>,
     /// Description string. Omitting (or sending null) leaves the
     /// existing value alone; sending an empty (or whitespace-only)
@@ -95,7 +102,19 @@ pub struct UpdatePageReq {
     /// custom deserializer, so the "clear via empty string" convention
     /// is the contract.
     #[serde(default)]
+    #[garde(skip)]
     pub description: Option<String>,
+}
+
+fn non_empty_after_trim_80(value: &str, _: &()) -> garde::Result {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(garde::Error::new("name required"));
+    }
+    if trimmed.chars().count() > MAX_NAME_LEN {
+        return Err(garde::Error::new("name must be 80 chars or fewer"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -190,10 +209,11 @@ fn show_in_sidebar_for(model: &user_page::Model, overrides: &HashMap<String, boo
 // ───── handlers ─────
 
 #[utoipa::path(
-    get,
+    operation_id = "pages_list",    get,
     path = "/me/pages",
-    responses((status = 200, body = Vec<PageView>))
+    responses((status = 200, body = shared::pagination::CursorPage<PageView>))
 )]
+#[handler]
 pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
     // Resolve / lazy-create the system page so a brand-new user sees
     // Home in the list even before any pin/sidebar interaction has
@@ -225,31 +245,26 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
         let visible = show_in_sidebar_for(&row, &overrides);
         items.push(to_view(&row, pc, visible));
     }
-    Json(items).into_response()
+    // Bounded by MAX_PAGES_PER_USER; envelope is uniform with the rest of
+    // the API (audit-remediation M4). When the cap eventually lifts the
+    // hook upgrades to `useInfiniteQuery` without breaking the wire shape.
+    Json(shared::pagination::CursorPage::bounded(items)).into_response()
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "pages_create",    post,
     path = "/me/pages",
     request_body = CreatePageReq,
     responses((status = 201, body = PageView))
 )]
+#[handler]
 pub async fn create(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<CreatePageReq>,
+    Validated(req): Validated<CreatePageReq>,
 ) -> impl IntoResponse {
+    // Garde already enforces non-empty-trimmed + ≤ MAX_NAME_LEN chars.
     let name = req.name.trim();
-    if name.is_empty() {
-        return error(StatusCode::BAD_REQUEST, "validation", "name required");
-    }
-    if name.chars().count() > MAX_NAME_LEN {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation",
-            "name must be 80 chars or fewer",
-        );
-    }
     // Ensure the system Home exists before counting — otherwise a fresh
     // user creating their first custom page would undercount and could
     // briefly exceed the documented cap if the system row materializes
@@ -317,17 +332,18 @@ pub async fn create(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "pages_update",    patch,
     path = "/me/pages/{id}",
     params(("id" = String, Path,)),
     request_body = UpdatePageReq,
     responses((status = 200, body = PageView))
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
-    Json(req): Json<UpdatePageReq>,
+    Validated(req): Validated<UpdatePageReq>,
 ) -> impl IntoResponse {
     let row = match fetch_owned(&app.db, user.id, id).await {
         Ok(r) => r,
@@ -336,17 +352,8 @@ pub async fn update(
     let mut am: user_page::ActiveModel = row.clone().into();
     let mut changed = false;
     if let Some(name) = req.name.as_ref() {
+        // Garde enforced non-empty-after-trim + ≤ 80 chars.
         let trimmed = name.trim();
-        if trimmed.is_empty() {
-            return error(StatusCode::BAD_REQUEST, "validation", "name required");
-        }
-        if trimmed.chars().count() > MAX_NAME_LEN {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "validation",
-                "name must be 80 chars or fewer",
-            );
-        }
         if trimmed != row.name {
             am.name = Set(trimmed.to_owned());
             changed = true;
@@ -400,11 +407,12 @@ pub async fn update(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "pages_delete_one",    delete,
     path = "/me/pages/{id}",
     params(("id" = String, Path,)),
     responses((status = 204))
 )]
+#[handler]
 pub async fn delete_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -429,11 +437,12 @@ pub async fn delete_one(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "pages_reorder",    post,
     path = "/me/pages/reorder",
     request_body = ReorderPagesReq,
     responses((status = 204))
 )]
+#[handler]
 pub async fn reorder(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -452,12 +461,19 @@ pub async fn reorder(
     };
     let owned_ids: std::collections::HashSet<Uuid> = owned.iter().map(|p| p.id).collect();
     let req_ids: std::collections::HashSet<Uuid> = req.page_ids.iter().copied().collect();
+    // Semantic-validation 422s (per audit-remediation M9.3): the
+    // request is structurally well-formed JSON, but the *set* it
+    // describes doesn't satisfy the rules.
     if req_ids.len() != req.page_ids.len() {
-        return error(StatusCode::BAD_REQUEST, "validation", "duplicate page id");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "duplicate page id",
+        );
     }
     if req_ids != owned_ids {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "page_ids must list every owned page exactly once",
         );
@@ -502,7 +518,7 @@ pub async fn reorder(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "pages_set_sidebar",    post,
     path = "/me/pages/{id}/sidebar",
     params(
         ("id" = String, Path,),
@@ -510,6 +526,7 @@ pub async fn reorder(
     ),
     responses((status = 204))
 )]
+#[handler]
 pub async fn set_sidebar(
     State(app): State<AppState>,
     user: CurrentUser,

@@ -7,11 +7,10 @@
 //! emits an `admin.user.activity.view` audit row.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
 };
 use chrono::{Duration, Utc};
 use entity::{
@@ -23,6 +22,8 @@ use sea_orm::{
     Statement,
 };
 use serde::Serialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::audit::{self, AuditEntry};
@@ -33,15 +34,16 @@ use crate::state::AppState;
 use super::reading_sessions::{
     DayBucket, ReadingStatsView, StatsError, StatsQuery, TopSeriesEntry, compute_stats_for_user,
 };
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/admin/stats/overview", get(overview))
-        .route("/admin/stats/users", get(users_list))
-        .route("/admin/stats/engagement", get(engagement))
-        .route("/admin/stats/content", get(content))
-        .route("/admin/stats/quality", get(quality))
-        .route("/admin/users/{id}/reading-stats", get(user_reading_stats))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(overview))
+        .routes(routes!(users_list))
+        .routes(routes!(engagement))
+        .routes(routes!(content))
+        .routes(routes!(quality))
+        .routes(routes!(user_reading_stats))
 }
 
 // ───────── views ─────────
@@ -82,10 +84,9 @@ pub struct HealthBlock {
 
 // ───────── Stats v2 views ─────────
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct AdminUserStatsListView {
-    pub users: Vec<AdminUserStatsRow>,
-}
+// `AdminUserStatsListView { users: Vec<_> }` was dropped in audit-
+// remediation M4 in favor of the workspace-uniform
+// `shared::pagination::CursorPage<T>` envelope.
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AdminUserStatsRow {
@@ -186,13 +187,14 @@ pub struct MetadataCoverageView {
 // ───────── handlers ─────────
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_stats_overview",    get,
     path = "/admin/stats/overview",
     responses(
         (status = 200, body = OverviewView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn overview(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     let totals = match compute_totals(&app).await {
         Ok(t) => t,
@@ -247,7 +249,7 @@ pub async fn overview(State(app): State<AppState>, _admin: RequireAdmin) -> Resp
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_stats_user_reading_stats",    get,
     path = "/admin/users/{id}/reading-stats",
     params(
         ("id" = String, Path, description = "target user id (uuid)"),
@@ -260,6 +262,7 @@ pub async fn overview(State(app): State<AppState>, _admin: RequireAdmin) -> Resp
         (status = 404, description = "user not found"),
     )
 )]
+#[handler]
 pub async fn user_reading_stats(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -279,7 +282,7 @@ pub async fn user_reading_stats(
         .flatten()
         .is_none()
     {
-        return error_response(StatusCode::NOT_FOUND, "not_found", "user not found");
+        return super::error(StatusCode::NOT_FOUND, "not_found", "user not found");
     }
 
     // Audit the access *before* the query, with the requested range.
@@ -305,7 +308,7 @@ pub async fn user_reading_stats(
             status,
             code,
             message,
-        }) => error_response(status, code, &message),
+        }) => super::error(status, code, &message),
     }
 }
 
@@ -476,16 +479,26 @@ async fn compute_reads_per_day(app: &AppState) -> Result<Vec<DayBucket>, sea_orm
 // ───────── Stats v2 handlers ─────────
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_stats_users_list",    get,
     path = "/admin/stats/users",
     responses(
-        (status = 200, body = AdminUserStatsListView),
+        (status = 200, body = shared::pagination::CursorPage<AdminUserStatsRow>),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn users_list(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
+    // Bounded by the deployment's registered-user count. Real cursor
+    // walking is deferred (audit-remediation M4-residual) because the
+    // typical Folio deployment is <100 users and the per-user aggregate
+    // sort key (`active_ms_30d`) is computed from a join — cheap cursor
+    // walking would require either a materialized aggregate or a
+    // composite cursor encoded over the sort key. Both add complexity
+    // without solving a real perf problem at current scale.
     match compute_users_list(&app).await {
-        Ok(view) => Json(view).into_response(),
+        Ok(rows) => {
+            Json(shared::pagination::CursorPage::bounded(rows)).into_response()
+        }
         Err(e) => {
             tracing::warn!(error = %e, "admin users_list failed");
             internal()
@@ -494,13 +507,14 @@ pub async fn users_list(State(app): State<AppState>, _admin: RequireAdmin) -> Re
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_stats_engagement",    get,
     path = "/admin/stats/engagement",
     responses(
         (status = 200, body = EngagementView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn engagement(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     match compute_engagement(&app).await {
         Ok(view) => Json(view).into_response(),
@@ -512,13 +526,14 @@ pub async fn engagement(State(app): State<AppState>, _admin: RequireAdmin) -> Re
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_stats_content",    get,
     path = "/admin/stats/content",
     responses(
         (status = 200, body = ContentInsightsView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn content(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     match compute_content(&app).await {
         Ok(view) => Json(view).into_response(),
@@ -530,13 +545,14 @@ pub async fn content(State(app): State<AppState>, _admin: RequireAdmin) -> Respo
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_stats_quality",    get,
     path = "/admin/stats/quality",
     responses(
         (status = 200, body = DataQualityView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn quality(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     match compute_quality(&app).await {
         Ok(view) => Json(view).into_response(),
@@ -549,7 +565,7 @@ pub async fn quality(State(app): State<AppState>, _admin: RequireAdmin) -> Respo
 
 // ───────── Stats v2 computation ─────────
 
-async fn compute_users_list(app: &AppState) -> Result<AdminUserStatsListView, sea_orm::DbErr> {
+async fn compute_users_list(app: &AppState) -> Result<Vec<AdminUserStatsRow>, sea_orm::DbErr> {
     let users = UserEntity::find().all(&app.db).await?;
     let backend = app.db.get_database_backend();
 
@@ -663,7 +679,7 @@ async fn compute_users_list(app: &AppState) -> Result<AdminUserStatsListView, se
         .collect();
     // Most active first.
     rows.sort_by(|a, b| b.active_ms_30d.cmp(&a.active_ms_30d));
-    Ok(AdminUserStatsListView { users: rows })
+    Ok(rows)
 }
 
 async fn compute_engagement(app: &AppState) -> Result<EngagementView, sea_orm::DbErr> {
@@ -1016,17 +1032,10 @@ async fn compute_quality(app: &AppState) -> Result<DataQualityView, sea_orm::DbE
 // ───────── error helpers ─────────
 
 fn internal() -> Response {
-    error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+    super::error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
 }
 
 fn bad(code: &str, message: &str) -> Response {
-    error_response(StatusCode::BAD_REQUEST, code, message)
+    super::error(StatusCode::UNPROCESSABLE_ENTITY, code, message)
 }
 
-fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
-}

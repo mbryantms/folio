@@ -71,8 +71,7 @@ impl IntoResponse for AuthRejection {
                 "Internal error",
             ),
         };
-        let body = serde_json::json!({"error": {"code": code, "message": message}});
-        (status, axum::Json(body)).into_response()
+        crate::api::error(status, code, message)
     }
 }
 

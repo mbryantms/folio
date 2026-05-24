@@ -277,7 +277,7 @@ async fn patch_invalid_smtp_port_rejected() {
         Some(json!({ "smtp.port": "not-a-number" })),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_value");
 }

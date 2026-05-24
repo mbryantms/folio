@@ -339,9 +339,11 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
     assert!(names.iter().any(|n| n == "Just Finished"));
     // M1 of markers + collections renamed the M9 "Want to Read"
     // filter template to "Unstarted" so the name is free for the
-    // per-user manual collection landing in M3.
-    assert!(names.iter().any(|n| n == "Unstarted"));
-    assert!(names.iter().any(|n| n == "Stale"));
+    // per-user manual collection landing in M3. M20261224 then dropped
+    // the "Unstarted" and "Stale" filter templates entirely (low
+    // traction) — those names should no longer appear in the catalog.
+    assert!(!names.iter().any(|n| n == "Unstarted"));
+    assert!(!names.iter().any(|n| n == "Stale"));
     assert!(names.iter().any(|n| n == "Continue reading"));
     assert!(names.iter().any(|n| n == "On deck"));
     // Markers + Collections M3: the per-user Want to Read collection
@@ -986,7 +988,7 @@ async fn pin_cap_respects_per_user_override() {
         .await;
         assert_eq!(
             status,
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "max_rails_per_page={invalid} must be rejected",
         );
     }
@@ -1370,7 +1372,9 @@ async fn make_page(app: &TestApp, auth: &Authed, name: &str) -> String {
 
 async fn system_page_id_for(app: &TestApp, auth: &Authed) -> String {
     let (_, pages) = http(app, Method::GET, "/api/me/pages", Some(auth), None).await;
-    pages
+    // Audit-remediation M4 wrapped this endpoint in `CursorPage<PageView>`
+    // (bounded → next_cursor always None); items live under `items`.
+    pages["items"]
         .as_array()
         .unwrap()
         .iter()

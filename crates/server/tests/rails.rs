@@ -822,7 +822,7 @@ async fn dismissal_validation_rejects_bad_input() {
         Some(json!({"target_kind": "garbage", "target_id": "x"})),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Empty target_id.
     let (status, _) = http(
@@ -833,7 +833,7 @@ async fn dismissal_validation_rejects_bad_input() {
         Some(json!({"target_kind": "issue", "target_id": ""})),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Nonexistent issue → 404.
     let (status, _) = http(
@@ -855,7 +855,7 @@ async fn dismissal_validation_rejects_bad_input() {
         Some(json!({"target_kind": "series", "target_id": "not-a-uuid"})),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ───── On Deck ─────
@@ -880,6 +880,12 @@ async fn on_deck_series_next_after_finishing_an_issue() {
     assert_eq!(items.len(), 1, "exactly one series_next card");
     assert_eq!(items[0]["kind"], "series_next");
     assert_eq!(items[0]["issue"]["id"], issue2_id);
+    // M5.1 regression guard: the parent series' slug is now pulled
+    // inline from the on-deck CTE instead of a per-row
+    // `series::Entity::find_by_id`. If that join column ever falls
+    // out of the SELECT (or the HashMap key swap drifts), this assert
+    // catches the empty-slug fallout that would break the reader URL.
+    assert_eq!(items[0]["issue"]["series_slug"], "od-series-series");
 }
 
 #[tokio::test]
@@ -1177,12 +1183,7 @@ async fn on_deck_series_with_cbl_yields_to_cbl_card_only() {
     // so finishing issue 2 leaves issue 3 as the CBL's pick (CBL
     // still surfaces in On Deck), and series 1 (unread, sort_number=1)
     // would otherwise also surface as SeriesNext.
-    let list_id = seed_cbl_list(
-        &app,
-        "Owns Series",
-        &[(0, &issue2_id), (1, &_issue3_id)],
-    )
-    .await;
+    let list_id = seed_cbl_list(&app, "Owns Series", &[(0, &issue2_id), (1, &_issue3_id)]).await;
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue2_id, 19, true, t0).await;
 

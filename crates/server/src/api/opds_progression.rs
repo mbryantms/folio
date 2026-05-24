@@ -146,6 +146,11 @@ async fn put_progression(
     Json(body): Json<Progression>,
 ) -> Response {
     if !(0.0..=1.0).contains(&body.progression) || body.progression.is_nan() {
+        // OPDS-Progression 1.0 spec defines `progression-invalid-payload`
+        // as 400 (per the registry URI; see the module docstring). Stays
+        // 400 even though our internal convention reclassifies semantic-
+        // validation failures to 422 — the wire protocol is governed by
+        // the spec, not our convention.
         return problem(
             StatusCode::BAD_REQUEST,
             "progression-invalid-payload",

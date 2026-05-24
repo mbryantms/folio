@@ -220,7 +220,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         </Card>
         <ThumbnailSettingsCard
           enabled={thumbnailSettings.data?.enabled ?? true}
-          format={thumbnailSettings.data?.format ?? "webp"}
+          format={(thumbnailSettings.data?.format as ThumbnailFormat | undefined) ?? "webp"}
           coverQuality={thumbnailSettings.data?.cover_quality ?? 80}
           pageQuality={thumbnailSettings.data?.page_quality ?? 50}
           loading={thumbnailSettings.isLoading}

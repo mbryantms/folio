@@ -12,11 +12,10 @@
 //! audit_log row keyed on the actor and the affected user.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
 };
 use entity::{library, library_user_access, user};
 use sea_orm::{
@@ -25,21 +24,28 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
-use super::error;
+use super::extractors::Validated;
+use super::{error, respond};
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::middleware::RequestContext;
+use crate::record_admin_action;
 use crate::state::AppState;
+use shared::error::ApiErrorCode;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/admin/users", get(list))
-        .route("/admin/users/{id}", get(get_one).patch(update))
-        .route("/admin/users/{id}/disable", post(disable))
-        .route("/admin/users/{id}/enable", post(enable))
-        .route("/admin/users/{id}/library-access", post(set_library_access))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(get_one))
+        .routes(routes!(update))
+        .routes(routes!(disable))
+        .routes(routes!(enable))
+        .routes(routes!(set_library_access))
 }
 
 // ───────── views ─────────
@@ -82,38 +88,85 @@ pub struct AdminUserDetailView {
 
 // ───────── request bodies ─────────
 
+/// Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query
+/// params + the matching fields on `UpdateUserReq`. Serde rejects bad
+/// values at deserialize time so handlers never see strings they can't
+/// trust.
+#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum UserRole {
+    Admin,
+    User,
+}
+
+impl UserRole {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::User => "user",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UserState {
+    PendingVerification,
+    Active,
+    Disabled,
+}
+
+impl UserState {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::PendingVerification => "pending_verification",
+            Self::Active => "active",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListUsersQuery {
     pub limit: Option<u64>,
     pub cursor: Option<String>,
-    pub role: Option<String>,
-    pub state: Option<String>,
+    pub role: Option<UserRole>,
+    pub state: Option<UserState>,
     pub q: Option<String>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct UpdateUserReq {
     #[serde(default)]
+    #[garde(inner(custom(non_empty_after_trim)))]
     pub display_name: Option<String>,
-    /// `admin` | `user`
     #[serde(default)]
-    pub role: Option<String>,
-    /// `pending_verification` | `active` | `disabled`
+    #[garde(skip)]
+    pub role: Option<UserRole>,
     #[serde(default)]
-    pub state: Option<String>,
+    #[garde(skip)]
+    pub state: Option<UserState>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+fn non_empty_after_trim(value: &str, _: &()) -> garde::Result {
+    if value.trim().is_empty() {
+        return Err(garde::Error::new("display_name cannot be empty"));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct LibraryAccessReq {
     /// Final set of library ids the user should be granted access to. The
     /// server replaces the user's `library_user_access` rows with this list.
+    #[garde(skip)]
     pub library_ids: Vec<String>,
 }
 
 // ───────── handlers ─────────
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_users_list",    get,
     path = "/admin/users",
     params(ListUsersQuery),
     responses(
@@ -121,6 +174,7 @@ pub struct LibraryAccessReq {
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -136,21 +190,13 @@ pub async fn list(
         };
         query = query.filter(user::Column::Id.gt(after));
     }
-    if let Some(role) = q.role.as_deref() {
-        if role != "admin" && role != "user" {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "validation.role",
-                "role must be admin or user",
-            );
-        }
-        query = query.filter(user::Column::Role.eq(role));
+    // Enum-typed query params (audit-remediation M9.4) — serde
+    // rejects bad values at deserialize time.
+    if let Some(role) = q.role {
+        query = query.filter(user::Column::Role.eq(role.as_db_str()));
     }
-    if let Some(state) = q.state.as_deref() {
-        if !matches!(state, "pending_verification" | "active" | "disabled") {
-            return error(StatusCode::BAD_REQUEST, "validation.state", "invalid state");
-        }
-        query = query.filter(user::Column::State.eq(state));
+    if let Some(state) = q.state {
+        query = query.filter(user::Column::State.eq(state.as_db_str()));
     }
     if let Some(needle) = q.q.as_deref()
         && !needle.trim().is_empty()
@@ -196,7 +242,7 @@ pub async fn list(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_users_get_one",    get,
     path = "/admin/users/{id}",
     params(("id" = String, Path,)),
     responses(
@@ -205,6 +251,7 @@ pub async fn list(
         (status = 404, description = "user not found"),
     )
 )]
+#[handler]
 pub async fn get_one(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -241,7 +288,7 @@ pub async fn get_one(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "admin_users_update",    patch,
     path = "/admin/users/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateUserReq,
@@ -252,60 +299,49 @@ pub async fn get_one(
         (status = 404, description = "user not found"),
     )
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     AxPath(id): AxPath<String>,
-    Json(req): Json<UpdateUserReq>,
+    Validated(req): Validated<UpdateUserReq>,
 ) -> impl IntoResponse {
+    // `id` is a path param — malformed UUID stays as 400 because the
+    // problem is parse-shape, not semantic content.
     let Ok(uuid) = Uuid::parse_str(&id) else {
-        return error(StatusCode::BAD_REQUEST, "validation", "invalid id");
+        return respond(
+            StatusCode::BAD_REQUEST,
+            ApiErrorCode::Validation,
+            "invalid id",
+        );
     };
     let Ok(Some(target)) = user::Entity::find_by_id(uuid).one(&app.db).await else {
-        return error(StatusCode::NOT_FOUND, "not_found", "user not found");
+        return respond(
+            StatusCode::NOT_FOUND,
+            ApiErrorCode::UserNotFound,
+            "user not found",
+        );
     };
 
-    if let Some(role) = req.role.as_deref()
-        && role != "admin"
-        && role != "user"
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation.role",
-            "role must be admin or user",
-        );
-    }
-    if let Some(state) = req.state.as_deref()
-        && !matches!(state, "pending_verification" | "active" | "disabled")
-    {
-        return error(StatusCode::BAD_REQUEST, "validation.state", "invalid state");
-    }
-    if let Some(name) = req.display_name.as_deref()
-        && name.trim().is_empty()
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation.display_name",
-            "display_name cannot be empty",
-        );
-    }
+    // Garde enforces: display_name non-empty-after-trim, role ∈
+    // {admin, user}, state ∈ {pending_verification, active, disabled}.
 
     // Self-demotion guard: an admin cannot strip their own admin role or
     // disable their own account through this endpoint. Locks them out of
     // /admin entirely with no recovery path through the UI.
     if target.id == actor.id {
-        if matches!(req.role.as_deref(), Some("user")) {
-            return error(
+        if matches!(req.role, Some(UserRole::User)) {
+            return respond(
                 StatusCode::FORBIDDEN,
-                "self_demote",
+                ApiErrorCode::SelfDemote,
                 "cannot demote yourself",
             );
         }
-        if matches!(req.state.as_deref(), Some("disabled")) {
-            return error(
+        if matches!(req.state, Some(UserState::Disabled)) {
+            return respond(
                 StatusCode::FORBIDDEN,
-                "self_disable",
+                ApiErrorCode::SelfDisable,
                 "cannot disable yourself",
             );
         }
@@ -321,20 +357,22 @@ pub async fn update(
             am.display_name = Set(trimmed);
         }
     }
-    if let Some(role) = req.role
-        && role != target.role
-    {
-        changed.insert("role".into(), serde_json::json!(role));
-        am.role = Set(role);
-    }
-    if let Some(state) = req.state
-        && state != target.state
-    {
-        changed.insert("state".into(), serde_json::json!(state.clone()));
-        if state == "disabled" {
-            bump_token_version = true;
+    if let Some(role) = req.role {
+        let role_str = role.as_db_str();
+        if role_str != target.role {
+            changed.insert("role".into(), serde_json::json!(role_str));
+            am.role = Set(role_str.to_owned());
         }
-        am.state = Set(state);
+    }
+    if let Some(state) = req.state {
+        let state_str = state.as_db_str();
+        if state_str != target.state {
+            changed.insert("state".into(), serde_json::json!(state_str));
+            if matches!(state, UserState::Disabled) {
+                bump_token_version = true;
+            }
+            am.state = Set(state_str.to_owned());
+        }
     }
 
     if changed.is_empty() {
@@ -359,23 +397,22 @@ pub async fn update(
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, user_id = %uuid, "update user failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiErrorCode::Internal,
+                "internal",
+            );
         }
     };
 
-    audit::record(
-        &app.db,
-        AuditEntry {
-            actor_id: actor.id,
-            action: "admin.user.update",
-            target_type: Some("user"),
-            target_id: Some(uuid.to_string()),
-            payload: serde_json::Value::Object(changed),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
-        },
-    )
-    .await;
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.user.update",
+        target = ("user", uuid.to_string()),
+        payload = serde_json::Value::Object(changed),
+    );
 
     let counts = library_counts_for(&app, vec![uuid])
         .await
@@ -389,7 +426,7 @@ pub async fn update(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "admin_users_disable",    post,
     path = "/admin/users/{id}/disable",
     params(("id" = String, Path,)),
     responses(
@@ -398,6 +435,7 @@ pub async fn update(
         (status = 404, description = "user not found"),
     )
 )]
+#[handler]
 pub async fn disable(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -408,7 +446,7 @@ pub async fn disable(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "admin_users_enable",    post,
     path = "/admin/users/{id}/enable",
     params(("id" = String, Path,)),
     responses(
@@ -417,6 +455,7 @@ pub async fn disable(
         (status = 404, description = "user not found"),
     )
 )]
+#[handler]
 pub async fn enable(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -493,7 +532,7 @@ async fn set_state(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "admin_users_set_library_access",    post,
     path = "/admin/users/{id}/library-access",
     params(("id" = String, Path,)),
     request_body = LibraryAccessReq,
@@ -504,12 +543,13 @@ async fn set_state(
         (status = 404, description = "user not found"),
     )
 )]
+#[handler]
 pub async fn set_library_access(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     AxPath(id): AxPath<String>,
-    Json(req): Json<LibraryAccessReq>,
+    Validated(req): Validated<LibraryAccessReq>,
 ) -> impl IntoResponse {
     let Ok(uuid) = Uuid::parse_str(&id) else {
         return error(StatusCode::BAD_REQUEST, "validation", "invalid id");
@@ -550,7 +590,7 @@ pub async fn set_library_access(
         };
         if (found as usize) != wanted.len() {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation.library_ids",
                 "one or more libraries not found",
             );

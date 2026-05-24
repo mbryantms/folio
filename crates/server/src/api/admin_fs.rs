@@ -16,21 +16,23 @@
 //! list isn't dominated by housekeeping noise.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use super::error;
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/admin/fs/list", get(list))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list))
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -59,7 +61,7 @@ pub struct DirEntry {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_fs_list",    get,
     path = "/admin/fs/list",
     params(ListQuery),
     responses(
@@ -69,6 +71,7 @@ pub struct DirEntry {
         (status = 404, description = "path does not exist"),
     )
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -115,7 +118,7 @@ pub async fn list(
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "path may not contain '..'",
         );
@@ -128,7 +131,7 @@ pub async fn list(
         Err(e) => {
             tracing::warn!(error = %e, path = %requested.display(), "fs/list: canonicalize failed");
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "path could not be resolved",
             );

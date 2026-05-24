@@ -6,17 +6,18 @@
 //! skips matching columns, preserving user edits across rescans.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, patch, post},
 };
 use entity::{issue, library, library_health_issue, library_user_access, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     Set, Statement, Value, sea_query::Expr,
 };
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::library::access;
 use serde::{Deserialize, Serialize};
@@ -31,28 +32,18 @@ use crate::state::AppState;
 
 use super::error;
 use super::series::{IssueDetailView, IssueLink, IssueSummaryView};
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/issues", get(list))
-        .route("/issues/search", get(search))
-        .route("/me/issues/bulk-metadata", patch(bulk_metadata))
-        .route(
-            "/series/{series_slug}/issues/{issue_slug}",
-            get(get_one).patch(update),
-        )
-        .route(
-            "/series/{series_slug}/issues/{issue_slug}/scan",
-            post(scan_issue),
-        )
-        .route(
-            "/series/{series_slug}/issues/{issue_slug}/next",
-            get(next_in_series),
-        )
-        .route(
-            "/series/{series_slug}/issues/{issue_slug}/health-issues",
-            get(list_issue_health),
-        )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(search))
+        .routes(routes!(bulk_metadata))
+        .routes(routes!(get_one))
+        .routes(routes!(update))
+        .routes(routes!(scan_issue))
+        .routes(routes!(next_in_series))
+        .routes(routes!(list_issue_health))
 }
 
 /// Resolve `(series_slug, issue_slug)` to the canonical issue row. Returns
@@ -107,7 +98,7 @@ pub(crate) async fn find_by_slugs(
 // ───── GET /issues/{id} ─────
 
 #[utoipa::path(
-    get,
+    operation_id = "issues_get_one",    get,
     path = "/series/{series_slug}/issues/{issue_slug}",
     params(
         ("series_slug" = String, Path,),
@@ -118,6 +109,7 @@ pub(crate) async fn find_by_slugs(
         (status = 404)
     )
 )]
+#[handler]
 pub async fn get_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -310,7 +302,7 @@ fn norm_str(v: Option<String>) -> Option<String> {
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "issues_update",    patch,
     path = "/series/{series_slug}/issues/{issue_slug}",
     params(
         ("series_slug" = String, Path,),
@@ -324,6 +316,7 @@ fn norm_str(v: Option<String>) -> Option<String> {
         (status = 404, description = "issue not found"),
     )
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -346,7 +339,7 @@ pub async fn update(
         for l in links {
             if l.url.trim().is_empty() {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation.additional_links",
                     "each link needs a non-empty url",
                 );
@@ -360,7 +353,7 @@ pub async fn update(
         && !f.is_finite()
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.sort_number",
             "sort_number must be finite",
         );
@@ -369,7 +362,7 @@ pub async fn update(
         && !(1800..=2999).contains(&y)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.year",
             "year out of range",
         );
@@ -378,7 +371,7 @@ pub async fn update(
         && !(1..=12).contains(&m)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.month",
             "month must be 1..=12",
         );
@@ -387,7 +380,7 @@ pub async fn update(
         && !(1..=31).contains(&d)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.day",
             "day must be 1..=31",
         );
@@ -396,7 +389,7 @@ pub async fn update(
         && !(0..=9999).contains(&v)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.volume",
             "volume out of range",
         );
@@ -405,7 +398,7 @@ pub async fn update(
         let t = s.trim();
         if !matches!(t, "Yes" | "YesAndRightToLeft" | "No") {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation.manga",
                 "manga must be Yes, YesAndRightToLeft, or No",
             );
@@ -415,7 +408,7 @@ pub async fn update(
         && s.len() > 16
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.language_code",
             "language_code too long",
         );
@@ -597,7 +590,7 @@ fn default_true() -> bool {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "issues_scan_issue",    post,
     path = "/series/{series_slug}/issues/{issue_slug}/scan",
     params(
         ("series_slug" = String, Path,),
@@ -610,6 +603,7 @@ fn default_true() -> bool {
         (status = 404, description = "issue not found"),
     )
 )]
+#[handler]
 pub async fn scan_issue(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -706,7 +700,7 @@ pub struct NextInSeriesView {
 /// issues are filtered out so the list mirrors the series page. The current
 /// issue is excluded from the result.
 #[utoipa::path(
-    get,
+    operation_id = "issues_next_in_series",    get,
     path = "/series/{series_slug}/issues/{issue_slug}/next",
     params(
         ("series_slug" = String, Path,),
@@ -718,6 +712,7 @@ pub struct NextInSeriesView {
         (status = 404, description = "issue not found"),
     )
 )]
+#[handler]
 pub async fn next_in_series(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -792,7 +787,7 @@ pub async fn next_in_series(
 /// recovered. The admin Health tab is still the place to dismiss or
 /// triage.
 #[utoipa::path(
-    get,
+    operation_id = "issues_list_issue_health",    get,
     path = "/series/{series_slug}/issues/{issue_slug}/health-issues",
     params(
         ("series_slug" = String, Path,),
@@ -803,6 +798,7 @@ pub async fn next_in_series(
         (status = 404, description = "issue not found"),
     )
 )]
+#[handler]
 pub async fn list_issue_health(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -986,7 +982,7 @@ pub struct BulkMetadataResp {
 /// Emits one `admin.issue.bulk_metadata_update` audit row per call
 /// with `{ patch_keys, mode, updated_count, requested_count }`.
 #[utoipa::path(
-    patch,
+    operation_id = "issues_bulk_metadata",    patch,
     path = "/me/issues/bulk-metadata",
     request_body = BulkMetadataReq,
     responses(
@@ -994,6 +990,7 @@ pub struct BulkMetadataResp {
         (status = 400, description = "validation"),
     )
 )]
+#[handler]
 pub async fn bulk_metadata(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1003,14 +1000,14 @@ pub async fn bulk_metadata(
     const MAX_IDS: usize = 500;
     if req.issue_ids.len() > MAX_IDS {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             &format!("issue_ids cap is {MAX_IDS}"),
         );
     }
     if req.patch.is_empty() {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.empty_patch",
             "patch must include at least one field",
         );
@@ -1022,7 +1019,7 @@ pub async fn bulk_metadata(
         && !matches!(v.as_str(), "Yes" | "No" | "YesAndRightToLeft")
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.manga",
             "manga must be Yes, No, YesAndRightToLeft, or null",
         );
@@ -1627,10 +1624,11 @@ async fn compute_next_issue_cursor(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "issues_list",    get,
     path = "/issues",
     responses((status = 200, body = super::series::IssueListView))
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1639,7 +1637,7 @@ pub async fn list(
     use super::series::{IssueListView, IssueSort, SortOrder, clamp_limit};
 
     if let Err(msg) = validate_list_query_params(&q) {
-        return error(StatusCode::BAD_REQUEST, "validation", msg);
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", msg);
     }
 
     let visible = access::for_user(&app, &user).await;
@@ -1718,7 +1716,7 @@ pub async fn list(
     if let Some(cursor) = q.cursor.as_deref() {
         select = match apply_issue_cursor(select, cursor, sort, asc, user.id) {
             Ok(s) => s,
-            Err(msg) => return error(StatusCode::BAD_REQUEST, "validation", msg),
+            Err(msg) => return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", msg),
         };
     }
     select = apply_issue_sort_ordering(select, sort, asc, user.id);
@@ -1837,7 +1835,7 @@ async fn hydrate_and_respond(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "issues_search",    get,
     path = "/issues/search",
     params(
         ("q" = String, Query,),
@@ -1846,6 +1844,7 @@ async fn hydrate_and_respond(
     ),
     responses((status = 200, body = IssueSearchView))
 )]
+#[handler]
 pub async fn search(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1856,7 +1855,7 @@ pub async fn search(
         return Json(IssueSearchView { items: Vec::new() }).into_response();
     }
     if text.len() > SEARCH_MAX_QUERY_LEN {
-        return error(StatusCode::BAD_REQUEST, "validation", "q too long");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "q too long");
     }
     let limit = q
         .limit
@@ -1985,7 +1984,11 @@ async fn fetch_issue_snippets(
         .into_iter()
         .filter_map(|r| {
             let s = r.snippet?;
-            if s.contains("<mark>") { Some((r.id, s)) } else { None }
+            if s.contains("<mark>") {
+                Some((r.id, s))
+            } else {
+                None
+            }
         })
         .collect())
 }

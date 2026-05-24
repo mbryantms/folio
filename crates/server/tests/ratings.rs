@@ -213,13 +213,13 @@ async fn series_rating_rejects_out_of_range() {
 
     // Below floor.
     let resp = put_rating(&app, &auth, &uri, serde_json::json!({"rating": -0.5})).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "validation.rating");
 
     // Above ceiling.
     let resp = put_rating(&app, &auth, &uri, serde_json::json!({"rating": 5.5})).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "validation.rating");
 }
@@ -234,7 +234,7 @@ async fn series_rating_rejects_non_half_step() {
 
     // Quarter-step — should bounce.
     let resp = put_rating(&app, &auth, &uri, serde_json::json!({"rating": 3.25})).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "validation.rating");
 }

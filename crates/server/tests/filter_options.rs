@@ -328,7 +328,7 @@ async fn genres_returns_distinct_values_across_visible_libraries() {
 
     let (status, json) = http(&app, Method::GET, "/api/filter-options/genres", Some(&auth)).await;
     assert_eq!(status, StatusCode::OK, "json: {json:#?}");
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -371,7 +371,7 @@ async fn library_scope_restricts_options() {
     let url = format!("/api/filter-options/genres?library={horror_lib}");
     let (status, json) = http(&app, Method::GET, &url, Some(&auth)).await;
     assert_eq!(status, StatusCode::OK);
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -404,7 +404,7 @@ async fn prefix_filter_narrows_results() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -437,7 +437,7 @@ async fn credits_endpoint_filters_by_role() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -456,7 +456,7 @@ async fn credits_endpoint_filters_by_role() {
         Some(&auth),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 /// Library with `n` series, each carrying the supplied publisher (one
@@ -564,7 +564,7 @@ async fn publishers_returns_distinct_non_null_values() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "json: {json:#?}");
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -660,7 +660,7 @@ async fn series_filter_status_narrows_results() {
 
     // Unknown enum is a 400, not silently empty.
     let (status, _) = http(&app, Method::GET, "/api/series?status=bogus", Some(&auth)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -997,7 +997,7 @@ async fn series_filter_user_rating_excludes_unrated_when_bounds_set() {
         Some(&auth),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     // Bad input: out-of-range.
     let (status, _) = http(
         &app,
@@ -1006,7 +1006,7 @@ async fn series_filter_user_rating_excludes_unrated_when_bounds_set() {
         Some(&auth),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1027,7 +1027,7 @@ async fn languages_options_endpoint() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -1055,7 +1055,7 @@ async fn age_ratings_options_endpoint_excludes_null_and_empty() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -1253,7 +1253,7 @@ async fn characters_options_endpoint_dedupes_and_sorts() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -1290,7 +1290,7 @@ async fn locations_options_endpoint_excludes_empty() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -1311,7 +1311,7 @@ async fn publishers_scoped_to_library_when_query_param_set() {
     let url = format!("/api/filter-options/publishers?library={img_lib}");
     let (status, json) = http(&app, Method::GET, &url, Some(&auth)).await;
     assert_eq!(status, StatusCode::OK);
-    let values: Vec<String> = json["values"]
+    let values: Vec<String> = json["items"]
         .as_array()
         .unwrap()
         .iter()

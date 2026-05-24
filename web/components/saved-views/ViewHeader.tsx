@@ -70,7 +70,7 @@ export function ViewHeader({
   const sidebar = useSidebarSavedView();
   const [pinOpen, setPinOpen] = React.useState(false);
   const canEdit = onEdit !== undefined && !view.is_system;
-  const pinnedCount = view.pinned_on_pages.length;
+  const pinnedCount = (view.pinned_on_pages ?? []).length;
   return (
     <header className={cn("space-y-3", className)}>
       <div className="flex flex-wrap items-start justify-between gap-3">

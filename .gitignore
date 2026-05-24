@@ -74,7 +74,6 @@ test-results/
 
 # Generated
 web/lib/api/types.ts.tmp
-web/lib/api/types.generated.ts
 crates/server/openapi.json.tmp
 
 # Claude Code — keep shared config (CLAUDE.md, .mcp.json, .claude/commands/,

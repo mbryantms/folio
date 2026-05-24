@@ -1296,7 +1296,7 @@ async fn search(
         );
     }
     if needle.len() > 200 {
-        return error(StatusCode::BAD_REQUEST, "validation", "query too long");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "query too long");
     }
     let allowed = match allowed_libraries(&app, &user).await {
         Ok(v) => v,
@@ -3549,14 +3549,14 @@ pub(crate) async fn progress_put(
         (None, Some(pos)) => {
             if total_pages <= 0 {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "position requires the issue to have a known page_count",
                 );
             }
             if !pos.is_finite() {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "position must be a finite number",
                 );
@@ -3567,14 +3567,14 @@ pub(crate) async fn progress_put(
         }
         (None, None) => {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "either page or position is required",
             );
         }
     };
     if page < 0 {
-        return error(StatusCode::BAD_REQUEST, "validation", "page must be >= 0");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "page must be >= 0");
     }
     let model = match crate::api::progress::upsert_for(
         &app,
@@ -3658,7 +3658,7 @@ async fn koreader_sync_put(
     let user = user.0;
     if !(0.0..=1.0).contains(&req.percentage) {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "percentage must be between 0 and 1",
         );
@@ -3670,7 +3670,7 @@ async fn koreader_sync_put(
         && body_doc != document_hash
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "URL document_hash and body.document disagree",
         );

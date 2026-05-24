@@ -499,7 +499,7 @@ async fn update_settings_rejects_unknown_format() {
         serde_json::json!({ "format": "tiff" }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
@@ -543,7 +543,7 @@ async fn update_settings_rejects_quality_outside_slider_range() {
         serde_json::json!({ "cover_quality": 101 }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

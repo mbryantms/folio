@@ -9,11 +9,10 @@
 //! (apalis-queued background scan lands in Phase 1b).
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
 };
 use entity::{issue, library, library_user_access, scan_run, series};
 use sea_orm::{
@@ -21,25 +20,28 @@ use sea_orm::{
     QueryOrder, QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use super::extractors::Validated;
 use crate::audit::{self, AuditEntry};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::{ignore, thumbnails};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/libraries", get(list).post(create))
-        .route(
-            "/libraries/{slug}",
-            get(get_one).patch(update_settings).delete(delete_one),
-        )
-        .route("/libraries/{slug}/scan", post(scan))
-        .route("/libraries/{slug}/scan-preview", get(scan_preview))
-        .route("/libraries/{slug}/validate-deeply", post(validate_deeply))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(create))
+        .routes(routes!(get_one, update_settings))
+        .routes(routes!(delete_one))
+        .routes(routes!(scan))
+        .routes(routes!(scan_preview))
+        .routes(routes!(validate_deeply))
 }
 
 /// Look up a library row by its URL slug. Used by every `/libraries/{slug}`
@@ -125,43 +127,55 @@ impl From<library::Model> for LibraryView {
 
 /// Body for `PATCH /libraries/{id}` (Milestone 4). Every field is optional;
 /// only the keys present in the body are updated.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct UpdateLibraryReq {
     #[serde(default)]
+    #[garde(skip)]
     pub ignore_globs: Option<Vec<String>>,
     #[serde(default)]
+    #[garde(skip)]
     pub report_missing_comicinfo: Option<bool>,
     #[serde(default)]
+    #[garde(skip)]
     pub file_watch_enabled: Option<bool>,
     #[serde(default)]
+    #[garde(inner(range(min = 0)))]
     pub soft_delete_days: Option<i32>,
     /// Cron expression. `null` clears it; an empty string is treated as null.
     /// Tri-state: omitted = leave unchanged; explicit `null` = clear.
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(cron_loose_check))]
     pub scan_schedule_cron: Option<Option<String>>,
     /// Admin override for the URL slug. The input is slugified
     /// (kebab-case, ASCII-folded) and rejected if it collides with another
     /// library's slug.
     #[serde(default)]
+    #[garde(skip)]
     pub slug: Option<String>,
     /// Toggle the per-library opt-in for auto-generating page-strip
     /// thumbnails on every post-scan pass. Cover thumbs are always
     /// generated regardless.
     #[serde(default)]
+    #[garde(skip)]
     pub generate_page_thumbs_on_scan: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct CreateLibraryReq {
+    #[garde(length(min = 1))]
     pub name: String,
+    #[garde(custom(absolute_path))]
     pub root_path: String,
     #[serde(default = "default_lang")]
+    #[garde(skip)]
     pub default_language: String,
     #[serde(default = "default_dir")]
+    #[garde(skip)]
     pub default_reading_direction: String,
     /// Explicitly enqueue the initial scan after creating the row.
     /// Defaults to false so library creation is side-effect-light.
     #[serde(default)]
+    #[garde(skip)]
     pub scan_now: bool,
     /// Set the per-library `generate_page_thumbs_on_scan` flag at
     /// creation time. When true, the post-scan pipeline (including the
@@ -169,7 +183,36 @@ pub struct CreateLibraryReq {
     /// thumbnails alongside the always-on cover thumbnails. Defaults
     /// to false; user can flip it later from library settings.
     #[serde(default)]
+    #[garde(skip)]
     pub generate_page_thumbs_on_scan: bool,
+}
+
+fn absolute_path(value: &str, _: &()) -> garde::Result {
+    if !std::path::Path::new(value).is_absolute() {
+        return Err(garde::Error::new("root_path must be absolute"));
+    }
+    Ok(())
+}
+
+/// Loose syntax check for the cron field. The outer `Option` is "field
+/// absent" (leave unchanged). The inner `Option` is "explicit null"
+/// (clear the schedule). When present, we require ≥ 5 whitespace-
+/// separated tokens — the tokio-cron-scheduler parser in Milestone 9 is
+/// the real validator; this is an early sanity check.
+fn cron_loose_check(value: &Option<Option<String>>, _: &()) -> garde::Result {
+    let Some(Some(expr)) = value else {
+        return Ok(());
+    };
+    if expr.trim().is_empty() {
+        // Empty string is normalized to "clear" in the handler. Not a failure.
+        return Ok(());
+    }
+    if expr.split_whitespace().count() < 5 {
+        return Err(garde::Error::new(
+            "cron expression must have at least 5 fields",
+        ));
+    }
+    Ok(())
 }
 
 fn default_lang() -> String {
@@ -255,10 +298,11 @@ pub struct ScanPreviewView {
 // ───────── handlers ─────────
 
 #[utoipa::path(
-    get,
+    operation_id = "libraries_list",    get,
     path = "/libraries",
     responses((status = 200, body = Vec<LibraryView>))
 )]
+#[handler]
 pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
     let q = library::Entity::find().order_by_asc(library::Column::Name);
     let rows: Vec<library::Model> = match q.all(&app.db).await {
@@ -279,7 +323,7 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "libraries_get_one",    get,
     path = "/libraries/{slug}",
     params(("slug" = String, Path,)),
     responses(
@@ -287,6 +331,7 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
         (status = 404, description = "not found or not accessible")
     )
 )]
+#[handler]
 pub async fn get_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -303,7 +348,7 @@ pub async fn get_one(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "libraries_create",    post,
     path = "/libraries",
     request_body = CreateLibraryReq,
     responses(
@@ -312,19 +357,13 @@ pub async fn get_one(
         (status = 409, description = "root_path already in use")
     )
 )]
+#[handler]
 pub async fn create(
     State(app): State<AppState>,
     _admin: RequireAdmin,
-    Json(req): Json<CreateLibraryReq>,
+    Validated(req): Validated<CreateLibraryReq>,
 ) -> impl IntoResponse {
-    let path = std::path::PathBuf::from(&req.root_path);
-    if !path.is_absolute() {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation",
-            "root_path must be absolute",
-        );
-    }
+    // `name` + `root_path` validated by garde; nothing further to check here.
     let now = chrono::Utc::now().fixed_offset();
     let slug = match crate::slug::allocate_library_slug(&app.db, &req.name).await {
         Ok(s) => s,
@@ -377,7 +416,7 @@ pub async fn create(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "libraries_update_settings",    patch,
     path = "/libraries/{slug}",
     params(("slug" = String, Path,)),
     request_body = UpdateLibraryReq,
@@ -388,12 +427,13 @@ pub async fn create(
         (status = 404, description = "library not found"),
     )
 )]
+#[handler]
 pub async fn update_settings(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     AxPath(slug): AxPath<String>,
-    Json(req): Json<UpdateLibraryReq>,
+    Validated(req): Validated<UpdateLibraryReq>,
 ) -> impl IntoResponse {
     let row = match find_by_slug(&app.db, &slug).await {
         Ok(r) => r,
@@ -401,39 +441,18 @@ pub async fn update_settings(
     };
     let uuid = row.id;
 
+    // `soft_delete_days >= 0` and the loose 5-field cron check are
+    // enforced by garde. `validate_globs` still runs here because it
+    // needs the runtime path-resolution context (host-relative globs
+    // are normalised against the library root).
     if let Some(globs) = &req.ignore_globs
         && let Err(e) = ignore::validate_globs(globs)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.ignore_globs",
             &e.to_string(),
         );
-    }
-    if let Some(days) = req.soft_delete_days
-        && days < 0
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation.soft_delete_days",
-            "soft_delete_days must be >= 0",
-        );
-    }
-    if let Some(Some(cron_expr)) = &req.scan_schedule_cron
-        && !cron_expr.trim().is_empty()
-    {
-        // Loose syntax check: ≥ 5 whitespace-separated tokens (the most common
-        // shape — both 5- and 6-field cron formats satisfy this). The
-        // tokio-cron-scheduler validation in Milestone 9 is the source of
-        // truth, so this is an early sanity check, not a full parse.
-        let token_count = cron_expr.split_whitespace().count();
-        if token_count < 5 {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "validation.scan_schedule_cron",
-                "cron expression must have at least 5 fields",
-            );
-        }
     }
 
     // Validate + slugify any admin-supplied slug before mutating state.
@@ -533,7 +552,7 @@ pub struct ScanLibraryQuery {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "libraries_scan",    post,
     path = "/libraries/{slug}/scan",
     params(
         ("slug" = String, Path,),
@@ -545,6 +564,7 @@ pub struct ScanLibraryQuery {
         (status = 404, description = "library not found")
     )
 )]
+#[handler]
 pub async fn scan(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -606,7 +626,7 @@ pub struct DeepValidateResp {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "libraries_validate_deeply",    post,
     path = "/libraries/{slug}/validate-deeply",
     params(("slug" = String, Path,)),
     responses(
@@ -627,6 +647,7 @@ pub struct DeepValidateResp {
 /// **Cost.** Image-decoding every page in a 20K-issue library can
 /// take 1-2 hours of single-core CPU. Operator-only; never
 /// automatic.
+#[handler]
 pub async fn validate_deeply(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -658,7 +679,7 @@ pub async fn validate_deeply(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "libraries_scan_preview",    get,
     path = "/libraries/{slug}/scan-preview",
     params(("slug" = String, Path,)),
     responses(
@@ -667,6 +688,7 @@ pub async fn validate_deeply(
         (status = 404, description = "library not found")
     )
 )]
+#[handler]
 pub async fn scan_preview(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -786,7 +808,7 @@ pub struct DeleteLibraryResp {
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "libraries_delete_one",    delete,
     path = "/libraries/{slug}",
     params(("slug" = String, Path,)),
     responses(
@@ -795,6 +817,7 @@ pub struct DeleteLibraryResp {
         (status = 404, description = "library not found"),
     )
 )]
+#[handler]
 pub async fn delete_one(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,

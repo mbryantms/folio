@@ -11,23 +11,27 @@
 //! milestones — the only thing that grows is the registry.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use super::error;
 use crate::auth::RequireAdmin;
 use crate::middleware::RequestContext;
 use crate::settings::{self, registry};
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/admin/settings", get(get_all).patch(update))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(get_all))
+        .routes(routes!(update))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -65,13 +69,14 @@ pub struct UpdateSettingsReq {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_settings_get_all",    get,
     path = "/admin/settings",
     responses(
         (status = 200, body = SettingsView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn get_all(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     let rows = match settings::read_all(&app.db, &app.secrets).await {
         Ok(r) => r,
@@ -112,7 +117,7 @@ pub async fn get_all(State(app): State<AppState>, _admin: RequireAdmin) -> Respo
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "admin_settings_update",    patch,
     path = "/admin/settings",
     request_body = UpdateSettingsReq,
     responses(
@@ -121,6 +126,7 @@ pub async fn get_all(State(app): State<AppState>, _admin: RequireAdmin) -> Respo
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -138,7 +144,7 @@ pub async fn update(
             Some(d) => d,
             None => {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "settings.unknown_key",
                     &format!("unknown setting key: {key}"),
                 );
@@ -146,7 +152,7 @@ pub async fn update(
         };
         if let Err(msg) = validate_value(def.kind, &value) {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "settings.invalid_value",
                 &format!("{key}: {msg}"),
             );
@@ -177,10 +183,17 @@ pub async fn update(
         Err(e) => Err(e),
     };
     if let Err(e) = dry_run {
-        return error(StatusCode::BAD_REQUEST, "settings.invalid_combination", &e);
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "settings.invalid_combination", &e);
     }
 
-    // 3. Persist + audit.
+    // 3. Persist + audit. `settings::write` writes one fine-grained
+    //    audit row per key (so operators can trace individual flag
+    //    flips). We additionally emit a batch-level row here so the
+    //    M10 `audit-check` AST tool sees the canonical
+    //    `record_admin_action!` invocation in the handler — and so a
+    //    timeline view of "what did this admin do" includes a single
+    //    rollup entry alongside the per-key detail.
+    let touched_keys: Vec<String> = updates.iter().map(|u| u.key.clone()).collect();
     if let Err(e) = settings::write(&app.db, &app.secrets, actor.id, &ctx, updates).await {
         tracing::error!(error = %e, "settings::write failed");
         return error(
@@ -189,6 +202,16 @@ pub async fn update(
             "failed to write settings",
         );
     }
+    crate::record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.settings.update",
+        payload = serde_json::json!({
+            "keys": touched_keys,
+            "count": touched_keys.len(),
+        }),
+    );
 
     // 4. Rebuild Config from the env baseline + the new DB overlay so the
     //    change takes effect on the next request — and so a row deleted via
@@ -212,7 +235,14 @@ pub async fn update(
             match crate::email::build(&app.cfg()) {
                 Ok(sender) => app.replace_email(sender).await,
                 Err(e) => {
-                    tracing::error!(error = %e, "email::build failed after smtp.* change");
+                    // SMTP build errors carry config-shape messages (host,
+                    // TLS mode, port); the password isn't normally embedded
+                    // but a future lettre upgrade could leak it through. Run
+                    // through the sanitizer defensively.
+                    tracing::error!(
+                        error = %crate::observability::sanitize_error(&e),
+                        "email::build failed after smtp.* change"
+                    );
                 }
             }
         }

@@ -10,7 +10,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { useSetSavedViewIcon } from "@/lib/api/mutations";
-import type { SavedViewView } from "@/lib/api/types";
+import type { SavedViewKind, SavedViewView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 import {
@@ -47,7 +47,7 @@ export function RailIconPicker({
   const setIcon = useSetSavedViewIcon();
   const [open, setOpen] = React.useState(false);
   const current = railIconFor(view);
-  const defaultKey = defaultIconKeyForKind(view.kind);
+  const defaultKey = defaultIconKeyForKind(view.kind as SavedViewKind);
   const usingDefault = !view.icon || view.icon === defaultKey;
 
   const choose = (entry: RailIconEntry) => {

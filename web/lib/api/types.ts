@@ -1,145 +1,289 @@
 /**
- * Hand-written API types for Phase 1a. Will be replaced by `openapi-typescript`
- * generated `paths`/`components` once `just openapi` is wired in CI. Until then
- * we keep them here so the web compiles without a server-side codegen step.
+ * **Hybrid alias shim (audit-remediation M1c, shipped 2026-05-23).** This
+ * file used to be a 2392-line hand-curated mirror of the Rust API surface.
+ * It's now a thin shim: 177 of 219 named types are one-line aliases over
+ * `components["schemas"]["X"]` from [./types.generated.ts](./types.generated.ts);
+ * the remaining ~40 entries are inline because they either don't have a
+ * codegen equivalent or carry narrower types than what codegen emits.
+ *
+ * **Source of truth:**
+ *   - For aliased types: the Rust DTO (codegen wins). Hand-edits to the
+ *     aliased block are silently overridden by the next `just openapi`.
+ *   - For inline types: hand-maintained. Each inline entry falls into one
+ *     of these buckets:
+ *       1. **Frontend-only computed types** (union/intersection helpers,
+ *          `OnDeckCard`'s variant shape, etc.) — by design.
+ *       2. **WS payload shapes** (`ScanEvent`) — the OpenAPI surface
+ *          excludes WebSocket events.
+ *       3. **Typed enums where the Rust source uses bare `String`** —
+ *          `MarkerKind`, `MarkerShape`, `LogWidgetKind`, `CblMatchStatus`,
+ *          `ThumbnailFormat`, `ScanRunKind`, `SavedViewKind`, etc. Each is
+ *          a tracked debt: when the Rust source derives `ToSchema` on an
+ *          enum (following the
+ *          [`preferences.rs`](../../../crates/server/src/auth/preferences.rs)
+ *          template), the inline entry can be promoted to an alias.
+ *
+ * **Drift gate:** `just openapi-check` regenerates both `openapi.json` and
+ * `types.generated.ts` and fails the build if either disagrees with the
+ * checked-in copy.
+ *
+ * **To add a new type:** write the Rust `ToSchema`, run `just openapi`,
+ * then either add an alias here or let
+ * `web/scripts/build-types-shim.py` regenerate the partition.
  */
 
-export type LibraryView = {
+import type { components } from "./types.generated";
+
+type Schemas = components["schemas"];
+
+// ────────────── Aliased from codegen ──────────────
+// Hand-edits to the *aliased* block below will be silently overridden by
+// the next `just openapi` when the Rust source moves. To change one of
+// these shapes, change the Rust DTO.
+export type LibraryView = Schemas["LibraryView"];
+export type CreateLibraryReq = Schemas["CreateLibraryReq"];
+export type UpdateLibraryReq = Schemas["UpdateLibraryReq"];
+export type SeriesView = Schemas["SeriesView"];
+export type SeriesProgressSummary = Schemas["SeriesProgressSummary"];
+export type SeriesListView = Schemas["SeriesListView"];
+export type SortOrder = Schemas["SortOrder"];
+export type UpdateSeriesReq = Schemas["UpdateSeriesReq"];
+export type IssueSummaryView = Schemas["IssueSummaryView"];
+export type IssueListView = Schemas["IssueListView"];
+export type IssueSearchHit = Schemas["IssueSearchHit"];
+export type IssueSearchView = Schemas["IssueSearchView"];
+export type PersonHit = Schemas["PersonHit"];
+export type CreatorRoleRail = Schemas["CreatorRoleRail"];
+export type CreatorDetailView = Schemas["CreatorDetailView"];
+export type PeopleListView = Schemas["PeopleListView"];
+export type IssueDetailView = Schemas["IssueDetailView"];
+export type IssueLink = Schemas["IssueLink"];
+export type UpdateIssueReq = Schemas["UpdateIssueReq"];
+export type NextInSeriesView = Schemas["NextInSeriesView"];
+export type SetRatingReq = Schemas["SetRatingReq"];
+export type RatingView = Schemas["RatingView"];
+export type MeView = Schemas["MeResp"]; // renamed in codegen as MeResp
+export type PreferencesReq = Schemas["PreferencesReq"];
+export type SeriesResumeView = Schemas["SeriesResumeView"];
+export type CblWindowEntry = Schemas["CblWindowEntry"];
+export type CblWindowView = Schemas["CblWindowView"];
+export type CblWindowPageView = Schemas["CblWindowPageView"];
+export type ContinueReadingCard = Schemas["ContinueReadingCard"];
+export type ContinueReadingView = Schemas["ContinueReadingView"];
+export type OnDeckCard = Schemas["OnDeckCard"];
+export type OnDeckView = Schemas["OnDeckView"];
+export type CreateRailDismissalReq = Schemas["CreateDismissalReq"]; // renamed in codegen as CreateDismissalReq
+export type NextUpSource = Schemas["NextUpSource"];
+export type NextUpView = Schemas["NextUpView"];
+export type ReadingSessionView = Schemas["ReadingSessionView"];
+export type ReadingSessionListView = Schemas["ReadingSessionListView"];
+export type ReadingLogEventSeries = Schemas["EventSeries"]; // renamed in codegen as EventSeries
+export type ReadingLogEventIssue = Schemas["EventIssue"]; // renamed in codegen as EventIssue
+export type ReadingLogPayload = Schemas["EventPayload"]; // renamed in codegen as EventPayload
+export type ReadingLogEventView = Schemas["ReadingLogEventView"];
+export type ReadingLogPageView = Schemas["ReadingLogPageView"];
+export type LogWidgetView = Schemas["LogWidgetView"];
+export type LogWidgetListView = Schemas["CursorPage_LogWidgetView"];
+export type AddLogWidgetReq = Schemas["AddWidgetReq"]; // renamed in codegen as AddWidgetReq
+export type ReadingDayBucket = Schemas["DayBucket"]; // renamed in codegen as DayBucket
+export type AdminOverviewView = Schemas["OverviewView"]; // renamed in codegen as OverviewView
+export type DeviceBucket = Schemas["DeviceBucket"];
+export type AdminUserStatsRow = Schemas["AdminUserStatsRow"];
+export type AdminUserStatsListView = Schemas["CursorPage_AdminUserStatsRow"];
+export type EngagementPoint = Schemas["EngagementPoint"];
+export type EngagementView = Schemas["EngagementView"];
+export type DeadStockEntry = Schemas["DeadStockEntry"];
+export type AbandonedEntry = Schemas["AbandonedEntry"];
+export type FunnelBucket = Schemas["FunnelBucket"];
+export type ContentInsightsView = Schemas["ContentInsightsView"];
+export type MetadataCoverageView = Schemas["MetadataCoverageView"];
+export type DataQualityView = Schemas["DataQualityView"];
+export type LatestReleaseView = Schemas["LatestReleaseView"];
+export type OcrModelView = Schemas["OcrModelView"];
+export type OcrModelsView = Schemas["OcrModelsView"];
+export type ServerInfoView = Schemas["ServerInfoView"];
+export type LogEntryView = Schemas["LogEntryView"];
+export type LogsResp = Schemas["LogsResp"];
+export type FsDirEntry = Schemas["DirEntry"]; // renamed in codegen as DirEntry
+export type FsListResp = Schemas["ListResp"]; // renamed in codegen as ListResp
+export type ActivityEntryView = Schemas["ActivityEntryView"];
+export type ActivityListView = Schemas["ActivityListView"];
+export type AuthConfigView = Schemas["AuthConfigView"];
+export type PublicAuthConfigView = Schemas["PublicAuthConfigView"];
+export type SettingRegistryEntry = Schemas["RegistryEntry"]; // renamed in codegen as RegistryEntry
+export type SettingResolvedEntry = Schemas["ResolvedEntry"]; // renamed in codegen as ResolvedEntry
+export type SettingsView = Schemas["SettingsView"];
+export type UpdateSettingsReq = Schemas["UpdateSettingsReq"];
+export type EmailStatusView = Schemas["EmailStatusView"];
+export type TestEmailResp = Schemas["TestEmailResp"];
+export type OidcDiscoverReq = Schemas["OidcDiscoverReq"];
+export type OidcDiscoverResp = Schemas["OidcDiscoverResp"];
+export type ReadingStatsView = Schemas["ReadingStatsView"];
+export type TopSeriesEntry = Schemas["TopSeriesEntry"];
+export type TopNameEntry = Schemas["TopNameEntry"];
+export type TopCreatorEntry = Schemas["TopCreatorEntry"];
+export type DowHourCell = Schemas["DowHourCell"];
+export type TimeOfDayCell = Schemas["TimeOfDayCell"];
+export type TimeOfDayBuckets = Schemas["TimeOfDayBuckets"];
+export type PacePoint = Schemas["PacePoint"];
+export type RereadIssueEntry = Schemas["RereadIssueEntry"];
+export type RereadSeriesEntry = Schemas["RereadSeriesEntry"];
+export type CompletionView = Schemas["CompletionView"];
+export type ClearHistoryResp = Schemas["ClearHistoryResp"];
+export type AccountReq = Schemas["AccountReq"];
+export type HealthIssueView = Schemas["HealthIssueView"];
+export type ScanRunView = Schemas["ScanRunView"];
+export type ScanResp = Schemas["ScanResp"];
+export type ScanPreviewView = Schemas["ScanPreviewView"];
+export type DeleteLibraryResp = Schemas["DeleteLibraryResp"];
+export type RemovedIssueView = Schemas["RemovedIssueView"];
+export type RemovedSeriesView = Schemas["RemovedSeriesView"];
+export type RemovedListView = Schemas["RemovedListView"];
+export type QueueDepthView = Schemas["QueueDepthView"];
+export type QueueClearTarget = Schemas["QueueClearTarget"];
+export type QueueClearReq = Schemas["QueueClearReq"];
+export type QueueClearResp = Schemas["QueueClearResp"];
+export type ThumbnailsStatusView = Schemas["ThumbnailsStatusView"];
+export type RegenerateResp = Schemas["RegenerateResp"];
+export type DeleteAllResp = Schemas["DeleteAllResp"];
+export type ThumbnailsSettingsView = Schemas["ThumbnailsSettingsView"];
+export type UpdateThumbnailsSettingsReq = Schemas["UpdateThumbnailsSettingsReq"];
+export type AdminUserView = Schemas["AdminUserView"];
+export type LibraryAccessGrantView = Schemas["LibraryAccessGrantView"];
+export type AdminUserDetailView = Schemas["AdminUserDetailView"];
+export type AdminUserListView = Schemas["AdminUserListView"];
+export type UpdateUserReq = Schemas["UpdateUserReq"];
+export type LibraryAccessReq = Schemas["LibraryAccessReq"];
+export type AuditEntryView = Schemas["AuditEntryView"];
+export type AuditListView = Schemas["AuditListView"];
+export type Field = Schemas["Field"];
+export type Op = Schemas["Op"];
+export type MatchMode = Schemas["MatchMode"];
+export type Condition = Schemas["Condition"];
+export type FilterDsl = Schemas["FilterDsl"];
+export type SavedViewView = Schemas["SavedViewView"];
+export type SavedViewListView = Schemas["SavedViewListView"];
+export type CreateSavedViewReq = Schemas["CreateSavedViewReq"];
+export type UpdateSavedViewReq = Schemas["UpdateSavedViewReq"];
+export type PreviewReq = Schemas["PreviewReq"];
+export type PinView = Schemas["PinView"];
+export type PinReq = Schemas["PinReq"];
+export type UnpinReq = Schemas["UnpinReq"];
+export type SidebarEntryView = Schemas["SidebarEntryView"];
+export type SidebarLayoutView = Schemas["SidebarLayoutView"];
+export type UpdateEntryReq = Schemas["UpdateEntryReq"];
+export type UpdateLayoutReq = Schemas["UpdateLayoutReq"];
+export type CblStatsView = Schemas["CblStatsView"];
+export type CblListView = Schemas["CblListView"];
+export type CblListListView = Schemas["CblListListView"];
+export type CblEntryView = Schemas["CblEntryView"];
+export type CblEntryHydratedView = Schemas["CblEntryHydratedView"];
+export type CblEntryListView = Schemas["CblEntryListView"];
+export type CblDetailView = Schemas["CblDetailView"];
+export type CreateCblListReq = Schemas["CreateCblListReq"];
+export type UpdateCblListReq = Schemas["UpdateCblListReq"];
+export type ManualMatchReq = Schemas["ManualMatchReq"];
+export type RefreshLogEntryView = Schemas["RefreshLogEntryView"];
+export type RefreshLogListView = Schemas["RefreshLogListView"];
+export type CatalogSourceView = Schemas["CatalogSourceView"];
+export type CatalogSourceListView = Schemas["CatalogSourceListView"];
+export type CatalogEntryView = Schemas["CatalogEntryView"];
+export type CatalogEntriesView = Schemas["CatalogEntriesView"];
+export type CreateCatalogSourceReq = Schemas["CreateCatalogSourceReq"];
+export type UpdateCatalogSourceReq = Schemas["UpdateCatalogSourceReq"];
+export type CollectionEntryView = Schemas["CollectionEntryView"];
+export type CollectionEntriesView = Schemas["CollectionEntriesView"];
+export type CreateCollectionReq = Schemas["CreateCollectionReq"];
+export type UpdateCollectionReq = Schemas["UpdateCollectionReq"];
+export type AddEntryReq = Schemas["AddEntryReq"];
+export type ReorderEntriesReq = Schemas["ReorderEntriesReq"];
+export type PageView = Schemas["PageView"];
+export type PageListView = Schemas["CursorPage_PageView"];
+export type CreatePageReq = Schemas["CreatePageReq"];
+export type UpdatePageReq = Schemas["UpdatePageReq"];
+export type ReorderPagesReq = Schemas["ReorderPagesReq"];
+// Marker types: kept narrower than the codegen because the Rust source
+// uses `String` for `kind` and `serde_json::Value` for `region`/`selection`.
+// MarkerKind / MarkerRegion / MarkerSelection are defined inline below.
+// Move these to aliases once Rust derives ToSchema on the marker enums
+// (audit-remediation residual; see preferences.rs for the template).
+export type MarkerView = {
   id: string;
-  /** URL-safe identifier, globally unique across libraries. */
-  slug: string;
-  name: string;
-  root_path: string;
-  default_language: string;
-  default_reading_direction: string;
-  dedupe_by_content: boolean;
-  last_scan_at: string | null;
-  /** Library Scanner v1 (M4) settings. */
-  ignore_globs: string[];
-  report_missing_comicinfo: boolean;
-  file_watch_enabled: boolean;
-  soft_delete_days: number;
-  scan_schedule_cron: string | null;
-  /** When true, the post-scan pipeline auto-enqueues page-strip thumbnails
-   *  alongside the always-on cover thumbnails. Default false. */
-  generate_page_thumbs_on_scan: boolean;
-};
-
-export type CreateLibraryReq = {
-  name: string;
-  root_path: string;
-  default_language?: string;
-  default_reading_direction?: string;
-  scan_now?: boolean;
-  /** Persistent setting: when true, every post-scan pass enqueues page
-   *  thumbnails. Cover thumbnails are always generated. Default false. */
-  generate_page_thumbs_on_scan?: boolean;
-};
-
-export type UpdateLibraryReq = {
-  ignore_globs?: string[];
-  report_missing_comicinfo?: boolean;
-  file_watch_enabled?: boolean;
-  soft_delete_days?: number;
-  /** `null` clears the cron; an empty string is treated as null server-side. */
-  scan_schedule_cron?: string | null;
-  /** Admin override for the URL slug. Server slugifies + validates uniqueness. */
-  slug?: string;
-  /** Toggle the per-library opt-in for auto-generating page thumbnails on
-   *  every post-scan pass. */
-  generate_page_thumbs_on_scan?: boolean;
-};
-
-export type SeriesView = {
-  id: string;
-  /** URL-safe identifier, globally unique across series. */
-  slug: string;
-  library_id: string;
-  name: string;
-  year: number | null;
-  volume: number | null;
-  publisher: string | null;
-  status: string;
-  total_issues: number | null;
-  age_rating: string | null;
-  summary: string | null;
-  language_code: string;
-  /** External-database IDs (ComicVine volume / Metron series). Set by the
-   *  scanner from ComicInfo or by admins via PATCH /series/{slug}. */
-  comicvine_id: number | null;
-  metron_id: number | null;
-  issue_count: number | null;
-  cover_url: string | null;
+  user_id: string;
+  series_id: string;
+  issue_id: string;
+  page_index: number;
+  kind: MarkerKind;
+  is_favorite: boolean;
+  tags: string[];
+  region?: MarkerRegion | null;
+  selection?: MarkerSelection | null;
+  body?: string | null;
+  color?: string | null;
   created_at: string;
   updated_at: string;
-  /**
-   * Aggregated CSV-style ComicInfo fields, frequency-ordered (most frequent
-   * first). Populated only by `GET /series/{id}` to keep list payloads small.
-   */
-  writers?: string[];
-  pencillers?: string[];
-  inkers?: string[];
-  colorists?: string[];
-  letterers?: string[];
-  cover_artists?: string[];
-  /** Name → canonical creator slug for every credit listed above.
-   *  Populated server-side from `series_credits.person_id` → `person`
-   *  on `GET /series/{slug}`. Credit chips on the series detail page
-   *  use this to link directly to `/creators/<slug>` (matching every
-   *  other entity navigation). Missing entries (a freshly-scanned
-   *  credit between rollups) fall back to the legacy
-   *  `/?library=all&credits=<name>` filter. */
-  creator_slugs?: Record<string, string>;
-  genres?: string[];
-  tags?: string[];
-  characters?: string[];
-  teams?: string[];
-  locations?: string[];
-  /** Sum of `page_count` across active, on-disk issues. Detail-only. */
-  total_page_count?: number | null;
-  last_issue_added_at?: string | null;
-  last_issue_updated_at?: string | null;
-  /** Earliest / latest publication year across the series's issues — drives
-   *  the "Released" stat's range display. Null on the list endpoint or
-   *  when no issue has a parsed year. */
-  earliest_year?: number | null;
-  latest_year?: number | null;
-  /** Server-computed read progress for the calling user across the entire
-   *  series. Sidesteps the client-side 100-issue page cap. Detail-only. */
-  progress_summary?: SeriesProgressSummary | null;
-  /** Calling user's 0..=5 rating for the series. Half-star precision.
-   *  Null means "not rated". */
-  user_rating?: number | null;
-  /** Per-series reading-direction override. `"ltr"` / `"rtl"` /
-   *  `"ttb"` or `null` for "Auto (inherit from user pref / library)".
-   *  See manga-and-bulk-metadata-1.0 M2. */
-  reading_direction?: string | null;
-  /** Search-result excerpt with `<mark>…</mark>` around matched terms.
-   *  Populated only on search-mode list responses; absent on every
-   *  other surface that returns a `SeriesView`. Render via the shared
-   *  `renderSnippet` helper which sanitises to a strict allowlist. */
+  series_name?: string | null;
+  series_slug?: string | null;
+  issue_slug?: string | null;
+  issue_title?: string | null;
+  issue_number?: string | null;
+};
+export type TagEntryView = Schemas["TagEntryView"];
+export type MarkerTagsView = Schemas["MarkerTagsView"];
+export type MarkerListView = {
+  items: MarkerView[];
+  next_cursor?: string | null;
+};
+export type MarkerCountView = Schemas["MarkerCountView"];
+export type MarkerSearchHit = {
+  id: string;
+  kind: MarkerKind;
+  issue_id: string;
+  series_id: string;
+  page_index: number;
+  region?: MarkerRegion | null;
   snippet?: string | null;
+  series_name?: string | null;
+  series_slug?: string | null;
+  issue_slug?: string | null;
+  issue_title?: string | null;
+  issue_number?: string | null;
 };
+export type MarkerSearchView = { items: MarkerSearchHit[] };
+export type IssueMarkersView = { items: MarkerView[] };
+export type CreateMarkerReq = {
+  issue_id: string;
+  page_index: number;
+  kind: MarkerKind;
+  region?: MarkerRegion | null;
+  selection?: MarkerSelection | null;
+  body?: string | null;
+  color?: string | null;
+  is_favorite?: boolean | null;
+  tags?: string[] | null;
+};
+export type UpdateMarkerReq = {
+  body?: string | null;
+  color?: string | null;
+  region?: MarkerRegion | null;
+  selection?: MarkerSelection | null;
+  is_favorite?: boolean;
+  tags?: string[];
+};
+export type SessionView = Schemas["SessionView"];
+export type SessionListView = Schemas["SessionListView"];
+export type AppPasswordView = Schemas["AppPasswordView"];
+export type AppPasswordListView = Schemas["AppPasswordListView"];
+export type AppPasswordCreatedView = Schemas["AppPasswordCreatedView"];
+export type CreateAppPasswordReq = Schemas["CreateAppPasswordReq"];
 
-export type SeriesProgressSummary = {
-  total: number;
-  finished: number;
-  in_progress: number;
-  /** Sum of page_count across the issues the user has finished. Used by
-   *  the series page's "Reading load" stat to estimate remaining minutes. */
-  finished_pages: number;
-};
-
-export type SeriesListView = {
-  items: SeriesView[];
-  next_cursor: string | null;
-  /** Total matching rows across all pages — populated only on the
-   *  first page (no cursor). `null` on subsequent pages and on saved-
-   *  view results (which are capped, so a precise total isn't useful). */
-  total?: number | null;
-};
+// ────────────── Frontend-only / not yet derived for ToSchema ──────────────
+// Each entry below is either a frontend-only computed type or a Rust type
+// that hasn't been wired into the OpenAPI spec yet. When the Rust source
+// derives ToSchema, move the corresponding entry up into the aliased block.
 
 export type SeriesSort = "name" | "created_at" | "updated_at" | "year";
+
 export type IssueSort =
   | "number"
   | "created_at"
@@ -147,112 +291,6 @@ export type IssueSort =
   | "year"
   | "page_count"
   | "user_rating";
-export type SortOrder = "asc" | "desc";
-
-export type UpdateSeriesReq = {
-  /** `null` clears the override; whitespace-only treated as null server-side. */
-  match_key?: string | null;
-  /** Admin override for the URL slug. Server slugifies + validates uniqueness. */
-  slug?: string;
-  /** Publication status — one of `continuing`, `ended`, `cancelled`,
-   *  `hiatus`, `limited`. Validated server-side; case-insensitive. */
-  status?: string;
-  /** ComicVine volume id. `null` clears, omit to leave untouched. */
-  comicvine_id?: number | null;
-  /** Metron series id. `null` clears, omit to leave untouched. */
-  metron_id?: number | null;
-  /** Series-level summary. `null` clears (the API falls back to the first
-   *  issue's summary on read). Omit to leave untouched. */
-  summary?: string | null;
-  /** Per-series reading-direction override. `"ltr"` / `"rtl"` /
-   *  `"ttb"` or `null` for "Auto" (clear). Server rejects unknown
-   *  values. See manga-and-bulk-metadata-1.0 M2. */
-  reading_direction?: string | null;
-};
-
-export type IssueSummaryView = {
-  id: string;
-  /** URL-safe identifier, unique within the parent series. */
-  slug: string;
-  series_id: string;
-  /** Slug of the parent series. */
-  series_slug: string;
-  /** Parent series name, denormalized so card components can fall back
-   *  to `"<series> #<number>"` when the issue has no title. Populated
-   *  by rail-feeding endpoints (Continue Reading, On Deck, CBL window,
-   *  Collections). Absent on endpoints where the JOIN cost outweighed
-   *  the benefit (per-series listing, server-side admin scans, …) —
-   *  callers fall back to the prior `#N` / `"Untitled"` defaults. */
-  series_name?: string | null;
-  title: string | null;
-  number: string | null;
-  sort_number: number | null;
-  year: number | null;
-  page_count: number | null;
-  state: string;
-  cover_url: string | null;
-  /** Spec §6.5 classification: `"Special"`, `"Annual"`, `"OneShot"`,
-   *  `"TPB"`, or omitted for ordinary numbered issues. Drives the
-   *  reader's Specials & Extras section on the series detail page. */
-  special_type?: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type IssueListView = {
-  items: IssueSummaryView[];
-  next_cursor: string | null;
-  /** See [`SeriesListView.total`] — same first-page-only semantics. */
-  total?: number | null;
-};
-
-/** Cross-library issue-search hit (manual-match popover backbone). */
-export type IssueSearchHit = IssueSummaryView & {
-  series_name: string;
-  /** Same shape as [`SeriesView.snippet`] — `<mark>`-wrapped excerpt
-   *  rendered via the shared sanitiser. Omitted when none of the
-   *  issue's free-text fields produced a highlight for the query. */
-  snippet?: string | null;
-};
-
-export type IssueSearchView = {
-  items: IssueSearchHit[];
-};
-
-/** Global-search M4: distinct creator-name hit, with role rollup +
- *  credit count across both series and issue credit junctions.
- *  Search-improvements M8 added `slug`, populated from the `person`
- *  backfill — present when the creator has been allocated a stable
- *  URL identity, omitted when they're a freshly-scanned credit that
- *  the next backfill hasn't covered yet. */
-export type PersonHit = {
-  person: string;
-  slug?: string | null;
-  roles: string[];
-  credit_count: number;
-};
-
-/** Search-improvements M8: creator detail page payload. Returned by
- *  `GET /creators/{slug}`. Lists series the creator touched, grouped
- *  per role they held on each — so a writer/artist/cover combo shows
- *  three rails, not one merged grid. */
-export type CreatorRoleRail = {
-  role: string;
-  series: SeriesView[];
-};
-
-export type CreatorDetailView = {
-  id: string;
-  slug: string;
-  name: string;
-  roles: string[];
-  credit_count: number;
-  rails: CreatorRoleRail[];
-};
-
-export type PeopleListView = {
-  items: PersonHit[];
-};
 
 export type PageInfo = {
   image: number;
@@ -265,255 +303,6 @@ export type PageInfo = {
   image_height?: number | null;
 };
 
-export type IssueDetailView = {
-  id: string;
-  /** URL-safe identifier, unique within the parent series. */
-  slug: string;
-  /** Slug of the parent series — handy for building nested URLs. */
-  series_slug: string;
-  series_id: string;
-  library_id: string;
-  file_path: string;
-  state: string;
-  title: string | null;
-  number: string | null;
-  sort_number: number | null;
-  volume: number | null;
-  year: number | null;
-  month: number | null;
-  day: number | null;
-  summary: string | null;
-  notes: string | null;
-  publisher: string | null;
-  writer: string | null;
-  penciller: string | null;
-  inker: string | null;
-  colorist: string | null;
-  letterer: string | null;
-  cover_artist: string | null;
-  editor: string | null;
-  translator: string | null;
-  imprint: string | null;
-  characters: string | null;
-  teams: string | null;
-  locations: string | null;
-  alternate_series: string | null;
-  tags: string | null;
-  genre: string | null;
-  language_code: string | null;
-  age_rating: string | null;
-  manga: string | null;
-  format: string | null;
-  black_and_white: boolean | null;
-  page_count: number | null;
-  story_arc: string | null;
-  story_arc_number: string | null;
-  web_url: string | null;
-  gtin: string | null;
-  /** External-database IDs. ComicVine `4000-N` strips to the integer N. */
-  comicvine_id: number | null;
-  metron_id: number | null;
-  /** Parent series' `reading_direction` override. The reader consults
-   *  this as the second layer of the resolution chain (below
-   *  ComicInfo `<Manga>` but above the user pref). `null` = "Auto".
-   *  See manga-and-bulk-metadata-1.0 M2. */
-  series_reading_direction?: string | null;
-  /** Parent library's `default_reading_direction`. The reader consults
-   *  this as a fallback below ComicInfo `<Manga>` and the user's
-   *  per-account preference but above the hard-coded LTR default.
-   *  See manga-and-bulk-metadata-1.0 M1. */
-  library_default_reading_direction?: string | null;
-  /** Calling user's 0..=5 rating for this issue. Null means "not rated". */
-  user_rating: number | null;
-  /** File size in bytes from the on-disk row at last scan. */
-  file_size: number;
-  created_at: string;
-  updated_at: string;
-  /** User-curated extra links (label optional, url required). Distinct from
-   *  `web_url` (the ComicInfo single link). Mutated via PATCH /issues/{id}. */
-  additional_links: IssueLink[];
-  /** Names of fields the user has overridden via PATCH /issues/{id}. The
-   *  scanner skips these on a rescan; clients can use this to flag locally
-   *  edited rows. */
-  user_edited: string[];
-  pages: PageInfo[];
-  comic_info_raw: Record<string, unknown>;
-  /** Name → canonical creator slug for every credit listed in the
-   *  per-role CSVs (writer / penciller / inker / colorist / letterer
-   *  / cover_artist). Built server-side from `issue_credits.person_id`.
-   *  ChipList uses this to link credit chips to `/creators/<slug>`. */
-  creator_slugs?: Record<string, string>;
-};
-
-export type IssueLink = {
-  label?: string | null;
-  url: string;
-};
-
-/** Body for `PATCH /series/{series_slug}/issues/{issue_slug}`. Each field
- *  independently optional; sending `null` clears a nullable column.
- *  `additional_links` is replace-all. The server records every touched
- *  field in `user_edited` so the scanner skips them on rescan. */
-export type UpdateIssueReq = {
-  // Identity / publication
-  title?: string | null;
-  /** Maps to `number_raw` on the entity (e.g. "1", "1.5", "Annual 2"). */
-  number?: string | null;
-  volume?: number | null;
-  year?: number | null;
-  month?: number | null;
-  day?: number | null;
-  summary?: string | null;
-  notes?: string | null;
-  publisher?: string | null;
-  imprint?: string | null;
-
-  // Credits
-  writer?: string | null;
-  penciller?: string | null;
-  inker?: string | null;
-  colorist?: string | null;
-  letterer?: string | null;
-  cover_artist?: string | null;
-  editor?: string | null;
-  translator?: string | null;
-
-  // Cast / setting / story
-  characters?: string | null;
-  teams?: string | null;
-  locations?: string | null;
-  alternate_series?: string | null;
-  story_arc?: string | null;
-  story_arc_number?: string | null;
-
-  // Classification
-  genre?: string | null;
-  tags?: string | null;
-  language_code?: string | null;
-  age_rating?: string | null;
-  format?: string | null;
-  black_and_white?: boolean | null;
-  /** One of `Yes`, `YesAndRightToLeft`, `No`, or null. */
-  manga?: string | null;
-
-  // Ordering / external
-  sort_number?: number | null;
-  web_url?: string | null;
-  gtin?: string | null;
-  comicvine_id?: number | null;
-  metron_id?: number | null;
-
-  additional_links?: IssueLink[];
-};
-
-/** Result of `GET /series/{series_slug}/issues/{issue_slug}/next`. */
-export type NextInSeriesView = {
-  items: IssueSummaryView[];
-};
-
-/** Body for the rating endpoints. `null` clears the rating. Half-star
- *  precision (rating × 2 must be an integer) is enforced server-side. */
-export type SetRatingReq = {
-  rating: number | null;
-};
-
-export type RatingView = {
-  rating: number | null;
-};
-
-export type MeView = {
-  id: string;
-  email: string | null;
-  display_name: string;
-  role: string;
-  csrf_token: string;
-  /** Phase 3: per-user reader direction. `null` means "auto" (no global override). */
-  default_reading_direction?: string | null;
-  /** M4: reader default fit mode. `null` defers to the reader's built-in default. */
-  default_fit_mode?: "width" | "height" | "original" | null;
-  /** M4: reader default view mode. `null` defers to per-series detection. */
-  default_view_mode?: "single" | "double" | "webtoon" | null;
-  /** M4: open the reader with the page strip visible. */
-  default_page_strip?: boolean;
-  /** v0.3.44 / v0.3.45: reader page-turn animation preference.
-   *  `null` falls back to the reader's built-in default (currently
-   *  `slide`); fresh users start here. Webtoon view ignores this
-   *  regardless. `fade` was added in v0.3.45. */
-  default_page_animation?: "off" | "slide" | "fade" | null;
-  /** Default for double-page view's "cover stands alone" toggle.
-   *  `true` matches the printed-comic convention. */
-  default_cover_solo: boolean;
-  /** M4: theme token. */
-  theme?: "system" | "dark" | "light" | "amber" | null;
-  /** M4: accent palette token. */
-  accent_color?: "amber" | "blue" | "emerald" | "rose" | null;
-  /** M4: density token. */
-  density?: "comfortable" | "compact" | null;
-  /** M4: per-action keybind overrides. Empty object means "use defaults". */
-  keybinds?: Record<string, string>;
-  /** M6a: per-user opt-out for reading-activity capture. */
-  activity_tracking_enabled: boolean;
-  /** M6a: IANA timezone for daily-bucket aggregations. */
-  timezone: string;
-  /** M6a: minimum active ms before a session is recorded. */
-  reading_min_active_ms: number;
-  /** M6a: minimum distinct pages before a session is recorded. */
-  reading_min_pages: number;
-  /** M6a: idle threshold (ms) after which the client ends the session. */
-  reading_idle_ms: number;
-  /** Human-URLs M3: BCP-47 language tag, drives next-intl + the
-   *  `NEXT_LOCALE` cookie. */
-  language: string;
-  /** Stats v2: opt-out from server-wide aggregation. When true, admin
-   *  dashboards exclude this user's sessions from totals/top-series/etc.
-   *  Default false. */
-  exclude_from_aggregates: boolean;
-  /** Markers M8: when true, the Bookmarks sidebar row renders a count
-   *  badge sourced from /me/markers/count. Default false. */
-  show_marker_count: boolean;
-  /** Per-user override of the home-page rail cap. 1..=50. Default 12.
-   *  Off-screen rails lazy-mount so a higher value does not force the
-   *  whole home page to load at hydration. */
-  max_rails_per_page: number;
-};
-
-/** PATCH /me/preferences body. Each field independently optional; `null`
- *  clears the stored value where the type allows. Absent leaves the field
- *  untouched. */
-export type PreferencesReq = {
-  default_reading_direction?: "ltr" | "rtl" | null;
-  default_fit_mode?: "width" | "height" | "original" | null;
-  default_view_mode?: "single" | "double" | "webtoon" | null;
-  default_page_strip?: boolean;
-  /** v0.3.44 / v0.3.45 — reader page-turn animation. */
-  default_page_animation?: "off" | "slide" | "fade" | null;
-  default_cover_solo?: boolean;
-  theme?: "system" | "dark" | "light" | "amber" | null;
-  accent_color?: "amber" | "blue" | "emerald" | "rose" | null;
-  density?: "comfortable" | "compact" | null;
-  keybinds?: Record<string, string>;
-  /** M6a. */
-  activity_tracking_enabled?: boolean;
-  /** M6a — IANA tz, e.g. `'America/Los_Angeles'`. */
-  timezone?: string;
-  /** M6a — 1000..=600_000 ms. */
-  reading_min_active_ms?: number;
-  /** M6a — 1..=200. */
-  reading_min_pages?: number;
-  /** M6a — 30000..=1_800_000 ms. */
-  reading_idle_ms?: number;
-  /** Human-URLs M3 — BCP-47 language tag, validated against the server's
-   *  SUPPORTED_LOCALES list. */
-  language?: string;
-  /** Stats v2 privacy toggle. */
-  exclude_from_aggregates?: boolean;
-  /** Markers M8: per-user toggle for the sidebar Bookmarks count badge. */
-  show_marker_count?: boolean;
-  /** Per-user override of the home-page rail cap. 1..=50. */
-  max_rails_per_page?: number;
-};
-
-/** Body for `POST /progress` (per-issue). */
 export type UpsertProgressReq = {
   issue_id: string;
   page: number;
@@ -521,7 +310,6 @@ export type UpsertProgressReq = {
   device?: string | null;
 };
 
-/** Per-issue progress record. */
 export type ProgressView = {
   issue_id: string;
   page: number;
@@ -530,7 +318,6 @@ export type ProgressView = {
   updated_at: string;
 };
 
-/** Body for `POST /series/{id}/progress` — bulk mark-all-read/unread. */
 export type UpsertSeriesProgressReq = {
   finished: boolean;
   device?: string | null;
@@ -544,72 +331,11 @@ export type UpsertSeriesProgressReq = {
   backfill?: boolean;
 };
 
-/** Response from `POST /series/{id}/progress`. */
 export type UpsertSeriesProgressResp = {
   updated: number;
   skipped: number;
 };
 
-/** Response from `GET /series/{slug}/resume` — the issue (+ resume page)
- *  the user should land on when they tap a series "play" affordance. */
-export type SeriesResumeView = {
-  series_slug: string;
-  /** `null` when the series has no readable issues. */
-  issue_slug: string | null;
-  issue_id: string | null;
-  /** 0-based; `0` for unread / re-read paths. */
-  page: number;
-  state: "unread" | "in_progress" | "finished";
-};
-
-// ---------- CBL reading window (home rail) ----------
-
-/** One entry in the CBL reading-window response. Matches `IssueSummaryView`
- *  plus the per-user progress overlay so the rail can render finished /
- *  in-progress / unread cards without a second round-trip. */
-export type CblWindowEntry = {
-  issue: IssueSummaryView;
-  /** 0-based position within the CBL — matches the `#N` badge other
-   *  surfaces use. */
-  position: number;
-  finished: boolean;
-  last_page: number;
-  /** 0.0–1.0 fraction read. */
-  percent: number;
-};
-
-export type CblWindowView = {
-  items: CblWindowEntry[];
-  /** Index within `items` of the user's current (first-unfinished)
-   *  entry. `null` when every matched entry is finished. */
-  current_index: number | null;
-  total_matched: number;
-  total_entries: number;
-};
-
-/** One page of a CBL reading window from `/window-paginated`. Anchor
- *  metadata (`current_index`, `total_*`) is populated **only** on the
- *  initial page so subsequent before/after fetches stay cheap. */
-export type CblWindowPageView = {
-  items: CblWindowEntry[];
-  current_index: number | null;
-  total_matched: number | null;
-  total_entries: number | null;
-  /** Smallest `position` in `items`; `null` when the page is empty.
-   *  Used as the `before` cursor for the next backward fetch. */
-  min_position: number | null;
-  /** Largest `position` in `items`; `null` when the page is empty.
-   *  Used as the `after` cursor for the next forward fetch. */
-  max_position: number | null;
-  has_more_before: boolean;
-  has_more_after: boolean;
-};
-
-// ---------- Home rails (Continue reading / On deck) ----------
-
-/** Per-issue progress overlay attached to rail cards. Mirrors `ProgressView`
- *  but uses the `last_page` name from the server's join (the rails endpoint
- *  reads `progress_records.last_page`, not the M3 `page` alias). */
 export type RailProgressInfo = {
   last_page: number;
   /** 0.0–1.0 fraction read. */
@@ -617,86 +343,6 @@ export type RailProgressInfo = {
   updated_at: string;
 };
 
-export type ContinueReadingCard = {
-  issue: IssueSummaryView;
-  /** Parent series name, denormalized so the card doesn't need a separate
-   *  lookup. The issue carries its own series_slug for navigation. */
-  series_name: string;
-  progress: RailProgressInfo;
-};
-
-export type ContinueReadingView = {
-  items: ContinueReadingCard[];
-};
-
-/** Discriminated union for the On Deck rail.
- *
- *  - `series_next`: the user finished one or more issues in a series and
- *    has no in-progress one. We surface the next issue in sort order.
- *  - `cbl_next`: the user has progress in a CBL reading list. We surface
- *    the lowest-position matched entry whose issue isn't finished yet. */
-export type OnDeckCard =
-  | {
-      kind: "series_next";
-      issue: IssueSummaryView;
-      series_name: string;
-      last_activity: string;
-    }
-  | {
-      kind: "cbl_next";
-      issue: IssueSummaryView;
-      cbl_list_id: string;
-      cbl_list_name: string;
-      /** Saved-view id (kind=`cbl`) wrapping this CBL list, when the
-       *  caller can see one. Threaded onto reader URLs as `?cbl=<id>`
-       *  so the next-up resolver keeps picking from the list across
-       *  page turns. Absent when no saved view points at this list. */
-      cbl_saved_view_id?: string;
-      /** 1-based, matches the CBL detail page's "#N" badge. */
-      position: number;
-      last_activity: string;
-    };
-
-export type OnDeckView = {
-  items: OnDeckCard[];
-};
-
-/** Request body for `POST /me/rail-dismissals`. */
-export type CreateRailDismissalReq = {
-  /** One of `'issue' | 'series' | 'cbl'`. */
-  target_kind: "issue" | "series" | "cbl";
-  target_id: string;
-};
-
-/** Response shape for `GET /issues/{id}/next-up?cbl=<saved_view_id>`. Drives
- *  the reader's "next issue" affordances (keybind, end-of-issue card).
- *  Resolution order: CBL > series > none. CBL fields only populated when
- *  `source === "cbl"`. `fallback_suggestion` is reserved — always null in
- *  M1; populated in M4/M5 when the end-of-issue card needs the peek. */
-export type NextUpSource = "cbl" | "series" | "none";
-
-export type NextUpView = {
-  source: NextUpSource;
-  target?: IssueSummaryView;
-  cbl_list_id?: string;
-  cbl_list_name?: string;
-  /** 1-based position of the target entry within the CBL ("3 of 24"). */
-  cbl_position?: number;
-  cbl_total?: number;
-  fallback_suggestion?: OnDeckCard;
-  /** Server flag: the caller passed `?cbl=<id>` but the current issue
-   *  wasn't actually in that CBL. The reader page wrapper scrubs the
-   *  dead param from the URL via `router.replace` so a refresh / shared
-   *  link no longer carries the stale reference. */
-  cbl_param_was_stale?: boolean;
-};
-
-// ---------- Reading sessions (M6a) ----------
-
-/** Body for `POST /me/reading-sessions`. Idempotent over `(user_id,
- *  client_session_id)`. The same client_session_id is used for the
- *  initial write, every 30s heartbeat, and the final close — server takes
- *  the max of monotonic counters and only sets `ended_at` once. */
 export type ReadingSessionUpsertReq = {
   /** Client-generated UUID v4 (or any 1-64 char unique tag). */
   client_session_id: string;
@@ -715,136 +361,13 @@ export type ReadingSessionUpsertReq = {
   client_meta?: Record<string, unknown>;
 };
 
-export type ReadingSessionView = {
-  id: string;
-  issue_id: string;
-  series_id: string;
-  client_session_id: string;
-  started_at: string;
-  ended_at: string | null;
-  last_heartbeat_at: string;
-  active_ms: number;
-  distinct_pages_read: number;
-  page_turns: number;
-  start_page: number;
-  end_page: number;
-  furthest_page: number;
-  device: string | null;
-  view_mode: "single" | "double" | "webtoon" | null;
-  /** Issue title from `issues.title` (joined). Populated by the list
-   *  endpoint; null on the upsert response. */
-  issue_title?: string | null;
-  /** Issue number from `issues.number_raw`. */
-  issue_number?: string | null;
-  /** Series name from `series.name`. */
-  series_name?: string | null;
-};
-
-export type ReadingSessionListView = {
-  records: ReadingSessionView[];
-  next_cursor: string | null;
-};
-
 export type ReadingStatsRange = "7d" | "30d" | "60d" | "90d" | "1y" | "all";
 
-// ---------- Reading log (event feed) ----------
-
-/** Four discrete kinds emitted by `GET /me/reading-log`. Defined as a
- *  literal union so widget configs can validate against it. */
 export type ReadingLogEventKind =
   | "issue_finished"
   | "series_finished"
   | "session_completed"
   | "marker_created";
-
-/** Series row hydrated alongside every event. `cover_url` may be
- *  `null` for series_finished events (the issue cover isn't directly
- *  available; the client falls back to the first matched issue's
- *  thumbnail). */
-export type ReadingLogEventSeries = {
-  id: string;
-  slug: string;
-  name: string;
-  year: number | null;
-  publisher: string | null;
-  imprint: string | null;
-  cover_url: string | null;
-};
-
-/** Issue row hydrated for the three issue-anchored event kinds. */
-export type ReadingLogEventIssue = {
-  id: string;
-  slug: string;
-  number: string | null;
-  title: string | null;
-  year: number | null;
-  month: number | null;
-  day: number | null;
-  page_count: number | null;
-  cover_url: string | null;
-  writer: string | null;
-  penciller: string | null;
-  inker: string | null;
-  colorist: string | null;
-  letterer: string | null;
-  cover_artist: string | null;
-  editor: string | null;
-};
-
-/** Kind-discriminated payload. `kind` here is the same value as the
- *  parent event's `kind`; serde tags both for symmetry. */
-export type ReadingLogPayload =
-  | {
-      kind: "issue_finished";
-      first_read_at: string | null;
-      total_sessions: number;
-      total_active_ms: number;
-      is_reread: boolean;
-    }
-  | {
-      kind: "series_finished";
-      started_at: string | null;
-      total_issues: number;
-      total_active_ms: number;
-      span_days: number | null;
-    }
-  | {
-      kind: "session_completed";
-      started_at: string;
-      ended_at: string;
-      active_ms: number;
-      pages_read: number;
-      device: string | null;
-      view_mode: string | null;
-    }
-  | {
-      kind: "marker_created";
-      marker_id: string;
-      marker_kind: string;
-      page_index: number;
-      tags: string[];
-      body_preview: string | null;
-    };
-
-export type ReadingLogEventView = {
-  id: string;
-  kind: ReadingLogEventKind;
-  occurred_at: string;
-  series: ReadingLogEventSeries | null;
-  issue: ReadingLogEventIssue | null;
-  payload: ReadingLogPayload;
-  /** `true` when the event was hidden via `POST /me/reading-log/hide`
-   *  and is only being returned because the caller passed
-   *  `include_hidden=true`. Default false; UI renders faded + offers
-   *  "Show again". Field is `skip_serializing_if`-elided on the wire
-   *  when false. */
-  is_hidden?: boolean;
-};
-
-export type ReadingLogPageView = {
-  events: ReadingLogEventView[];
-  next_cursor: string | null;
-};
 
 export type ReadingLogFilters = {
   kinds?: ReadingLogEventKind[];
@@ -860,11 +383,6 @@ export type ReadingLogFilters = {
   include_hidden?: boolean;
 };
 
-// ---------- Reading log widgets (M3 backend / M4 frontend) ----------
-
-/** Server-recognized widget kinds. Adding a new kind is a coordinated
- *  change: extend the const list in `crates/server/src/api/log_widgets.rs`
- *  AND ship a matching renderer + Zod schema on the web side. */
 export type LogWidgetKind =
   | "chrono_feed"
   | "stats_hero"
@@ -879,29 +397,6 @@ export type LogWidgetKind =
   | "currently_reading"
   | "note";
 
-/** One pinned widget on the user's `/log` page. `config` is a JSON
- *  blob whose shape is determined by `kind`; per-kind config types
- *  live in `web/components/log/widgets/types.ts`. */
-export type LogWidgetView = {
-  id: string;
-  kind: LogWidgetKind | string;
-  position: number;
-  config: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-};
-
-export type LogWidgetListView = {
-  widgets: LogWidgetView[];
-};
-
-export type AddLogWidgetReq = {
-  kind: LogWidgetKind;
-  /** Optional starting config. Omit for `{}` (which is always legal
-   *  — every kind's config schema defaults all fields). */
-  config?: Record<string, unknown>;
-};
-
 export type PatchLogWidgetReq = {
   /** Replacement config blob — the server stores it as-is. Clients
    *  merge with the previous value if they want partial updates. */
@@ -912,14 +407,6 @@ export type ReorderLogWidgetsReq = {
   /** Full set of widget ids in the new order. Server 400s when the
    *  set doesn't match the user's owned ids exactly. */
   ids: string[];
-};
-
-export type ReadingDayBucket = {
-  /** YYYY-MM-DD in user's timezone. */
-  date: string;
-  sessions: number;
-  active_ms: number;
-  pages: number;
 };
 
 export type ReadingTotalsView = {
@@ -934,8 +421,6 @@ export type ReadingTotalsView = {
   longest_streak: number;
 };
 
-// ---------- Admin observability (M6c) ----------
-
 export type AdminOverviewTotals = {
   libraries: number;
   series: number;
@@ -949,352 +434,11 @@ export type AdminOpenHealth = {
   info: number;
 };
 
-export type AdminOverviewView = {
-  totals: AdminOverviewTotals;
-  scans_in_flight: number;
-  open_health: AdminOpenHealth;
-  sessions_today: number;
-  active_readers_now: number;
-  reads_per_day: ReadingDayBucket[];
-  /** System-wide most-read series in the last 30 days. */
-  top_series_all_users: TopSeriesEntry[];
-};
-
-export type DeviceBucket = {
-  device: string;
-  sessions: number;
-  active_ms: number;
-};
-
-export type AdminUserStatsRow = {
-  user_id: string;
-  display_name: string;
-  email: string | null;
-  role: string;
-  state: string;
-  last_active_at: string | null;
-  sessions_30d: number;
-  active_ms_30d: number;
-  sessions_all_time: number;
-  active_ms_all_time: number;
-  top_series_name: string | null;
-  device_breakdown: DeviceBucket[];
-  excluded_from_aggregates: boolean;
-};
-
-export type AdminUserStatsListView = {
-  users: AdminUserStatsRow[];
-};
-
-export type EngagementPoint = {
-  /** `YYYY-MM-DD` (UTC). */
-  date: string;
-  dau: number;
-  wau: number;
-  mau: number;
-};
-
-export type EngagementView = {
-  /** Last 90 days, oldest first. */
-  series: EngagementPoint[];
-  devices_30d: DeviceBucket[];
-};
-
-export type DeadStockEntry = {
-  series_id: string;
-  name: string;
-  publisher: string | null;
-  library_id: string;
-  library_name: string;
-  issue_count: number;
-};
-
-export type AbandonedEntry = {
-  series_id: string;
-  name: string;
-  sessions: number;
-  unfinished_issues: number;
-  readers: number;
-};
-
-export type FunnelBucket = {
-  bucket: "0-25" | "25-50" | "50-75" | "75-99" | "100" | string;
-  issues: number;
-};
-
-export type ContentInsightsView = {
-  dead_stock: DeadStockEntry[];
-  abandoned: AbandonedEntry[];
-  completion_funnel: FunnelBucket[];
-};
-
-export type MetadataCoverageView = {
-  total_issues: number;
-  missing_writer: number;
-  missing_cover_artist: number;
-  missing_page_count: number;
-  missing_genre: number;
-  missing_publisher: number;
-};
-
-export type DataQualityView = {
-  orphan_sessions: number;
-  long_sessions: number;
-  dangling_sessions: number;
-  metadata: MetadataCoverageView;
-};
-
-/** Result of the server-side GitHub release lookup. `null` from the
- *  hook means the endpoint returned 204 — either the runtime setting
- *  `updates.check_upstream_releases` is off, the repo isn't on GitHub,
- *  or the last fetch errored (cached for 1 hour to avoid hammering). */
-export type LatestReleaseView = {
-  /** Release tag, e.g. `"v0.1.9"`. */
-  tag: string;
-  /** Browse URL on the host's release page. */
-  html_url: string;
-  /** Publication timestamp (RFC 3339). */
-  published_at: string;
-};
-
-/** One model entry inside [`OcrModelsView`]. Discovery walks
- *  `${HF_HOME}/hub/models--<org>--<repo>/…` for ONNX models and
- *  `${TESSDATA_PREFIX}/eng.traineddata` for tessdata. `bytes_on_disk`
- *  is the recursive sum under `cache_dir`. `present` reflects whether
- *  *any* bytes were found there. */
-export type OcrModelView = {
-  id: "comic-text-detector" | "manga-ocr" | "tesseract-eng";
-  purpose: string;
-  kind: "onnx" | "tessdata";
-  cache_dir: string;
-  present: boolean;
-  bytes_on_disk: number;
-  expected_bytes_approx: number;
-  source: string;
-};
-
-/** Read-only view of the OCR-model cache state. Surfaced on
- *  `/admin/server` so operators can verify auto-downloads completed
- *  and pre-stage models for air-gapped deploys. */
-export type OcrModelsView = {
-  hf_home: string;
-  tessdata_dir: string;
-  models: OcrModelView[];
-  total_bytes_on_disk: number;
-};
-
-export type ServerInfoView = {
-  /** `git describe --tags --always --dirty`. Linkable to a GitHub
-   *  release page when it starts with `v` and has no `-` suffix
-   *  (clean tag); rendered verbatim otherwise. `"dev"` when the
-   *  build script couldn't reach git. */
-  version: string;
-  /** 12-char short SHA, for display. `"unknown"` when git wasn't
-   *  reachable. */
-  build_sha: string;
-  /** 40-char full SHA, for stable commit URLs. `"unknown"` when git
-   *  wasn't reachable. */
-  build_sha_full: string;
-  /** Auto-detected `https://host/owner/repo` from
-   *  `git config --get remote.origin.url`. `null` when no remote was
-   *  detected and no override was passed at build time. */
-  repo_url: string | null;
-  /** Unix-seconds at build time (UTC). Drives the "Built — N hours
-   *  ago" UI row. `null` only if the build script couldn't resolve
-   *  the system clock. */
-  build_epoch: number | null;
-  uptime_secs: number;
-  postgres_ok: boolean;
-  redis_ok: boolean;
-  scheduler_running: boolean;
-  watchers_enabled: number;
-};
-
-// ---------- Admin logs / activity / auth (M6d, M6e) ----------
-
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
-
-export type LogEntryView = {
-  id: number;
-  timestamp: string;
-  level: LogLevel | string;
-  target: string;
-  message: string;
-  fields: Record<string, string>;
-};
-
-export type LogsResp = {
-  entries: LogEntryView[];
-  /** Highest id returned; pass back as `?since=` to tail. */
-  watermark: number;
-  capacity: number;
-};
-
-/** `GET /admin/fs/list` — directory listing for the New Library picker. */
-export type FsDirEntry = {
-  name: string;
-  /** Absolute path inside the container; pass back as `?path=` to drill in. */
-  path: string;
-};
-
-export type FsListResp = {
-  /** Canonical absolute path of the listed directory. */
-  path: string;
-  /** Canonical absolute path of the configured library root —
-   *  `COMIC_LIBRARY_PATH`. The picker uses this to gray out the "up"
-   *  button when the user reaches the root. */
-  root: string;
-  entries: FsDirEntry[];
-};
 
 export type ActivityKind = "audit" | "scan" | "health" | "reading";
 
-export type ActivityEntryView = {
-  kind: ActivityKind | string;
-  source_id: string;
-  timestamp: string;
-  summary: string;
-  payload: Record<string, unknown>;
-};
-
-export type ActivityListView = {
-  entries: ActivityEntryView[];
-  next_cursor: string | null;
-};
-
-export type AuthConfigView = {
-  auth_mode: "oidc" | "local" | "both" | string;
-  oidc: {
-    configured: boolean;
-    issuer: string | null;
-    client_id: string | null;
-    trust_unverified_email: boolean;
-  };
-  local: {
-    enabled: boolean;
-    registration_open: boolean;
-    smtp_configured: boolean;
-  };
-};
-
-/** Unauthenticated subset of [`AuthConfigView`]. Served by `/auth/config`
- *  so the sign-in page can render the right CTAs without leaking issuer
- *  / client_id / trust-unverified flag. */
-export type PublicAuthConfigView = {
-  auth_mode: "oidc" | "local" | "both" | string;
-  oidc_enabled: boolean;
-  registration_open: boolean;
-  /** True when SMTP is configured and local auth is on. Drives the
-   *  `/forgot-password` UI: false renders an "email recovery is disabled"
-   *  card instead of the reset-link form. */
-  password_recovery_enabled: boolean;
-};
-
-// ---------- Runtime-editable settings (`/admin/settings`) ----------
-
 export type SettingKind = "string" | "bool" | "uint" | "duration";
-
-export type SettingRegistryEntry = {
-  key: string;
-  kind: SettingKind;
-  is_secret: boolean;
-};
-
-export type SettingResolvedEntry = {
-  key: string;
-  /** Secret rows are returned as the literal string "<set>"; the API
-   *  never echoes the plaintext. */
-  value: unknown;
-  is_secret: boolean;
-};
-
-export type SettingsView = {
-  registry: SettingRegistryEntry[];
-  values: SettingResolvedEntry[];
-};
-
-/** PATCH /admin/settings body — flat key→value map. Use `null` to delete
- *  a row. Unknown keys are rejected with 400 settings.unknown_key. */
-export type UpdateSettingsReq = Record<string, unknown>;
-
-// ---------- Email pipeline status (`/admin/email/status`) ----------
-
-export type EmailStatusView = {
-  configured: boolean;
-  last_send_at: string | null;
-  last_send_ok: boolean | null;
-  last_error: string | null;
-  last_duration_ms: number | null;
-};
-
-export type TestEmailResp = {
-  delivered: boolean;
-  duration_ms: number;
-  to: string;
-};
-
-// ---------- OIDC discovery probe (`/admin/auth/oidc/discover`) ----------
-
-export type OidcDiscoverReq = {
-  issuer: string;
-};
-
-export type OidcDiscoverResp = {
-  issuer: string;
-  authorization_endpoint: string | null;
-  token_endpoint: string | null;
-  jwks_uri: string | null;
-  end_session_endpoint: string | null;
-  userinfo_endpoint: string | null;
-  scopes_supported: string[] | null;
-};
-
-// ---------- (continues below) ----------
-
-export type ReadingStatsView = {
-  range: ReadingStatsRange;
-  timezone: string;
-  totals: ReadingTotalsView;
-  per_day: ReadingDayBucket[];
-  /** Empty when the request is issue-scoped. */
-  top_series: TopSeriesEntry[];
-  top_genres: TopNameEntry[];
-  top_tags: TopNameEntry[];
-  /** Empty when the request is issue-scoped. */
-  top_publishers: TopNameEntry[];
-  top_imprints: TopNameEntry[];
-  /** Top creators across read series, partitioned per role (writer, penciller,
-   *  inker, colorist, letterer, cover_artist, editor, translator). Up to 10
-   *  rows per role; client slices by `role`. */
-  top_creators: TopCreatorEntry[];
-  /** Sparse 7×24 grid of day-of-week × hour (in user's tz). Only non-zero
-   *  cells emitted. `dow` follows Postgres EXTRACT (0 = Sunday). */
-  dow_hour: DowHourCell[];
-  time_of_day: TimeOfDayBuckets;
-  /** Per-session pace samples. Sessions with `<3` distinct pages dropped. */
-  pace_series: PacePoint[];
-  reread_top_issues: RereadIssueEntry[];
-  reread_top_series: RereadSeriesEntry[];
-  completion: CompletionView;
-  /** RFC 3339 timestamp of the earliest session in scope; null if no
-   *  sessions. */
-  first_read_at: string | null;
-  /** RFC 3339 timestamp of the latest session in scope. */
-  last_read_at: string | null;
-};
-
-export type TopSeriesEntry = {
-  series_id: string;
-  name: string;
-  sessions: number;
-  active_ms: number;
-};
-
-export type TopNameEntry = {
-  name: string;
-  sessions: number;
-  active_ms: number;
-};
 
 export type CreatorRole =
   | "writer"
@@ -1306,255 +450,11 @@ export type CreatorRole =
   | "editor"
   | "translator";
 
-export type TopCreatorEntry = {
-  role: CreatorRole | string;
-  person: string;
-  sessions: number;
-  active_ms: number;
-};
-
-export type DowHourCell = {
-  /** 0 = Sunday … 6 = Saturday. */
-  dow: number;
-  /** 0–23, user's local timezone. */
-  hour: number;
-  sessions: number;
-  active_ms: number;
-};
-
-export type TimeOfDayCell = {
-  sessions: number;
-  active_ms: number;
-};
-
-export type TimeOfDayBuckets = {
-  morning: TimeOfDayCell;
-  afternoon: TimeOfDayCell;
-  evening: TimeOfDayCell;
-  night: TimeOfDayCell;
-};
-
-export type PacePoint = {
-  /** RFC 3339 session-start timestamp. */
-  started_at: string;
-  /** Average seconds per distinct page within the session. */
-  sec_per_page: number;
-};
-
-export type RereadIssueEntry = {
-  issue_id: string;
-  title: string | null;
-  number_raw: string | null;
-  series_id: string;
-  series_name: string;
-  reads: number;
-  active_ms: number;
-};
-
-export type RereadSeriesEntry = {
-  series_id: string;
-  name: string;
-  distinct_issues: number;
-  reads: number;
-  active_ms: number;
-};
-
-export type CompletionView = {
-  completed: number;
-  started: number;
-  /** `completed / started`, 0–1. 0.0 when `started == 0`. */
-  rate: number;
-};
-
-export type ClearHistoryResp = {
-  deleted: number;
-};
-
-/** PATCH /me/account body. */
-export type AccountReq = {
-  display_name?: string;
-  /** Local users only. Sending for an OIDC user yields a 403. */
-  email?: string;
-  /** Required when changing the password. */
-  current_password?: string;
-  new_password?: string;
-};
-
-// ---------- Library Scanner v1 ----------
-
-export type HealthIssueView = {
-  id: string;
-  scan_id: string | null;
-  kind: string;
-  severity: string;
-  fingerprint: string;
-  payload: unknown;
-  first_seen_at: string;
-  last_seen_at: string;
-  resolved_at: string | null;
-  dismissed_at: string | null;
-};
-
 export type ScanRunKind = "library" | "series" | "issue";
+
 export type ScanMode = "normal" | "content_verify";
 
-export type ScanRunView = {
-  id: string;
-  state: string;
-  started_at: string;
-  ended_at: string | null;
-  error: string | null;
-  /** Free-form stats JSON (added/updated/removed/duration_ms etc.). */
-  stats: unknown;
-  /** Trigger discriminator. Drives the History tab's filter chips. */
-  kind: ScanRunKind;
-  /** Target series id when `kind` is `series` or `issue`. */
-  series_id: string | null;
-  /** Joined series name for the row's target label. `null` if the
-   *  underlying series row was deleted. */
-  series_name: string | null;
-  /** Originating issue id when `kind` is `issue`. */
-  issue_id: string | null;
-  /** Joined issue label shaped as `{series} #{number}` (or the title
-   *  variant when there's no number). `null` when the issue row was
-   *  since deleted or this scan isn't issue-kinded. */
-  issue_label: string | null;
-};
-
-export type ScanResp = {
-  scan_id: string;
-  state: string;
-  coalesced: boolean;
-  mode: ScanMode | string;
-  coalesced_into: string | null;
-  queued_followup: boolean;
-  reason: string;
-  kind: "library" | "series" | "issue" | string;
-  library_id: string;
-  series_id?: string | null;
-  issue_id?: string | null;
-};
-
-export type ScanPreviewView = {
-  mode: ScanMode | string;
-  dirty_folders: number;
-  known_issue_count: number;
-  thumbnail_backlog: number;
-  last_scan_duration_ms: number | null;
-  last_scan_state: string | null;
-  watcher_status: string;
-  reason: string;
-};
-
-/** `DELETE /libraries/{id}` — hard-deletes the library, all series, all
- *  issues, scan history, health issues, and on-disk thumbnails. The audit
- *  log row survives (audit is append-only). */
-export type DeleteLibraryResp = {
-  deleted_library: string;
-  deleted_issues: number;
-  deleted_series: number;
-  thumbs_swept: number;
-};
-
-export type RemovedIssueView = {
-  id: string;
-  series_id: string;
-  file_path: string;
-  removed_at: string;
-  removal_confirmed_at: string | null;
-};
-
-export type RemovedSeriesView = {
-  id: string;
-  name: string;
-  folder_path: string | null;
-  removed_at: string;
-  removal_confirmed_at: string | null;
-};
-
-export type RemovedListView = {
-  issues: RemovedIssueView[];
-  series: RemovedSeriesView[];
-};
-
-/** `GET /admin/queue-depth` — apalis pending-job counts per queue. */
-export type QueueDepthView = {
-  scan: number;
-  scan_series: number;
-  post_scan_thumbs: number;
-  post_scan_search: number;
-  post_scan_dictionary: number;
-  total: number;
-};
-
-export type QueueClearTarget = "all" | "scans" | "thumbnails";
-
-export type QueueClearReq = {
-  target: QueueClearTarget;
-};
-
-export type QueueClearResp = {
-  target: QueueClearTarget;
-  deleted_keys: number;
-  before: QueueDepthView;
-  after: QueueDepthView;
-  running_jobs_may_finish: boolean;
-};
-
-/** `GET /admin/libraries/{id}/thumbnails-status` — counts for the
- *  Thumbnails card on the library overview. */
-export type ThumbnailsStatusView = {
-  total: number;
-  generated: number;
-  missing: number;
-  errored: number;
-  cover_generated: number;
-  cover_missing: number;
-  cover_queued: number;
-  cover_running: number;
-  cover_failed: number;
-  page_total: number;
-  page_generated: number;
-  page_missing: number;
-  page_map_generated: number;
-  page_map_missing: number;
-  page_map_queued: number;
-  page_map_running: number;
-  page_map_failed: number;
-  /** Whole-server queue depth, not per-library — apalis can't filter. */
-  in_flight: number;
-  current_version: number;
-};
-
-export type RegenerateResp = {
-  enqueued: number;
-};
-
-export type DeleteAllResp = {
-  deleted: number;
-};
-
-/** `GET/PATCH /admin/libraries/{id}/thumbnails-settings`. */
-export type ThumbnailsSettingsView = {
-  enabled: boolean;
-  /** One of `webp` | `jpeg` | `png`. */
-  format: ThumbnailFormat;
-  /** Cover thumbnail encoder quality, 0..=100. */
-  cover_quality: number;
-  /** Reader page thumbnail encoder quality, 0..=100. */
-  page_quality: number;
-};
-
 export type ThumbnailFormat = "webp" | "jpeg" | "png";
-
-export type UpdateThumbnailsSettingsReq = {
-  enabled?: boolean;
-  format?: ThumbnailFormat;
-  cover_quality?: number;
-  page_quality?: number;
-};
-
-// ---------- Scan event stream (WS /ws/scan-events) ----------
 
 export type ScanEvent =
   | { type: "scan.started"; library_id: string; scan_id: string; at: string }
@@ -1646,132 +546,6 @@ export type ApiError = {
   error: { code: string; message: string; details?: unknown };
 };
 
-// ---------- Admin: users + audit (M3) ----------
-
-export type AdminUserView = {
-  id: string;
-  email: string | null;
-  display_name: string;
-  role: string;
-  state: string;
-  email_verified: boolean;
-  created_at: string;
-  last_login_at: string | null;
-  /** Granted libraries; always 0 for admins (admins implicitly see all). */
-  library_count: number;
-};
-
-export type LibraryAccessGrantView = {
-  library_id: string;
-  library_name: string;
-  role: string;
-};
-
-export type AdminUserDetailView = AdminUserView & {
-  library_access: LibraryAccessGrantView[];
-};
-
-export type AdminUserListView = {
-  items: AdminUserView[];
-  next_cursor: string | null;
-};
-
-export type UpdateUserReq = {
-  display_name?: string;
-  /** `admin` | `user` */
-  role?: string;
-  /** `pending_verification` | `active` | `disabled` */
-  state?: string;
-};
-
-export type LibraryAccessReq = {
-  library_ids: string[];
-};
-
-export type AuditEntryView = {
-  id: string;
-  actor_id: string;
-  actor_type: string;
-  /** Human-readable label resolved server-side (display name + email). */
-  actor_label: string | null;
-  action: string;
-  target_type: string | null;
-  target_id: string | null;
-  /** Human-readable label for `user` and `library` targets; `null` otherwise. */
-  target_label: string | null;
-  payload: unknown;
-  ip: string | null;
-  user_agent: string | null;
-  created_at: string;
-};
-
-export type AuditListView = {
-  items: AuditEntryView[];
-  next_cursor: string | null;
-};
-
-// ---------- Saved views (filter + CBL) ----------
-
-/** All filterable fields. Mirrors `crates/server/src/views/registry.rs`. */
-export type Field =
-  | "library"
-  | "name"
-  | "year"
-  | "volume"
-  | "total_issues"
-  | "publisher"
-  | "imprint"
-  | "status"
-  | "age_rating"
-  | "language_code"
-  | "created_at"
-  | "updated_at"
-  | "genres"
-  | "tags"
-  | "writer"
-  | "penciller"
-  | "inker"
-  | "colorist"
-  | "letterer"
-  | "cover_artist"
-  | "editor"
-  | "translator"
-  | "characters"
-  | "teams"
-  | "locations"
-  | "read_progress"
-  | "last_read"
-  | "read_count"
-  | "read_status"
-  | "unread_issues"
-  | "collection_completeness";
-
-export type Op =
-  | "contains"
-  | "not_contains"
-  | "starts_with"
-  | "equals"
-  | "not_equals"
-  | "is"
-  | "is_not"
-  | "in"
-  | "not_in"
-  | "gt"
-  | "gte"
-  | "lt"
-  | "lte"
-  | "between"
-  | "before"
-  | "after"
-  | "relative"
-  | "includes_any"
-  | "includes_all"
-  | "excludes"
-  | "is_true"
-  | "is_false";
-
-export type MatchMode = "all" | "any";
-
 export type SavedViewSortField =
   | "name"
   | "year"
@@ -1780,136 +554,10 @@ export type SavedViewSortField =
   | "last_read"
   | "read_progress";
 
-/** One condition row in a filter DSL. `group_id` always 0 in v1. */
-export type Condition = {
-  group_id?: number;
-  field: Field;
-  op: Op;
-  /** Shape varies by `(field, op)`. The compiler validates server-side. */
-  value?: unknown;
-};
-
-export type FilterDsl = {
-  match_mode: MatchMode;
-  conditions: Condition[];
-};
-
 export type SavedViewKind = "filter_series" | "cbl" | "system" | "collection";
 
-/** Built-in rail identifier when `kind === 'system'` or, for the
- *  per-user manual collection, `'want_to_read'` when `kind === 'collection'`. */
 export type SystemRailKey = "continue_reading" | "on_deck" | "want_to_read";
 
-export type SavedViewView = {
-  id: string;
-  /** `'filter_series' | 'cbl'`. */
-  kind: SavedViewKind;
-  /** `null` for system views (admin-curated, visible to every user). */
-  user_id?: string | null;
-  is_system: boolean;
-  name: string;
-  description?: string | null;
-  custom_year_start?: number | null;
-  custom_year_end?: number | null;
-  custom_tags: string[];
-  /** Populated when `kind === 'filter_series'`. */
-  match_mode?: MatchMode | null;
-  conditions?: Condition[] | null;
-  sort_field?: SavedViewSortField | null;
-  sort_order?: SortOrder | null;
-  result_limit?: number | null;
-  /** Populated when `kind === 'cbl'`. */
-  cbl_list_id?: string | null;
-  /** Whether the calling user has this view pinned. */
-  pinned: boolean;
-  pinned_position?: number | null;
-  /** Whether the calling user wants this view to appear in the
-   *  left sidebar's "Saved views" section. */
-  show_in_sidebar: boolean;
-  /** Identifies the built-in rail when `kind === 'system'`. */
-  system_key?: SystemRailKey | null;
-  /** Per-user icon override key. `null` falls back to a kind-based
-   *  default resolved client-side via the rail-icon registry. */
-  icon?: string | null;
-  /** Multi-page rails M6: every page (system + custom) this view is
-   *  currently pinned to. Drives the multi-pin picker. Empty when no
-   *  pin rows exist. Always populated regardless of `pinnedOn` filter. */
-  pinned_on_pages: string[];
-  created_at: string;
-  updated_at: string;
-};
-
-export type SavedViewListView = {
-  items: SavedViewView[];
-};
-
-export type CreateSavedViewReq = {
-  kind: SavedViewKind;
-  name: string;
-  description?: string | null;
-  custom_year_start?: number | null;
-  custom_year_end?: number | null;
-  custom_tags?: string[] | null;
-  /** Required when `kind === 'filter_series'`. */
-  filter?: FilterDsl | null;
-  sort_field?: SavedViewSortField | null;
-  sort_order?: SortOrder | null;
-  result_limit?: number | null;
-  /** Required when `kind === 'cbl'`. */
-  cbl_list_id?: string | null;
-};
-
-export type UpdateSavedViewReq = {
-  name?: string | null;
-  description?: string | null;
-  custom_year_start?: number | null;
-  custom_year_end?: number | null;
-  custom_tags?: string[] | null;
-  filter?: FilterDsl | null;
-  sort_field?: SavedViewSortField | null;
-  sort_order?: SortOrder | null;
-  result_limit?: number | null;
-};
-
-export type PreviewReq = {
-  filter: FilterDsl;
-  sort_field: SavedViewSortField;
-  sort_order: SortOrder;
-  result_limit: number;
-};
-
-export type PinView = {
-  view_id: string;
-  /** Page this row belongs to. Multi-page rails M3: every pin is
-   *  scoped to a `(user, page, view)` triple; this field identifies
-   *  the page for the row in the response. */
-  page_id: string;
-  pinned: boolean;
-  position?: number | null;
-};
-
-/** Body for `POST /me/saved-views/{id}/pin`. Send `{ page_ids: [...] }`
- *  to pin the view to one or more pages in a single call. Omit (or send
- *  an empty array) and the server defaults to the caller's system Home
- *  page — a transitional shim for the legacy single-pin call site
- *  removed in M5/M6 once the multi-pin picker ships. */
-export type PinReq = {
-  page_ids?: string[];
-};
-
-/** Body for `POST /me/saved-views/{id}/unpin`. `page_id` defaults to
- *  the caller's system Home page when omitted (legacy shim). */
-export type UnpinReq = {
-  page_id?: string | null;
-};
-
-// ---------- Sidebar layout (navigation customization M1) ----------
-
-/** `"header"` and `"spacer"` are layout-only rows the user can insert
- *  to organize the sidebar — they carry no link, only a label (header)
- *  or a visual gap (spacer). Default section titles are emitted by the
- *  server as `kind="header"` entries with stable `ref_id`s like
- *  `default:browse`, `default:libraries`. */
 export type SidebarEntryKind =
   | "builtin"
   | "library"
@@ -1918,141 +566,9 @@ export type SidebarEntryKind =
   | "header"
   | "spacer";
 
-export type SidebarEntryView = {
-  kind: SidebarEntryKind;
-  /** Built-in registry key ("home", "bookmarks", …), library UUID, or
-   *  saved-view UUID — disambiguated by `kind`. */
-  ref_id: string;
-  label: string;
-  icon: string;
-  href: string;
-  visible: boolean;
-  position: number;
-};
-
-export type SidebarLayoutView = {
-  entries: SidebarEntryView[];
-};
-
-export type UpdateEntryReq = {
-  kind: SidebarEntryKind;
-  ref_id: string;
-  visible: boolean;
-  position: number;
-  /** Required for `kind='header'`; ignored for `kind='spacer'`;
-   *  optional override for other kinds (null/missing falls back to
-   *  the server-resolved label). */
-  label?: string | null;
-};
-
-export type UpdateLayoutReq = {
-  entries: UpdateEntryReq[];
-};
-
-// ---------- CBL reading lists ----------
-
 export type CblSourceKind = "upload" | "url" | "catalog";
 
 export type CblMatchStatus = "matched" | "ambiguous" | "missing" | "manual";
-
-export type CblStatsView = {
-  total: number;
-  matched: number;
-  ambiguous: number;
-  missing: number;
-  manual: number;
-  /** Count of matched entries the calling user has finished. Drives the
-   *  per-user reading-progress pill on the home rail header. */
-  read_count: number;
-};
-
-export type CblListView = {
-  id: string;
-  owner_user_id?: string | null;
-  source_kind: CblSourceKind;
-  source_url?: string | null;
-  catalog_source_id?: string | null;
-  catalog_path?: string | null;
-  github_blob_sha?: string | null;
-  parsed_name: string;
-  parsed_matchers_present: boolean;
-  num_issues_declared?: number | null;
-  description?: string | null;
-  refresh_schedule?: string | null;
-  imported_at: string;
-  last_refreshed_at?: string | null;
-  last_match_run_at?: string | null;
-  created_at: string;
-  updated_at: string;
-  stats: CblStatsView;
-};
-
-export type CblListListView = {
-  items: CblListView[];
-};
-
-export type CblEntryView = {
-  id: string;
-  position: number;
-  series_name: string;
-  issue_number: string;
-  volume?: string | null;
-  year?: string | null;
-  cv_series_id?: number | null;
-  cv_issue_id?: number | null;
-  matched_issue_id?: string | null;
-  match_status: CblMatchStatus;
-  match_method?: string | null;
-  match_confidence?: number | null;
-  ambiguous_candidates?: unknown;
-  matched_at?: string | null;
-};
-
-/** One entry + the hydrated `IssueSummaryView` for its matched issue
- *  (`null` for unmatched entries, and for matched-but-inaccessible
- *  issues). Returned by the paginated `/entries` endpoint so the UI
- *  doesn't need a second hydration round-trip. */
-export type CblEntryHydratedView = CblEntryView & {
-  issue: IssueSummaryView | null;
-};
-
-export type CblEntryListView = {
-  items: CblEntryHydratedView[];
-  next_cursor: string | null;
-  /** Filter-set count on the first page only. `null` on subsequent pages. */
-  total: number | null;
-};
-
-/** Detail response — list metadata + aggregate counts on `stats`.
- *  Entries used to be embedded here (capped at 500); they now live
- *  exclusively on `/me/cbl-lists/{id}/entries` (cursor-paginated). */
-export type CblDetailView = CblListView;
-
-export type CreateCblListReq =
-  | {
-      kind: "url";
-      url: string;
-      name?: string | null;
-      description?: string | null;
-      refresh_schedule?: string | null;
-    }
-  | {
-      kind: "catalog";
-      catalog_source_id: string;
-      catalog_path: string;
-      name?: string | null;
-      description?: string | null;
-      refresh_schedule?: string | null;
-    };
-
-export type UpdateCblListReq = {
-  description?: string | null;
-  refresh_schedule?: string | null;
-};
-
-export type ManualMatchReq = {
-  issue_id: string;
-};
 
 export type ImportSummary = {
   list_id: string;
@@ -2067,165 +583,12 @@ export type ImportSummary = {
   rematched: number;
 };
 
-export type RefreshLogEntryView = {
-  id: string;
-  ran_at: string;
-  trigger: string;
-  upstream_changed: boolean;
-  prev_blob_sha?: string | null;
-  new_blob_sha?: string | null;
-  added_count: number;
-  removed_count: number;
-  reordered_count: number;
-  rematched_count: number;
-  diff_summary?: unknown;
-};
-
-export type RefreshLogListView = {
-  items: RefreshLogEntryView[];
-};
-
-export type CatalogSourceView = {
-  id: string;
-  display_name: string;
-  github_owner: string;
-  github_repo: string;
-  github_branch: string;
-  enabled: boolean;
-  last_indexed_at?: string | null;
-};
-
-export type CatalogSourceListView = {
-  items: CatalogSourceView[];
-};
-
-export type CatalogEntryView = {
-  path: string;
-  name: string;
-  publisher: string;
-  sha: string;
-  size: number;
-};
-
-export type CatalogEntriesView = {
-  source_id: string;
-  items: CatalogEntryView[];
-};
-
-export type CreateCatalogSourceReq = {
-  display_name: string;
-  github_owner: string;
-  github_repo: string;
-  github_branch?: string | null;
-};
-
-export type UpdateCatalogSourceReq = {
-  display_name?: string | null;
-  github_branch?: string | null;
-  enabled?: boolean | null;
-};
-
-// ─── Collections (markers + collections M2) ───
-
 export type CollectionEntryKind = "series" | "issue";
 
-export type CollectionEntryView = {
-  id: string;
-  position: number;
-  entry_kind: CollectionEntryKind;
-  added_at: string;
-  /** Populated when `entry_kind === 'series'`. `null` if the underlying
-   *  series was cascade-deleted between insert and read. Returned as a
-   *  full `SeriesView` so the home rail + collection detail page can
-   *  drop straight into `<SeriesCard>`. */
-  series?: SeriesView | null;
-  /** Populated when `entry_kind === 'issue'`. */
-  issue?: IssueSummaryView | null;
-};
-
-export type CollectionEntriesView = {
-  items: CollectionEntryView[];
-  next_cursor?: string | null;
-  /** First-page total only (omitted on subsequent pages). */
-  total?: number | null;
-};
-
-export type CreateCollectionReq = {
-  name: string;
-  description?: string | null;
-};
-
-export type UpdateCollectionReq = {
-  name?: string | null;
-  /** Send `""` (empty string) to clear; omit to leave unchanged. */
-  description?: string | null;
-};
-
-export type AddEntryReq = {
-  entry_kind: CollectionEntryKind;
-  /** Series UUID or issue id (TEXT/BLAKE3 hex). */
-  ref_id: string;
-};
-
-export type ReorderEntriesReq = {
-  /** Must include every current entry id — partial reorders rejected. */
-  entry_ids: string[];
-};
-
-// ─── Pages (multi-page rails M2) ───
-
-/** A user-owned page that pins saved-view rails. Every user has one
- *  `is_system = true` row named "Home" (slug `home`) reachable at `/`.
- *  Custom pages live at `/pages/{slug}`. */
-export type PageView = {
-  id: string;
-  name: string;
-  /** Per-user unique slug. System page is always `"home"`. */
-  slug: string;
-  is_system: boolean;
-  position: number;
-  /** Count of `user_view_pin` rows where `pinned = true` for this
-   *  (user, page) pair. Drives sidebar badges + page-picker readouts
-   *  without a separate pins fetch. */
-  pin_count: number;
-  /** Optional free-form description rendered under the title.
-   *  `null` (or absent) hides the descriptor row. */
-  description?: string | null;
-  /** Whether this page appears in the sidebar nav. System pages always
-   *  surface via the builtin Home entry; the toggle is exposed only on
-   *  custom pages. */
-  show_in_sidebar: boolean;
-  created_at: string;
-  updated_at: string;
-};
-
-export type CreatePageReq = {
-  name: string;
-};
-
-export type UpdatePageReq = {
-  name?: string;
-  /** Omit (or send `null`) to leave the description alone. Send an
-   *  empty string to clear it; serde can't reliably distinguish a
-   *  missing field from an explicit null. */
-  description?: string | null;
-};
-
-export type ReorderPagesReq = {
-  /** Must include every owned page id exactly once (including the
-   *  system page) — partial reorders rejected. */
-  page_ids: string[];
-};
-
-// ─── Markers (markers + collections M5) ───
-
 export type MarkerKind = "bookmark" | "note" | "favorite" | "highlight";
+
 export type MarkerShape = "rect" | "text" | "image";
 
-/** Rect region anchored on the page's natural pixel dims. All four
- *  positional fields are 0-100 percent floats so the overlay survives
- *  resize / zoom / fit-mode changes without recomputation. `shape`
- *  classifies the selection mode the client used. */
 export type MarkerRegion = {
   x: number;
   y: number;
@@ -2234,122 +597,13 @@ export type MarkerRegion = {
   shape: MarkerShape;
 };
 
-/** OCR'd text + cropped-pixel hash metadata for text/image-aware
- *  highlights. v1 stores opaquely; future milestones will let users
- *  search by text and re-find a panel by its image hash. */
 export type MarkerSelection = {
   text?: string | null;
   image_hash?: string | null;
   ocr_confidence?: number | null;
 };
 
-export type MarkerView = {
-  id: string;
-  user_id: string;
-  series_id: string;
-  issue_id: string;
-  page_index: number;
-  kind: MarkerKind;
-  is_favorite: boolean;
-  tags: string[];
-  region?: MarkerRegion | null;
-  selection?: MarkerSelection | null;
-  body?: string | null;
-  color?: string | null;
-  created_at: string;
-  updated_at: string;
-  series_name?: string | null;
-  series_slug?: string | null;
-  issue_slug?: string | null;
-  issue_title?: string | null;
-  issue_number?: string | null;
-};
-
-export type TagEntryView = {
-  tag: string;
-  count: number;
-};
-
-export type MarkerTagsView = {
-  items: TagEntryView[];
-};
-
 export type MarkerTagMatch = "all" | "any";
-
-export type MarkerListView = {
-  items: MarkerView[];
-  next_cursor?: string | null;
-};
-
-export type MarkerCountView = {
-  total: number;
-};
-
-/** Global-search hit shape returned by `/me/markers/search`. Lighter
- *  than `MarkerView` (search rails don't need color / tags /
- *  timestamps) and carries the `<mark>`-wrapped snippet that the
- *  modal renders via the shared `renderSearchSnippet` sanitiser. */
-export type MarkerSearchHit = {
-  id: string;
-  kind: MarkerKind;
-  issue_id: string;
-  series_id: string;
-  page_index: number;
-  region?: MarkerRegion | null;
-  snippet?: string | null;
-  series_name?: string | null;
-  series_slug?: string | null;
-  issue_slug?: string | null;
-  issue_title?: string | null;
-  issue_number?: string | null;
-};
-
-export type MarkerSearchView = {
-  items: MarkerSearchHit[];
-};
-
-export type IssueMarkersView = {
-  items: MarkerView[];
-};
-
-export type CreateMarkerReq = {
-  issue_id: string;
-  page_index: number;
-  kind: MarkerKind;
-  region?: MarkerRegion | null;
-  selection?: MarkerSelection | null;
-  body?: string | null;
-  color?: string | null;
-  is_favorite?: boolean | null;
-  tags?: string[] | null;
-};
-
-export type UpdateMarkerReq = {
-  body?: string | null;
-  color?: string | null;
-  region?: MarkerRegion | null;
-  selection?: MarkerSelection | null;
-  is_favorite?: boolean;
-  /** Replace tag list. Send `[]` to clear, omit to leave unchanged. */
-  tags?: string[];
-};
-
-// ────────────── Sessions (M5 — /me/sessions) ──────────────
-
-export type SessionView = {
-  id: string;
-  created_at: string;
-  last_used_at: string;
-  expires_at: string;
-  user_agent: string | null;
-  ip: string | null;
-  /** True when this row matches the caller's refresh cookie. */
-  current: boolean;
-};
-
-export type SessionListView = {
-  sessions: SessionView[];
-};
 
 export type RevokeAllSessionsResp = {
   /** Count of sessions transitioned from active → revoked. Doesn't
@@ -2357,36 +611,5 @@ export type RevokeAllSessionsResp = {
   revoked: number;
 };
 
-// ────────────── App passwords (M7 — /me/app-passwords) ──────────────
-
-/** App-password scope. `read` is the default and grants browse + page-stream
- *  + download. `read+progress` additionally lets the token write reading
- *  progress via the OPDS progress endpoint and the KOReader sync shim. */
 export type AppPasswordScope = "read" | "read+progress";
 
-export type AppPasswordView = {
-  id: string;
-  label: string;
-  scope: AppPasswordScope;
-  created_at: string;
-  last_used_at: string | null;
-};
-
-export type AppPasswordListView = {
-  items: AppPasswordView[];
-};
-
-export type AppPasswordCreatedView = {
-  id: string;
-  label: string;
-  scope: AppPasswordScope;
-  created_at: string;
-  /** The plaintext token. Shown once and never retrievable again. */
-  plaintext: string;
-};
-
-export type CreateAppPasswordReq = {
-  label: string;
-  /** Optional. Defaults server-side to `read` when omitted. */
-  scope?: AppPasswordScope;
-};

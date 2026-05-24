@@ -34,7 +34,7 @@ export function UserFooter({
   user,
   collapsed = false,
 }: {
-  user: { display_name: string; email: string | null; role: string };
+  user: { display_name: string; email?: string | null; role: string };
   /** When true, the footer renders just the avatar (matches the
    *  collapsed sidebar's icon-only look). The dropdown menu is unchanged. */
   collapsed?: boolean;
@@ -158,7 +158,10 @@ export function UserFooter({
   );
 }
 
-function computeInitials(displayName: string, email: string | null): string {
+function computeInitials(
+  displayName: string,
+  email: string | null | undefined,
+): string {
   const source = displayName.trim() || email?.trim() || "";
   if (!source) return "";
   // Names: take first letter of up to two words ("Jane Doe" → "JD").

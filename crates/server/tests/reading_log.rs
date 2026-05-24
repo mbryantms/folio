@@ -653,7 +653,6 @@ async fn unknown_kind_filter_returns_empty_not_error() {
     assert_eq!(body["events"].as_array().unwrap().len(), 0);
 }
 
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backfill_finishes_excluded_from_feed() {
     // A bulk-mark catalog write lands as `progress_records.is_backfill =
@@ -665,19 +664,20 @@ async fn backfill_finishes_excluded_from_feed() {
     let (lib_id, _sid, ids) = seed_library_with_issues(&app, "bf", 2).await;
     grant_library(&app, auth.user_id, lib_id).await;
 
-    let real_t =
-        chrono::DateTime::parse_from_rfc3339("2030-01-01T08:00:00Z").unwrap();
-    let backfill_t =
-        chrono::DateTime::parse_from_rfc3339("2030-01-02T08:00:00Z").unwrap();
+    let real_t = chrono::DateTime::parse_from_rfc3339("2030-01-01T08:00:00Z").unwrap();
+    let backfill_t = chrono::DateTime::parse_from_rfc3339("2030-01-02T08:00:00Z").unwrap();
     // Issue 0: a genuine read. Issue 1: a backfill catalog write
     // (later timestamp — would normally sort first in DESC).
     mark_finished_at(&app, auth.user_id, &ids[0], real_t).await;
     mark_backfill_at(&app, auth.user_id, &ids[1], backfill_t).await;
 
-    let (_, body) =
-        get_json(&app, "/api/me/reading-log?kind=issue_finished", &auth).await;
+    let (_, body) = get_json(&app, "/api/me/reading-log?kind=issue_finished", &auth).await;
     let events = body["events"].as_array().unwrap();
-    assert_eq!(events.len(), 1, "backfill row must not appear; got {body:#?}");
+    assert_eq!(
+        events.len(),
+        1,
+        "backfill row must not appear; got {body:#?}"
+    );
     assert_eq!(events[0]["issue"]["id"].as_str().unwrap(), ids[0]);
 }
 
@@ -697,8 +697,7 @@ async fn backfill_only_series_excluded_from_series_finished() {
     mark_backfill_at(&app, auth.user_id, &ids[0], t).await;
     mark_backfill_at(&app, auth.user_id, &ids[1], t).await;
 
-    let (_, body) =
-        get_json(&app, "/api/me/reading-log?kind=series_finished", &auth).await;
+    let (_, body) = get_json(&app, "/api/me/reading-log?kind=series_finished", &auth).await;
     let events = body["events"].as_array().unwrap();
     assert!(
         events.is_empty(),
@@ -741,9 +740,12 @@ async fn hide_marker_event_drops_it_from_feed_by_default() {
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     // Default feed: marker hidden.
-    let (_, body) =
-        get_json(&app, "/api/me/reading-log?kind=marker_created", &auth).await;
-    assert_eq!(body["events"].as_array().unwrap().len(), 0, "hidden marker must be filtered out by default");
+    let (_, body) = get_json(&app, "/api/me/reading-log?kind=marker_created", &auth).await;
+    assert_eq!(
+        body["events"].as_array().unwrap().len(),
+        0,
+        "hidden marker must be filtered out by default"
+    );
 
     // include_hidden=true: marker surfaces with is_hidden=true.
     let (_, body) = get_json(
@@ -789,10 +791,13 @@ async fn unhide_marker_event_restores_it_to_feed() {
         assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{endpoint}");
     }
 
-    let (_, body) =
-        get_json(&app, "/api/me/reading-log?kind=marker_created", &auth).await;
+    let (_, body) = get_json(&app, "/api/me/reading-log?kind=marker_created", &auth).await;
     let events = body["events"].as_array().unwrap();
-    assert_eq!(events.len(), 1, "unhide must restore marker to default feed");
+    assert_eq!(
+        events.len(),
+        1,
+        "unhide must restore marker to default feed"
+    );
     // is_hidden flag is elided when false on the wire.
     assert!(events[0].get("is_hidden").is_none() || events[0]["is_hidden"] == false);
 }
@@ -822,5 +827,7 @@ async fn hide_series_finished_is_rejected_as_validation_error() {
         ))
         .unwrap();
     let resp = app.router.clone().oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // Audit-remediation M9: HideEventReq::kind is enum-validated by
+    // garde; rejection lands at 422.
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }

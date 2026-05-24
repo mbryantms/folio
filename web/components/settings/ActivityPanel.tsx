@@ -9,7 +9,6 @@ import { ActivityTimeline } from "@/components/activity/ActivityTimeline";
 import { DowHourHeatmap } from "@/components/activity/DowHourHeatmap";
 import { HeroCards } from "@/components/activity/HeroCards";
 import { RereadList } from "@/components/activity/RereadList";
-import { TimeOfDayDonut } from "@/components/activity/TimeOfDayDonut";
 import { TopRankingsList } from "@/components/activity/TopRankings";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useReadingStats } from "@/lib/api/queries";
@@ -28,6 +27,14 @@ const PerDayBarChart = dynamic(
 );
 const PaceChart = dynamic(
   () => import("@/components/activity/PaceChart").then((m) => m.PaceChart),
+  { ssr: false, loading: () => <Skeleton className="h-48 w-full" /> },
+);
+// Same recharts chunk as the other two — the dedup means only one
+// network fetch — but lazy-loading keeps recharts out of the initial
+// /settings/activity bundle so the page header/hero paint first.
+const TimeOfDayDonut = dynamic(
+  () =>
+    import("@/components/activity/TimeOfDayDonut").then((m) => m.TimeOfDayDonut),
   { ssr: false, loading: () => <Skeleton className="h-48 w-full" /> },
 );
 
@@ -76,12 +83,12 @@ export function ActivityPanel() {
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           {stats.isLoading ? (
             <Skeleton className="h-44 w-full" />
-          ) : stats.data ? (
+          ) : stats.data?.dow_hour ? (
             <DowHourHeatmap cells={stats.data.dow_hour} />
           ) : null}
           {stats.isLoading ? (
             <Skeleton className="h-44 w-full" />
-          ) : stats.data ? (
+          ) : stats.data?.time_of_day ? (
             <TimeOfDayDonut data={stats.data.time_of_day} />
           ) : null}
         </div>
@@ -108,7 +115,7 @@ export function ActivityPanel() {
       >
         {stats.isLoading ? (
           <Skeleton className="h-48 w-full" />
-        ) : stats.data ? (
+        ) : stats.data?.pace_series ? (
           <PaceChart points={stats.data.pace_series} />
         ) : null}
       </SettingsSection>
@@ -130,7 +137,7 @@ export function ActivityPanel() {
       >
         {stats.isLoading ? (
           <Skeleton className="h-32 w-full" />
-        ) : stats.data ? (
+        ) : stats.data?.reread_top_issues && stats.data?.reread_top_series ? (
           <RereadList
             issues={stats.data.reread_top_issues}
             series={stats.data.reread_top_series}

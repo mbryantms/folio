@@ -13,27 +13,32 @@
 //! probe so an admin can preview an issuer's endpoints before committing.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use super::error;
 use crate::auth::RequireAdmin;
 use crate::config::AuthMode;
 use crate::middleware::rate_limit;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/admin/auth/config", get(get_config))
-        .route("/auth/config", get(get_public_config))
-        .route(
-            "/admin/auth/oidc/discover",
-            post(probe_discovery).route_layer(rate_limit::OIDC_CALLBACK.build()),
+pub fn routes() -> OpenApiRouter<AppState> {
+    // probe_discovery is rate-limited; the other two are not. Use a sub-
+    // router for the rate-limited route so the layer doesn't leak.
+    OpenApiRouter::new()
+        .routes(routes!(get_config))
+        .routes(routes!(get_public_config))
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(probe_discovery))
+                .route_layer(rate_limit::OIDC_CALLBACK.build()),
         )
 }
 
@@ -68,13 +73,14 @@ pub struct LocalConfigView {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "auth_config_get_config",    get,
     path = "/admin/auth/config",
     responses(
         (status = 200, body = AuthConfigView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn get_config(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     let cfg = app.cfg();
     let oidc_configured = match cfg.auth_mode {
@@ -138,12 +144,13 @@ pub struct PublicAuthConfigView {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "auth_config_get_public_config",    get,
     path = "/auth/config",
     responses(
         (status = 200, body = PublicAuthConfigView),
     )
 )]
+#[handler]
 pub async fn get_public_config(State(app): State<AppState>) -> Response {
     let cfg = app.cfg();
     let oidc_enabled = matches!(cfg.auth_mode, AuthMode::Oidc | AuthMode::Both)
@@ -197,7 +204,7 @@ pub struct OidcDiscoverResp {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "auth_config_probe_discovery",    post,
     path = "/admin/auth/oidc/discover",
     request_body = OidcDiscoverReq,
     responses(
@@ -207,6 +214,7 @@ pub struct OidcDiscoverResp {
         (status = 502, description = "discovery doc unreachable / malformed"),
     )
 )]
+#[handler]
 pub async fn probe_discovery(
     State(_app): State<AppState>,
     _admin: RequireAdmin,
@@ -215,7 +223,7 @@ pub async fn probe_discovery(
     let issuer = req.issuer.trim();
     if issuer.is_empty() || !(issuer.starts_with("http://") || issuer.starts_with("https://")) {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "oidc.invalid_issuer",
             "issuer must be an http(s) URL",
         );

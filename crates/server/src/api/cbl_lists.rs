@@ -17,11 +17,10 @@
 //! survive subsequent refreshes.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Multipart, Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
 };
 use chrono::Utc;
 use entity::{catalog_source, cbl_entry, cbl_list, cbl_refresh_log};
@@ -30,6 +29,8 @@ use sea_orm::{
     QueryFilter, QueryOrder,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
@@ -41,56 +42,33 @@ use crate::cbl::{
 };
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
 const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
 const MAX_BOOKS_PER_FILE: usize = 5_000;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        // user-scoped CBL lists
-        .route("/me/cbl-lists", get(list).post(create_from_json))
-        .route("/me/cbl-lists/upload", post(upload))
-        .route(
-            "/me/cbl-lists/{id}",
-            get(detail).patch(update).delete(delete_one),
-        )
-        .route("/me/cbl-lists/{id}/refresh", post(refresh_one))
-        .route("/me/cbl-lists/{id}/refresh-log", get(refresh_log))
-        .route("/me/cbl-lists/{id}/entries", get(entries))
-        .route("/me/cbl-lists/{id}/issues", get(issues))
-        .route("/me/cbl-lists/{id}/window", get(reading_window))
-        .route(
-            "/me/cbl-lists/{id}/window-paginated",
-            get(reading_window_paginated),
-        )
-        .route("/me/cbl-lists/{id}/export", get(export))
-        .route(
-            "/me/cbl-lists/{id}/entries/{entry_id}/match",
-            post(manual_match),
-        )
-        .route(
-            "/me/cbl-lists/{id}/entries/{entry_id}/clear-match",
-            post(clear_match),
-        )
-        // catalog browser
-        .route("/catalog/sources", get(list_catalog_sources))
-        .route(
-            "/catalog/sources/{id}/lists",
-            get(list_catalog_entries),
-        )
-        .route(
-            "/catalog/sources/{id}/refresh-index",
-            post(refresh_catalog_index),
-        )
-        // admin catalog mgmt
-        .route(
-            "/admin/catalog-sources",
-            post(admin_create_catalog_source),
-        )
-        .route(
-            "/admin/catalog-sources/{id}",
-            axum::routing::patch(admin_update_catalog_source).delete(admin_delete_catalog_source),
-        )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(create_from_json))
+        .routes(routes!(upload))
+        .routes(routes!(detail, update))
+        .routes(routes!(delete_one))
+        .routes(routes!(refresh_one))
+        .routes(routes!(refresh_log))
+        .routes(routes!(entries))
+        .routes(routes!(issues))
+        .routes(routes!(reading_window))
+        .routes(routes!(reading_window_paginated))
+        .routes(routes!(export))
+        .routes(routes!(manual_match))
+        .routes(routes!(clear_match))
+        .routes(routes!(list_catalog_sources))
+        .routes(routes!(list_catalog_entries))
+        .routes(routes!(refresh_catalog_index))
+        .routes(routes!(admin_create_catalog_source))
+        .routes(routes!(admin_update_catalog_source))
+        .routes(routes!(admin_delete_catalog_source))
 }
 
 // ───── wire types ─────
@@ -478,7 +456,9 @@ async fn fetch_list(
 
 // ───── handlers: lists ─────
 
-#[utoipa::path(get, path = "/me/cbl-lists", responses((status = 200, body = CblListListView)))]
+#[utoipa::path(
+    operation_id = "cbl_lists_list",    get, path = "/me/cbl-lists", responses((status = 200, body = CblListListView)))]
+#[handler]
 pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
     let rows = match cbl_list::Entity::find()
         .filter(
@@ -509,11 +489,12 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
 /// `/entries` endpoint. The per-status counts the UI used to derive
 /// from `entries` are on `list.stats`.
 #[utoipa::path(
-    get,
+    operation_id = "cbl_lists_detail",    get,
     path = "/me/cbl-lists/{id}",
     params(("id" = String, Path,)),
     responses((status = 200, body = CblDetailView))
 )]
+#[handler]
 pub async fn detail(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -574,7 +555,7 @@ fn parse_entry_cursor(s: &str) -> Result<(i32, Uuid), ()> {
 /// rows. Status filter is server-side, so the Resolution tab can
 /// stream just `ambiguous,missing` without touching the matched majority.
 #[utoipa::path(
-    get,
+    operation_id = "cbl_lists_entries",    get,
     path = "/me/cbl-lists/{id}/entries",
     params(
         ("id" = String, Path,),
@@ -589,6 +570,7 @@ fn parse_entry_cursor(s: &str) -> Result<(i32, Uuid), ()> {
         (status = 404, description = "list not found"),
     )
 )]
+#[handler]
 pub async fn entries(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -618,7 +600,7 @@ pub async fn entries(
             Ok(p) => p,
             Err(_) => {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "invalid status filter (expected comma-separated subset of matched,ambiguous,missing,manual)",
                 );
@@ -763,10 +745,11 @@ pub async fn entries(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "cbl_lists_upload",    post,
     path = "/me/cbl-lists/upload",
     responses((status = 201, body = CblListView))
 )]
+#[handler]
 pub async fn upload(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -790,7 +773,7 @@ pub async fn upload(
                     bytes = Some(b.to_vec());
                 }
                 Err(e) => {
-                    return error(StatusCode::BAD_REQUEST, "validation", &e.to_string());
+                    return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", &e.to_string());
                 }
             },
             "name" => name_override = field.text().await.ok().filter(|s| !s.trim().is_empty()),
@@ -800,7 +783,7 @@ pub async fn upload(
     }
     let Some(bytes) = bytes else {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "missing `file` field",
         );
@@ -831,11 +814,12 @@ pub async fn upload(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "cbl_lists_create_from_json",    post,
     path = "/me/cbl-lists",
     request_body = CreateCblListReq,
     responses((status = 201, body = CblListView))
 )]
+#[handler]
 pub async fn create_from_json(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1158,12 +1142,13 @@ async fn create_list_from_parsed(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "cbl_lists_update",    patch,
     path = "/me/cbl-lists/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateCblListReq,
     responses((status = 200, body = CblListView))
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1194,11 +1179,12 @@ pub async fn update(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "cbl_lists_delete_one",    delete,
     path = "/me/cbl-lists/{id}",
     params(("id" = String, Path,)),
     responses((status = 204))
 )]
+#[handler]
 pub async fn delete_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1218,11 +1204,12 @@ pub async fn delete_one(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "cbl_lists_refresh_one",    post,
     path = "/me/cbl-lists/{id}/refresh",
     params(("id" = String, Path,)),
     responses((status = 200))
 )]
+#[handler]
 pub async fn refresh_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1249,11 +1236,12 @@ fn summary_to_view(_app: &AppState, summary: &ImportSummary) -> ImportSummary {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "cbl_lists_refresh_log",    get,
     path = "/me/cbl-lists/{id}/refresh-log",
     params(("id" = String, Path,), ("limit" = Option<u64>, Query,)),
     responses((status = 200, body = RefreshLogListView))
 )]
+#[handler]
 pub async fn refresh_log(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1301,11 +1289,12 @@ pub async fn refresh_log(
 // ───── manual-match override ─────
 
 #[utoipa::path(
-    post,
+    operation_id = "cbl_lists_manual_match",    post,
     path = "/me/cbl-lists/{id}/entries/{entry_id}/match",
     request_body = ManualMatchReq,
     responses((status = 200, body = CblEntryView))
 )]
+#[handler]
 pub async fn manual_match(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1332,7 +1321,7 @@ pub async fn manual_match(
         .flatten()
         .is_some();
     if !issue_exists {
-        return error(StatusCode::BAD_REQUEST, "validation", "issue not found");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "issue not found");
     }
     let now = Utc::now().fixed_offset();
     let mut am: cbl_entry::ActiveModel = entry.into();
@@ -1351,10 +1340,11 @@ pub async fn manual_match(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "cbl_lists_clear_match",    post,
     path = "/me/cbl-lists/{id}/entries/{entry_id}/clear-match",
     responses((status = 200, body = CblEntryView))
 )]
+#[handler]
 pub async fn clear_match(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1389,7 +1379,7 @@ pub async fn clear_match(
 // ───── matched-issues hydration (used by saved_views/{id}/results when kind='cbl') ─────
 
 #[utoipa::path(
-    get,
+    operation_id = "cbl_lists_issues",    get,
     path = "/me/cbl-lists/{id}/issues",
     params(
         ("id" = String, Path,),
@@ -1398,6 +1388,7 @@ pub async fn clear_match(
     ),
     responses((status = 200, body = crate::api::series::IssueListView))
 )]
+#[handler]
 pub async fn issues(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1508,7 +1499,7 @@ pub async fn issues(
 /// `raw_xml` for re-match purposes, so this is just a Content-Disposition
 /// dressing on top of the stored string.
 #[utoipa::path(
-    get,
+    operation_id = "cbl_lists_export",    get,
     path = "/me/cbl-lists/{id}/export",
     params(("id" = String, Path,)),
     responses(
@@ -1516,6 +1507,7 @@ pub async fn issues(
         (status = 404, description = "list not found"),
     )
 )]
+#[handler]
 pub async fn export(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1560,7 +1552,9 @@ pub async fn export(
 
 // ───── catalog endpoints ─────
 
-#[utoipa::path(get, path = "/catalog/sources", responses((status = 200, body = CatalogSourceListView)))]
+#[utoipa::path(
+    operation_id = "cbl_lists_list_catalog_sources",    get, path = "/catalog/sources", responses((status = 200, body = CatalogSourceListView)))]
+#[handler]
 pub async fn list_catalog_sources(
     State(app): State<AppState>,
     _user: CurrentUser,
@@ -1590,11 +1584,12 @@ pub async fn list_catalog_sources(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "cbl_lists_list_catalog_entries",    get,
     path = "/catalog/sources/{id}/lists",
     params(("id" = String, Path,)),
     responses((status = 200, body = CatalogEntriesView))
 )]
+#[handler]
 pub async fn list_catalog_entries(
     State(app): State<AppState>,
     _user: CurrentUser,
@@ -1635,11 +1630,12 @@ pub async fn list_catalog_entries(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "cbl_lists_refresh_catalog_index",    post,
     path = "/catalog/sources/{id}/refresh-index",
     params(("id" = String, Path,)),
     responses((status = 200, body = CatalogEntriesView))
 )]
+#[handler]
 pub async fn refresh_catalog_index(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -1675,11 +1671,12 @@ pub async fn refresh_catalog_index(
 // ───── admin catalog source CRUD ─────
 
 #[utoipa::path(
-    post,
+    operation_id = "cbl_lists_admin_create_catalog_source",    post,
     path = "/admin/catalog-sources",
     request_body = CreateCatalogSourceReq,
     responses((status = 201, body = CatalogSourceView))
 )]
+#[handler]
 pub async fn admin_create_catalog_source(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -1744,12 +1741,13 @@ pub async fn admin_create_catalog_source(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "cbl_lists_admin_update_catalog_source",    patch,
     path = "/admin/catalog-sources/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateCatalogSourceReq,
     responses((status = 200, body = CatalogSourceView))
 )]
+#[handler]
 pub async fn admin_update_catalog_source(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -1803,11 +1801,12 @@ pub async fn admin_update_catalog_source(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "cbl_lists_admin_delete_catalog_source",    delete,
     path = "/admin/catalog-sources/{id}",
     params(("id" = String, Path,)),
     responses((status = 204))
 )]
+#[handler]
 pub async fn admin_delete_catalog_source(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -1899,7 +1898,7 @@ pub struct CblWindowView {
 /// don't backfill because filling past the natural cutoff would surface
 /// out-of-order entries to the user.
 #[utoipa::path(
-    get,
+    operation_id = "cbl_lists_reading_window",    get,
     path = "/me/cbl-lists/{id}/window",
     params(
         ("id"     = String, Path,),
@@ -1911,6 +1910,7 @@ pub struct CblWindowView {
         (status = 404, description = "list not found"),
     )
 )]
+#[handler]
 pub async fn reading_window(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -2162,7 +2162,7 @@ pub struct CblWindowPageView {
 /// computed from the *kept* entries so the cursor returned to the
 /// client never re-fetches an entry it just received.
 #[utoipa::path(
-    get,
+    operation_id = "cbl_lists_reading_window_paginated",    get,
     path = "/me/cbl-lists/{id}/window-paginated",
     params(
         ("id"        = String,      Path,),
@@ -2178,6 +2178,7 @@ pub struct CblWindowPageView {
         (status = 404, description = "list not found"),
     )
 )]
+#[handler]
 pub async fn reading_window_paginated(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -2190,14 +2191,14 @@ pub async fn reading_window_paginated(
     let direction = q.direction.as_deref().unwrap_or("initial");
     if !matches!(direction, "initial" | "before" | "after") {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_direction",
             "direction must be 'initial', 'before', or 'after'",
         );
     }
     if direction != "initial" && q.cursor.is_none() {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "missing_cursor",
             "cursor is required for before/after pagination",
         );

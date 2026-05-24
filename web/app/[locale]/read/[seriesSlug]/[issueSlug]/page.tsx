@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { Reader } from "./Reader";
 import { ReaderHealthToast } from "./ReaderHealthToast";
 import { apiGet, ApiError } from "@/lib/api/fetch";
-import type { IssueDetailView, MeView } from "@/lib/api/types";
+import type { IssueDetailView, MeView, PageInfo } from "@/lib/api/types";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
 import type { FitMode } from "@/lib/reader/store";
 
@@ -168,7 +168,7 @@ export default async function ReadPage({
       userDefaultPageAnimation = me.default_page_animation;
     }
     userDefaultCoverSolo = me.default_cover_solo !== false;
-    userKeybinds = me.keybinds ?? {};
+    userKeybinds = (me.keybinds as Record<string, string> | null | undefined) ?? {};
     activityTrackingEnabled = me.activity_tracking_enabled !== false;
     readingMinActiveMs = me.reading_min_active_ms ?? 30_000;
     readingMinPages = me.reading_min_pages ?? 3;
@@ -187,7 +187,7 @@ export default async function ReadPage({
         exitUrl={`/series/${seriesSlug}/issues/${issueSlug}`}
         totalPages={totalPages}
         initialPage={initialPage}
-        pages={issue.pages ?? []}
+        pages={(issue.pages as PageInfo[] | null | undefined) ?? []}
         manga={issue.manga ?? null}
         userDefaultDirection={userDefaultDirection}
         libraryDefaultDirection={libraryDefaultDirection}

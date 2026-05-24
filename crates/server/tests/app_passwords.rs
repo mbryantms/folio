@@ -271,12 +271,14 @@ async fn label_validation_rejects_empty_and_oversize() {
     let reg = register(&app, "label@example.com").await;
     let auth = Auth::from_response(&reg);
 
+    // Audit-remediation M9: semantic-validation failures (empty / oversize)
+    // come back as 422 via the garde `Validated<T>` extractor, not 400.
     let resp = create_password(&app, &auth, "").await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     let long = "x".repeat(200);
     let resp = create_password(&app, &auth, &long).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

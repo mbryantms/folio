@@ -18,7 +18,7 @@ export function ReadingLogPage() {
   const [range, setRange] = React.useState<ReadingStatsRange>("30d");
   const scope: LogScope = React.useMemo(() => ({ range }), [range]);
   const widgetsQuery = useLogWidgets();
-  const widgets = widgetsQuery.data?.widgets ?? [];
+  const widgets = widgetsQuery.data?.items ?? [];
 
   return (
     <div className="space-y-6">

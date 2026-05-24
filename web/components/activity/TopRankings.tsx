@@ -219,17 +219,19 @@ function entriesFor(
 ): Row[] {
   switch (dim) {
     case "series":
-      return data.top_series.map(seriesRow);
+      return (data.top_series ?? []).map(seriesRow);
     case "publishers":
-      return data.top_publishers.map(nameRow);
+      return (data.top_publishers ?? []).map(nameRow);
     case "imprints":
-      return data.top_imprints.map(nameRow);
+      return (data.top_imprints ?? []).map(nameRow);
     case "genres":
-      return data.top_genres.map(nameRow);
+      return (data.top_genres ?? []).map(nameRow);
     case "tags":
-      return data.top_tags.map(nameRow);
+      return (data.top_tags ?? []).map(nameRow);
     default:
-      return data.top_creators.filter((c) => c.role === dim).map(creatorRow);
+      return (data.top_creators ?? [])
+        .filter((c) => c.role === dim)
+        .map(creatorRow);
   }
 }
 

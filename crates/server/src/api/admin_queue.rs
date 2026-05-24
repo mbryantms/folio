@@ -7,24 +7,22 @@
 //! finished ones. In-flight jobs are still counted as pending.
 
 use apalis::prelude::Storage;
-use axum::{
-    Extension, Json, Router,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{get, post},
-};
+use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/admin/queue-depth", get(queue_depth))
-        .route("/admin/queue/clear", post(clear_queue))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(queue_depth))
+        .routes(routes!(clear_queue))
 }
 
 #[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
@@ -63,13 +61,14 @@ pub struct QueueClearResp {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_queue_queue_depth",    get,
     path = "/admin/queue-depth",
     responses(
         (status = 200, body = QueueDepthView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn queue_depth(
     axum::extract::State(app): axum::extract::State<AppState>,
     _admin: RequireAdmin,
@@ -84,7 +83,7 @@ pub async fn queue_depth(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "admin_queue_clear_queue",    post,
     path = "/admin/queue/clear",
     request_body = QueueClearReq,
     responses(
@@ -92,6 +91,7 @@ pub async fn queue_depth(
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn clear_queue(
     axum::extract::State(app): axum::extract::State<AppState>,
     admin: RequireAdmin,
@@ -243,9 +243,5 @@ async fn delete_matching_keys(
 }
 
 fn internal() -> axum::response::Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({"error": {"code": "internal", "message": "internal"}})),
-    )
-        .into_response()
+    super::error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
 }

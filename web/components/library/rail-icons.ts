@@ -182,7 +182,7 @@ export function railIconFor(view: SavedViewView): RailIconEntry {
     if (hit) return hit;
   }
   return (
-    RAIL_ICONS_BY_KEY.get(defaultIconKeyForKind(view.kind)) ??
+    RAIL_ICONS_BY_KEY.get(defaultIconKeyForKind(view.kind as SavedViewKind)) ??
     // The kind defaults are always in the registry; the fallback is
     // here for type safety only.
     RAIL_ICONS[0]

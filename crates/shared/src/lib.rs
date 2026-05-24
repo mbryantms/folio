@@ -9,7 +9,9 @@ pub mod ids;
 pub mod pagination;
 
 pub mod prelude {
-    pub use crate::error::{ApiError, ApiErrorCode};
+    pub use crate::error::{ApiError, ApiErrorBody, ApiErrorCode};
     pub use crate::ids::{IssueId, LibraryId, SeriesId, UserId};
-    pub use crate::pagination::{CursorPage, OffsetPage};
+    pub use crate::pagination::{
+        CursorError, CursorPage, OffsetPage, decode_cursor, encode_cursor,
+    };
 }

@@ -347,7 +347,10 @@ fn unsatisfiable(total: u64) -> Response {
     (
         StatusCode::RANGE_NOT_SATISFIABLE,
         hdrs,
-        axum::Json(serde_json::json!({"error": {"code": "range_not_satisfiable", "message": "requested range invalid"}})),
+        axum::Json(shared::error::ApiError::new(
+            shared::error::ApiErrorCode::RangeNotSatisfiable,
+            "requested range invalid",
+        )),
     )
         .into_response()
 }

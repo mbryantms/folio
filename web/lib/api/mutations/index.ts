@@ -1932,8 +1932,8 @@ export function useTogglePinOnPage() {
                 ? {
                     ...v,
                     pinned_on_pages: pinned
-                      ? [...new Set([...v.pinned_on_pages, pageId])]
-                      : v.pinned_on_pages.filter((p) => p !== pageId),
+                      ? [...new Set([...(v.pinned_on_pages ?? []), pageId])]
+                      : (v.pinned_on_pages ?? []).filter((p) => p !== pageId),
                   }
                 : v,
             ),

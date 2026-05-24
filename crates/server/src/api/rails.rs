@@ -20,11 +20,10 @@
 //! to extend the query side.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{delete as axum_delete, get, post},
 };
 use chrono::Utc;
 use entity::{issue, rail_dismissal, series};
@@ -33,6 +32,8 @@ use sea_orm::{
     Statement, sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::{error, not_found};
@@ -41,20 +42,18 @@ use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
 const DISMISS_KIND_ISSUE: &str = "issue";
 const DISMISS_KIND_SERIES: &str = "series";
 const DISMISS_KIND_CBL: &str = "cbl";
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/me/continue-reading", get(continue_reading))
-        .route("/me/on-deck", get(on_deck))
-        .route("/me/rail-dismissals", post(create_dismissal))
-        .route(
-            "/me/rail-dismissals/{kind}/{target_id}",
-            axum_delete(delete_dismissal),
-        )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(continue_reading))
+        .routes(routes!(on_deck))
+        .routes(routes!(create_dismissal))
+        .routes(routes!(delete_dismissal))
 }
 
 // ───── Response shapes ─────
@@ -141,10 +140,11 @@ pub struct CreateDismissalReq {
 /// updated_at` against `rail_dismissals.dismissed_at`, so we let Postgres
 /// do that in one SQL pass rather than re-filtering rows in Rust.
 #[utoipa::path(
-    get,
+    operation_id = "rails_continue_reading",    get,
     path = "/me/continue-reading",
     responses((status = 200, body = ContinueReadingView))
 )]
+#[handler]
 pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Response {
     let acl = access::for_user(&app, &user).await;
 
@@ -253,10 +253,11 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
 /// in a CBL the user has any progress in). Series with an active in-
 /// progress issue are skipped — they already surface in Continue Reading.
 #[utoipa::path(
-    get,
+    operation_id = "rails_on_deck",    get,
     path = "/me/on-deck",
     responses((status = 200, body = OnDeckView))
 )]
+#[handler]
 pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response {
     let acl = access::for_user(&app, &user).await;
     let mut items = match compute_on_deck(&app, user.id, &acl).await {
@@ -306,10 +307,14 @@ pub(crate) async fn compute_on_deck(
     // reset series would keep surfacing the first issue as on-deck.
     // Dismissals are honored with auto-restore (the dismissal expires
     // once new progress lands past `dismissed_at`).
+    // `series_slug` joins through the same `JOIN series s` already in
+    // the CTE — pulling it inline lets the per-row loop skip a second
+    // `series::Entity::find_by_id` round-trip (audit-remediation M5.1).
     #[derive(Debug, FromQueryResult)]
     struct SeriesRow {
         series_id: Uuid,
         series_name: String,
+        series_slug: String,
         last_activity: chrono::DateTime<chrono::FixedOffset>,
         library_id: Uuid,
     }
@@ -338,6 +343,7 @@ pub(crate) async fn compute_on_deck(
                       AND i.removed_at IS NULL
                 )
                 SELECT s.id AS series_id, s.name AS series_name,
+                       s.slug AS series_slug,
                        started.last_activity AS last_activity,
                        s.library_id AS library_id
                 FROM started
@@ -379,27 +385,19 @@ pub(crate) async fn compute_on_deck(
         // above guarantees we always have at least one finished
         // issue here, so the fallback only matters for the helper's
         // other call sites.
-        let next = match crate::api::next_up::pick_next_in_series_continue(
-            app,
-            user_id,
-            row.series_id,
-        )
-        .await
-        {
-            Ok(opt) => opt,
-            Err(resp) => return Err(resp),
-        };
+        let next =
+            match crate::api::next_up::pick_next_in_series_continue(app, user_id, row.series_id)
+                .await
+            {
+                Ok(opt) => opt,
+                Err(resp) => return Err(resp),
+            };
         let Some(issue_model) = next else { continue };
-        // Resolve the slug now (the join column wasn't in our CTE).
-        let series_row = match series::Entity::find_by_id(row.series_id).one(&app.db).await {
-            Ok(Some(s)) => s,
-            _ => continue,
-        };
         series_buf.push((
             row.last_activity,
             OnDeckCard::SeriesNext {
-                issue: IssueSummaryView::from_model(issue_model, &series_row.slug)
-                    .with_series_name(series_row.name.clone()),
+                issue: IssueSummaryView::from_model(issue_model, &row.series_slug)
+                    .with_series_name(row.series_name.clone()),
                 series_name: row.series_name.clone(),
                 last_activity: row.last_activity.to_rfc3339(),
             },
@@ -506,6 +504,28 @@ pub(crate) async fn compute_on_deck(
             }
         };
 
+    // Series-wide ownership per CBL — pre-fetched in one round-trip
+    // across every candidate (audit-remediation M5.2). Over-fetching
+    // for CBLs that turn out to have no next is cheap compared to the
+    // per-iteration query the old `series_ids_in_cbl(one)` helper
+    // produced. See comment on `cbl_owned_series_ids` above for why we
+    // shadow every series in the CBL, not just the currently-pointed
+    // issue.
+    let cbl_series_ownership: std::collections::HashMap<Uuid, Vec<Uuid>> = {
+        let ids: Vec<Uuid> = cbl_candidates.iter().map(|c| c.cbl_list_id).collect();
+        match series_ids_in_cbls(app, &ids).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(error = %e, "rails: on-deck cbl series-ownership lookup failed");
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal",
+                ));
+            }
+        }
+    };
+
     for cand in &cbl_candidates {
         let next =
             match crate::api::next_up::pick_next_in_cbl(app, user_id, cand.cbl_list_id, acl, None)
@@ -517,15 +537,8 @@ pub(crate) async fn compute_on_deck(
         let Some((issue_model, series_slug, series_name, position)) = next else {
             continue;
         };
-        // Series-wide ownership: every series with any entry in this
-        // CBL gets shadowed from the SeriesNext list, not just the
-        // exact issue the CBL is pointing at right now (see comment
-        // on `cbl_owned_series_ids` above). Cheap lookup against
-        // `cbl_entries.matched_series_id` per surviving CBL.
-        if let Ok(series_ids) =
-            series_ids_in_cbl(app, cand.cbl_list_id).await
-        {
-            cbl_owned_series_ids.extend(series_ids);
+        if let Some(series_ids) = cbl_series_ownership.get(&cand.cbl_list_id) {
+            cbl_owned_series_ids.extend(series_ids.iter().copied());
         }
         let cbl_saved_view_id = cbl_saved_view_by_list_id
             .get(&cand.cbl_list_id)
@@ -602,33 +615,50 @@ pub(crate) async fn top_on_deck_card(
 /// directly so the dedup works regardless of whether the matcher
 /// populated the denormalised column (which has historically been
 /// sometimes-set, sometimes-NULL depending on the match path).
-async fn series_ids_in_cbl(
+/// Batched companion that pulls series-ids for *every* CBL in
+/// `list_ids` in a single SQL round-trip. Returns
+/// `HashMap<cbl_list_id, Vec<series_id>>`; CBLs with no matched
+/// entries are absent from the map (callers should treat that as
+/// "no owned series"). Avoids the per-iteration N+1 the old
+/// `series_ids_in_cbl(one_id)` helper produced when called inside
+/// `compute_on_deck`'s CBL loop (audit-remediation M5.2).
+async fn series_ids_in_cbls(
     app: &AppState,
-    cbl_list_id: Uuid,
-) -> Result<Vec<Uuid>, sea_orm::DbErr> {
+    list_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, Vec<Uuid>>, sea_orm::DbErr> {
+    if list_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
     #[derive(FromQueryResult)]
     struct Row {
+        cbl_list_id: Uuid,
         series_id: Uuid,
     }
     let rows = Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT DISTINCT i.series_id AS series_id \
+        "SELECT DISTINCT e.cbl_list_id AS cbl_list_id, i.series_id AS series_id \
          FROM cbl_entries e \
          JOIN issues i ON i.id = e.matched_issue_id \
-         WHERE e.cbl_list_id = $1",
-        [cbl_list_id.into()],
+         WHERE e.cbl_list_id = ANY($1)",
+        [list_ids.to_vec().into()],
     ))
     .all(&app.db)
     .await?;
-    Ok(rows.into_iter().map(|r| r.series_id).collect())
+    let mut map: std::collections::HashMap<Uuid, Vec<Uuid>> =
+        std::collections::HashMap::with_capacity(list_ids.len());
+    for r in rows {
+        map.entry(r.cbl_list_id).or_default().push(r.series_id);
+    }
+    Ok(map)
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "rails_create_dismissal",    post,
     path = "/me/rail-dismissals",
     request_body = CreateDismissalReq,
     responses((status = 204))
 )]
+#[handler]
 pub async fn create_dismissal(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -638,7 +668,7 @@ pub async fn create_dismissal(
     let kind = req.target_kind.trim();
     if !is_valid_kind(kind) {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "target_kind must be one of: issue, series, cbl",
         );
@@ -646,7 +676,7 @@ pub async fn create_dismissal(
     let target_id = req.target_id.trim();
     if target_id.is_empty() {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "target_id is required",
         );
@@ -709,7 +739,7 @@ pub async fn create_dismissal(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "rails_delete_dismissal",    delete,
     path = "/me/rail-dismissals/{kind}/{target_id}",
     params(
         ("kind"      = String, Path,),
@@ -717,6 +747,7 @@ pub async fn create_dismissal(
     ),
     responses((status = 204))
 )]
+#[handler]
 pub async fn delete_dismissal(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -725,7 +756,7 @@ pub async fn delete_dismissal(
 ) -> Response {
     if !is_valid_kind(&kind) {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "kind must be one of: issue, series, cbl",
         );
@@ -797,7 +828,7 @@ async fn ensure_target_visible(
         DISMISS_KIND_SERIES => {
             let id = Uuid::parse_str(target_id).map_err(|_| {
                 error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "series target_id must be UUID",
                 )
@@ -815,7 +846,7 @@ async fn ensure_target_visible(
         DISMISS_KIND_CBL => {
             let id = Uuid::parse_str(target_id).map_err(|_| {
                 error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "cbl target_id must be UUID",
                 )
@@ -835,6 +866,6 @@ async fn ensure_target_visible(
             }
             Ok(())
         }
-        _ => Err(error(StatusCode::BAD_REQUEST, "validation", "invalid kind")),
+        _ => Err(error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "invalid kind")),
     }
 }

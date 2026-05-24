@@ -16,11 +16,10 @@
 use std::collections::{HashMap, HashSet};
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
 };
 use base64::Engine;
 use chrono::{DateTime, FixedOffset};
@@ -29,14 +28,17 @@ use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/admin/activity", get(list))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list))
 }
 
 const DEFAULT_LIMIT: u64 = 50;
@@ -80,7 +82,7 @@ pub struct ActivityEntryView {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_activity_list",    get,
     path = "/admin/activity",
     params(ActivityQuery),
     responses(
@@ -89,6 +91,7 @@ pub struct ActivityEntryView {
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     _admin: RequireAdmin,

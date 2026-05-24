@@ -11,15 +11,18 @@
 //! never leaks.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxPath, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
 };
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value,
+};
 use serde::Serialize;
 use std::collections::HashMap;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
@@ -28,9 +31,10 @@ use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
 use entity::{person, series};
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/creators/{slug}", get(get_one))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(get_one))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -81,7 +85,7 @@ struct CreditRow {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "creators_get_one",    get,
     path = "/creators/{slug}",
     params(("slug" = String, Path,)),
     responses(
@@ -89,6 +93,7 @@ struct CreditRow {
         (status = 404,),
     )
 )]
+#[handler]
 pub async fn get_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -163,10 +168,7 @@ pub async fn get_one(
 
     let backend = app.db.get_database_backend();
     let stmt = Statement::from_sql_and_values(backend, sql, params);
-    let credit_rows: Vec<CreditRow> = match CreditRow::find_by_statement(stmt)
-        .all(&app.db)
-        .await
-    {
+    let credit_rows: Vec<CreditRow> = match CreditRow::find_by_statement(stmt).all(&app.db).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "creators: credits fetch failed");
@@ -196,19 +198,13 @@ pub async fn get_one(
             Ok(rows) => rows,
             Err(e) => {
                 tracing::error!(error = %e, "creators: series hydrate failed");
-                return error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    "internal",
-                );
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         }
     };
     let hydrated = hydrate_series(&app, series_rows).await;
-    let series_by_id: HashMap<String, SeriesView> = hydrated
-        .into_iter()
-        .map(|s| (s.id.clone(), s))
-        .collect();
+    let series_by_id: HashMap<String, SeriesView> =
+        hydrated.into_iter().map(|s| (s.id.clone(), s)).collect();
 
     // Build per-role rails in canonical order.
     let mut role_keys: Vec<String> = by_role.keys().cloned().collect();

@@ -107,7 +107,11 @@ export function LogsClient() {
 }
 
 function LogRow({ entry }: { entry: LogEntryView }) {
-  const fieldEntries = Object.entries(entry.fields);
+  // entry.fields is typed `unknown` in codegen (Rust source is
+  // `serde_json::Value`); at runtime it's always a flat string-keyed object.
+  const fieldEntries = Object.entries(
+    (entry.fields as Record<string, unknown> | null | undefined) ?? {},
+  );
   return (
     <li className="grid grid-cols-[5rem_8rem_1fr] items-baseline gap-3 px-3 py-2 text-xs">
       <span className="text-muted-foreground font-mono">
@@ -165,6 +169,7 @@ function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
 
-function truncate(s: string, n: number): string {
+function truncate(input: unknown, n: number): string {
+  const s = typeof input === "string" ? input : String(input);
   return s.length <= n ? s : `${s.slice(0, n - 1)}…`;
 }

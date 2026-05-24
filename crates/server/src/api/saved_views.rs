@@ -16,11 +16,10 @@
 //! materializes the underlying entries.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, patch, post},
 };
 use chrono::Utc;
 use entity::{cbl_list, saved_view, user as user_entity, user_view_pin};
@@ -30,6 +29,8 @@ use sea_orm::{
     sea_query::PostgresQueryBuilder,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::api::series::SeriesListView;
@@ -43,6 +44,7 @@ use crate::views::{
 };
 
 use super::error;
+use server_macros::handler;
 
 pub const KIND_FILTER_SERIES: &str = "filter_series";
 pub const KIND_SYSTEM: &str = "system";
@@ -78,27 +80,21 @@ const MIN_RESULT_LIMIT: u64 = 1;
 /// (the pin handler still resolves a sane cap rather than 5xx-ing).
 const DEFAULT_MAX_RAILS_PER_PAGE: i64 = 12;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        // user-scoped
-        .route("/me/saved-views", get(list).post(create))
-        .route(
-            "/me/saved-views/{id}",
-            patch(update).delete(delete_one),
-        )
-        .route("/me/saved-views/{id}/pin", post(pin))
-        .route("/me/saved-views/{id}/unpin", post(unpin))
-        .route("/me/saved-views/{id}/sidebar", post(set_sidebar))
-        .route("/me/saved-views/{id}/icon", post(set_icon))
-        .route("/me/saved-views/reorder", post(reorder))
-        .route("/me/saved-views/{id}/results", get(results))
-        .route("/me/saved-views/preview", post(preview))
-        // admin
-        .route("/admin/saved-views", post(admin_create))
-        .route(
-            "/admin/saved-views/{id}",
-            patch(admin_update).delete(admin_delete),
-        )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(create))
+        .routes(routes!(update))
+        .routes(routes!(delete_one))
+        .routes(routes!(pin))
+        .routes(routes!(unpin))
+        .routes(routes!(set_sidebar))
+        .routes(routes!(set_icon))
+        .routes(routes!(reorder))
+        .routes(routes!(results))
+        .routes(routes!(preview))
+        .routes(routes!(admin_create))
+        .routes(routes!(admin_update, admin_delete))
 }
 
 // ───── wire types ─────
@@ -297,10 +293,14 @@ pub struct ResultsQuery {
 
 // ───── shared helpers ─────
 
+/// Cross-field validation for saved-view bodies: rules depend on the
+/// `kind` discriminator, which is awkward to express in garde
+/// attributes. Kept as a free function; all responses are 422
+/// (semantic-validation) per audit-remediation M9.3.
 fn validate_create(req: &CreateSavedViewReq) -> Result<(), (StatusCode, &'static str, String)> {
     if req.name.trim().is_empty() {
         return Err((
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "name required".into(),
         ));
@@ -324,7 +324,7 @@ fn validate_create(req: &CreateSavedViewReq) -> Result<(), (StatusCode, &'static
             let limit = req.result_limit.unwrap_or(12);
             if !(MIN_RESULT_LIMIT..=MAX_RESULT_LIMIT).contains(&(limit as u64)) {
                 return Err((
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     format!("result_limit must be {MIN_RESULT_LIMIT}..={MAX_RESULT_LIMIT}"),
                 ));
@@ -348,7 +348,7 @@ fn validate_create(req: &CreateSavedViewReq) -> Result<(), (StatusCode, &'static
         }
         _ => {
             return Err((
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "kind must be filter_series or cbl".into(),
             ));
@@ -516,11 +516,12 @@ fn to_view(
 // ───── handlers ─────
 
 #[utoipa::path(
-    get,
+    operation_id = "saved_views_list",    get,
     path = "/me/saved-views",
     params(("pinned" = Option<bool>, Query,)),
     responses((status = 200, body = SavedViewListView))
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -667,11 +668,12 @@ pub async fn list(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "saved_views_create",    post,
     path = "/me/saved-views",
     request_body = CreateSavedViewReq,
     responses((status = 201, body = SavedViewView))
 )]
+#[handler]
 pub async fn create(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -681,11 +683,12 @@ pub async fn create(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "saved_views_admin_create",    post,
     path = "/admin/saved-views",
     request_body = CreateSavedViewReq,
     responses((status = 201, body = SavedViewView))
 )]
+#[handler]
 pub async fn admin_create(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -889,12 +892,13 @@ async fn cbl_year_range(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "saved_views_update",    patch,
     path = "/me/saved-views/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateSavedViewReq,
     responses((status = 200, body = SavedViewView))
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -917,12 +921,13 @@ pub async fn update(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "saved_views_admin_update",    patch,
     path = "/admin/saved-views/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateSavedViewReq,
     responses((status = 200, body = SavedViewView))
 )]
+#[handler]
 pub async fn admin_update(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -999,7 +1004,11 @@ async fn apply_update(
     if let Some(name) = req.name.as_ref() {
         let trimmed = name.trim();
         if trimmed.is_empty() {
-            return error(StatusCode::BAD_REQUEST, "validation", "name required");
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                "name required",
+            );
         }
         am.name = Set(trimmed.to_owned());
     }
@@ -1034,7 +1043,7 @@ async fn apply_update(
         if let Some(lim) = req.result_limit {
             if !(MIN_RESULT_LIMIT..=MAX_RESULT_LIMIT).contains(&(lim as u64)) {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "result_limit out of range",
                 );
@@ -1086,11 +1095,12 @@ async fn apply_update(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "saved_views_delete_one",    delete,
     path = "/me/saved-views/{id}",
     params(("id" = String, Path,)),
     responses((status = 204))
 )]
+#[handler]
 pub async fn delete_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1112,9 +1122,7 @@ pub async fn delete_one(
     // delete through the saved-views catalog can't bypass it. Matches
     // that endpoint's response shape (409 + want_to_read_undeletable)
     // so the client toast strings are shared.
-    if row.kind == KIND_COLLECTION
-        && row.system_key.as_deref() == Some(SYSTEM_KEY_WANT_TO_READ)
-    {
+    if row.kind == KIND_COLLECTION && row.system_key.as_deref() == Some(SYSTEM_KEY_WANT_TO_READ) {
         return error(
             StatusCode::CONFLICT,
             "want_to_read_undeletable",
@@ -1160,11 +1168,12 @@ pub async fn delete_one(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "saved_views_admin_delete",    delete,
     path = "/admin/saved-views/{id}",
     params(("id" = String, Path,)),
     responses((status = 204))
 )]
+#[handler]
 pub async fn admin_delete(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -1255,12 +1264,13 @@ pub async fn admin_delete(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "saved_views_pin",    post,
     path = "/me/saved-views/{id}/pin",
     params(("id" = String, Path,)),
     request_body = PinReq,
     responses((status = 200, body = Vec<PinView>))
 )]
+#[handler]
 pub async fn pin(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1280,7 +1290,7 @@ pub async fn pin(
             Ok(r) => r,
             Err(e) => {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     &format!("invalid body: {e}"),
                 );
@@ -1341,9 +1351,7 @@ pub async fn pin(
     // identical lookups. Falls back to the default if the lookup
     // fails — better to allow the pin under the lenient default
     // than to 5xx the user out of their own preferences.
-    let max_rails_per_page: i64 = match user_entity::Entity::find_by_id(user.id)
-        .one(&app.db)
-        .await
+    let max_rails_per_page: i64 = match user_entity::Entity::find_by_id(user.id).one(&app.db).await
     {
         Ok(Some(u)) => u.max_rails_per_page as i64,
         _ => DEFAULT_MAX_RAILS_PER_PAGE,
@@ -1424,12 +1432,13 @@ pub async fn pin(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "saved_views_unpin",    post,
     path = "/me/saved-views/{id}/unpin",
     params(("id" = String, Path,)),
     request_body = UnpinReq,
     responses((status = 200, body = PinView))
 )]
+#[handler]
 pub async fn unpin(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1443,7 +1452,7 @@ pub async fn unpin(
             Ok(r) => r,
             Err(e) => {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     &format!("invalid body: {e}"),
                 );
@@ -1497,7 +1506,7 @@ pub async fn unpin(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "saved_views_set_sidebar",    post,
     path = "/me/saved-views/{id}/sidebar",
     params(
         ("id" = String, Path,),
@@ -1505,6 +1514,7 @@ pub async fn unpin(
     ),
     responses((status = 204))
 )]
+#[handler]
 pub async fn set_sidebar(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1578,12 +1588,13 @@ pub struct SetIconReq {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "saved_views_set_icon",    post,
     path = "/me/saved-views/{id}/icon",
     params(("id" = String, Path,)),
     request_body = SetIconReq,
     responses((status = 204))
 )]
+#[handler]
 pub async fn set_icon(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1616,7 +1627,7 @@ pub async fn set_icon(
         && s.len() > 64
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "icon key must be 64 chars or fewer",
         );
@@ -1682,11 +1693,12 @@ async fn compact_pin_positions(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "saved_views_reorder",    post,
     path = "/me/saved-views/reorder",
     request_body = ReorderReq,
     responses((status = 204))
 )]
+#[handler]
 pub async fn reorder(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1731,7 +1743,7 @@ pub async fn reorder(
         if pin.is_none() {
             let _ = txn.rollback().await;
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "all view_ids must be pinned",
             );
@@ -1775,11 +1787,12 @@ pub async fn reorder(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "saved_views_preview",    post,
     path = "/me/saved-views/preview",
     request_body = PreviewReq,
     responses((status = 200, body = SeriesListView))
 )]
+#[handler]
 pub async fn preview(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1800,7 +1813,7 @@ pub async fn preview(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "saved_views_results",    get,
     path = "/me/saved-views/{id}/results",
     params(
         ("id" = String, Path,),
@@ -1809,6 +1822,7 @@ pub async fn preview(
     ),
     responses((status = 200, body = SeriesListView))
 )]
+#[handler]
 pub async fn results(
     State(app): State<AppState>,
     user: CurrentUser,

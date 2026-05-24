@@ -13,7 +13,7 @@ export function UsersTab() {
   if (q.error || !q.data) {
     return <p className="text-destructive text-sm">Failed to load users.</p>;
   }
-  if (q.data.users.length === 0) {
+  if (q.data.items.length === 0) {
     return <p className="text-muted-foreground text-sm">No users yet.</p>;
   }
   return (
@@ -31,7 +31,7 @@ export function UsersTab() {
           </tr>
         </thead>
         <tbody className="divide-border divide-y">
-          {q.data.users.map((u) => (
+          {q.data.items.map((u) => (
             <tr key={u.user_id} className="hover:bg-muted/30">
               <td className="px-3 py-2">
                 <Link

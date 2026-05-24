@@ -44,6 +44,9 @@ serde_json = { workspace = true }
 # Used by the FormOrJson extractor (progressive-enhancement auth forms).
 serde_urlencoded = "0.7"
 
+# Request-body validation (audit-remediation M9).
+garde = { workspace = true }
+
 # IDs / hashing / crypto
 uuid = { workspace = true }
 blake3 = { workspace = true }
@@ -141,6 +144,7 @@ libc = "0.2"
 entity = { path = "../entity" }
 migration = { path = "../migration" }
 shared = { path = "../shared" }
+server-macros = { path = "../server-macros" }
 
 [dev-dependencies]
 testcontainers = { workspace = true }

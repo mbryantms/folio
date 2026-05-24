@@ -12,7 +12,7 @@
 
 use crate::state::AppState;
 use entity::library;
-use sea_orm::EntityTrait;
+use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QuerySelect};
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
@@ -76,12 +76,26 @@ pub async fn validate_library(
     // Overlap check: no other library may share or contain this root. Equality
     // and ancestor relationships both count. The other-library canonicalize
     // calls are also blocking — batch them in a single spawn_blocking.
-    if let Ok(others) = library::Entity::find().all(&state.db).await {
-        let other_roots: Vec<(uuid::Uuid, String)> = others
-            .into_iter()
-            .filter(|l| l.id != lib.id)
-            .map(|l| (l.id, l.root_path))
-            .collect();
+    //
+    // Push the `id != lib.id` filter to SQL and project just the two columns
+    // the canonicalize loop reads (audit-remediation M5.3) — the old
+    // `library::Entity::find().all()` hydrated full rows then filtered in Rust.
+    #[derive(FromQueryResult)]
+    struct OtherRoot {
+        id: uuid::Uuid,
+        root_path: String,
+    }
+    if let Ok(other_roots) = library::Entity::find()
+        .filter(library::Column::Id.ne(lib.id))
+        .select_only()
+        .column(library::Column::Id)
+        .column(library::Column::RootPath)
+        .into_model::<OtherRoot>()
+        .all(&state.db)
+        .await
+    {
+        let other_roots: Vec<(uuid::Uuid, String)> =
+            other_roots.into_iter().map(|r| (r.id, r.root_path)).collect();
         if !other_roots.is_empty() {
             let root_canon_for_block = root_canon.clone();
             let conflict = tokio::task::spawn_blocking(move || {

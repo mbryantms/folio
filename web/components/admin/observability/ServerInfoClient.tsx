@@ -197,7 +197,7 @@ function BuildCard({ data }: { data: ServerInfoView }) {
             mono
             href={shaHref}
           />
-          {data.build_epoch !== null && (
+          {data.build_epoch != null && (
             <Row
               label="Built"
               value={formatRelativeFromEpoch(data.build_epoch)}
@@ -283,7 +283,7 @@ export function parseSemverPrefix(version: string): number[] | null {
  * Exported for unit tests.
  */
 export function releaseUrl(
-  repoUrl: string | null,
+  repoUrl: string | null | undefined,
   version: string,
 ): string | undefined {
   if (!repoUrl) return undefined;
@@ -293,7 +293,7 @@ export function releaseUrl(
 
 /** GitHub-compatible commit URL. Exported for unit tests. */
 export function commitUrl(
-  repoUrl: string | null,
+  repoUrl: string | null | undefined,
   shaFull: string,
 ): string | undefined {
   if (!repoUrl) return undefined;
@@ -305,7 +305,7 @@ export function commitUrl(
 
 /** `"github.com/mbryantms/folio"` from `"https://github.com/mbryantms/folio"`.
  *  Exported for unit tests. */
-export function repoDisplay(repoUrl: string | null): string | null {
+export function repoDisplay(repoUrl: string | null | undefined): string | null {
   if (!repoUrl) return null;
   // Strip protocol for a compact "github.com/owner/repo" label.
   return repoUrl.replace(/^https?:\/\//, "");

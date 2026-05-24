@@ -5,11 +5,10 @@
 //! Plus [`prune`] — the trim-to-last-50 helper used by the daily cron.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
 };
 use entity::{scan_run, series};
 use sea_orm::{
@@ -18,6 +17,8 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
@@ -26,11 +27,12 @@ use crate::auth::RequireAdmin;
 use crate::library::events::ScanEvent;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/libraries/{slug}/scan-runs", get(list))
-        .route("/libraries/{slug}/scan-runs/{scan_id}/cancel", post(cancel))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(cancel))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -95,7 +97,7 @@ pub struct ListQuery {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "scan_runs_list",    get,
     path = "/libraries/{slug}/scan-runs",
     params(
         ("slug" = String, Path,),
@@ -109,6 +111,7 @@ pub struct ListQuery {
         (status = 404, description = "library not found"),
     )
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -127,7 +130,7 @@ pub async fn list(
         Some(k @ ("library" | "series" | "issue")) => Some(k.to_owned()),
         Some(_) => {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation.kind",
                 "kind must be one of: library, series, issue, all",
             );
@@ -258,7 +261,7 @@ pub struct ScanCancelResp {
 /// reaches `finalize_run`, it will overwrite this row with its own
 /// terminal state — that's fine and expected.
 #[utoipa::path(
-    post,
+    operation_id = "scan_runs_cancel",    post,
     path = "/libraries/{slug}/scan-runs/{scan_id}/cancel",
     params(
         ("slug" = String, Path,),
@@ -271,6 +274,7 @@ pub struct ScanCancelResp {
         (status = 409, description = "scan run already terminal"),
     )
 )]
+#[handler]
 pub async fn cancel(
     State(app): State<AppState>,
     admin: RequireAdmin,
@@ -285,7 +289,7 @@ pub async fn cancel(
         Ok(u) => u,
         Err(_) => {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "scan_id must be a UUID",
             );

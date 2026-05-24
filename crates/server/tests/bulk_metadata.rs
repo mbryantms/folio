@@ -382,7 +382,7 @@ async fn bulk_metadata_empty_patch_is_rejected() {
         serde_json::json!({ "issue_ids": ids, "patch": {} }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation.empty_patch");
 }
 
@@ -402,7 +402,7 @@ async fn bulk_metadata_unknown_manga_is_rejected() {
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation.manga");
 }
 
@@ -427,7 +427,7 @@ async fn bulk_metadata_ignores_credit_fields() {
     .await;
     // Unknown patch keys are silently dropped by serde; the empty
     // check then fires.
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation.empty_patch");
 }
 

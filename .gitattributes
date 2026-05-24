@@ -1,0 +1,7 @@
+# Generated files — annotate diffs and PR review tooling.
+# CI drift gate (`just openapi-check`) is the source of truth that these
+# files are regenerated whenever the Rust API surface changes. Reviewers
+# shouldn't need to scrutinize line-by-line diffs of these files; the
+# spec-completeness test + integration tests are what catch real bugs.
+web/lib/api/openapi.json linguist-generated=true
+web/lib/api/types.generated.ts linguist-generated=true

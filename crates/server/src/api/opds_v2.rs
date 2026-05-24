@@ -1024,7 +1024,7 @@ async fn search(
         return json_response(body);
     }
     if needle.len() > 200 {
-        return error(StatusCode::BAD_REQUEST, "validation", "validation");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "validation");
     }
     let allowed = match opds::allowed_libraries(&app, &user).await {
         Ok(v) => v,

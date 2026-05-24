@@ -1,68 +1,29 @@
 "use client";
 
 import * as React from "react";
-import { BookmarkPlus, ChevronDown, Filter, X } from "lucide-react";
 import { toast } from "sonner";
 
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import { ActiveChips } from "@/components/library/ActiveChips";
+import { FilterSheet } from "@/components/library/FilterSheet";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
-import {
-  CREDIT_ROLES,
-  EMPTY_CREDITS,
-  RATING_MAX,
-  RATING_MIN,
-  RATING_STEP,
-} from "@/components/library/library-grid-filters";
-import { libraryGridStateToFilterBuilderState } from "@/components/library/libraryGridStateToFilterState";
+import { LibraryGridToolbar } from "@/components/library/LibraryGridToolbar";
 import type { FilterBuilderState } from "@/components/filters/filter-builder";
-import { NewFilterViewDialog } from "@/components/saved-views/AddViewButton";
 import type {
-  CreditKey,
-  CreditState,
   LibraryGridInitialFilters,
   LibraryGridMode,
 } from "@/components/library/library-grid-filters";
+import { libraryGridStateToFilterBuilderState } from "@/components/library/libraryGridStateToFilterState";
+import { NewFilterViewDialog } from "@/components/saved-views/AddViewButton";
 import {
   SeriesCard,
   SeriesCardSkeleton,
 } from "@/components/library/SeriesCard";
 import { useCardSize } from "@/components/library/use-card-size";
-import { MultiSelectEditor } from "@/components/filters/value-editors/MultiSelectEditor";
-import type { OptionsEndpoint } from "@/components/filters/field-registry";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { PopoverPortalContainer } from "@/components/ui/popover";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Slider } from "@/components/ui/slider";
 import {
   useIssuesCrossListInfinite,
   useSeriesListInfinite,
 } from "@/lib/api/queries";
-import type {
-  IssuesCrossListFilters,
-  SeriesListFilters,
-} from "@/lib/api/queries";
-import type { IssueSort, SeriesSort, SortOrder } from "@/lib/api/types";
+import { useLibraryGridFilters } from "@/lib/library/use-grid-filters";
 import { cn } from "@/lib/utils";
 
 const CARD_SIZE_MIN = 120;
@@ -70,34 +31,6 @@ const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 160;
 const CARD_SIZE_STORAGE_KEY = "folio.libraryGrid.cardSize";
-
-/** Sort options surfaced in the dropdown for each mode. The `Recently
- *  …` labels match the verb users already see across the app; the
- *  release-date / rating / time-to-read additions sit at the bottom
- *  so the existing-default ordering keeps muscle memory. */
-const SERIES_SORT_LABELS: Record<SeriesSort, string> = {
-  name: "Name",
-  created_at: "Recently added",
-  updated_at: "Recently updated",
-  year: "Release date",
-};
-
-const ISSUE_SORT_LABELS: Record<IssueSort, string> = {
-  number: "Issue number",
-  created_at: "Recently added",
-  updated_at: "Recently updated",
-  year: "Release date",
-  page_count: "Time to read",
-  user_rating: "My rating",
-};
-
-const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: "any", label: "Any status" },
-  { value: "continuing", label: "Continuing" },
-  { value: "ended", label: "Ended" },
-  { value: "cancelled", label: "Cancelled" },
-  { value: "hiatus", label: "Hiatus" },
-];
 
 /** Library grid: paginated series listing with metadata-driven
  *  filters in a right-side Sheet drawer. Default sort is alphabetical
@@ -110,6 +43,11 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
  *  scopes to that single library — and forwards `library` to the
  *  metadata-suite endpoints so facet menus only show values that
  *  exist *inside that library*.
+ *
+ *  Refactored in audit-remediation M7.3 (1206 → ~380 LOC): filter
+ *  state lives in `useLibraryGridFilters`; the toolbar, FilterSheet,
+ *  and ActiveChips are their own files. This component composes
+ *  them with the grid + total/empty/loading states.
  */
 export function LibraryGridView({
   libraryId,
@@ -125,49 +63,53 @@ export function LibraryGridView({
   libraryCount?: number;
   initialFilters?: LibraryGridInitialFilters;
 }) {
-  const init = initialFilters ?? {};
-  const [mode, setMode] = React.useState<LibraryGridMode>(
-    init.mode ?? "series",
-  );
-  const [q, setQ] = React.useState("");
-  const [debouncedQ, setDebouncedQ] = React.useState("");
-  // Sort state is mode-scoped: switching modes should not carry an
-  // invalid sort across (e.g. `user_rating` is issue-only). We store
-  // both as one union and validate before passing to the query.
-  const [seriesSort, setSeriesSort] = React.useState<SeriesSort>("name");
-  const [issueSort, setIssueSort] = React.useState<IssueSort>("number");
-  const [order, setOrder] = React.useState<SortOrder>("asc");
-  const [status, setStatus] = React.useState<string>(init.status ?? "any");
-  const [yearFrom, setYearFrom] = React.useState<string>(init.yearFrom ?? "");
-  const [yearTo, setYearTo] = React.useState<string>(init.yearTo ?? "");
-  const [publishers, setPublishers] = React.useState<string[]>(
-    init.publishers ?? [],
-  );
-  const [languages, setLanguages] = React.useState<string[]>(
-    init.languages ?? [],
-  );
-  const [ageRatings, setAgeRatings] = React.useState<string[]>(
-    init.ageRatings ?? [],
-  );
-  const [genres, setGenres] = React.useState<string[]>(init.genres ?? []);
-  const [tags, setTags] = React.useState<string[]>(init.tags ?? []);
-  const [credits, setCredits] = React.useState<CreditState>(() => ({
-    ...EMPTY_CREDITS,
-    ...(init.credits ?? {}),
-  }));
-  const [anyCredits, setAnyCredits] = React.useState<string[]>(
-    init.anyCredits ?? [],
-  );
-  const [characters, setCharacters] = React.useState<string[]>(
-    init.characters ?? [],
-  );
-  const [teams, setTeams] = React.useState<string[]>(init.teams ?? []);
-  const [locations, setLocations] = React.useState<string[]>(
-    init.locations ?? [],
-  );
-  const [ratingRange, setRatingRange] = React.useState<[number, number] | null>(
-    init.ratingRange ?? null,
-  );
+  const filters = useLibraryGridFilters(libraryId, initialFilters);
+  const {
+    mode,
+    setMode,
+    q,
+    setQ,
+    trimmedQ,
+    seriesSort,
+    setSeriesSort,
+    issueSort,
+    setIssueSort,
+    order,
+    setOrder,
+    status,
+    setStatus,
+    yearFrom,
+    setYearFrom,
+    yearTo,
+    setYearTo,
+    publishers,
+    setPublishers,
+    languages,
+    setLanguages,
+    ageRatings,
+    setAgeRatings,
+    genres,
+    setGenres,
+    tags,
+    setTags,
+    credits,
+    setCreditRole,
+    anyCredits,
+    setAnyCredits,
+    characters,
+    setCharacters,
+    teams,
+    setTeams,
+    locations,
+    setLocations,
+    ratingRange,
+    setRatingRange,
+    facetCount,
+    seriesFilters,
+    issueFilters,
+    clearFacets,
+  } = filters;
+
   const [filterOpen, setFilterOpen] = React.useState(false);
   // M2 of saved-views parity — "Save as view…" dialog state. Seeded
   // from the current facet snapshot at click time; cleared when the
@@ -183,54 +125,6 @@ export function LibraryGridView({
     max: CARD_SIZE_MAX,
     defaultSize: CARD_SIZE_DEFAULT,
   });
-
-  React.useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(q.trim()), 200);
-    return () => clearTimeout(t);
-  }, [q]);
-
-  const trimmedQ = debouncedQ;
-
-  // Filters shared by both modes — assembled once, then split per
-  // endpoint below. `status` is series-only (issues don't carry
-  // status) so it's left out of the issues filter shape.
-  const sharedFilters = {
-    library: libraryId ?? undefined,
-    q: trimmedQ || undefined,
-    order: trimmedQ ? undefined : order,
-    year_from: parseYear(yearFrom),
-    year_to: parseYear(yearTo),
-    publisher: csvOrUndef(publishers),
-    language: csvOrUndef(languages),
-    age_rating: csvOrUndef(ageRatings),
-    genres: csvOrUndef(genres),
-    tags: csvOrUndef(tags),
-    writers: csvOrUndef(credits.writers),
-    pencillers: csvOrUndef(credits.pencillers),
-    inkers: csvOrUndef(credits.inkers),
-    colorists: csvOrUndef(credits.colorists),
-    letterers: csvOrUndef(credits.letterers),
-    cover_artists: csvOrUndef(credits.cover_artists),
-    editors: csvOrUndef(credits.editors),
-    translators: csvOrUndef(credits.translators),
-    credits: csvOrUndef(anyCredits),
-    characters: csvOrUndef(characters),
-    teams: csvOrUndef(teams),
-    locations: csvOrUndef(locations),
-    user_rating_min: ratingRange?.[0],
-    user_rating_max: ratingRange?.[1],
-    limit: 60,
-  };
-
-  const seriesFilters: SeriesListFilters = {
-    ...sharedFilters,
-    sort: trimmedQ ? undefined : seriesSort,
-    status: status === "any" ? undefined : status,
-  };
-  const issueFilters: IssuesCrossListFilters = {
-    ...sharedFilters,
-    sort: trimmedQ ? undefined : issueSort,
-  };
 
   // Always call both hooks (rules of hooks), but the inactive one
   // sits idle via `enabled: false` so we never fire two fetches per
@@ -269,46 +163,6 @@ export function LibraryGridView({
     return () => obs.disconnect();
   }, [query]);
 
-  const creditCount = CREDIT_ROLES.reduce(
-    (sum, c) => sum + credits[c.key].length,
-    0,
-  );
-  const facetCount =
-    (status !== "any" ? 1 : 0) +
-    (yearFrom || yearTo ? 1 : 0) +
-    (ratingRange ? 1 : 0) +
-    publishers.length +
-    languages.length +
-    ageRatings.length +
-    genres.length +
-    tags.length +
-    creditCount +
-    anyCredits.length +
-    characters.length +
-    teams.length +
-    locations.length;
-
-  function clearFacets() {
-    setStatus("any");
-    setYearFrom("");
-    setYearTo("");
-    setRatingRange(null);
-    setPublishers([]);
-    setLanguages([]);
-    setAgeRatings([]);
-    setGenres([]);
-    setTags([]);
-    setCredits(EMPTY_CREDITS);
-    setAnyCredits([]);
-    setCharacters([]);
-    setTeams([]);
-    setLocations([]);
-  }
-
-  function setCreditRole(key: CreditKey, values: string[]) {
-    setCredits((prev) => ({ ...prev, [key]: values }));
-  }
-
   const gridStyle: React.CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   };
@@ -328,6 +182,36 @@ export function LibraryGridView({
   const itemNounPlural = mode === "series" ? "series" : "issues";
   const itemLabel = total === 1 ? itemNoun : itemNounPlural;
 
+  function handleSaveView() {
+    const today = new Date().toISOString().slice(0, 10);
+    const result = libraryGridStateToFilterBuilderState(
+      {
+        status,
+        yearFrom,
+        yearTo,
+        publishers,
+        languages,
+        ageRatings,
+        genres,
+        tags,
+        credits,
+        characters,
+        teams,
+        locations,
+        ratingRange,
+        trimmedQ,
+      },
+      today,
+    );
+    for (const facet of result.droppedFacets) {
+      toast.warning(
+        `${facet} filter can't be saved to a view yet — skipped`,
+      );
+    }
+    setSaveViewSeed(result.state);
+    setSaveViewOpen(true);
+  }
+
   return (
     <>
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
@@ -343,168 +227,30 @@ export function LibraryGridView({
         </div>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
-        {/* Mode toggle: two side-by-side buttons that match the rest
-            of the toolbar (same `size="sm"` + outline base; active mode
-            takes `variant="secondary"` for visual contrast). Earlier
-            iterations used a bordered wrapper around the pair, which
-            ran ~2px taller than the peer Sort / Order / Filters
-            buttons — this version sits flush. */}
-        <Button
-          type="button"
-          variant={mode === "series" ? "secondary" : "outline"}
-          size="sm"
-          aria-pressed={mode === "series"}
-          onClick={() => setMode("series")}
-          className="h-9"
-        >
-          Series
-        </Button>
-        <Button
-          type="button"
-          variant={mode === "issues" ? "secondary" : "outline"}
-          size="sm"
-          aria-pressed={mode === "issues"}
-          onClick={() => setMode("issues")}
-          className="h-9"
-        >
-          Issues
-        </Button>
-        <Input
-          type="search"
-          placeholder={mode === "series" ? "Search series…" : "Search issues…"}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="h-9 w-72"
-        />
-        {mode === "series" ? (
-          <Select
-            value={seriesSort}
-            onValueChange={(v) => setSeriesSort(v as SeriesSort)}
-          >
-            <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(SERIES_SORT_LABELS) as SeriesSort[]).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {SERIES_SORT_LABELS[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <Select
-            value={issueSort}
-            onValueChange={(v) => setIssueSort(v as IssueSort)}
-          >
-            <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(ISSUE_SORT_LABELS) as IssueSort[]).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {ISSUE_SORT_LABELS[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!!trimmedQ}
-          onClick={() => setOrder((o) => (o === "asc" ? "desc" : "asc"))}
-          title={`Order: ${order === "asc" ? "Ascending" : "Descending"}`}
-          className="h-9 w-9"
-        >
-          {order === "asc" ? "↑" : "↓"}
-        </Button>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setFilterOpen(true)}
-          className="h-9"
-        >
-          <Filter className="mr-1 h-3.5 w-3.5" />
-          Filters
-          {facetCount > 0 ? (
-            <Badge
-              variant="secondary"
-              className="ml-2 h-5 min-w-5 rounded-full px-1.5 text-xs"
-            >
-              {facetCount}
-            </Badge>
-          ) : null}
-        </Button>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={facetCount === 0}
-          className="h-9"
-          onClick={() => {
-            const today = new Date().toISOString().slice(0, 10);
-            const result = libraryGridStateToFilterBuilderState(
-              {
-                status,
-                yearFrom,
-                yearTo,
-                publishers,
-                languages,
-                ageRatings,
-                genres,
-                tags,
-                credits,
-                characters,
-                teams,
-                locations,
-                ratingRange,
-                trimmedQ,
-              },
-              today,
-            );
-            for (const facet of result.droppedFacets) {
-              toast.warning(
-                `${facet} filter can't be saved to a view yet — skipped`,
-              );
-            }
-            setSaveViewSeed(result.state);
-            setSaveViewOpen(true);
-          }}
-          title="Persist these filters as a new saved view"
-        >
-          <BookmarkPlus className="mr-1 h-3.5 w-3.5" />
-          Save as view…
-        </Button>
-
-        {facetCount > 0 ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={clearFacets}
-            className="text-muted-foreground h-9"
-          >
-            <X className="mr-1 h-3 w-3" /> Clear filters
-          </Button>
-        ) : null}
-
-        <div className="ml-auto">
-          <CardSizeOptions
-            cardSize={cardSize}
-            onCardSize={setCardSize}
-            min={CARD_SIZE_MIN}
-            max={CARD_SIZE_MAX}
-            step={CARD_SIZE_STEP}
-            defaultSize={CARD_SIZE_DEFAULT}
-          />
-        </div>
-      </div>
+      <LibraryGridToolbar
+        mode={mode}
+        onMode={setMode}
+        q={q}
+        onQ={setQ}
+        trimmedQ={trimmedQ}
+        seriesSort={seriesSort}
+        onSeriesSort={setSeriesSort}
+        issueSort={issueSort}
+        onIssueSort={setIssueSort}
+        order={order}
+        onOrder={setOrder}
+        facetCount={facetCount}
+        onOpenFilters={() => setFilterOpen(true)}
+        canSaveView={facetCount > 0}
+        onSaveView={handleSaveView}
+        onClearFacets={clearFacets}
+        cardSize={cardSize}
+        onCardSize={setCardSize}
+        cardSizeMin={CARD_SIZE_MIN}
+        cardSizeMax={CARD_SIZE_MAX}
+        cardSizeStep={CARD_SIZE_STEP}
+        cardSizeDefault={CARD_SIZE_DEFAULT}
+      />
 
       {facetCount > 0 ? (
         <ActiveChips
@@ -643,501 +389,6 @@ export function LibraryGridView({
   );
 }
 
-function FilterSheet({
-  open,
-  onOpenChange,
-  mode,
-  libraryId,
-  status,
-  onStatus,
-  yearFrom,
-  yearTo,
-  onYearFrom,
-  onYearTo,
-  ratingRange,
-  onRatingRange,
-  publishers,
-  onPublishers,
-  languages,
-  onLanguages,
-  ageRatings,
-  onAgeRatings,
-  genres,
-  onGenres,
-  tags,
-  onTags,
-  credits,
-  onCredit,
-  characters,
-  onCharacters,
-  teams,
-  onTeams,
-  locations,
-  onLocations,
-  activeCount,
-  onClear,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  mode: LibraryGridMode;
-  libraryId: string | null;
-  status: string;
-  onStatus: (v: string) => void;
-  yearFrom: string;
-  yearTo: string;
-  onYearFrom: (v: string) => void;
-  onYearTo: (v: string) => void;
-  ratingRange: [number, number] | null;
-  onRatingRange: (v: [number, number] | null) => void;
-  publishers: string[];
-  onPublishers: (v: string[]) => void;
-  languages: string[];
-  onLanguages: (v: string[]) => void;
-  ageRatings: string[];
-  onAgeRatings: (v: string[]) => void;
-  genres: string[];
-  onGenres: (v: string[]) => void;
-  tags: string[];
-  onTags: (v: string[]) => void;
-  credits: CreditState;
-  onCredit: (key: CreditKey, values: string[]) => void;
-  characters: string[];
-  onCharacters: (v: string[]) => void;
-  teams: string[];
-  onTeams: (v: string[]) => void;
-  locations: string[];
-  onLocations: (v: string[]) => void;
-  activeCount: number;
-  onClear: () => void;
-}) {
-  // Forward `library` to the options endpoints so per-library views
-  // only surface values that exist in that library.
-  const optsLibrary = libraryId ?? undefined;
-  const ratingDraft: [number, number] = ratingRange ?? [RATING_MIN, RATING_MAX];
-  // Re-anchor the descendant `MultiSelectEditor` popovers into the
-  // SheetContent subtree. Without this they portal to document.body
-  // and Radix's Sheet modal aria-hides them — items render but reject
-  // focus/clicks. `overflow-visible` so a wide picker can extend past
-  // the sheet edge when needed; the inner body div owns the scroll.
-  const [portalContainer, setPortalContainer] =
-    React.useState<HTMLElement | null>(null);
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        ref={setPortalContainer}
-        side="right"
-        className="flex w-full flex-col gap-0 overflow-visible p-0 sm:max-w-md"
-      >
-        <SheetHeader className="border-border/60 flex-row items-center justify-between border-b pb-4 pl-6 pt-[max(1rem,var(--safe-top))] pr-[max(3rem,calc(var(--safe-right)+2rem))]">
-          <div>
-            <SheetTitle>Filters</SheetTitle>
-            <SheetDescription>
-              {activeCount > 0
-                ? `${activeCount} active`
-                : "Narrow the library by metadata."}
-            </SheetDescription>
-          </div>
-          {activeCount > 0 ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={onClear}
-              className="h-8"
-            >
-              Clear all
-            </Button>
-          ) : null}
-        </SheetHeader>
-        <PopoverPortalContainer value={portalContainer}>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {/* Status is series-only (issues don't carry one) — hide
-                the section when the grid is in issues mode rather
-                than disabling, so the picker stays uncluttered. */}
-            {mode === "series" ? (
-              <Section title="Status" defaultOpen>
-                <Select value={status} onValueChange={onStatus}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {STATUS_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Section>
-            ) : null}
-            <Section title="Year">
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="From"
-                  value={yearFrom}
-                  onChange={(e) => onYearFrom(e.target.value)}
-                />
-                <span className="text-muted-foreground text-xs">—</span>
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="To"
-                  value={yearTo}
-                  onChange={(e) => onYearTo(e.target.value)}
-                />
-              </div>
-            </Section>
-            <Section title="My rating">
-              <div className="space-y-3">
-                <div className="text-muted-foreground flex justify-between text-xs tabular-nums">
-                  <span>{ratingDraft[0].toFixed(1)} ★</span>
-                  <span>{ratingDraft[1].toFixed(1)} ★</span>
-                </div>
-                <Slider
-                  min={RATING_MIN}
-                  max={RATING_MAX}
-                  step={RATING_STEP}
-                  value={ratingDraft}
-                  onValueChange={(v) => {
-                    if (
-                      v.length === 2 &&
-                      v[0] !== undefined &&
-                      v[1] !== undefined
-                    ) {
-                      onRatingRange([v[0], v[1]]);
-                    }
-                  }}
-                />
-                <p className="text-muted-foreground text-xs">
-                  Series you haven&apos;t rated are excluded when this filter is
-                  active.
-                </p>
-                {ratingRange ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onRatingRange(null)}
-                    className="h-7 px-2 text-xs"
-                  >
-                    Clear rating filter
-                  </Button>
-                ) : null}
-              </div>
-            </Section>
-            <FacetMultiSection
-              title="Publisher"
-              value={publishers}
-              onChange={onPublishers}
-              endpoint={{ kind: "publishers" }}
-              library={optsLibrary}
-            />
-            <FacetMultiSection
-              title="Language"
-              value={languages}
-              onChange={onLanguages}
-              endpoint={{ kind: "languages" }}
-              library={optsLibrary}
-            />
-            <FacetMultiSection
-              title="Age rating"
-              value={ageRatings}
-              onChange={onAgeRatings}
-              endpoint={{ kind: "age_ratings" }}
-              library={optsLibrary}
-            />
-            <FacetMultiSection
-              title="Genres"
-              value={genres}
-              onChange={onGenres}
-              endpoint={{ kind: "genres" }}
-              library={optsLibrary}
-            />
-            <FacetMultiSection
-              title="Tags"
-              value={tags}
-              onChange={onTags}
-              endpoint={{ kind: "tags" }}
-              library={optsLibrary}
-            />
-            <Section title="Credits">
-              <div className="space-y-3">
-                {CREDIT_ROLES.map((c) => (
-                  <div key={c.key} className="space-y-1">
-                    <Label className="text-xs font-medium">{c.label}</Label>
-                    <MultiSelectEditor
-                      value={credits[c.key]}
-                      onChange={(v) => onCredit(c.key, v)}
-                      endpoint={{ kind: "credits", role: c.role }}
-                      library={optsLibrary}
-                      placeholder={`Any ${c.label.toLowerCase()}`}
-                    />
-                  </div>
-                ))}
-              </div>
-            </Section>
-            <FacetMultiSection
-              title="Characters"
-              value={characters}
-              onChange={onCharacters}
-              endpoint={{ kind: "characters" }}
-              library={optsLibrary}
-            />
-            <FacetMultiSection
-              title="Teams"
-              value={teams}
-              onChange={onTeams}
-              endpoint={{ kind: "teams" }}
-              library={optsLibrary}
-            />
-            <FacetMultiSection
-              title="Locations"
-              value={locations}
-              onChange={onLocations}
-              endpoint={{ kind: "locations" }}
-              library={optsLibrary}
-            />
-          </div>
-        </PopoverPortalContainer>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-function FacetMultiSection({
-  title,
-  value,
-  onChange,
-  endpoint,
-  library,
-}: {
-  title: string;
-  value: string[];
-  onChange: (v: string[]) => void;
-  endpoint: OptionsEndpoint;
-  library?: string;
-}) {
-  return (
-    <Section title={title} badge={value.length > 0 ? value.length : undefined}>
-      <MultiSelectEditor
-        value={value}
-        onChange={onChange}
-        endpoint={endpoint}
-        library={library}
-        placeholder={`Any ${title.toLowerCase()}`}
-      />
-    </Section>
-  );
-}
-
-function Section({
-  title,
-  badge,
-  defaultOpen,
-  children,
-}: {
-  title: string;
-  badge?: number;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Collapsible
-      defaultOpen={defaultOpen}
-      className="group border-border/60 border-b last:border-b-0"
-    >
-      <CollapsibleTrigger className="hover:bg-accent/40 flex w-full cursor-pointer items-center justify-between px-6 py-3 text-xs font-semibold tracking-wider uppercase select-none">
-        <span className="flex items-center gap-2">
-          {title}
-          {badge && badge > 0 ? (
-            <Badge
-              variant="secondary"
-              className="h-5 min-w-5 rounded-full px-1.5 text-[10px]"
-            >
-              {badge}
-            </Badge>
-          ) : null}
-        </span>
-        <ChevronDown className="text-muted-foreground h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-2 px-6 pb-4">
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-function ActiveChips({
-  status,
-  yearFrom,
-  yearTo,
-  ratingRange,
-  publishers,
-  languages,
-  ageRatings,
-  genres,
-  tags,
-  credits,
-  anyCredits,
-  characters,
-  teams,
-  locations,
-  onClearStatus,
-  onClearYear,
-  onClearRating,
-  onRemovePublisher,
-  onRemoveLanguage,
-  onRemoveAgeRating,
-  onRemoveGenre,
-  onRemoveTag,
-  onRemoveCredit,
-  onRemoveAnyCredit,
-  onRemoveCharacter,
-  onRemoveTeam,
-  onRemoveLocation,
-}: {
-  status: string;
-  yearFrom: string;
-  yearTo: string;
-  ratingRange: [number, number] | null;
-  publishers: string[];
-  languages: string[];
-  ageRatings: string[];
-  genres: string[];
-  tags: string[];
-  credits: CreditState;
-  anyCredits: string[];
-  characters: string[];
-  teams: string[];
-  locations: string[];
-  onClearStatus: () => void;
-  onClearYear: () => void;
-  onClearRating: () => void;
-  onRemovePublisher: (v: string) => void;
-  onRemoveLanguage: (v: string) => void;
-  onRemoveAgeRating: (v: string) => void;
-  onRemoveGenre: (v: string) => void;
-  onRemoveTag: (v: string) => void;
-  onRemoveCredit: (role: CreditKey, v: string) => void;
-  onRemoveAnyCredit: (v: string) => void;
-  onRemoveCharacter: (v: string) => void;
-  onRemoveTeam: (v: string) => void;
-  onRemoveLocation: (v: string) => void;
-}) {
-  return (
-    <div className="mb-4 flex flex-wrap gap-1.5">
-      {status !== "any" ? (
-        <Chip
-          label={`Status: ${labelFor(STATUS_OPTIONS, status)}`}
-          onRemove={onClearStatus}
-        />
-      ) : null}
-      {yearFrom || yearTo ? (
-        <Chip
-          label={`Year: ${yearFrom || "…"}–${yearTo || "…"}`}
-          onRemove={onClearYear}
-        />
-      ) : null}
-      {ratingRange ? (
-        <Chip
-          label={`Rating: ${ratingRange[0].toFixed(1)}–${ratingRange[1].toFixed(1)} ★`}
-          onRemove={onClearRating}
-        />
-      ) : null}
-      {publishers.map((v) => (
-        <Chip
-          key={`pub-${v}`}
-          label={`Publisher: ${v}`}
-          onRemove={() => onRemovePublisher(v)}
-        />
-      ))}
-      {languages.map((v) => (
-        <Chip
-          key={`lang-${v}`}
-          label={`Language: ${v}`}
-          onRemove={() => onRemoveLanguage(v)}
-        />
-      ))}
-      {ageRatings.map((v) => (
-        <Chip
-          key={`age-${v}`}
-          label={`Age: ${v}`}
-          onRemove={() => onRemoveAgeRating(v)}
-        />
-      ))}
-      {genres.map((v) => (
-        <Chip
-          key={`gen-${v}`}
-          label={`Genre: ${v}`}
-          onRemove={() => onRemoveGenre(v)}
-        />
-      ))}
-      {tags.map((v) => (
-        <Chip
-          key={`tag-${v}`}
-          label={`Tag: ${v}`}
-          onRemove={() => onRemoveTag(v)}
-        />
-      ))}
-      {CREDIT_ROLES.flatMap((c) =>
-        credits[c.key].map((v) => (
-          <Chip
-            key={`${c.key}-${v}`}
-            label={`${c.label.replace(/s$/, "")}: ${v}`}
-            onRemove={() => onRemoveCredit(c.key, v)}
-          />
-        )),
-      )}
-      {anyCredits.map((v) => (
-        <Chip
-          key={`credits-${v}`}
-          label={`Credits: ${v}`}
-          onRemove={() => onRemoveAnyCredit(v)}
-        />
-      ))}
-      {characters.map((v) => (
-        <Chip
-          key={`char-${v}`}
-          label={`Character: ${v}`}
-          onRemove={() => onRemoveCharacter(v)}
-        />
-      ))}
-      {teams.map((v) => (
-        <Chip
-          key={`team-${v}`}
-          label={`Team: ${v}`}
-          onRemove={() => onRemoveTeam(v)}
-        />
-      ))}
-      {locations.map((v) => (
-        <Chip
-          key={`loc-${v}`}
-          label={`Location: ${v}`}
-          onRemove={() => onRemoveLocation(v)}
-        />
-      ))}
-    </div>
-  );
-}
-
-function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
-  return (
-    <Badge variant="secondary" className="gap-1 pr-1">
-      {label}
-      <button
-        type="button"
-        onClick={onRemove}
-        className="hover:bg-muted-foreground/20 rounded-sm"
-        aria-label={`Remove ${label}`}
-      >
-        <X className="h-3 w-3" />
-      </button>
-    </Badge>
-  );
-}
-
 function GridSkeleton({
   mode,
   style,
@@ -1185,22 +436,4 @@ function EmptyState({
       {message}
     </div>
   );
-}
-
-function csvOrUndef(values: string[]): string | undefined {
-  return values.length ? values.join(",") : undefined;
-}
-
-function parseYear(raw: string): number | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  const n = Number.parseInt(trimmed, 10);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-function labelFor(
-  options: { value: string; label: string }[],
-  value: string,
-): string {
-  return options.find((o) => o.value === value)?.label ?? value;
 }

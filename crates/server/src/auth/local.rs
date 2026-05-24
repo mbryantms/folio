@@ -13,11 +13,10 @@
 //! sender configured under /admin/email.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect},
-    routing::{get, patch, post},
 };
 use axum_extra::extract::CookieJar;
 use chrono::Duration as ChronoDuration;
@@ -25,8 +24,9 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::time::Duration;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::api::form_or_json::{FormOrJson, ResponseFormat, redirect_with_error};
@@ -39,11 +39,14 @@ use crate::state::AppState;
 use super::CurrentUser;
 use super::cookies::{
     self, CSRF_COOKIE, REFRESH_COOKIE, REFRESH_PATH, SESSION_COOKIE, csrf_cookie, new_csrf_token,
-    new_refresh_token_raw, refresh_cookie, session_cookie,
+    new_refresh_token_raw, refresh_cookie, session_cookie, sha256_hex,
 };
 use super::email_token::{self, TokenPurpose};
 use super::jwt::JwtKeys;
 use super::password;
+use super::preferences::{
+    AccentColor, Density, FitMode, PageAnimation, ReadingDirection, Theme, ViewMode, opt_from_db,
+};
 
 use entity::auth_session::{self, ActiveModel as SessionAM, Entity as SessionEntity};
 use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
@@ -53,39 +56,45 @@ use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 // `Config::refresh_ttl`). Defaults are 24h / 30d — long enough that a
 // content-consumption session never bounces a user mid-issue.
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/auth/local/register",
-            post(register).route_layer(rate_limit::REGISTER.build()),
+pub fn routes() -> OpenApiRouter<AppState> {
+    // Each rate-limited route lives in its own sub-router so `route_layer`
+    // applies only to that handler. The five routes without a per-route
+    // bucket go through the top-level `.routes(...)` call.
+    //
+    // Recovery flow (M4). All four use the failed-auth Redis sentinel
+    // through their per-route rate-limit bucket; bodies are intentionally
+    // generic (e.g. always 204 / never confirm email-existence) so the
+    // endpoints don't double as user-enumeration oracles.
+    OpenApiRouter::new()
+        .routes(routes!(refresh))
+        .routes(routes!(logout))
+        .routes(routes!(me))
+        .routes(routes!(update_preferences))
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(register))
+                .route_layer(rate_limit::REGISTER.build()),
         )
-        .route(
-            "/auth/local/login",
-            post(login).route_layer(rate_limit::LOGIN.build()),
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(login))
+                .route_layer(rate_limit::LOGIN.build()),
         )
-        .route("/auth/refresh", post(refresh))
-        .route("/auth/logout", post(logout))
-        .route("/auth/me", get(me))
-        .route("/me/preferences", patch(update_preferences))
-        // Recovery flow (M4). All four use the failed-auth Redis sentinel
-        // through their per-route rate-limit bucket; bodies are intentionally
-        // generic (e.g. always 204 / never confirm email-existence) so the
-        // endpoints don't double as user-enumeration oracles.
-        .route(
-            "/auth/local/verify-email",
-            get(verify_email).route_layer(rate_limit::RESEND_VERIFICATION.build()),
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(verify_email))
+                .routes(routes!(resend_verification))
+                .route_layer(rate_limit::RESEND_VERIFICATION.build()),
         )
-        .route(
-            "/auth/local/resend-verification",
-            post(resend_verification).route_layer(rate_limit::RESEND_VERIFICATION.build()),
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(request_password_reset))
+                .route_layer(rate_limit::PASSWORD_RESET_REQUEST.build()),
         )
-        .route(
-            "/auth/local/request-password-reset",
-            post(request_password_reset).route_layer(rate_limit::PASSWORD_RESET_REQUEST.build()),
-        )
-        .route(
-            "/auth/local/reset-password",
-            post(reset_password).route_layer(rate_limit::PASSWORD_RESET_REDEEM.build()),
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(reset_password))
+                .route_layer(rate_limit::PASSWORD_RESET_REDEEM.build()),
         )
 }
 
@@ -125,35 +134,33 @@ pub struct MeResp {
     /// (the reader still falls back to ComicInfo `Manga=YesAndRightToLeft`
     /// detection per series).
     #[serde(default)]
-    pub default_reading_direction: Option<String>,
-    /// M4: reader default fit mode — `'width' | 'height' | 'original'`.
+    pub default_reading_direction: Option<ReadingDirection>,
+    /// M4: reader default fit mode.
     #[serde(default)]
-    pub default_fit_mode: Option<String>,
-    /// M4: reader default view mode — `'single' | 'double' | 'webtoon'`.
+    pub default_fit_mode: Option<FitMode>,
+    /// M4: reader default view mode.
     #[serde(default)]
-    pub default_view_mode: Option<String>,
+    pub default_view_mode: Option<ViewMode>,
     /// M4: when true the reader opens with the page strip visible.
     #[serde(default)]
     pub default_page_strip: bool,
-    /// v0.3.44 / v0.3.45: reader page-turn animation — `'off' |
-    /// 'slide' | 'fade' | null`. Null means "use the reader's
-    /// built-in default" (currently `slide`); fresh users start
-    /// here. Webtoon view ignores this regardless. `fade` was
-    /// added in v0.3.45.
+    /// v0.3.44 / v0.3.45: reader page-turn animation. `null` means
+    /// "use the reader's built-in default" (currently `slide`); fresh
+    /// users start here. Webtoon view ignores this regardless.
     #[serde(default)]
-    pub default_page_animation: Option<String>,
+    pub default_page_animation: Option<PageAnimation>,
     /// Default for the reader's "cover stands alone in double-page view"
     /// toggle. Per-series localStorage overrides at runtime.
     pub default_cover_solo: bool,
-    /// M4: theme token — `'system' | 'dark' | 'light' | 'amber'`.
+    /// M4: theme token.
     #[serde(default)]
-    pub theme: Option<String>,
-    /// M4: accent palette token (e.g. `'amber'`, `'blue'`, `'emerald'`, `'rose'`).
+    pub theme: Option<Theme>,
+    /// M4: accent palette token.
     #[serde(default)]
-    pub accent_color: Option<String>,
-    /// M4: density token — `'comfortable' | 'compact'`.
+    pub accent_color: Option<AccentColor>,
+    /// M4: density token.
     #[serde(default)]
-    pub density: Option<String>,
+    pub density: Option<Density>,
     /// M4: per-action keybind overrides for the reader. Empty object means
     /// "use defaults".
     #[serde(default)]
@@ -189,32 +196,26 @@ pub struct MeResp {
 /// `null` (where the type allows).
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct PreferencesReq {
-    /// `'ltr' | 'rtl' | null`. `null` clears the preference.
+    /// `null` clears the preference.
     #[serde(default, deserialize_with = "deserialize_some")]
-    pub default_reading_direction: Option<Option<String>>,
-    /// `'width' | 'height' | 'original' | null`.
+    pub default_reading_direction: Option<Option<ReadingDirection>>,
     #[serde(default, deserialize_with = "deserialize_some")]
-    pub default_fit_mode: Option<Option<String>>,
-    /// `'single' | 'double' | 'webtoon' | null`.
+    pub default_fit_mode: Option<Option<FitMode>>,
     #[serde(default, deserialize_with = "deserialize_some")]
-    pub default_view_mode: Option<Option<String>>,
+    pub default_view_mode: Option<Option<ViewMode>>,
     pub default_page_strip: Option<bool>,
-    /// `'off' | 'slide' | 'fade' | null`. `null` clears the
-    /// preference (server falls back to the reader's built-in
-    /// default of `slide`).
+    /// `null` clears the preference (server falls back to the reader's
+    /// built-in default of `slide`).
     #[serde(default, deserialize_with = "deserialize_some")]
-    pub default_page_animation: Option<Option<String>>,
+    pub default_page_animation: Option<Option<PageAnimation>>,
     /// Default cover-solo toggle; absent leaves the prior value untouched.
     pub default_cover_solo: Option<bool>,
-    /// `'system' | 'dark' | 'light' | 'amber' | null`.
     #[serde(default, deserialize_with = "deserialize_some")]
-    pub theme: Option<Option<String>>,
-    /// `'amber' | 'blue' | 'emerald' | 'rose' | null`.
+    pub theme: Option<Option<Theme>>,
     #[serde(default, deserialize_with = "deserialize_some")]
-    pub accent_color: Option<Option<String>>,
-    /// `'comfortable' | 'compact' | null`.
+    pub accent_color: Option<Option<AccentColor>>,
     #[serde(default, deserialize_with = "deserialize_some")]
-    pub density: Option<Option<String>>,
+    pub density: Option<Option<Density>>,
     /// Replace the entire keybinds object. Send `{}` to clear all overrides.
     pub keybinds: Option<serde_json::Value>,
     /// M6a: opt-out toggle. `false` disables the client tracker hook.
@@ -298,7 +299,7 @@ const PASSWORD_RESET_TTL: Duration = Duration::from_secs(60 * 60);
 // ────────────── Handlers ──────────────
 
 #[utoipa::path(
-    post,
+    operation_id = "local_register",    post,
     path = "/auth/local/register",
     request_body = RegisterReq,
     responses(
@@ -476,7 +477,7 @@ pub async fn register(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "local_login",    post,
     path = "/auth/local/login",
     request_body = LoginReq,
     responses(
@@ -630,7 +631,7 @@ pub async fn login(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "local_refresh",    post,
     path = "/auth/refresh",
     responses(
         (status = 200, body = MeResp, description = "tokens rotated"),
@@ -734,7 +735,7 @@ pub async fn refresh(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "local_logout",    post,
     path = "/auth/logout",
     responses(
         (status = 204, description = "session revoked, cookies cleared"),
@@ -806,7 +807,7 @@ pub async fn logout(State(app): State<AppState>, jar: CookieJar) -> axum::respon
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "local_me",    get,
     path = "/auth/me",
     responses(
         (status = 200, body = MeResp),
@@ -839,7 +840,7 @@ pub async fn me(
 /// Phase 3 only ships `default_reading_direction`. CSRF-checked by middleware
 /// (cookie auth, unsafe verb).
 #[utoipa::path(
-    patch,
+    operation_id = "local_update_preferences",    patch,
     path = "/me/preferences",
     request_body = PreferencesReq,
     responses(
@@ -852,75 +853,24 @@ pub async fn update_preferences(
     State(app): State<AppState>,
     user: CurrentUser,
     jar: CookieJar,
-    Json(req): Json<PreferencesReq>,
+    // Use `FormOrJson` instead of bare `Json` so serde deserialization
+    // failures — including "unknown enum variant" on the typed
+    // preference tokens — return the canonical
+    // `{"error":{"code":"validation","message":...}}` envelope rather
+    // than axum's default 422 text body. The form path is never used
+    // here (the preferences UI is JS-only), but the extractor is the
+    // cheapest way to get rejection-to-envelope mapping.
+    FormOrJson { data: req, .. }: FormOrJson<PreferencesReq>,
 ) -> impl IntoResponse {
-    if let Some(Some(d)) = req.default_reading_direction.as_ref()
-        && !matches!(d.as_str(), "ltr" | "rtl")
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation",
-            "default_reading_direction must be 'ltr', 'rtl', or null",
-        );
-    }
-    if let Some(Some(d)) = req.default_fit_mode.as_ref()
-        && !matches!(d.as_str(), "width" | "height" | "original")
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation",
-            "default_fit_mode must be 'width', 'height', 'original', or null",
-        );
-    }
-    if let Some(Some(d)) = req.default_view_mode.as_ref()
-        && !matches!(d.as_str(), "single" | "double" | "webtoon")
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation",
-            "default_view_mode must be 'single', 'double', 'webtoon', or null",
-        );
-    }
-    if let Some(Some(a)) = req.default_page_animation.as_ref()
-        && !matches!(a.as_str(), "off" | "slide" | "fade")
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation",
-            "default_page_animation must be 'off', 'slide', 'fade', or null",
-        );
-    }
-    if let Some(Some(t)) = req.theme.as_ref()
-        && !matches!(t.as_str(), "system" | "dark" | "light" | "amber")
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation",
-            "theme must be 'system', 'dark', 'light', 'amber', or null",
-        );
-    }
-    if let Some(Some(c)) = req.accent_color.as_ref()
-        && !matches!(c.as_str(), "amber" | "blue" | "emerald" | "rose")
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation",
-            "accent_color must be 'amber', 'blue', 'emerald', 'rose', or null",
-        );
-    }
-    if let Some(Some(d)) = req.density.as_ref()
-        && !matches!(d.as_str(), "comfortable" | "compact")
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation",
-            "density must be 'comfortable', 'compact', or null",
-        );
-    }
+    // The seven token preferences (reading direction, fit/view mode,
+    // page animation, theme, accent color, density) are typed enums on
+    // `PreferencesReq` — serde rejects unknown variants at deserialize
+    // time with a structured error before the handler runs. No manual
+    // `matches!()` block needed.
     if let Some(kb) = req.keybinds.as_ref() {
         if !kb.is_object() {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "keybinds must be an object",
             );
@@ -931,7 +881,7 @@ pub async fn update_preferences(
             for (action, key) in map {
                 if !key.is_string() {
                     return error(
-                        StatusCode::BAD_REQUEST,
+                        StatusCode::UNPROCESSABLE_ENTITY,
                         "validation",
                         &format!("keybinds.{action} must be a string"),
                     );
@@ -943,7 +893,7 @@ pub async fn update_preferences(
         && tz.parse::<chrono_tz::Tz>().is_err()
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "timezone must be a valid IANA zone",
         );
@@ -952,7 +902,7 @@ pub async fn update_preferences(
         && !(1_000..=600_000).contains(&v)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "reading_min_active_ms must be between 1000 and 600000",
         );
@@ -961,7 +911,7 @@ pub async fn update_preferences(
         && !(1..=200).contains(&v)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "reading_min_pages must be between 1 and 200",
         );
@@ -970,7 +920,7 @@ pub async fn update_preferences(
         && !SUPPORTED_LOCALES.contains(&lang)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.language",
             &format!("language must be one of: {}", SUPPORTED_LOCALES.join(", ")),
         );
@@ -979,7 +929,7 @@ pub async fn update_preferences(
         && !(30_000..=1_800_000).contains(&v)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "reading_idle_ms must be between 30000 and 1800000",
         );
@@ -988,7 +938,7 @@ pub async fn update_preferences(
         && !(1..=50).contains(&v)
     {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "max_rails_per_page must be between 1 and 50",
         );
@@ -999,32 +949,35 @@ pub async fn update_preferences(
         _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
     let mut am: UserAM = row.into();
+    // The typed-enum preference fields project back to DB-side `Option<String>`
+    // via the enum's `as_str()` wire form. `Some(None)` clears the column
+    // (sends NULL); `Some(Some(variant))` sets it.
     if let Some(v) = req.default_reading_direction {
-        am.default_reading_direction = Set(v);
+        am.default_reading_direction = Set(v.map(|e| e.as_str().to_owned()));
     }
     if let Some(v) = req.default_fit_mode {
-        am.default_fit_mode = Set(v);
+        am.default_fit_mode = Set(v.map(|e| e.as_str().to_owned()));
     }
     if let Some(v) = req.default_view_mode {
-        am.default_view_mode = Set(v);
+        am.default_view_mode = Set(v.map(|e| e.as_str().to_owned()));
     }
     if let Some(v) = req.default_page_strip {
         am.default_page_strip = Set(v);
     }
     if let Some(v) = req.default_page_animation {
-        am.default_page_animation = Set(v);
+        am.default_page_animation = Set(v.map(|e| e.as_str().to_owned()));
     }
     if let Some(v) = req.default_cover_solo {
         am.default_cover_solo = Set(v);
     }
     if let Some(v) = req.theme {
-        am.theme = Set(v);
+        am.theme = Set(v.map(|e| e.as_str().to_owned()));
     }
     if let Some(v) = req.accent_color {
-        am.accent_color = Set(v);
+        am.accent_color = Set(v.map(|e| e.as_str().to_owned()));
     }
     if let Some(v) = req.density {
-        am.density = Set(v);
+        am.density = Set(v.map(|e| e.as_str().to_owned()));
     }
     if let Some(v) = req.keybinds {
         am.keybinds = Set(v);
@@ -1092,7 +1045,7 @@ const SUPPORTED_LOCALES: [&str; 1] = ["en"];
 /// When the email maps to an active local account, a 1-hour reset token
 /// is sent via the configured EmailSender.
 #[utoipa::path(
-    post,
+    operation_id = "local_request_password_reset",    post,
     path = "/auth/local/request-password-reset",
     request_body = RequestPasswordResetReq,
     responses((status = 204, description = "request accepted (whether or not the email exists)"))
@@ -1151,7 +1104,7 @@ pub async fn request_password_reset(
 /// `token_version` (so every existing session for the user is
 /// invalidated), and sends a confirmation email. Returns 204 on success.
 #[utoipa::path(
-    post,
+    operation_id = "local_reset_password",    post,
     path = "/auth/local/reset-password",
     request_body = ResetPasswordReq,
     responses(
@@ -1270,7 +1223,7 @@ pub async fn reset_password(
 /// 302s to `/sign-in?verified=1`. Re-clicking a still-valid token after
 /// activation is a 302 to the same target (idempotent / harmless).
 #[utoipa::path(
-    get,
+    operation_id = "local_verify_email",    get,
     path = "/auth/local/verify-email",
     responses(
         (status = 302, description = "redirect to /sign-in?verified=1"),
@@ -1337,7 +1290,7 @@ pub async fn verify_email(
 /// Always 204 (no enumeration). Sends a fresh 24h token only when the
 /// account exists, is local, and is `pending_verification`.
 #[utoipa::path(
-    post,
+    operation_id = "local_resend_verification",    post,
     path = "/auth/local/resend-verification",
     request_body = ResendVerificationReq,
     responses((status = 204, description = "request accepted (whether or not the email exists)"))
@@ -1517,12 +1470,6 @@ fn finalize_session(
     }
 }
 
-fn sha256_hex(input: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(input.as_bytes());
-    format!("{:x}", h.finalize())
-}
-
 /// Build a `MeResp` from a fully-loaded user row. Used by login, refresh,
 /// and the preferences PATCH so the response shape stays consistent.
 pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp {
@@ -1532,15 +1479,15 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         display_name: row.display_name.clone(),
         role: row.role.clone(),
         csrf_token,
-        default_reading_direction: row.default_reading_direction.clone(),
-        default_fit_mode: row.default_fit_mode.clone(),
-        default_view_mode: row.default_view_mode.clone(),
+        default_reading_direction: opt_from_db(row.default_reading_direction.as_deref()),
+        default_fit_mode: opt_from_db(row.default_fit_mode.as_deref()),
+        default_view_mode: opt_from_db(row.default_view_mode.as_deref()),
         default_page_strip: row.default_page_strip,
-        default_page_animation: row.default_page_animation.clone(),
+        default_page_animation: opt_from_db(row.default_page_animation.as_deref()),
         default_cover_solo: row.default_cover_solo,
-        theme: row.theme.clone(),
-        accent_color: row.accent_color.clone(),
-        density: row.density.clone(),
+        theme: opt_from_db(row.theme.as_deref()),
+        accent_color: opt_from_db(row.accent_color.as_deref()),
+        density: opt_from_db(row.density.as_deref()),
         keybinds: row.keybinds.clone(),
         activity_tracking_enabled: row.activity_tracking_enabled,
         timezone: row.timezone.clone(),
@@ -1591,9 +1538,5 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
-    (
-        status,
-        Json(serde_json::json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
+    crate::api::error(status, code, message)
 }

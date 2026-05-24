@@ -345,7 +345,9 @@ async fn users_list_returns_aggregates_for_each_user() {
 
     let (s, body) = get(&app, &admin, "/api/admin/stats/users").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
-    let users = body["users"].as_array().expect("users array");
+    // CursorPage<T> envelope from audit-remediation M4 — `users` was
+    // the pre-M4 wrapper key and is no longer emitted.
+    let users = body["items"].as_array().expect("items array");
     // 2 users registered.
     assert_eq!(users.len(), 2);
     // Reader is first (more activity); admin has 0 sessions.

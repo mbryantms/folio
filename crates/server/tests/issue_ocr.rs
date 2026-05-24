@@ -367,7 +367,7 @@ async fn zero_size_region_returns_400() {
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "invalid_region");
 }
 
@@ -386,7 +386,7 @@ async fn unknown_language_returns_400() {
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "invalid_lang");
 }
 
@@ -554,7 +554,7 @@ async fn region_outside_page_bounds_returns_400() {
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "invalid_region");
 }
 

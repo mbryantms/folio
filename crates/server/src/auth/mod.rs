@@ -20,6 +20,7 @@ pub mod jwt;
 pub mod local;
 pub mod oidc;
 pub mod password;
+pub mod preferences;
 pub mod url_signing;
 pub mod ws_ticket;
 pub mod xff;

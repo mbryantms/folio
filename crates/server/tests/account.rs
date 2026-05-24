@@ -131,7 +131,7 @@ async fn empty_display_name_rejected() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "empty@example.com", "correctly-horse-battery").await;
     let (status, body) = patch_account(&app, &auth, r#"{"display_name":"   "}"#).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation.display_name");
 }
 
@@ -141,7 +141,7 @@ async fn change_password_requires_current() {
     let auth = register(&app, "pw1@example.com", "original-password-123").await;
     let (status, body) =
         patch_account(&app, &auth, r#"{"new_password":"new-password-stronger-9"}"#).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation.current_password");
 }
 
@@ -169,7 +169,7 @@ async fn change_password_minimum_length() {
         r#"{"current_password":"original-password-123","new_password":"short"}"#,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation.new_password");
 }
 
@@ -215,7 +215,7 @@ async fn email_validation_rejects_garbage() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "badmail@example.com", "correctly-horse-battery").await;
     let (status, body) = patch_account(&app, &auth, r#"{"email":"not-an-email"}"#).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation.email");
 }
 

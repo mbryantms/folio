@@ -16,7 +16,14 @@ use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetReques
 use tower_http::trace::TraceLayer;
 use tracing::Level;
 use utoipa::OpenApi;
+use utoipa_axum::router::OpenApiRouter;
 
+/// OpenAPI document metadata (info, etc.). All paths and component schemas
+/// are discovered automatically via the `utoipa-axum` router composition in
+/// [`build_openapi_router`] — there is no manual `paths(...)` or
+/// `components(schemas(...))` list to keep in sync. Adding a new handler with
+/// `#[utoipa::path]` and registering it via `routes!()` is sufficient; the
+/// spec picks it up on the next `just openapi` run.
 #[derive(OpenApi)]
 #[openapi(
     info(
@@ -24,414 +31,109 @@ use utoipa::OpenApi;
         version = env!("CARGO_PKG_VERSION"),
         description = "Self-hostable comic reader. See comic-reader-spec.md."
     ),
-    paths(
-        api::health::healthz,
-        api::health::readyz,
-        auth::local::register,
-        auth::local::login,
-        auth::local::refresh,
-        auth::local::logout,
-        auth::local::me,
-        auth::local::update_preferences,
-        auth::local::request_password_reset,
-        auth::local::reset_password,
-        auth::local::verify_email,
-        auth::local::resend_verification,
-        api::account::update,
-        auth::ws_ticket::mint,
-        api::libraries::list,
-        api::libraries::get_one,
-        api::libraries::create,
-        api::libraries::update_settings,
-        api::libraries::delete_one,
-        api::libraries::scan,
-        api::libraries::scan_preview,
-        api::health_issues::list,
-        api::health_issues::dismiss,
-        api::reconcile::list_removed,
-        api::reconcile::restore_issue,
-        api::reconcile::confirm_issue,
-        api::scan_runs::list,
-        api::scan_runs::cancel,
-        api::admin_queue::queue_depth,
-        api::admin_queue::clear_queue,
-        api::admin_thumbs::library_status,
-        api::admin_thumbs::get_settings,
-        api::admin_thumbs::update_settings,
-        api::admin_thumbs::generate_missing,
-        api::admin_thumbs::generate_page_map,
-        api::admin_thumbs::force_recreate,
-        api::admin_thumbs::delete_all,
-        api::admin_thumbs::regenerate_series_cover,
-        api::admin_thumbs::generate_series_page_map,
-        api::admin_thumbs::force_recreate_series_page_map,
-        api::admin_thumbs::regenerate_issue_cover,
-        api::admin_thumbs::generate_issue_page_map,
-        api::admin_thumbs::force_recreate_issue_page_map,
-        api::admin_users::list,
-        api::admin_users::get_one,
-        api::admin_users::update,
-        api::admin_users::disable,
-        api::admin_users::enable,
-        api::admin_users::set_library_access,
-        api::audit::list,
-        api::series::list,
-        api::series::get_one,
-        api::series::update_series,
-        api::series::scan_series,
-        api::series::list_issues,
-        api::issues::get_one,
-        api::issues::update,
-        api::issues::scan_issue,
-        api::issues::next_in_series,
-        api::issues::list_issue_health,
-        api::issues::bulk_metadata,
-        api::libraries::validate_deeply,
-        api::progress::upsert_bulk,
-        api::progress::upsert_series_bulk,
-        api::collections::bulk_add_members,
-        api::collections::bulk_remove_members,
-        api::series::resume,
-        api::issues::search,
-        api::issues::list,
-        api::people::list,
-        api::creators::get_one,
-        api::ratings::set_series_rating,
-        api::ratings::set_issue_rating,
-        api::progress::upsert_series,
-        api::rails::continue_reading,
-        api::rails::on_deck,
-        api::rails::create_dismissal,
-        api::rails::delete_dismissal,
-        api::next_up::next_up,
-        api::next_up::prev_up,
-        api::reading_sessions::upsert,
-        api::reading_sessions::list,
-        api::reading_sessions::stats,
-        api::reading_sessions::clear_history,
-        api::reading_log::reading_log,
-        api::log_widgets::list,
-        api::log_widgets::add,
-        api::log_widgets::update,
-        api::log_widgets::remove,
-        api::log_widgets::reorder,
-        api::log_widgets::reset,
-        api::admin_stats::overview,
-        api::admin_stats::user_reading_stats,
-        api::admin_stats::users_list,
-        api::admin_stats::engagement,
-        api::admin_stats::content,
-        api::admin_stats::quality,
-        api::saved_views::list,
-        api::saved_views::create,
-        api::saved_views::update,
-        api::saved_views::delete_one,
-        api::saved_views::pin,
-        api::saved_views::unpin,
-        api::saved_views::set_sidebar,
-        api::saved_views::set_icon,
-        api::saved_views::reorder,
-        api::saved_views::results,
-        api::saved_views::preview,
-        api::saved_views::admin_create,
-        api::saved_views::admin_update,
-        api::saved_views::admin_delete,
-        api::sidebar_layout::get_layout,
-        api::sidebar_layout::update_layout,
-        api::cbl_lists::list,
-        api::cbl_lists::detail,
-        api::cbl_lists::upload,
-        api::cbl_lists::create_from_json,
-        api::cbl_lists::update,
-        api::cbl_lists::delete_one,
-        api::cbl_lists::refresh_one,
-        api::cbl_lists::refresh_log,
-        api::cbl_lists::entries,
-        api::cbl_lists::issues,
-        api::cbl_lists::reading_window,
-        api::cbl_lists::reading_window_paginated,
-        api::cbl_lists::manual_match,
-        api::cbl_lists::clear_match,
-        api::cbl_lists::export,
-        api::cbl_lists::list_catalog_sources,
-        api::cbl_lists::list_catalog_entries,
-        api::cbl_lists::refresh_catalog_index,
-        api::cbl_lists::admin_create_catalog_source,
-        api::cbl_lists::admin_update_catalog_source,
-        api::cbl_lists::admin_delete_catalog_source,
-        api::collections::list,
-        api::collections::create,
-        api::collections::update,
-        api::collections::delete_one,
-        api::collections::list_entries,
-        api::collections::add_entry,
-        api::collections::remove_entry,
-        api::collections::reorder_entries,
-        api::pages::list,
-        api::pages::create,
-        api::pages::update,
-        api::pages::delete_one,
-        api::pages::reorder,
-        api::pages::set_sidebar,
-        api::issue_ocr::serve,
-        api::admin_ocr::list,
-        api::markers::list,
-        api::markers::create,
-        api::markers::count,
-        api::markers::search,
-        api::markers::tags_index,
-        api::markers::update,
-        api::markers::delete_one,
-        api::markers::list_for_issue,
-        api::filter_options::genres,
-        api::filter_options::tags,
-        api::filter_options::credits,
-        api::filter_options::publishers,
-        api::filter_options::languages,
-        api::filter_options::age_ratings,
-        api::filter_options::characters,
-        api::filter_options::teams,
-        api::filter_options::locations,
-        api::admin_logs::list,
-        api::admin_fs::list,
-        api::admin_activity::list,
-        api::auth_config::get_config,
-        api::auth_config::get_public_config,
-        api::auth_config::probe_discovery,
-        api::server_info::info,
-        api::server_releases::latest_release,
-        api::sessions::list,
-        api::sessions::revoke_one,
-        api::sessions::revoke_all,
-        api::app_passwords::list,
-        api::app_passwords::create,
-        api::app_passwords::revoke,
-        api::admin_settings::get_all,
-        api::admin_settings::update,
-        api::admin_email::status,
-        api::admin_email::test_send,
-    ),
-    components(schemas(
-        shared::error::ApiError,
-        shared::error::ApiErrorBody,
-        auth::local::RegisterReq,
-        auth::local::LoginReq,
-        auth::local::LoginResp,
-        auth::local::MeResp,
-        auth::local::PreferencesReq,
-        auth::local::RequestPasswordResetReq,
-        auth::local::ResetPasswordReq,
-        auth::local::ResendVerificationReq,
-        api::account::AccountReq,
-        auth::ws_ticket::WsTicketResp,
-        api::libraries::LibraryView,
-        api::libraries::CreateLibraryReq,
-        api::libraries::UpdateLibraryReq,
-        api::libraries::DeleteLibraryResp,
-        api::libraries::ScanResp,
-        api::libraries::ScanMode,
-        api::libraries::ScanPreviewView,
-        api::health_issues::HealthIssueView,
-        api::reconcile::RemovedListView,
-        api::reconcile::RemovedIssueView,
-        api::reconcile::RemovedSeriesView,
-        api::scan_runs::ScanRunView,
-        api::scan_runs::ScanCancelResp,
-        api::admin_queue::QueueDepthView,
-        api::admin_queue::QueueClearReq,
-        api::admin_queue::QueueClearResp,
-        api::admin_queue::QueueClearTarget,
-        api::admin_thumbs::ThumbnailsStatusView,
-        api::admin_thumbs::ThumbnailsSettingsView,
-        api::admin_thumbs::UpdateThumbnailsSettingsReq,
-        api::admin_thumbs::RegenerateResp,
-        api::admin_thumbs::DeleteAllResp,
-        api::admin_users::AdminUserView,
-        api::admin_users::AdminUserListView,
-        api::admin_users::AdminUserDetailView,
-        api::admin_users::LibraryAccessGrantView,
-        api::admin_users::UpdateUserReq,
-        api::admin_users::LibraryAccessReq,
-        api::audit::AuditEntryView,
-        api::audit::AuditListView,
-        api::series::SeriesView,
-        api::series::SeriesListView,
-        api::series::SeriesResumeView,
-        api::series::UpdateSeriesReq,
-        api::series::IssueSummaryView,
-        api::series::IssueListView,
-        api::series::IssueDetailView,
-        api::series::IssueLink,
-        api::issues::UpdateIssueReq,
-        api::issues::NextInSeriesView,
-        api::issues::IssueSearchView,
-        api::issues::IssueSearchHit,
-        api::people::PeopleListView,
-        api::people::PersonHit,
-        api::creators::CreatorDetailView,
-        api::creators::CreatorRoleRail,
-        api::ratings::SetRatingReq,
-        api::ratings::RatingView,
-        api::progress::UpsertSeriesReq,
-        api::progress::UpsertSeriesResp,
-        api::progress::UpsertBulkReq,
-        api::progress::UpsertBulkResp,
-        api::progress::UpsertSeriesBulkReq,
-        api::progress::UpsertSeriesBulkResp,
-        api::issues::BulkMetadataReq,
-        api::issues::BulkMetadataPatch,
-        api::issues::BulkMode,
-        api::issues::BulkMetadataResp,
-        api::rails::ContinueReadingView,
-        api::rails::ContinueReadingCard,
-        api::rails::OnDeckView,
-        api::rails::OnDeckCard,
-        api::rails::ProgressInfo,
-        api::rails::CreateDismissalReq,
-        api::next_up::NextUpView,
-        api::next_up::NextUpSource,
-        api::reading_log::ReadingLogPageView,
-        api::reading_log::ReadingLogEventView,
-        api::reading_log::EventSeries,
-        api::reading_log::EventIssue,
-        api::reading_log::EventPayload,
-        api::log_widgets::LogWidgetView,
-        api::log_widgets::LogWidgetListView,
-        api::log_widgets::AddWidgetReq,
-        api::log_widgets::PatchWidgetReq,
-        api::log_widgets::ReorderReq,
-        api::reading_sessions::UpsertReq,
-        api::reading_sessions::ReadingSessionView,
-        api::reading_sessions::ReadingSessionListView,
-        api::reading_sessions::ReadingStatsView,
-        api::reading_sessions::TotalsView,
-        api::reading_sessions::DayBucket,
-        api::reading_sessions::TopSeriesEntry,
-        api::reading_sessions::TopNameEntry,
-        api::reading_sessions::TopCreatorEntry,
-        api::reading_sessions::DowHourCell,
-        api::reading_sessions::TimeOfDayBuckets,
-        api::reading_sessions::TimeOfDayCell,
-        api::reading_sessions::PacePoint,
-        api::reading_sessions::RereadIssueEntry,
-        api::reading_sessions::RereadSeriesEntry,
-        api::reading_sessions::CompletionView,
-        api::reading_sessions::ClearHistoryResp,
-        api::admin_stats::OverviewView,
-        api::admin_stats::TotalsBlock,
-        api::admin_stats::HealthBlock,
-        api::admin_stats::AdminUserStatsListView,
-        api::admin_stats::AdminUserStatsRow,
-        api::admin_stats::DeviceBucket,
-        api::admin_stats::EngagementView,
-        api::admin_stats::EngagementPoint,
-        api::admin_stats::ContentInsightsView,
-        api::admin_stats::DeadStockEntry,
-        api::admin_stats::AbandonedEntry,
-        api::admin_stats::FunnelBucket,
-        api::admin_stats::DataQualityView,
-        api::admin_stats::MetadataCoverageView,
-        api::saved_views::SavedViewView,
-        api::saved_views::SavedViewListView,
-        api::saved_views::CreateSavedViewReq,
-        api::saved_views::UpdateSavedViewReq,
-        api::saved_views::ReorderReq,
-        api::saved_views::PinView,
-        api::saved_views::PreviewReq,
-        api::saved_views::SetIconReq,
-        api::sidebar_layout::SidebarLayoutView,
-        api::sidebar_layout::SidebarEntryView,
-        api::sidebar_layout::UpdateLayoutReq,
-        api::sidebar_layout::UpdateEntryReq,
-        crate::views::dsl::FilterDsl,
-        crate::views::dsl::Condition,
-        crate::views::dsl::Field,
-        crate::views::dsl::Op,
-        crate::views::dsl::MatchMode,
-        crate::views::dsl::SortField,
-        crate::views::dsl::SortOrder,
-        api::cbl_lists::CblListView,
-        api::cbl_lists::CblListListView,
-        api::cbl_lists::CblStatsView,
-        api::cbl_lists::CblEntryView,
-        api::cbl_lists::CblEntryHydratedView,
-        api::cbl_lists::CblEntryListView,
-        api::cbl_lists::CblWindowView,
-        api::cbl_lists::CblWindowPageView,
-        api::cbl_lists::CblWindowEntry,
-        api::cbl_lists::CblDetailView,
-        api::cbl_lists::CreateCblListReq,
-        api::cbl_lists::UpdateCblListReq,
-        api::cbl_lists::ManualMatchReq,
-        api::cbl_lists::RefreshLogEntryView,
-        api::cbl_lists::RefreshLogListView,
-        api::cbl_lists::CatalogSourceView,
-        api::cbl_lists::CatalogSourceListView,
-        api::cbl_lists::CatalogEntryView,
-        api::cbl_lists::CatalogEntriesView,
-        api::cbl_lists::CreateCatalogSourceReq,
-        api::cbl_lists::UpdateCatalogSourceReq,
-        crate::cbl::import::ImportSummary,
-        api::collections::CollectionEntryView,
-        api::collections::CollectionEntriesView,
-        api::collections::CreateCollectionReq,
-        api::collections::UpdateCollectionReq,
-        api::collections::AddEntryReq,
-        api::collections::ReorderEntriesReq,
-        api::pages::PageView,
-        api::pages::CreatePageReq,
-        api::pages::UpdatePageReq,
-        api::pages::ReorderPagesReq,
-        api::pages::SetSidebarQuery,
-        api::issue_ocr::OcrRequest,
-        api::issue_ocr::OcrResponse,
-        api::issue_ocr::OcrRegion,
-        api::admin_ocr::OcrModelView,
-        api::admin_ocr::OcrModelsView,
-        api::markers::MarkerView,
-        api::markers::MarkerListView,
-        api::markers::MarkerCountView,
-        api::markers::MarkerSearchView,
-        api::markers::MarkerSearchHit,
-        api::markers::MarkerTagsView,
-        api::markers::TagEntryView,
-        api::markers::IssueMarkersView,
-        api::markers::CreateMarkerReq,
-        api::markers::UpdateMarkerReq,
-        api::filter_options::OptionsView,
-        api::admin_logs::LogsResp,
-        api::admin_logs::LogEntryView,
-        api::admin_fs::ListResp,
-        api::admin_fs::DirEntry,
-        api::admin_activity::ActivityListView,
-        api::admin_activity::ActivityEntryView,
-        api::auth_config::AuthConfigView,
-        api::auth_config::OidcConfigView,
-        api::auth_config::LocalConfigView,
-        api::auth_config::PublicAuthConfigView,
-        api::auth_config::OidcDiscoverReq,
-        api::auth_config::OidcDiscoverResp,
-        api::server_info::ServerInfoView,
-        api::server_releases::LatestReleaseView,
-        api::sessions::SessionView,
-        api::sessions::SessionListView,
-        api::sessions::RevokeAllResp,
-        api::app_passwords::AppPasswordView,
-        api::app_passwords::AppPasswordListView,
-        api::app_passwords::AppPasswordCreatedView,
-        api::app_passwords::CreateAppPasswordReq,
-        api::admin_settings::SettingsView,
-        api::admin_settings::RegistryEntry,
-        api::admin_settings::ResolvedEntry,
-        api::admin_settings::UpdateSettingsReq,
-        api::admin_email::EmailStatusView,
-        api::admin_email::TestEmailResp,
-    ))
 )]
 pub struct ApiDoc;
 
+/// Compose every routed module into a single [`OpenApiRouter`].
+///
+/// State-free — the result is bound to a concrete [`AppState`] at serve time
+/// via `.with_state(state)`. This is the one place new modules get wired
+/// into both the axum router AND the OpenAPI spec; there is no separate
+/// `paths(...)` list to maintain.
+///
+/// Group layout follows the rust-public-origin v0.2.1 design:
+///
+///   * `bare` — routes external clients hit directly (operator healthchecks,
+///     form-action POSTs the Next sign-in submits to, OIDC callbacks, OPDS
+///     clients, page-byte streams, WebSocket upgrades). None share path
+///     shapes with Next.js HTML pages.
+///   * `api`  — JSON the web app reaches via `apiFetch` (which prepends
+///     `/api/`). Mounted via `nest("/api", api)`.
+///
+/// `auth::local::routes()` is intentionally merged into BOTH groups — it
+/// covers both the bare form-action POSTs and the cookie-API endpoints the
+/// web app calls; duplicate routing is harmless, but the spec must include
+/// each operation only once or `openapi-typescript` emits duplicate
+/// identifiers. The bare-group registration is wrapped via
+/// `OpenApiRouter::from(axum::Router::from(...))` so its routes are live
+/// but its spec contribution is dropped; the `api`-group registration is
+/// the canonical spec entry.
+pub fn build_openapi_router() -> OpenApiRouter<AppState> {
+    let bare = OpenApiRouter::<AppState>::new()
+        .merge(api::health::routes())
+        .merge(api::csp::routes())
+        // Modules below don't have `#[utoipa::path]` on their handlers
+        // (XML feeds, binary streams, WS upgrades, browser-defined bodies).
+        // Wrap each as an OpenApiRouter so it composes into the chain;
+        // their routes still work, they just don't appear in the spec.
+        .merge(OpenApiRouter::from(api::meta::routes()))
+        // auth::local and auth::ws_ticket: routes-only in `bare` (canonical
+        // spec entry lives in the `api` group below).
+        .merge(OpenApiRouter::from(axum::Router::from(auth::local::routes())))
+        .merge(OpenApiRouter::from(auth::oidc::routes()))
+        .merge(OpenApiRouter::from(axum::Router::from(auth::ws_ticket::routes())))
+        .merge(OpenApiRouter::from(api::ws_scan_events::routes()))
+        .merge(OpenApiRouter::from(api::page_bytes::routes()))
+        .merge(OpenApiRouter::from(api::thumbnails::routes()))
+        .merge(OpenApiRouter::from(api::opds::routes()))
+        .merge(OpenApiRouter::from(api::opds_v2::routes()))
+        .merge(OpenApiRouter::from(api::komga_compat::routes()))
+        .merge(OpenApiRouter::from(api::opds_progression::routes()));
+
+    let api = OpenApiRouter::<AppState>::new()
+        .merge(auth::local::routes())
+        .merge(auth::ws_ticket::routes())
+        .merge(api::account::routes())
+        .merge(api::libraries::routes())
+        .merge(api::health_issues::routes())
+        .merge(api::reconcile::routes())
+        .merge(api::scan_runs::routes())
+        .merge(api::admin_queue::routes())
+        .merge(api::admin_thumbs::routes())
+        .merge(api::admin_users::routes())
+        .merge(api::audit::routes())
+        .merge(api::series::routes())
+        .merge(api::issues::routes())
+        .merge(api::people::routes())
+        .merge(api::creators::routes())
+        .merge(api::progress::routes())
+        .merge(api::rails::routes())
+        .merge(api::next_up::routes())
+        .merge(api::ratings::routes())
+        .merge(api::reading_sessions::routes())
+        .merge(api::reading_log::routes())
+        .merge(api::log_widgets::routes())
+        .merge(api::admin_stats::routes())
+        .merge(api::saved_views::routes())
+        .merge(api::sidebar_layout::routes())
+        .merge(api::cbl_lists::routes())
+        .merge(api::collections::routes())
+        .merge(api::pages::routes())
+        .merge(api::issue_ocr::routes())
+        .merge(api::admin_ocr::routes())
+        .merge(api::markers::routes())
+        .merge(api::filter_options::routes())
+        .merge(api::admin_logs::routes())
+        .merge(api::admin_fs::routes())
+        .merge(api::admin_activity::routes())
+        .merge(api::auth_config::routes())
+        .merge(api::server_info::routes())
+        .merge(api::server_releases::routes())
+        .merge(api::sessions::routes())
+        .merge(api::app_passwords::routes())
+        .merge(api::admin_settings::routes())
+        .merge(api::admin_email::routes());
+
+    bare.nest("/api", api)
+}
+
 pub fn openapi_spec() -> utoipa::openapi::OpenApi {
-    ApiDoc::openapi()
+    let (_router, mut spec) = build_openapi_router().split_for_parts();
+    // Carry the `info` block (title/version/description) over from the
+    // metadata-only ApiDoc derive — `OpenApiRouter` defaults to an empty
+    // info block.
+    spec.info = ApiDoc::openapi().info;
+    spec
 }
 
 pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Result<()> {
@@ -688,102 +390,12 @@ pub fn router(state: AppState) -> Router {
     let csp_template = Arc::new(CspTemplate::new(&cfg));
     let trusted_proxies = TrustedProxies::from_config(&cfg.trusted_proxies);
 
-    // Routing groups (v0.2.1 — follows the rust-public-origin plan's M2
-    // fallback wiring, but splits the API surface out of bare paths to
-    // avoid colliding with Next.js HTML routes):
-    //
-    //   `bare`  — routes external clients hit directly: operator/CI
-    //             healthchecks, browser form-action POSTs (Next sign-in
-    //             form posts to `/auth/local/login`), OIDC IdP
-    //             callbacks, OPDS clients, WebSocket upgrade endpoints,
-    //             image-byte streams referenced from OPDS feeds and
-    //             API responses. None of these share path shapes with
-    //             Next pages, so they don't conflict.
-    //
-    //   `api`   — every JSON route the web app reaches via `apiFetch`
-    //             (which prepends `/api/`). Mounted via
-    //             `Router::nest("/api", api)`. Browser navigations to
-    //             bare paths like `/admin/users` or `/series/{slug}`
-    //             now fall through to the SSR proxy instead of hitting
-    //             the Rust JSON handler.
-    //
-    // `auth::local::routes()` lives in BOTH because it mixes form
-    // actions (`/auth/local/login` — bare) and cookie-API endpoints
-    // (`/auth/refresh`, `/auth/me`, `/auth/logout`, `/me/preferences` —
-    // also reachable as `/api/auth/refresh` etc. for the web app).
-    // Duplicate registration is harmless; the only real cost is a
-    // separate rate-limit-bucket instance per path, and the
-    // failed-auth Redis lockout is shared across them anyway.
-    let bare = Router::<AppState>::new()
-        .merge(api::health::routes())
-        .merge(api::csp::routes())
-        .merge(api::meta::routes())
-        .merge(auth::local::routes())
-        .merge(auth::oidc::routes())
-        .merge(auth::ws_ticket::routes())
-        .merge(api::ws_scan_events::routes())
-        .merge(api::page_bytes::routes())
-        .merge(api::thumbnails::routes())
-        .merge(api::opds::routes())
-        .merge(api::opds_v2::routes())
-        // progress-writeback-2.0 M3: Komga REST shim at literal
-        // `/api/v1/books/...` paths. Mounted in the bare group
-        // because external clients (Panels) hit these directly,
-        // not via the web app's `apiFetch` prefix. The shim's
-        // handlers self-gate on `compat.opds_panels_mode == "komga"`
-        // and return 404 when compat is off.
-        .merge(api::komga_compat::routes())
-        // progress-writeback-2.0 M5: OPDS Progression 1.0 spec-clean
-        // endpoint at `/opds/v1/progression/{issue_id}`. Always
-        // active regardless of compat mode — no client implements
-        // the spec yet (May 2026), but Folio is ready when one does.
-        .merge(api::opds_progression::routes());
+    // Single source of truth: `build_openapi_router` composes every routed
+    // module. `split_for_parts` discards the OpenApi side here — that
+    // surface is exposed via [`openapi_spec`] / the `--emit-openapi` flag.
+    let (api_router, _) = build_openapi_router().split_for_parts();
 
-    let api = Router::<AppState>::new()
-        .merge(auth::local::routes())
-        .merge(auth::ws_ticket::routes())
-        .merge(api::account::routes())
-        .merge(api::libraries::routes())
-        .merge(api::health_issues::routes())
-        .merge(api::reconcile::routes())
-        .merge(api::scan_runs::routes())
-        .merge(api::admin_queue::routes())
-        .merge(api::admin_thumbs::routes())
-        .merge(api::admin_users::routes())
-        .merge(api::audit::routes())
-        .merge(api::series::routes())
-        .merge(api::issues::routes())
-        .merge(api::people::routes())
-        .merge(api::creators::routes())
-        .merge(api::progress::routes())
-        .merge(api::rails::routes())
-        .merge(api::next_up::routes())
-        .merge(api::ratings::routes())
-        .merge(api::reading_sessions::routes())
-        .merge(api::reading_log::routes())
-        .merge(api::log_widgets::routes())
-        .merge(api::admin_stats::routes())
-        .merge(api::saved_views::routes())
-        .merge(api::sidebar_layout::routes())
-        .merge(api::cbl_lists::routes())
-        .merge(api::collections::routes())
-        .merge(api::pages::routes())
-        .merge(api::issue_ocr::routes())
-        .merge(api::admin_ocr::routes())
-        .merge(api::markers::routes())
-        .merge(api::filter_options::routes())
-        .merge(api::admin_logs::routes())
-        .merge(api::admin_fs::routes())
-        .merge(api::admin_activity::routes())
-        .merge(api::auth_config::routes())
-        .merge(api::server_info::routes())
-        .merge(api::server_releases::routes())
-        .merge(api::sessions::routes())
-        .merge(api::app_passwords::routes())
-        .merge(api::admin_settings::routes())
-        .merge(api::admin_email::routes());
-
-    bare.nest("/api", api)
+    api_router
         // Catch-all fallback: anything no explicit route matched is
         // forwarded to the configured Next.js SSR upstream. Layers
         // below wrap the fallback the same way they wrap any explicit

@@ -448,7 +448,7 @@ async fn add_entry_validation_errors() {
         Some(serde_json::json!({ "entry_kind": "blob", "ref_id": "x" })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Bad UUID for series.
     let (status, _) = http(
@@ -459,7 +459,7 @@ async fn add_entry_validation_errors() {
         Some(serde_json::json!({ "entry_kind": "series", "ref_id": "not-a-uuid" })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Nonexistent series.
     let (status, body) = http(
@@ -587,7 +587,7 @@ async fn reorder_rejects_partial_lists() {
         Some(serde_json::json!({ "entry_ids": [ids[0].clone()] })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body:#?}");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body: {body:#?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -753,7 +753,7 @@ async fn bulk_add_rejects_over_cap() {
         Some(serde_json::json!({"members": members})),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -925,7 +925,7 @@ async fn bulk_remove_rejects_over_cap() {
         Some(serde_json::json!({"members": members})),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

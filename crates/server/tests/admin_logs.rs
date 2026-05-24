@@ -155,7 +155,7 @@ async fn level_filter_drops_lower_severity() {
     assert_eq!(messages, vec!["info msg", "error msg"]);
 
     let (s, _) = get(&app, &admin, "/api/admin/logs?level=garbage").await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

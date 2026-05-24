@@ -317,7 +317,7 @@ function SectionHeader({
 }
 
 function EventCard({ event }: { event: ReadingLogEventView }) {
-  const Icon = KIND_ICON[event.kind];
+  const Icon = KIND_ICON[event.kind as ReadingLogEventKind];
   const cover = event.issue?.cover_url ?? event.series?.cover_url ?? null;
   const seriesName = event.series?.name ?? "—";
   const number = event.issue?.number ?? null;
@@ -351,11 +351,11 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
         <span
           className={cn(
             "absolute top-2 left-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide uppercase backdrop-blur",
-            KIND_TINT[event.kind],
+            KIND_TINT[event.kind as ReadingLogEventKind],
           )}
         >
           <Icon aria-hidden="true" className="h-3.5 w-3.5" />
-          {KIND_LABEL[event.kind]}
+          {KIND_LABEL[event.kind as ReadingLogEventKind]}
         </span>
       </div>
       <CardContent className="flex flex-1 flex-col gap-1.5 p-3.5">

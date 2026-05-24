@@ -59,7 +59,7 @@ export function SeriesActivityTab({
         </h3>
         <IssueGridHeatmap
           issues={issues}
-          rereads={data.reread_top_issues}
+          rereads={data.reread_top_issues ?? []}
           seriesSlug={seriesSlug}
         />
       </section>
@@ -69,7 +69,7 @@ export function SeriesActivityTab({
           Reading pace
         </h3>
         {hasActivity ? (
-          <PaceChart points={data.pace_series} />
+          <PaceChart points={data.pace_series ?? []} />
         ) : (
           <p className="text-muted-foreground text-sm">
             Start an issue to record your first pace sample.

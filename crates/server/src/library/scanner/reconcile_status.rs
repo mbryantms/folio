@@ -48,6 +48,34 @@ struct CountBySeriesRow {
     max_count: Option<i32>,
 }
 
+#[derive(Debug, FromQueryResult)]
+struct VolumeModeRow {
+    mode_volume: Option<i32>,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct VolumeModeBySeriesRow {
+    series_id: Uuid,
+    mode_volume: Option<i32>,
+}
+
+/// Bag of post-ingest aggregates used by `apply_reconciled_status`.
+/// One per series row — gathered once via grouped queries when reconciling
+/// a scan batch, or one-off for the single-series variant.
+#[derive(Debug, Default, Clone, Copy)]
+struct IssueAggregates {
+    /// MAX(`<Count>`) across the series' active issues. Drives the
+    /// status / total_issues ladder.
+    comicinfo_count: Option<i32>,
+    /// Statistical mode of `issues.volume` across the series' active
+    /// issues — survives the per-issue plausibility filter applied
+    /// during `process::ingest`, so any value here is already in the
+    /// realistic 1–99 range. Used to backfill `series.volume` when no
+    /// sidecar value is available, healing rows that earlier scans
+    /// stamped with a `V<year>` filename token.
+    volume_mode: Option<i32>,
+}
+
 /// Recompute the series's metadata-derived fields. The `sidecar`
 /// argument is `Some(_)` when called from a folder scan with a
 /// `series.json` present, `None` when called from the tombstone
@@ -72,20 +100,44 @@ where
     C: ConnectionTrait,
 {
     let backend = db.get_database_backend();
-    let stmt = Statement::from_sql_and_values(
+    let count_stmt = Statement::from_sql_and_values(
         backend,
         "SELECT MAX(comicinfo_count) AS max_count \
          FROM issues \
          WHERE series_id = $1 AND removed_at IS NULL",
         [series_id.into()],
     );
-    let max_row = CountRow::find_by_statement(stmt).one(db).await?;
+    let max_row = CountRow::find_by_statement(count_stmt).one(db).await?;
     let comicinfo_count: Option<i32> = max_row.and_then(|r| r.max_count).filter(|n| *n > 0);
+
+    // MODE() is Postgres-specific; the dev + prod backends are both
+    // Postgres so this is safe. If we ever add a SQLite backend the
+    // mode call would need a fallback (e.g. `SELECT volume, COUNT(*)
+    // ... GROUP BY volume ORDER BY 2 DESC LIMIT 1`).
+    let mode_stmt = Statement::from_sql_and_values(
+        backend,
+        "SELECT MODE() WITHIN GROUP (ORDER BY volume) AS mode_volume \
+         FROM issues \
+         WHERE series_id = $1 AND removed_at IS NULL AND volume IS NOT NULL",
+        [series_id.into()],
+    );
+    let mode_row = VolumeModeRow::find_by_statement(mode_stmt).one(db).await?;
+    let volume_mode: Option<i32> = mode_row.and_then(|r| r.mode_volume);
+
     let row = match series::Entity::find_by_id(series_id).one(db).await? {
         Some(r) => r,
         None => return Ok(()), // series was deleted between scan and reconcile
     };
-    apply_reconciled_status(db, row, comicinfo_count, sidecar).await
+    apply_reconciled_status(
+        db,
+        row,
+        IssueAggregates {
+            comicinfo_count,
+            volume_mode,
+        },
+        sidecar,
+    )
+    .await
 }
 
 /// Set-based equivalent of [`reconcile_series_status`] for scanner batches.
@@ -121,6 +173,31 @@ where
         .map(|r| (r.series_id, r.max_count.filter(|n| *n > 0)))
         .collect();
 
+    // Grouped MODE() across active issues' `volume`. Raw SQL because
+    // SeaORM's expression builder doesn't model `WITHIN GROUP`. The
+    // `ANY($1::uuid[])` pattern works under both `sea-orm-postgres`
+    // and bare `sqlx` parameter binding without manual quoting.
+    let backend = db.get_database_backend();
+    let mode_stmt = Statement::from_sql_and_values(
+        backend,
+        "SELECT series_id, \
+                MODE() WITHIN GROUP (ORDER BY volume) AS mode_volume \
+         FROM issues \
+         WHERE series_id = ANY($1::uuid[]) \
+           AND removed_at IS NULL \
+           AND volume IS NOT NULL \
+         GROUP BY series_id",
+        [ids.clone().into()],
+    );
+    let mode_rows: Vec<VolumeModeBySeriesRow> =
+        VolumeModeBySeriesRow::find_by_statement(mode_stmt)
+            .all(db)
+            .await?;
+    let volume_modes: HashMap<Uuid, Option<i32>> = mode_rows
+        .into_iter()
+        .map(|r| (r.series_id, r.mode_volume))
+        .collect();
+
     let rows = series::Entity::find()
         .filter(series::Column::Id.is_in(ids))
         .all(db)
@@ -128,8 +205,11 @@ where
 
     for row in rows {
         let sidecar = sidecars.get(&row.id).and_then(|m| m.as_ref());
-        let comicinfo_count = counts.get(&row.id).copied().flatten();
-        apply_reconciled_status(db, row, comicinfo_count, sidecar).await?;
+        let aggregates = IssueAggregates {
+            comicinfo_count: counts.get(&row.id).copied().flatten(),
+            volume_mode: volume_modes.get(&row.id).copied().flatten(),
+        };
+        apply_reconciled_status(db, row, aggregates, sidecar).await?;
     }
     Ok(())
 }
@@ -137,12 +217,14 @@ where
 async fn apply_reconciled_status<C>(
     db: &C,
     row: series::Model,
-    comicinfo_count: Option<i32>,
+    aggregates: IssueAggregates,
     sidecar: Option<&SeriesMetadata>,
 ) -> Result<(), DbErr>
 where
     C: ConnectionTrait,
 {
+    let comicinfo_count = aggregates.comicinfo_count;
+
     // Resolve each field using the precedence ladder. None on either
     // signal source means "no change" — never overwrite an existing
     // value with NULL just because we didn't see it this scan.
@@ -213,6 +295,62 @@ where
         && let Some(cv) = resolved_comicvine_id
     {
         am.comicvine_id = Set(Some(cv));
+        am.updated_at = Set(Utc::now().fixed_offset());
+        dirty = true;
+    }
+
+    // ───── volume / name / publisher self-heal ─────
+    //
+    // These three fields were historically only set at series-creation
+    // time (identity.rs tier 4), which meant a rescan couldn't repair
+    // values stamped by earlier-buggy scanner versions. The most visible
+    // case: filename `V<year>` tokens (Mylar3 fill-in) landed in
+    // `series.volume` as `2016` / `2023` / etc. on ~99 % of one user's
+    // library. With the plausibility filter on the inference side,
+    // FRESH series get correct values — but existing rows can only heal
+    // here.
+    //
+    // Precedence ladder (matches what identity.rs uses for hint
+    // computation on new series):
+    //   1. series.json sidecar — curated metadata wins outright.
+    //   2. MODE() over `issues.volume` — survives per-issue plausibility
+    //      filter, so any value here is realistic.
+    //   3. No signal → leave the row alone.
+    //
+    // For `name` / `publisher` we don't fall back to issue-level
+    // aggregates today — series-level data isn't denormalized onto
+    // issues, and trusting the first-issue ComicInfo enough to overwrite
+    // an existing `name` row has too many false-positive failure modes
+    // (renamed crossovers, multi-series anthology folders). Sidecar
+    // only.
+
+    if let Some(v) = sidecar.and_then(|m| m.volume).or(aggregates.volume_mode)
+        && row.volume != Some(v)
+    {
+        am.volume = Set(Some(v));
+        am.updated_at = Set(Utc::now().fixed_offset());
+        dirty = true;
+    }
+
+    if let Some(name) = sidecar
+        .and_then(|m| m.name.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        && row.name != name
+    {
+        am.name = Set(name.to_owned());
+        am.normalized_name = Set(entity::series::normalize_name(name));
+        am.updated_at = Set(Utc::now().fixed_offset());
+        dirty = true;
+    }
+
+    if let Some(publisher) = sidecar
+        .and_then(|m| m.publisher.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        && row.publisher.as_deref() != Some(publisher)
+    {
+        am.publisher = Set(Some(publisher.to_owned()));
         am.updated_at = Set(Utc::now().fixed_offset());
         dirty = true;
     }

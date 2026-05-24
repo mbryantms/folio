@@ -95,7 +95,7 @@ function ViewRow({ view }: { view: SavedViewView }) {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [pinOpen, setPinOpen] = React.useState(false);
   const isCbl = view.kind === "cbl";
-  const pinnedCount = view.pinned_on_pages.length;
+  const pinnedCount = (view.pinned_on_pages ?? []).length;
   // The per-user Want to Read collection (kind='collection',
   // system_key='want_to_read') is auto-seeded for every account and
   // backend-guarded against deletion. Surface it as built-in in the

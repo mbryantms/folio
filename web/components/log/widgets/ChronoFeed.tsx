@@ -310,7 +310,7 @@ function GroupHeader({ label }: { label: string }) {
 }
 
 function EventRow({ event }: { event: ReadingLogEventView }) {
-  const Icon = KIND_ICON[event.kind];
+  const Icon = KIND_ICON[event.kind as ReadingLogEventKind];
   const cover = event.issue?.cover_url ?? event.series?.cover_url ?? null;
   const issueLabel = event.issue?.number ? `#${event.issue.number}` : null;
   const issueTitle = event.issue?.title ?? null;
@@ -392,11 +392,11 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase",
-              KIND_TINT[event.kind],
+              KIND_TINT[event.kind as ReadingLogEventKind],
             )}
           >
             <Icon aria-hidden="true" className="h-3 w-3" />
-            {KIND_LABEL[event.kind]}
+            {KIND_LABEL[event.kind as ReadingLogEventKind]}
           </span>
           <PayloadLine event={event} />
         </div>

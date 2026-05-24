@@ -35,11 +35,10 @@
 //! All endpoints require `role == "admin"`.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, post},
 };
 use entity::{issue, library};
 use sea_orm::{
@@ -48,6 +47,8 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
@@ -57,60 +58,23 @@ use crate::jobs::post_scan;
 use crate::library::thumbnails::{self, THUMBNAIL_VERSION, ThumbFormat};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/admin/libraries/{slug}/thumbnails-status",
-            get(library_status),
-        )
-        .route(
-            "/admin/libraries/{slug}/thumbnails-settings",
-            get(get_settings).patch(update_settings),
-        )
-        .route(
-            "/admin/libraries/{slug}/thumbnails/generate-missing",
-            post(generate_missing),
-        )
-        .route(
-            "/admin/libraries/{slug}/thumbnails/generate-page-map",
-            post(generate_page_map),
-        )
-        .route(
-            "/admin/libraries/{slug}/thumbnails/force-recreate",
-            post(force_recreate),
-        )
-        .route("/admin/libraries/{slug}/thumbnails", delete(delete_all))
-        // Series-scope thumbnail regen — admins can rebuild one book without
-        // touching the rest of the library.
-        .route(
-            "/admin/series/{series_slug}/thumbnails/regenerate-cover",
-            post(regenerate_series_cover),
-        )
-        .route(
-            "/admin/series/{series_slug}/thumbnails/generate-page-map",
-            post(generate_series_page_map),
-        )
-        .route(
-            "/admin/series/{series_slug}/thumbnails/force-recreate-page-map",
-            post(force_recreate_series_page_map),
-        )
-        // Issue-scope thumbnail regen. The cover route replaces the legacy
-        // `/regenerate-thumbnails` endpoint, which conflated cover regen with
-        // a full strip-dir wipe — no UI consumer existed, so this is a clean
-        // rename + tightened semantics.
-        .route(
-            "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/regenerate-cover",
-            post(regenerate_issue_cover),
-        )
-        .route(
-            "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/generate-page-map",
-            post(generate_issue_page_map),
-        )
-        .route(
-            "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/force-recreate-page-map",
-            post(force_recreate_issue_page_map),
-        )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(library_status))
+        .routes(routes!(get_settings))
+        .routes(routes!(update_settings))
+        .routes(routes!(generate_missing))
+        .routes(routes!(generate_page_map))
+        .routes(routes!(force_recreate))
+        .routes(routes!(delete_all))
+        .routes(routes!(regenerate_series_cover))
+        .routes(routes!(generate_series_page_map))
+        .routes(routes!(force_recreate_series_page_map))
+        .routes(routes!(regenerate_issue_cover))
+        .routes(routes!(generate_issue_page_map))
+        .routes(routes!(force_recreate_issue_page_map))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -199,7 +163,7 @@ struct PageThumbIssueRow {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_thumbs_library_status",    get,
     path = "/admin/libraries/{slug}/thumbnails-status",
     params(("slug" = String, Path,)),
     responses(
@@ -208,6 +172,7 @@ struct PageThumbIssueRow {
         (status = 404, description = "library not found"),
     )
 )]
+#[handler]
 pub async fn library_status(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -304,7 +269,7 @@ async fn thumbnail_queued_counts(app: &AppState, lib_id: Uuid) -> (u64, u64) {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_thumbs_get_settings",    get,
     path = "/admin/libraries/{slug}/thumbnails-settings",
     params(("slug" = String, Path,)),
     responses(
@@ -313,6 +278,7 @@ async fn thumbnail_queued_counts(app: &AppState, lib_id: Uuid) -> (u64, u64) {
         (status = 404, description = "library not found"),
     )
 )]
+#[handler]
 pub async fn get_settings(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -332,7 +298,7 @@ pub async fn get_settings(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "admin_thumbs_update_settings",    patch,
     path = "/admin/libraries/{slug}/thumbnails-settings",
     params(("slug" = String, Path,)),
     request_body = UpdateThumbnailsSettingsReq,
@@ -343,6 +309,7 @@ pub async fn get_settings(
         (status = 404, description = "library not found"),
     )
 )]
+#[handler]
 pub async fn update_settings(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -363,7 +330,7 @@ pub async fn update_settings(
             Some(f) => Some(f.as_str().to_owned()),
             None => {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation.thumbnail_format",
                     "format must be one of: webp, jpeg, png",
                 );
@@ -375,7 +342,7 @@ pub async fn update_settings(
         |value: Option<i32>, field: &str| -> Result<Option<i32>, axum::response::Response> {
             match value {
                 Some(v) if !(0..=100).contains(&v) => Err(error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation.thumbnail_quality",
                     &format!("{field} must be between 0 and 100"),
                 )),
@@ -457,7 +424,7 @@ pub async fn update_settings(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "admin_thumbs_generate_missing",    post,
     path = "/admin/libraries/{slug}/thumbnails/generate-missing",
     params(("slug" = String, Path,)),
     responses(
@@ -467,6 +434,7 @@ pub async fn update_settings(
         (status = 409, description = "thumbnails disabled"),
     )
 )]
+#[handler]
 pub async fn generate_missing(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -506,7 +474,7 @@ pub async fn generate_missing(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "admin_thumbs_generate_page_map",    post,
     path = "/admin/libraries/{slug}/thumbnails/generate-page-map",
     params(("slug" = String, Path,)),
     responses(
@@ -516,6 +484,7 @@ pub async fn generate_missing(
         (status = 409, description = "thumbnails disabled"),
     )
 )]
+#[handler]
 pub async fn generate_page_map(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -555,7 +524,7 @@ pub async fn generate_page_map(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "admin_thumbs_force_recreate",    post,
     path = "/admin/libraries/{slug}/thumbnails/force-recreate",
     params(("slug" = String, Path,)),
     responses(
@@ -565,6 +534,7 @@ pub async fn generate_page_map(
         (status = 409, description = "thumbnails disabled"),
     )
 )]
+#[handler]
 pub async fn force_recreate(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -625,7 +595,7 @@ pub async fn force_recreate(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "admin_thumbs_delete_all",    delete,
     path = "/admin/libraries/{slug}/thumbnails",
     params(("slug" = String, Path,)),
     responses(
@@ -634,6 +604,7 @@ pub async fn force_recreate(
         (status = 404, description = "library not found"),
     )
 )]
+#[handler]
 pub async fn delete_all(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -695,7 +666,7 @@ pub async fn delete_all(
 /// the inline-fallback path or by a separate `force-recreate-page-map`
 /// call. Audit: `admin.thumbnails.regenerate.series_cover`.
 #[utoipa::path(
-    post,
+    operation_id = "admin_thumbs_regenerate_series_cover",    post,
     path = "/admin/series/{series_slug}/thumbnails/regenerate-cover",
     params(("series_slug" = String, Path,)),
     responses(
@@ -705,6 +676,7 @@ pub async fn delete_all(
         (status = 409, description = "thumbnails disabled"),
     )
 )]
+#[handler]
 pub async fn regenerate_series_cover(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -792,7 +764,7 @@ pub async fn regenerate_series_cover(
 /// repeated calls are cheap and idempotent. Audit:
 /// `admin.thumbnails.generate_page_map.series`.
 #[utoipa::path(
-    post,
+    operation_id = "admin_thumbs_generate_series_page_map",    post,
     path = "/admin/series/{series_slug}/thumbnails/generate-page-map",
     params(("series_slug" = String, Path,)),
     responses(
@@ -802,6 +774,7 @@ pub async fn regenerate_series_cover(
         (status = 409, description = "thumbnails disabled"),
     )
 )]
+#[handler]
 pub async fn generate_series_page_map(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -858,7 +831,7 @@ pub async fn generate_series_page_map(
 /// archive. Cover files are preserved. Audit:
 /// `admin.thumbnails.force_recreate.series_page_map`.
 #[utoipa::path(
-    post,
+    operation_id = "admin_thumbs_force_recreate_series_page_map",    post,
     path = "/admin/series/{series_slug}/thumbnails/force-recreate-page-map",
     params(("series_slug" = String, Path,)),
     responses(
@@ -868,6 +841,7 @@ pub async fn generate_series_page_map(
         (status = 409, description = "thumbnails disabled"),
     )
 )]
+#[handler]
 pub async fn force_recreate_series_page_map(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -953,7 +927,7 @@ pub async fn force_recreate_series_page_map(
 /// stamp columns, and enqueue a fresh `Cover` job. Strip subtree is
 /// preserved. Audit: `admin.thumbnails.regenerate.issue_cover`.
 #[utoipa::path(
-    post,
+    operation_id = "admin_thumbs_regenerate_issue_cover",    post,
     path = "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/regenerate-cover",
     params(
         ("series_slug" = String, Path,),
@@ -966,6 +940,7 @@ pub async fn force_recreate_series_page_map(
         (status = 409, description = "thumbnails disabled"),
     )
 )]
+#[handler]
 pub async fn regenerate_issue_cover(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -1013,7 +988,7 @@ pub async fn regenerate_issue_cover(
 /// strip files already exist, so calling this when nothing's missing is a
 /// no-op. Audit: `admin.thumbnails.generate_page_map.issue`.
 #[utoipa::path(
-    post,
+    operation_id = "admin_thumbs_generate_issue_page_map",    post,
     path = "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/generate-page-map",
     params(
         ("series_slug" = String, Path,),
@@ -1026,6 +1001,7 @@ pub async fn regenerate_issue_cover(
         (status = 409, description = "thumbnails disabled"),
     )
 )]
+#[handler]
 pub async fn generate_issue_page_map(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -1070,7 +1046,7 @@ pub async fn generate_issue_page_map(
 /// `Strip` job. Cover file is preserved. Audit:
 /// `admin.thumbnails.force_recreate.issue_page_map`.
 #[utoipa::path(
-    post,
+    operation_id = "admin_thumbs_force_recreate_issue_page_map",    post,
     path = "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/force-recreate-page-map",
     params(
         ("series_slug" = String, Path,),
@@ -1083,6 +1059,7 @@ pub async fn generate_issue_page_map(
         (status = 409, description = "thumbnails disabled"),
     )
 )]
+#[handler]
 pub async fn force_recreate_issue_page_map(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,

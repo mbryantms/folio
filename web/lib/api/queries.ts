@@ -50,7 +50,7 @@ import type {
   HealthIssueView,
   NextUpView,
   OnDeckView,
-  PageView,
+  PageListView,
   PreviewReq,
   RefreshLogListView,
   IssueListView,
@@ -743,6 +743,10 @@ export function useLogWidgets() {
   return useQuery({
     queryKey: queryKeys.logWidgets,
     queryFn: () => jsonFetch<LogWidgetListView>("/me/log/widgets"),
+    // `LogWidgetListView` is now the uniform `CursorPage<LogWidgetView>`
+    // envelope (audit-remediation M4). Widgets are bounded per-user;
+    // `next_cursor` is always null. The single consumer reads
+    // `data?.items`.
   });
 }
 
@@ -1160,7 +1164,15 @@ export function useSavedViews(filters: SavedViewListFilters = {}) {
 export function useMePages() {
   return useQuery({
     queryKey: queryKeys.mePages,
-    queryFn: () => jsonFetch<PageView[]>("/me/pages"),
+    // Server returns `CursorPage<PageView>` (audit-remediation M4 uniform
+    // envelope); pages are bounded per-user so `next_cursor` is always
+    // null. Unwrap to `PageView[]` here so call sites keep their
+    // `.map(...)` shape. When the cap eventually lifts and pagination
+    // kicks in, swap to `useInfiniteQuery`.
+    queryFn: async () => {
+      const page = await jsonFetch<PageListView>("/me/pages");
+      return page.items;
+    },
     placeholderData: keepPreviousData,
   });
 }

@@ -183,7 +183,7 @@ export function ManagePinsDialog({
                 forceOpen={query.trim().length > 0 ? true : undefined}
               >
                 {group.items.map((v) => {
-                  const isPinned = v.pinned_on_pages.includes(pageId);
+                  const isPinned = (v.pinned_on_pages ?? []).includes(pageId);
                   const disabled = !isPinned && atCap;
                   return (
                     <label

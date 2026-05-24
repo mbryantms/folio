@@ -6,17 +6,17 @@
 //! swap this for Automerge CRDT sync was reconsidered and dropped on
 //! 2026-05-15 (see spec §9 decision note).
 //!
-//! Forward-compat: every response carries `X-Progress-Api: 1`. The
-//! header is retained as a versioning hook in case the wire format
-//! ever changes; the Automerge cutover that originally motivated it
-//! is no longer planned.
+//! Error envelope: every error response flows through the shared
+//! `crate::api::error` helper. The `X-Progress-Api` header that used to
+//! ride every response was dropped in audit-remediation M3 — the
+//! versioning shim was unused by clients and represented premature
+//! infrastructure.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxPath, Query, State},
-    http::{HeaderName, HeaderValue, StatusCode, header},
+    http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
 };
 use chrono::Utc;
 use entity::{
@@ -27,19 +27,27 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set, Unchanged,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
+use super::error;
 use crate::auth::CurrentUser;
 use crate::state::AppState;
+use server_macros::handler;
 
-const API_VERSION_HEADER: &str = "x-progress-api";
-const API_VERSION: &str = "1";
-
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/progress", post(upsert).get(list))
-        .route("/series/{slug}/progress", post(upsert_series))
-        .route("/me/progress/bulk", post(upsert_bulk))
-        .route("/me/progress/series-bulk", post(upsert_series_bulk))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        // Single-record `/progress` endpoints aren't in the OpenAPI spec —
+        // they predate the `/me/progress/bulk` endpoints below and are kept
+        // as a transitional surface. Register them as plain routes so the
+        // spec only documents the bulk shape clients should target.
+        .route(
+            "/progress",
+            axum::routing::post(upsert).get(list),
+        )
+        .routes(routes!(upsert_series))
+        .routes(routes!(upsert_bulk))
+        .routes(routes!(upsert_series_bulk))
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,7 +141,7 @@ pub async fn upsert(
     Json(req): Json<UpsertReq>,
 ) -> Response {
     if req.page < 0 {
-        return error(StatusCode::BAD_REQUEST, "validation", "page must be >= 0");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "page must be >= 0");
     }
     // ACL: confirm the user can see the issue at all.
     let issue_row = match issue::Entity::find_by_id(req.issue_id.clone())
@@ -158,13 +166,10 @@ pub async fn upsert(
     )
     .await;
     match result {
-        Ok(model) => versioned(
-            StatusCode::OK,
-            Json(ProgressView::from(model)).into_response(),
-        ),
+        Ok(model) => (StatusCode::OK, Json(ProgressView::from(model))).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "progress upsert failed");
-            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+            super::error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
     }
 }
@@ -262,10 +267,11 @@ pub async fn list(
         }
     };
     let views: Vec<ProgressView> = rows.into_iter().map(Into::into).collect();
-    versioned(
+    (
         StatusCode::OK,
-        Json(serde_json::json!({"records": views})).into_response(),
+        Json(serde_json::json!({"records": views})),
     )
+        .into_response()
 }
 
 /// Body for `POST /series/{id}/progress` — bulk read/unread for every active
@@ -302,7 +308,7 @@ pub struct UpsertSeriesResp {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "progress_upsert_series",    post,
     path = "/series/{slug}/progress",
     params(("slug" = String, Path,)),
     request_body = UpsertSeriesReq,
@@ -311,6 +317,7 @@ pub struct UpsertSeriesResp {
         (status = 404, description = "series not found"),
     )
 )]
+#[handler]
 pub async fn upsert_series(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -413,10 +420,11 @@ pub async fn upsert_series(
         }
     }
 
-    versioned(
+    (
         StatusCode::OK,
-        Json(UpsertSeriesResp { updated, skipped }).into_response(),
+        Json(UpsertSeriesResp { updated, skipped }),
     )
+        .into_response()
 }
 
 /// Body for `POST /me/progress/bulk` — bulk read/unread for an
@@ -463,7 +471,7 @@ pub struct UpsertBulkResp {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "progress_upsert_bulk",    post,
     path = "/me/progress/bulk",
     request_body = UpsertBulkReq,
     responses(
@@ -471,6 +479,7 @@ pub struct UpsertBulkResp {
         (status = 400, description = "validation"),
     )
 )]
+#[handler]
 pub async fn upsert_bulk(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -483,7 +492,7 @@ pub async fn upsert_bulk(
     const MAX_IDS: usize = 500;
     if req.issue_ids.len() > MAX_IDS {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             &format!("issue_ids cap is {MAX_IDS}"),
         );
@@ -491,16 +500,16 @@ pub async fn upsert_bulk(
     // Empty list is a 200 OK with all-zero counts — easier on clients
     // that compute their selection list dynamically.
     if req.issue_ids.is_empty() {
-        return versioned(
+        return (
             StatusCode::OK,
             Json(UpsertBulkResp {
                 updated: 0,
                 skipped: 0,
                 forbidden: 0,
                 not_found: 0,
-            })
-            .into_response(),
-        );
+            }),
+        )
+            .into_response();
     }
     // Dedup ids — a client that double-checks the same card shouldn't
     // get a 2x cost. Preserves order for predictable iteration.
@@ -625,16 +634,16 @@ pub async fn upsert_bulk(
         }
     }
 
-    versioned(
+    (
         StatusCode::OK,
         Json(UpsertBulkResp {
             updated,
             skipped,
             forbidden,
             not_found,
-        })
-        .into_response(),
+        }),
     )
+        .into_response()
 }
 
 /// Body for `POST /me/progress/series-bulk` — bulk read/unread
@@ -674,7 +683,7 @@ pub struct UpsertSeriesBulkResp {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "progress_upsert_series_bulk",    post,
     path = "/me/progress/series-bulk",
     request_body = UpsertSeriesBulkReq,
     responses(
@@ -682,6 +691,7 @@ pub struct UpsertSeriesBulkResp {
         (status = 400, description = "validation"),
     )
 )]
+#[handler]
 pub async fn upsert_series_bulk(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -693,22 +703,22 @@ pub async fn upsert_series_bulk(
     const MAX_SERIES: usize = 100;
     if req.series_ids.len() > MAX_SERIES {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             &format!("series_ids cap is {MAX_SERIES}"),
         );
     }
     if req.series_ids.is_empty() {
-        return versioned(
+        return (
             StatusCode::OK,
             Json(UpsertSeriesBulkResp {
                 updated: 0,
                 skipped: 0,
                 forbidden_series: 0,
                 not_found_series: 0,
-            })
-            .into_response(),
-        );
+            }),
+        )
+            .into_response();
     }
     // Dedup series ids.
     let mut seen = std::collections::HashSet::with_capacity(req.series_ids.len());
@@ -844,27 +854,16 @@ pub async fn upsert_series_bulk(
         }
     }
 
-    versioned(
+    (
         StatusCode::OK,
         Json(UpsertSeriesBulkResp {
             updated,
             skipped,
             forbidden_series,
             not_found_series,
-        })
-        .into_response(),
+        }),
     )
-}
-
-fn versioned(status: StatusCode, mut resp: Response) -> Response {
-    *resp.status_mut() = status;
-    resp.headers_mut().insert(
-        HeaderName::from_static(API_VERSION_HEADER),
-        HeaderValue::from_static(API_VERSION),
-    );
-    resp.headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    resp
+        .into_response()
 }
 
 async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool {
@@ -881,10 +880,3 @@ async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool
         .is_some()
 }
 
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    versioned(
-        status,
-        axum::Json(serde_json::json!({"error": {"code": code, "message": message}}))
-            .into_response(),
-    )
-}

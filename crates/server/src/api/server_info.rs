@@ -7,20 +7,22 @@
 //! cadences, not real-time.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::State,
     response::{IntoResponse, Response},
-    routing::get,
 };
 use entity::library;
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, Statement};
 use serde::Serialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/admin/server/info", get(info))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(info))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -73,13 +75,14 @@ pub struct ServerInfoView {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "server_info_info",    get,
     path = "/admin/server/info",
     responses(
         (status = 200, body = ServerInfoView),
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn info(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     // `Cargo.toml` declares `version = "0.0.0"` and the release ritual
     // uses git tags only. The displayed version comes from

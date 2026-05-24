@@ -215,7 +215,7 @@ async fn rejects_parent_dir_segment() {
         ))
     );
     let (s, body) = get(&app, &admin, &uri).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 }
 

@@ -338,11 +338,11 @@ function buildBody(prev: SeriesView, form: FormState): UpdateSeriesReq {
   return body;
 }
 
-function didChangeStr(prev: string | null, next: string): boolean {
+function didChangeStr(prev: string | null | undefined, next: string): boolean {
   return (prev ?? "") !== next.trim();
 }
 
-function didChangeInt(prev: number | null, next: string): boolean {
+function didChangeInt(prev: number | null | undefined, next: string): boolean {
   const trimmed = next.trim();
   if (trimmed === "") return prev != null;
   const n = Number.parseInt(trimmed, 10);

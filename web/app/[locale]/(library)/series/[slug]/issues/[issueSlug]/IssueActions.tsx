@@ -892,7 +892,7 @@ function buildPatchBody(
   const str = (
     field: keyof UpdateIssueReq,
     next: string,
-    prevValue: string | null,
+    prevValue: string | null | undefined,
   ) => {
     if (didChangeStr(prevValue, next)) {
       (body as Record<string, unknown>)[field] = emptyToNull(next);
@@ -995,11 +995,11 @@ function buildSeriesPatchBody(
   return body;
 }
 
-function didChangeStr(prev: string | null, next: string): boolean {
+function didChangeStr(prev: string | null | undefined, next: string): boolean {
   return (prev ?? "") !== next.trim();
 }
 
-function didChangeInt(prev: number | null, next: string): boolean {
+function didChangeInt(prev: number | null | undefined, next: string): boolean {
   const trimmed = next.trim();
   if (trimmed === "") return prev != null;
   const n = Number.parseInt(trimmed, 10);
@@ -1007,7 +1007,7 @@ function didChangeInt(prev: number | null, next: string): boolean {
   return n !== prev;
 }
 
-function didChangeNum(prev: number | null, next: string): boolean {
+function didChangeNum(prev: number | null | undefined, next: string): boolean {
   const trimmed = next.trim();
   if (trimmed === "") return prev != null;
   const n = Number(trimmed);

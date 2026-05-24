@@ -1,11 +1,10 @@
 //! `/series` and `/series/{id}` (Phase 1a).
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
 };
 use chrono::Utc;
 use entity::{issue, library_user_access, series};
@@ -15,7 +14,10 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
+use server_macros::handler;
 
 const MAX_QUERY_LEN: usize = 200;
 
@@ -25,13 +27,14 @@ use crate::auth::{CurrentUser, RequireAdmin};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/series", get(list))
-        .route("/series/{slug}", get(get_one).patch(update_series))
-        .route("/series/{slug}/scan", axum::routing::post(scan_series))
-        .route("/series/{slug}/issues", get(list_issues))
-        .route("/series/{slug}/resume", get(resume))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(get_one))
+        .routes(routes!(update_series))
+        .routes(routes!(scan_series))
+        .routes(routes!(list_issues))
+        .routes(routes!(resume))
 }
 
 /// Resolve a series slug to its row. Standard 404 envelope on miss.
@@ -94,7 +97,7 @@ fn scan_force_default() -> bool {
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "series_scan_series",    post,
     path = "/series/{slug}/scan",
     params(
         ("slug" = String, Path,),
@@ -106,6 +109,7 @@ fn scan_force_default() -> bool {
         (status = 404, description = "series not found"),
     )
 )]
+#[handler]
 pub async fn scan_series(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -213,7 +217,7 @@ where
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "series_update_series",    patch,
     path = "/series/{slug}",
     params(("slug" = String, Path,)),
     request_body = UpdateSeriesReq,
@@ -223,6 +227,7 @@ where
         (status = 404, description = "series not found"),
     )
 )]
+#[handler]
 pub async fn update_series(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -255,7 +260,7 @@ pub async fn update_series(
             "continuing" | "ended" | "cancelled" | "hiatus" | "limited"
         ) {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation.status",
                 "status must be continuing, ended, cancelled, hiatus, or limited",
             );
@@ -276,7 +281,7 @@ pub async fn update_series(
                 let t = s.trim().to_ascii_lowercase();
                 if !matches!(t.as_str(), "ltr" | "rtl" | "ttb") {
                     return error(
-                        StatusCode::BAD_REQUEST,
+                        StatusCode::UNPROCESSABLE_ENTITY,
                         "validation.reading_direction",
                         "reading_direction must be ltr, rtl, ttb, or null",
                     );
@@ -1342,17 +1347,18 @@ fn compute_next_series_cursor(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "series_list",    get,
     path = "/series",
     responses((status = 200, body = SeriesListView))
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     user: CurrentUser,
     Query(q): Query<ListSeriesQuery>,
 ) -> impl IntoResponse {
     if let Err(msg) = validate_list_series_query_params(&q) {
-        return error(StatusCode::BAD_REQUEST, "validation", msg);
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", msg);
     }
 
     let visible_libs = visible_libraries(&app, &user).await;
@@ -1407,9 +1413,7 @@ pub async fn list(
             // handles the NULL-aware order semantics for `year`.
             let order = q.order.unwrap_or(match sort {
                 SeriesSort::Name => SortOrder::Asc,
-                SeriesSort::CreatedAt | SeriesSort::UpdatedAt | SeriesSort::Year => {
-                    SortOrder::Desc
-                }
+                SeriesSort::CreatedAt | SeriesSort::UpdatedAt | SeriesSort::Year => SortOrder::Desc,
             });
             let asc = matches!(order, SortOrder::Asc);
             apply_series_sort_ordering(filtered, sort, asc).limit(limit)
@@ -1486,7 +1490,7 @@ pub async fn list(
     if let Some(cursor) = q.cursor.as_deref() {
         select = match apply_series_cursor(select, cursor, sort, asc) {
             Ok(s) => s,
-            Err(msg) => return error(StatusCode::BAD_REQUEST, "validation", msg),
+            Err(msg) => return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", msg),
         };
     }
     select = apply_series_sort_ordering(select, sort, asc);
@@ -1552,9 +1556,7 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
         .column(issue::Column::SeriesId)
         .column(issue::Column::Id)
         .order_by_asc(issue::Column::SeriesId)
-        .order_by_asc(Expr::cust(
-            "CASE WHEN sort_number = 1 THEN 0 ELSE 1 END",
-        ))
+        .order_by_asc(Expr::cust("CASE WHEN sort_number = 1 THEN 0 ELSE 1 END"))
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::FilePath)
@@ -1747,7 +1749,7 @@ where
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "series_get_one",    get,
     path = "/series/{slug}",
     params(("slug" = String, Path,)),
     responses(
@@ -1755,6 +1757,7 @@ where
         (status = 404)
     )
 )]
+#[handler]
 pub async fn get_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1785,9 +1788,7 @@ pub async fn get_one(
         .filter(issue::Column::SeriesId.eq(row.id))
         .filter(issue::Column::State.eq("active"))
         .filter(issue::Column::RemovedAt.is_null())
-        .order_by_asc(Expr::cust(
-            "CASE WHEN sort_number = 1 THEN 0 ELSE 1 END",
-        ))
+        .order_by_asc(Expr::cust("CASE WHEN sort_number = 1 THEN 0 ELSE 1 END"))
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::FilePath)
@@ -1972,7 +1973,11 @@ pub(crate) async fn fetch_series_snippets(
         .into_iter()
         .filter_map(|r| {
             let s = r.snippet?;
-            if s.contains("<mark>") { Some((r.id, s)) } else { None }
+            if s.contains("<mark>") {
+                Some((r.id, s))
+            } else {
+                None
+            }
         })
         .collect())
 }
@@ -2325,11 +2330,12 @@ mod tests {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "series_list_issues",    get,
     path = "/series/{slug}/issues",
     params(("slug" = String, Path,)),
     responses((status = 200, body = IssueListView))
 )]
+#[handler]
 pub async fn list_issues(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -2339,7 +2345,7 @@ pub async fn list_issues(
     if let Some(s) = q.q.as_ref()
         && s.len() > MAX_QUERY_LEN
     {
-        return error(StatusCode::BAD_REQUEST, "validation", "q too long");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "q too long");
     }
     let s = match find_by_slug(&app.db, &slug).await {
         Ok(r) => r,
@@ -2400,7 +2406,7 @@ pub async fn list_issues(
     match sort {
         IssueSort::Year | IssueSort::PageCount | IssueSort::UserRating => {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "sort not supported on per-series listing",
             );
@@ -2624,7 +2630,7 @@ pub struct SeriesResumeView {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "series_resume",    get,
     path = "/series/{slug}/resume",
     params(("slug" = String, Path,)),
     responses(
@@ -2632,6 +2638,7 @@ pub struct SeriesResumeView {
         (status = 404, description = "series not found"),
     )
 )]
+#[handler]
 pub async fn resume(
     State(app): State<AppState>,
     user: CurrentUser,

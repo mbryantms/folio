@@ -10,15 +10,16 @@
 //! emit an audit-log row keyed on the user themself as the actor and target.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Redirect},
-    routing::{patch, post},
 };
 use axum_extra::extract::CookieJar;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::Deserialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 
@@ -31,20 +32,22 @@ use crate::auth::local::{MeResp, me_resp_from_row};
 use crate::auth::password;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
 // Access TTL flows from config; the CSRF cookie max-age must match the access
 // cookie's so JS doesn't think the form is signed-in after the access cookie
 // expires. Read at handler time via `app.cfg().access_ttl()`.
 
-pub fn routes() -> Router<AppState> {
+pub fn routes() -> OpenApiRouter<AppState> {
     // PATCH is the JSON contract (XHR happy path); POST is the
     // form-fallback alias so an HTML `<form method="POST">` can target
-    // the same handler. Both wire through the same `update` function;
-    // the CSRF middleware accepts the hidden `csrf_token` form field as
-    // an alternative to the `X-CSRF-Token` header (see `auth/csrf.rs`).
-    Router::new()
-        .route("/me/account", patch(update))
-        .route("/me/account", post(update))
+    // the same handler. The utoipa::path annotation on `update` only
+    // declares PATCH; the POST alias is added explicitly for the
+    // form-fallback path (no spec entry needed — the JSON contract
+    // is the public one).
+    OpenApiRouter::new()
+        .routes(routes!(update))
+        .route("/me/account", axum::routing::post(update))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -70,7 +73,7 @@ pub struct AccountReq {
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "account_update",    patch,
     path = "/me/account",
     request_body = AccountReq,
     responses(
@@ -81,6 +84,7 @@ pub struct AccountReq {
         (status = 409, description = "email already in use"),
     )
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -113,7 +117,7 @@ pub async fn update(
         && name.trim().is_empty()
     {
         return fail(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation.display_name",
             "display_name cannot be empty",
         );
@@ -129,7 +133,7 @@ pub async fn update(
         }
         let lower = email.trim().to_lowercase();
         if !lower.contains('@') || lower.len() > 254 {
-            return fail(StatusCode::BAD_REQUEST, "validation.email", "invalid email");
+            return fail(StatusCode::UNPROCESSABLE_ENTITY, "validation.email", "invalid email");
         }
         if Some(&lower) != row.email.as_ref()
             && let Ok(Some(other)) = UserEntity::find()
@@ -153,21 +157,21 @@ pub async fn update(
         }
         let Some(new_pw) = req.new_password.as_deref() else {
             return fail(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation.new_password",
                 "new_password is required when current_password is provided",
             );
         };
         let Some(current_pw) = req.current_password.as_deref() else {
             return fail(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation.current_password",
                 "current_password is required to change the password",
             );
         };
         if new_pw.len() < 12 {
             return fail(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation.new_password",
                 "new password must be at least 12 characters",
             );
@@ -178,7 +182,7 @@ pub async fn update(
             && confirm != new_pw
         {
             return fail(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation.confirm_password",
                 "passwords do not match",
             );

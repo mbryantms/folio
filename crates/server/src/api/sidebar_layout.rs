@@ -37,11 +37,10 @@
 //! the payload revert to "no override" → default visibility.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
 };
 use entity::{library, saved_view, user_page, user_sidebar_entry, user_view_pin};
 use sea_orm::{
@@ -50,12 +49,15 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
+use server_macros::handler;
 
 pub const KIND_BUILTIN: &str = "builtin";
 pub const KIND_LIBRARY: &str = "library";
@@ -125,8 +127,10 @@ pub struct BuiltinDef {
     pub href: &'static str,
 }
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/me/sidebar-layout", get(get_layout).patch(update_layout))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(get_layout))
+        .routes(routes!(update_layout))
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -163,12 +167,13 @@ pub struct UpdateEntryReq {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "sidebar_layout_get_layout",    get,
     path = "/me/sidebar-layout",
     responses(
         (status = 200, body = SidebarLayoutView),
     )
 )]
+#[handler]
 pub async fn get_layout(State(app): State<AppState>, user: CurrentUser) -> Response {
     match compute_layout(&app, &user).await {
         Ok(entries) => Json(SidebarLayoutView { entries }).into_response(),
@@ -180,7 +185,7 @@ pub async fn get_layout(State(app): State<AppState>, user: CurrentUser) -> Respo
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "sidebar_layout_update_layout",    patch,
     path = "/me/sidebar-layout",
     request_body = UpdateLayoutReq,
     responses(
@@ -188,6 +193,7 @@ pub async fn get_layout(State(app): State<AppState>, user: CurrentUser) -> Respo
         (status = 400, description = "invalid kind or duplicate ref"),
     )
 )]
+#[handler]
 pub async fn update_layout(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -202,7 +208,7 @@ pub async fn update_layout(
             KIND_BUILTIN | KIND_LIBRARY | KIND_VIEW | KIND_PAGE | KIND_HEADER | KIND_SPACER => {}
             other => {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     &format!("unknown sidebar entry kind '{other}'"),
                 );
@@ -212,14 +218,14 @@ pub async fn update_layout(
         // sidebar would render a mute row with no affordance.
         if e.kind == KIND_HEADER && e.label.as_deref().map(str::trim).unwrap_or("").is_empty() {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "header entries require a non-empty label",
             );
         }
         if !seen.insert((e.kind.clone(), e.ref_id.clone())) {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 &format!("duplicate {} entry for ref_id={}", e.kind, e.ref_id),
             );

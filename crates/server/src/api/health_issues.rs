@@ -4,28 +4,29 @@
 //! by [`crate::library::health::HealthCollector`] (spec §10).
 
 use axum::{
-    Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
 };
 use entity::library_health_issue;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
 use crate::auth::RequireAdmin;
+use crate::middleware::RequestContext;
+use crate::record_admin_action;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/libraries/{slug}/health-issues", get(list))
-        .route(
-            "/libraries/{slug}/health-issues/{issue_id}/dismiss",
-            post(dismiss),
-        )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(dismiss))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -68,7 +69,7 @@ pub struct ListQuery {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "health_issues_list",    get,
     path = "/libraries/{slug}/health-issues",
     params(("slug" = String, Path,)),
     responses(
@@ -77,6 +78,7 @@ pub struct ListQuery {
         (status = 404, description = "library not found"),
     )
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -116,7 +118,7 @@ pub async fn list(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "health_issues_dismiss",    post,
     path = "/libraries/{slug}/health-issues/{issue_id}/dismiss",
     params(
         ("slug" = String, Path,),
@@ -128,9 +130,11 @@ pub async fn list(
         (status = 404, description = "issue not found"),
     )
 )]
+#[handler]
 pub async fn dismiss(
     State(app): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     AxPath((lib_slug, issue_id)): AxPath<(String, String)>,
 ) -> impl IntoResponse {
     let lib = match crate::api::libraries::find_by_slug(&app.db, &lib_slug).await {
@@ -149,11 +153,22 @@ pub async fn dismiss(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     };
 
+    let kind = row.kind.clone();
     let mut am: library_health_issue::ActiveModel = row.into();
     am.dismissed_at = Set(Some(chrono::Utc::now().fixed_offset()));
     if let Err(e) = am.update(&app.db).await {
         tracing::error!(error = %e, "dismiss health issue failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.library.health_issue.dismiss",
+        target = ("library_health_issue", issue_uuid.to_string()),
+        payload = serde_json::json!({"library_id": lib_uuid.to_string(), "kind": kind}),
+    );
+
     StatusCode::NO_CONTENT.into_response()
 }

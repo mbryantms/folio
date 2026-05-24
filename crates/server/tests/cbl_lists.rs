@@ -873,6 +873,9 @@ async fn entries_rejects_invalid_status_and_cursor() {
     let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
     let list_id = view["id"].as_str().unwrap();
 
+    // `?status=bogus` is a semantic enum violation (audit-remediation
+    // M9.3 reclassification): the field is structurally correct, the
+    // *value* isn't accepted. 422.
     let (status, body) = http(
         &app,
         Method::GET,
@@ -881,9 +884,10 @@ async fn entries_rejects_invalid_status_and_cursor() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"].as_str(), Some("validation"));
 
+    // `?cursor=malformed` is parse-shape (base64-decode failure) — stays 400.
     let (status, body) = http(
         &app,
         Method::GET,

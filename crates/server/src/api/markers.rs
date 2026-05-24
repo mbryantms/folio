@@ -24,11 +24,10 @@
 //! markers are user-personal data.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, patch},
 };
 use base64::Engine;
 use chrono::Utc;
@@ -38,12 +37,15 @@ use sea_orm::{
     QueryFilter, QueryOrder, QuerySelect,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
+use server_macros::handler;
 
 /// Slim error newtype for validator helpers — `Result<T, MarkerError>`
 /// avoids the `clippy::result_large_err` lint that `axum::response::Response`
@@ -85,14 +87,16 @@ const ALL_KINDS: &[&str] = &[KIND_BOOKMARK, KIND_NOTE, KIND_FAVORITE, KIND_HIGHL
 const MAX_TAGS_PER_MARKER: usize = 32;
 const MAX_TAG_LEN: usize = 80;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/me/markers", get(list).post(create))
-        .route("/me/markers/count", get(count))
-        .route("/me/markers/search", get(search))
-        .route("/me/markers/tags", get(tags_index))
-        .route("/me/markers/{id}", patch(update).delete(delete_one))
-        .route("/me/issues/{issue_id}/markers", get(list_for_issue))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(create))
+        .routes(routes!(count))
+        .routes(routes!(search))
+        .routes(routes!(tags_index))
+        .routes(routes!(update))
+        .routes(routes!(delete_one))
+        .routes(routes!(list_for_issue))
 }
 
 // ────────────── DTOs ──────────────
@@ -259,11 +263,53 @@ pub struct UpdateMarkerReq {
     pub selection: Option<Option<serde_json::Value>>,
 }
 
+/// `kind` filter values for `GET /me/markers` — typed enum so a
+/// bad value rejects at deserialize time (audit-remediation M9.4).
+#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MarkerKindFilter {
+    Bookmark,
+    Note,
+    Favorite,
+    Highlight,
+}
+
+impl MarkerKindFilter {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Bookmark => KIND_BOOKMARK,
+            Self::Note => KIND_NOTE,
+            Self::Favorite => KIND_FAVORITE,
+            Self::Highlight => KIND_HIGHLIGHT,
+        }
+    }
+}
+
+/// `tag_match` mode for the marker list — AND vs OR over selected tags.
+#[derive(Debug, Default, Clone, Copy, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TagMatchMode {
+    /// Markers must have every selected tag (default).
+    #[default]
+    All,
+    /// Markers need at least one of the selected tags.
+    Any,
+}
+
+impl TagMatchMode {
+    pub fn sql_op(self) -> &'static str {
+        match self {
+            Self::All => "@>",
+            Self::Any => "&&",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListQuery {
-    /// One of `bookmark | note | highlight`. Omit for all.
+    /// Filter by marker kind. Omit for all.
     #[serde(default)]
-    pub kind: Option<String>,
+    pub kind: Option<MarkerKindFilter>,
     /// Filter to a single issue.
     #[serde(default)]
     pub issue_id: Option<String>,
@@ -278,10 +324,9 @@ pub struct ListQuery {
     /// AND vs. OR semantics across selected tags.
     #[serde(default)]
     pub tags: Option<String>,
-    /// `"all"` (default) — markers must have every selected tag.
-    /// `"any"` — markers need at least one.
+    /// AND/OR semantics over the `tags` filter. Defaults to `all`.
     #[serde(default)]
-    pub tag_match: Option<String>,
+    pub tag_match: Option<TagMatchMode>,
     #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default)]
@@ -473,7 +518,7 @@ fn validate_shape(
 ) -> Result<(), MarkerError> {
     if !ALL_KINDS.contains(&kind) {
         return Err(MarkerError::new(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "kind must be bookmark | note | favorite | highlight",
         ));
@@ -499,7 +544,7 @@ fn validate_shape(
         && b.len() > MAX_BODY_BYTES
     {
         return Err(MarkerError::new(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "body too large (max 10 KB)",
         ));
@@ -610,7 +655,7 @@ fn decode_cursor(raw: &str) -> Result<(chrono::DateTime<chrono::FixedOffset>, Uu
 // ────────────── handlers ──────────────
 
 #[utoipa::path(
-    get,
+    operation_id = "markers_list",    get,
     path = "/me/markers",
     params(
         ("kind" = Option<String>, Query,),
@@ -624,6 +669,7 @@ fn decode_cursor(raw: &str) -> Result<(chrono::DateTime<chrono::FixedOffset>, Uu
     ),
     responses((status = 200, body = MarkerListView))
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -636,15 +682,10 @@ pub async fn list(
         .order_by_desc(marker::Column::UpdatedAt)
         .order_by_desc(marker::Column::Id);
 
-    if let Some(kind) = q.kind.as_deref() {
-        if !ALL_KINDS.contains(&kind) {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "validation",
-                "kind must be bookmark | note | favorite | highlight",
-            );
-        }
-        select = select.filter(marker::Column::Kind.eq(kind));
+    if let Some(kind) = q.kind {
+        // Enum-typed query param (audit-remediation M9.4) — serde
+        // rejects bad values at deserialize time (400 from axum).
+        select = select.filter(marker::Column::Kind.eq(kind.as_db_str()));
     }
     if let Some(issue_id) = q.issue_id.as_ref() {
         select = select.filter(marker::Column::IssueId.eq(issue_id));
@@ -669,19 +710,9 @@ pub async fn list(
         if !parsed.is_empty() {
             // Postgres array operators take a typed array literal.
             // `@>` (contains) implements AND semantics; `&&` (overlap)
-            // implements OR. Falls through to AND when the client
-            // doesn't pass a `tag_match`.
-            let op = match q.tag_match.as_deref() {
-                Some("any") => "&&",
-                Some("all") | None => "@>",
-                Some(_) => {
-                    return error(
-                        StatusCode::BAD_REQUEST,
-                        "validation",
-                        "tag_match must be 'all' or 'any'",
-                    );
-                }
-            };
+            // implements OR. Default is AND when the client omits
+            // `tag_match` (audit-remediation M9.4).
+            let op = q.tag_match.unwrap_or_default().sql_op();
             let sql = format!("tags {op} $1::text[]");
             select = select.filter(sea_orm::sea_query::Expr::cust_with_values(&sql, [parsed]));
         }
@@ -743,10 +774,11 @@ pub async fn list(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "markers_count",    get,
     path = "/me/markers/count",
     responses((status = 200, body = MarkerCountView))
 )]
+#[handler]
 pub async fn count(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
     match marker::Entity::find()
         .filter(marker::Column::UserId.eq(user.id))
@@ -762,7 +794,7 @@ pub async fn count(State(app): State<AppState>, user: CurrentUser) -> impl IntoR
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "markers_search",    get,
     path = "/me/markers/search",
     params(
         ("q" = String, Query,),
@@ -770,6 +802,7 @@ pub async fn count(State(app): State<AppState>, user: CurrentUser) -> impl IntoR
     ),
     responses((status = 200, body = MarkerSearchView))
 )]
+#[handler]
 pub async fn search(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -781,7 +814,11 @@ pub async fn search(
         return Json(MarkerSearchView { items: Vec::new() }).into_response();
     }
     if text.len() > MARKER_SEARCH_MAX_QUERY_LEN {
-        return error(StatusCode::BAD_REQUEST, "validation", "q too long");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "q too long",
+        );
     }
     let limit = q
         .limit
@@ -934,10 +971,11 @@ async fn fetch_marker_snippets(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "markers_tags_index",    get,
     path = "/me/markers/tags",
     responses((status = 200, body = MarkerTagsView))
 )]
+#[handler]
 pub async fn tags_index(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
     // Distinct tag set + per-tag count, scoped to the caller. The
     // GIN(user_id, tags) index covers the user filter; the unnest +
@@ -978,11 +1016,12 @@ pub async fn tags_index(State(app): State<AppState>, user: CurrentUser) -> impl 
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "markers_list_for_issue",    get,
     path = "/me/issues/{issue_id}/markers",
     params(("issue_id" = String, Path,)),
     responses((status = 200, body = IssueMarkersView))
 )]
+#[handler]
 pub async fn list_for_issue(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1013,11 +1052,12 @@ pub async fn list_for_issue(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "markers_create",    post,
     path = "/me/markers",
     request_body = CreateMarkerReq,
     responses((status = 201, body = MarkerView))
 )]
+#[handler]
 pub async fn create(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1108,7 +1148,7 @@ pub async fn create(
             }
             if msg.contains("markers_body_size_chk") {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "body too large (max 10 KB)",
                 );
@@ -1122,12 +1162,13 @@ pub async fn create(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "markers_update",    patch,
     path = "/me/markers/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateMarkerReq,
     responses((status = 200, body = MarkerView))
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1208,11 +1249,12 @@ pub async fn update(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "markers_delete_one",    delete,
     path = "/me/markers/{id}",
     params(("id" = String, Path,)),
     responses((status = 204))
 )]
+#[handler]
 pub async fn delete_one(
     State(app): State<AppState>,
     user: CurrentUser,

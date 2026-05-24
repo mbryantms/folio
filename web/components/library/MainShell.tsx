@@ -43,7 +43,7 @@ export function MainShell({
 }: {
   children: React.ReactNode;
   sections: MainNavSection[];
-  user: { display_name: string; email: string | null; role: string };
+  user: { display_name: string; email?: string | null; role: string };
   homeHref: string;
   /** SSR-resolved initial sidebar state (read from cookie by the layout). */
   defaultSidebar?: SidebarState;

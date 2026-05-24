@@ -58,7 +58,7 @@ export function EmailStatusCard({
 
             <div>
               <Label>Last result</Label>
-              <ResultBadge ok={status.last_send_ok} />
+              <ResultBadge ok={status.last_send_ok ?? null} />
               {status.last_duration_ms != null && (
                 <span className="text-muted-foreground ml-2 text-xs">
                   {status.last_duration_ms} ms

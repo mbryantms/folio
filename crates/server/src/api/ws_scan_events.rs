@@ -15,7 +15,7 @@
 
 use axum::extract::FromRequestParts;
 use axum::{
-    Json, Router,
+    Router,
     extract::{
         Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -89,18 +89,18 @@ pub async fn handler(
         }
     };
     if row.state == "disabled" {
-        return (
+        return super::error(
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": {"code": "auth.disabled", "message": "Account disabled"}})),
-        )
-            .into_response();
+            "auth.disabled",
+            "Account disabled",
+        );
     }
     if row.role != "admin" {
-        return (
+        return super::error(
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": {"code": "auth.permission_denied", "message": "admin only"}})),
-        )
-            .into_response();
+            "auth.permission_denied",
+            "admin only",
+        );
     }
     // Auth passed — now extract the WS upgrade. Any non-upgrade request
     // (curl probe, test oneshot post-auth) returns 400 with the standard
@@ -115,11 +115,11 @@ pub async fn handler(
 }
 
 fn unauthorized() -> axum::response::Response {
-    (
+    super::error(
         StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({"error": {"code": "auth.required", "message": "Authentication required"}})),
+        "auth.required",
+        "Authentication required",
     )
-        .into_response()
 }
 
 async fn run(mut socket: WebSocket, app: AppState) {

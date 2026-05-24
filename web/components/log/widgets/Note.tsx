@@ -1,5 +1,3 @@
-"use client";
-
 import { StickyNote } from "lucide-react";
 
 import { WidgetCard } from "../WidgetCard";

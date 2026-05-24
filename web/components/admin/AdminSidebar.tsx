@@ -23,7 +23,7 @@ export function AdminSidebar({
 }: {
   sections: NavSection[];
   title: string;
-  user: { display_name: string; email: string | null; role: string };
+  user: { display_name: string; email?: string | null; role: string };
   /** When true, the sidebar shrinks to icon-only mode with hover tooltips. */
   collapsed?: boolean;
 }) {

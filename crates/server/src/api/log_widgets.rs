@@ -20,11 +20,10 @@
 //! `time_of_day`) rely on that.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxPath, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use chrono::Utc;
 use entity::log_widget;
@@ -33,21 +32,23 @@ use sea_orm::{
     QueryOrder, TransactionTrait, Unchanged,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
 use crate::auth::CurrentUser;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/me/log/widgets", get(list).post(add))
-        .route(
-            "/me/log/widgets/{id}",
-            axum::routing::patch(update).delete(remove),
-        )
-        .route("/me/log/widgets/reorder", post(reorder))
-        .route("/me/log/widgets/reset", post(reset))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(add))
+        .routes(routes!(update))
+        .routes(routes!(remove))
+        .routes(routes!(reorder))
+        .routes(routes!(reset))
 }
 
 // ───────── Wire types ─────────
@@ -75,10 +76,10 @@ impl From<log_widget::Model> for LogWidgetView {
     }
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct LogWidgetListView {
-    pub widgets: Vec<LogWidgetView>,
-}
+/// Audit-remediation M4 dropped `LogWidgetListView { widgets: Vec<_> }` in
+/// favor of the workspace-uniform `shared::pagination::CursorPage<T>`
+/// envelope (`{ items, next_cursor, total? }`). Widget lists are bounded
+/// per-user; `next_cursor` is always `None`.
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AddWidgetReq {
@@ -332,12 +333,13 @@ async fn seed_defaults<C: ConnectionTrait>(db: &C, user_id: Uuid) -> Result<(), 
 // ───────── Handlers ─────────
 
 #[utoipa::path(
-    get,
+    operation_id = "log_widgets_list",    get,
     path = "/me/log/widgets",
     responses(
-        (status = 200, body = LogWidgetListView),
+        (status = 200, body = shared::pagination::CursorPage<LogWidgetView>),
     )
 )]
+#[handler]
 pub async fn list(State(app): State<AppState>, user: CurrentUser) -> Response {
     // First-read seeding lives in a single transaction so two
     // concurrent first-reads can't both insert the defaults. The
@@ -372,11 +374,11 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> Response {
         return internal(e);
     }
     let widgets: Vec<LogWidgetView> = rows.into_iter().map(Into::into).collect();
-    Json(LogWidgetListView { widgets }).into_response()
+    Json(shared::pagination::CursorPage::bounded(widgets)).into_response()
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "log_widgets_add",    post,
     path = "/me/log/widgets",
     request_body = AddWidgetReq,
     responses(
@@ -384,6 +386,7 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> Response {
         (status = 400, description = "unknown kind or invalid config"),
     )
 )]
+#[handler]
 pub async fn add(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -393,7 +396,7 @@ pub async fn add(
         .config
         .unwrap_or(serde_json::Value::Object(Default::default()));
     if let Err(msg) = validate_config(&req.kind, &config) {
-        return error(StatusCode::BAD_REQUEST, "validation", &msg);
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", &msg);
     }
     // Next position = current max + 1. Done inside a transaction so
     // two concurrent adds can't pick the same slot.
@@ -433,7 +436,7 @@ pub async fn add(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "log_widgets_update",    patch,
     path = "/me/log/widgets/{id}",
     params(("id" = String, Path,)),
     request_body = PatchWidgetReq,
@@ -443,6 +446,7 @@ pub async fn add(
         (status = 404, description = "not found / not yours"),
     )
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -454,7 +458,7 @@ pub async fn update(
         Err(resp) => return resp,
     };
     if let Err(msg) = validate_config(&existing.kind, &req.config) {
-        return error(StatusCode::BAD_REQUEST, "validation", &msg);
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", &msg);
     }
     let now = Utc::now().fixed_offset();
     let am = log_widget::ActiveModel {
@@ -473,7 +477,7 @@ pub async fn update(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "log_widgets_remove",    delete,
     path = "/me/log/widgets/{id}",
     params(("id" = String, Path,)),
     responses(
@@ -481,6 +485,7 @@ pub async fn update(
         (status = 404, description = "not found / not yours"),
     )
 )]
+#[handler]
 pub async fn remove(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -540,14 +545,15 @@ pub async fn remove(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "log_widgets_reorder",    post,
     path = "/me/log/widgets/reorder",
     request_body = ReorderReq,
     responses(
-        (status = 200, body = LogWidgetListView),
+        (status = 200, body = shared::pagination::CursorPage<LogWidgetView>),
         (status = 400, description = "ids don't match owned set"),
     )
 )]
+#[handler]
 pub async fn reorder(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -574,7 +580,7 @@ pub async fn reorder(
     let req_set: std::collections::HashSet<Uuid> = parsed_ids.iter().copied().collect();
     if existing_set != req_set {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "ids must match the user's owned widget set exactly",
         );
@@ -615,16 +621,17 @@ pub async fn reorder(
         return internal(e);
     }
     let widgets: Vec<LogWidgetView> = rows.into_iter().map(Into::into).collect();
-    Json(LogWidgetListView { widgets }).into_response()
+    Json(shared::pagination::CursorPage::bounded(widgets)).into_response()
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "log_widgets_reset",    post,
     path = "/me/log/widgets/reset",
     responses(
-        (status = 200, body = LogWidgetListView),
+        (status = 200, body = shared::pagination::CursorPage<LogWidgetView>),
     )
 )]
+#[handler]
 pub async fn reset(State(app): State<AppState>, user: CurrentUser) -> Response {
     let txn = match app.db.begin().await {
         Ok(t) => t,
@@ -653,7 +660,7 @@ pub async fn reset(State(app): State<AppState>, user: CurrentUser) -> Response {
         return internal(e);
     }
     let widgets: Vec<LogWidgetView> = rows.into_iter().map(Into::into).collect();
-    Json(LogWidgetListView { widgets }).into_response()
+    Json(shared::pagination::CursorPage::bounded(widgets)).into_response()
 }
 
 // ───────── Helpers ─────────

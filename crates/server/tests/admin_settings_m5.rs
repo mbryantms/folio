@@ -131,7 +131,7 @@ async fn scan_worker_count_out_of_range_rejected() {
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
     let resp = patch_settings(&app, &admin, json!({ "workers.scan_count": 9999 })).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_combination");
 
@@ -145,7 +145,7 @@ async fn hash_buffer_below_floor_rejected() {
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
     let resp = patch_settings(&app, &admin, json!({ "workers.scan_hash_buffer_kb": 32 })).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_combination");
 }
@@ -156,7 +156,7 @@ async fn zip_lru_capacity_zero_rejected() {
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
 
     let resp = patch_settings(&app, &admin, json!({ "cache.zip_lru_capacity": 0 })).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_combination");
 }
@@ -169,7 +169,7 @@ async fn negative_number_rejected_at_type_check() {
     // Negative number fails the registry's Uint type check before the
     // range validation runs.
     let resp = patch_settings(&app, &admin, json!({ "workers.scan_count": -1 })).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_value");
 }

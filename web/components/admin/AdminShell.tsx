@@ -32,7 +32,7 @@ export function AdminShell({
   defaultSidebar = "expanded",
 }: {
   children: React.ReactNode;
-  user: { display_name: string; email: string | null; role: string };
+  user: { display_name: string; email?: string | null; role: string };
   sections: NavSection[];
   title: string;
   homeHref: string;

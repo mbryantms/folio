@@ -23,7 +23,10 @@ async fn body_json(b: Body) -> serde_json::Value {
     if bytes.is_empty() {
         return serde_json::Value::Null;
     }
-    serde_json::from_slice(&bytes).unwrap()
+    // Non-JSON bodies (e.g. axum's default `QueryRejection` plain-text
+    // response) become `Null` so tests that only assert on status
+    // don't crash here.
+    serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
 }
 
 struct Authed {
@@ -429,7 +432,8 @@ async fn create_validates_shape() {
         Some(bad),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Audit-remediation M9.3: invalid `kind` is semantic-validation (422).
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // page_index beyond page_count (20) → 422.
     let bad = serde_json::json!({
@@ -1043,7 +1047,13 @@ async fn tags_round_trip_and_filter_by_all_any() {
     let items = list["items"].as_array().unwrap();
     assert_eq!(items.len(), 3);
 
-    // Bad tag_match → 400.
+    // Bad tag_match → 400. Audit-remediation M9.4 converted the
+    // `tag_match` query param from `String`-then-validate to a typed
+    // `TagMatchMode` enum. Axum's `Query` extractor rejects unparseable
+    // values with a 400 (parse-shape error from serde) before the
+    // handler runs, so this asserts the rejection at the extractor
+    // boundary rather than the canonical 422 the old handler-side
+    // validation produced.
     let (status, _) = http(
         &app,
         Method::GET,

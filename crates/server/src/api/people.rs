@@ -10,26 +10,28 @@
 //! visibility rules apply as everywhere else.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
 };
 use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use super::error;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
+use server_macros::handler;
 
 const MAX_QUERY_LEN: usize = 200;
 const DEFAULT_LIMIT: i64 = 20;
 const MAX_LIMIT: i64 = 100;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/people", get(list))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list))
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,7 +68,7 @@ struct Row {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "people_list",    get,
     path = "/people",
     params(
         ("q" = Option<String>, Query,),
@@ -74,6 +76,7 @@ struct Row {
     ),
     responses((status = 200, body = PeopleListView))
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -84,7 +87,7 @@ pub async fn list(
         return Json(PeopleListView { items: Vec::new() }).into_response();
     }
     if text.len() > MAX_QUERY_LEN {
-        return error(StatusCode::BAD_REQUEST, "validation", "q too long");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "q too long");
     }
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
@@ -173,4 +176,3 @@ pub async fn list(
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "db", &e.to_string()),
     }
 }
-

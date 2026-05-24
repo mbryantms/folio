@@ -12,21 +12,23 @@
 //!   - `limit` — hard cap, default 500, max 5000.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use super::error;
 use crate::auth::RequireAdmin;
 use crate::observability::{LOG_RING_CAPACITY, LevelFilter, LogEntry, SnapshotFilter};
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/admin/logs", get(list))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list))
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -76,7 +78,7 @@ impl From<LogEntry> for LogEntryView {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "admin_logs_list",    get,
     path = "/admin/logs",
     params(LogsQuery),
     responses(
@@ -85,6 +87,7 @@ impl From<LogEntry> for LogEntryView {
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -95,7 +98,7 @@ pub async fn list(
             Some(l) => l,
             None => {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "level must be 'error', 'warn', 'info', 'debug', or 'trace'",
                 );

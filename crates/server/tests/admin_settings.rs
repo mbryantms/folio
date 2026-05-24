@@ -176,7 +176,7 @@ async fn settings_patch_rejects_unknown_key() {
         serde_json::json!({ "bogus.future.key": "value" }),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.unknown_key");
 }

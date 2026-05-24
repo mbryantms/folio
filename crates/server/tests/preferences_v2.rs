@@ -247,7 +247,7 @@ async fn keybinds_must_be_object() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "kb-bad@example.com").await;
     let (status, body) = patch_pref(&app, &auth, r#"{"keybinds": "not-an-object"}"#).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 }
 
@@ -256,7 +256,7 @@ async fn keybinds_value_must_be_string() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "kb-num@example.com").await;
     let (status, body) = patch_pref(&app, &auth, r#"{"keybinds": {"nextPage": 42}}"#).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 }
 

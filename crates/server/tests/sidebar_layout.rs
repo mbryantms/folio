@@ -400,7 +400,7 @@ async fn patch_rejects_invalid_kind() {
         Some(body),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -422,7 +422,7 @@ async fn patch_rejects_duplicate_ref() {
         Some(body),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -535,7 +535,9 @@ async fn home_label_reflects_renamed_system_page() {
     let auth = register(&app, "home-rename@example.com").await;
 
     let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&auth), None).await;
-    let home_id = pages
+    // Audit-remediation M4 wrapped `/me/pages` in `CursorPage<PageView>`
+    // (bounded → next_cursor always None); items live under `items`.
+    let home_id = pages["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -778,7 +780,7 @@ async fn patch_rejects_header_without_label() {
         Some(body),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(json["error"]["code"], "validation");
 }
 

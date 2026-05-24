@@ -148,7 +148,7 @@ function ConfigureFormBody({
 }) {
   const patch = usePatchLogWidget(widget.id);
   const [draft, setDraft] = React.useState<Record<string, unknown>>(
-    widget.config,
+    (widget.config as Record<string, unknown> | null | undefined) ?? {},
   );
   const onSave = () => {
     patch.mutate({ config: draft }, { onSuccess: () => onClose() });

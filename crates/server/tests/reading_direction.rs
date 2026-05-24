@@ -371,7 +371,7 @@ async fn patch_series_rejects_unknown_reading_direction() {
         serde_json::json!({ "reading_direction": "diagonal" }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation.reading_direction");
 }
 

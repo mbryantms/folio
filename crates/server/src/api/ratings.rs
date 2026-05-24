@@ -13,19 +13,21 @@
 //! surface the calling user's rating inline (`user_rating`).
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxPath, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::put,
 };
 use entity::user_rating;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use super::error;
 use crate::auth::CurrentUser;
 use crate::state::AppState;
+use server_macros::handler;
 
 pub const MIN_RATING: f64 = 0.0;
 pub const MAX_RATING: f64 = 5.0;
@@ -35,13 +37,10 @@ pub const STEP: f64 = 0.5;
 pub const TARGET_TYPE_ISSUE: &str = "issue";
 pub const TARGET_TYPE_SERIES: &str = "series";
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/series/{series_slug}/rating", put(set_series_rating))
-        .route(
-            "/series/{series_slug}/issues/{issue_slug}/rating",
-            put(set_issue_rating),
-        )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(set_series_rating))
+        .routes(routes!(set_issue_rating))
 }
 
 /// Body for both rating endpoints. `null` clears the rating.
@@ -75,7 +74,7 @@ pub fn validate_rating(rating: f64) -> Result<f64, &'static str> {
 }
 
 #[utoipa::path(
-    put,
+    operation_id = "ratings_set_series_rating",    put,
     path = "/series/{series_slug}/rating",
     params(("series_slug" = String, Path,)),
     request_body = SetRatingReq,
@@ -85,6 +84,7 @@ pub fn validate_rating(rating: f64) -> Result<f64, &'static str> {
         (status = 404, description = "series not found"),
     )
 )]
+#[handler]
 pub async fn set_series_rating(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -109,7 +109,7 @@ pub async fn set_series_rating(
 }
 
 #[utoipa::path(
-    put,
+    operation_id = "ratings_set_issue_rating",    put,
     path = "/series/{series_slug}/issues/{issue_slug}/rating",
     params(
         ("series_slug" = String, Path,),
@@ -122,6 +122,7 @@ pub async fn set_series_rating(
         (status = 404, description = "issue not found"),
     )
 )]
+#[handler]
 pub async fn set_issue_rating(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -152,7 +153,7 @@ async fn write_rating(
         let snapped = match validate_rating(r) {
             Ok(v) => v,
             Err(msg) => {
-                return error(StatusCode::BAD_REQUEST, "validation.rating", msg);
+                return error(StatusCode::UNPROCESSABLE_ENTITY, "validation.rating", msg);
             }
         };
         let now = chrono::Utc::now().fixed_offset();

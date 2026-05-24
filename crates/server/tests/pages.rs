@@ -123,7 +123,9 @@ async fn list_includes_system_home_for_fresh_user() {
 
     let (status, body) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     assert_eq!(status, StatusCode::OK);
-    let arr = body.as_array().unwrap();
+    // `/me/pages` returns the `CursorPage<PageView>` envelope as of
+    // audit-remediation M4 (uniform `{items, next_cursor, total}`).
+    let arr = body["items"].as_array().unwrap();
     assert_eq!(
         arr.len(),
         1,
@@ -155,7 +157,9 @@ async fn create_then_list_returns_both() {
 
     let (status, body) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
     assert_eq!(status, StatusCode::OK);
-    let arr = body.as_array().unwrap();
+    // `/me/pages` returns the `CursorPage<PageView>` envelope as of
+    // audit-remediation M4 (uniform `{items, next_cursor, total}`).
+    let arr = body["items"].as_array().unwrap();
     assert_eq!(arr.len(), 2);
     // Home first (position 0), Marvel second (position 1).
     assert_eq!(arr[0]["is_system"], true);
@@ -176,7 +180,9 @@ async fn create_rejects_empty_and_long_names() {
         Some(serde_json::json!({ "name": "   " })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Audit-remediation M9: semantic-validation failures land on 422
+    // via the garde `Validated<T>` extractor.
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 
     let too_long: String = "a".repeat(81);
@@ -188,7 +194,7 @@ async fn create_rejects_empty_and_long_names() {
         Some(serde_json::json!({ "name": too_long })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
@@ -289,7 +295,7 @@ async fn rename_system_page_keeps_home_slug() {
     let user = register(&app, "system-rename@example.com").await;
 
     let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
-    let home = pages.as_array().unwrap()[0].clone();
+    let home = pages["items"].as_array().unwrap()[0].clone();
     assert_eq!(home["is_system"], true);
     let home_id = id(&home);
 
@@ -313,7 +319,7 @@ async fn delete_system_page_returns_409() {
     let user = register(&app, "system-delete@example.com").await;
 
     let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
-    let home_id = id(&pages.as_array().unwrap()[0]);
+    let home_id = id(&pages["items"].as_array().unwrap()[0]);
 
     let (status, body) = http(
         &app,
@@ -328,7 +334,7 @@ async fn delete_system_page_returns_409() {
 
     // Still there.
     let (_, after) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
-    assert_eq!(after.as_array().unwrap().len(), 1);
+    assert_eq!(after["items"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -456,7 +462,7 @@ async fn reorder_rewrites_positions() {
 
     // Fetch the system page id too — reorder must list every owned page.
     let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
-    let home_id = id(pages
+    let home_id = id(pages["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -477,7 +483,7 @@ async fn reorder_rewrites_positions() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (_, after) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
-    let ordered_ids: Vec<String> = after
+    let ordered_ids: Vec<String> = after["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -508,7 +514,8 @@ async fn reorder_rejects_partial_or_duplicate_set() {
     .await;
     let a_id = id(&a);
 
-    // Missing the system page.
+    // Missing the system page — audit-remediation M9 reclassifies
+    // set-mismatch semantic validation to 422.
     let (status, body) = http(
         &app,
         Method::POST,
@@ -517,7 +524,7 @@ async fn reorder_rejects_partial_or_duplicate_set() {
         Some(serde_json::json!({ "page_ids": [a_id] })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 
     // Duplicate.
@@ -529,7 +536,7 @@ async fn reorder_rejects_partial_or_duplicate_set() {
         Some(serde_json::json!({ "page_ids": [a_id, a_id] })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 }
 
@@ -551,7 +558,7 @@ async fn cross_user_isolation() {
 
     // Bob cannot see Alice's page in his list.
     let (_, bob_pages) = http(&app, Method::GET, "/api/me/pages", Some(&bob), None).await;
-    let bob_arr = bob_pages.as_array().unwrap();
+    let bob_arr = bob_pages["items"].as_array().unwrap();
     assert_eq!(bob_arr.len(), 1, "Bob only sees his own Home page");
     assert!(bob_arr.iter().all(|p| p["id"] != alice_page_id.to_string()));
 
@@ -727,7 +734,7 @@ async fn sidebar_toggle_hides_and_shows_page() {
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
-    let row = pages
+    let row = pages["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -764,7 +771,7 @@ async fn sidebar_toggle_hides_and_shows_page() {
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
-    let row = pages
+    let row = pages["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -778,7 +785,7 @@ async fn sidebar_toggle_on_system_page_returns_409() {
     let app = TestApp::spawn().await;
     let user = register(&app, "sys-toggle@example.com").await;
     let (_, pages) = http(&app, Method::GET, "/api/me/pages", Some(&user), None).await;
-    let home_id = id(pages
+    let home_id = id(pages["items"]
         .as_array()
         .unwrap()
         .iter()

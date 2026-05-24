@@ -114,7 +114,7 @@ async fn first_get_auto_seeds_default_layout() {
 
     let (status, body) = http(&app, Method::GET, "/api/me/log/widgets", &auth, None).await;
     assert_eq!(status, StatusCode::OK);
-    let widgets = body["widgets"].as_array().unwrap();
+    let widgets = body["items"].as_array().unwrap();
     let kinds: Vec<&str> = widgets
         .iter()
         .map(|w| w["kind"].as_str().unwrap())
@@ -136,13 +136,13 @@ async fn seed_is_idempotent_across_two_gets() {
     let auth = register(&app, "idem@lw.test").await;
     let (_, body1) = http(&app, Method::GET, "/api/me/log/widgets", &auth, None).await;
     let (_, body2) = http(&app, Method::GET, "/api/me/log/widgets", &auth, None).await;
-    let ids1: Vec<&str> = body1["widgets"]
+    let ids1: Vec<&str> = body1["items"]
         .as_array()
         .unwrap()
         .iter()
         .map(|w| w["id"].as_str().unwrap())
         .collect();
-    let ids2: Vec<&str> = body2["widgets"]
+    let ids2: Vec<&str> = body2["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -173,7 +173,7 @@ async fn add_rejects_unknown_kind() {
     let auth = register(&app, "unk@lw.test").await;
     let req = serde_json::json!({"kind": "uncle_bobs_widget"});
     let (status, body) = http(&app, Method::POST, "/api/me/log/widgets", &auth, Some(req)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 }
 
@@ -187,7 +187,7 @@ async fn add_rejects_invalid_config_shape_for_kind() {
         "config": { "weeks": "fifty-two" }
     });
     let (status, body) = http(&app, Method::POST, "/api/me/log/widgets", &auth, Some(req)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 }
 
@@ -196,7 +196,7 @@ async fn patch_updates_config_and_bumps_updated_at() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "patch@lw.test").await;
     let (_, list) = http(&app, Method::GET, "/api/me/log/widgets", &auth, None).await;
-    let heatmap = list["widgets"]
+    let heatmap = list["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -221,7 +221,7 @@ async fn patch_rejects_unknown_field_for_kind() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "patchbad@lw.test").await;
     let (_, list) = http(&app, Method::GET, "/api/me/log/widgets", &auth, None).await;
-    let id = list["widgets"][0]["id"].as_str().unwrap().to_owned();
+    let id = list["items"][0]["id"].as_str().unwrap().to_owned();
     let req = serde_json::json!({ "config": { "bogus_field": true } });
     let (status, _) = http(
         &app,
@@ -232,7 +232,7 @@ async fn patch_rejects_unknown_field_for_kind() {
     )
     .await;
     // `deny_unknown_fields` rejects with validation.
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -242,7 +242,7 @@ async fn delete_removes_and_compacts_positions() {
     let (_, list) = http(&app, Method::GET, "/api/me/log/widgets", &auth, None).await;
     // Delete the heatmap (position 2). Survivors should renumber to
     // 0, 1, 2 — no gap left where the deleted row used to be.
-    let heatmap = list["widgets"]
+    let heatmap = list["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -260,7 +260,7 @@ async fn delete_removes_and_compacts_positions() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (_, after) = http(&app, Method::GET, "/api/me/log/widgets", &auth, None).await;
-    let widgets = after["widgets"].as_array().unwrap();
+    let widgets = after["items"].as_array().unwrap();
     assert_eq!(widgets.len(), 3);
     for (i, w) in widgets.iter().enumerate() {
         assert_eq!(w["position"].as_i64().unwrap(), i as i64);
@@ -277,7 +277,7 @@ async fn reorder_rewrites_positions_atomically() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "reorder@lw.test").await;
     let (_, list) = http(&app, Method::GET, "/api/me/log/widgets", &auth, None).await;
-    let widgets = list["widgets"].as_array().unwrap();
+    let widgets = list["items"].as_array().unwrap();
     let ids: Vec<&str> = widgets.iter().map(|w| w["id"].as_str().unwrap()).collect();
     // Reverse the order entirely.
     let reversed: Vec<&&str> = ids.iter().rev().collect();
@@ -291,7 +291,7 @@ async fn reorder_rewrites_positions_atomically() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let after_kinds: Vec<&str> = body["widgets"]
+    let after_kinds: Vec<&str> = body["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -319,7 +319,7 @@ async fn reorder_rejects_id_set_mismatch() {
         Some(req),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 }
 
@@ -329,7 +329,7 @@ async fn reset_wipes_and_reseeds() {
     let auth = register(&app, "reset@lw.test").await;
     // Mutate the seed: delete one widget, add an extra.
     let (_, list) = http(&app, Method::GET, "/api/me/log/widgets", &auth, None).await;
-    let drop_id = list["widgets"][0]["id"].as_str().unwrap();
+    let drop_id = list["items"][0]["id"].as_str().unwrap();
     http(
         &app,
         Method::DELETE,
@@ -349,7 +349,7 @@ async fn reset_wipes_and_reseeds() {
     // Reset → back to the canonical 4-widget M2 layout.
     let (status, body) = http(&app, Method::POST, "/api/me/log/widgets/reset", &auth, None).await;
     assert_eq!(status, StatusCode::OK);
-    let kinds: Vec<&str> = body["widgets"]
+    let kinds: Vec<&str> = body["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -370,13 +370,13 @@ async fn other_users_widgets_are_isolated() {
     let (_, alice_list) = http(&app, Method::GET, "/api/me/log/widgets", &alice, None).await;
     let (_, bob_list) = http(&app, Method::GET, "/api/me/log/widgets", &bob, None).await;
     // Disjoint id sets.
-    let alice_ids: std::collections::HashSet<&str> = alice_list["widgets"]
+    let alice_ids: std::collections::HashSet<&str> = alice_list["items"]
         .as_array()
         .unwrap()
         .iter()
         .map(|w| w["id"].as_str().unwrap())
         .collect();
-    let bob_ids: std::collections::HashSet<&str> = bob_list["widgets"]
+    let bob_ids: std::collections::HashSet<&str> = bob_list["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -385,7 +385,7 @@ async fn other_users_widgets_are_isolated() {
     assert!(alice_ids.is_disjoint(&bob_ids));
 
     // Bob can't touch Alice's widgets.
-    let alice_first = alice_list["widgets"][0]["id"].as_str().unwrap();
+    let alice_first = alice_list["items"][0]["id"].as_str().unwrap();
     let (status, _) = http(
         &app,
         Method::PATCH,

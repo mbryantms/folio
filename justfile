@@ -543,9 +543,27 @@ openapi:
     cd web && pnpm run openapi:gen
 
 openapi-check:
-    cargo run --bin server -- --emit-openapi > /tmp/openapi.json
-    diff -q /tmp/openapi.json web/lib/api/openapi.json || \
-        (echo "==> OpenAPI spec drifted. Run 'just openapi'." && exit 1)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SPEC_OUT=$(mktemp -t openapi-check-spec.XXXXXX.json)
+    TYPES_OUT=$(mktemp -t openapi-check-types.XXXXXX.ts)
+    trap 'rm -f "$SPEC_OUT" "$TYPES_OUT"' EXIT
+    cargo run --bin server -- --emit-openapi > "$SPEC_OUT"
+    if ! diff -q "$SPEC_OUT" web/lib/api/openapi.json >/dev/null; then
+        echo "==> OpenAPI spec drifted. Run 'just openapi' and commit the diff." >&2
+        diff -u web/lib/api/openapi.json "$SPEC_OUT" | head -50
+        exit 1
+    fi
+    # Regenerate types into a tmp file and diff against the checked-in copy.
+    # Forces re-running `just openapi` after any spec change so the generated
+    # TS file doesn't go stale.
+    (cd web && pnpm exec openapi-typescript lib/api/openapi.json -o "$TYPES_OUT" >/dev/null 2>&1)
+    if ! diff -q "$TYPES_OUT" web/lib/api/types.generated.ts >/dev/null; then
+        echo "==> Generated TS types are stale. Run 'just openapi' and commit the diff." >&2
+        diff -u web/lib/api/types.generated.ts "$TYPES_OUT" | head -50
+        exit 1
+    fi
+    echo "OpenAPI spec + generated types are in sync."
 
 # ───── docs site ─────
 
@@ -575,3 +593,11 @@ docker-test:
     docker compose -f compose.test.yml up -d --wait --wait-timeout 90 postgres redis app web
     docker compose -f compose.test.yml run --rm smoke
     docker compose -f compose.test.yml down --volumes --remove-orphans
+
+# Walk every handler in crates/server/src/api/ and fail if any
+# RequireAdmin-gated function returns success without calling
+# `record_admin_action!` (or its `audit::record(...)` equivalent).
+# See `crates/tools/audit-check/allowlist.txt` for the read-only +
+# delegate-pattern exemptions. Audit-remediation M10.2.
+audit-check:
+    cargo run -p audit-check --release

@@ -3,24 +3,26 @@
 //! ordered newest-first; the cursor encodes the boundary `(created_at, id)`.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
 };
 use entity::{audit_log, library, user};
 use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/admin/audit", get(list))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -63,7 +65,7 @@ pub struct AuditQuery {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "audit_list",    get,
     path = "/admin/audit",
     params(AuditQuery),
     responses(
@@ -71,6 +73,7 @@ pub struct AuditQuery {
         (status = 403, description = "admin only"),
     )
 )]
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     _admin: RequireAdmin,

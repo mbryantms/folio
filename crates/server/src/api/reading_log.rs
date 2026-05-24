@@ -24,11 +24,10 @@
 //! cheap, indexed reads.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use chrono::{DateTime, FixedOffset};
 use entity::{issue, library_user_access, marker, progress_record, reading_session, series};
@@ -38,17 +37,21 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use super::extractors::Validated;
 use crate::auth::CurrentUser;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/me/reading-log", get(reading_log))
-        .route("/me/reading-log/hide", post(hide))
-        .route("/me/reading-log/unhide", post(unhide))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(reading_log))
+        .routes(routes!(hide))
+        .routes(routes!(unhide))
 }
 
 // ───────── Request / response shapes ─────────
@@ -318,7 +321,7 @@ enum CandidateRaw {
 // ───────── Handler ─────────
 
 #[utoipa::path(
-    get,
+    operation_id = "reading_log_reading_log",    get,
     path = "/me/reading-log",
     params(
         ("cursor"     = Option<String>, Query,),
@@ -334,6 +337,7 @@ enum CandidateRaw {
         (status = 400, description = "validation"),
     )
 )]
+#[handler]
 pub async fn reading_log(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1102,20 +1106,34 @@ async fn fetch_series_finished(
 /// (without the `iss-fin:` / `ses:` / `mrk:` prefix the wire payload
 /// uses on `ReadingLogEventView.id` — clients strip that before
 /// calling).
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct HideEventReq {
     /// One of `issue_finished | session_completed | marker_created`.
     /// `series_finished` is rejected (derived event with no source
     /// row to flag).
+    #[garde(custom(valid_hide_kind))]
     pub kind: String,
     /// For `issue_finished`: the `issues.id` BLAKE3 hex.
     /// For `session_completed`: the `reading_sessions.id` UUID.
     /// For `marker_created`: the `markers.id` UUID.
+    #[garde(length(min = 1))]
     pub source_id: String,
 }
 
+fn valid_hide_kind(value: &str, _: &()) -> garde::Result {
+    if !matches!(
+        value,
+        "issue_finished" | "session_completed" | "marker_created"
+    ) {
+        return Err(garde::Error::new(
+            "kind must be issue_finished | session_completed | marker_created",
+        ));
+    }
+    Ok(())
+}
+
 #[utoipa::path(
-    post,
+    operation_id = "reading_log_hide",    post,
     path = "/me/reading-log/hide",
     request_body = HideEventReq,
     responses(
@@ -1124,16 +1142,17 @@ pub struct HideEventReq {
         (status = 404, description = "no such event for this user"),
     )
 )]
+#[handler]
 pub async fn hide(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<HideEventReq>,
+    Validated(req): Validated<HideEventReq>,
 ) -> Response {
     set_hidden(&app, user.id, &req, true).await
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "reading_log_unhide",    post,
     path = "/me/reading-log/unhide",
     request_body = HideEventReq,
     responses(
@@ -1142,10 +1161,11 @@ pub async fn hide(
         (status = 404, description = "no such event for this user"),
     )
 )]
+#[handler]
 pub async fn unhide(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<HideEventReq>,
+    Validated(req): Validated<HideEventReq>,
 ) -> Response {
     set_hidden(&app, user.id, &req, false).await
 }
@@ -1153,12 +1173,7 @@ pub async fn unhide(
 /// Shared implementation for hide + unhide. Routes the flag flip to
 /// the correct source table based on `kind`. All updates filter on
 /// `user_id` so a caller can't toggle another user's events.
-async fn set_hidden(
-    app: &AppState,
-    user_id: Uuid,
-    req: &HideEventReq,
-    hidden: bool,
-) -> Response {
+async fn set_hidden(app: &AppState, user_id: Uuid, req: &HideEventReq, hidden: bool) -> Response {
     match req.kind.as_str() {
         "issue_finished" => {
             // Issue-finished uses `progress_records.is_backfill` as
@@ -1182,7 +1197,7 @@ async fn set_hidden(
                 Ok(u) => u,
                 Err(_) => {
                     return error(
-                        StatusCode::BAD_REQUEST,
+                        StatusCode::UNPROCESSABLE_ENTITY,
                         "validation",
                         "source_id must be a session UUID",
                     );
@@ -1210,7 +1225,7 @@ async fn set_hidden(
                 Ok(u) => u,
                 Err(_) => {
                     return error(
-                        StatusCode::BAD_REQUEST,
+                        StatusCode::UNPROCESSABLE_ENTITY,
                         "validation",
                         "source_id must be a marker UUID",
                     );
@@ -1225,12 +1240,12 @@ async fn set_hidden(
             handle_update_result(res, "marker_created")
         }
         "series_finished" => error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "series_finished is a derived event and can't be hidden directly",
         ),
         _ => error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "kind must be issue_finished | session_completed | marker_created",
         ),

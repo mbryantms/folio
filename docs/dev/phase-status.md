@@ -329,6 +329,69 @@ inline in [`docs/dev/security-audit.md`](./security-audit.md).
 
 ---
 
+## v0.6 — Audit remediation (M0 → M10) ✅
+
+Eleven milestones cleaning up architectural debt found by the
+2026-05-23 audit across DB/API consistency, Rust backend, Next.js,
+and query performance. Plan archived at
+`~/.claude/plans/done/folio-audit-remediation-1.0.md`; per-milestone
+done-memories are indexed in `MEMORY.md`.
+
+Highlights:
+
+- **M0** — Foundation primitives: `shared::error::ApiErrorCode` (42
+  variants), `shared::pagination::CursorPage<T>`, `shared::ids` newtypes,
+  `server-macros` proc-macro crate with `#[handler]`,
+  `record_admin_action!` macro.
+- **M1 + M1a-c** — OpenAPI spec now codegen from `utoipa-axum::routes!`;
+  `web/lib/api/types.generated.ts` is the canonical TypeScript type
+  source, gated by a `just openapi-check` drift check.
+- **M2** — `RequireAdmin` extractor + audit-log completeness test
+  (3 mutating handlers backfilled with `record_admin_action!`).
+- **M3** — Error-envelope unified at one construction site
+  (`api::error`); 17 inline `serde_json::json!({"error": ...})`
+  call sites collapsed to 1.
+- **M4 + M4-residual** — Uniform `CursorPage<T>` envelope across
+  every list endpoint; `filter-options/*` (9 endpoints) migrated to
+  real cursor walking with `?cursor=` / `?limit=`; `MAX_OPTIONS=200`
+  cap removed.
+- **M5** — Two `compute_on_deck` N+1s closed (rails inline-slug
+  join + batched `series_ids_in_cbls`); `hydrate_*` helpers audited
+  clean; scanner overlap query tightened to projected
+  `(id, root_path)`.
+- **M6** — `#[handler]` swept across 175 handlers in 41 files;
+  `observability::sanitize_error` wired into SMTP + OIDC error logs;
+  `sha256_hex` consolidated to one helper; `docs/dev/logging.md` added.
+- **M7** — App-router error/loading boundaries (locale + 3 route
+  groups); `LibraryGridView` split 1206 → 439 LOC; `TimeOfDayDonut`
+  lazy-loaded; 4 safe `"use client"` drops.
+- **M8** — `docs/dev/schema-evolution.md` (three-era narrative);
+  inline `search_doc` docstrings on `series.rs` + `issue.rs`; new
+  `schema_parity` test (3/3) walking `Column::iter()` across 38
+  entities; index audit clean (no new migrations needed).
+- **M9** — `garde` adopted; new `Validated<T>` axum extractor +
+  `from_garde` helper; 6 DTOs migrated; 4 path/query enums replace
+  stringly-typed params (`MarkerKindFilter`, `TagMatchMode`,
+  `UserRole`, `UserState`); semantic 400→422 reclassification across
+  migrated files + markers + reading_sessions.
+- **M10** — CI gates wired: spec-drift (openapi.json +
+  types.generated.ts), audit-check binary, schema-parity / pagination /
+  audit-log / perf-regressions all running via `cargo test --workspace`.
+  `audit-check` AST tool at `crates/tools/audit-check/` walks every
+  handler and fails CI if a `RequireAdmin` handler skips
+  `record_admin_action!`; allowlist covers read-only GETs +
+  delegate-pattern wrappers. New `perf_regressions.rs` smoke-tests
+  endpoint correctness over a 10-series / 100-issue / 5-CBL seed,
+  with strict ≤N-queries thresholds asserted via a process-wide
+  `tracing-subscriber` Layer that counts `target: "sqlx::query"`
+  events (added in the post-M10 follow-ups).
+
+Test totals after the plan: web `pnpm test` 479/479, cargo workspace
+~620 tests + 3 new files (`audit_log_completeness`,
+`list_pagination_completeness`, `schema_parity`, `perf_regressions`).
+
+---
+
 ## Phases 3.5+ — outline only
 
 | Phase | Focus | Status |

@@ -57,7 +57,7 @@ export function MultiSelectEditor({
   const remote = useFilterOptions(endpoint, { library, q: search });
   const options = staticOptions
     ? Array.from(staticOptions)
-    : (remote.data?.values ?? []);
+    : (remote.data ?? []);
 
   function toggle(v: string) {
     if (selected.includes(v)) {

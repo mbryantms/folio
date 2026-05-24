@@ -1,6 +1,14 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
+// Note: `search_doc` is a Postgres GENERATED ALWAYS column (tsvector,
+// see m20260301_000001_search_docs) and is intentionally omitted from
+// this entity. Sea-ORM has no first-class read-only column support;
+// including it would require custom ActiveModel plumbing that rejects
+// writes. The column is documented as an entity-vs-DB parity
+// exception in docs/dev/schema-evolution.md and allow-listed by the
+// schema_parity regression test.
+
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "issues")]
 pub struct Model {

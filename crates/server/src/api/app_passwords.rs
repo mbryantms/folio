@@ -8,47 +8,78 @@
 //! Audit log: `user.app_password.create` / `user.app_password.revoke`.
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get},
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, PaginatorTrait, QueryFilter,
     QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use entity::app_password::{self, Entity as AppPasswordEntity};
 
 use super::error;
+use super::extractors::Validated;
 use crate::audit::{self, AuditEntry};
 use crate::auth::{CurrentUser, app_password as ap};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
+use server_macros::handler;
 
-const MAX_LABEL_LEN: usize = 80;
 const MAX_ACTIVE_PER_USER: usize = 25;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/me/app-passwords", get(list).post(create))
-        .route("/me/app-passwords/{id}", delete(revoke))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(create))
+        .routes(routes!(revoke))
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct CreateAppPasswordReq {
     /// Free-form label so the user can tell their tokens apart.
     /// 1-80 characters; trimmed.
+    #[garde(length(max = 80), custom(label_non_empty_after_trim))]
     pub label: String,
     /// Optional scope tag — `read` (default) or `read+progress`.
     /// Tokens with `read` can browse, page-stream, and download; the
     /// progress-write surface (PUT `/opds/v1/issues/{id}/progress` and
     /// the KOReader sync shim) requires `read+progress`.
     #[serde(default)]
+    #[garde(custom(valid_scope_or_default))]
     pub scope: Option<String>,
+}
+
+fn label_non_empty_after_trim(value: &str, _: &()) -> garde::Result {
+    if value.trim().is_empty() {
+        return Err(garde::Error::new("label cannot be empty"));
+    }
+    Ok(())
+}
+
+/// Allow `None` (defaults to `read` at handler time), or a non-empty
+/// scope string that `ap::is_valid_scope` accepts. Whitespace-only
+/// strings are treated as "not provided" — the handler does the
+/// same trim+filter, so any rejection from this validator and the
+/// in-handler unwrap-to-default agree on the empty case.
+fn valid_scope_or_default(value: &Option<String>, _: &()) -> garde::Result {
+    let Some(raw) = value else {
+        return Ok(());
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    if !ap::is_valid_scope(trimmed) {
+        return Err(garde::Error::new("scope must be 'read' or 'read+progress'"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -86,13 +117,14 @@ fn view(row: app_password::Model) -> AppPasswordView {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "app_passwords_list",    get,
     path = "/me/app-passwords",
     responses(
         (status = 200, body = AppPasswordListView),
         (status = 401, description = "not authenticated"),
     )
 )]
+#[handler]
 pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
     match AppPasswordEntity::find()
         .filter(app_password::Column::UserId.eq(user.id))
@@ -113,7 +145,7 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "app_passwords_create",    post,
     path = "/me/app-passwords",
     request_body = CreateAppPasswordReq,
     responses(
@@ -123,27 +155,16 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
         (status = 409, description = "too many active passwords"),
     )
 )]
+#[handler]
 pub async fn create(
     State(app): State<AppState>,
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
-    Json(req): Json<CreateAppPasswordReq>,
+    Validated(req): Validated<CreateAppPasswordReq>,
 ) -> impl IntoResponse {
+    // Garde already enforced length(max=80) + non-empty-after-trim
+    // on the raw struct; here we just normalize for storage.
     let label = req.label.trim().to_owned();
-    if label.is_empty() {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation.label",
-            "label cannot be empty",
-        );
-    }
-    if label.len() > MAX_LABEL_LEN {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation.label",
-            "label must be 80 characters or fewer",
-        );
-    }
 
     // Per-user soft cap. Bearer auth has to argon2-scan every active
     // row; cap the working set so a stray script can't push it into the
@@ -177,13 +198,8 @@ pub async fn create(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or(ap::SCOPE_READ);
-    if !ap::is_valid_scope(scope) {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "validation.scope",
-            "scope must be 'read' or 'read+progress'",
-        );
-    }
+    // Garde's `valid_scope_or_default` already gates this; we keep
+    // the lookup here purely for the default-fallback semantics.
 
     let (id, plaintext) =
         match ap::issue(&app.db, user.id, &label, scope, app.secrets.pepper.as_ref()).await {
@@ -225,7 +241,7 @@ pub async fn create(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "app_passwords_revoke",    delete,
     path = "/me/app-passwords/{id}",
     params(("id" = Uuid, Path)),
     responses(
@@ -233,6 +249,7 @@ pub async fn create(
         (status = 404, description = "not found or not owned by caller"),
     )
 )]
+#[handler]
 pub async fn revoke(
     State(app): State<AppState>,
     user: CurrentUser,

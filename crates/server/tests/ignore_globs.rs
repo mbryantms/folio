@@ -202,7 +202,7 @@ async fn invalid_glob_returns_400() {
         serde_json::json!({ "ignore_globs": ["[unclosed"] }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation.ignore_globs");
 }
 

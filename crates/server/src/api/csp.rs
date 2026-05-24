@@ -4,17 +4,20 @@
 //! We accept either by reading the raw body and parsing as JSON.
 //! Logged structured at `warn`; increments `comic_csp_violations_total`.
 
-use axum::{
-    Router, body::Bytes, extract::State, http::StatusCode, response::IntoResponse, routing::post,
-};
+use axum::{body::Bytes, extract::State, http::StatusCode, response::IntoResponse};
+use utoipa_axum::router::OpenApiRouter;
 
 use crate::middleware::rate_limit;
 use crate::state::AppState;
 
-pub fn routes() -> Router<AppState> {
-    Router::new().route(
+pub fn routes() -> OpenApiRouter<AppState> {
+    // CSP report endpoint isn't in the spec — the body shape is
+    // browser-defined and varies by user-agent. Register via plain
+    // `.route()` so we still apply the per-route rate-limit layer
+    // without forcing a `#[utoipa::path]` over a polymorphic body.
+    OpenApiRouter::new().route(
         "/csp-report",
-        post(csp_report).route_layer(rate_limit::CSP_REPORT.build()),
+        axum::routing::post(csp_report).route_layer(rate_limit::CSP_REPORT.build()),
     )
 }
 

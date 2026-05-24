@@ -71,11 +71,12 @@ describe("multi-pin dialog data contract", () => {
     // Pages the view is already on never count as cap-disabled — toggling
     // off doesn't increment the count.
     const fullDisabled =
-      !v.pinned_on_pages.includes(full.id) && full.pin_count >= 12;
+      !(v.pinned_on_pages ?? []).includes(full.id) && full.pin_count >= 12;
     const otherDisabled =
-      !v.pinned_on_pages.includes(otherFull.id) && otherFull.pin_count >= 12;
+      !(v.pinned_on_pages ?? []).includes(otherFull.id) &&
+      otherFull.pin_count >= 12;
     const openDisabled =
-      !v.pinned_on_pages.includes(open.id) && open.pin_count >= 12;
+      !(v.pinned_on_pages ?? []).includes(open.id) && open.pin_count >= 12;
 
     expect(fullDisabled).toBe(false); // already pinned → not disabled
     expect(otherDisabled).toBe(true); // full + not pinned → disabled

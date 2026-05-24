@@ -516,7 +516,7 @@ async fn bulk_mark_over_cap_rejects() {
         serde_json::json!({"issue_ids": ids, "finished": true}),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -828,7 +828,7 @@ async fn series_bulk_over_cap_rejects() {
         serde_json::json!({"series_ids": ids, "finished": true}),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -980,12 +980,8 @@ async fn per_issue_reader_write_always_clears_backfill() {
     .await;
 
     // Per-issue reader write — bumps a page without changing finished.
-    let (status, _) = post_progress(
-        &app,
-        &auth,
-        serde_json::json!({"issue_id": id, "page": 5}),
-    )
-    .await;
+    let (status, _) =
+        post_progress(&app, &auth, serde_json::json!({"issue_id": id, "page": 5})).await;
     assert_eq!(status, StatusCode::OK);
 
     let db = Database::connect(&app.db_url).await.unwrap();

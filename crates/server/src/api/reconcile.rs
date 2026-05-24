@@ -10,33 +10,31 @@
 //! All admin-only.
 
 use axum::{
-    Json, Router,
+    Extension, Json,
     extract::{Path as AxPath, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
 };
 use entity::{issue, series};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::Serialize;
 use std::collections::HashMap;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
 use crate::auth::RequireAdmin;
+use crate::middleware::RequestContext;
+use crate::record_admin_action;
 use crate::state::AppState;
+use server_macros::handler;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/libraries/{slug}/removed", get(list_removed))
-        .route(
-            "/series/{series_slug}/issues/{issue_slug}/restore",
-            post(restore_issue),
-        )
-        .route(
-            "/series/{series_slug}/issues/{issue_slug}/confirm-removal",
-            post(confirm_issue),
-        )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_removed))
+        .routes(routes!(restore_issue))
+        .routes(routes!(confirm_issue))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -69,7 +67,7 @@ pub struct RemovedSeriesView {
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "reconcile_list_removed",    get,
     path = "/libraries/{slug}/removed",
     params(("slug" = String, Path,)),
     responses(
@@ -78,6 +76,7 @@ pub struct RemovedSeriesView {
         (status = 404, description = "library not found"),
     )
 )]
+#[handler]
 pub async fn list_removed(
     State(app): State<AppState>,
     _admin: RequireAdmin,
@@ -162,7 +161,7 @@ pub async fn list_removed(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "reconcile_restore_issue",    post,
     path = "/series/{series_slug}/issues/{issue_slug}/restore",
     params(
         ("series_slug" = String, Path,),
@@ -175,9 +174,11 @@ pub async fn list_removed(
         (status = 409, description = "file is still missing on disk"),
     )
 )]
+#[handler]
 pub async fn restore_issue(
     State(app): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     AxPath((series_slug, issue_slug)): AxPath<(String, String)>,
 ) -> impl IntoResponse {
     let row = match crate::api::issues::find_by_slugs(&app.db, &series_slug, &issue_slug).await {
@@ -199,11 +200,21 @@ pub async fn restore_issue(
         tracing::error!(error = %e, issue_id = %id, "restore issue failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.issue.restore",
+        target = ("issue", id.clone()),
+        payload = serde_json::json!({"series_slug": series_slug, "issue_slug": issue_slug}),
+    );
+
     StatusCode::NO_CONTENT.into_response()
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "reconcile_confirm_issue",    post,
     path = "/series/{series_slug}/issues/{issue_slug}/confirm-removal",
     params(
         ("series_slug" = String, Path,),
@@ -215,9 +226,11 @@ pub async fn restore_issue(
         (status = 404, description = "issue not found"),
     )
 )]
+#[handler]
 pub async fn confirm_issue(
     State(app): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     AxPath((series_slug, issue_slug)): AxPath<(String, String)>,
 ) -> impl IntoResponse {
     let row = match crate::api::issues::find_by_slugs(&app.db, &series_slug, &issue_slug).await {
@@ -242,5 +255,15 @@ pub async fn confirm_issue(
     }
     // M5: now that the issue is confirmed-removed, drop its on-disk thumbs.
     crate::library::thumbnails::wipe_issue_thumbs(&data_dir, &issue_id);
+
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.issue.confirm_removal",
+        target = ("issue", id),
+        payload = serde_json::json!({"series_slug": series_slug, "issue_slug": issue_slug}),
+    );
+
     StatusCode::NO_CONTENT.into_response()
 }

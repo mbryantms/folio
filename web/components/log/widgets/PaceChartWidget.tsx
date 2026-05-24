@@ -28,7 +28,7 @@ export function PaceChartWidget({
     <WidgetCard widget={widget} title="Reading pace" subtitle={`Last ${range}`}>
       {stats.isLoading ? (
         <Skeleton className="h-48 w-full" />
-      ) : stats.data && stats.data.pace_series.length > 0 ? (
+      ) : stats.data?.pace_series && stats.data.pace_series.length > 0 ? (
         <PaceChart points={stats.data.pace_series} />
       ) : (
         <p className="text-muted-foreground text-xs">

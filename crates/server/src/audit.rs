@@ -1,6 +1,10 @@
 //! Audit-log helper. Append-only writes to `audit_log` (§5.9). Callers fire
 //! and forget — failures here are logged but never bubble up to the request,
 //! since the user-visible action has already succeeded by the time we record.
+//!
+//! **Convention:** every admin mutation calls [`record_admin_action!`]. The
+//! macro is the canonical anchor the M10 CI tool greps for; new admin
+//! handlers that omit it fail the audit-log completeness check.
 
 use crate::middleware::RequestContext;
 use entity::audit_log;
@@ -63,4 +67,82 @@ pub async fn record_with_ctx(
         },
     )
     .await;
+}
+
+/// Canonical audit-emit macro for admin mutations.
+///
+/// Two forms — with or without a specific target row:
+///
+/// ```ignore
+/// // Targeted mutation: editing a user, library, CBL list, etc.
+/// record_admin_action!(
+///     db = &app.db,
+///     ctx = &ctx,
+///     actor = admin.user_id,
+///     action = "admin.user.update",
+///     target = ("user", user_id.to_string()),
+///     payload = serde_json::json!({"role": new_role}),
+/// );
+///
+/// // Untargeted mutation: bulk operations, system actions.
+/// record_admin_action!(
+///     db = &app.db,
+///     ctx = &ctx,
+///     actor = admin.user_id,
+///     action = "admin.libraries.scan_all",
+///     payload = serde_json::json!({"count": libs.len()}),
+/// );
+/// ```
+///
+/// Why a macro? Two reasons. (1) The M10 CI tool greps for
+/// `record_admin_action!` to verify every `RequireAdmin` handler emits an
+/// audit row before returning success — a function call would require AST
+/// analysis to detect; a macro invocation is a stable grep target. (2)
+/// Changing the audit shape later (adding fields, async vs sync) is a
+/// single-site edit.
+#[macro_export]
+macro_rules! record_admin_action {
+    (
+        db = $db:expr,
+        ctx = $ctx:expr,
+        actor = $actor:expr,
+        action = $action:expr,
+        target = ($target_type:expr, $target_id:expr),
+        payload = $payload:expr $(,)?
+    ) => {{
+        $crate::audit::record(
+            $db,
+            $crate::audit::AuditEntry {
+                actor_id: $actor,
+                action: $action,
+                target_type: Some($target_type),
+                target_id: Some($target_id),
+                payload: $payload,
+                ip: $ctx.ip_string(),
+                user_agent: $ctx.user_agent.clone(),
+            },
+        )
+        .await
+    }};
+    (
+        db = $db:expr,
+        ctx = $ctx:expr,
+        actor = $actor:expr,
+        action = $action:expr,
+        payload = $payload:expr $(,)?
+    ) => {{
+        $crate::audit::record(
+            $db,
+            $crate::audit::AuditEntry {
+                actor_id: $actor,
+                action: $action,
+                target_type: None,
+                target_id: None,
+                payload: $payload,
+                ip: $ctx.ip_string(),
+                user_agent: $ctx.user_agent.clone(),
+            },
+        )
+        .await
+    }};
 }

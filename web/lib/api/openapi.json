@@ -10,12 +10,9 @@
     "version": "0.0.0"
   },
   "paths": {
-    "/admin/activity": {
+    "/api/admin/activity": {
       "get": {
-        "tags": [
-          "api::admin_activity"
-        ],
-        "operationId": "list",
+        "operationId": "admin_activity_list",
         "parameters": [
           {
             "name": "limit",
@@ -74,12 +71,9 @@
         }
       }
     },
-    "/admin/audit": {
+    "/api/admin/audit": {
       "get": {
-        "tags": [
-          "api::audit"
-        ],
-        "operationId": "list",
+        "operationId": "audit_list",
         "parameters": [
           {
             "name": "limit",
@@ -168,12 +162,9 @@
         }
       }
     },
-    "/admin/auth/config": {
+    "/api/admin/auth/config": {
       "get": {
-        "tags": [
-          "api::auth_config"
-        ],
-        "operationId": "get_config",
+        "operationId": "auth_config_get_config",
         "responses": {
           "200": {
             "description": "",
@@ -191,12 +182,9 @@
         }
       }
     },
-    "/admin/auth/oidc/discover": {
+    "/api/admin/auth/oidc/discover": {
       "post": {
-        "tags": [
-          "api::auth_config"
-        ],
-        "operationId": "probe_discovery",
+        "operationId": "auth_config_probe_discovery",
         "requestBody": {
           "content": {
             "application/json": {
@@ -230,12 +218,9 @@
         }
       }
     },
-    "/admin/catalog-sources": {
+    "/api/admin/catalog-sources": {
       "post": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "admin_create_catalog_source",
+        "operationId": "cbl_lists_admin_create_catalog_source",
         "requestBody": {
           "content": {
             "application/json": {
@@ -260,12 +245,9 @@
         }
       }
     },
-    "/admin/catalog-sources/{id}": {
+    "/api/admin/catalog-sources/{id}": {
       "delete": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "admin_delete_catalog_source",
+        "operationId": "cbl_lists_admin_delete_catalog_source",
         "parameters": [
           {
             "name": "id",
@@ -283,10 +265,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "admin_update_catalog_source",
+        "operationId": "cbl_lists_admin_update_catalog_source",
         "parameters": [
           {
             "name": "id",
@@ -321,12 +300,9 @@
         }
       }
     },
-    "/admin/email/status": {
+    "/api/admin/email/status": {
       "get": {
-        "tags": [
-          "api::admin_email"
-        ],
-        "operationId": "status",
+        "operationId": "admin_email_status",
         "responses": {
           "200": {
             "description": "",
@@ -344,12 +320,9 @@
         }
       }
     },
-    "/admin/email/test": {
+    "/api/admin/email/test": {
       "post": {
-        "tags": [
-          "api::admin_email"
-        ],
-        "operationId": "test_send",
+        "operationId": "admin_email_test_send",
         "responses": {
           "200": {
             "description": "",
@@ -373,12 +346,9 @@
         }
       }
     },
-    "/admin/fs/list": {
+    "/api/admin/fs/list": {
       "get": {
-        "tags": [
-          "api::admin_fs"
-        ],
-        "operationId": "list",
+        "operationId": "admin_fs_list",
         "parameters": [
           {
             "name": "path",
@@ -416,12 +386,9 @@
         }
       }
     },
-    "/admin/libraries/{slug}/thumbnails": {
+    "/api/admin/libraries/{slug}/thumbnails": {
       "delete": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
-        "operationId": "delete_all",
+        "operationId": "admin_thumbs_delete_all",
         "parameters": [
           {
             "name": "slug",
@@ -452,12 +419,9 @@
         }
       }
     },
-    "/admin/libraries/{slug}/thumbnails-settings": {
+    "/api/admin/libraries/{slug}/thumbnails-settings": {
       "get": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
-        "operationId": "get_settings",
+        "operationId": "admin_thumbs_get_settings",
         "parameters": [
           {
             "name": "slug",
@@ -488,10 +452,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
-        "operationId": "update_settings",
+        "operationId": "admin_thumbs_update_settings",
         "parameters": [
           {
             "name": "slug",
@@ -535,12 +496,9 @@
         }
       }
     },
-    "/admin/libraries/{slug}/thumbnails-status": {
+    "/api/admin/libraries/{slug}/thumbnails-status": {
       "get": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
-        "operationId": "library_status",
+        "operationId": "admin_thumbs_library_status",
         "parameters": [
           {
             "name": "slug",
@@ -571,12 +529,9 @@
         }
       }
     },
-    "/admin/libraries/{slug}/thumbnails/force-recreate": {
+    "/api/admin/libraries/{slug}/thumbnails/force-recreate": {
       "post": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
-        "operationId": "force_recreate",
+        "operationId": "admin_thumbs_force_recreate",
         "parameters": [
           {
             "name": "slug",
@@ -610,12 +565,9 @@
         }
       }
     },
-    "/admin/libraries/{slug}/thumbnails/generate-missing": {
+    "/api/admin/libraries/{slug}/thumbnails/generate-missing": {
       "post": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
-        "operationId": "generate_missing",
+        "operationId": "admin_thumbs_generate_missing",
         "parameters": [
           {
             "name": "slug",
@@ -649,12 +601,9 @@
         }
       }
     },
-    "/admin/libraries/{slug}/thumbnails/generate-page-map": {
+    "/api/admin/libraries/{slug}/thumbnails/generate-page-map": {
       "post": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
-        "operationId": "generate_page_map",
+        "operationId": "admin_thumbs_generate_page_map",
         "parameters": [
           {
             "name": "slug",
@@ -688,12 +637,9 @@
         }
       }
     },
-    "/admin/logs": {
+    "/api/admin/logs": {
       "get": {
-        "tags": [
-          "api::admin_logs"
-        ],
-        "operationId": "list",
+        "operationId": "admin_logs_list",
         "parameters": [
           {
             "name": "since",
@@ -763,12 +709,9 @@
         }
       }
     },
-    "/admin/ocr/models": {
+    "/api/admin/ocr/models": {
       "get": {
-        "tags": [
-          "api::admin_ocr"
-        ],
-        "operationId": "list",
+        "operationId": "admin_ocr_list",
         "responses": {
           "200": {
             "description": "",
@@ -786,12 +729,9 @@
         }
       }
     },
-    "/admin/queue-depth": {
+    "/api/admin/queue-depth": {
       "get": {
-        "tags": [
-          "api::admin_queue"
-        ],
-        "operationId": "queue_depth",
+        "operationId": "admin_queue_queue_depth",
         "responses": {
           "200": {
             "description": "",
@@ -809,12 +749,9 @@
         }
       }
     },
-    "/admin/queue/clear": {
+    "/api/admin/queue/clear": {
       "post": {
-        "tags": [
-          "api::admin_queue"
-        ],
-        "operationId": "clear_queue",
+        "operationId": "admin_queue_clear_queue",
         "requestBody": {
           "content": {
             "application/json": {
@@ -842,12 +779,9 @@
         }
       }
     },
-    "/admin/saved-views": {
+    "/api/admin/saved-views": {
       "post": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "admin_create",
+        "operationId": "saved_views_admin_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -872,12 +806,9 @@
         }
       }
     },
-    "/admin/saved-views/{id}": {
+    "/api/admin/saved-views/{id}": {
       "delete": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "admin_delete",
+        "operationId": "saved_views_admin_delete",
         "parameters": [
           {
             "name": "id",
@@ -895,10 +826,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "admin_update",
+        "operationId": "saved_views_admin_update",
         "parameters": [
           {
             "name": "id",
@@ -933,13 +861,10 @@
         }
       }
     },
-    "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/force-recreate-page-map": {
+    "/api/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/force-recreate-page-map": {
       "post": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
         "summary": "Destructive: wipe one issue's strip subtree, then enqueue a fresh\n`Strip` job. Cover file is preserved. Audit:\n`admin.thumbnails.force_recreate.issue_page_map`.",
-        "operationId": "force_recreate_issue_page_map",
+        "operationId": "admin_thumbs_force_recreate_issue_page_map",
         "parameters": [
           {
             "name": "series_slug",
@@ -981,13 +906,10 @@
         }
       }
     },
-    "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/generate-page-map": {
+    "/api/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/generate-page-map": {
       "post": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
         "summary": "Fill-only `Strip` enqueue for a single issue. Worker skips pages whose\nstrip files already exist, so calling this when nothing's missing is a\nno-op. Audit: `admin.thumbnails.generate_page_map.issue`.",
-        "operationId": "generate_issue_page_map",
+        "operationId": "admin_thumbs_generate_issue_page_map",
         "parameters": [
           {
             "name": "series_slug",
@@ -1029,13 +951,10 @@
         }
       }
     },
-    "/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/regenerate-cover": {
+    "/api/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/regenerate-cover": {
       "post": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
         "summary": "Wipe one issue's cover thumbnail (every known extension), clear its\nstamp columns, and enqueue a fresh `Cover` job. Strip subtree is\npreserved. Audit: `admin.thumbnails.regenerate.issue_cover`.",
-        "operationId": "regenerate_issue_cover",
+        "operationId": "admin_thumbs_regenerate_issue_cover",
         "parameters": [
           {
             "name": "series_slug",
@@ -1077,13 +996,10 @@
         }
       }
     },
-    "/admin/series/{series_slug}/thumbnails/force-recreate-page-map": {
+    "/api/admin/series/{series_slug}/thumbnails/force-recreate-page-map": {
       "post": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
         "summary": "Destructive: delete every strip subtree in the series, then enqueue a\n`Strip` job per active issue so each page is re-encoded from the\narchive. Cover files are preserved. Audit:\n`admin.thumbnails.force_recreate.series_page_map`.",
-        "operationId": "force_recreate_series_page_map",
+        "operationId": "admin_thumbs_force_recreate_series_page_map",
         "parameters": [
           {
             "name": "series_slug",
@@ -1117,13 +1033,10 @@
         }
       }
     },
-    "/admin/series/{series_slug}/thumbnails/generate-page-map": {
+    "/api/admin/series/{series_slug}/thumbnails/generate-page-map": {
       "post": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
         "summary": "Fill-only enqueue: walk every active issue in the series and push a\n`Strip` job. The worker skips pages whose strip files already exist, so\nrepeated calls are cheap and idempotent. Audit:\n`admin.thumbnails.generate_page_map.series`.",
-        "operationId": "generate_series_page_map",
+        "operationId": "admin_thumbs_generate_series_page_map",
         "parameters": [
           {
             "name": "series_slug",
@@ -1157,13 +1070,10 @@
         }
       }
     },
-    "/admin/series/{series_slug}/thumbnails/regenerate-cover": {
+    "/api/admin/series/{series_slug}/thumbnails/regenerate-cover": {
       "post": {
-        "tags": [
-          "api::admin_thumbs"
-        ],
         "summary": "Wipe every cover file in a series and re-enqueue cover jobs for each\nactive issue. Strip subtree is preserved; strips refill lazily through\nthe inline-fallback path or by a separate `force-recreate-page-map`\ncall. Audit: `admin.thumbnails.regenerate.series_cover`.",
-        "operationId": "regenerate_series_cover",
+        "operationId": "admin_thumbs_regenerate_series_cover",
         "parameters": [
           {
             "name": "series_slug",
@@ -1197,12 +1107,9 @@
         }
       }
     },
-    "/admin/server/info": {
+    "/api/admin/server/info": {
       "get": {
-        "tags": [
-          "api::server_info"
-        ],
-        "operationId": "info",
+        "operationId": "server_info_info",
         "responses": {
           "200": {
             "description": "",
@@ -1220,12 +1127,9 @@
         }
       }
     },
-    "/admin/server/latest-release": {
+    "/api/admin/server/latest-release": {
       "get": {
-        "tags": [
-          "api::server_releases"
-        ],
-        "operationId": "latest_release",
+        "operationId": "server_releases_latest_release",
         "responses": {
           "200": {
             "description": "",
@@ -1246,12 +1150,9 @@
         }
       }
     },
-    "/admin/settings": {
+    "/api/admin/settings": {
       "get": {
-        "tags": [
-          "api::admin_settings"
-        ],
-        "operationId": "get_all",
+        "operationId": "admin_settings_get_all",
         "responses": {
           "200": {
             "description": "",
@@ -1269,10 +1170,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::admin_settings"
-        ],
-        "operationId": "update",
+        "operationId": "admin_settings_update",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1303,12 +1201,9 @@
         }
       }
     },
-    "/admin/stats/content": {
+    "/api/admin/stats/content": {
       "get": {
-        "tags": [
-          "api::admin_stats"
-        ],
-        "operationId": "content",
+        "operationId": "admin_stats_content",
         "responses": {
           "200": {
             "description": "",
@@ -1326,12 +1221,9 @@
         }
       }
     },
-    "/admin/stats/engagement": {
+    "/api/admin/stats/engagement": {
       "get": {
-        "tags": [
-          "api::admin_stats"
-        ],
-        "operationId": "engagement",
+        "operationId": "admin_stats_engagement",
         "responses": {
           "200": {
             "description": "",
@@ -1349,12 +1241,9 @@
         }
       }
     },
-    "/admin/stats/overview": {
+    "/api/admin/stats/overview": {
       "get": {
-        "tags": [
-          "api::admin_stats"
-        ],
-        "operationId": "overview",
+        "operationId": "admin_stats_overview",
         "responses": {
           "200": {
             "description": "",
@@ -1372,12 +1261,9 @@
         }
       }
     },
-    "/admin/stats/quality": {
+    "/api/admin/stats/quality": {
       "get": {
-        "tags": [
-          "api::admin_stats"
-        ],
-        "operationId": "quality",
+        "operationId": "admin_stats_quality",
         "responses": {
           "200": {
             "description": "",
@@ -1395,19 +1281,16 @@
         }
       }
     },
-    "/admin/stats/users": {
+    "/api/admin/stats/users": {
       "get": {
-        "tags": [
-          "api::admin_stats"
-        ],
-        "operationId": "users_list",
+        "operationId": "admin_stats_users_list",
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdminUserStatsListView"
+                  "$ref": "#/components/schemas/CursorPage_AdminUserStatsRow"
                 }
               }
             }
@@ -1418,12 +1301,9 @@
         }
       }
     },
-    "/admin/users": {
+    "/api/admin/users": {
       "get": {
-        "tags": [
-          "api::admin_users"
-        ],
-        "operationId": "list",
+        "operationId": "admin_users_list",
         "parameters": [
           {
             "name": "limit",
@@ -1454,9 +1334,13 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/UserRole"
+                }
               ]
             }
           },
@@ -1465,9 +1349,13 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/UserState"
+                }
               ]
             }
           },
@@ -1500,12 +1388,9 @@
         }
       }
     },
-    "/admin/users/{id}": {
+    "/api/admin/users/{id}": {
       "get": {
-        "tags": [
-          "api::admin_users"
-        ],
-        "operationId": "get_one",
+        "operationId": "admin_users_get_one",
         "parameters": [
           {
             "name": "id",
@@ -1536,10 +1421,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::admin_users"
-        ],
-        "operationId": "update",
+        "operationId": "admin_users_update",
         "parameters": [
           {
             "name": "id",
@@ -1583,12 +1465,9 @@
         }
       }
     },
-    "/admin/users/{id}/disable": {
+    "/api/admin/users/{id}/disable": {
       "post": {
-        "tags": [
-          "api::admin_users"
-        ],
-        "operationId": "disable",
+        "operationId": "admin_users_disable",
         "parameters": [
           {
             "name": "id",
@@ -1619,12 +1498,9 @@
         }
       }
     },
-    "/admin/users/{id}/enable": {
+    "/api/admin/users/{id}/enable": {
       "post": {
-        "tags": [
-          "api::admin_users"
-        ],
-        "operationId": "enable",
+        "operationId": "admin_users_enable",
         "parameters": [
           {
             "name": "id",
@@ -1655,12 +1531,9 @@
         }
       }
     },
-    "/admin/users/{id}/library-access": {
+    "/api/admin/users/{id}/library-access": {
       "post": {
-        "tags": [
-          "api::admin_users"
-        ],
-        "operationId": "set_library_access",
+        "operationId": "admin_users_set_library_access",
         "parameters": [
           {
             "name": "id",
@@ -1704,12 +1577,9 @@
         }
       }
     },
-    "/admin/users/{id}/reading-stats": {
+    "/api/admin/users/{id}/reading-stats": {
       "get": {
-        "tags": [
-          "api::admin_stats"
-        ],
-        "operationId": "user_reading_stats",
+        "operationId": "admin_stats_user_reading_stats",
         "parameters": [
           {
             "name": "id",
@@ -1753,12 +1623,9 @@
         }
       }
     },
-    "/auth/config": {
+    "/api/auth/config": {
       "get": {
-        "tags": [
-          "api::auth_config"
-        ],
-        "operationId": "get_public_config",
+        "operationId": "auth_config_get_public_config",
         "responses": {
           "200": {
             "description": "",
@@ -1773,12 +1640,9 @@
         }
       }
     },
-    "/auth/local/login": {
+    "/api/auth/local/login": {
       "post": {
-        "tags": [
-          "auth::local"
-        ],
-        "operationId": "login",
+        "operationId": "local_login",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1806,12 +1670,9 @@
         }
       }
     },
-    "/auth/local/register": {
+    "/api/auth/local/register": {
       "post": {
-        "tags": [
-          "auth::local"
-        ],
-        "operationId": "register",
+        "operationId": "local_register",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1845,14 +1706,11 @@
         }
       }
     },
-    "/auth/local/request-password-reset": {
+    "/api/auth/local/request-password-reset": {
       "post": {
-        "tags": [
-          "auth::local"
-        ],
         "summary": "`POST /auth/local/request-password-reset`",
         "description": "Always returns 204 — the response doesn't leak whether the email is on\nfile (otherwise the endpoint doubles as a user-enumeration oracle).\nWhen the email maps to an active local account, a 1-hour reset token\nis sent via the configured EmailSender.",
-        "operationId": "request_password_reset",
+        "operationId": "local_request_password_reset",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1870,14 +1728,11 @@
         }
       }
     },
-    "/auth/local/resend-verification": {
+    "/api/auth/local/resend-verification": {
       "post": {
-        "tags": [
-          "auth::local"
-        ],
         "summary": "`POST /auth/local/resend-verification { email }`",
         "description": "Always 204 (no enumeration). Sends a fresh 24h token only when the\naccount exists, is local, and is `pending_verification`.",
-        "operationId": "resend_verification",
+        "operationId": "local_resend_verification",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1895,14 +1750,11 @@
         }
       }
     },
-    "/auth/local/reset-password": {
+    "/api/auth/local/reset-password": {
       "post": {
-        "tags": [
-          "auth::local"
-        ],
         "summary": "`POST /auth/local/reset-password { token, new_password }`",
         "description": "Verifies the HMAC token, rehashes the new password, bumps\n`token_version` (so every existing session for the user is\ninvalidated), and sends a confirmation email. Returns 204 on success.",
-        "operationId": "reset_password",
+        "operationId": "local_reset_password",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1923,14 +1775,11 @@
         }
       }
     },
-    "/auth/local/verify-email": {
+    "/api/auth/local/verify-email": {
       "get": {
-        "tags": [
-          "auth::local"
-        ],
         "summary": "`GET /auth/local/verify-email?token=...`",
         "description": "Consumes a 24h verification token; on success flips\n`state=pending_verification` → `active` and `email_verified=true`, then\n302s to `/sign-in?verified=1`. Re-clicking a still-valid token after\nactivation is a 302 to the same target (idempotent / harmless).",
-        "operationId": "verify_email",
+        "operationId": "local_verify_email",
         "responses": {
           "302": {
             "description": "redirect to /sign-in?verified=1"
@@ -1941,12 +1790,9 @@
         }
       }
     },
-    "/auth/logout": {
+    "/api/auth/logout": {
       "post": {
-        "tags": [
-          "auth::local"
-        ],
-        "operationId": "logout",
+        "operationId": "local_logout",
         "responses": {
           "204": {
             "description": "session revoked, cookies cleared"
@@ -1957,12 +1803,9 @@
         }
       }
     },
-    "/auth/me": {
+    "/api/auth/me": {
       "get": {
-        "tags": [
-          "auth::local"
-        ],
-        "operationId": "me",
+        "operationId": "local_me",
         "responses": {
           "200": {
             "description": "",
@@ -1980,12 +1823,9 @@
         }
       }
     },
-    "/auth/refresh": {
+    "/api/auth/refresh": {
       "post": {
-        "tags": [
-          "auth::local"
-        ],
-        "operationId": "refresh",
+        "operationId": "local_refresh",
         "responses": {
           "200": {
             "description": "tokens rotated",
@@ -2003,12 +1843,9 @@
         }
       }
     },
-    "/auth/ws-ticket": {
+    "/api/auth/ws-ticket": {
       "post": {
-        "tags": [
-          "auth::ws_ticket"
-        ],
-        "operationId": "mint",
+        "operationId": "ws_ticket_mint",
         "responses": {
           "200": {
             "description": "",
@@ -2029,12 +1866,9 @@
         }
       }
     },
-    "/catalog/sources": {
+    "/api/catalog/sources": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "list_catalog_sources",
+        "operationId": "cbl_lists_list_catalog_sources",
         "responses": {
           "200": {
             "description": "",
@@ -2049,12 +1883,9 @@
         }
       }
     },
-    "/catalog/sources/{id}/lists": {
+    "/api/catalog/sources/{id}/lists": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "list_catalog_entries",
+        "operationId": "cbl_lists_list_catalog_entries",
         "parameters": [
           {
             "name": "id",
@@ -2079,12 +1910,9 @@
         }
       }
     },
-    "/catalog/sources/{id}/refresh-index": {
+    "/api/catalog/sources/{id}/refresh-index": {
       "post": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "refresh_catalog_index",
+        "operationId": "cbl_lists_refresh_catalog_index",
         "parameters": [
           {
             "name": "id",
@@ -2109,12 +1937,9 @@
         }
       }
     },
-    "/creators/{slug}": {
+    "/api/creators/{slug}": {
       "get": {
-        "tags": [
-          "api::creators"
-        ],
-        "operationId": "get_one",
+        "operationId": "creators_get_one",
         "parameters": [
           {
             "name": "slug",
@@ -2142,12 +1967,9 @@
         }
       }
     },
-    "/filter-options/age_ratings": {
+    "/api/filter-options/age_ratings": {
       "get": {
-        "tags": [
-          "api::filter_options"
-        ],
-        "operationId": "age_ratings",
+        "operationId": "filter_options_age_ratings",
         "parameters": [
           {
             "name": "library",
@@ -2172,7 +1994,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptionsView"
+                  "$ref": "#/components/schemas/CursorPage_String"
                 }
               }
             }
@@ -2180,12 +2002,9 @@
         }
       }
     },
-    "/filter-options/characters": {
+    "/api/filter-options/characters": {
       "get": {
-        "tags": [
-          "api::filter_options"
-        ],
-        "operationId": "characters",
+        "operationId": "filter_options_characters",
         "parameters": [
           {
             "name": "library",
@@ -2210,7 +2029,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptionsView"
+                  "$ref": "#/components/schemas/CursorPage_String"
                 }
               }
             }
@@ -2218,12 +2037,9 @@
         }
       }
     },
-    "/filter-options/credits/{role}": {
+    "/api/filter-options/credits/{role}": {
       "get": {
-        "tags": [
-          "api::filter_options"
-        ],
-        "operationId": "credits",
+        "operationId": "filter_options_credits",
         "parameters": [
           {
             "name": "role",
@@ -2256,7 +2072,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptionsView"
+                  "$ref": "#/components/schemas/CursorPage_String"
                 }
               }
             }
@@ -2267,12 +2083,9 @@
         }
       }
     },
-    "/filter-options/genres": {
+    "/api/filter-options/genres": {
       "get": {
-        "tags": [
-          "api::filter_options"
-        ],
-        "operationId": "genres",
+        "operationId": "filter_options_genres",
         "parameters": [
           {
             "name": "library",
@@ -2297,7 +2110,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptionsView"
+                  "$ref": "#/components/schemas/CursorPage_String"
                 }
               }
             }
@@ -2305,12 +2118,9 @@
         }
       }
     },
-    "/filter-options/languages": {
+    "/api/filter-options/languages": {
       "get": {
-        "tags": [
-          "api::filter_options"
-        ],
-        "operationId": "languages",
+        "operationId": "filter_options_languages",
         "parameters": [
           {
             "name": "library",
@@ -2335,7 +2145,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptionsView"
+                  "$ref": "#/components/schemas/CursorPage_String"
                 }
               }
             }
@@ -2343,12 +2153,9 @@
         }
       }
     },
-    "/filter-options/locations": {
+    "/api/filter-options/locations": {
       "get": {
-        "tags": [
-          "api::filter_options"
-        ],
-        "operationId": "locations",
+        "operationId": "filter_options_locations",
         "parameters": [
           {
             "name": "library",
@@ -2373,7 +2180,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptionsView"
+                  "$ref": "#/components/schemas/CursorPage_String"
                 }
               }
             }
@@ -2381,12 +2188,9 @@
         }
       }
     },
-    "/filter-options/publishers": {
+    "/api/filter-options/publishers": {
       "get": {
-        "tags": [
-          "api::filter_options"
-        ],
-        "operationId": "publishers",
+        "operationId": "filter_options_publishers",
         "parameters": [
           {
             "name": "library",
@@ -2411,7 +2215,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptionsView"
+                  "$ref": "#/components/schemas/CursorPage_String"
                 }
               }
             }
@@ -2419,12 +2223,9 @@
         }
       }
     },
-    "/filter-options/tags": {
+    "/api/filter-options/tags": {
       "get": {
-        "tags": [
-          "api::filter_options"
-        ],
-        "operationId": "tags",
+        "operationId": "filter_options_tags",
         "parameters": [
           {
             "name": "library",
@@ -2449,7 +2250,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptionsView"
+                  "$ref": "#/components/schemas/CursorPage_String"
                 }
               }
             }
@@ -2457,12 +2258,9 @@
         }
       }
     },
-    "/filter-options/teams": {
+    "/api/filter-options/teams": {
       "get": {
-        "tags": [
-          "api::filter_options"
-        ],
-        "operationId": "teams",
+        "operationId": "filter_options_teams",
         "parameters": [
           {
             "name": "library",
@@ -2487,7 +2285,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptionsView"
+                  "$ref": "#/components/schemas/CursorPage_String"
                 }
               }
             }
@@ -2495,32 +2293,9 @@
         }
       }
     },
-    "/healthz": {
+    "/api/issues": {
       "get": {
-        "tags": [
-          "api::health"
-        ],
-        "operationId": "healthz",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Health"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/issues": {
-      "get": {
-        "tags": [
-          "api::issues"
-        ],
-        "operationId": "list",
+        "operationId": "issues_list",
         "responses": {
           "200": {
             "description": "",
@@ -2535,12 +2310,9 @@
         }
       }
     },
-    "/issues/search": {
+    "/api/issues/search": {
       "get": {
-        "tags": [
-          "api::issues"
-        ],
-        "operationId": "search",
+        "operationId": "issues_search",
         "parameters": [
           {
             "name": "q",
@@ -2583,13 +2355,10 @@
         }
       }
     },
-    "/issues/{issue_id}/next-up": {
+    "/api/issues/{issue_id}/next-up": {
       "get": {
-        "tags": [
-          "api::next_up"
-        ],
         "summary": "Resolve the next issue the user should read after the given one. Picks\nCBL > series; returns `source: \"none\"` when neither branch has a\nviable target.",
-        "operationId": "next_up",
+        "operationId": "next_up_next_up",
         "parameters": [
           {
             "name": "issue_id",
@@ -2627,13 +2396,10 @@
         }
       }
     },
-    "/issues/{issue_id}/prev-up": {
+    "/api/issues/{issue_id}/prev-up": {
       "get": {
-        "tags": [
-          "api::next_up"
-        ],
         "summary": "Resolve the previous issue the user should navigate to. Picks\nCBL > series; returns `source: \"none\"` when neither branch has a\nviable target (e.g., user is on the first issue of the series and\nno CBL context).",
-        "operationId": "prev_up",
+        "operationId": "next_up_prev_up",
         "parameters": [
           {
             "name": "issue_id",
@@ -2671,12 +2437,9 @@
         }
       }
     },
-    "/libraries": {
+    "/api/libraries": {
       "get": {
-        "tags": [
-          "api::libraries"
-        ],
-        "operationId": "list",
+        "operationId": "libraries_list",
         "responses": {
           "200": {
             "description": "",
@@ -2694,10 +2457,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::libraries"
-        ],
-        "operationId": "create",
+        "operationId": "libraries_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2728,12 +2488,9 @@
         }
       }
     },
-    "/libraries/{slug}": {
+    "/api/libraries/{slug}": {
       "get": {
-        "tags": [
-          "api::libraries"
-        ],
-        "operationId": "get_one",
+        "operationId": "libraries_get_one",
         "parameters": [
           {
             "name": "slug",
@@ -2761,10 +2518,7 @@
         }
       },
       "delete": {
-        "tags": [
-          "api::libraries"
-        ],
-        "operationId": "delete_one",
+        "operationId": "libraries_delete_one",
         "parameters": [
           {
             "name": "slug",
@@ -2795,10 +2549,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::libraries"
-        ],
-        "operationId": "update_settings",
+        "operationId": "libraries_update_settings",
         "parameters": [
           {
             "name": "slug",
@@ -2842,12 +2593,9 @@
         }
       }
     },
-    "/libraries/{slug}/health-issues": {
+    "/api/libraries/{slug}/health-issues": {
       "get": {
-        "tags": [
-          "api::health_issues"
-        ],
-        "operationId": "list",
+        "operationId": "health_issues_list",
         "parameters": [
           {
             "name": "slug",
@@ -2881,12 +2629,9 @@
         }
       }
     },
-    "/libraries/{slug}/health-issues/{issue_id}/dismiss": {
+    "/api/libraries/{slug}/health-issues/{issue_id}/dismiss": {
       "post": {
-        "tags": [
-          "api::health_issues"
-        ],
-        "operationId": "dismiss",
+        "operationId": "health_issues_dismiss",
         "parameters": [
           {
             "name": "slug",
@@ -2918,12 +2663,9 @@
         }
       }
     },
-    "/libraries/{slug}/removed": {
+    "/api/libraries/{slug}/removed": {
       "get": {
-        "tags": [
-          "api::reconcile"
-        ],
-        "operationId": "list_removed",
+        "operationId": "reconcile_list_removed",
         "parameters": [
           {
             "name": "slug",
@@ -2954,12 +2696,9 @@
         }
       }
     },
-    "/libraries/{slug}/scan": {
+    "/api/libraries/{slug}/scan": {
       "post": {
-        "tags": [
-          "api::libraries"
-        ],
-        "operationId": "scan",
+        "operationId": "libraries_scan",
         "parameters": [
           {
             "name": "slug",
@@ -2999,12 +2738,9 @@
         }
       }
     },
-    "/libraries/{slug}/scan-preview": {
+    "/api/libraries/{slug}/scan-preview": {
       "get": {
-        "tags": [
-          "api::libraries"
-        ],
-        "operationId": "scan_preview",
+        "operationId": "libraries_scan_preview",
         "parameters": [
           {
             "name": "slug",
@@ -3035,12 +2771,9 @@
         }
       }
     },
-    "/libraries/{slug}/scan-runs": {
+    "/api/libraries/{slug}/scan-runs": {
       "get": {
-        "tags": [
-          "api::scan_runs"
-        ],
-        "operationId": "list",
+        "operationId": "scan_runs_list",
         "parameters": [
           {
             "name": "slug",
@@ -3095,14 +2828,11 @@
         }
       }
     },
-    "/libraries/{slug}/scan-runs/{scan_id}/cancel": {
+    "/api/libraries/{slug}/scan-runs/{scan_id}/cancel": {
       "post": {
-        "tags": [
-          "api::scan_runs"
-        ],
         "summary": "`POST /libraries/{slug}/scan-runs/{scan_id}/cancel` — flip a stuck\nscan_runs row to a terminal state. Idempotent against already-\nterminal rows (returns 409). The worker is the usual authority on\nstate transitions; this endpoint is the manual escape hatch for\nscans that have lost their worker (e.g., operator cleared the\nqueue mid-flight, server restart killed an in-flight job, or the\nworker hangs and no progress events arrive).",
         "description": "Writes `state=\"cancelled\"`, `ended_at=NOW`, `error=\"Cancelled by\nadmin\"`. Emits `ScanEvent::Failed` so connected WebSocket clients\n(the Live scan page) drop the run out of their \"active\" set\nimmediately. Race note: if a still-alive worker subsequently\nreaches `finalize_run`, it will overwrite this row with its own\nterminal state — that's fine and expected.",
-        "operationId": "cancel",
+        "operationId": "scan_runs_cancel",
         "parameters": [
           {
             "name": "slug",
@@ -3144,14 +2874,11 @@
         }
       }
     },
-    "/libraries/{slug}/validate-deeply": {
+    "/api/libraries/{slug}/validate-deeply": {
       "post": {
-        "tags": [
-          "api::libraries"
-        ],
         "summary": "Tranche C of recovery-visibility — admin-triggered deep page-\ndecode validation. Walks every active issue in the library,\nreads every page entry, runs each through the `image` crate's\ndecoder, and emits `UnreadablePage` health-issues for failures.",
         "description": "Returns immediately. The job runs in a `tokio::spawn` background\ntask without apalis-style persistence; a server restart abandons\nthe in-flight run and the operator can re-trigger.\n\n**Cost.** Image-decoding every page in a 20K-issue library can\ntake 1-2 hours of single-core CPU. Operator-only; never\nautomatic.",
-        "operationId": "validate_deeply",
+        "operationId": "libraries_validate_deeply",
         "parameters": [
           {
             "name": "slug",
@@ -3182,12 +2909,9 @@
         }
       }
     },
-    "/me/account": {
+    "/api/me/account": {
       "patch": {
-        "tags": [
-          "api::account"
-        ],
-        "operationId": "update",
+        "operationId": "account_update",
         "requestBody": {
           "content": {
             "application/json": {
@@ -3224,12 +2948,9 @@
         }
       }
     },
-    "/me/app-passwords": {
+    "/api/me/app-passwords": {
       "get": {
-        "tags": [
-          "api::app_passwords"
-        ],
-        "operationId": "list",
+        "operationId": "app_passwords_list",
         "responses": {
           "200": {
             "description": "",
@@ -3247,10 +2968,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::app_passwords"
-        ],
-        "operationId": "create",
+        "operationId": "app_passwords_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -3284,12 +3002,9 @@
         }
       }
     },
-    "/me/app-passwords/{id}": {
+    "/api/me/app-passwords/{id}": {
       "delete": {
-        "tags": [
-          "api::app_passwords"
-        ],
-        "operationId": "revoke",
+        "operationId": "app_passwords_revoke",
         "parameters": [
           {
             "name": "id",
@@ -3311,12 +3026,9 @@
         }
       }
     },
-    "/me/cbl-lists": {
+    "/api/me/cbl-lists": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "list",
+        "operationId": "cbl_lists_list",
         "responses": {
           "200": {
             "description": "",
@@ -3331,10 +3043,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "create_from_json",
+        "operationId": "cbl_lists_create_from_json",
         "requestBody": {
           "content": {
             "application/json": {
@@ -3359,12 +3068,9 @@
         }
       }
     },
-    "/me/cbl-lists/upload": {
+    "/api/me/cbl-lists/upload": {
       "post": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "upload",
+        "operationId": "cbl_lists_upload",
         "responses": {
           "201": {
             "description": "",
@@ -3379,13 +3085,10 @@
         }
       }
     },
-    "/me/cbl-lists/{id}": {
+    "/api/me/cbl-lists/{id}": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
         "summary": "Detail endpoint — returns list metadata + aggregate stats only.\nEntries used to be embedded here (capped at 500), which silently\ntruncated long lists; they now live exclusively on the paginated\n`/entries` endpoint. The per-status counts the UI used to derive\nfrom `entries` are on `list.stats`.",
-        "operationId": "detail",
+        "operationId": "cbl_lists_detail",
         "parameters": [
           {
             "name": "id",
@@ -3410,10 +3113,7 @@
         }
       },
       "delete": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "delete_one",
+        "operationId": "cbl_lists_delete_one",
         "parameters": [
           {
             "name": "id",
@@ -3431,10 +3131,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "update",
+        "operationId": "cbl_lists_update",
         "parameters": [
           {
             "name": "id",
@@ -3469,13 +3166,10 @@
         }
       }
     },
-    "/me/cbl-lists/{id}/entries": {
+    "/api/me/cbl-lists/{id}/entries": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
         "summary": "`GET /me/cbl-lists/{id}/entries` — paginated walk over CBL entries\nin position order, hydrated with `IssueSummaryView` for matched\nrows. Status filter is server-side, so the Resolution tab can\nstream just `ambiguous,missing` without touching the matched majority.",
-        "operationId": "entries",
+        "operationId": "cbl_lists_entries",
         "parameters": [
           {
             "name": "id",
@@ -3536,12 +3230,9 @@
         }
       }
     },
-    "/me/cbl-lists/{id}/entries/{entry_id}/clear-match": {
+    "/api/me/cbl-lists/{id}/entries/{entry_id}/clear-match": {
       "post": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "clear_match",
+        "operationId": "cbl_lists_clear_match",
         "responses": {
           "200": {
             "description": "",
@@ -3556,12 +3247,9 @@
         }
       }
     },
-    "/me/cbl-lists/{id}/entries/{entry_id}/match": {
+    "/api/me/cbl-lists/{id}/entries/{entry_id}/match": {
       "post": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "manual_match",
+        "operationId": "cbl_lists_manual_match",
         "requestBody": {
           "content": {
             "application/json": {
@@ -3586,13 +3274,10 @@
         }
       }
     },
-    "/me/cbl-lists/{id}/export": {
+    "/api/me/cbl-lists/{id}/export": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
         "summary": "`GET /me/cbl-lists/{id}/export` — round-trip the original `<Books>`\nXML back to the user as a `.cbl` download. The bytes are exactly\nwhat we imported (or last refreshed) — every CBL list keeps its\n`raw_xml` for re-match purposes, so this is just a Content-Disposition\ndressing on top of the stored string.",
-        "operationId": "export",
+        "operationId": "cbl_lists_export",
         "parameters": [
           {
             "name": "id",
@@ -3616,12 +3301,9 @@
         }
       }
     },
-    "/me/cbl-lists/{id}/issues": {
+    "/api/me/cbl-lists/{id}/issues": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "issues",
+        "operationId": "cbl_lists_issues",
         "parameters": [
           {
             "name": "id",
@@ -3666,12 +3348,9 @@
         }
       }
     },
-    "/me/cbl-lists/{id}/refresh": {
+    "/api/me/cbl-lists/{id}/refresh": {
       "post": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "refresh_one",
+        "operationId": "cbl_lists_refresh_one",
         "parameters": [
           {
             "name": "id",
@@ -3689,12 +3368,9 @@
         }
       }
     },
-    "/me/cbl-lists/{id}/refresh-log": {
+    "/api/me/cbl-lists/{id}/refresh-log": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
-        "operationId": "refresh_log",
+        "operationId": "cbl_lists_refresh_log",
         "parameters": [
           {
             "name": "id",
@@ -3729,14 +3405,11 @@
         }
       }
     },
-    "/me/cbl-lists/{id}/window": {
+    "/api/me/cbl-lists/{id}/window": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
         "summary": "`GET /me/cbl-lists/{id}/window` — slice of the CBL anchored on the\nuser's next unfinished matched entry. The window is `before` finished\nentries + the current entry + `after` upcoming entries. Used by the\nhome rail to give a \"where am I in this list\" view instead of always\nstarting from position 0.",
         "description": "Library-ACL filtering happens at hydrate time: an entry whose issue\nlives in a library the user can't see is silently dropped from the\nwindow (same policy as `/issues`). That can leave the window short of\n`before + 1 + after` items in heavily-restricted environments; we\ndon't backfill because filling past the natural cutoff would surface\nout-of-order entries to the user.",
-        "operationId": "reading_window",
+        "operationId": "cbl_lists_reading_window",
         "parameters": [
           {
             "name": "id",
@@ -3784,14 +3457,11 @@
         }
       }
     },
-    "/me/cbl-lists/{id}/window-paginated": {
+    "/api/me/cbl-lists/{id}/window-paginated": {
       "get": {
-        "tags": [
-          "api::cbl_lists"
-        ],
         "summary": "Bidirectional paginated window over a CBL. Same anchor-aware\ninitial slice as `/window`, plus `direction=before|after` modes the\nhome rail uses to lazy-load surrounding entries as the user scrolls\nwithout disturbing the already-rendered anchor band.",
         "description": "Library-ACL filtering happens at hydrate time: an entry whose issue\nlives in a library the user can't see is silently dropped from the\npage (matching `/window`). `min_position` / `max_position` are\ncomputed from the *kept* entries so the cursor returned to the\nclient never re-fetches an entry it just received.",
-        "operationId": "reading_window_paginated",
+        "operationId": "cbl_lists_reading_window_paginated",
         "parameters": [
           {
             "name": "id",
@@ -3869,12 +3539,9 @@
         }
       }
     },
-    "/me/collections": {
+    "/api/me/collections": {
       "get": {
-        "tags": [
-          "api::collections"
-        ],
-        "operationId": "list",
+        "operationId": "collections_list",
         "responses": {
           "200": {
             "description": "",
@@ -3892,10 +3559,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::collections"
-        ],
-        "operationId": "create",
+        "operationId": "collections_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -3920,12 +3584,9 @@
         }
       }
     },
-    "/me/collections/{id}": {
+    "/api/me/collections/{id}": {
       "delete": {
-        "tags": [
-          "api::collections"
-        ],
-        "operationId": "delete_one",
+        "operationId": "collections_delete_one",
         "parameters": [
           {
             "name": "id",
@@ -3943,10 +3604,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::collections"
-        ],
-        "operationId": "update",
+        "operationId": "collections_update",
         "parameters": [
           {
             "name": "id",
@@ -3981,12 +3639,9 @@
         }
       }
     },
-    "/me/collections/{id}/entries": {
+    "/api/me/collections/{id}/entries": {
       "get": {
-        "tags": [
-          "api::collections"
-        ],
-        "operationId": "list_entries",
+        "operationId": "collections_list_entries",
         "parameters": [
           {
             "name": "id",
@@ -4029,10 +3684,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::collections"
-        ],
-        "operationId": "add_entry",
+        "operationId": "collections_add_entry",
         "parameters": [
           {
             "name": "id",
@@ -4067,12 +3719,9 @@
         }
       }
     },
-    "/me/collections/{id}/entries/reorder": {
+    "/api/me/collections/{id}/entries/reorder": {
       "post": {
-        "tags": [
-          "api::collections"
-        ],
-        "operationId": "reorder_entries",
+        "operationId": "collections_reorder_entries",
         "parameters": [
           {
             "name": "id",
@@ -4100,12 +3749,9 @@
         }
       }
     },
-    "/me/collections/{id}/entries/{entry_id}": {
+    "/api/me/collections/{id}/entries/{entry_id}": {
       "delete": {
-        "tags": [
-          "api::collections"
-        ],
-        "operationId": "remove_entry",
+        "operationId": "collections_remove_entry",
         "parameters": [
           {
             "name": "id",
@@ -4131,14 +3777,11 @@
         }
       }
     },
-    "/me/collections/{id}/members/bulk-add": {
+    "/api/me/collections/{id}/members/bulk-add": {
       "post": {
-        "tags": [
-          "api::collections"
-        ],
         "summary": "Multi-select Tranche M3: append many (entry_kind, ref_id) members\nto a collection in one round-trip. Per-row insert semantics\nmatch `add_entry` — including the partial-unique idempotent skip,\nwhich the response surfaces as `already_present`. Each member\ngets its own light validation + existence check so a single\nbad id in the batch can't poison the rest.",
         "description": "Position counter walks forward from the collection's current max,\nincrementing per accepted insert; concurrent bulk-add races have\nthe same theoretical position-collision risk as the single-add\nendpoint (none enforced at the schema level today), so callers\nshouldn't fire two bulk-adds against the same collection in\nparallel.",
-        "operationId": "bulk_add_members",
+        "operationId": "collections_bulk_add_members",
         "parameters": [
           {
             "name": "id",
@@ -4179,13 +3822,10 @@
         }
       }
     },
-    "/me/collections/{id}/members/bulk-remove": {
+    "/api/me/collections/{id}/members/bulk-remove": {
       "post": {
-        "tags": [
-          "api::collections"
-        ],
         "summary": "Multi-select Tranche M4: drop many `(entry_kind, ref_id)` members\nfrom a collection in one round-trip. Per-row delete; partial\nsuccess preserved. Members not in the collection are silently\ncounted as `not_present`. The underlying series / issues are NOT\ntouched — only the collection-membership row.",
-        "operationId": "bulk_remove_members",
+        "operationId": "collections_bulk_remove_members",
         "parameters": [
           {
             "name": "id",
@@ -4226,14 +3866,11 @@
         }
       }
     },
-    "/me/continue-reading": {
+    "/api/me/continue-reading": {
       "get": {
-        "tags": [
-          "api::rails"
-        ],
         "summary": "In-progress issues for the calling user, ordered by most recent\nactivity. Excludes finished issues, issues that haven't actually been\nopened (`last_page = 0`), removed/encrypted issues, issues the user\ncan't see (library ACL), and issues whose dismissal is still current\n(no newer progress write past the dismissal timestamp).",
         "description": "Implementation note: dismissals require comparing `progress_records.\nupdated_at` against `rail_dismissals.dismissed_at`, so we let Postgres\ndo that in one SQL pass rather than re-filtering rows in Rust.",
-        "operationId": "continue_reading",
+        "operationId": "rails_continue_reading",
         "responses": {
           "200": {
             "description": "",
@@ -4248,14 +3885,11 @@
         }
       }
     },
-    "/me/issues/bulk-metadata": {
+    "/api/me/issues/bulk-metadata": {
       "patch": {
-        "tags": [
-          "api::issues"
-        ],
         "summary": "Bulk-update a per-field patch across a list of issue ids.",
         "description": "One transaction; batched by issue across the patch's fields. ACL\nis per-issue via the library access check. Skips per-field +\nper-issue when `mode = skip_if_set` AND the column is non-NULL.\nEmits one `admin.issue.bulk_metadata_update` audit row per call\nwith `{ patch_keys, mode, updated_count, requested_count }`.",
-        "operationId": "bulk_metadata",
+        "operationId": "issues_bulk_metadata",
         "requestBody": {
           "content": {
             "application/json": {
@@ -4283,12 +3917,9 @@
         }
       }
     },
-    "/me/issues/{id}/ocr": {
+    "/api/me/issues/{id}/ocr": {
       "post": {
-        "tags": [
-          "api::issue_ocr"
-        ],
-        "operationId": "serve",
+        "operationId": "issue_ocr_serve",
         "parameters": [
           {
             "name": "id",
@@ -4333,12 +3964,9 @@
         }
       }
     },
-    "/me/issues/{issue_id}/markers": {
+    "/api/me/issues/{issue_id}/markers": {
       "get": {
-        "tags": [
-          "api::markers"
-        ],
-        "operationId": "list_for_issue",
+        "operationId": "markers_list_for_issue",
         "parameters": [
           {
             "name": "issue_id",
@@ -4363,19 +3991,16 @@
         }
       }
     },
-    "/me/log/widgets": {
+    "/api/me/log/widgets": {
       "get": {
-        "tags": [
-          "api::log_widgets"
-        ],
-        "operationId": "list",
+        "operationId": "log_widgets_list",
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LogWidgetListView"
+                  "$ref": "#/components/schemas/CursorPage_LogWidgetView"
                 }
               }
             }
@@ -4383,10 +4008,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::log_widgets"
-        ],
-        "operationId": "add",
+        "operationId": "log_widgets_add",
         "requestBody": {
           "content": {
             "application/json": {
@@ -4414,12 +4036,9 @@
         }
       }
     },
-    "/me/log/widgets/reorder": {
+    "/api/me/log/widgets/reorder": {
       "post": {
-        "tags": [
-          "api::log_widgets"
-        ],
-        "operationId": "reorder",
+        "operationId": "log_widgets_reorder",
         "requestBody": {
           "content": {
             "application/json": {
@@ -4436,7 +4055,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LogWidgetListView"
+                  "$ref": "#/components/schemas/CursorPage_LogWidgetView"
                 }
               }
             }
@@ -4447,19 +4066,16 @@
         }
       }
     },
-    "/me/log/widgets/reset": {
+    "/api/me/log/widgets/reset": {
       "post": {
-        "tags": [
-          "api::log_widgets"
-        ],
-        "operationId": "reset",
+        "operationId": "log_widgets_reset",
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LogWidgetListView"
+                  "$ref": "#/components/schemas/CursorPage_LogWidgetView"
                 }
               }
             }
@@ -4467,12 +4083,9 @@
         }
       }
     },
-    "/me/log/widgets/{id}": {
+    "/api/me/log/widgets/{id}": {
       "delete": {
-        "tags": [
-          "api::log_widgets"
-        ],
-        "operationId": "remove",
+        "operationId": "log_widgets_remove",
         "parameters": [
           {
             "name": "id",
@@ -4493,10 +4106,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::log_widgets"
-        ],
-        "operationId": "update",
+        "operationId": "log_widgets_update",
         "parameters": [
           {
             "name": "id",
@@ -4537,12 +4147,9 @@
         }
       }
     },
-    "/me/markers": {
+    "/api/me/markers": {
       "get": {
-        "tags": [
-          "api::markers"
-        ],
-        "operationId": "list",
+        "operationId": "markers_list",
         "parameters": [
           {
             "name": "kind",
@@ -4625,10 +4232,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::markers"
-        ],
-        "operationId": "create",
+        "operationId": "markers_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -4653,12 +4257,9 @@
         }
       }
     },
-    "/me/markers/count": {
+    "/api/me/markers/count": {
       "get": {
-        "tags": [
-          "api::markers"
-        ],
-        "operationId": "count",
+        "operationId": "markers_count",
         "responses": {
           "200": {
             "description": "",
@@ -4673,12 +4274,9 @@
         }
       }
     },
-    "/me/markers/search": {
+    "/api/me/markers/search": {
       "get": {
-        "tags": [
-          "api::markers"
-        ],
-        "operationId": "search",
+        "operationId": "markers_search",
         "parameters": [
           {
             "name": "q",
@@ -4713,12 +4311,9 @@
         }
       }
     },
-    "/me/markers/tags": {
+    "/api/me/markers/tags": {
       "get": {
-        "tags": [
-          "api::markers"
-        ],
-        "operationId": "tags_index",
+        "operationId": "markers_tags_index",
         "responses": {
           "200": {
             "description": "",
@@ -4733,12 +4328,9 @@
         }
       }
     },
-    "/me/markers/{id}": {
+    "/api/me/markers/{id}": {
       "delete": {
-        "tags": [
-          "api::markers"
-        ],
-        "operationId": "delete_one",
+        "operationId": "markers_delete_one",
         "parameters": [
           {
             "name": "id",
@@ -4756,10 +4348,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::markers"
-        ],
-        "operationId": "update",
+        "operationId": "markers_update",
         "parameters": [
           {
             "name": "id",
@@ -4794,13 +4383,10 @@
         }
       }
     },
-    "/me/on-deck": {
+    "/api/me/on-deck": {
       "get": {
-        "tags": [
-          "api::rails"
-        ],
         "summary": "\"What's next\" suggestions for the home page. Returns a mix of\n`series_next` cards (next-unread issue in a series the user has read\nat least one finished issue of, with no in-progress issue blocking the\nqueue) and `cbl_next` cards (lowest-position unfinished matched entry\nin a CBL the user has any progress in). Series with an active in-\nprogress issue are skipped — they already surface in Continue Reading.",
-        "operationId": "on_deck",
+        "operationId": "rails_on_deck",
         "responses": {
           "200": {
             "description": "",
@@ -4815,22 +4401,16 @@
         }
       }
     },
-    "/me/pages": {
+    "/api/me/pages": {
       "get": {
-        "tags": [
-          "api::pages"
-        ],
-        "operationId": "list",
+        "operationId": "pages_list",
         "responses": {
           "200": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PageView"
-                  }
+                  "$ref": "#/components/schemas/CursorPage_PageView"
                 }
               }
             }
@@ -4838,10 +4418,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::pages"
-        ],
-        "operationId": "create",
+        "operationId": "pages_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -4866,12 +4443,9 @@
         }
       }
     },
-    "/me/pages/reorder": {
+    "/api/me/pages/reorder": {
       "post": {
-        "tags": [
-          "api::pages"
-        ],
-        "operationId": "reorder",
+        "operationId": "pages_reorder",
         "requestBody": {
           "content": {
             "application/json": {
@@ -4889,12 +4463,9 @@
         }
       }
     },
-    "/me/pages/{id}": {
+    "/api/me/pages/{id}": {
       "delete": {
-        "tags": [
-          "api::pages"
-        ],
-        "operationId": "delete_one",
+        "operationId": "pages_delete_one",
         "parameters": [
           {
             "name": "id",
@@ -4912,10 +4483,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::pages"
-        ],
-        "operationId": "update",
+        "operationId": "pages_update",
         "parameters": [
           {
             "name": "id",
@@ -4950,12 +4518,9 @@
         }
       }
     },
-    "/me/pages/{id}/sidebar": {
+    "/api/me/pages/{id}/sidebar": {
       "post": {
-        "tags": [
-          "api::pages"
-        ],
-        "operationId": "set_sidebar",
+        "operationId": "pages_set_sidebar",
         "parameters": [
           {
             "name": "id",
@@ -4981,13 +4546,10 @@
         }
       }
     },
-    "/me/preferences": {
+    "/api/me/preferences": {
       "patch": {
-        "tags": [
-          "auth::local"
-        ],
         "summary": "`PATCH /me/preferences` — update the calling user's preferences.\nPhase 3 only ships `default_reading_direction`. CSRF-checked by middleware\n(cookie auth, unsafe verb).",
-        "operationId": "update_preferences",
+        "operationId": "local_update_preferences",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5018,12 +4580,9 @@
         }
       }
     },
-    "/me/progress/bulk": {
+    "/api/me/progress/bulk": {
       "post": {
-        "tags": [
-          "api::progress"
-        ],
-        "operationId": "upsert_bulk",
+        "operationId": "progress_upsert_bulk",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5051,12 +4610,9 @@
         }
       }
     },
-    "/me/progress/series-bulk": {
+    "/api/me/progress/series-bulk": {
       "post": {
-        "tags": [
-          "api::progress"
-        ],
-        "operationId": "upsert_series_bulk",
+        "operationId": "progress_upsert_series_bulk",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5084,12 +4640,9 @@
         }
       }
     },
-    "/me/rail-dismissals": {
+    "/api/me/rail-dismissals": {
       "post": {
-        "tags": [
-          "api::rails"
-        ],
-        "operationId": "create_dismissal",
+        "operationId": "rails_create_dismissal",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5107,12 +4660,9 @@
         }
       }
     },
-    "/me/rail-dismissals/{kind}/{target_id}": {
+    "/api/me/rail-dismissals/{kind}/{target_id}": {
       "delete": {
-        "tags": [
-          "api::rails"
-        ],
-        "operationId": "delete_dismissal",
+        "operationId": "rails_delete_dismissal",
         "parameters": [
           {
             "name": "kind",
@@ -5138,12 +4688,9 @@
         }
       }
     },
-    "/me/reading-log": {
+    "/api/me/reading-log": {
       "get": {
-        "tags": [
-          "api::reading_log"
-        ],
-        "operationId": "reading_log",
+        "operationId": "reading_log_reading_log",
         "parameters": [
           {
             "name": "cursor",
@@ -5221,12 +4768,61 @@
         }
       }
     },
-    "/me/reading-sessions": {
+    "/api/me/reading-log/hide": {
+      "post": {
+        "operationId": "reading_log_hide",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HideEventReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "hidden"
+          },
+          "400": {
+            "description": "validation"
+          },
+          "404": {
+            "description": "no such event for this user"
+          }
+        }
+      }
+    },
+    "/api/me/reading-log/unhide": {
+      "post": {
+        "operationId": "reading_log_unhide",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HideEventReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "unhidden"
+          },
+          "400": {
+            "description": "validation"
+          },
+          "404": {
+            "description": "no such event for this user"
+          }
+        }
+      }
+    },
+    "/api/me/reading-sessions": {
       "get": {
-        "tags": [
-          "api::reading_sessions"
-        ],
-        "operationId": "list",
+        "operationId": "reading_sessions_list",
         "parameters": [
           {
             "name": "issue_id",
@@ -5284,10 +4880,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::reading_sessions"
-        ],
-        "operationId": "upsert",
+        "operationId": "reading_sessions_upsert",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5331,13 +4924,10 @@
         }
       }
     },
-    "/me/reading-sessions/clear": {
+    "/api/me/reading-sessions/clear": {
       "post": {
-        "tags": [
-          "api::reading_sessions"
-        ],
         "description": "Destructive — deletes ALL of the caller's reading_sessions rows. Audited.",
-        "operationId": "clear_history",
+        "operationId": "reading_sessions_clear_history",
         "responses": {
           "200": {
             "description": "",
@@ -5352,12 +4942,9 @@
         }
       }
     },
-    "/me/reading-stats": {
+    "/api/me/reading-stats": {
       "get": {
-        "tags": [
-          "api::reading_sessions"
-        ],
-        "operationId": "stats",
+        "operationId": "reading_sessions_stats",
         "parameters": [
           {
             "name": "range",
@@ -5402,12 +4989,9 @@
         }
       }
     },
-    "/me/saved-views": {
+    "/api/me/saved-views": {
       "get": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "list",
+        "operationId": "saved_views_list",
         "parameters": [
           {
             "name": "pinned",
@@ -5432,10 +5016,7 @@
         }
       },
       "post": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "create",
+        "operationId": "saved_views_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5460,12 +5041,9 @@
         }
       }
     },
-    "/me/saved-views/preview": {
+    "/api/me/saved-views/preview": {
       "post": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "preview",
+        "operationId": "saved_views_preview",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5490,12 +5068,9 @@
         }
       }
     },
-    "/me/saved-views/reorder": {
+    "/api/me/saved-views/reorder": {
       "post": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "reorder",
+        "operationId": "saved_views_reorder",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5513,12 +5088,9 @@
         }
       }
     },
-    "/me/saved-views/{id}": {
+    "/api/me/saved-views/{id}": {
       "delete": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "delete_one",
+        "operationId": "saved_views_delete_one",
         "parameters": [
           {
             "name": "id",
@@ -5536,10 +5108,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "update",
+        "operationId": "saved_views_update",
         "parameters": [
           {
             "name": "id",
@@ -5574,12 +5143,9 @@
         }
       }
     },
-    "/me/saved-views/{id}/icon": {
+    "/api/me/saved-views/{id}/icon": {
       "post": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "set_icon",
+        "operationId": "saved_views_set_icon",
         "parameters": [
           {
             "name": "id",
@@ -5607,12 +5173,9 @@
         }
       }
     },
-    "/me/saved-views/{id}/pin": {
+    "/api/me/saved-views/{id}/pin": {
       "post": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "pin",
+        "operationId": "saved_views_pin",
         "parameters": [
           {
             "name": "id",
@@ -5650,12 +5213,9 @@
         }
       }
     },
-    "/me/saved-views/{id}/results": {
+    "/api/me/saved-views/{id}/results": {
       "get": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "results",
+        "operationId": "saved_views_results",
         "parameters": [
           {
             "name": "id",
@@ -5698,12 +5258,9 @@
         }
       }
     },
-    "/me/saved-views/{id}/sidebar": {
+    "/api/me/saved-views/{id}/sidebar": {
       "post": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "set_sidebar",
+        "operationId": "saved_views_set_sidebar",
         "parameters": [
           {
             "name": "id",
@@ -5729,12 +5286,9 @@
         }
       }
     },
-    "/me/saved-views/{id}/unpin": {
+    "/api/me/saved-views/{id}/unpin": {
       "post": {
-        "tags": [
-          "api::saved_views"
-        ],
-        "operationId": "unpin",
+        "operationId": "saved_views_unpin",
         "parameters": [
           {
             "name": "id",
@@ -5769,12 +5323,9 @@
         }
       }
     },
-    "/me/sessions": {
+    "/api/me/sessions": {
       "get": {
-        "tags": [
-          "api::sessions"
-        ],
-        "operationId": "list",
+        "operationId": "sessions_list",
         "responses": {
           "200": {
             "description": "",
@@ -5792,12 +5343,9 @@
         }
       }
     },
-    "/me/sessions/revoke-all": {
+    "/api/me/sessions/revoke-all": {
       "post": {
-        "tags": [
-          "api::sessions"
-        ],
-        "operationId": "revoke_all",
+        "operationId": "sessions_revoke_all",
         "responses": {
           "200": {
             "description": "",
@@ -5815,12 +5363,9 @@
         }
       }
     },
-    "/me/sessions/{id}": {
+    "/api/me/sessions/{id}": {
       "delete": {
-        "tags": [
-          "api::sessions"
-        ],
-        "operationId": "revoke_one",
+        "operationId": "sessions_revoke_one",
         "parameters": [
           {
             "name": "id",
@@ -5842,12 +5387,9 @@
         }
       }
     },
-    "/me/sidebar-layout": {
+    "/api/me/sidebar-layout": {
       "get": {
-        "tags": [
-          "api::sidebar_layout"
-        ],
-        "operationId": "get_layout",
+        "operationId": "sidebar_layout_get_layout",
         "responses": {
           "200": {
             "description": "",
@@ -5862,10 +5404,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::sidebar_layout"
-        ],
-        "operationId": "update_layout",
+        "operationId": "sidebar_layout_update_layout",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5893,12 +5432,9 @@
         }
       }
     },
-    "/people": {
+    "/api/people": {
       "get": {
-        "tags": [
-          "api::people"
-        ],
-        "operationId": "list",
+        "operationId": "people_list",
         "parameters": [
           {
             "name": "q",
@@ -5932,35 +5468,9 @@
         }
       }
     },
-    "/readyz": {
+    "/api/series": {
       "get": {
-        "tags": [
-          "api::health"
-        ],
-        "operationId": "readyz",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Health"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "dependency unreachable"
-          }
-        }
-      }
-    },
-    "/series": {
-      "get": {
-        "tags": [
-          "api::series"
-        ],
-        "operationId": "list",
+        "operationId": "series_list",
         "responses": {
           "200": {
             "description": "",
@@ -5975,12 +5485,9 @@
         }
       }
     },
-    "/series/{series_slug}/issues/{issue_slug}": {
+    "/api/series/{series_slug}/issues/{issue_slug}": {
       "get": {
-        "tags": [
-          "api::issues"
-        ],
-        "operationId": "get_one",
+        "operationId": "issues_get_one",
         "parameters": [
           {
             "name": "series_slug",
@@ -6016,10 +5523,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::issues"
-        ],
-        "operationId": "update",
+        "operationId": "issues_update",
         "parameters": [
           {
             "name": "series_slug",
@@ -6071,12 +5575,9 @@
         }
       }
     },
-    "/series/{series_slug}/issues/{issue_slug}/confirm-removal": {
+    "/api/series/{series_slug}/issues/{issue_slug}/confirm-removal": {
       "post": {
-        "tags": [
-          "api::reconcile"
-        ],
-        "operationId": "confirm_issue",
+        "operationId": "reconcile_confirm_issue",
         "parameters": [
           {
             "name": "series_slug",
@@ -6108,14 +5609,11 @@
         }
       }
     },
-    "/series/{series_slug}/issues/{issue_slug}/health-issues": {
+    "/api/series/{series_slug}/issues/{issue_slug}/health-issues": {
       "get": {
-        "tags": [
-          "api::issues"
-        ],
         "summary": "Tranche B of recovery-visibility (`~/.claude/plans/recovery-visibility-1.0.md`).\nReturns the open `library_health_issues` rows whose payload `path`\nmatches this issue's file. The issue detail page renders a small\nbadge when this list is non-empty, and the reader fires a one-time\ntoast on issue open. Resolved + dismissed rows are excluded — the\nbadge represents \"things you can still act on right now.\"",
         "description": "Auth: regular `CurrentUser` (NOT admin-only). Any user with library\naccess can see whether the file they're about to read is partial /\nrecovered. The admin Health tab is still the place to dismiss or\ntriage.",
-        "operationId": "list_issue_health",
+        "operationId": "issues_list_issue_health",
         "parameters": [
           {
             "name": "series_slug",
@@ -6154,13 +5652,10 @@
         }
       }
     },
-    "/series/{series_slug}/issues/{issue_slug}/next": {
+    "/api/series/{series_slug}/issues/{issue_slug}/next": {
       "get": {
-        "tags": [
-          "api::issues"
-        ],
         "summary": "Returns the next N issues in the same series, ordered by `sort_number`\nASC (NULLS LAST) with `id` as a stable tie-breaker. Removed / soft-deleted\nissues are filtered out so the list mirrors the series page. The current\nissue is excluded from the result.",
-        "operationId": "next_in_series",
+        "operationId": "issues_next_in_series",
         "parameters": [
           {
             "name": "series_slug",
@@ -6207,12 +5702,9 @@
         }
       }
     },
-    "/series/{series_slug}/issues/{issue_slug}/rating": {
+    "/api/series/{series_slug}/issues/{issue_slug}/rating": {
       "put": {
-        "tags": [
-          "api::ratings"
-        ],
-        "operationId": "set_issue_rating",
+        "operationId": "ratings_set_issue_rating",
         "parameters": [
           {
             "name": "series_slug",
@@ -6261,12 +5753,9 @@
         }
       }
     },
-    "/series/{series_slug}/issues/{issue_slug}/restore": {
+    "/api/series/{series_slug}/issues/{issue_slug}/restore": {
       "post": {
-        "tags": [
-          "api::reconcile"
-        ],
-        "operationId": "restore_issue",
+        "operationId": "reconcile_restore_issue",
         "parameters": [
           {
             "name": "series_slug",
@@ -6301,12 +5790,9 @@
         }
       }
     },
-    "/series/{series_slug}/issues/{issue_slug}/scan": {
+    "/api/series/{series_slug}/issues/{issue_slug}/scan": {
       "post": {
-        "tags": [
-          "api::issues"
-        ],
-        "operationId": "scan_issue",
+        "operationId": "issues_scan_issue",
         "parameters": [
           {
             "name": "series_slug",
@@ -6347,12 +5833,9 @@
         }
       }
     },
-    "/series/{series_slug}/rating": {
+    "/api/series/{series_slug}/rating": {
       "put": {
-        "tags": [
-          "api::ratings"
-        ],
-        "operationId": "set_series_rating",
+        "operationId": "ratings_set_series_rating",
         "parameters": [
           {
             "name": "series_slug",
@@ -6393,12 +5876,9 @@
         }
       }
     },
-    "/series/{slug}": {
+    "/api/series/{slug}": {
       "get": {
-        "tags": [
-          "api::series"
-        ],
-        "operationId": "get_one",
+        "operationId": "series_get_one",
         "parameters": [
           {
             "name": "slug",
@@ -6426,10 +5906,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "api::series"
-        ],
-        "operationId": "update_series",
+        "operationId": "series_update_series",
         "parameters": [
           {
             "name": "slug",
@@ -6470,12 +5947,9 @@
         }
       }
     },
-    "/series/{slug}/issues": {
+    "/api/series/{slug}/issues": {
       "get": {
-        "tags": [
-          "api::series"
-        ],
-        "operationId": "list_issues",
+        "operationId": "series_list_issues",
         "parameters": [
           {
             "name": "slug",
@@ -6500,12 +5974,9 @@
         }
       }
     },
-    "/series/{slug}/progress": {
+    "/api/series/{slug}/progress": {
       "post": {
-        "tags": [
-          "api::progress"
-        ],
-        "operationId": "upsert_series",
+        "operationId": "progress_upsert_series",
         "parameters": [
           {
             "name": "slug",
@@ -6543,12 +6014,9 @@
         }
       }
     },
-    "/series/{slug}/resume": {
+    "/api/series/{slug}/resume": {
       "get": {
-        "tags": [
-          "api::series"
-        ],
-        "operationId": "resume",
+        "operationId": "series_resume",
         "parameters": [
           {
             "name": "slug",
@@ -6576,12 +6044,9 @@
         }
       }
     },
-    "/series/{slug}/scan": {
+    "/api/series/{slug}/scan": {
       "post": {
-        "tags": [
-          "api::series"
-        ],
-        "operationId": "scan_series",
+        "operationId": "series_scan_series",
         "parameters": [
           {
             "name": "slug",
@@ -6610,6 +6075,43 @@
           },
           "404": {
             "description": "series not found"
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "health_healthz",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "health_readyz",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "dependency unreachable"
           }
         }
       }
@@ -6646,6 +6148,16 @@
             "format": "int64"
           }
         }
+      },
+      "AccentColor": {
+        "type": "string",
+        "description": "`amber` | `blue` | `emerald` | `rose`.",
+        "enum": [
+          "amber",
+          "blue",
+          "emerald",
+          "rose"
+        ]
       },
       "AccountReq": {
         "type": "object",
@@ -6754,6 +6266,7 @@
       },
       "AddWidgetReq": {
         "type": "object",
+        "description": "Audit-remediation M4 dropped `LogWidgetListView { widgets: Vec<_> }` in\nfavor of the workspace-uniform `shared::pagination::CursorPage<T>`\nenvelope (`{ items, next_cursor, total? }`). Widget lists are bounded\nper-user; `next_cursor` is always `None`.",
         "required": [
           "kind"
         ],
@@ -6805,20 +6318,6 @@
               "null"
             ],
             "description": "Opaque cursor for the next page. `None` when the result is exhausted."
-          }
-        }
-      },
-      "AdminUserStatsListView": {
-        "type": "object",
-        "required": [
-          "users"
-        ],
-        "properties": {
-          "users": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AdminUserStatsRow"
-            }
           }
         }
       },
@@ -6939,33 +6438,6 @@
             "type": "string"
           },
           "state": {
-            "type": "string"
-          }
-        }
-      },
-      "ApiError": {
-        "type": "object",
-        "required": [
-          "error"
-        ],
-        "properties": {
-          "error": {
-            "$ref": "#/components/schemas/ApiErrorBody"
-          }
-        }
-      },
-      "ApiErrorBody": {
-        "type": "object",
-        "required": [
-          "code",
-          "message"
-        ],
-        "properties": {
-          "code": {
-            "type": "string"
-          },
-          "details": {},
-          "message": {
             "type": "string"
           }
         }
@@ -8499,6 +7971,269 @@
           }
         }
       },
+      "CursorPage_AdminUserStatsRow": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "user_id",
+                "display_name",
+                "role",
+                "state",
+                "sessions_30d",
+                "active_ms_30d",
+                "sessions_all_time",
+                "active_ms_all_time",
+                "device_breakdown",
+                "excluded_from_aggregates"
+              ],
+              "properties": {
+                "active_ms_30d": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "active_ms_all_time": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "device_breakdown": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceBucket"
+                  }
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "excluded_from_aggregates": {
+                  "type": "boolean"
+                },
+                "last_active_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "role": {
+                  "type": "string"
+                },
+                "sessions_30d": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "sessions_all_time": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "top_series_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "user_id": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_LogWidgetView": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "position",
+                "config",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "config": {},
+                "created_at": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "position": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_PageView": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "slug",
+                "is_system",
+                "position",
+                "pin_count",
+                "show_in_sidebar",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional free-form description rendered under the title. `None`\n(or absent) hides the descriptor row."
+                },
+                "id": {
+                  "type": "string"
+                },
+                "is_system": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "pin_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Count of `user_view_pin` rows where `pinned = true` for this\n(user, page) pair. Lets the sidebar render a badge or the page\npicker show \"n / 12\" without fetching every pin row."
+                },
+                "position": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "show_in_sidebar": {
+                  "type": "boolean",
+                  "description": "Whether this page appears in the sidebar nav. Computed from\n`user_sidebar_entries` — missing override means visible (the\ndefault). System pages always show via the builtin Home entry\nregardless of this flag."
+                },
+                "slug": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_String": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "DataQualityView": {
         "type": "object",
         "required": [
@@ -8645,6 +8380,14 @@
             "minimum": 0
           }
         }
+      },
+      "Density": {
+        "type": "string",
+        "description": "`comfortable` | `compact`.",
+        "enum": [
+          "comfortable",
+          "compact"
+        ]
       },
       "DeviceBucket": {
         "type": "object",
@@ -9172,6 +8915,15 @@
           }
         }
       },
+      "FitMode": {
+        "type": "string",
+        "description": "`width` | `height` | `original`.",
+        "enum": [
+          "width",
+          "height",
+          "original"
+        ]
+      },
       "FunnelBucket": {
         "type": "object",
         "required": [
@@ -9294,60 +9046,21 @@
           }
         }
       },
-      "ImportSummary": {
+      "HideEventReq": {
         "type": "object",
-        "description": "Outcome the API returns to the caller after an import / refresh run.",
+        "description": "Body for `POST /me/reading-log/hide` and `/unhide`. Identifies a\nsingle event in the feed by its `kind` and the raw source id\n(without the `iss-fin:` / `ses:` / `mrk:` prefix the wire payload\nuses on `ReadingLogEventView.id` — clients strip that before\ncalling).",
         "required": [
-          "list_id",
-          "upstream_changed",
-          "matched",
-          "ambiguous",
-          "missing",
-          "manual",
-          "added",
-          "removed",
-          "reordered",
-          "rematched"
+          "kind",
+          "source_id"
         ],
         "properties": {
-          "added": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "ambiguous": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "list_id": {
+          "kind": {
             "type": "string",
-            "format": "uuid"
+            "description": "One of `issue_finished | session_completed | marker_created`.\n`series_finished` is rejected (derived event with no source\nrow to flag)."
           },
-          "manual": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "matched": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "missing": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "rematched": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "removed": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "reordered": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "upstream_changed": {
-            "type": "boolean"
+          "source_id": {
+            "type": "string",
+            "description": "For `issue_finished`: the `issues.id` BLAKE3 hex.\nFor `session_completed`: the `reading_sessions.id` UUID.\nFor `marker_created`: the `markers.id` UUID."
           }
         }
       },
@@ -10084,20 +9797,6 @@
           }
         }
       },
-      "LogWidgetListView": {
-        "type": "object",
-        "required": [
-          "widgets"
-        ],
-        "properties": {
-          "widgets": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LogWidgetView"
-            }
-          }
-        }
-      },
       "LogWidgetView": {
         "type": "object",
         "required": [
@@ -10464,11 +10163,15 @@
         ],
         "properties": {
           "accent_color": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "M4: accent palette token (e.g. `'amber'`, `'blue'`, `'emerald'`, `'rose'`)."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AccentColor",
+                "description": "M4: accent palette token."
+              }
+            ]
           },
           "activity_tracking_enabled": {
             "type": "boolean",
@@ -10482,43 +10185,63 @@
             "description": "Default for the reader's \"cover stands alone in double-page view\"\ntoggle. Per-series localStorage overrides at runtime."
           },
           "default_fit_mode": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "M4: reader default fit mode — `'width' | 'height' | 'original'`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FitMode",
+                "description": "M4: reader default fit mode."
+              }
+            ]
           },
           "default_page_animation": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "v0.3.44 / v0.3.45: reader page-turn animation — `'off' |\n'slide' | 'fade' | null`. Null means \"use the reader's\nbuilt-in default\" (currently `slide`); fresh users start\nhere. Webtoon view ignores this regardless. `fade` was\nadded in v0.3.45."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PageAnimation",
+                "description": "v0.3.44 / v0.3.45: reader page-turn animation. `null` means\n\"use the reader's built-in default\" (currently `slide`); fresh\nusers start here. Webtoon view ignores this regardless."
+              }
+            ]
           },
           "default_page_strip": {
             "type": "boolean",
             "description": "M4: when true the reader opens with the page strip visible."
           },
           "default_reading_direction": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Phase 3: per-user reader direction preference. `null` means \"auto\"\n(the reader still falls back to ComicInfo `Manga=YesAndRightToLeft`\ndetection per series)."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReadingDirection",
+                "description": "Phase 3: per-user reader direction preference. `null` means \"auto\"\n(the reader still falls back to ComicInfo `Manga=YesAndRightToLeft`\ndetection per series)."
+              }
+            ]
           },
           "default_view_mode": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "M4: reader default view mode — `'single' | 'double' | 'webtoon'`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ViewMode",
+                "description": "M4: reader default view mode."
+              }
+            ]
           },
           "density": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "M4: density token — `'comfortable' | 'compact'`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Density",
+                "description": "M4: density token."
+              }
+            ]
           },
           "display_name": {
             "type": "string"
@@ -10571,11 +10294,15 @@
             "description": "Markers M8: when true, /settings renders a count badge on the\nBookmarks sidebar row. Default false."
           },
           "theme": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "M4: theme token — `'system' | 'dark' | 'light' | 'amber'`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Theme",
+                "description": "M4: theme token."
+              }
+            ]
           },
           "timezone": {
             "type": "string",
@@ -11091,20 +10818,6 @@
           "is_false"
         ]
       },
-      "OptionsView": {
-        "type": "object",
-        "required": [
-          "values"
-        ],
-        "properties": {
-          "values": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
       "OverviewView": {
         "type": "object",
         "required": [
@@ -11171,6 +10884,15 @@
             "description": "RFC 3339 timestamp of the session start."
           }
         }
+      },
+      "PageAnimation": {
+        "type": "string",
+        "description": "`off` | `slide` | `fade`.",
+        "enum": [
+          "off",
+          "slide",
+          "fade"
+        ]
       },
       "PageView": {
         "type": "object",
@@ -11326,11 +11048,14 @@
         "description": "`PATCH /me/preferences` request body. Every field is optional; when a key\nis absent the prior value is preserved. To clear a stored value, send\n`null` (where the type allows).",
         "properties": {
           "accent_color": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`'amber' | 'blue' | 'emerald' | 'rose' | null`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AccentColor"
+              }
+            ]
           },
           "activity_tracking_enabled": {
             "type": [
@@ -11347,18 +11072,25 @@
             "description": "Default cover-solo toggle; absent leaves the prior value untouched."
           },
           "default_fit_mode": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`'width' | 'height' | 'original' | null`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FitMode"
+              }
+            ]
           },
           "default_page_animation": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`'off' | 'slide' | 'fade' | null`. `null` clears the\npreference (server falls back to the reader's built-in\ndefault of `slide`)."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PageAnimation",
+                "description": "`null` clears the preference (server falls back to the reader's\nbuilt-in default of `slide`)."
+              }
+            ]
           },
           "default_page_strip": {
             "type": [
@@ -11367,25 +11099,35 @@
             ]
           },
           "default_reading_direction": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`'ltr' | 'rtl' | null`. `null` clears the preference."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReadingDirection",
+                "description": "`null` clears the preference."
+              }
+            ]
           },
           "default_view_mode": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`'single' | 'double' | 'webtoon' | null`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ViewMode"
+              }
+            ]
           },
           "density": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`'comfortable' | 'compact' | null`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Density"
+              }
+            ]
           },
           "exclude_from_aggregates": {
             "type": [
@@ -11444,11 +11186,14 @@
             "description": "Markers M8: per-user toggle for the Bookmarks sidebar count\nbadge. Default false."
           },
           "theme": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`'system' | 'dark' | 'light' | 'amber' | null`."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Theme"
+              }
+            ]
           },
           "timezone": {
             "type": [
@@ -11633,6 +11378,14 @@
             "format": "double"
           }
         }
+      },
+      "ReadingDirection": {
+        "type": "string",
+        "description": "`ltr` | `rtl`.",
+        "enum": [
+          "ltr",
+          "rtl"
+        ]
       },
       "ReadingLogEventView": {
         "type": "object",
@@ -12204,24 +11957,15 @@
       "ReorderReq": {
         "type": "object",
         "required": [
-          "view_ids"
+          "ids"
         ],
         "properties": {
-          "page_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Page whose pins are being reordered. Omit to default to the\ncaller's system \"Home\" page — transitional shim until the web\nmigrates to explicit page ids (M5/M6)."
-          },
-          "view_ids": {
+          "ids": {
             "type": "array",
             "items": {
-              "type": "string",
-              "format": "uuid"
+              "type": "string"
             },
-            "description": "View IDs in desired pin order. Views not currently pinned to\n`page_id` are rejected; pinned views absent from the list keep\ntheir existing position."
+            "description": "Full set of widget ids in the new order. Server rejects when\nthe set doesn't match the user's owned ids exactly — partial\nreorders would leave gaps in `position`."
           }
         }
       },
@@ -12551,14 +12295,6 @@
             "type": "string"
           }
         }
-      },
-      "ScanMode": {
-        "type": "string",
-        "description": "Library scan modes. Maps directly onto the scanner engine's\n`force` boolean: `Normal` runs the fast paths (folder + per-file\nmtime gates), `ContentVerify` bypasses them and re-hashes +\nre-parses every file. The third mode — `MetadataRefresh` — was\ndropped on 2026-05-17 because it produced identical scanner\nbehavior to `ContentVerify` (both set `force=true` and the\nscanner library doesn't branch on the mode discriminant). Users\nwho want page-byte decode validation use the separate\n`POST /libraries/{slug}/validate-deeply` endpoint instead.",
-        "enum": [
-          "normal",
-          "content_verify"
-        ]
       },
       "ScanPreviewView": {
         "type": "object",
@@ -13228,18 +12964,6 @@
           }
         }
       },
-      "SetSidebarQuery": {
-        "type": "object",
-        "properties": {
-          "show": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "`true` (default) shows the page in the sidebar; `false` hides it.\nIdempotent — repeated calls with the same value are no-ops."
-          }
-        }
-      },
       "SettingsView": {
         "type": "object",
         "required": [
@@ -13369,6 +13093,16 @@
             "type": "string"
           }
         }
+      },
+      "Theme": {
+        "type": "string",
+        "description": "`system` | `dark` | `light` | `amber`.",
+        "enum": [
+          "system",
+          "dark",
+          "light",
+          "amber"
+        ]
       },
       "ThumbnailsSettingsView": {
         "type": "object",
@@ -14362,18 +14096,24 @@
             ]
           },
           "role": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`admin` | `user`"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UserRole"
+              }
+            ]
           },
           "state": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`pending_verification` | `active` | `disabled`"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UserState"
+              }
+            ]
           }
         }
       },
@@ -14616,6 +14356,31 @@
             "minimum": 0
           }
         }
+      },
+      "UserRole": {
+        "type": "string",
+        "description": "Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query\nparams + the matching fields on `UpdateUserReq`. Serde rejects bad\nvalues at deserialize time so handlers never see strings they can't\ntrust.",
+        "enum": [
+          "admin",
+          "user"
+        ]
+      },
+      "UserState": {
+        "type": "string",
+        "enum": [
+          "pending_verification",
+          "active",
+          "disabled"
+        ]
+      },
+      "ViewMode": {
+        "type": "string",
+        "description": "`single` | `double` | `webtoon`.",
+        "enum": [
+          "single",
+          "double",
+          "webtoon"
+        ]
       },
       "WsTicketResp": {
         "type": "object",

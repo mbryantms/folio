@@ -19,11 +19,10 @@
 //! both series and issue cards.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, patch, post},
 };
 use chrono::Utc;
 use entity::{collection_entry, issue, saved_view, series, user_view_pin};
@@ -33,12 +32,15 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::api::saved_views::{KIND_COLLECTION, SYSTEM_KEY_WANT_TO_READ, SavedViewView};
 use crate::api::series::{IssueSummaryView, SeriesView, hydrate_series};
 use crate::auth::CurrentUser;
 use crate::state::AppState;
+use server_macros::handler;
 
 const MAX_ENTRIES_LIMIT: u64 = 200;
 const MIN_ENTRIES_LIMIT: u64 = 1;
@@ -46,30 +48,18 @@ const DEFAULT_ENTRIES_LIMIT: u64 = 60;
 const ENTRY_KIND_SERIES: &str = "series";
 const ENTRY_KIND_ISSUE: &str = "issue";
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/me/collections", get(list).post(create))
-        .route("/me/collections/{id}", patch(update).delete(delete_one))
-        .route(
-            "/me/collections/{id}/entries",
-            get(list_entries).post(add_entry),
-        )
-        .route(
-            "/me/collections/{id}/entries/{entry_id}",
-            delete(remove_entry),
-        )
-        .route(
-            "/me/collections/{id}/entries/reorder",
-            post(reorder_entries),
-        )
-        .route(
-            "/me/collections/{id}/members/bulk-add",
-            post(bulk_add_members),
-        )
-        .route(
-            "/me/collections/{id}/members/bulk-remove",
-            post(bulk_remove_members),
-        )
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(create))
+        .routes(routes!(update))
+        .routes(routes!(delete_one))
+        .routes(routes!(list_entries))
+        .routes(routes!(add_entry))
+        .routes(routes!(remove_entry))
+        .routes(routes!(reorder_entries))
+        .routes(routes!(bulk_add_members))
+        .routes(routes!(bulk_remove_members))
 }
 
 // ───── wire types ─────
@@ -364,10 +354,11 @@ pub(crate) async fn ensure_want_to_read_seeded(
 // ───── handlers ─────
 
 #[utoipa::path(
-    get,
+    operation_id = "collections_list",    get,
     path = "/me/collections",
     responses((status = 200, body = Vec<SavedViewView>))
 )]
+#[handler]
 pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
     if let Err(e) = ensure_want_to_read_seeded(&app.db, user.id).await {
         tracing::warn!(user_id = %user.id, error = %e, "collections: want_to_read seed failed");
@@ -429,11 +420,12 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "collections_create",    post,
     path = "/me/collections",
     request_body = CreateCollectionReq,
     responses((status = 201, body = SavedViewView))
 )]
+#[handler]
 pub async fn create(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -441,11 +433,11 @@ pub async fn create(
 ) -> impl IntoResponse {
     let name = req.name.trim();
     if name.is_empty() {
-        return error(StatusCode::BAD_REQUEST, "validation", "name required");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "name required");
     }
     if name.len() > 200 {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "name must be 200 chars or fewer",
         );
@@ -492,12 +484,13 @@ pub async fn create(
 }
 
 #[utoipa::path(
-    patch,
+    operation_id = "collections_update",    patch,
     path = "/me/collections/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateCollectionReq,
     responses((status = 200, body = SavedViewView))
 )]
+#[handler]
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -513,11 +506,11 @@ pub async fn update(
     if let Some(name) = req.name.as_ref() {
         let trimmed = name.trim();
         if trimmed.is_empty() {
-            return error(StatusCode::BAD_REQUEST, "validation", "name required");
+            return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "name required");
         }
         if trimmed.len() > 200 {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "name must be 200 chars or fewer",
             );
@@ -566,11 +559,12 @@ pub async fn update(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "collections_delete_one",    delete,
     path = "/me/collections/{id}",
     params(("id" = String, Path,)),
     responses((status = 204))
 )]
+#[handler]
 pub async fn delete_one(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -599,7 +593,7 @@ pub async fn delete_one(
 }
 
 #[utoipa::path(
-    get,
+    operation_id = "collections_list_entries",    get,
     path = "/me/collections/{id}/entries",
     params(
         ("id" = String, Path,),
@@ -608,6 +602,7 @@ pub async fn delete_one(
     ),
     responses((status = 200, body = CollectionEntriesView))
 )]
+#[handler]
 pub async fn list_entries(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -672,12 +667,13 @@ pub async fn list_entries(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "collections_add_entry",    post,
     path = "/me/collections/{id}/entries",
     params(("id" = String, Path,)),
     request_body = AddEntryReq,
     responses((status = 201, body = CollectionEntryView))
 )]
+#[handler]
 pub async fn add_entry(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -693,7 +689,7 @@ pub async fn add_entry(
             Ok(uid) => (Some(uid), None),
             Err(_) => {
                 return error(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
                     "ref_id must be a UUID for entry_kind='series'",
                 );
@@ -703,13 +699,13 @@ pub async fn add_entry(
             // Issue ids are BLAKE3 hex (TEXT). Light validation only
             // — the FK check at insert time is the source of truth.
             if req.ref_id.is_empty() || req.ref_id.len() > 128 {
-                return error(StatusCode::BAD_REQUEST, "validation", "ref_id invalid");
+                return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "ref_id invalid");
             }
             (None, Some(req.ref_id.clone()))
         }
         _ => {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "entry_kind must be 'series' or 'issue'",
             );
@@ -807,7 +803,7 @@ pub async fn add_entry(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "collections_bulk_add_members",    post,
     path = "/me/collections/{id}/members/bulk-add",
     params(("id" = String, Path,)),
     request_body = BulkAddMembersReq,
@@ -830,6 +826,7 @@ pub async fn add_entry(
 /// endpoint (none enforced at the schema level today), so callers
 /// shouldn't fire two bulk-adds against the same collection in
 /// parallel.
+#[handler]
 pub async fn bulk_add_members(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -839,7 +836,7 @@ pub async fn bulk_add_members(
     const MAX_MEMBERS: usize = 500;
     if req.members.len() > MAX_MEMBERS {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             &format!("members cap is {MAX_MEMBERS}"),
         );
@@ -975,7 +972,7 @@ pub async fn bulk_add_members(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "collections_bulk_remove_members",    post,
     path = "/me/collections/{id}/members/bulk-remove",
     params(("id" = String, Path,)),
     request_body = BulkRemoveMembersReq,
@@ -990,6 +987,7 @@ pub async fn bulk_add_members(
 /// success preserved. Members not in the collection are silently
 /// counted as `not_present`. The underlying series / issues are NOT
 /// touched — only the collection-membership row.
+#[handler]
 pub async fn bulk_remove_members(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -999,7 +997,7 @@ pub async fn bulk_remove_members(
     const MAX_MEMBERS: usize = 500;
     if req.members.len() > MAX_MEMBERS {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             &format!("members cap is {MAX_MEMBERS}"),
         );
@@ -1092,11 +1090,12 @@ pub async fn bulk_remove_members(
 }
 
 #[utoipa::path(
-    delete,
+    operation_id = "collections_remove_entry",    delete,
     path = "/me/collections/{id}/entries/{entry_id}",
     params(("id" = String, Path,), ("entry_id" = String, Path,)),
     responses((status = 204))
 )]
+#[handler]
 pub async fn remove_entry(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1125,12 +1124,13 @@ pub async fn remove_entry(
 }
 
 #[utoipa::path(
-    post,
+    operation_id = "collections_reorder_entries",    post,
     path = "/me/collections/{id}/entries/reorder",
     params(("id" = String, Path,)),
     request_body = ReorderEntriesReq,
     responses((status = 204))
 )]
+#[handler]
 pub async fn reorder_entries(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -1159,7 +1159,7 @@ pub async fn reorder_entries(
     for entry_id in &req.entry_ids {
         if !by_id.contains_key(entry_id) {
             return error(
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "every entry_id must belong to this collection",
             );
@@ -1169,7 +1169,7 @@ pub async fn reorder_entries(
     // the deferrable position uniqueness constraint.
     if req.entry_ids.len() != existing.len() {
         return error(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "entry_ids must include every current entry",
         );

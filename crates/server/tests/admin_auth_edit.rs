@@ -152,7 +152,7 @@ async fn switching_to_oidc_without_creds_rejected_pre_write() {
         Some(json!({ "auth.mode": "oidc" })),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_combination");
 
@@ -351,7 +351,7 @@ async fn discover_probe_rejects_bad_url() {
         Some(json!({ "issuer": "not-a-url" })),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "oidc.invalid_issuer");
 }
