@@ -386,6 +386,89 @@
         }
       }
     },
+    "/api/admin/health-issues": {
+      "get": {
+        "operationId": "admin_health_issues_list",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_resolved",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "include_dismissed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_CrossLibHealthIssueView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "invalid filter value"
+          }
+        }
+      }
+    },
     "/api/admin/libraries/scan-all": {
       "post": {
         "operationId": "libraries_scan_all",
@@ -887,6 +970,105 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/admin/scan-runs": {
+      "get": {
+        "operationId": "admin_scan_runs_list",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_CrossLibScanRunView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "invalid filter value"
+          }
+        }
+      }
+    },
+    "/api/admin/scan-runs/latest-per-library": {
+      "get": {
+        "summary": "Most-recent scan_run row per library. One row per library, ordered\noldest-scanned-first so the \"What hasn't been touched in months\"\nlibraries float to the top — drives the dashboard's \"Latest scan\nper library\" card.",
+        "operationId": "admin_scan_runs_latest_per_library",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CrossLibScanRunView"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
           }
         }
       }
@@ -8001,6 +8183,60 @@
           }
         }
       },
+      "CrossLibHealthIssueView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/HealthIssueView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "library_id",
+              "library_name",
+              "library_slug"
+            ],
+            "properties": {
+              "library_id": {
+                "type": "string"
+              },
+              "library_name": {
+                "type": "string"
+              },
+              "library_slug": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Cross-library health-issue row. Adds library context fields so the\nadmin findings table can render a Library column without N+1 lookups."
+      },
+      "CrossLibScanRunView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ScanRunView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "library_id",
+              "library_name",
+              "library_slug"
+            ],
+            "properties": {
+              "library_id": {
+                "type": "string"
+              },
+              "library_name": {
+                "type": "string"
+              },
+              "library_slug": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Cross-library scan-run row. Adds library context fields so the\nadmin findings table can render a Library column without N+1\nlookups. Same shape as the per-library [`ScanRunView`] otherwise."
+      },
       "CursorPage_AdminUserStatsRow": {
         "type": "object",
         "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
@@ -8081,6 +8317,112 @@
                   "type": "string"
                 }
               }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_CrossLibHealthIssueView": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/HealthIssueView"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "library_id",
+                    "library_name",
+                    "library_slug"
+                  ],
+                  "properties": {
+                    "library_id": {
+                      "type": "string"
+                    },
+                    "library_name": {
+                      "type": "string"
+                    },
+                    "library_slug": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ],
+              "description": "Cross-library health-issue row. Adds library context fields so the\nadmin findings table can render a Library column without N+1 lookups."
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_CrossLibScanRunView": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ScanRunView"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "library_id",
+                    "library_name",
+                    "library_slug"
+                  ],
+                  "properties": {
+                    "library_id": {
+                      "type": "string"
+                    },
+                    "library_name": {
+                      "type": "string"
+                    },
+                    "library_slug": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ],
+              "description": "Cross-library scan-run row. Adds library context fields so the\nadmin findings table can render a Library column without N+1\nlookups. Same shape as the per-library [`ScanRunView`] otherwise."
             }
           },
           "next_cursor": {

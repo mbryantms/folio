@@ -47,6 +47,8 @@ import type {
   CblWindowPageView,
   CblWindowView,
   ContinueReadingView,
+  CrossLibHealthIssueView,
+  CrossLibScanRunView,
   HealthIssueView,
   NextUpView,
   OnDeckView,
@@ -234,6 +236,23 @@ export const queryKeys = {
   libraries: ["libraries"] as const,
   library: (id: string) => ["libraries", id] as const,
   health: (libraryId: string) => ["libraries", libraryId, "health"] as const,
+  /** Cross-library findings — admin findings page + dashboard cards. */
+  adminHealthIssues: (filters: {
+    library_id?: string;
+    kind?: string;
+    severity?: string;
+    include_resolved?: boolean;
+    include_dismissed?: boolean;
+    limit?: number;
+  }) => ["admin", "health-issues", filters] as const,
+  adminScanRuns: (filters: {
+    library_id?: string;
+    kind?: string;
+    state?: string;
+    since?: string;
+    limit?: number;
+  }) => ["admin", "scan-runs", filters] as const,
+  adminLatestScanPerLibrary: ["admin", "scan-runs", "latest-per-library"] as const,
   issueHealth: (seriesSlug: string, issueSlug: string) =>
     ["issues", seriesSlug, issueSlug, "health"] as const,
   scanRuns: (libraryId: string, kind?: string) =>
@@ -553,6 +572,91 @@ export function useScanRuns(
     queryFn: () =>
       jsonFetch<ScanRunView[]>(`/libraries/${libraryId}/scan-runs${qs}`),
     enabled: !!libraryId,
+  });
+}
+
+/**
+ * Cross-library health-issue feed. Backs both the dashboard "Open
+ * health issues" card (limit:5 truncated view) and the /admin/findings
+ * page (paginated table with filters).
+ *
+ * Cursor pagination is the caller's responsibility — pass `cursor` for
+ * subsequent pages.
+ */
+export function useAdminHealthIssues(filters: {
+  library_id?: string;
+  kind?: string;
+  severity?: string;
+  include_resolved?: boolean;
+  include_dismissed?: boolean;
+  limit?: number;
+  cursor?: string;
+}) {
+  const params = new URLSearchParams();
+  if (filters.library_id) params.set("library_id", filters.library_id);
+  if (filters.kind) params.set("kind", filters.kind);
+  if (filters.severity) params.set("severity", filters.severity);
+  if (filters.include_resolved) params.set("include_resolved", "true");
+  if (filters.include_dismissed) params.set("include_dismissed", "true");
+  if (filters.limit != null) params.set("limit", String(filters.limit));
+  if (filters.cursor) params.set("cursor", filters.cursor);
+  const qs = params.toString();
+  // Strip cursor from the cache key so successive pages share a cache
+  // bucket and `useInfiniteQuery` can stitch them together if we later
+  // migrate to that pattern.
+  const { cursor: _drop, ...keyFilters } = filters;
+  return useQuery({
+    queryKey: queryKeys.adminHealthIssues(keyFilters),
+    queryFn: () =>
+      jsonFetch<{
+        items: CrossLibHealthIssueView[];
+        next_cursor: string | null;
+      }>(`/admin/health-issues${qs ? `?${qs}` : ""}`),
+  });
+}
+
+/**
+ * Cross-library scan-run history. Used by the dashboard's "Recent
+ * scan failures" card (filter `state=failed&since=<7d-ago>`), the
+ * findings page's Scan-runs rail, and any "what just ran" surface.
+ */
+export function useAdminScanRuns(filters: {
+  library_id?: string;
+  kind?: string;
+  state?: string;
+  since?: string;
+  limit?: number;
+  cursor?: string;
+}) {
+  const params = new URLSearchParams();
+  if (filters.library_id) params.set("library_id", filters.library_id);
+  if (filters.kind) params.set("kind", filters.kind);
+  if (filters.state) params.set("state", filters.state);
+  if (filters.since) params.set("since", filters.since);
+  if (filters.limit != null) params.set("limit", String(filters.limit));
+  if (filters.cursor) params.set("cursor", filters.cursor);
+  const qs = params.toString();
+  const { cursor: _drop, ...keyFilters } = filters;
+  return useQuery({
+    queryKey: queryKeys.adminScanRuns(keyFilters),
+    queryFn: () =>
+      jsonFetch<{
+        items: CrossLibScanRunView[];
+        next_cursor: string | null;
+      }>(`/admin/scan-runs${qs ? `?${qs}` : ""}`),
+  });
+}
+
+/**
+ * Most-recent scan_run row per library, oldest-scanned-first. Backs
+ * the dashboard's "Latest scan per library" card so operators see at
+ * a glance which libraries haven't been touched in a while.
+ */
+export function useAdminLatestScanPerLibrary() {
+  return useQuery({
+    queryKey: queryKeys.adminLatestScanPerLibrary,
+    queryFn: () =>
+      jsonFetch<CrossLibScanRunView[]>(`/admin/scan-runs/latest-per-library`),
   });
 }
 

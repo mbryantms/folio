@@ -92,6 +92,8 @@ get_scan        # GET /libraries/{slug}/scans/{id} — single scan run
 # ── scan_runs.rs ────────────────────────────────────────────
 list_scan_runs   # GET /scan-runs — per-library scan-run summary
 get_run         # GET /scan-runs/{id} — single scan run detail
+admin_list                  # GET /admin/scan-runs — cross-library read
+admin_latest_per_library    # GET /admin/scan-runs/latest-per-library — dashboard snapshot
 
 # ── server_info.rs ──────────────────────────────────────────
 info            # GET /admin/server — build/version/SHA info

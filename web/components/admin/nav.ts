@@ -15,6 +15,7 @@ export type IconName =
   | "FileClock"
   | "FileText"
   | "Gauge"
+  | "HeartPulse"
   | "Key"
   | "KeyRound"
   | "Keyboard"
@@ -54,6 +55,11 @@ export function adminNav(localePrefix: string): NavSection[] {
           href: p("/libraries"),
           label: "Libraries",
           icon: "Library",
+        },
+        {
+          href: p("/findings"),
+          label: "Findings",
+          icon: "HeartPulse",
         },
       ],
     },

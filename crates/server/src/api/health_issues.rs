@@ -9,9 +9,15 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use entity::library_health_issue;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use chrono::{DateTime, FixedOffset};
+use entity::{library, library_health_issue};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    Set,
+};
 use serde::{Deserialize, Serialize};
+use shared::pagination::{CursorPage, decode_cursor, encode_cursor};
+use std::collections::HashMap;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
@@ -26,6 +32,7 @@ use server_macros::handler;
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list))
+        .routes(routes!(admin_list))
         .routes(routes!(dismiss))
 }
 
@@ -115,6 +122,198 @@ pub async fn list(
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
     }
+}
+
+/// Cross-library health-issue row. Adds library context fields so the
+/// admin findings table can render a Library column without N+1 lookups.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CrossLibHealthIssueView {
+    #[serde(flatten)]
+    pub base: HealthIssueView,
+    pub library_id: String,
+    pub library_name: String,
+    pub library_slug: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminListQuery {
+    /// Restrict to one library (UUID). Omit / `all` for cross-library.
+    #[serde(default)]
+    pub library_id: Option<String>,
+    /// Restrict to one `IssueKind` variant (e.g. `UnreadableArchive`).
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// `error` | `warning` | `info`. Unknown values 422.
+    #[serde(default)]
+    pub severity: Option<String>,
+    #[serde(default)]
+    pub include_resolved: Option<bool>,
+    #[serde(default)]
+    pub include_dismissed: Option<bool>,
+    #[serde(default)]
+    pub limit: Option<u64>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+#[utoipa::path(
+    operation_id = "admin_health_issues_list",    get,
+    path = "/admin/health-issues",
+    params(
+        ("library_id" = Option<String>, Query,),
+        ("kind" = Option<String>, Query,),
+        ("severity" = Option<String>, Query,),
+        ("include_resolved" = Option<bool>, Query,),
+        ("include_dismissed" = Option<bool>, Query,),
+        ("limit" = Option<u64>, Query,),
+        ("cursor" = Option<String>, Query,),
+    ),
+    responses(
+        (status = 200, body = shared::pagination::CursorPage<CrossLibHealthIssueView>),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "invalid filter value"),
+    )
+)]
+#[handler]
+pub async fn admin_list(
+    State(app): State<AppState>,
+    _admin: RequireAdmin,
+    Query(q): Query<AdminListQuery>,
+) -> impl IntoResponse {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+
+    // Severity filter is bounded — reject unknown values rather than
+    // silently returning an empty list (saves an operator from chasing
+    // a typo).
+    let severity_filter = match q.severity.as_deref() {
+        None | Some("") | Some("all") => None,
+        Some(s @ ("error" | "warning" | "info")) => Some(s.to_owned()),
+        Some(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation.severity",
+                "severity must be one of: error, warning, info, all",
+            );
+        }
+    };
+
+    let library_filter = match q.library_id.as_deref() {
+        None | Some("") | Some("all") => None,
+        Some(raw) => match Uuid::parse_str(raw) {
+            Ok(u) => Some(u),
+            Err(_) => {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation.library_id",
+                    "library_id must be a UUID or 'all'",
+                );
+            }
+        },
+    };
+
+    let cursor: Option<(DateTime<FixedOffset>, Uuid)> = match q.cursor.as_deref() {
+        None => None,
+        Some(c) => match decode_cursor::<(DateTime<FixedOffset>, Uuid)>(c) {
+            Ok(parsed) => Some(parsed),
+            Err(_) => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
+        },
+    };
+
+    let mut select = library_health_issue::Entity::find();
+    if let Some(lib_id) = library_filter {
+        select = select.filter(library_health_issue::Column::LibraryId.eq(lib_id));
+    }
+    if let Some(kind) = q.kind.as_deref().filter(|s| !s.is_empty()) {
+        select = select.filter(library_health_issue::Column::Kind.eq(kind));
+    }
+    if let Some(sev) = severity_filter.as_deref() {
+        select = select.filter(library_health_issue::Column::Severity.eq(sev));
+    }
+    if !q.include_resolved.unwrap_or(false) {
+        select = select.filter(library_health_issue::Column::ResolvedAt.is_null());
+    }
+    if !q.include_dismissed.unwrap_or(false) {
+        select = select.filter(library_health_issue::Column::DismissedAt.is_null());
+    }
+    if let Some((c_at, c_id)) = cursor {
+        // Strictly-after-cursor in DESC order on (last_seen_at, id).
+        select = select.filter(
+            Condition::any()
+                .add(library_health_issue::Column::LastSeenAt.lt(c_at))
+                .add(
+                    Condition::all()
+                        .add(library_health_issue::Column::LastSeenAt.eq(c_at))
+                        .add(library_health_issue::Column::Id.lt(c_id)),
+                ),
+        );
+    }
+    select = select
+        .order_by_desc(library_health_issue::Column::LastSeenAt)
+        .order_by_desc(library_health_issue::Column::Id)
+        .limit(limit + 1);
+
+    let rows = match select.all(&app.db).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "admin list health issues failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let next_cursor = if rows.len() as u64 > limit {
+        rows.get((limit - 1) as usize)
+            .and_then(|r| encode_cursor(&(r.last_seen_at, r.id)).ok())
+    } else {
+        None
+    };
+    let page: Vec<library_health_issue::Model> = rows.into_iter().take(limit as usize).collect();
+
+    // Batch-resolve library names so the table can render a Library
+    // column without one /libraries/{slug} request per row.
+    let library_ids: std::collections::HashSet<Uuid> =
+        page.iter().map(|r| r.library_id).collect();
+    let library_meta: HashMap<Uuid, (String, String)> = if library_ids.is_empty() {
+        HashMap::new()
+    } else {
+        match library::Entity::find()
+            .filter(library::Column::Id.is_in(library_ids))
+            .all(&app.db)
+            .await
+        {
+            Ok(libs) => libs
+                .into_iter()
+                .map(|l| (l.id, (l.name, l.slug)))
+                .collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "library lookup for health issues failed");
+                HashMap::new()
+            }
+        }
+    };
+
+    let items: Vec<CrossLibHealthIssueView> = page
+        .into_iter()
+        .map(|m| {
+            let lib_id = m.library_id;
+            let (name, slug) = library_meta
+                .get(&lib_id)
+                .cloned()
+                .unwrap_or_else(|| (String::from("(deleted library)"), String::new()));
+            CrossLibHealthIssueView {
+                library_id: lib_id.to_string(),
+                library_name: name,
+                library_slug: slug,
+                base: HealthIssueView::from(m),
+            }
+        })
+        .collect();
+
+    Json(CursorPage::<CrossLibHealthIssueView>::paginated(
+        items,
+        next_cursor,
+        None,
+    ))
+    .into_response()
 }
 
 #[utoipa::path(

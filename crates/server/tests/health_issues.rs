@@ -668,3 +668,173 @@ async fn per_issue_health_endpoint_returns_matching_rows() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+async fn admin_list_health(app: &TestApp, auth: &Authed, query: &str) -> serde_json::Value {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/api/admin/health-issues?{query}"))
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", auth.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    body_json(resp.into_body()).await
+}
+
+#[tokio::test]
+async fn admin_cross_library_health_aggregates_and_filters() {
+    // Two libraries, each with at least one health issue, then assert
+    // the cross-library endpoint:
+    //   - returns rows from BOTH libraries (the aggregate cuts the
+    //     "click into 22 libraries" workflow)
+    //   - enriches each row with the originating library's name + slug
+    //   - filters by library_id when scoped to one
+    //   - rejects invalid severity / library_id values with 422
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+
+    let tmp_a = tempfile::tempdir().unwrap();
+    let foo_a = tmp_a.path().join("Series A (2020)");
+    std::fs::create_dir_all(&foo_a).unwrap();
+    write_cbz(&foo_a.join("A 001.cbz"), 1);
+    write_cbz(&tmp_a.path().join("orphan-a.cbz"), 2); // FileAtRoot in lib A
+    let lib_a = create_library(&app, tmp_a.path(), false).await;
+
+    let tmp_b = tempfile::tempdir().unwrap();
+    let foo_b = tmp_b.path().join("Series B (2020)");
+    std::fs::create_dir_all(&foo_b).unwrap();
+    write_cbz(&foo_b.join("B 001.cbz"), 3);
+    write_cbz(&tmp_b.path().join("orphan-b.cbz"), 4); // FileAtRoot in lib B
+    let lib_b = create_library(&app, tmp_b.path(), false).await;
+
+    let state = app.state();
+    scanner::scan_library(&state, lib_a).await.unwrap();
+    scanner::scan_library(&state, lib_b).await.unwrap();
+
+    // Default (no library filter): both libraries' rows surface.
+    let body = admin_list_health(&app, &auth, "").await;
+    let items = body["items"].as_array().expect("items");
+    let library_ids: std::collections::HashSet<&str> = items
+        .iter()
+        .map(|v| v["library_id"].as_str().unwrap())
+        .collect();
+    assert!(
+        library_ids.contains(lib_a.to_string().as_str()),
+        "lib A rows missing from cross-library list: {body}",
+    );
+    assert!(
+        library_ids.contains(lib_b.to_string().as_str()),
+        "lib B rows missing from cross-library list: {body}",
+    );
+
+    // Enrichment: library_name + library_slug carried per row.
+    for item in items {
+        assert!(item["library_name"].as_str().is_some());
+        assert!(item["library_slug"].as_str().is_some());
+    }
+    assert!(body["next_cursor"].is_null() || body["next_cursor"].is_string());
+
+    // Scoped to lib_a: only lib_a rows.
+    let scoped = admin_list_health(&app, &auth, &format!("library_id={lib_a}")).await;
+    for item in scoped["items"].as_array().unwrap() {
+        assert_eq!(item["library_id"], lib_a.to_string());
+    }
+
+    // Invalid severity → 422 (not a silent empty list).
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/health-issues?severity=bogus")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", auth.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Invalid library_id → 422.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/health-issues?library_id=not-a-uuid")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", auth.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn admin_cross_library_health_cursor_paginates() {
+    // Smaller libraries, force pagination with limit=2.
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    // 3 stray files at root → 3 FileAtRoot rows
+    for i in 1..=3u32 {
+        write_cbz(&tmp.path().join(format!("orphan-{i}.cbz")), i);
+    }
+    // One real series so the library is valid
+    let foo = tmp.path().join("Series Foo (2020)");
+    std::fs::create_dir_all(&foo).unwrap();
+    write_cbz(&foo.join("Foo 001.cbz"), 100);
+
+    let lib = create_library(&app, tmp.path(), false).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib).await.unwrap();
+
+    let p1 = admin_list_health(&app, &auth, "limit=2").await;
+    let p1_items = p1["items"].as_array().expect("items");
+    assert_eq!(p1_items.len(), 2, "page 1 should hit the limit");
+    let next = p1["next_cursor"]
+        .as_str()
+        .expect("more rows exist → cursor non-null");
+
+    let p2 = admin_list_health(
+        &app,
+        &auth,
+        &format!("limit=2&cursor={}", urlencoding::encode(next)),
+    )
+    .await;
+    let p2_items = p2["items"].as_array().expect("items");
+    assert!(!p2_items.is_empty(), "page 2 should have remaining rows");
+
+    // No overlap between pages (cursor pagination is strict).
+    let ids_1: std::collections::HashSet<&str> = p1_items
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    let ids_2: std::collections::HashSet<&str> = p2_items
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert!(
+        ids_1.is_disjoint(&ids_2),
+        "page 1 and page 2 must not share ids",
+    );
+}

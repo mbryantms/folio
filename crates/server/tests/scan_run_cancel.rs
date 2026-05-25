@@ -241,6 +241,144 @@ async fn cancel_requires_admin() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────
+// Cross-library scan-run admin endpoints (M2 of the cross-library
+// findings plan). Same dispatcher uses seed_library_and_scan_run as
+// the cancel tests above — seeds a library + a single scan_run row,
+// then asserts the admin views surface it correctly.
+// ─────────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_cross_library_scan_runs_aggregates_with_library_enrichment() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin-x-scan-runs@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    // Seed two libraries, each with one scan_run.
+    let (lib_a, _slug_a, scan_a) = seed_library_and_scan_run(&app, "complete").await;
+    let (lib_b, _slug_b, scan_b) = seed_library_and_scan_run(&app, "failed").await;
+
+    // Default: both libraries' runs surface in one response with
+    // library_name + library_slug carried per row.
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/admin/scan-runs",
+        &auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().expect("items");
+    let scan_ids: std::collections::HashSet<&str> =
+        items.iter().map(|v| v["id"].as_str().unwrap()).collect();
+    assert!(scan_ids.contains(scan_a.to_string().as_str()));
+    assert!(scan_ids.contains(scan_b.to_string().as_str()));
+    for item in items {
+        assert!(item["library_name"].as_str().is_some());
+        assert!(item["library_slug"].as_str().is_some());
+    }
+
+    // Filter by state=failed: only lib_b's row.
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/admin/scan-runs?state=failed",
+        &auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], scan_b.to_string());
+    assert_eq!(items[0]["library_id"], lib_b.to_string());
+
+    // Filter by library_id: scoped result.
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/api/admin/scan-runs?library_id={lib_a}"),
+        &auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().expect("items");
+    assert!(items.iter().all(|v| v["library_id"] == lib_a.to_string()));
+
+    // Invalid state filter → 422.
+    let (status, _) = http(
+        &app,
+        Method::GET,
+        "/api/admin/scan-runs?state=bogus",
+        &auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_latest_per_library_returns_one_row_per_library() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin-latest@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    // Seed lib_a with TWO scans, lib_b with one. Latest-per-library
+    // should return exactly two rows (one per library), and lib_a's
+    // entry should be the newer of its two scans.
+    let (lib_a, _, scan_a_old) = seed_library_and_scan_run(&app, "complete").await;
+
+    // Insert a newer scan for lib_a.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let scan_a_new = Uuid::now_v7();
+    let later = chrono::Utc::now().fixed_offset() + chrono::Duration::seconds(10);
+    scan_run::ActiveModel {
+        id: Set(scan_a_new),
+        library_id: Set(lib_a),
+        state: Set("complete".into()),
+        started_at: Set(later),
+        ended_at: Set(Some(later)),
+        stats: Set(serde_json::json!({})),
+        error: Set(None),
+        kind: Set("library".into()),
+        series_id: Set(None),
+        issue_id: Set(None),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let (lib_b, _, scan_b) = seed_library_and_scan_run(&app, "complete").await;
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/admin/scan-runs/latest-per-library",
+        &auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body.as_array().expect("array");
+    assert_eq!(items.len(), 2, "expected 1 row per library");
+
+    let by_lib: std::collections::HashMap<&str, &str> = items
+        .iter()
+        .map(|v| {
+            (
+                v["library_id"].as_str().unwrap(),
+                v["id"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        by_lib.get(lib_a.to_string().as_str()),
+        Some(&scan_a_new.to_string().as_str()),
+        "lib_a entry must be the NEWER scan, not the older one ({scan_a_old})",
+    );
+    assert_eq!(
+        by_lib.get(lib_b.to_string().as_str()),
+        Some(&scan_b.to_string().as_str()),
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancel_unknown_scan_returns_404() {
     let app = TestApp::spawn().await;

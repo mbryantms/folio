@@ -148,6 +148,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/health-issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_health_issues_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/libraries/scan-all": {
         parameters: {
             query?: never;
@@ -354,6 +370,42 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["saved_views_admin_update"];
+        trace?: never;
+    };
+    "/api/admin/scan-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_scan_runs_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/scan-runs/latest-per-library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Most-recent scan_run row per library. One row per library, ordered
+         *     oldest-scanned-first so the "What hasn't been touched in months"
+         *     libraries float to the top — drives the dashboard's "Latest scan
+         *     per library" card. */
+        get: operations["admin_scan_runs_latest_per_library"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/admin/series/{series_slug}/issues/{issue_slug}/thumbnails/force-recreate-page-map": {
@@ -3446,6 +3498,21 @@ export interface components {
              *     fields the library grid renders so the page can show full cards. */
             series: components["schemas"]["SeriesView"][];
         };
+        /** @description Cross-library health-issue row. Adds library context fields so the
+         *     admin findings table can render a Library column without N+1 lookups. */
+        CrossLibHealthIssueView: components["schemas"]["HealthIssueView"] & {
+            library_id: string;
+            library_name: string;
+            library_slug: string;
+        };
+        /** @description Cross-library scan-run row. Adds library context fields so the
+         *     admin findings table can render a Library column without N+1
+         *     lookups. Same shape as the per-library [`ScanRunView`] otherwise. */
+        CrossLibScanRunView: components["schemas"]["ScanRunView"] & {
+            library_id: string;
+            library_name: string;
+            library_slug: string;
+        };
         /** @description Cursor-paginated list response. `total` is populated only on the first
          *     page of paginated lists where the count is cheap; bounded lists omit it. */
         CursorPage_AdminUserStatsRow: {
@@ -3468,6 +3535,30 @@ export interface components {
                 top_series_name?: string | null;
                 user_id: string;
             }[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
+        /** @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it. */
+        CursorPage_CrossLibHealthIssueView: {
+            items: (components["schemas"]["HealthIssueView"] & {
+                library_id: string;
+                library_name: string;
+                library_slug: string;
+            })[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
+        /** @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it. */
+        CursorPage_CrossLibScanRunView: {
+            items: (components["schemas"]["ScanRunView"] & {
+                library_id: string;
+                library_name: string;
+                library_slug: string;
+            })[];
             next_cursor?: string | null;
             /** Format: int64 */
             total?: number | null;
@@ -6221,6 +6312,47 @@ export interface operations {
             };
         };
     };
+    admin_health_issues_list: {
+        parameters: {
+            query?: {
+                library_id?: string;
+                kind?: string;
+                severity?: string;
+                include_resolved?: boolean;
+                include_dismissed?: boolean;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_CrossLibHealthIssueView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid filter value */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     libraries_scan_all: {
         parameters: {
             query?: never;
@@ -6712,6 +6844,72 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+        };
+    };
+    admin_scan_runs_list: {
+        parameters: {
+            query?: {
+                library_id?: string;
+                kind?: string;
+                state?: string;
+                since?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_CrossLibScanRunView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid filter value */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_scan_runs_latest_per_library: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrossLibScanRunView"][];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
