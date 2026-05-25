@@ -60,6 +60,11 @@ pub async fn scan_library_with(
     scan_library_with_run_id(state, library_id, force, None).await
 }
 
+#[tracing::instrument(
+    skip_all,
+    name = "scan_library",
+    fields(library_id = %library_id, force = force, scan_id = tracing::field::Empty),
+)]
 pub async fn scan_library_with_run_id(
     state: &AppState,
     library_id: Uuid,
@@ -79,6 +84,12 @@ pub async fn scan_library_with_run_id(
 
     let scan_id =
         open_scan_run(state, library_id, "library", None, None, requested_scan_id).await?;
+    // Record `scan_id` on the span so every log emitted under this
+    // scan inherits it via the RingLayer's parent-span walk. The
+    // Empty field declared in the instrument attr above is what
+    // makes this `.record()` work — fields not declared at
+    // attr-time can't be added later.
+    tracing::Span::current().record("scan_id", tracing::field::display(scan_id));
     state.events.emit(ScanEvent::Started {
         library_id,
         scan_id,
@@ -313,6 +324,17 @@ fn add_delta(counter: &AtomicU64, before: u64, after: u64) {
 /// only when `kind == ScanKind::Issue` and lets the History row link back
 /// to the originating issue.
 #[expect(clippy::too_many_arguments)]
+#[tracing::instrument(
+    skip_all,
+    name = "scan_series_folder",
+    fields(
+        library_id = %library_id,
+        series_id = %series_id,
+        scan_kind = ?kind,
+        force = force,
+        scan_id = tracing::field::Empty,
+    ),
+)]
 pub async fn scan_series_folder(
     state: &AppState,
     library_id: Uuid,
@@ -373,6 +395,7 @@ pub async fn scan_series_folder(
         requested_scan_id,
     )
     .await?;
+    tracing::Span::current().record("scan_id", tracing::field::display(scan_id));
     state.events.emit(ScanEvent::Started {
         library_id,
         scan_id,

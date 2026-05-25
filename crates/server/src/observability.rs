@@ -215,13 +215,42 @@ impl<S> Layer<S> for RingLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         let metadata = event.metadata();
         let level = level_str(metadata.level());
         let target = metadata.target().to_owned();
 
         let mut visitor = FieldVisitor::default();
         event.record(&mut visitor);
+
+        // Walk the parent-span chain and copy structured context fields
+        // down to the event. Without this, a `tracing::warn!()` inside
+        // a deeply-nested helper would lose the `library_id` /
+        // `series_id` / `scan_id` its enclosing scan-span recorded —
+        // even though that's exactly the context the admin Logs filter
+        // needs to scope by library.
+        //
+        // Event fields take precedence: if a call site explicitly sets
+        // `library_id = %something_else`, that wins over the span's
+        // value (caller-known is more specific than caller-inherited).
+        if let Some(span) = ctx.event_span(event) {
+            // Walk from the event's immediate span up to the root.
+            for span in span.scope().from_root() {
+                if let Some(map) = span.extensions().get::<SpanFields>() {
+                    for (k, v) in &map.0 {
+                        // Skip if the event itself or a closer span
+                        // already supplied this key. `from_root`
+                        // order means we accumulate outer-first; an
+                        // inner span's value already in the map
+                        // shouldn't be clobbered by a less-specific
+                        // outer one.
+                        if !visitor.fields.contains_key(k) {
+                            visitor.fields.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+            }
+        }
 
         // The conventional `message` field — usually the format string. If
         // missing, fall back to the metadata name (often the action verb).
@@ -240,7 +269,35 @@ where
         };
         self.buffer.push(entry);
     }
+
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        ctx: Context<'_, S>,
+    ) {
+        // Capture the span's structured fields into a side-table on
+        // the span's extensions. `on_event` walks parents and reads
+        // these to enrich events with inherited context (library_id,
+        // series_id, scan_id, …). Storing once at span-creation
+        // avoids walking field iterators on every event.
+        let mut visitor = FieldVisitor::default();
+        attrs.record(&mut visitor);
+        if visitor.fields.is_empty() {
+            return;
+        }
+        if let Some(span) = ctx.span(id) {
+            span.extensions_mut().insert(SpanFields(visitor.fields));
+        }
+    }
 }
+
+/// Per-span side-table populated by [`RingLayer::on_new_span`] and read by
+/// [`RingLayer::on_event`] to enrich events with inherited context.
+/// Stored separately from `tracing_subscriber`'s own span-attribute
+/// machinery so RingLayer doesn't fight with formatters or sinks that
+/// also attach extensions.
+struct SpanFields(BTreeMap<String, String>);
 
 #[derive(Default)]
 struct FieldVisitor {
@@ -349,7 +406,10 @@ pub fn redact_secrets(s: &str) -> String {
 
     // password= / token= / secret= → `<key>=<redacted>` up to next non-word
     // boundary. Cheap state machine instead of a regex dep.
-    out = redact_kv(&out, &["password", "passwd", "token", "secret", "authorization"]);
+    out = redact_kv(
+        &out,
+        &["password", "passwd", "token", "secret", "authorization"],
+    );
 
     // `Bearer <opaque>` / `Basic <opaque>` — anchor on the scheme word, then
     // chew anything up to next whitespace / quote.
@@ -379,7 +439,19 @@ fn redact_kv(s: &str, keys: &[&str]) -> String {
                 // Skip the value: anything up to whitespace / `&` / `"` / `;` / `,`.
                 let mut j = i + klen + 1;
                 while j < bytes.len()
-                    && !matches!(bytes[j], b' ' | b'\t' | b'\n' | b'&' | b'"' | b'\'' | b';' | b',' | b')' | b'>' | b'<')
+                    && !matches!(
+                        bytes[j],
+                        b' ' | b'\t'
+                            | b'\n'
+                            | b'&'
+                            | b'"'
+                            | b'\''
+                            | b';'
+                            | b','
+                            | b')'
+                            | b'>'
+                            | b'<'
+                    )
                 {
                     j += 1;
                 }
@@ -411,14 +483,16 @@ fn redact_bearer(s: &str) -> String {
             None
         };
         if let Some(scheme_len) = matched_scheme {
-            let prev_ok =
-                i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
+            let prev_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
             if prev_ok {
                 out.push_str(&s[i..i + scheme_len]);
                 out.push_str("<redacted>");
                 let mut j = i + scheme_len;
                 while j < bytes.len()
-                    && !matches!(bytes[j], b' ' | b'\t' | b'\n' | b'"' | b'\'' | b';' | b',' | b')' | b'>' | b'<')
+                    && !matches!(
+                        bytes[j],
+                        b' ' | b'\t' | b'\n' | b'"' | b'\'' | b';' | b',' | b')' | b'>' | b'<'
+                    )
                 {
                     j += 1;
                 }

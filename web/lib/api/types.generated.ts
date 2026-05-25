@@ -6667,6 +6667,13 @@ export interface operations {
                 level?: string | null;
                 q?: string | null;
                 limit?: number | null;
+                /** @description Restrict to log entries whose `fields["library_id"]` matches
+                 *     this UUID. Populated by the scanner's instrumented spans
+                 *     (`scan_library`, `scan_series_folder`) — every event emitted
+                 *     under those spans inherits the library_id via the
+                 *     `RingLayer::on_event` parent-span walk. Omit / `all` for
+                 *     cross-library. */
+                library_id?: string | null;
             };
             header?: never;
             path?: never;

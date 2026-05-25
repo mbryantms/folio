@@ -37,6 +37,13 @@ pub struct LogsQuery {
     pub level: Option<String>,
     pub q: Option<String>,
     pub limit: Option<usize>,
+    /// Restrict to log entries whose `fields["library_id"]` matches
+    /// this UUID. Populated by the scanner's instrumented spans
+    /// (`scan_library`, `scan_series_folder`) — every event emitted
+    /// under those spans inherits the library_id via the
+    /// `RingLayer::on_event` parent-span walk. Omit / `all` for
+    /// cross-library.
+    pub library_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -110,6 +117,22 @@ pub async fn list(
     let limit = q.limit.unwrap_or(500).clamp(1, LOG_RING_CAPACITY);
     let since = q.since.unwrap_or(0);
 
+    // Validate library_id format before the snapshot — bad UUIDs are
+    // a caller bug, not an empty result.
+    let library_filter = match q.library_id.as_deref() {
+        None | Some("") | Some("all") => None,
+        Some(raw) => match uuid::Uuid::parse_str(raw) {
+            Ok(_) => Some(raw.to_owned()),
+            Err(_) => {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation.library_id",
+                    "library_id must be a UUID or 'all'",
+                );
+            }
+        },
+    };
+
     let snap = app.log_buffer.snapshot(SnapshotFilter {
         since,
         level,
@@ -117,8 +140,18 @@ pub async fn list(
         limit,
     });
 
-    let watermark = snap.last().map(|e| e.id).unwrap_or(since);
-    let entries: Vec<LogEntryView> = snap.into_iter().map(Into::into).collect();
+    // Post-filter by library_id — the ring buffer doesn't index on
+    // structured fields, so we apply this after the snapshot. Fine for
+    // the ring's 5K-entry cap; would need an index if the buffer grew.
+    let entries_iter: Box<dyn Iterator<Item = LogEntry>> = match library_filter.as_deref() {
+        None => Box::new(snap.into_iter()),
+        Some(lib_id) => Box::new(
+            snap.into_iter()
+                .filter(move |e| e.fields.get("library_id").map(|v| v.as_str()) == Some(lib_id)),
+        ),
+    };
+    let entries: Vec<LogEntryView> = entries_iter.map(Into::into).collect();
+    let watermark = entries.last().map(|e| e.id).unwrap_or(since);
     Json(LogsResp {
         entries,
         watermark,

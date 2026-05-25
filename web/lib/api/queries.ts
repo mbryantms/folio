@@ -450,6 +450,11 @@ export type AdminLogFilters = {
   q?: string;
   since?: number;
   limit?: number;
+  /** UUID of a single library to scope to, or `"all"` / omit for
+   *  cross-library. Backed by the scanner's instrumented spans —
+   *  scan-emitted events carry the library_id via the RingLayer's
+   *  parent-span walk. */
+  library_id?: string;
 };
 
 export type AdminActivityFilters = {

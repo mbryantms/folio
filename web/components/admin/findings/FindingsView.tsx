@@ -25,13 +25,18 @@ import {
 import { useDismissHealthIssue } from "@/lib/api/mutations";
 import {
   useAdminHealthIssues,
+  useAdminLogs,
   useAdminScanRuns,
   useLibraryList,
 } from "@/lib/api/queries";
-import type { CrossLibHealthIssueView } from "@/lib/api/types";
+import type {
+  CrossLibHealthIssueView,
+  LogEntryView,
+  LogLevel,
+} from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
-type Tab = "health" | "scans";
+type Tab = "health" | "scans" | "logs";
 type Severity = "all" | "error" | "warning" | "info";
 
 /**
@@ -59,6 +64,8 @@ export function FindingsView() {
   const severity = (sp.get("severity") as Severity) ?? "all";
   const libraryId = sp.get("library_id") ?? "all";
   const state = sp.get("state") ?? "all";
+  const level = (sp.get("level") as LogLevel) ?? "info";
+  const search = sp.get("q") ?? "";
 
   const { data: libraries } = useLibraryList();
 
@@ -77,6 +84,7 @@ export function FindingsView() {
       <TabsList>
         <TabsTrigger value="health">Open health issues</TabsTrigger>
         <TabsTrigger value="scans">Scan runs</TabsTrigger>
+        <TabsTrigger value="logs">Logs</TabsTrigger>
       </TabsList>
 
       <TabsContent value="health" className="mt-4 space-y-3">
@@ -104,6 +112,25 @@ export function FindingsView() {
           />
         </FilterRow>
         <ScanRunsRail state={state} libraryId={libraryId} />
+      </TabsContent>
+
+      <TabsContent value="logs" className="mt-4 space-y-3">
+        <FilterRow>
+          <LogLevelChips
+            value={level}
+            onChange={(v) => setParam("level", v === "info" ? null : v)}
+          />
+          <LibraryFilter
+            libraries={libraries ?? []}
+            value={libraryId}
+            onChange={(v) => setParam("library_id", v)}
+          />
+          <LogSearch
+            value={search}
+            onChange={(v) => setParam("q", v.length === 0 ? null : v)}
+          />
+        </FilterRow>
+        <LogsRail level={level} libraryId={libraryId} q={search} libraries={libraries ?? []} />
       </TabsContent>
     </Tabs>
   );
@@ -396,6 +423,205 @@ function ScanRunsRail({
         </table>
       </CardContent>
     </Card>
+  );
+}
+
+function LogLevelChips({
+  value,
+  onChange,
+}: {
+  value: LogLevel;
+  onChange: (v: LogLevel) => void;
+}) {
+  const options: { v: LogLevel; label: string }[] = [
+    { v: "error", label: "Error" },
+    { v: "warn", label: "Warn+" },
+    { v: "info", label: "Info+" },
+    { v: "debug", label: "Debug+" },
+  ];
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-muted-foreground mr-1 text-xs uppercase">Level</span>
+      {options.map((o) => (
+        <button
+          key={o.v}
+          type="button"
+          onClick={() => onChange(o.v)}
+          className={cn(
+            "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+            value === o.v
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function LogSearch({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  // Local state so each keystroke doesn't immediately re-fetch.
+  // Commits on Enter or blur — the query string is the source of
+  // truth, this is just a debounce-by-commit input. Re-syncing from
+  // `value` only happens when it actually changes (e.g., user pasted
+  // a deep-link URL); the equality guard avoids the eslint lint about
+  // sync setState in an effect.
+  const [draft, setDraft] = React.useState(value);
+  const prevValue = React.useRef(value);
+  React.useEffect(() => {
+    if (prevValue.current !== value) {
+      prevValue.current = value;
+      setDraft(value);
+    }
+  }, [value]);
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-muted-foreground mr-1 text-xs uppercase">Search</span>
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onChange(draft);
+        }}
+        onBlur={() => onChange(draft)}
+        placeholder="Substring match"
+        className="border-border bg-background w-48 rounded-md border px-2 py-1 text-xs"
+      />
+    </div>
+  );
+}
+
+function LogsRail({
+  level,
+  libraryId,
+  q,
+  libraries,
+}: {
+  level: LogLevel;
+  libraryId: string;
+  q: string;
+  libraries: { id: string; name: string }[];
+}) {
+  const filters = {
+    level,
+    library_id: libraryId === "all" ? undefined : libraryId,
+    q: q || undefined,
+    limit: 200,
+  };
+  const { data, isLoading, error } = useAdminLogs(filters);
+  const libraryNames = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const lib of libraries) map.set(lib.id, lib.name);
+    return map;
+  }, [libraries]);
+
+  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (error) return <p className="text-destructive text-sm">{error.message}</p>;
+  const entries = data?.entries ?? [];
+  if (entries.length === 0) {
+    return (
+      <Card>
+        <CardContent className="text-muted-foreground py-12 text-center text-sm">
+          <CheckCircle2 className="text-primary mx-auto mb-2 h-6 w-6" />
+          No log entries match these filters.
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <CardContent className="p-0">
+        <ul className="divide-border/60 divide-y">
+          {entries.map((entry) => (
+            <LogRow key={entry.id} entry={entry} libraryNames={libraryNames} />
+          ))}
+        </ul>
+        <p className="text-muted-foreground border-border/60 border-t px-3 py-2 text-center text-xs">
+          {entries.length} entr{entries.length === 1 ? "y" : "ies"} ·{" "}
+          {data?.capacity ?? "?"}-row buffer
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LogRow({
+  entry,
+  libraryNames,
+}: {
+  entry: LogEntryView;
+  libraryNames: Map<string, string>;
+}) {
+  // The `fields` blob is always an object per the backend serializer.
+  const fields =
+    entry.fields && typeof entry.fields === "object"
+      ? (entry.fields as Record<string, string>)
+      : {};
+  const libraryId = fields.library_id;
+  const libraryName = libraryId ? libraryNames.get(libraryId) : undefined;
+  // Don't render library_id again in the chip strip below — it's
+  // surfaced as the colored library badge instead.
+  const extraEntries = Object.entries(fields).filter(
+    ([k]) => k !== "library_id" && k !== "message",
+  );
+  return (
+    <li className="flex items-start gap-3 px-3 py-2">
+      <LogLevelBadge level={entry.level} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="font-mono text-xs text-muted-foreground">
+            {new Date(entry.timestamp).toLocaleTimeString()}
+          </span>
+          <span className="text-muted-foreground/70 truncate font-mono text-[10px]">
+            {entry.target}
+          </span>
+          {libraryId ? (
+            <Badge variant="outline" className="text-[10px]">
+              {libraryName ?? libraryId.slice(0, 8)}
+            </Badge>
+          ) : null}
+        </div>
+        <p className="text-foreground mt-0.5 text-sm wrap-anywhere">
+          {entry.message}
+        </p>
+        {extraEntries.length > 0 ? (
+          <div className="text-muted-foreground/80 mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px]">
+            {extraEntries.map(([k, v]) => (
+              <span key={k}>
+                <span className="text-muted-foreground/60">{k}=</span>
+                <span className="wrap-anywhere">{String(v)}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function LogLevelBadge({ level }: { level: string }) {
+  const variant =
+    level === "error"
+      ? "destructive"
+      : level === "warn"
+        ? "secondary"
+        : "outline";
+  return (
+    <Badge
+      variant={variant}
+      className="w-12 shrink-0 justify-center uppercase tabular-nums"
+    >
+      {level}
+    </Badge>
   );
 }
 

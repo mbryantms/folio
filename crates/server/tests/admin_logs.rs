@@ -106,6 +106,32 @@ fn seed_entry(level: &str, target: &str, message: &str) -> LogEntry {
     }
 }
 
+/// Build a `LogEntry` with structured `fields` populated — used by the
+/// library_id-filter test to mimic what the RingLayer's parent-span
+/// walk produces in production. The scanner's `#[tracing::instrument]`
+/// records `library_id` on the span; on_event copies it into the
+/// event's `fields` map. Seeding directly here exercises the
+/// downstream filter without needing a real scan.
+fn seed_entry_with_fields(
+    level: &str,
+    target: &str,
+    message: &str,
+    fields: &[(&str, &str)],
+) -> LogEntry {
+    let mut map = BTreeMap::new();
+    for (k, v) in fields {
+        map.insert((*k).to_owned(), (*v).to_owned());
+    }
+    LogEntry {
+        id: 0,
+        timestamp: Utc::now(),
+        level: level.into(),
+        target: target.into(),
+        message: message.into(),
+        fields: map,
+    }
+}
+
 #[tokio::test]
 async fn rejects_non_admin() {
     let app = TestApp::spawn().await;
@@ -174,6 +200,67 @@ async fn since_filter_returns_only_newer() {
     assert_eq!(after.len(), 2);
     assert_eq!(after[0]["message"], "msg3");
     assert_eq!(after[1]["message"], "msg4");
+}
+
+#[tokio::test]
+async fn library_id_filter_scopes_to_one_library() {
+    // Two seeded entries with `fields["library_id"] = <uuid>` and one
+    // without. `?library_id=<uuid>` should return only the matching
+    // pair; `?library_id=all` returns everything; an invalid UUID
+    // returns 422.
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+
+    let lib_a = "019e5c65-825f-7913-8d8d-35076c162065";
+    let lib_b = "019e2665-9dd1-74b0-b393-624913f6f9e3";
+
+    let buf = app.state().log_buffer.clone();
+    buf.push(seed_entry_with_fields(
+        "info",
+        "server::library::scanner",
+        "scan complete (a)",
+        &[("library_id", lib_a)],
+    ));
+    buf.push(seed_entry_with_fields(
+        "warn",
+        "server::library::scanner",
+        "missing comicinfo (a)",
+        &[("library_id", lib_a)],
+    ));
+    buf.push(seed_entry_with_fields(
+        "info",
+        "server::library::scanner",
+        "scan complete (b)",
+        &[("library_id", lib_b)],
+    ));
+    buf.push(seed_entry(
+        "info",
+        "server::api::progress",
+        "no library context",
+    ));
+
+    // library_id=A → 2 entries.
+    let (s, body) = get(&app, &admin, &format!("/api/admin/logs?library_id={lib_a}")).await;
+    assert_eq!(s, StatusCode::OK);
+    let entries = body["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "expected 2 lib_a entries, got: {body}");
+    for e in entries {
+        assert_eq!(e["fields"]["library_id"], lib_a);
+    }
+
+    // library_id=all → 4 (drops the filter).
+    let (s, body) = get(&app, &admin, "/api/admin/logs?library_id=all").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["entries"].as_array().unwrap().len(), 4);
+
+    // No filter → also 4 (same as 'all').
+    let (s, body) = get(&app, &admin, "/api/admin/logs").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["entries"].as_array().unwrap().len(), 4);
+
+    // Invalid UUID → 422 (not a silent empty list).
+    let (s, _) = get(&app, &admin, "/api/admin/logs?library_id=not-a-uuid").await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
