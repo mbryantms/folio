@@ -40,6 +40,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(get_one, update_settings))
         .routes(routes!(delete_one))
         .routes(routes!(scan))
+        .routes(routes!(scan_all))
         .routes(routes!(scan_preview))
         .routes(routes!(validate_deeply))
 }
@@ -614,6 +615,143 @@ pub async fn scan(
             )
         }
     }
+}
+
+/// Body for `POST /admin/libraries/scan-all`. `force=true` enqueues
+/// every library in `ContentVerify` mode (re-hashes + re-parses every
+/// file, bypassing the mtime fast-path) — same semantics as the
+/// per-library `?force=true` flag.
+#[derive(Debug, Default, Deserialize, Serialize, utoipa::ToSchema)]
+pub struct ScanAllReq {
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// One entry in the `scan-all` response — what happened for a given
+/// library. `was_already_running=true` means apalis's in-flight
+/// coalesce gate found an existing scan and the click was a no-op for
+/// that library; `scan_id` is the existing scan's id in that case.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ScanAllItem {
+    pub library_id: String,
+    pub slug: String,
+    pub name: String,
+    pub scan_id: String,
+    pub was_already_running: bool,
+}
+
+/// Response for `POST /admin/libraries/scan-all`. Enumerates per-library
+/// outcomes plus rollup counters so the UI can render a single toast
+/// like "Enqueued 18 · 2 already running · 0 failed."
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ScanAllResp {
+    pub enqueued: Vec<ScanAllItem>,
+    pub total: usize,
+    pub newly_enqueued: usize,
+    pub already_running: usize,
+    pub failed: usize,
+    /// `true` when the request was made with `force=true`.
+    pub force: bool,
+}
+
+#[utoipa::path(
+    operation_id = "libraries_scan_all",    post,
+    path = "/admin/libraries/scan-all",
+    request_body = ScanAllReq,
+    responses(
+        (status = 202, body = ScanAllResp),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn scan_all(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<ScanAllReq>,
+) -> impl IntoResponse {
+    let mode = if req.force {
+        ScanMode::ContentVerify
+    } else {
+        ScanMode::Normal
+    };
+
+    let libraries: Vec<library::Model> = match library::Entity::find()
+        .order_by_asc(library::Column::Name)
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "scan-all: list libraries failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let mut items: Vec<ScanAllItem> = Vec::with_capacity(libraries.len());
+    let mut newly_enqueued: usize = 0;
+    let mut already_running: usize = 0;
+    let mut failed: usize = 0;
+    for lib in &libraries {
+        match app.jobs.coalesce_scan(lib.id, mode.force()).await {
+            Ok(outcome) => {
+                let was_coalesced = outcome.was_coalesced();
+                if was_coalesced {
+                    already_running += 1;
+                } else {
+                    newly_enqueued += 1;
+                }
+                items.push(ScanAllItem {
+                    library_id: lib.id.to_string(),
+                    slug: lib.slug.clone(),
+                    name: lib.name.clone(),
+                    scan_id: outcome.scan_id().to_string(),
+                    was_already_running: was_coalesced,
+                });
+            }
+            Err(e) => {
+                failed += 1;
+                tracing::error!(
+                    error = %e,
+                    library_id = %lib.id,
+                    library = %lib.name,
+                    "scan-all: enqueue failed for one library; continuing",
+                );
+            }
+        }
+    }
+
+    // Audit-log the bulk action. Per-library `scan_run` rows record
+    // the execution of each individual scan, but the user-intent
+    // event ("admin clicked Scan All at 17:42") is only captured
+    // here. Both pieces matter when reconstructing operator action
+    // from the audit trail.
+    crate::record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.libraries.scan_all",
+        payload = serde_json::json!({
+            "force": req.force,
+            "total": libraries.len(),
+            "newly_enqueued": newly_enqueued,
+            "already_running": already_running,
+            "failed": failed,
+        }),
+    );
+
+    (
+        StatusCode::ACCEPTED,
+        Json(ScanAllResp {
+            total: items.len(),
+            newly_enqueued,
+            already_running,
+            failed,
+            force: req.force,
+            enqueued: items,
+        }),
+    )
+        .into_response()
 }
 
 /// Response for `POST /libraries/{slug}/validate-deeply`. Returns

@@ -17,7 +17,7 @@ use axum::{
 };
 use common::TestApp;
 use entity::{library::ActiveModel as LibraryAM, scan_run::Entity as ScanRunEntity};
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use std::io::Write;
 use std::path::Path;
 use tower::ServiceExt;
@@ -194,6 +194,204 @@ async fn second_trigger_while_in_flight_is_coalesced() {
     );
     assert_eq!(b2["coalesced"], true);
     assert_eq!(b2["state"], "coalesced");
+}
+
+async fn post_scan_all(
+    app: &TestApp,
+    auth: &Authed,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/libraries/scan-all")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        auth.session, auth.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", &auth.csrf)
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+#[tokio::test]
+async fn scan_all_enqueues_one_scan_per_library() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    // Three libraries — proves the handler iterates, not just hits the
+    // first one. Different root_paths so they don't accidentally share
+    // an in-flight gate via path collision.
+    let lib_a = create_library_with_root(&app, "/tmp/scan-all-a").await;
+    let lib_b = create_library_with_root(&app, "/tmp/scan-all-b").await;
+    let lib_c = create_library_with_root(&app, "/tmp/scan-all-c").await;
+
+    let (status, body) = post_scan_all(&app, &auth, serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["newly_enqueued"], 3);
+    assert_eq!(body["already_running"], 0);
+    assert_eq!(body["failed"], 0);
+    assert_eq!(body["force"], false);
+
+    let items = body["enqueued"].as_array().expect("enqueued array");
+    assert_eq!(items.len(), 3);
+    let library_ids: std::collections::HashSet<&str> = items
+        .iter()
+        .map(|i| i["library_id"].as_str().unwrap())
+        .collect();
+    for id in [&lib_a, &lib_b, &lib_c] {
+        assert!(
+            library_ids.contains(id.as_str()),
+            "missing library_id {id} in enqueued list",
+        );
+    }
+    for item in items {
+        assert!(item["scan_id"].as_str().is_some(), "missing scan_id");
+        assert_eq!(item["was_already_running"], false);
+        assert!(item["name"].as_str().is_some());
+        assert!(item["slug"].as_str().is_some());
+    }
+}
+
+#[tokio::test]
+async fn scan_all_coalesces_libraries_already_running() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let lib_a = create_library_with_root(&app, "/tmp/scan-all-coalesce-a").await;
+    let _lib_b = create_library_with_root(&app, "/tmp/scan-all-coalesce-b").await;
+
+    // Pre-enqueue a scan for lib_a so scan-all hits the coalesce gate
+    // for that one. The TestApp has no worker, so the in-flight Redis
+    // key stays set.
+    let (s1, _) = post_scan(&app, &auth, &lib_a).await;
+    assert_eq!(s1, StatusCode::ACCEPTED);
+
+    let (status, body) = post_scan_all(&app, &auth, serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body["total"], 2);
+    assert_eq!(body["newly_enqueued"], 1);
+    assert_eq!(body["already_running"], 1);
+
+    // Find lib_a's entry and assert it reports coalesced; the other
+    // library should be freshly queued.
+    let items = body["enqueued"].as_array().unwrap();
+    let a_item = items
+        .iter()
+        .find(|i| i["library_id"] == lib_a)
+        .expect("lib_a entry present");
+    assert_eq!(a_item["was_already_running"], true);
+}
+
+#[tokio::test]
+async fn scan_all_emits_audit_log_row() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let _lib = create_library_with_root(&app, "/tmp/scan-all-audit").await;
+
+    let (status, _) = post_scan_all(&app, &auth, serde_json::json!({"force": true})).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    // The action name matches the audit.rs template (line 92) and is
+    // what the bulk-action audit-check expects. Untargeted (no
+    // target_type / target_id) because the action scopes "every
+    // library at once."
+    use entity::audit_log::{Column as AuditCol, Entity as AuditEntity};
+    let row = AuditEntity::find()
+        .filter(AuditCol::Action.eq("admin.libraries.scan_all"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("audit_log row for admin.libraries.scan_all");
+    assert!(row.target_type.is_none(), "scan-all is untargeted");
+    assert!(row.target_id.is_none());
+    assert_eq!(row.payload["force"], true);
+    assert_eq!(row.payload["total"], 1);
+    assert_eq!(row.payload["newly_enqueued"], 1);
+}
+
+#[tokio::test]
+async fn scan_all_requires_admin() {
+    let app = TestApp::spawn().await;
+    // Register a non-admin (the first registrant becomes admin, so we
+    // need TWO accounts to get a non-admin).
+    let _admin = register_admin(&app).await;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"email":"non-admin@example.com","password":"correctly-horse-battery"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let cookies: Vec<String> = resp
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .collect();
+    let session = cookies
+        .iter()
+        .find(|c| c.starts_with("__Host-comic_session="))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .trim_start_matches("__Host-comic_session=")
+        .to_owned();
+    let csrf = cookies
+        .iter()
+        .find(|c| c.starts_with("__Host-comic_csrf="))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .trim_start_matches("__Host-comic_csrf=")
+        .to_owned();
+
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/libraries/scan-all")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={session}; __Host-comic_csrf={csrf}"),
+                )
+                .header("X-CSRF-Token", &csrf)
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "non-admin must get 403 from scan-all",
+    );
 }
 
 #[tokio::test]

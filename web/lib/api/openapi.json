@@ -386,6 +386,36 @@
         }
       }
     },
+    "/api/admin/libraries/scan-all": {
+      "post": {
+        "operationId": "libraries_scan_all",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanAllReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanAllResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/libraries/{slug}/thumbnails": {
       "delete": {
         "operationId": "admin_thumbs_delete_all",
@@ -12266,6 +12296,83 @@
               "null"
             ],
             "description": "`None` for system views (admin-curated, visible to every user)."
+          }
+        }
+      },
+      "ScanAllItem": {
+        "type": "object",
+        "description": "One entry in the `scan-all` response — what happened for a given\nlibrary. `was_already_running=true` means apalis's in-flight\ncoalesce gate found an existing scan and the click was a no-op for\nthat library; `scan_id` is the existing scan's id in that case.",
+        "required": [
+          "library_id",
+          "slug",
+          "name",
+          "scan_id",
+          "was_already_running"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scan_id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "was_already_running": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ScanAllReq": {
+        "type": "object",
+        "description": "Body for `POST /admin/libraries/scan-all`. `force=true` enqueues\nevery library in `ContentVerify` mode (re-hashes + re-parses every\nfile, bypassing the mtime fast-path) — same semantics as the\nper-library `?force=true` flag.",
+        "properties": {
+          "force": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ScanAllResp": {
+        "type": "object",
+        "description": "Response for `POST /admin/libraries/scan-all`. Enumerates per-library\noutcomes plus rollup counters so the UI can render a single toast\nlike \"Enqueued 18 · 2 already running · 0 failed.\"",
+        "required": [
+          "enqueued",
+          "total",
+          "newly_enqueued",
+          "already_running",
+          "failed",
+          "force"
+        ],
+        "properties": {
+          "already_running": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enqueued": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanAllItem"
+            }
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "force": {
+            "type": "boolean",
+            "description": "`true` when the request was made with `force=true`."
+          },
+          "newly_enqueued": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },

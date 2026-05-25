@@ -59,6 +59,8 @@ import type {
   RatingView,
   SavedViewListView,
   SavedViewView,
+  ScanAllReq,
+  ScanAllResp,
   ScanMode,
   ScanResp,
   SetRatingReq,
@@ -204,6 +206,62 @@ export function useTriggerScan(libraryId: string) {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.scanRunsAll(libraryId) });
         qc.invalidateQueries({ queryKey: queryKeys.scanPreview(libraryId) });
+      },
+    },
+  );
+}
+
+/**
+ * Trigger a scan across every library the admin can administer.
+ *
+ * Backend coalesces per-library: if a library is already scanning,
+ * its `was_already_running` is `true` and `scan_id` points at the
+ * in-flight run (no new run started). The toast summarizes the three
+ * outcome buckets — newly_enqueued / already_running / failed — so a
+ * second click is visibly a no-op rather than a confusing silent
+ * success.
+ *
+ * Invalidates every per-library scan-runs and scan-preview cache so
+ * the open per-library admin pages re-fetch live status without
+ * waiting for the next WS event.
+ */
+export function useScanAllLibraries() {
+  const qc = useQueryClient();
+  return useApiMutation<ScanAllResp, ScanAllReq | void>(
+    (input) => ({
+      path: `/admin/libraries/scan-all`,
+      method: "POST",
+      body: input ?? { force: false },
+    }),
+    {
+      successMessage: (data) => {
+        if (!data) return "Scan-all enqueued";
+        const { newly_enqueued, already_running, failed, total, force } = data;
+        const parts: string[] = [];
+        if (newly_enqueued > 0) {
+          parts.push(
+            `${newly_enqueued} ${force ? "content-verified" : "queued"}`,
+          );
+        }
+        if (already_running > 0) {
+          parts.push(`${already_running} already running`);
+        }
+        if (failed > 0) parts.push(`${failed} failed`);
+        if (parts.length === 0) return `No libraries to scan (${total} total)`;
+        return `Scan-all: ${parts.join(" · ")}`;
+      },
+      onSuccess: (data) => {
+        // Re-fetch every per-library scan view so any open admin tab
+        // for one of the enqueued libraries picks up the new scan_id
+        // immediately. Cheap — these caches are small.
+        for (const item of data?.enqueued ?? []) {
+          qc.invalidateQueries({
+            queryKey: queryKeys.scanRunsAll(item.library_id),
+          });
+          qc.invalidateQueries({
+            queryKey: queryKeys.scanPreview(item.library_id),
+          });
+        }
       },
     },
   );

@@ -148,6 +148,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/libraries/scan-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["libraries_scan_all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/libraries/{slug}/thumbnails": {
         parameters: {
             query?: never;
@@ -4963,6 +4979,36 @@ export interface components {
             /** @description `None` for system views (admin-curated, visible to every user). */
             user_id?: string | null;
         };
+        /** @description One entry in the `scan-all` response — what happened for a given
+         *     library. `was_already_running=true` means apalis's in-flight
+         *     coalesce gate found an existing scan and the click was a no-op for
+         *     that library; `scan_id` is the existing scan's id in that case. */
+        ScanAllItem: {
+            library_id: string;
+            name: string;
+            scan_id: string;
+            slug: string;
+            was_already_running: boolean;
+        };
+        /** @description Body for `POST /admin/libraries/scan-all`. `force=true` enqueues
+         *     every library in `ContentVerify` mode (re-hashes + re-parses every
+         *     file, bypassing the mtime fast-path) — same semantics as the
+         *     per-library `?force=true` flag. */
+        ScanAllReq: {
+            force?: boolean;
+        };
+        /** @description Response for `POST /admin/libraries/scan-all`. Enumerates per-library
+         *     outcomes plus rollup counters so the UI can render a single toast
+         *     like "Enqueued 18 · 2 already running · 0 failed." */
+        ScanAllResp: {
+            already_running: number;
+            enqueued: components["schemas"]["ScanAllItem"][];
+            failed: number;
+            /** @description `true` when the request was made with `force=true`. */
+            force: boolean;
+            newly_enqueued: number;
+            total: number;
+        };
         ScanCancelResp: {
             ended_at?: string | null;
             error?: string | null;
@@ -6168,6 +6214,36 @@ export interface operations {
             };
             /** @description path does not exist */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    libraries_scan_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanAllReq"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanAllResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
