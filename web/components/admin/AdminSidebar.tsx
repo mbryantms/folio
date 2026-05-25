@@ -54,9 +54,16 @@ export function AdminSidebar({
               )}
               <ul className="flex flex-col gap-0.5">
                 {section.items.map((item) => {
-                  const active =
-                    pathname === item.href ||
-                    (item.href !== "" && pathname.startsWith(item.href + "/"));
+                  // Exact-match nav entries (typically the section
+                  // index, e.g. Dashboard whose href is `/admin`)
+                  // light up ONLY on their own path. Without this
+                  // flag the descendant-match below would light
+                  // Dashboard on every admin sub-page since they're
+                  // all `/admin/…`.
+                  const active = item.exact
+                    ? pathname === item.href
+                    : pathname === item.href ||
+                      (item.href !== "" && pathname.startsWith(item.href + "/"));
                   const Icon = navIcons[item.icon];
                   const link = (
                     <Link

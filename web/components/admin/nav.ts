@@ -37,6 +37,14 @@ export type NavItem = {
   icon: IconName;
   /** Marks pages that are placeholders shipped in M1 — drop this when M2–M6 fill them in. */
   placeholder?: boolean;
+  /**
+   * When true, only highlight this nav item when the current path
+   * matches `href` exactly — no descendant match. Use for "index"
+   * entries whose href is the layout root (e.g. `/admin` for the
+   * Dashboard); without this flag, descendant-matching would light
+   * Dashboard up on every admin sub-page since they're all `/admin/…`.
+   */
+  exact?: boolean;
 };
 
 export type NavSection = {
@@ -50,7 +58,7 @@ export function adminNav(localePrefix: string): NavSection[] {
     {
       label: "Overview",
       items: [
-        { href: p(""), label: "Dashboard", icon: "Gauge" },
+        { href: p(""), label: "Dashboard", icon: "Gauge", exact: true },
         {
           href: p("/libraries"),
           label: "Libraries",
@@ -67,7 +75,11 @@ export function adminNav(localePrefix: string): NavSection[] {
       label: "People",
       items: [
         { href: p("/users"), label: "Users", icon: "Users" },
-        { href: p("/audit"), label: "Audit log", icon: "FileClock" },
+        // Audit-log entries are surfaced via the unified Activity
+        // feed (filter chip = "Audit"). The dedicated /admin/audit
+        // route still resolves — it redirects to
+        // `/admin/activity?kinds=audit` — so bookmarks aren't broken,
+        // but the sidebar collapses to one entry per data source.
         { href: p("/activity"), label: "Activity", icon: "Activity" },
       ],
     },
