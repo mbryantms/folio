@@ -7438,11 +7438,13 @@
           },
           "manual": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "Subset of `matched`: entries the user resolved via the manual\nmatch popover (not via the importer's automatic matcher).\n**Already included in `matched`** — surfaced separately so the\nResolution tab can call out user overrides."
           },
           "matched": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "**Resolved entries** — every row whose `matched_issue_id IS NOT\nNULL`, i.e. both auto-matched (`match_status='matched'`) AND\nuser-resolved overrides (`match_status='manual'`). Drives the\n\"Collection\" pill, which is asking *\"how many of this list's\nbooks does the library have on disk?\"* — the answer doesn't\ncare which path got the entry resolved.\n\nThe auto-vs-manual breakdown is still available below via\n`manual`; subtract for the strict auto-only count."
           },
           "missing": {
             "type": "integer",

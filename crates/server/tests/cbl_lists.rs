@@ -393,6 +393,100 @@ async fn manual_match_overrides_survive_refresh() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_match_increments_collection_count() {
+    // Regression: pre-fix, `stats.matched` strictly counted rows with
+    // `match_status='matched'`. Manual matches set `match_status='manual'`
+    // and ARE separately counted as `stats.manual`, but the Collection
+    // pill in the UI displays `matched / total` only — so a user who
+    // resolved an ambiguous / missing entry by hand saw the pill stay
+    // put even though the row was now resolved. Worse, `read_count`
+    // already counted `matched_issue_id IS NOT NULL` (status-agnostic),
+    // so read-progress could legitimately exceed Collection.
+    //
+    // After the fix, `stats.matched` counts every row with a resolved
+    // issue (auto + manual). The Collection pill increments on manual
+    // resolution. `stats.manual` stays available as a sub-count for
+    // the Resolution tab to call out user overrides.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "delta@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap().to_owned();
+
+    // Snapshot stats before any manual match: 3 auto-matched Invincibles.
+    let stats_before = &view["stats"];
+    assert_eq!(stats_before["matched"].as_i64(), Some(3));
+    assert_eq!(stats_before["manual"].as_i64(), Some(0));
+
+    // Manually resolve "Tech Jacket #1" (currently missing) to a
+    // seeded Invincible issue. Bumps the entry from `missing` to
+    // `manual`.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let list_uuid = Uuid::parse_str(&list_id).unwrap();
+    let missing_entry = cbl_entry::Entity::find()
+        .filter(cbl_entry::Column::CblListId.eq(list_uuid))
+        .filter(cbl_entry::Column::MatchStatus.eq("missing"))
+        .filter(cbl_entry::Column::SeriesName.eq("Tech Jacket"))
+        .filter(cbl_entry::Column::IssueNumber.eq("1"))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("Tech Jacket #1 entry");
+    let target_issue = entity::issue::Entity::find()
+        .filter(entity::issue::Column::ComicvineId.eq(105347_i64))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("seeded Invincible #1 issue");
+    let url = format!(
+        "/api/me/cbl-lists/{list_id}/entries/{entry_id}/match",
+        entry_id = missing_entry.id
+    );
+    let body = serde_json::json!({ "issue_id": target_issue.id });
+    let (status, _) = http(&app, Method::POST, &url, Some(&auth), Some(body)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Re-fetch the list and assert the Collection number went up.
+    let detail_url = format!("/api/me/cbl-lists/{list_id}");
+    let (status, after) = http(&app, Method::GET, &detail_url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let stats_after = &after["stats"];
+    assert_eq!(
+        stats_after["matched"].as_i64(),
+        Some(4),
+        "manual match must bump the Collection count: stats={stats_after:#?}",
+    );
+    assert_eq!(
+        stats_after["manual"].as_i64(),
+        Some(1),
+        "the manual sub-count tracks user overrides",
+    );
+    // And consistency: manual is a SUBSET of matched (documented in
+    // the CblStatsView doc), so matched >= manual must hold.
+    assert!(
+        stats_after["matched"].as_i64().unwrap()
+            >= stats_after["manual"].as_i64().unwrap(),
+        "manual entries must be included in `matched`",
+    );
+
+    // Clearing a manual match should remove it from both counts.
+    let clear_url = format!(
+        "/api/me/cbl-lists/{list_id}/entries/{entry_id}/clear-match",
+        entry_id = missing_entry.id
+    );
+    let (status, _) = http(&app, Method::POST, &clear_url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, restored) = http(&app, Method::GET, &detail_url, Some(&auth), None).await;
+    let stats_restored = &restored["stats"];
+    assert_eq!(
+        stats_restored["matched"].as_i64(),
+        Some(3),
+        "clearing the manual match drops Collection back",
+    );
+    assert_eq!(stats_restored["manual"].as_i64(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn clear_match_drops_status_to_missing() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "carol@example.com").await;

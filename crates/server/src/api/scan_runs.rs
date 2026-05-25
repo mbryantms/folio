@@ -485,16 +485,15 @@ async fn resolve_joins(
     let library_ids: HashSet<Uuid> = rows.iter().map(|r| r.library_id).collect();
 
     let mut issue_meta: HashMap<String, (Uuid, Option<String>, Option<String>)> = HashMap::new();
-    if !issue_ids.is_empty() {
-        if let Ok(issue_rows) = entity::issue::Entity::find()
+    if !issue_ids.is_empty()
+        && let Ok(issue_rows) = entity::issue::Entity::find()
             .filter(entity::issue::Column::Id.is_in(issue_ids.iter().cloned().collect::<Vec<_>>()))
             .all(&app.db)
             .await
-        {
-            for i in issue_rows {
-                series_ids.insert(i.series_id);
-                issue_meta.insert(i.id.clone(), (i.series_id, i.number_raw, i.title));
-            }
+    {
+        for i in issue_rows {
+            series_ids.insert(i.series_id);
+            issue_meta.insert(i.id.clone(), (i.series_id, i.number_raw, i.title));
         }
     }
 

@@ -100,9 +100,22 @@ pub struct CblListView {
 #[derive(Debug, Default, Serialize, utoipa::ToSchema)]
 pub struct CblStatsView {
     pub total: i64,
+    /// **Resolved entries** — every row whose `matched_issue_id IS NOT
+    /// NULL`, i.e. both auto-matched (`match_status='matched'`) AND
+    /// user-resolved overrides (`match_status='manual'`). Drives the
+    /// "Collection" pill, which is asking *"how many of this list's
+    /// books does the library have on disk?"* — the answer doesn't
+    /// care which path got the entry resolved.
+    ///
+    /// The auto-vs-manual breakdown is still available below via
+    /// `manual`; subtract for the strict auto-only count.
     pub matched: i64,
     pub ambiguous: i64,
     pub missing: i64,
+    /// Subset of `matched`: entries the user resolved via the manual
+    /// match popover (not via the importer's automatic matcher).
+    /// **Already included in `matched`** — surfaced separately so the
+    /// Resolution tab can call out user overrides.
     pub manual: i64,
     /// Count of matched entries whose issue the **calling user** has
     /// finished. Drives the per-user reading-progress pill on the home
@@ -382,14 +395,31 @@ async fn stats_for(
         total,
         ..Default::default()
     };
-    for status in ["matched", "ambiguous", "missing", "manual"] {
+    // `stats.matched` is "resolved to an issue" — both auto-matched
+    // and user-overridden rows. The user-facing Collection pill asks
+    // "how many of this list's books are in your library?", which
+    // doesn't care whether the matcher found the issue automatically
+    // or the user picked it via the manual-match popover. Bucketing
+    // strictly by `match_status='matched'` (the pre-fix behavior) hid
+    // every manual resolution from the count — the pill stayed put
+    // while `match_status` flipped to `'manual'` underneath, and
+    // worse, `read_count` below already used the matched_issue_id
+    // criterion so the read-progress pill could legitimately exceed
+    // the Collection number.
+    stats.matched = base
+        .clone()
+        .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
+        .count(db)
+        .await? as i64;
+    // Per-status breakdown for the Resolution tab. `manual` is a
+    // *subset* of `matched` — see CblStatsView::manual.
+    for status in ["ambiguous", "missing", "manual"] {
         let n = base
             .clone()
             .filter(cbl_entry::Column::MatchStatus.eq(status))
             .count(db)
             .await? as i64;
         match status {
-            "matched" => stats.matched = n,
             "ambiguous" => stats.ambiguous = n,
             "missing" => stats.missing = n,
             "manual" => stats.manual = n,
@@ -773,7 +803,11 @@ pub async fn upload(
                     bytes = Some(b.to_vec());
                 }
                 Err(e) => {
-                    return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", &e.to_string());
+                    return error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "validation",
+                        &e.to_string(),
+                    );
                 }
             },
             "name" => name_override = field.text().await.ok().filter(|s| !s.trim().is_empty()),
@@ -1129,7 +1163,11 @@ async fn create_list_from_parsed(
     };
     let stats = CblStatsView {
         total: i64::from(summary.matched + summary.ambiguous + summary.missing + summary.manual),
-        matched: i64::from(summary.matched),
+        // `matched` is "resolved to an issue" — auto-match + preserved
+        // user overrides — to match `stats_for` semantics. The strict
+        // auto-only count is `matched - manual` for any caller that
+        // needs it.
+        matched: i64::from(summary.matched + summary.manual),
         ambiguous: i64::from(summary.ambiguous),
         missing: i64::from(summary.missing),
         manual: i64::from(summary.manual),
@@ -1321,7 +1359,11 @@ pub async fn manual_match(
         .flatten()
         .is_some();
     if !issue_exists {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "issue not found");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "issue not found",
+        );
     }
     let now = Utc::now().fixed_offset();
     let mut am: cbl_entry::ActiveModel = entry.into();

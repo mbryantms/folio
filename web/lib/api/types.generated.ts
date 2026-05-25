@@ -3201,9 +3201,26 @@ export interface components {
         CblStatsView: {
             /** Format: int64 */
             ambiguous: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Subset of `matched`: entries the user resolved via the manual
+             *     match popover (not via the importer's automatic matcher).
+             *     **Already included in `matched`** — surfaced separately so the
+             *     Resolution tab can call out user overrides.
+             */
             manual: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description **Resolved entries** — every row whose `matched_issue_id IS NOT
+             *     NULL`, i.e. both auto-matched (`match_status='matched'`) AND
+             *     user-resolved overrides (`match_status='manual'`). Drives the
+             *     "Collection" pill, which is asking *"how many of this list's
+             *     books does the library have on disk?"* — the answer doesn't
+             *     care which path got the entry resolved.
+             *
+             *     The auto-vs-manual breakdown is still available below via
+             *     `manual`; subtract for the strict auto-only count.
+             */
             matched: number;
             /** Format: int64 */
             missing: number;
