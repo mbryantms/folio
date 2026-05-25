@@ -249,7 +249,15 @@ export default async function IssuePage({
                   #{issue.number}
                 </span>
               )}
-              {issue.volume != null && <span>Vol. {issue.volume}</span>}
+              {/* Effective volume: issue's per-issue override (rare —
+                  set when ComicInfo's `<Volume>` tag explicitly
+                  differs from the parent run), else the parent
+                  series's volume. Inherits so a reader on Fantastic
+                  Four V6 #4 sees "Vol. 6" without having to navigate
+                  back to the series page. */}
+              {(issue.volume ?? series?.volume ?? null) != null && (
+                <span>Vol. {issue.volume ?? series?.volume}</span>
+              )}
             </div>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
               {heading}
@@ -340,7 +348,7 @@ export default async function IssuePage({
                       ? issue.sort_number.toString()
                       : null,
                 },
-                { label: "Volume", value: issue.volume },
+                { label: "Volume", value: issue.volume ?? series?.volume ?? null },
                 { label: "Publication date", value: publicationDate },
                 {
                   label: "Publication status",

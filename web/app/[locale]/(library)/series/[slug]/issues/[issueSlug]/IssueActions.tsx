@@ -385,6 +385,14 @@ function EditForm({
                   max={9999}
                   value={form.volume}
                   onChange={(e) => set("volume", e.target.value)}
+                  // Leaving this blank means "inherit from the parent
+                  // series" — the issue page renders `issue.volume ??
+                  // series.volume` so single-volume runs and most
+                  // multi-volume runs need no per-issue override.
+                  // Set this only when a specific issue's ComicInfo
+                  // legitimately claims a different volume than the
+                  // run it sits in.
+                  placeholder="Inherits from series"
                 />
               </Field>
               <Field label="Alternate series" htmlFor="ed-alt-series">
