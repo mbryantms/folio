@@ -75,7 +75,7 @@ export function ScanAllButton() {
             joined, not duplicated — clicking twice is safe.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="flex items-start gap-3 rounded-md border p-3">
+        <div className="border-border/60 flex items-start gap-3 rounded-md border p-3">
           <Checkbox
             id="scan-all-force"
             checked={force}

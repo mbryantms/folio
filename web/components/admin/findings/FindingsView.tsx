@@ -111,7 +111,7 @@ export function FindingsView() {
 
 function FilterRow({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border p-3">
+    <div className="border-border/60 flex flex-wrap items-center gap-2 rounded-md border p-3">
       {children}
     </div>
   );
