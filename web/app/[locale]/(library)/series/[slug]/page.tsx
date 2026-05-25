@@ -177,6 +177,16 @@ export default async function SeriesPage({
             than buried under a tab. */}
         <div className="min-w-0 space-y-5">
           <div>
+            {/* Prominent volume caption above the H1 — mirrors the
+                issue page's `Vol. N` badge so the multi-volume signal
+                is visible without drilling into the Details tab. Only
+                rendered when the series carries a volume number;
+                single-volume titles (volume null) just show the H1. */}
+            {series.volume != null && (
+              <p className="text-muted-foreground mb-1 text-sm font-medium tracking-wide uppercase">
+                Volume {series.volume}
+              </p>
+            )}
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
               {series.name}
             </h1>
