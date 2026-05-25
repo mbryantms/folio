@@ -240,7 +240,11 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     label: "Audit log",
     group: "Admin",
     icon: History,
-    href: "/admin/audit",
+    // The standalone /admin/audit page redirects into the unified
+    // Activity feed; deep-link directly with the chip pre-applied so
+    // the command-palette action lands on the same filtered view a
+    // typed URL would.
+    href: "/admin/activity?kinds=audit",
     role: "admin",
     keywords: ["actions", "trail"],
   },

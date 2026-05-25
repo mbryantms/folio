@@ -2,6 +2,7 @@
 
 import { AlertTriangle, BookOpen, FileClock, Library } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,10 @@ import { formatDurationMs } from "@/lib/activity";
 import { useAdminActivity } from "@/lib/api/queries";
 import type { ActivityEntryView, ActivityKind } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+
+const KIND_VALUES = ["audit", "scan", "health", "reading"] as const;
+const isKind = (v: string): v is ActivityKind =>
+  (KIND_VALUES as readonly string[]).includes(v);
 
 const ALL_KINDS: ReadonlyArray<{
   value: ActivityKind;
@@ -35,9 +40,19 @@ const ALL_KINDS: ReadonlyArray<{
 ];
 
 export function ActivityFeedClient() {
-  const [active, setActive] = useState<Set<ActivityKind>>(
-    () => new Set(ALL_KINDS.map((k) => k.value)),
-  );
+  // Seed initial selection from `?kinds=audit,scan` so deep-links
+  // from elsewhere (Quick Actions "View audit log" → `?kinds=audit`,
+  // the now-redirected `/admin/audit` route) land with the right
+  // filter applied. Unknown values fall back to "show all" rather
+  // than an empty list.
+  const sp = useSearchParams();
+  const [active, setActive] = useState<Set<ActivityKind>>(() => {
+    const raw = sp.get("kinds");
+    if (!raw) return new Set(ALL_KINDS.map((k) => k.value));
+    const parsed = raw.split(",").map((s) => s.trim()).filter(isKind);
+    if (parsed.length === 0) return new Set(ALL_KINDS.map((k) => k.value));
+    return new Set(parsed);
+  });
   const filters = useMemo(
     () => ({ kinds: [...active] as ActivityKind[], limit: 50 }),
     [active],

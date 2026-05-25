@@ -675,7 +675,10 @@ function QuickActionsCard() {
         />
         <Action
           icon={<FileStack className="h-3.5 w-3.5" />}
-          href={`/admin/audit`}
+          // Audit-log entries live on the unified Activity feed —
+          // pre-apply the chip so the link lands with audit-only
+          // results, then the user can broaden if they want.
+          href={`/admin/activity?kinds=audit`}
           label="View audit log"
         />
         <Action
