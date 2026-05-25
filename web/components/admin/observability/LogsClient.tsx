@@ -2,13 +2,14 @@
 
 import { Pause, Play } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { SegmentedControl } from "@/components/settings/SegmentedControl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAdminLogs } from "@/lib/api/queries";
+import { useAdminLogs, useLibraryList } from "@/lib/api/queries";
 import type { LogEntryView, LogLevel } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,20 @@ const LEVELS: ReadonlyArray<{ value: LogLevel | "all"; label: string }> = [
 ];
 
 export function LogsClient() {
+  // URL-driven library filter so cross-links from /admin/findings
+  // scan-run rows (`/admin/logs?library_id=<uuid>`) land with the
+  // scope already applied. Level + search stay in local state so
+  // keystroke-rapid changes don't flap the URL bar.
+  const router = useRouter();
+  const sp = useSearchParams();
+  const libraryId = sp.get("library_id") ?? "all";
+  const { data: libraries } = useLibraryList();
+  const libraryNames = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const lib of libraries ?? []) map.set(lib.id, lib.name);
+    return map;
+  }, [libraries]);
+
   const [level, setLevel] = useState<LogLevel | "all">("info");
   const [q, setQ] = useState("");
   const [tail, setTail] = useState(true);
@@ -29,12 +44,21 @@ export function LogsClient() {
     () => ({
       level: level === "all" ? undefined : level,
       q: q.trim() || undefined,
+      library_id: libraryId === "all" ? undefined : libraryId,
       limit: 500,
     }),
-    [level, q],
+    [level, q, libraryId],
   );
 
   const logs = useAdminLogs(filters, { intervalMs: tail ? 2_000 : undefined });
+
+  function setLibraryParam(next: string) {
+    const params = new URLSearchParams(sp);
+    if (next === "all") params.delete("library_id");
+    else params.set("library_id", next);
+    const qs = params.toString();
+    router.replace(`/admin/logs${qs ? `?${qs}` : ""}`, { scroll: false });
+  }
 
   return (
     <div className="space-y-4">
@@ -53,6 +77,24 @@ export function LogsClient() {
             onChange={(e) => setQ(e.currentTarget.value)}
             className="h-9 w-72"
           />
+          {/* Library scope is URL-driven so a cross-link from the
+              findings page (`/admin/logs?library_id=<uuid>`) lands
+              with the scope already applied. */}
+          <label className="text-muted-foreground flex items-center gap-1.5 text-xs uppercase">
+            Library
+            <select
+              value={libraryId}
+              onChange={(e) => setLibraryParam(e.target.value)}
+              className="border-border bg-background h-9 rounded-md border px-2 text-xs normal-case"
+            >
+              <option value="all">All libraries</option>
+              {(libraries ?? []).map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -86,7 +128,11 @@ export function LogsClient() {
             <ol className="divide-border divide-y">
               {/* Newest at the top mirrors a tail's natural reading order. */}
               {[...logs.data.entries].reverse().map((entry) => (
-                <LogRow key={entry.id} entry={entry} />
+                <LogRow
+                  key={entry.id}
+                  entry={entry}
+                  libraryNames={libraryNames}
+                />
               ))}
             </ol>
           </div>
@@ -106,18 +152,36 @@ export function LogsClient() {
   );
 }
 
-function LogRow({ entry }: { entry: LogEntryView }) {
+function LogRow({
+  entry,
+  libraryNames,
+}: {
+  entry: LogEntryView;
+  libraryNames: Map<string, string>;
+}) {
   // entry.fields is typed `unknown` in codegen (Rust source is
   // `serde_json::Value`); at runtime it's always a flat string-keyed object.
-  const fieldEntries = Object.entries(
-    (entry.fields as Record<string, unknown> | null | undefined) ?? {},
-  );
+  const fields =
+    (entry.fields as Record<string, unknown> | null | undefined) ?? {};
+  const libraryId = typeof fields.library_id === "string" ? fields.library_id : undefined;
+  const libraryName = libraryId ? libraryNames.get(libraryId) : undefined;
+  // Library is surfaced as a dedicated chip beside the level, so
+  // drop it from the structured-fields strip below to avoid showing
+  // the UUID twice.
+  const fieldEntries = Object.entries(fields).filter(([k]) => k !== "library_id");
   return (
     <li className="grid grid-cols-[5rem_8rem_1fr] items-baseline gap-3 px-3 py-2 text-xs">
       <span className="text-muted-foreground font-mono">
         {formatHms(entry.timestamp)}
       </span>
-      <LevelChip level={entry.level} />
+      <div className="flex flex-col items-start gap-1">
+        <LevelChip level={entry.level} />
+        {libraryId ? (
+          <Badge variant="outline" className="text-[10px]">
+            {libraryName ?? libraryId.slice(0, 8)}
+          </Badge>
+        ) : null}
+      </div>
       <div className="min-w-0">
         <p className="text-foreground/95 font-mono">{entry.message}</p>
         <p className="text-muted-foreground mt-0.5 font-mono text-[10px]">
