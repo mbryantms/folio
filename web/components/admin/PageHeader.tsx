@@ -27,7 +27,11 @@ export function PageHeader({
         ) : null}
       </div>
       {actions ? (
-        <div className="flex items-center gap-2">{actions}</div>
+        // `flex-wrap` so action-heavy pages (e.g. /log, where the
+        // header carries a 6-button range selector + Add widget +
+        // Reset) gracefully break onto a second row on mobile rather
+        // than overflowing the viewport.
+        <div className="flex flex-wrap items-center gap-2">{actions}</div>
       ) : null}
     </header>
   );
