@@ -311,7 +311,12 @@ where
     //
     // Precedence ladder (matches what identity.rs uses for hint
     // computation on new series):
-    //   1. series.json sidecar — curated metadata wins outright.
+    //   1. series.json sidecar — curated metadata wins outright,
+    //      INCLUDING an explicit `null` / absent `volume`. A sidecar
+    //      that doesn't carry a volume is a positive assertion that
+    //      no volume exists for this series (most single-run titles);
+    //      treating it as "no signal" leaves stale year-stamped values
+    //      from prior buggy scans untouched.
     //   2. MODE() over `issues.volume` — survives per-issue plausibility
     //      filter, so any value here is realistic.
     //   3. No signal → leave the row alone.
@@ -323,10 +328,16 @@ where
     // (renamed crossovers, multi-series anthology folders). Sidecar
     // only.
 
-    if let Some(v) = sidecar.and_then(|m| m.volume).or(aggregates.volume_mode)
-        && row.volume != Some(v)
+    // `Some(Some(v))` = write `v`; `Some(None)` = write NULL;
+    // `None` = no signal, leave the row alone.
+    let target_volume: Option<Option<i32>> = match sidecar {
+        Some(meta) => Some(meta.volume),
+        None => aggregates.volume_mode.map(Some),
+    };
+    if let Some(new_value) = target_volume
+        && row.volume != new_value
     {
-        am.volume = Set(Some(v));
+        am.volume = Set(new_value);
         am.updated_at = Set(Utc::now().fixed_offset());
         dirty = true;
     }

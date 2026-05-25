@@ -575,7 +575,14 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             am.sort_number = Set(sort_number);
         }
         am.number_raw = Set(number_raw);
-        am.volume = Set(info.volume.or(inferred.volume));
+        // ComicInfo `<Volume>` and MetronInfo carry the same Mylar3
+        // `V<year>` pollution as filenames. Gate every source through
+        // `plausible_volume` so year-stamped values get dropped at
+        // ingest — same rule already applied to `inferred.volume`.
+        am.volume = Set(info
+            .volume
+            .filter(|&v| filename::plausible_volume(v, info.year))
+            .or(inferred.volume));
         am.year = Set(info.year);
         am.month = Set(info.month);
         am.day = Set(info.day);
@@ -696,7 +703,14 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             title: Set(info.title.clone()),
             sort_number: Set(sort_number),
             number_raw: Set(number_raw),
-            volume: Set(info.volume.or(inferred.volume)),
+            // Same plausibility gate as the update path above —
+            // ComicInfo / MetronInfo `<Volume>` values in the
+            // 1900–2100 year range are Mylar3 stamps, not real
+            // volumes.
+            volume: Set(info
+                .volume
+                .filter(|&v| filename::plausible_volume(v, info.year))
+                .or(inferred.volume)),
             year: Set(info.year),
             month: Set(info.month),
             day: Set(info.day),
@@ -1241,8 +1255,12 @@ fn merge_metron_into_comicinfo(info: &mut ComicInfo, m: &MetronInfo) {
     if m.number.is_some() {
         info.number = m.number.clone();
     }
-    if m.volume.is_some() {
-        info.volume = m.volume;
+    // Gate MetronInfo's `<volume>` through the same plausibility
+    // filter — newer schema, same potential for tooling pollution.
+    if let Some(v) = m.volume
+        && filename::plausible_volume(v, m.year)
+    {
+        info.volume = Some(v);
     }
     if m.year.is_some() {
         info.year = m.year;
@@ -1415,10 +1433,18 @@ pub fn peek_identity_hint(path: &Path, limits: ArchiveLimits) -> SeriesIdentityH
                 "Unknown Series".to_string()
             }
         });
+    let resolved_year = info.year.or(inferred.year);
     SeriesIdentityHint {
         series_name,
-        year: info.year.or(inferred.year),
-        volume: info.volume.or(inferred.volume),
+        year: resolved_year,
+        // Identity-time volume signal: ComicInfo gated through
+        // `plausible_volume`, then filename inference (already gated
+        // at parser level), then the folder-leaf V-token fallback
+        // applied in `process_planned_folder`.
+        volume: info
+            .volume
+            .filter(|&v| filename::plausible_volume(v, resolved_year))
+            .or(inferred.volume),
         publisher: info.publisher.clone().or(inferred.publisher.clone()),
         imprint: info.imprint.clone(),
         language: info.language_iso.clone(),

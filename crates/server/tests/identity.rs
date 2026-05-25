@@ -92,6 +92,22 @@ fn write_cbz(path: &Path, marker: u32) {
     zw.finish().unwrap();
 }
 
+/// Same as `write_cbz` but stamps a caller-supplied ComicInfo.xml
+/// alongside the page. Used by volume / metadata regression tests that
+/// need to exercise specific tag values (e.g. `<Volume>2016</Volume>`).
+fn write_cbz_with_comicinfo(path: &Path, comicinfo_xml: &str) {
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
+    zw.start_file("page-001.png", opts).unwrap();
+    zw.write_all(&png).unwrap();
+    zw.start_file("ComicInfo.xml", opts).unwrap();
+    zw.write_all(comicinfo_xml.as_bytes()).unwrap();
+    zw.finish().unwrap();
+}
+
 async fn create_library(app: &TestApp, root: &Path) -> Uuid {
     let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
     let id = Uuid::now_v7();
@@ -466,6 +482,123 @@ async fn rescan_self_heals_stale_year_stamped_volume_from_sidecar() {
         healed.volume,
         Some(3),
         "sidecar volume must overwrite year-stamped value on rescan",
+    );
+}
+
+#[tokio::test]
+async fn comicinfo_year_stamped_volume_is_rejected_at_ingest() {
+    // ComicInfo.xml inside each CBZ commonly carries the same Mylar3
+    // `V<year>` pollution as filenames — e.g. `<Volume>2016</Volume>`
+    // on a 2016 publication. v0.6.1 gated only filename inference;
+    // v0.6.2 extends the plausibility filter to ComicInfo + MetronInfo
+    // so the year-stamp drops out at every read site.
+    //
+    // This test writes a CBZ whose ComicInfo carries `<Volume>2016</Volume>`
+    // and asserts `issue.volume` ends up NULL (not 2016).
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Pi (2016)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz_with_comicinfo(
+        &folder.join("Series Pi 001 (2016).cbz"),
+        r#"<?xml version="1.0"?>
+<ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Series>Series Pi</Series>
+  <Number>1</Number>
+  <Volume>2016</Volume>
+  <Year>2016</Year>
+</ComicInfo>"#,
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let series_row = SeriesEntity::find()
+        .filter(SeriesCol::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        series_row.volume, None,
+        "series.volume must not be year-stamped from ComicInfo",
+    );
+
+    let issue_volumes: Vec<Option<i32>> = entity::issue::Entity::find()
+        .filter(entity::issue::Column::SeriesId.eq(series_row.id))
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|i| i.volume)
+        .collect();
+    assert_eq!(
+        issue_volumes,
+        vec![None],
+        "issue.volume must not be year-stamped from ComicInfo",
+    );
+}
+
+#[tokio::test]
+async fn sidecar_volume_null_clears_stale_year_stamp() {
+    // A series row that an earlier-buggy scan stamped with
+    // `volume = 2016`, whose folder now carries a `series.json`
+    // sidecar with `volume: null` (the explicit "no volume" assertion
+    // for single-run titles). Reconcile must write NULL through —
+    // pre-fix behavior treated sidecar `null` the same as "no sidecar"
+    // and fell back to MODE(), which re-affirmed the year-stamp.
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Rho (2017)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz(&folder.join("Series Rho 001 (2017).cbz"), 1);
+    std::fs::write(
+        folder.join("series.json"),
+        r#"{"version":"1.0.2","metadata":{"type":"comicSeries","name":"Series Rho","year":2017,"volume":null,"publisher":"Marvel"}}"#,
+    )
+    .unwrap();
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let row = SeriesEntity::find()
+        .filter(SeriesCol::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    // First scan via the post-v0.6.1 path already lands at NULL
+    // because sidecar.volume=None and filename V-token is filtered.
+    assert_eq!(row.volume, None);
+
+    // Simulate the pre-fix corruption: an earlier scan with the
+    // contaminated parser had written `volume = 2017` here.
+    let mut am: entity::series::ActiveModel = row.into();
+    am.volume = Set(Some(2017));
+    am.update(&state.db).await.unwrap();
+
+    // Re-touch + rescan. The sidecar's explicit `null` volume must
+    // overwrite the year-stamp.
+    let new_time = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    let f = std::fs::File::open(&folder).unwrap();
+    f.set_modified(new_time).ok();
+    std::fs::write(
+        folder.join("series.json"),
+        r#"{"version":"1.0.2","metadata":{"type":"comicSeries","name":"Series Rho","year":2017,"volume":null,"publisher":"Marvel"}}"#,
+    )
+    .unwrap();
+
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let healed = SeriesEntity::find()
+        .filter(SeriesCol::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        healed.volume, None,
+        "sidecar volume=null must clear year-stamped value on rescan",
     );
 }
 
