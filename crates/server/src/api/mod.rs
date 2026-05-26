@@ -29,6 +29,7 @@ pub mod libraries;
 pub mod log_widgets;
 pub mod markers;
 pub mod meta;
+pub mod metadata_search;
 pub mod next_up;
 pub mod opds;
 pub mod opds_progression;

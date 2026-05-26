@@ -46,6 +46,13 @@ pub struct Model {
     /// should resume. NULL otherwise.
     #[sea_orm(nullable)]
     pub resume_after: Option<DateTimeWithTimeZone>,
+    /// Serialized `SeriesQueryFacts` / `IssueQueryFacts` so the
+    /// polling endpoint can render the search-in-flight UI without
+    /// re-resolving the local entity. Nullable for legacy/null rows
+    /// inserted before M3 (none exist on first deploy but the guard
+    /// keeps Apply jobs (M4) usable without a query).
+    #[sea_orm(nullable)]
+    pub query: Option<Json>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

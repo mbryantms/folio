@@ -6261,6 +6261,192 @@
         }
       }
     },
+    "/api/series/{slug}/issues/{issue_slug}/metadata/candidates": {
+      "get": {
+        "operationId": "metadata_candidates_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "description": "Pin a specific run; defaults to the latest run for the\nscope/entity.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidatesResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue / run not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/issues/{issue_slug}/metadata/search": {
+      "post": {
+        "operationId": "metadata_search_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchStartedResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "no providers configured"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue not found"
+          },
+          "502": {
+            "description": "queue error"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/candidates": {
+      "get": {
+        "operationId": "metadata_candidates_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "description": "Pin a specific run; defaults to the latest run for the\nscope/entity.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidatesResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found / no run"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/search": {
+      "post": {
+        "operationId": "metadata_search_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchStartedResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "no providers configured"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "502": {
+            "description": "queue error"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/progress": {
       "post": {
         "operationId": "progress_upsert_series",
@@ -7127,6 +7313,100 @@
             "format": "int32",
             "description": "Rows removed from the collection.",
             "minimum": 0
+          }
+        }
+      },
+      "CandidateView": {
+        "type": "object",
+        "required": [
+          "source",
+          "external_id",
+          "bucket",
+          "score",
+          "score_breakdown",
+          "candidate"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "candidate": {},
+          "external_id": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          },
+          "score_breakdown": {},
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "CandidatesResp": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "status",
+          "providers",
+          "started_at",
+          "items_total",
+          "items_matched_high",
+          "items_matched_medium",
+          "items_matched_low",
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CandidateView"
+            }
+          },
+          "error_summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items_matched_high": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_matched_low": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_matched_medium": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
           }
         }
       },
@@ -13074,6 +13354,23 @@
             "type": "string"
           },
           "stats": {}
+        }
+      },
+      "SearchStartedResp": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "coalesced"
+        ],
+        "properties": {
+          "coalesced": {
+            "type": "boolean",
+            "description": "`true` when an in-flight run for the same target was reused\ninstead of enqueueing a fresh one — UI can swallow the \"Started\nfetching\" toast in this case."
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
         }
       },
       "SeriesListView": {

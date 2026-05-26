@@ -2766,6 +2766,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/issues/{issue_slug}/metadata/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_candidates_issue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/issues/{issue_slug}/metadata/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_search_issue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_candidates_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_search_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/progress": {
         parameters: {
             query?: never;
@@ -3133,6 +3197,33 @@ export interface components {
              * @description Rows removed from the collection.
              */
             removed: number;
+        };
+        CandidateView: {
+            bucket: string;
+            candidate: unknown;
+            external_id: string;
+            /** Format: float */
+            score: number;
+            score_breakdown: unknown;
+            source: string;
+        };
+        CandidatesResp: {
+            candidates: components["schemas"]["CandidateView"][];
+            error_summary?: string | null;
+            finished_at?: string | null;
+            /** Format: int32 */
+            items_matched_high: number;
+            /** Format: int32 */
+            items_matched_low: number;
+            /** Format: int32 */
+            items_matched_medium: number;
+            /** Format: int32 */
+            items_total: number;
+            providers: string[];
+            /** Format: uuid */
+            run_id: string;
+            started_at: string;
+            status: string;
         };
         CatalogEntriesView: {
             items: components["schemas"]["CatalogEntryView"][];
@@ -5230,6 +5321,14 @@ export interface components {
             started_at: string;
             state: string;
             stats: unknown;
+        };
+        SearchStartedResp: {
+            /** @description `true` when an in-flight run for the same target was reused
+             *     instead of enqueueing a fresh one — UI can swallow the "Started
+             *     fetching" toast in this case. */
+            coalesced: boolean;
+            /** Format: uuid */
+            run_id: string;
         };
         SeriesListView: {
             items: components["schemas"]["SeriesView"][];
@@ -11618,6 +11717,184 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueListView"];
                 };
+            };
+        };
+    };
+    metadata_candidates_issue: {
+        parameters: {
+            query?: {
+                /** @description Pin a specific run; defaults to the latest run for the
+                 *     scope/entity. */
+                run_id?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidatesResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue / run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_search_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchStartedResp"];
+                };
+            };
+            /** @description no providers configured */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description queue error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_candidates_series: {
+        parameters: {
+            query?: {
+                /** @description Pin a specific run; defaults to the latest run for the
+                 *     scope/entity. */
+                run_id?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidatesResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found / no run */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_search_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchStartedResp"];
+                };
+            };
+            /** @description no providers configured */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description queue error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

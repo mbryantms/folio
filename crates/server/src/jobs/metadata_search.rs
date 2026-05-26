@@ -1,0 +1,288 @@
+//! Apalis-backed metadata-search workers (metadata-providers-1.0 M3).
+//!
+//! Two job types — `SearchSeriesJob` + `SearchIssueJob` — both backed
+//! by per-entity Redis coalescing so repeat clicks while a search is
+//! already in flight return the existing `run_id` instead of doubling
+//! the provider budget. The handler delegates the actual fan-out and
+//! ranking to [`crate::metadata::orchestrator`], which is the single
+//! audited surface for everything (the future bulk-refresh job will
+//! call the same entry points).
+//!
+//! Worker concurrency is intentionally bounded to 1 per job type —
+//! the per-provider Redis token bucket already enforces budget, and
+//! the velocity cap on the ComicVine client serializes through a
+//! per-instance mutex. Running multiple search workers concurrently
+//! gains nothing on the happy path and risks burst-deny on bucket
+//! exhaustion.
+
+use crate::metadata::identifier::Source;
+use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
+use crate::metadata::orchestrator::{self, StoredQuery};
+use crate::state::AppState;
+use apalis::prelude::*;
+use redis::AsyncCommands;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+// ───────── coalescing key shapes ─────────
+
+fn series_inflight_key(series_id: Uuid) -> String {
+    format!("metadata:search:series:{series_id}")
+}
+
+fn issue_inflight_key(issue_id: &str) -> String {
+    format!("metadata:search:issue:{issue_id}")
+}
+
+/// Set the in-flight marker for a series search and return the run id
+/// that wins the coalescing race. If a previous run is still active,
+/// the existing run id wins and the caller skips the enqueue.
+pub async fn reserve_series_slot(
+    state: &AppState,
+    series_id: Uuid,
+    new_run_id: Uuid,
+) -> Result<Uuid, redis::RedisError> {
+    let mut conn = state.jobs.redis.clone();
+    let key = series_inflight_key(series_id);
+    // SET NX EX 600 — the 10-minute TTL is a generous upper bound for
+    // a search across two providers (each capped at 30s timeout); if
+    // the worker crashes mid-search the key auto-expires so the next
+    // click isn't permanently locked out.
+    let set: Option<String> = redis::cmd("SET")
+        .arg(&key)
+        .arg(new_run_id.to_string())
+        .arg("NX")
+        .arg("EX")
+        .arg(600)
+        .query_async(&mut conn)
+        .await?;
+    if set.is_some() {
+        return Ok(new_run_id);
+    }
+    let existing: Option<String> = conn.get(&key).await?;
+    let id = existing
+        .and_then(|s| Uuid::parse_str(&s).ok())
+        .unwrap_or(new_run_id);
+    Ok(id)
+}
+
+pub async fn reserve_issue_slot(
+    state: &AppState,
+    issue_id: &str,
+    new_run_id: Uuid,
+) -> Result<Uuid, redis::RedisError> {
+    let mut conn = state.jobs.redis.clone();
+    let key = issue_inflight_key(issue_id);
+    let set: Option<String> = redis::cmd("SET")
+        .arg(&key)
+        .arg(new_run_id.to_string())
+        .arg("NX")
+        .arg("EX")
+        .arg(600)
+        .query_async(&mut conn)
+        .await?;
+    if set.is_some() {
+        return Ok(new_run_id);
+    }
+    let existing: Option<String> = conn.get(&key).await?;
+    let id = existing
+        .and_then(|s| Uuid::parse_str(&s).ok())
+        .unwrap_or(new_run_id);
+    Ok(id)
+}
+
+async fn release_series_slot(state: &AppState, series_id: Uuid) {
+    let mut conn = state.jobs.redis.clone();
+    let _: Result<(), _> = conn.del::<_, ()>(series_inflight_key(series_id)).await;
+}
+
+async fn release_issue_slot(state: &AppState, issue_id: &str) {
+    let mut conn = state.jobs.redis.clone();
+    let _: Result<(), _> = conn.del::<_, ()>(issue_inflight_key(issue_id)).await;
+}
+
+// ───────── series job ─────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchSeriesJob {
+    pub run_id: Uuid,
+    pub series_id: Uuid,
+    pub library_id: Option<Uuid>,
+    pub facts: SeriesQueryFacts,
+}
+
+pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Result<(), Error> {
+    let state: AppState = (*state).clone();
+    let SearchSeriesJob {
+        run_id,
+        series_id,
+        library_id: _,
+        facts,
+    } = job;
+    tracing::info!(
+        run_id = %run_id,
+        series_id = %series_id,
+        name = %facts.name,
+        "metadata search: series job start"
+    );
+    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
+    if providers.is_empty() {
+        if let Err(e) = orchestrator::fail_run(&state.db, run_id, "no providers configured").await
+        {
+            tracing::error!(error = %e, "metadata search: fail_run write failed");
+        }
+        release_series_slot(&state, series_id).await;
+        return Ok(());
+    }
+    let threshold = high_threshold(&state);
+    match orchestrator::run_series_search(&state.db, run_id, &providers, &facts, threshold).await {
+        Ok(ranked) => {
+            tracing::info!(
+                run_id = %run_id,
+                results = ranked.len(),
+                "metadata search: series job complete"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                run_id = %run_id,
+                error = %e,
+                "metadata search: series job failed"
+            );
+        }
+    }
+    release_series_slot(&state, series_id).await;
+    Ok(())
+}
+
+// ───────── issue job ─────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchIssueJob {
+    pub run_id: Uuid,
+    pub issue_id: String,
+    pub library_id: Option<Uuid>,
+    pub facts: IssueQueryFacts,
+    /// `(source, external_id)` pairs from `external_ids` for the
+    /// parent series — lets the per-provider issue search narrow to
+    /// a known volume and skip the keyword phase.
+    pub series_external_ids: Vec<(Source, String)>,
+}
+
+pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<(), Error> {
+    let state: AppState = (*state).clone();
+    let SearchIssueJob {
+        run_id,
+        issue_id,
+        library_id: _,
+        facts,
+        series_external_ids,
+    } = job;
+    tracing::info!(
+        run_id = %run_id,
+        issue_id,
+        series = %facts.series_name,
+        number = %facts.issue_number,
+        "metadata search: issue job start"
+    );
+    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
+    if providers.is_empty() {
+        if let Err(e) = orchestrator::fail_run(&state.db, run_id, "no providers configured").await
+        {
+            tracing::error!(error = %e, "metadata search: fail_run write failed");
+        }
+        release_issue_slot(&state, &issue_id).await;
+        return Ok(());
+    }
+    let threshold = high_threshold(&state);
+    match orchestrator::run_issue_search(
+        &state.db,
+        run_id,
+        &providers,
+        &facts,
+        &series_external_ids,
+        threshold,
+    )
+    .await
+    {
+        Ok(ranked) => {
+            tracing::info!(
+                run_id = %run_id,
+                results = ranked.len(),
+                "metadata search: issue job complete"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                run_id = %run_id,
+                error = %e,
+                "metadata search: issue job failed"
+            );
+        }
+    }
+    release_issue_slot(&state, &issue_id).await;
+    Ok(())
+}
+
+// ───────── helpers ─────────
+
+fn high_threshold(_state: &AppState) -> f32 {
+    // M5 plumbs `metadata.auto_apply_threshold` (default 95) through
+    // the settings overlay. Until that lands, hard-code the default
+    // so the matcher buckets are stable.
+    95.0
+}
+
+/// Synchronous variant used by tests that want to drive the
+/// orchestrator without an apalis worker booted. Production callers
+/// always go through the queue + worker.
+#[cfg(test)]
+pub async fn run_series_inline(
+    state: &AppState,
+    run_id: Uuid,
+    series_id: Uuid,
+    facts: SeriesQueryFacts,
+) {
+    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
+    let _ = orchestrator::run_series_search(
+        &state.db,
+        run_id,
+        &providers,
+        &facts,
+        high_threshold(state),
+    )
+    .await;
+    release_series_slot(state, series_id).await;
+}
+
+#[cfg(test)]
+pub async fn run_issue_inline(
+    state: &AppState,
+    run_id: Uuid,
+    issue_id: String,
+    facts: IssueQueryFacts,
+    series_external_ids: Vec<(Source, String)>,
+) {
+    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
+    let _ = orchestrator::run_issue_search(
+        &state.db,
+        run_id,
+        &providers,
+        &facts,
+        &series_external_ids,
+        high_threshold(state),
+    )
+    .await;
+    release_issue_slot(state, &issue_id).await;
+}
+
+/// Build a `StoredQuery` for the run row from the series facts —
+/// kept here so the API handler doesn't need to know the `StoredQuery`
+/// variant layout.
+pub fn series_stored_query(facts: &SeriesQueryFacts) -> StoredQuery {
+    StoredQuery::Series(facts.clone())
+}
+
+pub fn issue_stored_query(facts: &IssueQueryFacts) -> StoredQuery {
+    StoredQuery::Issue(facts.clone())
+}

@@ -26,6 +26,7 @@ use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;
 
 pub mod close_dangling_sessions;
+pub mod metadata_search;
 pub mod orphan_sweep;
 pub mod post_scan;
 pub mod prune_auth_sessions;
@@ -44,6 +45,8 @@ pub struct JobRuntime {
     pub post_scan_thumbs_storage: RedisStorage<post_scan::ThumbsJob>,
     pub post_scan_search_storage: RedisStorage<post_scan::SearchJob>,
     pub post_scan_dictionary_storage: RedisStorage<post_scan::DictionaryJob>,
+    pub metadata_search_series_storage: RedisStorage<metadata_search::SearchSeriesJob>,
+    pub metadata_search_issue_storage: RedisStorage<metadata_search::SearchIssueJob>,
     pub redis: ConnectionManager,
 }
 
@@ -58,6 +61,10 @@ impl JobRuntime {
         let post_scan_search_storage = RedisStorage::<post_scan::SearchJob>::new(conn.clone());
         let post_scan_dictionary_storage =
             RedisStorage::<post_scan::DictionaryJob>::new(conn.clone());
+        let metadata_search_series_storage =
+            RedisStorage::<metadata_search::SearchSeriesJob>::new(conn.clone());
+        let metadata_search_issue_storage =
+            RedisStorage::<metadata_search::SearchIssueJob>::new(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -65,6 +72,8 @@ impl JobRuntime {
             post_scan_thumbs_storage,
             post_scan_search_storage,
             post_scan_dictionary_storage,
+            metadata_search_series_storage,
+            metadata_search_issue_storage,
             redis: conn,
         })
     }
@@ -249,6 +258,22 @@ impl JobRuntime {
             .backend(self.post_scan_dictionary_storage.clone())
             .build_fn(post_scan::handle_dictionary);
 
+        // Metadata search workers: concurrency=1 — the per-provider
+        // velocity caps + Redis token buckets already throttle the
+        // outbound calls; spinning up multiple workers only contends
+        // for the same budget.
+        let metadata_series_worker = WorkerBuilder::new("metadata_search_series")
+            .concurrency(1)
+            .data(state.clone())
+            .backend(self.metadata_search_series_storage.clone())
+            .build_fn(metadata_search::handle_series);
+
+        let metadata_issue_worker = WorkerBuilder::new("metadata_search_issue")
+            .concurrency(1)
+            .data(state.clone())
+            .backend(self.metadata_search_issue_storage.clone())
+            .build_fn(metadata_search::handle_issue);
+
         let shutdown_fut = {
             let token = shutdown.clone();
             async move {
@@ -262,6 +287,8 @@ impl JobRuntime {
             .register(thumbs_worker)
             .register(search_worker)
             .register(dictionary_worker)
+            .register(metadata_series_worker)
+            .register(metadata_issue_worker)
             .run_with_signal(shutdown_fut)
             .await
     }

@@ -44,6 +44,7 @@ pub mod log_widget;
 pub mod marker;
 pub mod metadata_cache;
 pub mod metadata_run;
+pub mod metadata_run_candidate;
 pub mod object;
 pub mod person;
 pub mod progress_record;
@@ -109,6 +110,7 @@ pub mod prelude {
     pub use super::marker::Entity as Marker;
     pub use super::metadata_cache::Entity as MetadataCache;
     pub use super::metadata_run::Entity as MetadataRun;
+    pub use super::metadata_run_candidate::Entity as MetadataRunCandidate;
     pub use super::object::Entity as Object;
     pub use super::person::Entity as Person;
     pub use super::progress_record::Entity as ProgressRecord;
