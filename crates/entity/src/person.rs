@@ -24,6 +24,14 @@ pub struct Model {
     /// `lower(person) = normalized_name`.
     #[sea_orm(unique)]
     pub normalized_name: String,
+    /// Alternate names / spellings. JSON array of strings. Added in
+    /// m20261228 when person joined the top-level-entity shape used
+    /// by character / team / publisher / etc.
+    pub aliases: Json,
+    #[sea_orm(nullable)]
+    pub description: Option<String>,
+    #[sea_orm(nullable)]
+    pub image_url: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

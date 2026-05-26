@@ -31,7 +31,7 @@
 //!    set for `person_id`. The string column stays as the denormalized
 //!    cache the existing rollup pipeline reads.
 //! 4. `issue.story_arc` CSVs are split into the new `story_arc` entity
-//!    + the new `issue_arcs` junction. The `issue.story_arc` /
+//!    plus the new `issue_arcs` junction. The `issue.story_arc` and
 //!    `issue.story_arc_number` columns stay as denormalized cache.
 //! 5. `publisher` / `imprint` entities are seeded from
 //!    `series.{publisher,imprint}` strings; `series.publisher_id` is
@@ -489,6 +489,19 @@ impl MigrationTrait for Migration {
              ADD COLUMN IF NOT EXISTS staff_rating DOUBLE PRECISION, \
              ADD COLUMN IF NOT EXISTS aliases JSONB NOT NULL DEFAULT '[]'::jsonb, \
              ADD COLUMN IF NOT EXISTS last_metadata_sync_at TIMESTAMPTZ",
+        )
+        .await?;
+
+        // Bring the pre-existing `person` table up to the shared
+        // top-level-entity shape (matches character / team / etc.).
+        // m20261223 created it with the minimal id/slug/name/
+        // normalized_name shape; M0's writer helpers expect the
+        // richer set.
+        db.execute_unprepared(
+            "ALTER TABLE person \
+             ADD COLUMN IF NOT EXISTS aliases JSONB NOT NULL DEFAULT '[]'::jsonb, \
+             ADD COLUMN IF NOT EXISTS description TEXT, \
+             ADD COLUMN IF NOT EXISTS image_url TEXT",
         )
         .await?;
 

@@ -12,6 +12,7 @@ pub mod cbl;
 pub mod email;
 pub mod jobs;
 pub mod library;
+pub mod metadata;
 pub mod middleware;
 pub mod ocr;
 pub mod pages;

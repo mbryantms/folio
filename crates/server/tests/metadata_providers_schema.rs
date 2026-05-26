@@ -98,7 +98,9 @@ async fn migration_creates_new_tables_with_expected_constraints() {
         entity_id: Set(Uuid::now_v7().to_string()),
         source: Set("comicvine".into()),
         external_id: Set("17993".into()),
-        external_url: Set(Some("https://comicvine.gamespot.com/invincible/4050-17993/".into())),
+        external_url: Set(Some(
+            "https://comicvine.gamespot.com/invincible/4050-17993/".into(),
+        )),
         set_by: Set("user".into()),
         first_set_at: Set(now),
         last_synced_at: Set(now),
@@ -169,6 +171,13 @@ async fn migration_creates_new_tables_with_expected_constraints() {
     .insert(&db)
     .await
     .unwrap();
-    let run = MetadataRun::find_by_id(run_id).one(&db).await.unwrap().unwrap();
-    assert_eq!(run.providers, vec!["metron".to_string(), "comicvine".to_string()]);
+    let run = MetadataRun::find_by_id(run_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        run.providers,
+        vec!["metron".to_string(), "comicvine".to_string()]
+    );
 }
