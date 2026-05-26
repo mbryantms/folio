@@ -105,12 +105,38 @@ pub struct Model {
     pub review: Option<String>,
     #[sea_orm(nullable)]
     pub web_url: Option<String>,
+    /// Short summary (1-2 sentences). Populated by M4 Apply jobs from
+    /// ComicVine's `deck` field; distinct from `summary` (the long
+    /// description). Free for the bulk-edit dialog + Apply jobs to
+    /// set; not populated by the scanner today.
     #[sea_orm(nullable)]
-    pub comicvine_id: Option<i64>,
+    pub deck: Option<String>,
+    /// Date the issue was first available in stores (Metron `store_date`,
+    /// CV `store_date`). Distinct from the `year`/`month`/`day` trio
+    /// which captures the cover date.
     #[sea_orm(nullable)]
-    pub metron_id: Option<i64>,
+    pub store_date: Option<Date>,
+    /// Metron-specific final order cutoff date — when retailers had
+    /// to finalize their orders. Useful future pullist features.
     #[sea_orm(nullable)]
-    pub gtin: Option<String>,
+    pub foc_date: Option<Date>,
+    /// Catalog price as a display number (no FX, single-currency
+    /// assumption). DOUBLE PRECISION rather than NUMERIC because this
+    /// is display data, not financial math (matches `community_rating`).
+    #[sea_orm(nullable)]
+    pub price: Option<f64>,
+    #[sea_orm(nullable)]
+    pub sku: Option<String>,
+    /// ComicVine staff review score (1-5 or NULL).
+    #[sea_orm(nullable)]
+    pub staff_rating: Option<f64>,
+    /// Alternate titles / aliases the providers expose. JSON array of
+    /// strings.
+    pub aliases: Json,
+    /// Last time an M4 Apply job (or a manual fetch from M5) touched
+    /// this issue from any provider. NULL = never synced.
+    #[sea_orm(nullable)]
+    pub last_metadata_sync_at: Option<DateTimeWithTimeZone>,
 
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,

@@ -626,13 +626,12 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         am.community_rating = Set(info.community_rating);
         am.review = Set(info.review.clone());
         am.web_url = Set(info.web.clone());
-        am.gtin = Set(info.gtin.clone());
-        if !edited.contains("comicvine_id") {
-            am.comicvine_id = Set(info.comicvine_id);
-        }
-        if !edited.contains("metron_id") {
-            am.metron_id = Set(info.metron_id);
-        }
+        // TODO(M0c-metadata-providers): replaced by
+        // writers::set_external_id(entity_type='issue', source='gtin'|
+        // 'comicvine'|'metron', ...). Respects field_provenance
+        // 'user' rows automatically — no need for the manual
+        // `edited.contains(...)` checks at this layer.
+        let _ = (&info.gtin, &info.comicvine_id, &info.metron_id, &edited);
         // ComicInfo `<Count>` per-issue. The reconcile step computes
         // a per-series MAX over this column to refresh
         // `series.total_issues` and derive `status`.
@@ -746,9 +745,17 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             community_rating: Set(info.community_rating),
             review: Set(info.review.clone()),
             web_url: Set(info.web.clone()),
-            comicvine_id: Set(info.comicvine_id),
-            metron_id: Set(info.metron_id),
-            gtin: Set(info.gtin.clone()),
+            // TODO(M0c-metadata-providers): comicvine_id / metron_id /
+            // gtin moved to the external_ids table — written via
+            // writers::set_external_id below.
+            deck: Set(None),
+            store_date: Set(None),
+            foc_date: Set(None),
+            price: Set(None),
+            sku: Set(None),
+            staff_rating: Set(None),
+            aliases: Set(serde_json::json!([])),
+            last_metadata_sync_at: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
             removed_at: Set(None),

@@ -329,12 +329,12 @@ pub async fn update_series(
         // rationale.
         am.status_user_set_at = Set(Some(Utc::now().fixed_offset()));
     }
-    if let Some(v) = req.comicvine_id {
-        am.comicvine_id = Set(v);
-    }
-    if let Some(v) = req.metron_id {
-        am.metron_id = Set(v);
-    }
+    // TODO(M0c-metadata-providers): comicvine_id / metron_id PATCH
+    // now writes through writers::set_external_id (and the
+    // <ExternalIdsCard> in M5 is the canonical user surface for
+    // editing per-source IDs). Drop the request fields once the new
+    // path is wired.
+    let _ = (&req.comicvine_id, &req.metron_id);
     let normalized_summary = req.summary.as_ref().map(|v| {
         v.as_ref().and_then(|s| {
             let t = s.trim().to_owned();
@@ -540,8 +540,12 @@ impl From<series::Model> for SeriesView {
             age_rating: m.age_rating,
             summary: m.summary,
             language_code: m.language_code,
-            comicvine_id: m.comicvine_id,
-            metron_id: m.metron_id,
+            // TODO(M0c-metadata-providers): JOIN external_ids and
+            // surface all per-source IDs, not just CV/Metron. Stub
+            // None preserves response shape until M5 ships the
+            // <ExternalIdsCard> endpoint that replaces these fields.
+            comicvine_id: None,
+            metron_id: None,
             issue_count: None,
             cover_url: None,
             created_at: m.created_at.to_rfc3339(),
@@ -783,9 +787,12 @@ impl IssueDetailView {
             story_arc: m.story_arc,
             story_arc_number: m.story_arc_number,
             web_url: m.web_url,
-            gtin: m.gtin,
-            comicvine_id: m.comicvine_id,
-            metron_id: m.metron_id,
+            // TODO(M0c-metadata-providers): replaced by
+            // <ExternalIdsCard> on the issue page (M5). Stub None
+            // preserves response shape during the migration window.
+            gtin: None,
+            comicvine_id: None,
+            metron_id: None,
             series_reading_direction: None,
             library_default_reading_direction: None,
             user_rating: None,

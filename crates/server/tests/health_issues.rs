@@ -825,14 +825,10 @@ async fn admin_cross_library_health_cursor_paginates() {
     assert!(!p2_items.is_empty(), "page 2 should have remaining rows");
 
     // No overlap between pages (cursor pagination is strict).
-    let ids_1: std::collections::HashSet<&str> = p1_items
-        .iter()
-        .map(|v| v["id"].as_str().unwrap())
-        .collect();
-    let ids_2: std::collections::HashSet<&str> = p2_items
-        .iter()
-        .map(|v| v["id"].as_str().unwrap())
-        .collect();
+    let ids_1: std::collections::HashSet<&str> =
+        p1_items.iter().map(|v| v["id"].as_str().unwrap()).collect();
+    let ids_2: std::collections::HashSet<&str> =
+        p2_items.iter().map(|v| v["id"].as_str().unwrap()).collect();
     assert!(
         ids_1.is_disjoint(&ids_2),
         "page 1 and page 2 must not share ids",

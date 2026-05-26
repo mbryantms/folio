@@ -148,26 +148,19 @@ pub async fn resolve_or_create(
     if let Some(row) = q.one(db).await?
         && !existing_folder_blocks_merge(&row, &folder_str)
     {
-        // Backfill folder_path so future scans take the fast path; also
-        // pick up any external IDs the previous scan didn't have.
+        // Backfill folder_path so future scans take the fast path.
+        // TODO(M0c-metadata-providers): also pick up external IDs the
+        // previous scan didn't have via writers::set_external_id —
+        // this used to inline the comicvine_id/metron_id backfill.
         let id = row.id;
         let needs_folder_backfill = row.folder_path.as_deref() != Some(folder_str.as_str());
-        let needs_id_backfill = (hint.comicvine_id.is_some() && row.comicvine_id.is_none())
-            || (hint.metron_id.is_some() && row.metron_id.is_none());
-        if needs_folder_backfill || needs_id_backfill {
+        if needs_folder_backfill {
             let mut am: SeriesAM = row.into();
-            if needs_folder_backfill {
-                am.folder_path = Set(Some(folder_str));
-            }
-            if hint.comicvine_id.is_some() {
-                am.comicvine_id = Set(hint.comicvine_id);
-            }
-            if hint.metron_id.is_some() {
-                am.metron_id = Set(hint.metron_id);
-            }
+            am.folder_path = Set(Some(folder_str));
             am.updated_at = Set(Utc::now().fixed_offset());
             am.update(db).await?;
         }
+        let _ = (&hint.comicvine_id, &hint.metron_id);
         return Ok(SeriesMatch::ByNormalizedNameYear { id });
     }
 
@@ -209,11 +202,22 @@ pub async fn resolve_or_create(
                 .language
                 .clone()
                 .unwrap_or_else(|| default_language.to_string())),
-            comicvine_id: Set(hint.comicvine_id),
-            metron_id: Set(hint.metron_id),
-            gtin: Set(None),
+            // TODO(M0c-metadata-providers): comicvine_id / metron_id /
+            // gtin moved to external_ids — written via
+            // writers::set_external_id after the insert.
             series_group: Set(hint.series_group.clone()),
             alternate_names: Set(serde_json::json!([])),
+            // New M0 columns; all NULL/false at scanner-insert time.
+            // M4 Apply jobs populate from provider responses.
+            sort_name: Set(None),
+            year_end: Set(None),
+            series_type: Set(None),
+            aliases: Set(serde_json::json!([])),
+            deck: Set(None),
+            publisher_id: Set(None),
+            imprint_id: Set(None),
+            last_metadata_sync_at: Set(None),
+            metadata_sync_paused: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
             folder_path: Set(Some(folder_str.clone())),
@@ -287,23 +291,15 @@ fn existing_folder_blocks_merge(row: &series::Model, incoming_folder: &str) -> b
 /// scanned hint provides values that the row currently lacks. Never
 /// overwrites set values — admin edits and prior scans win.
 async fn backfill_external_ids(
-    db: &sea_orm::DatabaseConnection,
-    row: series::Model,
-    hint: &SeriesIdentityHint,
+    _db: &sea_orm::DatabaseConnection,
+    _row: series::Model,
+    _hint: &SeriesIdentityHint,
 ) -> anyhow::Result<()> {
-    let needs_cv = hint.comicvine_id.is_some() && row.comicvine_id.is_none();
-    let needs_mt = hint.metron_id.is_some() && row.metron_id.is_none();
-    if !needs_cv && !needs_mt {
-        return Ok(());
-    }
-    let mut am: SeriesAM = row.into();
-    if needs_cv {
-        am.comicvine_id = Set(hint.comicvine_id);
-    }
-    if needs_mt {
-        am.metron_id = Set(hint.metron_id);
-    }
-    am.updated_at = Set(Utc::now().fixed_offset());
-    am.update(db).await?;
+    // TODO(M0c-metadata-providers): rewrite to call
+    // writers::set_external_id(entity_type='series', source='comicvine'
+    // | 'metron', ...) when the hint has values the existing
+    // external_ids rows lack. The "never overwrite a set value"
+    // semantics now live in writers::set_external_id itself (skips
+    // when set_by='user', otherwise upserts).
     Ok(())
 }

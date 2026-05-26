@@ -8,6 +8,8 @@ pub struct Model {
     pub series_id: Uuid,
     #[sea_orm(primary_key, auto_increment = false)]
     pub team: String,
+    #[sea_orm(nullable)]
+    pub team_id: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -19,11 +21,24 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Series,
+    #[sea_orm(
+        belongs_to = "super::team::Entity",
+        from = "Column::TeamId",
+        to = "super::team::Column::Id",
+        on_delete = "SetNull"
+    )]
+    Team,
 }
 
 impl Related<super::series::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Series.def()
+    }
+}
+
+impl Related<super::team::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Team.def()
     }
 }
 

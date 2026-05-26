@@ -204,9 +204,15 @@ async fn seed_series_with_genre(
             age_rating: Set(None),
             summary: Set(None),
             language_code: Set("en".into()),
-            comicvine_id: Set(None),
-            metron_id: Set(None),
-            gtin: Set(None),
+            sort_name: Set(None),
+            year_end: Set(None),
+            series_type: Set(None),
+            aliases: Set(serde_json::json!([])),
+            deck: Set(None),
+            publisher_id: Set(None),
+            imprint_id: Set(None),
+            last_metadata_sync_at: Set(None),
+            metadata_sync_paused: Set(false),
             series_group: Set(None),
             slug: Set(format!("{lib_name}-{name}")),
             alternate_names: Set(serde_json::json!([])),
@@ -276,9 +282,14 @@ async fn seed_series_with_genre(
             community_rating: Set(None),
             review: Set(None),
             web_url: Set(None),
-            comicvine_id: Set(None),
-            metron_id: Set(None),
-            gtin: Set(None),
+            deck: Set(None),
+            store_date: Set(None),
+            foc_date: Set(None),
+            price: Set(None),
+            sku: Set(None),
+            staff_rating: Set(None),
+            aliases: Set(serde_json::json!([])),
+            last_metadata_sync_at: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
             removed_at: Set(None),
@@ -547,9 +558,15 @@ async fn seed_series_with_issues(
         age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
-        comicvine_id: Set(None),
-        metron_id: Set(None),
-        gtin: Set(None),
+        sort_name: Set(None),
+        year_end: Set(None),
+        series_type: Set(None),
+        aliases: Set(serde_json::json!([])),
+        deck: Set(None),
+        publisher_id: Set(None),
+        imprint_id: Set(None),
+        last_metadata_sync_at: Set(None),
+        metadata_sync_paused: Set(false),
         series_group: Set(None),
         slug: Set(format!("{lib_name}-{series_name}")),
         alternate_names: Set(serde_json::json!([])),
@@ -1791,9 +1808,15 @@ async fn seed_series_with_field(
         age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
-        comicvine_id: Set(None),
-        metron_id: Set(None),
-        gtin: Set(None),
+        sort_name: Set(None),
+        year_end: Set(None),
+        series_type: Set(None),
+        aliases: Set(serde_json::json!([])),
+        deck: Set(None),
+        publisher_id: Set(None),
+        imprint_id: Set(None),
+        last_metadata_sync_at: Set(None),
+        metadata_sync_paused: Set(false),
         series_group: Set(None),
         slug: Set(format!("{lib_slug}-{series_name}")),
         alternate_names: Set(serde_json::json!([])),
@@ -1861,9 +1884,14 @@ async fn seed_series_with_field(
         community_rating: Set(None),
         review: Set(None),
         web_url: Set(None),
-        comicvine_id: Set(None),
-        metron_id: Set(None),
-        gtin: Set(None),
+        deck: Set(None),
+        store_date: Set(None),
+        foc_date: Set(None),
+        price: Set(None),
+        sku: Set(None),
+        staff_rating: Set(None),
+        aliases: Set(serde_json::json!([])),
+        last_metadata_sync_at: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
         removed_at: Set(None),
@@ -1888,6 +1916,9 @@ async fn seed_series_with_field(
                 IssueCharacterAM {
                     issue_id: Set(issue_id.clone()),
                     character: Set((*v).into()),
+                    character_id: Set(None),
+                    is_first_appearance: Set(false),
+                    died_in_issue: Set(false),
                 }
                 .insert(&db)
                 .await
@@ -1895,6 +1926,7 @@ async fn seed_series_with_field(
                 SeriesCharacterAM {
                     series_id: Set(series_id),
                     character: Set((*v).into()),
+                    character_id: Set(None),
                 }
                 .insert(&db)
                 .await
@@ -1904,6 +1936,9 @@ async fn seed_series_with_field(
                 IssueTeamAM {
                     issue_id: Set(issue_id.clone()),
                     team: Set((*v).into()),
+                    team_id: Set(None),
+                    is_first_appearance: Set(false),
+                    disbanded_in_issue: Set(false),
                 }
                 .insert(&db)
                 .await
@@ -1911,6 +1946,7 @@ async fn seed_series_with_field(
                 SeriesTeamAM {
                     series_id: Set(series_id),
                     team: Set((*v).into()),
+                    team_id: Set(None),
                 }
                 .insert(&db)
                 .await
@@ -1920,6 +1956,8 @@ async fn seed_series_with_field(
                 IssueLocationAM {
                     issue_id: Set(issue_id.clone()),
                     location: Set((*v).into()),
+                    location_id: Set(None),
+                    is_first_appearance: Set(false),
                 }
                 .insert(&db)
                 .await
@@ -1927,6 +1965,7 @@ async fn seed_series_with_field(
                 SeriesLocationAM {
                     series_id: Set(series_id),
                     location: Set((*v).into()),
+                    location_id: Set(None),
                 }
                 .insert(&db)
                 .await

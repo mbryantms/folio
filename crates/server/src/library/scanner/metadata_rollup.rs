@@ -255,6 +255,11 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                     // NULL here keeps this hot path off the slug
                     // allocator.
                     person_id: Set(None),
+                    // TODO(M0c-metadata-providers): wire ordinal from
+                    // provider response. Scanner has no per-credit
+                    // ordering signal today (ComicInfo lists writers
+                    // in a single CSV); default 0 is correct.
+                    ordinal: Set(0),
                 })
                 .collect();
             issue_credit::Entity::insert_many(rows)
@@ -294,6 +299,13 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                 .map(|c| issue_character::ActiveModel {
                     issue_id: Set(issue_id.to_string()),
                     character: Set(c),
+                    // TODO(M0c-metadata-providers): writers.rs
+                    // upsert_character + set the FK. Scanner has no
+                    // first-appearance / died-in-issue signal from
+                    // ComicInfo; defaults to false.
+                    character_id: Set(None),
+                    is_first_appearance: Set(false),
+                    died_in_issue: Set(false),
                 })
                 .collect();
             issue_character::Entity::insert_many(rows)
@@ -332,6 +344,11 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                 .map(|t| issue_team::ActiveModel {
                     issue_id: Set(issue_id.to_string()),
                     team: Set(t),
+                    // TODO(M0c-metadata-providers): writers.rs
+                    // upsert_team + set FK + flags.
+                    team_id: Set(None),
+                    is_first_appearance: Set(false),
+                    disbanded_in_issue: Set(false),
                 })
                 .collect();
             issue_team::Entity::insert_many(rows)
@@ -367,6 +384,10 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                 .map(|l| issue_location::ActiveModel {
                     issue_id: Set(issue_id.to_string()),
                     location: Set(l),
+                    // TODO(M0c-metadata-providers): writers.rs
+                    // upsert_location + set FK + flag.
+                    location_id: Set(None),
+                    is_first_appearance: Set(false),
                 })
                 .collect();
             issue_location::Entity::insert_many(rows)

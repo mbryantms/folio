@@ -18,6 +18,10 @@ pub struct Model {
     /// not-yet-populated `person` row; the rollup fills it in shortly
     /// after.
     pub person_id: Option<Uuid>,
+    /// Display order within the role group — providers expose stable
+    /// ordering ("co-writers" are 0, 1, …). Defaults to 0; the M4
+    /// Apply jobs populate from provider response.
+    pub ordinal: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

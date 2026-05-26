@@ -39,14 +39,44 @@ pub struct Model {
     pub summary: Option<String>,
     pub language_code: String,
     #[sea_orm(nullable)]
-    pub comicvine_id: Option<i64>,
-    #[sea_orm(nullable)]
-    pub metron_id: Option<i64>,
-    #[sea_orm(nullable)]
-    pub gtin: Option<String>,
-    #[sea_orm(nullable)]
     pub series_group: Option<String>,
     pub alternate_names: Json,
+    /// Sort name (drops leading articles, "The X-Men" → "X-Men, The").
+    /// Metron exposes this natively; CV doesn't, so we'd derive at
+    /// fetch time.
+    #[sea_orm(nullable)]
+    pub sort_name: Option<String>,
+    /// Year the series ended. NULL for ongoing. Distinct from
+    /// `status`: a series can be `ongoing` with `year_end IS NULL`,
+    /// or `cancelled`/`completed` with `year_end IS NOT NULL`.
+    #[sea_orm(nullable)]
+    pub year_end: Option<i32>,
+    /// `'ongoing' | 'limited' | 'one-shot' | 'annual' | 'hardcover'
+    /// | 'tpb' | 'digital_chapter' | 'single_issue'`. Metron exposes
+    /// natively; CV doesn't.
+    #[sea_orm(nullable)]
+    pub series_type: Option<String>,
+    /// Alternate titles. JSON array of strings.
+    pub aliases: Json,
+    /// Short summary (1-2 sentences). Distinct from `summary` (long).
+    #[sea_orm(nullable)]
+    pub deck: Option<String>,
+    /// FK to the canonical `publisher` entity. NULL until a fetch or
+    /// scanner populates it. The legacy `publisher` TEXT column
+    /// stays as the denormalized read-cache (matches the
+    /// CSV-on-issues pattern).
+    #[sea_orm(nullable)]
+    pub publisher_id: Option<Uuid>,
+    /// FK to the canonical `imprint` entity. NULL until populated.
+    #[sea_orm(nullable)]
+    pub imprint_id: Option<Uuid>,
+    /// Last time an M4 Apply job touched this series from any
+    /// provider. NULL = never synced.
+    #[sea_orm(nullable)]
+    pub last_metadata_sync_at: Option<DateTimeWithTimeZone>,
+    /// When true, the weekly refresh cron + bulk-refresh fan-out
+    /// skip this series. User-facing toggle on the series page.
+    pub metadata_sync_paused: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     /// Disk path of the series folder. Used as the fast-path identity match

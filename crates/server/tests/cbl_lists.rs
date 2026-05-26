@@ -212,9 +212,15 @@ async fn seed_matchable_issues(app: &TestApp) -> Uuid {
         age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
-        comicvine_id: Set(Some(17993)),
-        metron_id: Set(None),
-        gtin: Set(None),
+        sort_name: Set(None),
+        year_end: Set(None),
+        series_type: Set(None),
+        aliases: Set(serde_json::json!([])),
+        deck: Set(None),
+        publisher_id: Set(None),
+        imprint_id: Set(None),
+        last_metadata_sync_at: Set(None),
+        metadata_sync_paused: Set(false),
         series_group: Set(None),
         slug: Set("invincible-2003".into()),
         alternate_names: Set(serde_json::json!([])),
@@ -235,8 +241,12 @@ async fn seed_matchable_issues(app: &TestApp) -> Uuid {
 
     // Insert three Invincible issues with CV IDs from the sample.
     // `Invincible #1` = CV 105347, `#2` = 105532, `#3` = 105533.
+    // TODO(M0c-metadata-providers): `_cv` was previously written into
+    // issues.comicvine_id at seed time; under the new schema it flows
+    // through writers::set_external_id (entity_type='issue',
+    // source='comicvine').
     let cv_ids = [(1, 105347i64), (2, 105532), (3, 105533)];
-    for (num, cv) in cv_ids {
+    for (num, _cv) in cv_ids {
         let issue_id = format!("{:0>62}{:02x}", series_id.simple(), num as u8);
         IssueAM {
             id: Set(issue_id.clone()),
@@ -287,9 +297,14 @@ async fn seed_matchable_issues(app: &TestApp) -> Uuid {
             community_rating: Set(None),
             review: Set(None),
             web_url: Set(None),
-            comicvine_id: Set(Some(cv)),
-            metron_id: Set(None),
-            gtin: Set(None),
+            deck: Set(None),
+            store_date: Set(None),
+            foc_date: Set(None),
+            price: Set(None),
+            sku: Set(None),
+            staff_rating: Set(None),
+            aliases: Set(serde_json::json!([])),
+            last_metadata_sync_at: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
             removed_at: Set(None),
@@ -354,8 +369,19 @@ async fn manual_match_overrides_survive_refresh() {
         .unwrap()
         .expect("Tech Jacket #1 entry");
 
+    // TODO(M0c-metadata-providers): rewrite to JOIN external_ids
+    // (source='comicvine', external_id='105347', entity_type='issue').
+    // For now match by series-name + issue-number — `seed_matchable_issues`
+    // creates exactly one "Invincible" series.
+    let invincible_series = entity::series::Entity::find()
+        .filter(entity::series::Column::NormalizedName.eq("invincible"))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("seeded Invincible series");
     let target_issue = entity::issue::Entity::find()
-        .filter(entity::issue::Column::ComicvineId.eq(105347_i64))
+        .filter(entity::issue::Column::NumberRaw.eq("1"))
+        .filter(entity::issue::Column::SeriesId.eq(invincible_series.id))
         .one(&db)
         .await
         .unwrap()
@@ -432,8 +458,19 @@ async fn manual_match_increments_collection_count() {
         .await
         .unwrap()
         .expect("Tech Jacket #1 entry");
+    // TODO(M0c-metadata-providers): rewrite to JOIN external_ids
+    // (source='comicvine', external_id='105347', entity_type='issue').
+    // For now match by series-name + issue-number — `seed_matchable_issues`
+    // creates exactly one "Invincible" series.
+    let invincible_series = entity::series::Entity::find()
+        .filter(entity::series::Column::NormalizedName.eq("invincible"))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("seeded Invincible series");
     let target_issue = entity::issue::Entity::find()
-        .filter(entity::issue::Column::ComicvineId.eq(105347_i64))
+        .filter(entity::issue::Column::NumberRaw.eq("1"))
+        .filter(entity::issue::Column::SeriesId.eq(invincible_series.id))
         .one(&db)
         .await
         .unwrap()
@@ -464,8 +501,7 @@ async fn manual_match_increments_collection_count() {
     // And consistency: manual is a SUBSET of matched (documented in
     // the CblStatsView doc), so matched >= manual must hold.
     assert!(
-        stats_after["matched"].as_i64().unwrap()
-            >= stats_after["manual"].as_i64().unwrap(),
+        stats_after["matched"].as_i64().unwrap() >= stats_after["manual"].as_i64().unwrap(),
         "manual entries must be included in `matched`",
     );
 

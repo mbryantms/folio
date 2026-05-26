@@ -16,8 +16,8 @@
 //! they're written by the API endpoint and explicitly preserved by the
 //! refresh writer.
 
-use entity::{issue, series};
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Statement};
+use entity::series;
+use sea_orm::{ConnectionTrait, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -143,40 +143,14 @@ async fn build_id_lookup<C: ConnectionTrait>(
         return Ok(IdLookup::default());
     }
 
-    let mut cond = sea_orm::Condition::any();
-    if !cv_ids.is_empty() {
-        let cvs: Vec<i64> = cv_ids.iter().map(|&i| i as i64).collect();
-        cond = cond.add(issue::Column::ComicvineId.is_in(cvs));
-    }
-    if !metron_ids.is_empty() {
-        let ms: Vec<i64> = metron_ids.iter().map(|&i| i as i64).collect();
-        cond = cond.add(issue::Column::MetronId.is_in(ms));
-    }
-
-    let rows = issue::Entity::find()
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
-        .filter(cond)
-        .all(db)
-        .await?;
-
-    let mut lookup = IdLookup::default();
-    for row in rows {
-        if let Some(cv) = row.comicvine_id
-            && cv >= 0
-            && cv <= i32::MAX as i64
-        {
-            // Last-write-wins on the rare collision; CBL canon is a
-            // 1:1 ID→issue mapping so duplicate hits are a data bug.
-            lookup.cv.insert(cv as i32, row.id.clone());
-        }
-        if let Some(m) = row.metron_id
-            && m >= 0
-            && m <= i32::MAX as i64
-        {
-            lookup.metron.insert(m as i32, row.id.clone());
-        }
-    }
+    // TODO(M0c-metadata-providers): rewrite as a JOIN to
+    // external_ids (source IN ('comicvine','metron'), entity_type =
+    // 'issue', external_id IN ...). Returning an empty lookup here
+    // means CBL ID-based fast-path matches degrade to name-based
+    // matching during the M0a→M0c window — acceptable for the brief
+    // window since name-based matching still works.
+    let _ = (cv_ids, metron_ids, db);
+    let lookup = IdLookup::default();
     Ok(lookup)
 }
 

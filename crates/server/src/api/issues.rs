@@ -468,7 +468,10 @@ pub async fn update(
     apply_str!(format, format, "format");
     apply_str!(manga, manga, "manga");
     apply_str!(web_url, web_url, "web_url");
-    apply_str!(gtin, gtin, "gtin");
+    // TODO(M0c-metadata-providers): gtin writes through
+    // writers::set_external_id(entity_type='issue', source='gtin', …).
+    // M5's <ExternalIdsCard> is the canonical user surface.
+    let _ = &req.gtin;
 
     // ── nullable scalar columns ──
     if let Some(v) = req.volume {
@@ -507,18 +510,10 @@ pub async fn update(
         changes.insert("sort_number".into(), serde_json::json!(v));
         touched = true;
     }
-    if let Some(v) = req.comicvine_id {
-        am.comicvine_id = Set(v);
-        edited.insert("comicvine_id".into());
-        changes.insert("comicvine_id".into(), serde_json::json!(v));
-        touched = true;
-    }
-    if let Some(v) = req.metron_id {
-        am.metron_id = Set(v);
-        edited.insert("metron_id".into());
-        changes.insert("metron_id".into(), serde_json::json!(v));
-        touched = true;
-    }
+    // TODO(M0c-metadata-providers): comicvine_id / metron_id PATCH
+    // routes through writers::set_external_id; M5's <ExternalIdsCard>
+    // is the canonical user surface for editing per-source IDs.
+    let _ = (&req.comicvine_id, &req.metron_id);
 
     if let Some(links) = req.additional_links {
         let normalized: Vec<IssueLink> = links

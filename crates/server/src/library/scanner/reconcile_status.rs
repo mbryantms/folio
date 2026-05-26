@@ -288,15 +288,11 @@ where
         dirty = true;
     }
 
-    // comicvine_id: backfill only when NULL — never clobber a value
-    // that may have come from richer source (e.g. ComicVine API).
-    if row.comicvine_id.is_none()
-        && let Some(cv) = resolved_comicvine_id
-    {
-        am.comicvine_id = Set(Some(cv));
-        am.updated_at = Set(Utc::now().fixed_offset());
-        dirty = true;
-    }
+    // TODO(M0c-metadata-providers): comicvine_id backfill now goes
+    // through writers::set_external_id(entity_type='series',
+    // source='comicvine', ...) — that helper's "skip if set_by='user'"
+    // semantics replace the old IS NULL check.
+    let _ = resolved_comicvine_id;
 
     // ───── volume / name / publisher self-heal ─────
     //

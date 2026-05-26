@@ -260,13 +260,7 @@ async fn admin_cross_library_scan_runs_aggregates_with_library_enrichment() {
 
     // Default: both libraries' runs surface in one response with
     // library_name + library_slug carried per row.
-    let (status, body) = http(
-        &app,
-        Method::GET,
-        "/api/admin/scan-runs",
-        &auth,
-    )
-    .await;
+    let (status, body) = http(&app, Method::GET, "/api/admin/scan-runs", &auth).await;
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().expect("items");
     let scan_ids: std::collections::HashSet<&str> =
@@ -305,13 +299,7 @@ async fn admin_cross_library_scan_runs_aggregates_with_library_enrichment() {
     assert!(items.iter().all(|v| v["library_id"] == lib_a.to_string()));
 
     // Invalid state filter → 422.
-    let (status, _) = http(
-        &app,
-        Method::GET,
-        "/api/admin/scan-runs?state=bogus",
-        &auth,
-    )
-    .await;
+    let (status, _) = http(&app, Method::GET, "/api/admin/scan-runs?state=bogus", &auth).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
@@ -361,12 +349,7 @@ async fn admin_latest_per_library_returns_one_row_per_library() {
 
     let by_lib: std::collections::HashMap<&str, &str> = items
         .iter()
-        .map(|v| {
-            (
-                v["library_id"].as_str().unwrap(),
-                v["id"].as_str().unwrap(),
-            )
-        })
+        .map(|v| (v["library_id"].as_str().unwrap(), v["id"].as_str().unwrap()))
         .collect();
     assert_eq!(
         by_lib.get(lib_a.to_string().as_str()),
