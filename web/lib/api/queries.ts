@@ -358,6 +358,18 @@ export const queryKeys = {
     ["series", slug, "issues", issueSlug, "external-ids"] as const,
   /** Cover gallery for an issue (M5.2). */
   issueCovers: (issueId: string) => ["issues", issueId, "covers"] as const,
+  // ── M6 admin surface ──
+  adminMetadataDashboard: ["admin", "metadata", "dashboard"] as const,
+  adminMetadataProviders: ["admin", "metadata", "providers"] as const,
+  adminMetadataRuns: (filters: {
+    library_id?: string;
+    scope?: string;
+    status?: string;
+    before?: string;
+  }) => ["admin", "metadata", "runs", filters] as const,
+  adminMetadataRun: (id: string) => ["admin", "metadata", "runs", id] as const,
+  adminMetadataReviewQueue: (filters: { bucket?: string }) =>
+    ["admin", "metadata", "review-queue", filters] as const,
   /** Runtime-editable settings (M1 of runtime-config-admin). Registry
    *  + resolved values; mutated via PATCH /admin/settings. */
   adminSettings: ["admin", "settings"] as const,
@@ -1946,5 +1958,78 @@ export function useIssueCovers(issueId: string) {
       ),
     enabled: !!issueId,
     staleTime: 60_000,
+  });
+}
+
+// ───────── M6 admin surface ─────────
+
+import type {
+  DashboardResp,
+  ProvidersListResp,
+  ReviewQueueResp,
+  RunDetailResp,
+  RunsListResp,
+} from "./types";
+
+export function useAdminMetadataDashboard() {
+  return useQuery({
+    queryKey: queryKeys.adminMetadataDashboard,
+    queryFn: () => jsonFetch<DashboardResp>(`/admin/metadata/dashboard`),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useAdminMetadataProviders() {
+  return useQuery({
+    queryKey: queryKeys.adminMetadataProviders,
+    queryFn: () => jsonFetch<ProvidersListResp>(`/admin/metadata/providers`),
+    staleTime: 30_000,
+  });
+}
+
+export function useAdminMetadataRuns(filters: {
+  library_id?: string;
+  scope?: string;
+  status?: string;
+  before?: string;
+}) {
+  return useQuery({
+    queryKey: queryKeys.adminMetadataRuns(filters),
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (filters.library_id) params.set("library_id", filters.library_id);
+      if (filters.scope) params.set("scope", filters.scope);
+      if (filters.status) params.set("status", filters.status);
+      if (filters.before) params.set("before", filters.before);
+      const qs = params.toString();
+      return jsonFetch<RunsListResp>(
+        `/admin/metadata/runs${qs ? `?${qs}` : ""}`,
+      );
+    },
+    staleTime: 15_000,
+  });
+}
+
+export function useAdminMetadataRun(id: string) {
+  return useQuery({
+    queryKey: queryKeys.adminMetadataRun(id),
+    queryFn: () =>
+      jsonFetch<RunDetailResp>(`/admin/metadata/runs/${encodeURIComponent(id)}`),
+    enabled: !!id,
+    staleTime: 15_000,
+  });
+}
+
+export function useAdminMetadataReviewQueue(filters: { bucket?: string }) {
+  return useQuery({
+    queryKey: queryKeys.adminMetadataReviewQueue(filters),
+    queryFn: () => {
+      const qs = filters.bucket
+        ? `?bucket=${encodeURIComponent(filters.bucket)}`
+        : "";
+      return jsonFetch<ReviewQueueResp>(`/admin/metadata/review-queue${qs}`);
+    },
+    staleTime: 15_000,
   });
 }

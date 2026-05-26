@@ -105,3 +105,10 @@ check_releases   # GET /admin/server/releases — upstream-release poll
 # ── admin_metadata.rs ───────────────────────────────────────
 list_providers   # GET /admin/metadata/providers — read-only provider status + quota gauge
 
+
+# ── admin_metadata.rs (M6) ───────────────────────────────────
+dashboard           # GET /admin/metadata/dashboard — read-only counts + quota
+list_runs           # GET /admin/metadata/runs — paginated run history
+get_run             # GET /admin/metadata/runs/{id} — single run detail
+list_review_queue   # GET /admin/metadata/review-queue — pending medium/low matches
+

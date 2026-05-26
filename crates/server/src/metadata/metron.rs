@@ -81,6 +81,11 @@ impl MetronClient {
         base_url: String,
         redis: ConnectionManager,
     ) -> Self {
+        // Defense-in-depth trim — same paste-leak fix as the CV
+        // client. Whitespace inside HTTP Basic credentials is base64-
+        // encoded straight through and Metron rejects with 401.
+        let username = username.trim();
+        let password = password.trim();
         let creds = B64.encode(format!("{username}:{password}"));
         let auth_header = format!("Basic {creds}");
         let http = reqwest::Client::builder()

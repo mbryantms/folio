@@ -1781,6 +1781,9 @@ export function useUpdateSettings() {
         qc.invalidateQueries({ queryKey: queryKeys.adminSettings });
         qc.invalidateQueries({ queryKey: queryKeys.adminAuthConfig });
         qc.invalidateQueries({ queryKey: queryKeys.adminEmailStatus });
+        // metadata-providers M6: edits to `metadata.*` keys reshape
+        // both the dashboard + providers lists immediately.
+        qc.invalidateQueries({ queryKey: ["admin", "metadata"] });
       },
     },
   );
@@ -2389,6 +2392,51 @@ export function useDeleteExternalIdIssue(
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "issues", issueSlug, "external-ids"],
         });
+      },
+    },
+  );
+}
+
+// ───────── M6 admin mutations ─────────
+
+import type { TestProviderResp } from "../types";
+
+export function useTestMetadataProvider() {
+  const qc = useQueryClient();
+  return useApiMutation<TestProviderResp, { id: string }>(
+    (input) => ({
+      path: `/admin/metadata/providers/${encodeURIComponent(input.id)}/test`,
+      method: "POST",
+    }),
+    {
+      onSuccess: () => {
+        // The probe touches the Redis quota bucket — refresh the
+        // dashboard + providers tabs so the gauges reflect the new
+        // remaining count.
+        qc.invalidateQueries({ queryKey: ["admin", "metadata", "providers"] });
+        qc.invalidateQueries({ queryKey: ["admin", "metadata", "dashboard"] });
+      },
+    },
+  );
+}
+
+export function useDismissMetadataCandidate() {
+  const qc = useQueryClient();
+  return useApiMutation<
+    { dismissed: boolean },
+    { runId: string; ordinal: number }
+  >(
+    (input) => ({
+      path: `/admin/metadata/review-queue/${encodeURIComponent(input.runId)}/${input.ordinal}/dismiss`,
+      method: "POST",
+    }),
+    {
+      successMessage: "Candidate dismissed",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["admin", "metadata", "review-queue"],
+        });
+        qc.invalidateQueries({ queryKey: ["admin", "metadata", "dashboard"] });
       },
     },
   );

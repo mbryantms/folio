@@ -631,4 +631,16 @@ export type ExternalIdRow = Schemas["ExternalIdRow"];
 export type AddExternalIdReq = Schemas["AddExternalIdReq"];
 export type IssueCoversResp = Schemas["IssueCoversResp"];
 export type IssueCoverRow = Schemas["IssueCoverRow"];
+// M6 admin surface
+export type DashboardResp = Schemas["DashboardResp"];
+export type ProviderView = Schemas["ProviderView"];
+export type QuotaView = Schemas["QuotaView"];
+export type RunsListResp = Schemas["RunsListResp"];
+export type RunRow = Schemas["RunRow"];
+export type RunDetailResp = Schemas["RunDetailResp"];
+export type CandidateRow = Schemas["CandidateRow"];
+export type ReviewQueueResp = Schemas["ReviewQueueResp"];
+export type ReviewItem = Schemas["ReviewItem"];
+export type ProvidersListResp = Schemas["ProvidersListResp"];
+export type TestProviderResp = Schemas["TestProviderResp"];
 

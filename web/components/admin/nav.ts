@@ -28,6 +28,7 @@ export type IconName =
   | "Search"
   | "Server"
   | "Shield"
+  | "Sparkles"
   | "UserCog"
   | "Users";
 
@@ -86,6 +87,14 @@ export function adminNav(localePrefix: string): NavSection[] {
     {
       label: "Insights",
       items: [{ href: p("/stats"), label: "Stats", icon: "BarChart3" }],
+    },
+    {
+      label: "Content",
+      items: [
+        // metadata-providers-1.0 M6 — provider/quota dashboard +
+        // review queue + run history at `/admin/metadata`.
+        { href: p("/metadata"), label: "Metadata", icon: "Sparkles" },
+      ],
     },
     {
       label: "System",

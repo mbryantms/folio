@@ -19,6 +19,7 @@ import {
   Search,
   Server,
   Shield,
+  Sparkles,
   UserCog,
   Users,
   type LucideIcon,
@@ -46,6 +47,7 @@ export const navIcons: Record<IconName, LucideIcon> = {
   Search,
   Server,
   Shield,
+  Sparkles,
   UserCog,
   Users,
 };

@@ -292,6 +292,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_metadata_dashboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/providers": {
         parameters: {
             query?: never;
@@ -318,6 +334,70 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["admin_metadata_providers_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/metadata/review-queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_metadata_review_queue_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/metadata/review-queue/{run_id}/{ordinal}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_metadata_review_queue_dismiss"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/metadata/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_metadata_runs_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/metadata/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_metadata_run_detail"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3411,6 +3491,19 @@ export interface components {
              */
             removed: number;
         };
+        CandidateRow: {
+            applied_at?: string | null;
+            bucket: string;
+            candidate: unknown;
+            dismissed_at?: string | null;
+            external_id: string;
+            /** Format: int32 */
+            ordinal: number;
+            /** Format: float */
+            score: number;
+            score_breakdown: unknown;
+            source: string;
+        };
         CandidateView: {
             bucket: string;
             candidate: unknown;
@@ -3972,6 +4065,41 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
+        DashboardResp: {
+            /**
+             * Format: int64
+             * @description Count of successful `metadata_apply` audit rows in the last
+             *     7 days.
+             */
+            applies_last_7_days: number;
+            /** @description Per-provider quota snapshots — only populated when the
+             *     provider is configured + enabled. */
+            providers: components["schemas"]["ProviderView"][];
+            /**
+             * Format: int64
+             * @description `metadata_run_candidate` rows in the medium / low bucket with
+             *     no `applied_at` AND no `dismissed_at`.
+             */
+            review_queue_count: number;
+            /**
+             * Format: int64
+             * @description Series with at least one row in `external_ids` from a
+             *     configured provider source.
+             */
+            series_matched: number;
+            /**
+             * Format: int64
+             * @description Total series rows the operator has — denominator for the
+             *     "matched / unmatched" headline.
+             */
+            series_total: number;
+            /**
+             * Format: int64
+             * @description `series_total - series_matched` (precomputed so the UI can
+             *     render directly).
+             */
+            series_unmatched: number;
+        };
         DataQualityView: {
             /** Format: int64 */
             dangling_sessions: number;
@@ -4043,6 +4171,9 @@ export interface components {
         DirEntry: {
             name: string;
             path: string;
+        };
+        DismissResp: {
+            dismissed: boolean;
         };
         DowHourCell: {
             /** Format: int64 */
@@ -5432,6 +5563,25 @@ export interface components {
             key: string;
             value: unknown;
         };
+        ReviewItem: {
+            bucket: string;
+            candidate: unknown;
+            external_id: string;
+            /** Format: int32 */
+            ordinal: number;
+            /** Format: uuid */
+            run_id: string;
+            run_started_at: string;
+            scope: string;
+            scope_entity_id?: string | null;
+            /** Format: float */
+            score: number;
+            source: string;
+        };
+        ReviewQueueResp: {
+            items: components["schemas"]["ReviewItem"][];
+            next_cursor?: string | null;
+        };
         RevokeAllResp: {
             /**
              * Format: int64
@@ -5439,6 +5589,43 @@ export interface components {
              *     include sessions that were already revoked or expired.
              */
             revoked: number;
+        };
+        RunDetailResp: {
+            candidates: components["schemas"]["CandidateRow"][];
+            query?: unknown;
+            run: components["schemas"]["RunRow"];
+        };
+        RunRow: {
+            error_summary?: string | null;
+            finished_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            items_applied: number;
+            /** Format: int32 */
+            items_matched_high: number;
+            /** Format: int32 */
+            items_matched_low: number;
+            /** Format: int32 */
+            items_matched_medium: number;
+            /** Format: int32 */
+            items_skipped: number;
+            /** Format: int32 */
+            items_total: number;
+            /** Format: uuid */
+            library_id?: string | null;
+            providers: string[];
+            scope: string;
+            scope_entity_id?: string | null;
+            started_at: string;
+            status: string;
+            trigger_kind: string;
+        };
+        RunsListResp: {
+            /** @description `started_at` of the last row — caller passes back as `before=`
+             *     for the next page. `None` when no more rows. */
+            next_cursor?: string | null;
+            runs: components["schemas"]["RunRow"][];
         };
         SavedViewListView: {
             items: components["schemas"]["SavedViewView"][];
@@ -7151,6 +7338,32 @@ export interface operations {
             };
         };
     };
+    admin_metadata_dashboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     admin_metadata_providers_list: {
         parameters: {
             query?: never;
@@ -7227,6 +7440,143 @@ export interface operations {
             };
             /** @description provider responded with an error */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_review_queue_list: {
+        parameters: {
+            query?: {
+                /** @description `medium` | `low` | both (default). */
+                bucket?: string | null;
+                limit?: number | null;
+                before?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewQueueResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_review_queue_dismiss: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                ordinal: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DismissResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description candidate not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_runs_list: {
+        parameters: {
+            query?: {
+                library_id?: string | null;
+                scope?: string | null;
+                status?: string | null;
+                /** @description Hard cap of 100; default 25. */
+                limit?: number | null;
+                /** @description ISO-8601 timestamp; returns rows older than this for
+                 *     cursor-style pagination. */
+                before?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunsListResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_run_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetailResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description run not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

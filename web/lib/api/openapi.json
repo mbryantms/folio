@@ -834,6 +834,26 @@
         }
       }
     },
+    "/api/admin/metadata/dashboard": {
+      "get": {
+        "operationId": "admin_metadata_dashboard",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/providers": {
       "get": {
         "operationId": "admin_metadata_providers_list",
@@ -893,6 +913,225 @@
           },
           "502": {
             "description": "provider responded with an error"
+          }
+        }
+      }
+    },
+    "/api/admin/metadata/review-queue": {
+      "get": {
+        "operationId": "admin_metadata_review_queue_list",
+        "parameters": [
+          {
+            "name": "bucket",
+            "in": "query",
+            "description": "`medium` | `low` | both (default).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQueueResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/metadata/review-queue/{run_id}/{ordinal}/dismiss": {
+      "post": {
+        "operationId": "admin_metadata_review_queue_dismiss",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "ordinal",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DismissResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "candidate not found"
+          }
+        }
+      }
+    },
+    "/api/admin/metadata/runs": {
+      "get": {
+        "operationId": "admin_metadata_runs_list",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Hard cap of 100; default 25.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "ISO-8601 timestamp; returns rows older than this for\ncursor-style pagination.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunsListResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/metadata/runs/{id}": {
+      "get": {
+        "operationId": "admin_metadata_run_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "run not found"
           }
         }
       }
@@ -7901,6 +8140,51 @@
           }
         }
       },
+      "CandidateRow": {
+        "type": "object",
+        "required": [
+          "ordinal",
+          "source",
+          "external_id",
+          "bucket",
+          "score",
+          "score_breakdown",
+          "candidate"
+        ],
+        "properties": {
+          "applied_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "candidate": {},
+          "dismissed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          },
+          "score_breakdown": {},
+          "source": {
+            "type": "string"
+          }
+        }
+      },
       "CandidateView": {
         "type": "object",
         "required": [
@@ -9548,6 +9832,51 @@
           }
         }
       },
+      "DashboardResp": {
+        "type": "object",
+        "required": [
+          "series_total",
+          "series_matched",
+          "series_unmatched",
+          "review_queue_count",
+          "applies_last_7_days",
+          "providers"
+        ],
+        "properties": {
+          "applies_last_7_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Count of successful `metadata_apply` audit rows in the last\n7 days."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderView"
+            },
+            "description": "Per-provider quota snapshots — only populated when the\nprovider is configured + enabled."
+          },
+          "review_queue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`metadata_run_candidate` rows in the medium / low bucket with\nno `applied_at` AND no `dismissed_at`."
+          },
+          "series_matched": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series with at least one row in `external_ids` from a\nconfigured provider source."
+          },
+          "series_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total series rows the operator has — denominator for the\n\"matched / unmatched\" headline."
+          },
+          "series_unmatched": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`series_total - series_matched` (precomputed so the UI can\nrender directly)."
+          }
+        }
+      },
       "DataQualityView": {
         "type": "object",
         "required": [
@@ -9736,6 +10065,17 @@
           },
           "path": {
             "type": "string"
+          }
+        }
+      },
+      "DismissResp": {
+        "type": "object",
+        "required": [
+          "dismissed"
+        ],
+        "properties": {
+          "dismissed": {
+            "type": "boolean"
           }
         }
       },
@@ -13659,6 +13999,76 @@
           "value": {}
         }
       },
+      "ReviewItem": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "ordinal",
+          "source",
+          "external_id",
+          "bucket",
+          "score",
+          "candidate",
+          "scope",
+          "run_started_at"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "candidate": {},
+          "external_id": {
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "run_started_at": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "scope_entity_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "ReviewQueueResp": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "RevokeAllResp": {
         "type": "object",
         "required": [
@@ -13670,6 +14080,136 @@
             "format": "int64",
             "description": "Number of sessions transitioned from active → revoked. Doesn't\ninclude sessions that were already revoked or expired.",
             "minimum": 0
+          }
+        }
+      },
+      "RunDetailResp": {
+        "type": "object",
+        "required": [
+          "run",
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CandidateRow"
+            }
+          },
+          "query": {},
+          "run": {
+            "$ref": "#/components/schemas/RunRow"
+          }
+        }
+      },
+      "RunRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "scope",
+          "trigger_kind",
+          "providers",
+          "status",
+          "started_at",
+          "items_total",
+          "items_matched_high",
+          "items_matched_medium",
+          "items_matched_low",
+          "items_applied",
+          "items_skipped"
+        ],
+        "properties": {
+          "error_summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "items_applied": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_matched_high": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_matched_low": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_matched_medium": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_skipped": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "library_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scope": {
+            "type": "string"
+          },
+          "scope_entity_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "trigger_kind": {
+            "type": "string"
+          }
+        }
+      },
+      "RunsListResp": {
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`started_at` of the last row — caller passes back as `before=`\nfor the next page. `None` when no more rows."
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunRow"
+            }
           }
         }
       },

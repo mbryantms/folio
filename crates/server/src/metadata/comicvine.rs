@@ -86,6 +86,11 @@ impl ComicVineClient {
 
     /// Test constructor — points at an arbitrary base URL (wiremock).
     pub fn with_base_url(api_key: String, base_url: String, redis: ConnectionManager) -> Self {
+        // Defense-in-depth trim: the overlay loader already strips
+        // whitespace from the stored secret, but a stale value
+        // written before that fix shipped (or any non-overlay caller)
+        // shouldn't reach CV with a `?api_key=...%0A` URL.
+        let api_key = api_key.trim().to_owned();
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(DEFAULT_TIMEOUT)

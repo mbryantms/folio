@@ -879,19 +879,25 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
         // ───────── Metadata providers (metadata-providers-1.0 M1) ─────────
         "metadata.comicvine.api_key" => match row.value.as_str() {
             Some(s) => {
-                // Secret — only divergence-flag, never log value.
+                // Trim before compare + store — pasting from the
+                // ComicVine API page commonly drags a trailing newline
+                // and CV's `?api_key=...&format=json` URL parameter
+                // rejects keys with any extra whitespace as "Invalid
+                // API Key" (status_code=100). Same fix applies to
+                // every secret key we accept by paste.
+                let trimmed = s.trim();
                 if let Some(env_v) = cfg.comicvine_api_key.as_deref().filter(|p| !p.is_empty())
-                    && env_v != s
+                    && env_v != trimmed
                 {
                     tracing::warn!(
                         key = "metadata.comicvine.api_key",
                         "app_setting collision: env and DB disagree on this key; DB value wins"
                     );
                 }
-                cfg.comicvine_api_key = if s.trim().is_empty() {
+                cfg.comicvine_api_key = if trimmed.is_empty() {
                     None
                 } else {
-                    Some(s.to_owned())
+                    Some(trimmed.to_owned())
                 };
             }
             None => bad_type(&row.key, "string", &row.value),
@@ -902,29 +908,32 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
         },
         "metadata.metron.username" => match row.value.as_str() {
             Some(s) => {
-                warn_if_diverges(&row.key, cfg.metron_username.as_deref(), s);
-                cfg.metron_username = if s.trim().is_empty() {
+                let trimmed = s.trim();
+                warn_if_diverges(&row.key, cfg.metron_username.as_deref(), trimmed);
+                cfg.metron_username = if trimmed.is_empty() {
                     None
                 } else {
-                    Some(s.to_owned())
+                    Some(trimmed.to_owned())
                 };
             }
             None => bad_type(&row.key, "string", &row.value),
         },
         "metadata.metron.password" => match row.value.as_str() {
             Some(s) => {
+                // Trim — same paste-leak fix as the CV API key.
+                let trimmed = s.trim();
                 if let Some(env_v) = cfg.metron_password.as_deref().filter(|p| !p.is_empty())
-                    && env_v != s
+                    && env_v != trimmed
                 {
                     tracing::warn!(
                         key = "metadata.metron.password",
                         "app_setting collision: env and DB disagree on this key; DB value wins"
                     );
                 }
-                cfg.metron_password = if s.is_empty() {
+                cfg.metron_password = if trimmed.is_empty() {
                     None
                 } else {
-                    Some(s.to_owned())
+                    Some(trimmed.to_owned())
                 };
             }
             None => bad_type(&row.key, "string", &row.value),

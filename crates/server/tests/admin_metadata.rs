@@ -217,6 +217,187 @@ async fn test_provider_409_for_metron_when_disabled() {
     assert_eq!(body["error"]["code"], "metadata.disabled");
 }
 
+// ───────── M6 admin surface ─────────
+
+#[tokio::test]
+async fn dashboard_returns_counts_and_provider_snapshot() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = get(&app, &admin, "/api/admin/metadata/dashboard").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    // No series seeded → matched/unmatched both 0.
+    assert_eq!(body["series_total"], 0);
+    assert_eq!(body["series_matched"], 0);
+    assert_eq!(body["series_unmatched"], 0);
+    assert_eq!(body["review_queue_count"], 0);
+    assert_eq!(body["applies_last_7_days"], 0);
+    let providers = body["providers"].as_array().unwrap();
+    assert!(providers.iter().any(|p| p["id"] == "comicvine"));
+    assert!(providers.iter().any(|p| p["id"] == "metron"));
+}
+
+#[tokio::test]
+async fn dashboard_requires_admin() {
+    let app = TestApp::spawn().await;
+    let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
+    let resp = get(&app, &user, "/api/admin/metadata/dashboard").await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn runs_list_empty_then_returns_seeded_row() {
+    use sea_orm::{ActiveModelTrait, Set};
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = get(&app, &admin, "/api/admin/metadata/runs").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["runs"].as_array().unwrap().len(), 0);
+
+    // Seed one run.
+    let now = chrono::Utc::now().fixed_offset();
+    let run_id = uuid::Uuid::now_v7();
+    entity::metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("series".into()),
+        scope_entity_id: Set(Some(uuid::Uuid::now_v7().to_string())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(3),
+        items_matched_high: Set(1),
+        items_matched_medium: Set(1),
+        items_matched_low: Set(1),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        query: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    let resp = get(&app, &admin, "/api/admin/metadata/runs").await;
+    let body = body_json(resp.into_body()).await;
+    let runs = body["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["scope"], "series");
+    assert_eq!(runs[0]["items_total"], 3);
+
+    // Detail.
+    let resp = get(&app, &admin, &format!("/api/admin/metadata/runs/{run_id}")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["run"]["id"], run_id.to_string());
+    assert_eq!(body["candidates"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn review_queue_lists_unresolved_medium_and_low() {
+    use sea_orm::{ActiveModelTrait, Set};
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    // Seed a run + two candidate rows (one medium, one low) — both
+    // unresolved.
+    let now = chrono::Utc::now().fixed_offset();
+    let run_id = uuid::Uuid::now_v7();
+    entity::metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("series".into()),
+        scope_entity_id: Set(Some(uuid::Uuid::now_v7().to_string())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(2),
+        items_matched_high: Set(0),
+        items_matched_medium: Set(1),
+        items_matched_low: Set(1),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        query: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    for (i, bucket) in ["medium", "low"].iter().enumerate() {
+        entity::metadata_run_candidate::ActiveModel {
+            run_id: Set(run_id),
+            ordinal: Set(i as i32),
+            source: Set("comicvine".into()),
+            external_id: Set(format!("{i}")),
+            bucket: Set((*bucket).into()),
+            score: Set(80.0),
+            score_breakdown: Set(serde_json::json!({})),
+            candidate: Set(serde_json::json!({"name": "Saga"})),
+            applied_at: Set(None),
+            dismissed_at: Set(None),
+        }
+        .insert(&app.state().db)
+        .await
+        .unwrap();
+    }
+
+    let resp = get(&app, &admin, "/api/admin/metadata/review-queue").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+
+    // Bucket filter.
+    let resp = get(
+        &app,
+        &admin,
+        "/api/admin/metadata/review-queue?bucket=medium",
+    )
+    .await;
+    let body = body_json(resp.into_body()).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["bucket"], "medium");
+
+    // Dismiss the medium row → drops from the unfiltered list.
+    let resp = post(
+        &app,
+        &admin,
+        &format!("/api/admin/metadata/review-queue/{run_id}/0/dismiss"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = get(&app, &admin, "/api/admin/metadata/review-queue").await;
+    let body = body_json(resp.into_body()).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["bucket"], "low");
+
+    // Audit row written for the dismiss.
+    use entity::audit_log;
+    use sea_orm::EntityTrait as _;
+    let rows = audit_log::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert!(rows
+        .iter()
+        .any(|r| r.action == "admin.metadata.review_queue.dismiss"));
+}
+
 #[tokio::test]
 async fn list_providers_includes_metron_row() {
     let app = TestApp::spawn_with_metron("u", "p", true).await;
