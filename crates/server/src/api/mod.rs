@@ -17,6 +17,7 @@ pub mod cbl_lists;
 pub mod collections;
 pub mod creators;
 pub mod csp;
+pub mod external_ids;
 pub mod extractors;
 pub mod filter_options;
 pub mod form_or_json;

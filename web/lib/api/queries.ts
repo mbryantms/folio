@@ -252,7 +252,11 @@ export const queryKeys = {
     since?: string;
     limit?: number;
   }) => ["admin", "scan-runs", filters] as const,
-  adminLatestScanPerLibrary: ["admin", "scan-runs", "latest-per-library"] as const,
+  adminLatestScanPerLibrary: [
+    "admin",
+    "scan-runs",
+    "latest-per-library",
+  ] as const,
   issueHealth: (seriesSlug: string, issueSlug: string) =>
     ["issues", seriesSlug, issueSlug, "health"] as const,
   scanRuns: (libraryId: string, kind?: string) =>
@@ -327,6 +331,31 @@ export const queryKeys = {
     ["admin", "activity", filters] as const,
   /** Read-only auth-config view. Cheap; cached for the session. */
   adminAuthConfig: ["admin", "auth-config"] as const,
+  /** Metadata-providers (M5): candidate-list polling for the dialog. */
+  metadataCandidatesSeries: (slug: string, runId: string | null) =>
+    ["series", slug, "metadata", "candidates", runId ?? "latest"] as const,
+  metadataCandidatesIssue: (
+    slug: string,
+    issueSlug: string,
+    runId: string | null,
+  ) =>
+    [
+      "series",
+      slug,
+      "issues",
+      issueSlug,
+      "metadata",
+      "candidates",
+      runId ?? "latest",
+    ] as const,
+  /** Sync-status card (last_metadata_sync_at + paused). */
+  metadataSyncStatusSeries: (slug: string) =>
+    ["series", slug, "metadata", "status"] as const,
+  /** External-IDs card listing. */
+  externalIdsSeries: (slug: string) =>
+    ["series", slug, "external-ids"] as const,
+  externalIdsIssue: (slug: string, issueSlug: string) =>
+    ["series", slug, "issues", issueSlug, "external-ids"] as const,
   /** Runtime-editable settings (M1 of runtime-config-admin). Registry
    *  + resolved values; mutated via PATCH /admin/settings. */
   adminSettings: ["admin", "settings"] as const,
@@ -1802,6 +1831,105 @@ export function useUserProgress() {
       const resp = await jsonFetch<{ records: ProgressView[] }>("/progress");
       return new Map(resp.records.map((r) => [r.issue_id, r]));
     },
+    staleTime: 30_000,
+  });
+}
+
+// ───────── metadata-providers-1.0 ─────────
+
+import type {
+  CandidatesResp,
+  ExternalIdsListResp,
+  SyncStatusResp,
+} from "./types";
+
+/** Polls a single search run until it finalizes. `enabled=false`
+ *  while no `runId` exists; `refetchInterval` short-circuits to
+ *  `false` once status hits `completed`/`failed`/`awaiting_quota` so
+ *  the polling loop stops on its own. */
+export function useMetadataCandidatesSeries(
+  seriesSlug: string,
+  runId: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.metadataCandidatesSeries(seriesSlug, runId),
+    queryFn: () =>
+      jsonFetch<CandidatesResp>(
+        runId
+          ? `/series/${encodeURIComponent(seriesSlug)}/metadata/candidates?run_id=${encodeURIComponent(runId)}`
+          : `/series/${encodeURIComponent(seriesSlug)}/metadata/candidates`,
+      ),
+    enabled: !!seriesSlug && !!runId,
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      if (!d) return 1500;
+      return d.status === "completed" ||
+        d.status === "failed" ||
+        d.status === "awaiting_quota"
+        ? false
+        : 1500;
+    },
+  });
+}
+
+export function useMetadataCandidatesIssue(
+  seriesSlug: string,
+  issueSlug: string,
+  runId: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.metadataCandidatesIssue(seriesSlug, issueSlug, runId),
+    queryFn: () =>
+      jsonFetch<CandidatesResp>(
+        runId
+          ? `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/candidates?run_id=${encodeURIComponent(runId)}`
+          : `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/candidates`,
+      ),
+    enabled: !!seriesSlug && !!issueSlug && !!runId,
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      if (!d) return 1500;
+      return d.status === "completed" ||
+        d.status === "failed" ||
+        d.status === "awaiting_quota"
+        ? false
+        : 1500;
+    },
+  });
+}
+
+export function useMetadataSyncStatus(seriesSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.metadataSyncStatusSeries(seriesSlug),
+    queryFn: () =>
+      jsonFetch<SyncStatusResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/metadata/status`,
+      ),
+    enabled: !!seriesSlug,
+    staleTime: 30_000,
+  });
+}
+
+export function useExternalIdsSeries(seriesSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.externalIdsSeries(seriesSlug),
+    queryFn: () =>
+      jsonFetch<ExternalIdsListResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/external-ids`,
+      ),
+    enabled: !!seriesSlug,
+    staleTime: 30_000,
+  });
+}
+
+export function useExternalIdsIssue(seriesSlug: string, issueSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.externalIdsIssue(seriesSlug, issueSlug),
+    queryFn: () =>
+      jsonFetch<ExternalIdsListResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
+      ),
+    enabled: !!seriesSlug && !!issueSlug,
     staleTime: 30_000,
   });
 }

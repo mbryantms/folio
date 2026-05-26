@@ -2750,6 +2750,38 @@ export interface paths {
         patch: operations["series_update_series"];
         trace?: never;
     };
+    "/api/series/{slug}/external-ids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["external_ids_list_series"];
+        put?: never;
+        post: operations["external_ids_add_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/external-ids/{source}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["external_ids_delete_series"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/issues": {
         parameters: {
             query?: never;
@@ -2761,6 +2793,38 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/issues/{issue_slug}/external-ids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["external_ids_list_issue"];
+        put?: never;
+        post: operations["external_ids_add_issue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/issues/{issue_slug}/external-ids/{source}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["external_ids_delete_issue"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2846,6 +2910,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/metadata/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_pause_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_resume_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/metadata/search": {
         parameters: {
             query?: never;
@@ -2856,6 +2952,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["metadata_search_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_sync_status_series"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2996,6 +3108,16 @@ export interface components {
             /** @description Series UUID or issue id (TEXT). Validated against the
              *     declared `entry_kind`. */
             ref_id: string;
+        };
+        AddExternalIdReq: {
+            external_id: string;
+            /** @description Optional override; defaults to the canonical URL template for
+             *     `(source, entity_type)` when one exists. */
+            external_url?: string | null;
+            /** @description `"comicvine" | "metron" | "gcd" | "marvel" | "locg" | "mal" |
+             *     "anilist" | "mangaupdates" | "isbn" | "upc" | "asin" | "doi"`.
+             *     Aliases accepted (`"cv"` → ComicVine, etc.). */
+            source: string;
         };
         /** @description Audit-remediation M4 dropped `LogWidgetListView { widgets: Vec<_> }` in
          *     favor of the workspace-uniform `shared::pagination::CursorPage<T>`
@@ -4055,6 +4177,20 @@ export interface components {
             slug: string;
             /** Format: int32 */
             year?: number | null;
+        };
+        ExternalIdRow: {
+            external_id: string;
+            external_url?: string | null;
+            first_set_at: string;
+            last_synced_at: string;
+            set_by: string;
+            source: string;
+            source_label: string;
+        };
+        ExternalIdsListResp: {
+            entity_id: string;
+            entity_type: string;
+            rows: components["schemas"]["ExternalIdRow"][];
         };
         /**
          * @description All filterable fields. Per-field metadata (kind, allowed ops, SQL
@@ -5682,6 +5818,17 @@ export interface components {
         SortField: "name" | "year" | "created_at" | "updated_at" | "last_read" | "read_progress";
         /** @enum {string} */
         SortOrder: "asc" | "desc";
+        SyncStatusResp: {
+            last_metadata_sync_at?: string | null;
+            /**
+             * Format: int64
+             * @description `external_ids` row count for this series (UI uses it to render
+             *     "matched against 2 sources" without a second round-trip).
+             */
+            linked_source_count: number;
+            paused: boolean;
+            series_slug: string;
+        };
         TagEntryView: {
             /** Format: int64 */
             count: number;
@@ -11774,6 +11921,129 @@ export interface operations {
             };
         };
     };
+    external_ids_list_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalIdsListResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    external_ids_add_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddExternalIdReq"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalIdRow"];
+                };
+            };
+            /** @description invalid source */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    external_ids_delete_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description unlinked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid source */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / link not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     series_list_issues: {
         parameters: {
             query?: never;
@@ -11792,6 +12062,132 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueListView"];
                 };
+            };
+        };
+    };
+    external_ids_list_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalIdsListResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    external_ids_add_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddExternalIdReq"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalIdRow"];
+                };
+            };
+            /** @description invalid source */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    external_ids_delete_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description unlinked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid source */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue / link not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -12031,6 +12427,76 @@ export interface operations {
             };
         };
     };
+    metadata_pause_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncStatusResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_resume_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncStatusResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_search_series: {
         parameters: {
             query?: never;
@@ -12073,6 +12539,41 @@ export interface operations {
             };
             /** @description queue error */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_sync_status_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncStatusResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

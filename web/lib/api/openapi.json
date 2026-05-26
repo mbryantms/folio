@@ -6234,6 +6234,120 @@
         }
       }
     },
+    "/api/series/{slug}/external-ids": {
+      "get": {
+        "operationId": "external_ids_list_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalIdsListResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      },
+      "post": {
+        "operationId": "external_ids_add_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddExternalIdReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalIdRow"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid source"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/external-ids/{source}": {
+      "delete": {
+        "operationId": "external_ids_delete_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "unlinked"
+          },
+          "400": {
+            "description": "invalid source"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series / link not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/issues": {
       "get": {
         "operationId": "series_list_issues",
@@ -6257,6 +6371,144 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/issues/{issue_slug}/external-ids": {
+      "get": {
+        "operationId": "external_ids_list_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalIdsListResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      },
+      "post": {
+        "operationId": "external_ids_add_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddExternalIdReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalIdRow"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid source"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/issues/{issue_slug}/external-ids/{source}": {
+      "delete": {
+        "operationId": "external_ids_delete_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "unlinked"
+          },
+          "400": {
+            "description": "invalid source"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue / link not found"
           }
         }
       }
@@ -6514,6 +6766,72 @@
         }
       }
     },
+    "/api/series/{slug}/metadata/pause": {
+      "post": {
+        "operationId": "metadata_pause_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatusResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/resume": {
+      "post": {
+        "operationId": "metadata_resume_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatusResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/metadata/search": {
       "post": {
         "operationId": "metadata_search_series",
@@ -6549,6 +6867,39 @@
           },
           "502": {
             "description": "queue error"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/status": {
+      "get": {
+        "operationId": "metadata_sync_status_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatusResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
           }
         }
       }
@@ -6840,6 +7191,29 @@
           "ref_id": {
             "type": "string",
             "description": "Series UUID or issue id (TEXT). Validated against the\ndeclared `entry_kind`."
+          }
+        }
+      },
+      "AddExternalIdReq": {
+        "type": "object",
+        "required": [
+          "source",
+          "external_id"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "external_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional override; defaults to the canonical URL template for\n`(source, entity_type)` when one exists."
+          },
+          "source": {
+            "type": "string",
+            "description": "`\"comicvine\" | \"metron\" | \"gcd\" | \"marvel\" | \"locg\" | \"mal\" |\n\"anilist\" | \"mangaupdates\" | \"isbn\" | \"upc\" | \"asin\" | \"doi\"`.\nAliases accepted (`\"cv\"` → ComicVine, etc.)."
           }
         }
       },
@@ -9764,6 +10138,65 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "ExternalIdRow": {
+        "type": "object",
+        "required": [
+          "source",
+          "source_label",
+          "external_id",
+          "set_by",
+          "first_set_at",
+          "last_synced_at"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "external_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_set_at": {
+            "type": "string"
+          },
+          "last_synced_at": {
+            "type": "string"
+          },
+          "set_by": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          }
+        }
+      },
+      "ExternalIdsListResp": {
+        "type": "object",
+        "required": [
+          "entity_type",
+          "entity_id",
+          "rows"
+        ],
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdRow"
+            }
           }
         }
       },
@@ -14135,6 +14568,33 @@
           "asc",
           "desc"
         ]
+      },
+      "SyncStatusResp": {
+        "type": "object",
+        "required": [
+          "series_slug",
+          "paused",
+          "linked_source_count"
+        ],
+        "properties": {
+          "last_metadata_sync_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "linked_source_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`external_ids` row count for this series (UI uses it to render\n\"matched against 2 sources\" without a second round-trip)."
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "series_slug": {
+            "type": "string"
+          }
+        }
       },
       "TagEntryView": {
         "type": "object",

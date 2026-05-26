@@ -48,6 +48,7 @@ import { readerUrl } from "@/lib/urls";
 
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
+import { SeriesMetadataPanel } from "./SeriesMetadataPanel";
 
 type ProgressDelta = { records: ProgressLike[] };
 
@@ -419,6 +420,8 @@ export default async function SeriesPage({
         issueCount={series.issue_count ?? series.total_issues ?? null}
         initialQuery={initialQuery ?? ""}
       />
+
+      <SeriesMetadataPanel seriesSlug={series.slug} />
     </div>
   );
 }

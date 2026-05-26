@@ -2167,3 +2167,229 @@ export function useUnhideReadingLogEvent() {
     },
   );
 }
+
+// ───────── metadata-providers-1.0 ─────────
+
+import type {
+  ApplyAcceptedResp,
+  ApplyCoverPolicy,
+  ApplyMode,
+  AddExternalIdReq,
+  ExternalIdRow,
+  SearchStartedResp,
+  SyncStatusResp,
+} from "../types";
+
+export function useSearchMetadataForSeries(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<SearchStartedResp, void>(
+    () => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/search`,
+      method: "POST",
+    }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "metadata", "candidates"],
+        });
+      },
+    },
+  );
+}
+
+export function useSearchMetadataForIssue(
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  const qc = useQueryClient();
+  return useApiMutation<SearchStartedResp, void>(
+    () => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/search`,
+      method: "POST",
+    }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: [
+            "series",
+            seriesSlug,
+            "issues",
+            issueSlug,
+            "metadata",
+            "candidates",
+          ],
+        });
+      },
+    },
+  );
+}
+
+export type ApplyMetadataInput = {
+  run_id: string;
+  ordinal: number;
+  mode?: ApplyMode;
+  apply_cover?: boolean;
+  cover_overwrite_policy?: ApplyCoverPolicy;
+  override_user_edits?: boolean;
+};
+
+export function useApplyMetadataForSeries(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<ApplyAcceptedResp, ApplyMetadataInput>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/apply`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Applying metadata",
+      onSuccess: () => {
+        // The apply job mutates the series row + writes the cover +
+        // bumps last_metadata_sync_at. Invalidate every surface that
+        // reads from those.
+        qc.invalidateQueries({ queryKey: ["series", seriesSlug] });
+      },
+    },
+  );
+}
+
+export function useApplyMetadataForIssue(
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  const qc = useQueryClient();
+  return useApiMutation<ApplyAcceptedResp, ApplyMetadataInput>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/apply`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Applying metadata",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "issues", issueSlug],
+        });
+      },
+    },
+  );
+}
+
+export function usePauseMetadataSync(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<SyncStatusResp, void>(
+    () => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/pause`,
+      method: "POST",
+    }),
+    {
+      successMessage: "Auto-sync paused",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "metadata", "status"],
+        });
+      },
+    },
+  );
+}
+
+export function useResumeMetadataSync(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<SyncStatusResp, void>(
+    () => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/resume`,
+      method: "POST",
+    }),
+    {
+      successMessage: "Auto-sync resumed",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "metadata", "status"],
+        });
+      },
+    },
+  );
+}
+
+export function useAddExternalIdSeries(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<ExternalIdRow, AddExternalIdReq>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/external-ids`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Identifier added",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "external-ids"],
+        });
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "metadata", "status"],
+        });
+      },
+    },
+  );
+}
+
+export function useDeleteExternalIdSeries(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<null, { source: string }>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/external-ids/${encodeURIComponent(input.source)}`,
+      method: "DELETE",
+    }),
+    {
+      successMessage: "Identifier removed",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "external-ids"],
+        });
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "metadata", "status"],
+        });
+      },
+    },
+  );
+}
+
+export function useAddExternalIdIssue(seriesSlug: string, issueSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<ExternalIdRow, AddExternalIdReq>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Identifier added",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "issues", issueSlug, "external-ids"],
+        });
+      },
+    },
+  );
+}
+
+export function useDeleteExternalIdIssue(
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  const qc = useQueryClient();
+  return useApiMutation<null, { source: string }>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids/${encodeURIComponent(input.source)}`,
+      method: "DELETE",
+    }),
+    {
+      successMessage: "Identifier removed",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "issues", issueSlug, "external-ids"],
+        });
+      },
+    },
+  );
+}

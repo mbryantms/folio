@@ -618,3 +618,15 @@ export type RevokeAllSessionsResp = {
 
 export type AppPasswordScope = "read" | "read+progress";
 
+// ───────── metadata-providers-1.0 ─────────
+export type SearchStartedResp = Schemas["SearchStartedResp"];
+export type CandidatesResp = Schemas["CandidatesResp"];
+export type CandidateView = Schemas["CandidateView"];
+export type ApplyAcceptedResp = Schemas["ApplyAcceptedResp"];
+export type ApplyMode = Schemas["ApplyMode"];
+export type ApplyCoverPolicy = Schemas["ApplyCoverPolicy"];
+export type SyncStatusResp = Schemas["SyncStatusResp"];
+export type ExternalIdsListResp = Schemas["ExternalIdsListResp"];
+export type ExternalIdRow = Schemas["ExternalIdRow"];
+export type AddExternalIdReq = Schemas["AddExternalIdReq"];
+

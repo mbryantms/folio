@@ -20,7 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::{issue, library_user_access, metadata_run, series};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -41,6 +41,9 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(search_series))
         .routes(routes!(candidates_series))
         .routes(routes!(apply_series))
+        .routes(routes!(pause_series))
+        .routes(routes!(resume_series))
+        .routes(routes!(sync_status_series))
         .routes(routes!(search_issue))
         .routes(routes!(candidates_issue))
         .routes(routes!(apply_issue))
@@ -338,6 +341,151 @@ pub async fn candidates_series(
         );
     }
     Json(build_candidates_resp(&app, run).await).into_response()
+}
+
+// ───────── /series/{slug}/metadata/pause + resume + status ─────────
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SyncStatusResp {
+    pub series_slug: String,
+    pub paused: bool,
+    pub last_metadata_sync_at: Option<String>,
+    /// `external_ids` row count for this series (UI uses it to render
+    /// "matched against 2 sources" without a second round-trip).
+    pub linked_source_count: i64,
+}
+
+#[utoipa::path(
+    operation_id = "metadata_sync_status_series",    get,
+    path = "/series/{slug}/metadata/status",
+    params(("slug" = String, Path)),
+    responses(
+        (status = 200, body = SyncStatusResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "series not found"),
+    )
+)]
+#[handler]
+pub async fn sync_status_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path(slug): Path<String>,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+    }
+    let linked = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(s.id.to_string()))
+        .count(&app.db)
+        .await
+        .unwrap_or(0) as i64;
+    Json(SyncStatusResp {
+        series_slug: s.slug.clone(),
+        paused: s.metadata_sync_paused,
+        last_metadata_sync_at: s.last_metadata_sync_at.map(|t| t.to_rfc3339()),
+        linked_source_count: linked,
+    })
+    .into_response()
+}
+
+#[utoipa::path(
+    operation_id = "metadata_pause_series",    post,
+    path = "/series/{slug}/metadata/pause",
+    params(("slug" = String, Path)),
+    responses(
+        (status = 200, body = SyncStatusResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "series not found"),
+    )
+)]
+#[handler]
+pub async fn pause_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Path(slug): Path<String>,
+) -> Response {
+    toggle_metadata_sync_paused(&app, &user, &ctx, &slug, true).await
+}
+
+#[utoipa::path(
+    operation_id = "metadata_resume_series",    post,
+    path = "/series/{slug}/metadata/resume",
+    params(("slug" = String, Path)),
+    responses(
+        (status = 200, body = SyncStatusResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "series not found"),
+    )
+)]
+#[handler]
+pub async fn resume_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Path(slug): Path<String>,
+) -> Response {
+    toggle_metadata_sync_paused(&app, &user, &ctx, &slug, false).await
+}
+
+async fn toggle_metadata_sync_paused(
+    app: &AppState,
+    user: &CurrentUser,
+    ctx: &RequestContext,
+    slug: &str,
+    paused: bool,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(app, user, s.library_id).await {
+        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+    }
+    let was = s.metadata_sync_paused;
+    let mut am: entity::series::ActiveModel = s.clone().into();
+    am.metadata_sync_paused = sea_orm::Set(paused);
+    am.updated_at = sea_orm::Set(chrono::Utc::now().fixed_offset());
+    if let Err(e) = am.update(&app.db).await {
+        tracing::error!(error = %e, "metadata pause/resume update failed");
+        return error(StatusCode::BAD_GATEWAY, "internal", "internal");
+    }
+    let action: &'static str = if paused {
+        "admin.series.metadata_pause"
+    } else {
+        "admin.series.metadata_resume"
+    };
+    crate::audit::record(
+        &app.db,
+        crate::audit::AuditEntry {
+            actor_id: user.id,
+            action,
+            target_type: Some("series"),
+            target_id: Some(s.id.to_string()),
+            payload: serde_json::json!({ "was": was, "now": paused }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+    let linked = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(s.id.to_string()))
+        .count(&app.db)
+        .await
+        .unwrap_or(0) as i64;
+    Json(SyncStatusResp {
+        series_slug: s.slug.clone(),
+        paused,
+        last_metadata_sync_at: s.last_metadata_sync_at.map(|t| t.to_rfc3339()),
+        linked_source_count: linked,
+    })
+    .into_response()
 }
 
 // ───────── per-issue ─────────

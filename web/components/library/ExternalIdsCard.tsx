@@ -1,0 +1,289 @@
+"use client";
+
+/**
+ * `<ExternalIdsCard>` (metadata-providers-1.0 M5).
+ *
+ * Per-entity list of `external_ids` rows with add / unlink actions.
+ * Used on both the series page and the issue page —
+ * `entityType="series"|"issue"` picks the right endpoints + query keys.
+ *
+ * User-added rows land with `set_by='user'` and are sacred against
+ * future Apply jobs (the M4 layer's `should_apply` matrix checks
+ * provenance before overwriting).
+ */
+
+import { Loader2, Plus, Trash2 } from "lucide-react";
+import * as React from "react";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  useAddExternalIdIssue,
+  useAddExternalIdSeries,
+  useDeleteExternalIdIssue,
+  useDeleteExternalIdSeries,
+} from "@/lib/api/mutations";
+import { useExternalIdsIssue, useExternalIdsSeries } from "@/lib/api/queries";
+import type { ExternalIdRow } from "@/lib/api/types";
+
+const SOURCES: Array<{ value: string; label: string }> = [
+  { value: "comicvine", label: "ComicVine" },
+  { value: "metron", label: "Metron" },
+  { value: "gcd", label: "Grand Comics Database" },
+  { value: "marvel", label: "Marvel" },
+  { value: "locg", label: "League of Comic Geeks" },
+  { value: "mal", label: "MyAnimeList" },
+  { value: "anilist", label: "AniList" },
+  { value: "mangaupdates", label: "MangaUpdates" },
+  { value: "isbn", label: "ISBN" },
+  { value: "upc", label: "UPC" },
+  { value: "asin", label: "ASIN" },
+];
+
+export type ExternalIdsCardProps =
+  | { entityType: "series"; seriesSlug: string }
+  | { entityType: "issue"; seriesSlug: string; issueSlug: string };
+
+export function ExternalIdsCard(props: ExternalIdsCardProps) {
+  const seriesList = useExternalIdsSeries(
+    props.entityType === "series" ? props.seriesSlug : "",
+  );
+  const issueList = useExternalIdsIssue(
+    props.entityType === "issue" ? props.seriesSlug : "",
+    props.entityType === "issue" ? props.issueSlug : "",
+  );
+  const addSeries = useAddExternalIdSeries(
+    props.entityType === "series" ? props.seriesSlug : "",
+  );
+  const deleteSeries = useDeleteExternalIdSeries(
+    props.entityType === "series" ? props.seriesSlug : "",
+  );
+  const addIssue = useAddExternalIdIssue(
+    props.entityType === "issue" ? props.seriesSlug : "",
+    props.entityType === "issue" ? props.issueSlug : "",
+  );
+  const deleteIssue = useDeleteExternalIdIssue(
+    props.entityType === "issue" ? props.seriesSlug : "",
+    props.entityType === "issue" ? props.issueSlug : "",
+  );
+
+  const query = props.entityType === "series" ? seriesList : issueList;
+  const add = props.entityType === "series" ? addSeries : addIssue;
+  const remove = props.entityType === "series" ? deleteSeries : deleteIssue;
+
+  const rows = query.data?.rows ?? [];
+  const [adding, setAdding] = React.useState(false);
+  const [source, setSource] = React.useState("comicvine");
+  const [extId, setExtId] = React.useState("");
+  const [confirmRemove, setConfirmRemove] =
+    React.useState<ExternalIdRow | null>(null);
+
+  const onAdd = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!extId.trim()) return;
+    add.mutate(
+      { source, external_id: extId.trim() },
+      {
+        onSuccess: () => {
+          setAdding(false);
+          setExtId("");
+        },
+      },
+    );
+  };
+
+  const onConfirmRemove = () => {
+    if (!confirmRemove) return;
+    remove.mutate(
+      { source: confirmRemove.source },
+      {
+        onSuccess: () => setConfirmRemove(null),
+      },
+    );
+  };
+
+  return (
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-sm font-medium">External IDs</CardTitle>
+          {!adding && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setAdding(true)}
+              aria-label="Add identifier"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          {query.isLoading ? (
+            <div className="text-muted-foreground flex items-center gap-2 py-3">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            </div>
+          ) : rows.length === 0 && !adding ? (
+            <div className="text-muted-foreground py-3">
+              No identifiers linked yet.
+            </div>
+          ) : (
+            <ul className="divide-y">
+              {rows.map((r) => (
+                <li
+                  key={r.source}
+                  className="flex items-center justify-between py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{r.source_label}</span>
+                      {r.set_by === "user" && (
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">
+                          User-set
+                        </span>
+                      )}
+                    </div>
+                    {r.external_url ? (
+                      <a
+                        href={r.external_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-muted-foreground block truncate text-xs hover:underline"
+                      >
+                        {r.external_id} ↗
+                      </a>
+                    ) : (
+                      <code className="text-muted-foreground block truncate text-xs">
+                        {r.external_id}
+                      </code>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setConfirmRemove(r)}
+                    aria-label={`Remove ${r.source_label} link`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {adding && (
+            <form
+              onSubmit={onAdd}
+              className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-end"
+            >
+              <div className="grid flex-1 gap-1.5">
+                <Label htmlFor="eic-source" className="text-xs">
+                  Source
+                </Label>
+                <Select value={source} onValueChange={setSource}>
+                  <SelectTrigger id="eic-source">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SOURCES.map((s) => (
+                      <SelectItem key={s.value} value={s.value}>
+                        {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid flex-[2] gap-1.5">
+                <Label htmlFor="eic-id" className="text-xs">
+                  ID
+                </Label>
+                <Input
+                  id="eic-id"
+                  value={extId}
+                  onChange={(e) => setExtId(e.target.value)}
+                  placeholder="e.g. 12345"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-1">
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={add.isPending || !extId.trim()}
+                >
+                  Add
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setAdding(false);
+                    setExtId("");
+                  }}
+                  disabled={add.isPending}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          )}
+        </CardContent>
+      </Card>
+
+      <AlertDialog
+        open={confirmRemove !== null}
+        onOpenChange={(o) => {
+          if (!o) setConfirmRemove(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Unlink {confirmRemove?.source_label}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Removes the link to <code>{confirmRemove?.external_id}</code>.
+              Subsequent metadata fetches won&apos;t auto-re-add it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={remove.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={onConfirmRemove}
+              disabled={remove.isPending}
+            >
+              {remove.isPending ? (
+                <>
+                  <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Unlinking
+                </>
+              ) : (
+                "Unlink"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}

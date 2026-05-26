@@ -1,0 +1,208 @@
+/**
+ * <MetadataMatchForm> smoke — metadata-providers-1.0 M5.
+ *
+ * Renders the inner form (Radix Dialog portals don't traverse
+ * `renderToStaticMarkup`) in three states — polling, completed with
+ * candidates, awaiting_quota — and asserts the right shell is
+ * present. Mocks the mutation + query hooks so we don't pull in
+ * TanStack Query or network plumbing.
+ */
+import { describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import type * as React from "react";
+import { createElement } from "react";
+
+let candidatesState = {
+  data: undefined as
+    | undefined
+    | {
+        status: string;
+        candidates: Array<{
+          source: string;
+          external_id: string;
+          bucket: string;
+          score: number;
+          candidate: unknown;
+        }>;
+        providers: string[];
+        error_summary: string | null;
+      },
+};
+
+vi.mock("@/lib/api/mutations", () => ({
+  useSearchMetadataForSeries: () => ({
+    mutate: () => undefined,
+    isPending: false,
+  }),
+  useApplyMetadataForSeries: () => ({
+    mutate: () => undefined,
+    isPending: false,
+  }),
+}));
+
+vi.mock("@/lib/api/queries", () => ({
+  useMe: () => ({ data: { role: "admin", id: "u1", email: "a@b.c" } }),
+  useMetadataCandidatesSeries: () => candidatesState,
+}));
+
+vi.mock("@/components/ui/scroll-area", () => ({
+  ScrollArea: ({ children }: { children: React.ReactNode }) =>
+    createElement("div", null, children),
+}));
+
+// Stub the Dialog primitives — Radix needs a real DialogRoot context
+// that `renderToStaticMarkup` doesn't simulate. Flat passthroughs are
+// fine since the inner `MetadataMatchForm` doesn't depend on Dialog
+// behavior beyond rendering its children.
+vi.mock("@/components/ui/dialog", () => ({
+  Dialog: ({ children }: { children: React.ReactNode }) =>
+    createElement("div", null, children),
+  DialogContent: ({ children }: { children: React.ReactNode }) =>
+    createElement("div", null, children),
+  DialogHeader: ({ children }: { children: React.ReactNode }) =>
+    createElement("div", null, children),
+  DialogFooter: ({ children }: { children: React.ReactNode }) =>
+    createElement("div", null, children),
+  DialogTitle: ({ children }: { children: React.ReactNode }) =>
+    createElement("h2", null, children),
+  DialogDescription: ({ children }: { children: React.ReactNode }) =>
+    createElement("p", null, children),
+}));
+
+vi.mock("@/components/ui/radio-group", () => ({
+  RadioGroup: ({
+    value,
+    children,
+  }: {
+    value?: string;
+    children: React.ReactNode;
+  }) =>
+    createElement("div", { role: "radiogroup", "data-value": value }, children),
+  RadioGroupItem: ({ value, id }: { value: string; id?: string }) =>
+    createElement("button", {
+      type: "button",
+      role: "radio",
+      "data-value": value,
+      id,
+    }),
+}));
+
+vi.mock("@/components/ui/switch", () => ({
+  Switch: ({
+    id,
+    checked,
+  }: {
+    id?: string;
+    checked?: boolean;
+  }) =>
+    createElement("input", {
+      type: "checkbox",
+      id,
+      checked: !!checked,
+      readOnly: true,
+    }),
+}));
+
+import { MetadataMatchForm } from "@/components/library/MetadataMatchDialog";
+
+describe("<MetadataMatchForm>", () => {
+  it("renders the polling shell when no run yet", () => {
+    candidatesState = { data: undefined };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        seriesSlug: "saga",
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("Searching providers");
+    expect(html).toContain("Fetch metadata");
+    // Mode radios are present.
+    expect(html).toContain('data-value="fill_missing"');
+    expect(html).toContain('data-value="replace_all"');
+  });
+
+  it("renders ranked candidates when the run is completed", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["metron", "comicvine"],
+        error_summary: null,
+        candidates: [
+          {
+            source: "metron",
+            external_id: "12345",
+            bucket: "high",
+            score: 92.5,
+            candidate: {
+              name: "Saga",
+              year: 2012,
+              publisher: "Image Comics",
+              issue_count: 60,
+            },
+          },
+          {
+            source: "comicvine",
+            external_id: "abc",
+            bucket: "medium",
+            score: 78,
+            candidate: { name: "Sagas", year: 2013 },
+          },
+        ],
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        seriesSlug: "saga",
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("Saga");
+    expect(html).toContain("Image Comics");
+    expect(html).toContain("HIGH");
+    expect(html).toContain("MEDIUM");
+    expect(html).toContain("ComicVine");
+    expect(html).toContain("Metron");
+  });
+
+  it("renders awaiting_quota explanation when every provider is exhausted", () => {
+    candidatesState = {
+      data: {
+        status: "awaiting_quota",
+        providers: ["comicvine"],
+        error_summary: null,
+        candidates: [],
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        seriesSlug: "saga",
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("out of quota");
+    expect(html).toContain("Retry");
+  });
+
+  it("surfaces the admin-only override toggle", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["comicvine"],
+        error_summary: null,
+        candidates: [],
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        seriesSlug: "saga",
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("Override user-edited fields");
+    expect(html).toContain("metadata_apply_force");
+  });
+});
