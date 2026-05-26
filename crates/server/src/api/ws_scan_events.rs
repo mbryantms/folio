@@ -89,11 +89,7 @@ pub async fn handler(
         }
     };
     if row.state == "disabled" {
-        return super::error(
-            StatusCode::FORBIDDEN,
-            "auth.disabled",
-            "Account disabled",
-        );
+        return super::error(StatusCode::FORBIDDEN, "auth.disabled", "Account disabled");
     }
     if row.role != "admin" {
         return super::error(

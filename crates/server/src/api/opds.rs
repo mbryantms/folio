@@ -1296,7 +1296,11 @@ async fn search(
         );
     }
     if needle.len() > 200 {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "query too long");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "query too long",
+        );
     }
     let allowed = match allowed_libraries(&app, &user).await {
         Ok(v) => v,
@@ -3574,7 +3578,11 @@ pub(crate) async fn progress_put(
         }
     };
     if page < 0 {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "page must be >= 0");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "page must be >= 0",
+        );
     }
     let model = match crate::api::progress::upsert_for(
         &app,

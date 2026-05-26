@@ -80,11 +80,7 @@ pub async fn mint(
         .await;
     if let Err(e) = res {
         tracing::error!(error = %e, "ws_ticket: redis SET failed");
-        return crate::api::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            "internal",
-        );
+        return crate::api::error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
     Json(WsTicketResp {
         ticket,

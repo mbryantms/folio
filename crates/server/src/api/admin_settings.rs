@@ -183,7 +183,11 @@ pub async fn update(
         Err(e) => Err(e),
     };
     if let Err(e) = dry_run {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, "settings.invalid_combination", &e);
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "settings.invalid_combination",
+            &e,
+        );
     }
 
     // 3. Persist + audit. `settings::write` writes one fine-grained

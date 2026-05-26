@@ -133,7 +133,11 @@ pub async fn update(
         }
         let lower = email.trim().to_lowercase();
         if !lower.contains('@') || lower.len() > 254 {
-            return fail(StatusCode::UNPROCESSABLE_ENTITY, "validation.email", "invalid email");
+            return fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation.email",
+                "invalid email",
+            );
         }
         if Some(&lower) != row.email.as_ref()
             && let Ok(Some(other)) = UserEntity::find()

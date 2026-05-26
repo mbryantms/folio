@@ -42,21 +42,20 @@ use common::TestApp;
 use entity::{
     cbl_entry, cbl_list,
     issue::ActiveModel as IssueAM,
-    library, library_user_access,
-    progress_record,
+    library, library_user_access, progress_record,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
 use sea_orm::{ActiveModelTrait, Database, Set};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
 use tracing::Subscriber;
-use tracing_subscriber::layer::{Context, SubscriberExt};
-use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::util::SubscriberInitExt;
 use uuid::Uuid;
 
 /// Process-wide counter of sqlx::query events. Installed once via the
@@ -76,7 +75,10 @@ fn install_query_counter() -> Arc<AtomicU64> {
             // explicitly so a developer's `RUST_LOG=warn` doesn't
             // silence the events the counter depends on.
             let filter = tracing_subscriber::EnvFilter::new("sqlx::query=info");
-            tracing_subscriber::registry().with(filter).with(layer).init();
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(layer)
+                .init();
             counter
         })
         .clone()
@@ -158,7 +160,11 @@ async fn register(app: &TestApp, email: &str) -> Authed {
     }
 }
 
-async fn get(app: &TestApp, auth: &Authed, path: &str) -> (StatusCode, serde_json::Value, Duration) {
+async fn get(
+    app: &TestApp,
+    auth: &Authed,
+    path: &str,
+) -> (StatusCode, serde_json::Value, Duration) {
     let started = Instant::now();
     let cookie = format!(
         "__Host-comic_session={}; __Host-comic_csrf={}",
@@ -366,11 +372,7 @@ async fn seed_library(
 
 /// Seed `cbl_count` CBL lists, each holding 3 issues sampled from the
 /// seeded series.
-async fn seed_cbls(
-    app: &TestApp,
-    series_with_issues: &[(Uuid, Vec<String>)],
-    cbl_count: usize,
-) {
+async fn seed_cbls(app: &TestApp, series_with_issues: &[(Uuid, Vec<String>)], cbl_count: usize) {
     let db = Database::connect(&app.db_url).await.unwrap();
     let now = Utc::now().fixed_offset();
     for i in 0..cbl_count {
@@ -477,11 +479,11 @@ fn assert_quick(elapsed: Duration, path: &str) {
 /// are tuned so either category trips the test immediately while
 /// leaving room for legitimate one-off additions (a new ACL check,
 /// a new metadata sub-query).
-const MAX_QUERIES_ON_DECK: u64 = 50;       // observed ≈ 23
-const MAX_QUERIES_MARKERS: u64 = 10;       // observed ≈ 2
-const MAX_QUERIES_READING_LOG: u64 = 30;   // observed ≈ 9
-const MAX_QUERIES_SERIES: u64 = 20;        // observed ≈ 5
-const MAX_QUERIES_ADMIN_STATS: u64 = 20;   // observed ≈ 6
+const MAX_QUERIES_ON_DECK: u64 = 50; // observed ≈ 23
+const MAX_QUERIES_MARKERS: u64 = 10; // observed ≈ 2
+const MAX_QUERIES_READING_LOG: u64 = 30; // observed ≈ 9
+const MAX_QUERIES_SERIES: u64 = 20; // observed ≈ 5
+const MAX_QUERIES_ADMIN_STATS: u64 = 20; // observed ≈ 6
 
 #[tokio::test]
 async fn realistic_dataset_endpoints_respond_correctly() {
@@ -560,7 +562,11 @@ async fn realistic_dataset_endpoints_respond_correctly() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["items"].is_array(), "admin stats items missing");
     assert_quick(elapsed, "/api/admin/stats/users");
-    assert_query_count(snap.taken(), MAX_QUERIES_ADMIN_STATS, "/api/admin/stats/users");
+    assert_query_count(
+        snap.taken(),
+        MAX_QUERIES_ADMIN_STATS,
+        "/api/admin/stats/users",
+    );
 }
 
 fn assert_query_count(observed: u64, max: u64, path: &str) {

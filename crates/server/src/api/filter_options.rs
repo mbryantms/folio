@@ -119,9 +119,8 @@ fn page_from_rows(mut rows: Vec<String>, limit: i64) -> CursorPage<String> {
     let limit = limit as usize;
     let next_cursor = if rows.len() > limit {
         rows.truncate(limit);
-        rows.last().and_then(|v| {
-            encode_cursor(&OptionsCursor { after: v.clone() }).ok()
-        })
+        rows.last()
+            .and_then(|v| encode_cursor(&OptionsCursor { after: v.clone() }).ok())
     } else {
         None
     };
@@ -438,7 +437,11 @@ pub async fn credits(
     Query(q): Query<OptionsQuery>,
 ) -> impl IntoResponse {
     if !CREDIT_ROLES.contains(&role.as_str()) {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "unknown credit role");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "unknown credit role",
+        );
     }
     fetch_distinct(&app, &user, "series_credits", "person", Some(role), q).await
 }

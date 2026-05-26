@@ -94,8 +94,10 @@ pub async fn validate_library(
         .all(&state.db)
         .await
     {
-        let other_roots: Vec<(uuid::Uuid, String)> =
-            other_roots.into_iter().map(|r| (r.id, r.root_path)).collect();
+        let other_roots: Vec<(uuid::Uuid, String)> = other_roots
+            .into_iter()
+            .map(|r| (r.id, r.root_path))
+            .collect();
         if !other_roots.is_empty() {
             let root_canon_for_block = root_canon.clone();
             let conflict = tokio::task::spawn_blocking(move || {

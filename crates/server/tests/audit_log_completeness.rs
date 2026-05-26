@@ -102,7 +102,11 @@ async fn admin_send(
     } else {
         Body::empty()
     };
-    app.router.clone().oneshot(b.body(body).unwrap()).await.unwrap()
+    app.router
+        .clone()
+        .oneshot(b.body(body).unwrap())
+        .await
+        .unwrap()
 }
 
 async fn audit_entries_for(app: &TestApp, auth: &Authed, action_prefix: &str) -> Vec<Value> {
@@ -192,10 +196,9 @@ async fn reconcile_restore_writes_audit_row() {
     // A real on-disk file so the handler's `Path::exists` check passes.
     let file_path = tmp.path().join("issue-1.cbz");
     std::fs::write(&file_path, b"").unwrap();
-    let issue_id =
-        common::seed::IssueSeed::new(lib_id, series_id, &file_path, b"", 1.0)
-            .insert(&db)
-            .await;
+    let issue_id = common::seed::IssueSeed::new(lib_id, series_id, &file_path, b"", 1.0)
+        .insert(&db)
+        .await;
 
     let (series_slug, issue_slug) = {
         use entity::{issue, series};
@@ -257,10 +260,9 @@ async fn reconcile_confirm_writes_audit_row() {
     let series_id = common::seed::seed_series(&db, lib_id, "Confirm Series").await;
     let file_path = tmp.path().join("issue-c.cbz");
     std::fs::write(&file_path, b"").unwrap();
-    let issue_id =
-        common::seed::IssueSeed::new(lib_id, series_id, &file_path, b"", 1.0)
-            .insert(&db)
-            .await;
+    let issue_id = common::seed::IssueSeed::new(lib_id, series_id, &file_path, b"", 1.0)
+        .insert(&db)
+        .await;
 
     let (series_slug, issue_slug) = {
         use entity::{issue, series};

@@ -433,7 +433,11 @@ pub async fn create(
 ) -> impl IntoResponse {
     let name = req.name.trim();
     if name.is_empty() {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "name required");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "name required",
+        );
     }
     if name.len() > 200 {
         return error(
@@ -506,7 +510,11 @@ pub async fn update(
     if let Some(name) = req.name.as_ref() {
         let trimmed = name.trim();
         if trimmed.is_empty() {
-            return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "name required");
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                "name required",
+            );
         }
         if trimmed.len() > 200 {
             return error(
@@ -699,7 +707,11 @@ pub async fn add_entry(
             // Issue ids are BLAKE3 hex (TEXT). Light validation only
             // — the FK check at insert time is the source of truth.
             if req.ref_id.is_empty() || req.ref_id.len() > 128 {
-                return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "ref_id invalid");
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation",
+                    "ref_id invalid",
+                );
             }
             (None, Some(req.ref_id.clone()))
         }

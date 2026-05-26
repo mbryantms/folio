@@ -141,7 +141,11 @@ pub async fn upsert(
     Json(req): Json<UpsertReq>,
 ) -> Response {
     if req.page < 0 {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "page must be >= 0");
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "page must be >= 0",
+        );
     }
     // ACL: confirm the user can see the issue at all.
     let issue_row = match issue::Entity::find_by_id(req.issue_id.clone())
@@ -267,11 +271,7 @@ pub async fn list(
         }
     };
     let views: Vec<ProgressView> = rows.into_iter().map(Into::into).collect();
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({"records": views})),
-    )
-        .into_response()
+    (StatusCode::OK, Json(serde_json::json!({"records": views}))).into_response()
 }
 
 /// Body for `POST /series/{id}/progress` — bulk read/unread for every active
@@ -420,11 +420,7 @@ pub async fn upsert_series(
         }
     }
 
-    (
-        StatusCode::OK,
-        Json(UpsertSeriesResp { updated, skipped }),
-    )
-        .into_response()
+    (StatusCode::OK, Json(UpsertSeriesResp { updated, skipped })).into_response()
 }
 
 /// Body for `POST /me/progress/bulk` — bulk read/unread for an
@@ -879,4 +875,3 @@ async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool
         .flatten()
         .is_some()
 }
-

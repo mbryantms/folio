@@ -35,8 +35,8 @@ use crate::auth::RequireAdmin;
 use crate::middleware::RequestContext;
 use crate::record_admin_action;
 use crate::state::AppState;
-use shared::error::ApiErrorCode;
 use server_macros::handler;
+use shared::error::ApiErrorCode;
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()

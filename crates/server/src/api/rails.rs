@@ -866,6 +866,10 @@ async fn ensure_target_visible(
             }
             Ok(())
         }
-        _ => Err(error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "invalid kind")),
+        _ => Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "invalid kind",
+        )),
     }
 }

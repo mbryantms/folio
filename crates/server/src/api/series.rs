@@ -13,11 +13,11 @@ use sea_orm::{
     QueryFilter, QueryOrder, QuerySelect, Set, Value, sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
+use server_macros::handler;
 use std::collections::HashMap;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
-use server_macros::handler;
 
 const MAX_QUERY_LEN: usize = 200;
 

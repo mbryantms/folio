@@ -58,17 +58,15 @@ where
             .map_err(IntoResponse::into_response)?;
 
         if is_form {
-            let data = serde_urlencoded::from_bytes::<T>(&body).map_err(|e| {
-                super::error(StatusCode::BAD_REQUEST, "validation", &e.to_string())
-            })?;
+            let data = serde_urlencoded::from_bytes::<T>(&body)
+                .map_err(|e| super::error(StatusCode::BAD_REQUEST, "validation", &e.to_string()))?;
             Ok(FormOrJson {
                 data,
                 format: ResponseFormat::Form,
             })
         } else {
-            let data = serde_json::from_slice::<T>(&body).map_err(|e| {
-                super::error(StatusCode::BAD_REQUEST, "validation", &e.to_string())
-            })?;
+            let data = serde_json::from_slice::<T>(&body)
+                .map_err(|e| super::error(StatusCode::BAD_REQUEST, "validation", &e.to_string()))?;
             Ok(FormOrJson {
                 data,
                 format: ResponseFormat::Json,

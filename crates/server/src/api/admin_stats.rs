@@ -496,9 +496,7 @@ pub async fn users_list(State(app): State<AppState>, _admin: RequireAdmin) -> Re
     // composite cursor encoded over the sort key. Both add complexity
     // without solving a real perf problem at current scale.
     match compute_users_list(&app).await {
-        Ok(rows) => {
-            Json(shared::pagination::CursorPage::bounded(rows)).into_response()
-        }
+        Ok(rows) => Json(shared::pagination::CursorPage::bounded(rows)).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "admin users_list failed");
             internal()
@@ -1038,4 +1036,3 @@ fn internal() -> Response {
 fn bad(code: &str, message: &str) -> Response {
     super::error(StatusCode::UNPROCESSABLE_ENTITY, code, message)
 }
-

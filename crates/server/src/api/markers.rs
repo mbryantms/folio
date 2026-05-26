@@ -814,11 +814,7 @@ pub async fn search(
         return Json(MarkerSearchView { items: Vec::new() }).into_response();
     }
     if text.len() > MARKER_SEARCH_MAX_QUERY_LEN {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation",
-            "q too long",
-        );
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "q too long");
     }
     let limit = q
         .limit

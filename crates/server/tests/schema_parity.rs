@@ -98,10 +98,7 @@ struct ColRow {
     column_name: String,
 }
 
-async fn live_columns(
-    db: &sea_orm::DatabaseConnection,
-    table: &str,
-) -> HashSet<String> {
+async fn live_columns(db: &sea_orm::DatabaseConnection, table: &str) -> HashSet<String> {
     ColRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT column_name FROM information_schema.columns \
@@ -153,10 +150,8 @@ async fn every_postgres_column_is_in_an_entity_or_allow_listed() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let mut failures: Vec<String> = Vec::new();
 
-    let allow_list: HashSet<(&str, &str)> = GENERATED_COLUMNS
-        .iter()
-        .map(|(t, c, _)| (*t, *c))
-        .collect();
+    let allow_list: HashSet<(&str, &str)> =
+        GENERATED_COLUMNS.iter().map(|(t, c, _)| (*t, *c)).collect();
 
     for check in all_entities() {
         let live = live_columns(&db, check.table).await;
