@@ -119,6 +119,76 @@ async fn me_with_session_cookie_works() {
 }
 
 #[tokio::test]
+async fn me_reuses_existing_csrf_cookie() {
+    // Regression: minting a fresh CSRF token on every /auth/me call
+    // created a TOCTOU race against in-flight POSTs that captured
+    // the cookie value just before /auth/me's response rotated it.
+    // Symptom: random 403s with `reason: "no-token"` on routine
+    // mutations after a TanStack staleTime-revalidate of useMe().
+    // Fix: reuse the existing cookie value; only mint when missing.
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "user@example.com", "correctly-horse-battery").await;
+    let session_cookie = extract_cookie(&reg, "__Host-comic_session").unwrap();
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/me")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}"
+                    ),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    // Body's csrf_token field must match the cookie we sent in.
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["csrf_token"], csrf);
+}
+
+#[tokio::test]
+async fn me_mints_csrf_when_cookie_missing() {
+    // Fresh sessions (no CSRF cookie yet) still get one minted on the
+    // first /auth/me call — the original "fresh on app load" intent.
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "user@example.com", "correctly-horse-battery").await;
+    let session_cookie = extract_cookie(&reg, "__Host-comic_session").unwrap();
+
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/me")
+                // Intentionally omit __Host-comic_csrf — only send session.
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={session_cookie}"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let minted = extract_cookie(&resp, "__Host-comic_csrf");
+    assert!(
+        minted.is_some(),
+        "expected a freshly-minted CSRF cookie when none was sent"
+    );
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["csrf_token"], minted.unwrap());
+}
+
+#[tokio::test]
 async fn csrf_enforced_on_unsafe_verbs() {
     let app = TestApp::spawn().await;
     let reg = register(&app, "user@example.com", "correctly-horse-battery").await;

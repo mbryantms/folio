@@ -819,8 +819,22 @@ pub async fn me(
     user: CurrentUser,
     jar: CookieJar,
 ) -> impl IntoResponse {
-    // Mint a fresh CSRF token on /auth/me — clients call this on app load.
-    let csrf = new_csrf_token();
+    // Re-use the existing CSRF cookie value when one is already set.
+    // Minting a fresh token on every /auth/me call creates a TOCTOU
+    // race: TanStack staleTime-revalidates trigger background
+    // /auth/me fetches that rotate the cookie *while* an unrelated
+    // POST is in flight (the JS read its CSRF cookie value, the
+    // browser then attaches the freshly-rotated cookie when the
+    // request actually goes out → cookie ≠ header → 403). Tokens
+    // still rotate on login / token_version bumps; the per-app-load
+    // freshness is what the original comment cared about, and the
+    // first /auth/me after a clean session still mints because no
+    // cookie exists yet.
+    let existing = jar.get(CSRF_COOKIE).map(|c| c.value().to_owned());
+    let (csrf, set_cookie) = match existing {
+        Some(v) if !v.is_empty() => (v, false),
+        _ => (new_csrf_token(), true),
+    };
 
     // Re-fetch the row to pick up profile fields not carried on CurrentUser
     // (e.g. default_reading_direction, M4 reader prefs). Tolerate a transient
@@ -832,7 +846,11 @@ pub async fn me(
         .flatten();
 
     let body = me_resp_from_parts(&user, csrf.clone(), row.as_ref());
-    let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
+    let jar = if set_cookie {
+        jar.add(csrf_cookie(csrf, app.cfg().access_ttl()))
+    } else {
+        jar
+    };
     (StatusCode::OK, jar, Json(body)).into_response()
 }
 
