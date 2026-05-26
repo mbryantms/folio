@@ -33,12 +33,36 @@ let candidatesState = {
 // we inline the noop shape rather than referencing a shared const
 // from outside the factory (that throws "Cannot access X before
 // initialization" at module-load time).
+//
+// The dialog uses `apiMutate` directly for the auto-kick (instead of
+// `useSearchMetadataForSeries`/`useSearchMetadataForIssue`) — see the
+// kick-effect comment in MetadataMatchDialog.tsx for the StrictMode
+// rationale. The mock stub returns a never-resolving promise so the
+// "Searching providers…" shell renders deterministically (the test
+// asserts the polling state, not the resolution).
 vi.mock("@/lib/api/mutations", () => ({
-  useSearchMetadataForSeries: () => ({ mutate: () => undefined, isPending: false }),
-  useSearchMetadataForIssue: () => ({ mutate: () => undefined, isPending: false }),
-  useApplyMetadataForSeries: () => ({ mutate: () => undefined, isPending: false }),
-  useApplyMetadataForIssue: () => ({ mutate: () => undefined, isPending: false }),
+  apiMutate: () => new Promise(() => {}),
+  useApplyMetadataForSeries: () => ({
+    mutate: () => undefined,
+    isPending: false,
+    isSuccess: false,
+  }),
+  useApplyMetadataForIssue: () => ({
+    mutate: () => undefined,
+    isPending: false,
+    isSuccess: false,
+  }),
 }));
+
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    useQueryClient: () => ({
+      invalidateQueries: () => undefined,
+    }),
+  };
+});
 
 vi.mock("@/lib/api/queries", () => ({
   useMe: () => ({ data: { role: "admin", id: "u1", email: "a@b.c" } }),

@@ -34,18 +34,24 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+
+import { apiMutate } from "@/lib/api/mutations";
 import {
   useApplyMetadataForIssue,
   useApplyMetadataForSeries,
-  useSearchMetadataForIssue,
-  useSearchMetadataForSeries,
 } from "@/lib/api/mutations";
 import {
   useMe,
   useMetadataCandidatesIssue,
   useMetadataCandidatesSeries,
 } from "@/lib/api/queries";
-import type { ApplyMode, CandidateView } from "@/lib/api/types";
+import type {
+  ApplyMode,
+  CandidateView,
+  SearchStartedResp,
+} from "@/lib/api/types";
 
 export type MetadataMatchScope =
   | { kind: "series"; seriesSlug: string }
@@ -90,16 +96,11 @@ export function MetadataMatchForm({
 }) {
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
-  // Hooks must be unconditional. Call both sets — the empty-string
-  // `enabled` guard inside each hook short-circuits the inactive
-  // half so we don't fire two HTTP calls per render.
-  const seriesSearch = useSearchMetadataForSeries(
-    scope.kind === "series" ? scope.seriesSlug : "",
-  );
-  const issueSearch = useSearchMetadataForIssue(
-    scope.kind === "issue" ? scope.seriesSlug : "",
-    scope.kind === "issue" ? scope.issueSlug : "",
-  );
+  // Apply mutations stay on the useApiMutation pattern — they're
+  // fired by an explicit user click (the Apply button) post-mount,
+  // so the React 19 StrictMode dev mount→unmount→remount cycle has
+  // long settled by the time the user clicks. The auto-kick search
+  // below uses apiMutate directly instead, see below.
   const seriesApply = useApplyMetadataForSeries(
     scope.kind === "series" ? scope.seriesSlug : "",
   );
@@ -107,9 +108,11 @@ export function MetadataMatchForm({
     scope.kind === "issue" ? scope.seriesSlug : "",
     scope.kind === "issue" ? scope.issueSlug : "",
   );
-  const search = scope.kind === "series" ? seriesSearch : issueSearch;
   const apply = scope.kind === "series" ? seriesApply : issueApply;
+  const qc = useQueryClient();
   const [runId, setRunId] = React.useState<string | null>(null);
+  const [searchPending, setSearchPending] = React.useState(false);
+  const [searchError, setSearchError] = React.useState<string | null>(null);
   const seriesCandidates = useMetadataCandidatesSeries(
     scope.kind === "series" ? scope.seriesSlug : "",
     scope.kind === "series" ? runId : null,
@@ -125,9 +128,72 @@ export function MetadataMatchForm({
   const [overrideUserEdits, setOverrideUserEdits] = React.useState(false);
   const [pickedOrdinal, setPickedOrdinal] = React.useState<number | null>(null);
 
-  // Auto-kick the search the first time the dialog opens. We track
-  // "did we kick this dialog session?" in a ref so a re-render
-  // (mode toggle, etc.) doesn't re-fire the search.
+  // Auto-kick the search via raw apiMutate — NOT useApiMutation.
+  // Backstory: TanStack Query v5's useMutation observer ends up
+  // disconnected from its state machine when fired from an effect
+  // that gets cleaned up by React 19 StrictMode's intentional
+  // mount → unmount → remount dev cycle. The mutationFn promise
+  // resolves (the network roundtrip completes), but the observer's
+  // `data`/`status`/per-call onSuccess all silently drop on the
+  // floor — the kick effect would set `search.mutate()` running,
+  // then the cleanup tears the observer down, then the resolution
+  // arrives nowhere. Bypassing the observer entirely with a direct
+  // apiMutate call sidesteps the issue: the response lands in plain
+  // React state via the local `searchPending`/`runId` slots, which
+  // survive the strict-mode cycle just like any other useState.
+  const searchPath = React.useMemo(
+    () =>
+      scope.kind === "series"
+        ? `/series/${encodeURIComponent(scope.seriesSlug)}/metadata/search`
+        : `/series/${encodeURIComponent(scope.seriesSlug)}/issues/${encodeURIComponent(scope.issueSlug)}/metadata/search`,
+    [scope],
+  );
+  const candidatesInvalidateKey = React.useMemo(
+    () =>
+      scope.kind === "series"
+        ? ["series", scope.seriesSlug, "metadata", "candidates"]
+        : [
+            "series",
+            scope.seriesSlug,
+            "issues",
+            scope.issueSlug,
+            "metadata",
+            "candidates",
+          ],
+    [scope],
+  );
+
+  const runSearch = React.useCallback(() => {
+    setSearchPending(true);
+    setSearchError(null);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await apiMutate<SearchStartedResp>({
+          path: searchPath,
+          method: "POST",
+        });
+        if (cancelled) return;
+        if (result?.run_id) {
+          setRunId(result.run_id);
+          qc.invalidateQueries({ queryKey: candidatesInvalidateKey });
+        } else {
+          setSearchError("Empty response from search endpoint.");
+        }
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : "Search failed.";
+        setSearchError(msg);
+        toast.error(msg);
+      } finally {
+        if (!cancelled) setSearchPending(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchPath, candidatesInvalidateKey, qc]);
+
   const kickedRef = React.useRef(false);
   React.useEffect(() => {
     if (!open) {
@@ -136,17 +202,21 @@ export function MetadataMatchForm({
     }
     if (kickedRef.current) return;
     kickedRef.current = true;
-    search.mutate(undefined, {
-      onSuccess: (data) => {
-        if (data?.run_id) setRunId(data.run_id);
-      },
-    });
-    // search is stable across renders; including it would loop.
+    runSearch();
+    // runSearch is stable per (searchPath, key) — those don't change
+    // mid-dialog.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const runStatus = candidates.data?.status ?? "queued";
-  const isPolling = runStatus === "queued" || runStatus === "searching";
+  // "Searching providers..." renders when EITHER the POST is in
+  // flight (`searchPending`) OR the run row has been created but the
+  // worker hasn't finalized it yet (`runStatus` queued/searching).
+  // The search-creation step that races with StrictMode lands the
+  // run row in DB — surfacing searchPending lets the dialog show
+  // progress even before the run row is queryable.
+  const isPolling =
+    searchPending || runStatus === "queued" || runStatus === "searching";
   const isFinalized =
     runStatus === "completed" ||
     runStatus === "failed" ||
@@ -155,28 +225,32 @@ export function MetadataMatchForm({
   const onApply = (ordinal: number) => {
     if (!runId) return;
     setPickedOrdinal(ordinal);
-    apply.mutate(
-      {
-        run_id: runId,
-        ordinal,
-        mode,
-        apply_cover: applyCover,
-        override_user_edits: overrideUserEdits,
-      },
-      { onSuccess: () => onClose() },
-    );
+    apply.mutate({
+      run_id: runId,
+      ordinal,
+      mode,
+      apply_cover: applyCover,
+      override_user_edits: overrideUserEdits,
+    });
+    // The auto-close happens via the apply.isSuccess watcher below
+    // rather than a per-call onSuccess — same StrictMode-remount race
+    // that strands the search kick's onSuccess.
   };
+
+  // Close the dialog when the apply mutation resolves successfully.
+  React.useEffect(() => {
+    if (apply.isSuccess) onClose();
+    // onClose is stable enough (parent owns it via useState setter
+    // for the open boolean) that adding it to deps would loop only
+    // if the parent re-creates the setter unnecessarily.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apply.isSuccess]);
 
   const restart = () => {
     setRunId(null);
     setPickedOrdinal(null);
     kickedRef.current = false;
-    // Re-trigger the kickoff effect.
-    search.mutate(undefined, {
-      onSuccess: (data) => {
-        if (data?.run_id) setRunId(data.run_id);
-      },
-    });
+    runSearch();
   };
 
   return (
@@ -242,7 +316,14 @@ export function MetadataMatchForm({
       )}
 
       <ScrollArea className="max-h-[50vh] pr-3">
-        {isPolling ? (
+        {searchError ? (
+          <div className="text-destructive py-6 text-sm">
+            {searchError}{" "}
+            <button onClick={restart} className="underline">
+              Retry
+            </button>
+          </div>
+        ) : isPolling ? (
           <div className="text-muted-foreground flex items-center justify-center gap-2 py-12 text-sm">
             <Loader2 className="h-4 w-4 animate-spin" /> Searching providers…
           </div>
