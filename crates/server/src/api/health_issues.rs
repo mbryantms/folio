@@ -270,8 +270,7 @@ pub async fn admin_list(
 
     // Batch-resolve library names so the table can render a Library
     // column without one /libraries/{slug} request per row.
-    let library_ids: std::collections::HashSet<Uuid> =
-        page.iter().map(|r| r.library_id).collect();
+    let library_ids: std::collections::HashSet<Uuid> = page.iter().map(|r| r.library_id).collect();
     let library_meta: HashMap<Uuid, (String, String)> = if library_ids.is_empty() {
         HashMap::new()
     } else {
@@ -280,10 +279,7 @@ pub async fn admin_list(
             .all(&app.db)
             .await
         {
-            Ok(libs) => libs
-                .into_iter()
-                .map(|l| (l.id, (l.name, l.slug)))
-                .collect(),
+            Ok(libs) => libs.into_iter().map(|l| (l.id, (l.name, l.slug))).collect(),
             Err(e) => {
                 tracing::error!(error = %e, "library lookup for health issues failed");
                 HashMap::new()

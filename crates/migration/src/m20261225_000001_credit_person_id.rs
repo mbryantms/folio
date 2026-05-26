@@ -68,10 +68,8 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
         for table in ["series_credits", "issue_credits"] {
-            db.execute_unprepared(&format!(
-                "DROP INDEX IF EXISTS {table}_person_id_idx"
-            ))
-            .await?;
+            db.execute_unprepared(&format!("DROP INDEX IF EXISTS {table}_person_id_idx"))
+                .await?;
             db.execute_unprepared(&format!(
                 "ALTER TABLE {table} DROP COLUMN IF EXISTS person_id"
             ))

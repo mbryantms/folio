@@ -59,7 +59,10 @@ fn main() -> ExitCode {
     let allowlist = match load_allowlist(&allowlist_path) {
         Ok(set) => set,
         Err(e) => {
-            eprintln!("audit-check: could not read {}: {e}", allowlist_path.display());
+            eprintln!(
+                "audit-check: could not read {}: {e}",
+                allowlist_path.display()
+            );
             return ExitCode::from(2);
         }
     };
@@ -105,7 +108,10 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    eprintln!("audit-check: {} unaudited RequireAdmin handler(s):", misses.len());
+    eprintln!(
+        "audit-check: {} unaudited RequireAdmin handler(s):",
+        misses.len()
+    );
     for m in &misses {
         eprintln!(
             "  {}:{} — fn `{}` is admin-gated but never calls `record_admin_action!`",
@@ -145,7 +151,13 @@ impl<'a> HandlerVisitor<'a> {
         }
     }
 
-    fn check(&mut self, name: &str, line: usize, sig_inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>, block: &syn::Block) {
+    fn check(
+        &mut self,
+        name: &str,
+        line: usize,
+        sig_inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>,
+        block: &syn::Block,
+    ) {
         if !has_require_admin_arg(sig_inputs) {
             return;
         }

@@ -42,14 +42,10 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared(
-            "DROP INDEX IF EXISTS progress_records_backfill_idx",
-        )
-        .await?;
-        db.execute_unprepared(
-            "ALTER TABLE progress_records DROP COLUMN IF EXISTS is_backfill",
-        )
-        .await?;
+        db.execute_unprepared("DROP INDEX IF EXISTS progress_records_backfill_idx")
+            .await?;
+        db.execute_unprepared("ALTER TABLE progress_records DROP COLUMN IF EXISTS is_backfill")
+            .await?;
         Ok(())
     }
 }

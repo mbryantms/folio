@@ -54,10 +54,8 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
         for table in ["markers", "reading_sessions"] {
-            db.execute_unprepared(&format!(
-                "DROP INDEX IF EXISTS {table}_hidden_idx"
-            ))
-            .await?;
+            db.execute_unprepared(&format!("DROP INDEX IF EXISTS {table}_hidden_idx"))
+                .await?;
             db.execute_unprepared(&format!(
                 "ALTER TABLE {table} DROP COLUMN IF EXISTS hidden_from_log"
             ))

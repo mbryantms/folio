@@ -376,8 +376,7 @@ pub async fn admin_list(
     };
     let page: Vec<scan_run::Model> = rows.into_iter().take(limit as usize).collect();
 
-    let (series_names, issue_labels, library_meta) =
-        resolve_joins(&app, &page).await;
+    let (series_names, issue_labels, library_meta) = resolve_joins(&app, &page).await;
 
     let items: Vec<CrossLibScanRunView> = page
         .into_iter()
