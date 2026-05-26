@@ -15,6 +15,7 @@
 //!   payloads (`metadata_cache` table from M1 migration).
 //! - [`comicvine`] — first concrete provider impl (M1).
 
+pub mod apply;
 pub mod cache;
 pub mod comicvine;
 pub mod field;

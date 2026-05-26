@@ -26,6 +26,7 @@ use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;
 
 pub mod close_dangling_sessions;
+pub mod metadata_apply;
 pub mod metadata_search;
 pub mod orphan_sweep;
 pub mod post_scan;
@@ -47,6 +48,8 @@ pub struct JobRuntime {
     pub post_scan_dictionary_storage: RedisStorage<post_scan::DictionaryJob>,
     pub metadata_search_series_storage: RedisStorage<metadata_search::SearchSeriesJob>,
     pub metadata_search_issue_storage: RedisStorage<metadata_search::SearchIssueJob>,
+    pub metadata_apply_series_storage: RedisStorage<metadata_apply::ApplySeriesJob>,
+    pub metadata_apply_issue_storage: RedisStorage<metadata_apply::ApplyIssueJob>,
     pub redis: ConnectionManager,
 }
 
@@ -65,6 +68,10 @@ impl JobRuntime {
             RedisStorage::<metadata_search::SearchSeriesJob>::new(conn.clone());
         let metadata_search_issue_storage =
             RedisStorage::<metadata_search::SearchIssueJob>::new(conn.clone());
+        let metadata_apply_series_storage =
+            RedisStorage::<metadata_apply::ApplySeriesJob>::new(conn.clone());
+        let metadata_apply_issue_storage =
+            RedisStorage::<metadata_apply::ApplyIssueJob>::new(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -74,6 +81,8 @@ impl JobRuntime {
             post_scan_dictionary_storage,
             metadata_search_series_storage,
             metadata_search_issue_storage,
+            metadata_apply_series_storage,
+            metadata_apply_issue_storage,
             redis: conn,
         })
     }
@@ -274,6 +283,22 @@ impl JobRuntime {
             .backend(self.metadata_search_issue_storage.clone())
             .build_fn(metadata_search::handle_issue);
 
+        // Apply workers: concurrency=1 per-job-type — apply itself
+        // is short (single detail fetch + DB writes), serializing
+        // by entity is sufficient via the per-entity mutex inside
+        // the handler.
+        let metadata_apply_series_worker = WorkerBuilder::new("metadata_apply_series")
+            .concurrency(1)
+            .data(state.clone())
+            .backend(self.metadata_apply_series_storage.clone())
+            .build_fn(metadata_apply::handle_series);
+
+        let metadata_apply_issue_worker = WorkerBuilder::new("metadata_apply_issue")
+            .concurrency(1)
+            .data(state.clone())
+            .backend(self.metadata_apply_issue_storage.clone())
+            .build_fn(metadata_apply::handle_issue);
+
         let shutdown_fut = {
             let token = shutdown.clone();
             async move {
@@ -289,6 +314,8 @@ impl JobRuntime {
             .register(dictionary_worker)
             .register(metadata_series_worker)
             .register(metadata_issue_worker)
+            .register(metadata_apply_series_worker)
+            .register(metadata_apply_issue_worker)
             .run_with_signal(shutdown_fut)
             .await
     }

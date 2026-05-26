@@ -400,6 +400,205 @@ async fn search_issue_succeeds_with_seeded_issue() {
     assert_eq!(run.scope_entity_id.as_deref(), Some(issue_id.as_str()));
 }
 
+// ───────── apply endpoint decision logic ─────────
+
+async fn seed_completed_series_run(
+    app: &TestApp,
+    series_id: Uuid,
+    source: &str,
+    external_id: &str,
+) -> (Uuid, i32) {
+    let db = &app.state().db;
+    let now = Utc::now().fixed_offset();
+    let run_id = Uuid::now_v7();
+    entity::metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("series".into()),
+        scope_entity_id: Set(Some(series_id.to_string())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec![source.into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(1),
+        items_matched_high: Set(1),
+        items_matched_medium: Set(0),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        query: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    entity::metadata_run_candidate::ActiveModel {
+        run_id: Set(run_id),
+        ordinal: Set(0),
+        source: Set(source.into()),
+        external_id: Set(external_id.into()),
+        bucket: Set("high".into()),
+        score: Set(95.0),
+        score_breakdown: Set(json!({})),
+        candidate: Set(json!({})),
+        applied_at: Set(None),
+        dismissed_at: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    (run_id, 0)
+}
+
+async fn post_json(
+    app: &TestApp,
+    auth: &Authed,
+    path: &str,
+    body: Value,
+) -> axum::http::Response<Body> {
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(path)
+                .header(header::COOKIE, auth.cookie())
+                .header("x-csrf-token", &auth.csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn apply_series_returns_202_when_run_and_candidate_exist() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let (run_id, ordinal) = seed_completed_series_run(&app, series_id, "comicvine", "12345").await;
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/apply"),
+        json!({"run_id": run_id, "ordinal": ordinal}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["run_id"], run_id.to_string());
+    assert_eq!(body["ordinal"], ordinal);
+    assert_eq!(body["status"], "queued");
+}
+
+#[tokio::test]
+async fn apply_series_400_when_candidate_ordinal_unknown() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let (run_id, _ord) = seed_completed_series_run(&app, series_id, "comicvine", "12345").await;
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/apply"),
+        json!({"run_id": run_id, "ordinal": 99}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "metadata.candidate_not_found");
+}
+
+#[tokio::test]
+async fn apply_series_404_when_run_belongs_to_different_series() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let other_series_id = SeriesSeed::new(lib_id, "Other").insert(&app.state().db).await;
+    let (other_run_id, _ord) =
+        seed_completed_series_run(&app, other_series_id, "comicvine", "12345").await;
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/apply"),
+        json!({"run_id": other_run_id, "ordinal": 0}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "metadata.run_not_found");
+}
+
+#[tokio::test]
+async fn apply_series_403_when_override_user_edits_requested_by_non_admin() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    // Grant the user library access via direct row insert (the test
+    // harness has no helper for this, so we do it raw).
+    use entity::library_user_access;
+    use entity::user;
+    use sea_orm::{ColumnTrait, QueryFilter};
+    let user_row = user::Entity::find()
+        .filter(user::Column::Email.eq("user@example.com"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let now = Utc::now().fixed_offset();
+    library_user_access::ActiveModel {
+        user_id: Set(user_row.id),
+        library_id: Set(lib_id),
+        role: Set("reader".into()),
+        age_rating_max: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    let (run_id, ord) = seed_completed_series_run(&app, series_id, "comicvine", "12345").await;
+    let resp = post_json(
+        &app,
+        &user,
+        &format!("/api/series/{series_id}/metadata/apply"),
+        json!({"run_id": run_id, "ordinal": ord, "override_user_edits": true}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.forbidden");
+}
+
+#[tokio::test]
+async fn apply_series_403_when_user_lacks_library_access() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let (run_id, ord) = seed_completed_series_run(&app, series_id, "comicvine", "12345").await;
+    let resp = post_json(
+        &app,
+        &user,
+        &format!("/api/series/{series_id}/metadata/apply"),
+        json!({"run_id": run_id, "ordinal": ord}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
 #[tokio::test]
 async fn search_issue_400_when_issue_has_no_number_raw() {
     let app = TestApp::spawn_with_comicvine("k", true).await;

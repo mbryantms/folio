@@ -6261,6 +6261,63 @@
         }
       }
     },
+    "/api/series/{slug}/issues/{issue_slug}/metadata/apply": {
+      "post": {
+        "operationId": "metadata_apply_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyAcceptedResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "candidate not found / no providers"
+          },
+          "403": {
+            "description": "library access denied / override_user_edits requires admin"
+          },
+          "404": {
+            "description": "issue / run not found"
+          },
+          "502": {
+            "description": "queue error"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/issues/{issue_slug}/metadata/candidates": {
       "get": {
         "operationId": "metadata_candidates_issue",
@@ -6355,6 +6412,55 @@
           },
           "404": {
             "description": "issue not found"
+          },
+          "502": {
+            "description": "queue error"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/apply": {
+      "post": {
+        "operationId": "metadata_apply_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyAcceptedResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "candidate not found / no providers"
+          },
+          "403": {
+            "description": "library access denied / override_user_edits requires admin"
+          },
+          "404": {
+            "description": "series / run not found"
           },
           "502": {
             "description": "queue error"
@@ -6985,6 +7091,78 @@
           },
           "scope": {
             "type": "string"
+          }
+        }
+      },
+      "ApplyAcceptedResp": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "ordinal",
+          "status"
+        ],
+        "properties": {
+          "ordinal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`queued` — the apply job is in flight; the candidate row's\n`applied_at` flips once it completes. The Runs / Review-Queue\nsurfaces (M6) reflect the new state via the same polling\nendpoint."
+          }
+        }
+      },
+      "ApplyCoverPolicy": {
+        "type": "string",
+        "enum": [
+          "never",
+          "when_missing",
+          "always"
+        ]
+      },
+      "ApplyMode": {
+        "type": "string",
+        "enum": [
+          "fill_missing",
+          "replace_all"
+        ]
+      },
+      "ApplyRequest": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "ordinal"
+        ],
+        "properties": {
+          "apply_cover": {
+            "type": "boolean",
+            "description": "Pull + write the cover image. Defaults to true."
+          },
+          "cover_overwrite_policy": {
+            "$ref": "#/components/schemas/ApplyCoverPolicy",
+            "description": "`never` / `when_missing` (default) / `always`. Only applies to\nthe primary cover; variants are always additive."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ApplyMode",
+            "description": "`fill_missing` (default) only writes fields that are currently\nempty; `replace_all` overwrites non-user fields. User-set\nfields stay sacred regardless unless `override_user_edits=true`\n(admin-only)."
+          },
+          "ordinal": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based rank from the orchestrator (lower = higher score)."
+          },
+          "override_user_edits": {
+            "type": "boolean",
+            "description": "Bypass the user-precedence rule. Admin-only; non-admin callers\nget 403 if they request it."
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The run row produced by `POST .../metadata/search`. Required so\nthe apply job can read the chosen candidate back from\n`metadata_run_candidate` rather than re-fetching from the\nprovider."
           }
         }
       },

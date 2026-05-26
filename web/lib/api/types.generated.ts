@@ -2766,6 +2766,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/issues/{issue_slug}/metadata/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_apply_issue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/issues/{issue_slug}/metadata/candidates": {
         parameters: {
             query?: never;
@@ -2792,6 +2808,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["metadata_search_issue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_apply_series"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3037,6 +3069,49 @@ export interface components {
             label: string;
             last_used_at?: string | null;
             scope: string;
+        };
+        ApplyAcceptedResp: {
+            /** Format: int32 */
+            ordinal: number;
+            /** Format: uuid */
+            run_id: string;
+            /** @description `queued` — the apply job is in flight; the candidate row's
+             *     `applied_at` flips once it completes. The Runs / Review-Queue
+             *     surfaces (M6) reflect the new state via the same polling
+             *     endpoint. */
+            status: string;
+        };
+        /** @enum {string} */
+        ApplyCoverPolicy: "never" | "when_missing" | "always";
+        /** @enum {string} */
+        ApplyMode: "fill_missing" | "replace_all";
+        ApplyRequest: {
+            /** @description Pull + write the cover image. Defaults to true. */
+            apply_cover?: boolean;
+            /** @description `never` / `when_missing` (default) / `always`. Only applies to
+             *     the primary cover; variants are always additive. */
+            cover_overwrite_policy?: components["schemas"]["ApplyCoverPolicy"];
+            /** @description `fill_missing` (default) only writes fields that are currently
+             *     empty; `replace_all` overwrites non-user fields. User-set
+             *     fields stay sacred regardless unless `override_user_edits=true`
+             *     (admin-only). */
+            mode?: components["schemas"]["ApplyMode"];
+            /**
+             * Format: int32
+             * @description 0-based rank from the orchestrator (lower = higher score).
+             */
+            ordinal: number;
+            /** @description Bypass the user-precedence rule. Admin-only; non-admin callers
+             *     get 403 if they request it. */
+            override_user_edits?: boolean;
+            /**
+             * Format: uuid
+             * @description The run row produced by `POST .../metadata/search`. Required so
+             *     the apply job can read the chosen candidate back from
+             *     `metadata_run_candidate` rather than re-fetching from the
+             *     provider.
+             */
+            run_id: string;
         };
         AuditEntryView: {
             action: string;
@@ -11720,6 +11795,60 @@ export interface operations {
             };
         };
     };
+    metadata_apply_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyAcceptedResp"];
+                };
+            };
+            /** @description candidate not found / no providers */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied / override_user_edits requires admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue / run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description queue error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_candidates_issue: {
         parameters: {
             query?: {
@@ -11795,6 +11924,59 @@ export interface operations {
                 content?: never;
             };
             /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description queue error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_apply_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyAcceptedResp"];
+                };
+            };
+            /** @description candidate not found / no providers */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied / override_user_edits requires admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / run not found */
             404: {
                 headers: {
                     [name: string]: unknown;

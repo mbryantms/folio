@@ -28,7 +28,8 @@ use uuid::Uuid;
 
 use super::error;
 use crate::auth::CurrentUser;
-use crate::jobs::metadata_search;
+use crate::jobs::{metadata_apply, metadata_search};
+use crate::metadata::apply::ApplyMode;
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
 use crate::metadata::orchestrator;
 use crate::middleware::RequestContext;
@@ -39,8 +40,10 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(search_series))
         .routes(routes!(candidates_series))
+        .routes(routes!(apply_series))
         .routes(routes!(search_issue))
         .routes(routes!(candidates_issue))
+        .routes(routes!(apply_issue))
 }
 
 // ───────── response shapes ─────────
@@ -84,6 +87,73 @@ pub struct CandidatesQuery {
     /// Pin a specific run; defaults to the latest run for the
     /// scope/entity.
     pub run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ApplyRequest {
+    /// The run row produced by `POST .../metadata/search`. Required so
+    /// the apply job can read the chosen candidate back from
+    /// `metadata_run_candidate` rather than re-fetching from the
+    /// provider.
+    pub run_id: Uuid,
+    /// 0-based rank from the orchestrator (lower = higher score).
+    pub ordinal: i32,
+    /// `fill_missing` (default) only writes fields that are currently
+    /// empty; `replace_all` overwrites non-user fields. User-set
+    /// fields stay sacred regardless unless `override_user_edits=true`
+    /// (admin-only).
+    #[serde(default = "default_fill_missing")]
+    pub mode: ApplyMode,
+    /// Pull + write the cover image. Defaults to true.
+    #[serde(default = "default_true")]
+    pub apply_cover: bool,
+    /// `never` / `when_missing` (default) / `always`. Only applies to
+    /// the primary cover; variants are always additive.
+    #[serde(default = "default_when_missing")]
+    pub cover_overwrite_policy: ApplyCoverPolicy,
+    /// Bypass the user-precedence rule. Admin-only; non-admin callers
+    /// get 403 if they request it.
+    #[serde(default)]
+    pub override_user_edits: bool,
+}
+
+fn default_fill_missing() -> ApplyMode {
+    ApplyMode::FillMissing
+}
+fn default_true() -> bool {
+    true
+}
+fn default_when_missing() -> ApplyCoverPolicy {
+    ApplyCoverPolicy::WhenMissing
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplyCoverPolicy {
+    Never,
+    WhenMissing,
+    Always,
+}
+
+impl From<ApplyCoverPolicy> for crate::jobs::metadata_apply::CoverPolicy {
+    fn from(p: ApplyCoverPolicy) -> Self {
+        match p {
+            ApplyCoverPolicy::Never => crate::jobs::metadata_apply::CoverPolicy::Never,
+            ApplyCoverPolicy::WhenMissing => crate::jobs::metadata_apply::CoverPolicy::WhenMissing,
+            ApplyCoverPolicy::Always => crate::jobs::metadata_apply::CoverPolicy::Always,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ApplyAcceptedResp {
+    pub run_id: Uuid,
+    pub ordinal: i32,
+    /// `queued` — the apply job is in flight; the candidate row's
+    /// `applied_at` flips once it completes. The Runs / Review-Queue
+    /// surfaces (M6) reflect the new state via the same polling
+    /// endpoint.
+    pub status: String,
 }
 
 // ───────── /series/{slug}/metadata/search ─────────
@@ -450,6 +520,204 @@ pub async fn candidates_issue(
         );
     }
     Json(build_candidates_resp(&app, run).await).into_response()
+}
+
+// ───────── /series/{slug}/metadata/apply ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_apply_series",    post,
+    path = "/series/{slug}/metadata/apply",
+    params(("slug" = String, Path)),
+    request_body = ApplyRequest,
+    responses(
+        (status = 202, body = ApplyAcceptedResp),
+        (status = 400, description = "candidate not found / no providers"),
+        (status = 403, description = "library access denied / override_user_edits requires admin"),
+        (status = 404, description = "series / run not found"),
+        (status = 502, description = "queue error"),
+    )
+)]
+#[handler]
+pub async fn apply_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Path(slug): Path<String>,
+    axum::Json(req): axum::Json<ApplyRequest>,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+    }
+    if req.override_user_edits && user.role != "admin" {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "override_user_edits requires admin",
+        );
+    }
+    // Validate the run belongs to this series + the candidate exists.
+    let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    };
+    if run.scope != orchestrator::scope::SERIES
+        || run.scope_entity_id.as_deref() != Some(s.id.to_string().as_str())
+    {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "run does not belong to this series",
+        );
+    }
+    if entity::metadata_run_candidate::Entity::find_by_id((req.run_id, req.ordinal))
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten()
+        .is_none()
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "metadata.candidate_not_found",
+            "no candidate with that ordinal",
+        );
+    }
+
+    use apalis::prelude::Storage;
+    let mut storage = app.jobs.metadata_apply_series_storage.clone();
+    if let Err(e) = storage
+        .push(metadata_apply::ApplySeriesJob {
+            run_id: req.run_id,
+            ordinal: req.ordinal,
+            series_id: s.id,
+            mode: req.mode,
+            apply_cover: req.apply_cover,
+            cover_overwrite_policy: req.cover_overwrite_policy.into(),
+            override_user_edits: req.override_user_edits,
+            actor_id: Some(user.id),
+            actor_ip: ctx.ip_string(),
+            actor_ua: ctx.user_agent.clone(),
+        })
+        .await
+    {
+        tracing::error!(error = %e, "metadata_apply series: push failed");
+        return error(StatusCode::BAD_GATEWAY, "metadata.queue", "queue push failed");
+    }
+
+    (
+        StatusCode::ACCEPTED,
+        Json(ApplyAcceptedResp {
+            run_id: req.run_id,
+            ordinal: req.ordinal,
+            status: "queued".into(),
+        }),
+    )
+        .into_response()
+}
+
+// ───────── /series/{slug}/issues/{issue_slug}/metadata/apply ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_apply_issue",    post,
+    path = "/series/{slug}/issues/{issue_slug}/metadata/apply",
+    params(("slug" = String, Path), ("issue_slug" = String, Path)),
+    request_body = ApplyRequest,
+    responses(
+        (status = 202, body = ApplyAcceptedResp),
+        (status = 400, description = "candidate not found / no providers"),
+        (status = 403, description = "library access denied / override_user_edits requires admin"),
+        (status = 404, description = "issue / run not found"),
+        (status = 502, description = "queue error"),
+    )
+)]
+#[handler]
+pub async fn apply_issue(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Path((slug, issue_slug)): Path<(String, String)>,
+    axum::Json(req): axum::Json<ApplyRequest>,
+) -> Response {
+    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+    }
+    if req.override_user_edits && user.role != "admin" {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "override_user_edits requires admin",
+        );
+    }
+    let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    };
+    if run.scope != orchestrator::scope::ISSUE
+        || run.scope_entity_id.as_deref() != Some(i.id.as_str())
+    {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "run does not belong to this issue",
+        );
+    }
+    if entity::metadata_run_candidate::Entity::find_by_id((req.run_id, req.ordinal))
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten()
+        .is_none()
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "metadata.candidate_not_found",
+            "no candidate with that ordinal",
+        );
+    }
+
+    use apalis::prelude::Storage;
+    let mut storage = app.jobs.metadata_apply_issue_storage.clone();
+    if let Err(e) = storage
+        .push(metadata_apply::ApplyIssueJob {
+            run_id: req.run_id,
+            ordinal: req.ordinal,
+            issue_id: i.id.clone(),
+            mode: req.mode,
+            apply_cover: req.apply_cover,
+            cover_overwrite_policy: req.cover_overwrite_policy.into(),
+            override_user_edits: req.override_user_edits,
+            actor_id: Some(user.id),
+            actor_ip: ctx.ip_string(),
+            actor_ua: ctx.user_agent.clone(),
+        })
+        .await
+    {
+        tracing::error!(error = %e, "metadata_apply issue: push failed");
+        return error(StatusCode::BAD_GATEWAY, "metadata.queue", "queue push failed");
+    }
+
+    (
+        StatusCode::ACCEPTED,
+        Json(ApplyAcceptedResp {
+            run_id: req.run_id,
+            ordinal: req.ordinal,
+            status: "queued".into(),
+        }),
+    )
+        .into_response()
 }
 
 // ───────── helpers ─────────
