@@ -27,6 +27,7 @@ use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::identifier::Source;
+use crate::metadata::metron::MetronClient;
 use crate::metadata::provider::{MetadataProvider, ProviderError};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
@@ -93,20 +94,45 @@ pub async fn list_providers(
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
     let cv_enabled = cfg.comicvine_enabled && cv_key_set;
-
     let cv_quota = if cv_key_set {
-        let client = comicvine_client(&app);
-        client.quota().await.ok().map(snapshot_to_view)
+        comicvine_client(&app)
+            .quota()
+            .await
+            .ok()
+            .map(snapshot_to_view)
     } else {
         None
     };
-
     providers.push(ProviderView {
         id: Source::ComicVine.as_str().to_owned(),
         label: Source::ComicVine.label().to_owned(),
         enabled: cv_enabled,
         configured: cv_key_set,
         quota: cv_quota,
+    });
+
+    let metron_set = cfg
+        .metron_username
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+        && cfg
+            .metron_password
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+    let metron_enabled = cfg.metron_enabled && metron_set;
+    let metron_quota = if metron_set {
+        metron_client(&app).quota().await.ok().map(snapshot_to_view)
+    } else {
+        None
+    };
+    providers.push(ProviderView {
+        id: Source::Metron.as_str().to_owned(),
+        label: Source::Metron.label().to_owned(),
+        enabled: metron_enabled,
+        configured: metron_set,
+        quota: metron_quota,
     });
 
     Json(ProvidersListResp { providers }).into_response()
@@ -169,11 +195,41 @@ pub async fn test_provider(
             let outcome = client.health_check().await;
             (started.elapsed().as_millis() as u64, outcome)
         }
+        Source::Metron => {
+            let username_set = cfg
+                .metron_username
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            let password_set = cfg
+                .metron_password
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            if !(username_set && password_set) {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "metadata.no_credentials",
+                    "set the Metron username and password before testing",
+                );
+            }
+            if !cfg.metron_enabled {
+                return error(
+                    StatusCode::CONFLICT,
+                    "metadata.disabled",
+                    "Metron integration is disabled; enable it before testing",
+                );
+            }
+            let client = metron_client(&app);
+            let started = std::time::Instant::now();
+            let outcome = client.health_check().await;
+            (started.elapsed().as_millis() as u64, outcome)
+        }
         _ => {
             return error(
                 StatusCode::NOT_FOUND,
-                "metadata.provider_not_in_m1",
-                "this provider lands in a later milestone",
+                "metadata.provider_not_supported",
+                "this provider isn't supported yet",
             );
         }
     };
@@ -257,6 +313,13 @@ fn comicvine_client(app: &AppState) -> ComicVineClient {
         .clone()
         .unwrap_or_default();
     ComicVineClient::new(key, app.jobs.redis.clone())
+}
+
+fn metron_client(app: &AppState) -> MetronClient {
+    let cfg = app.cfg();
+    let username = cfg.metron_username.clone().unwrap_or_default();
+    let password = cfg.metron_password.clone().unwrap_or_default();
+    MetronClient::new(&username, &password, app.jobs.redis.clone())
 }
 
 impl Clone for QuotaView {

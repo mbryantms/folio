@@ -198,6 +198,16 @@ pub struct Config {
     /// apply jobs will skip ComicVine in the provider priority list.
     #[serde(default)]
     pub comicvine_enabled: bool,
+    /// Metron username (HTTP Basic auth).
+    #[serde(default)]
+    pub metron_username: Option<String>,
+    /// Metron password (HTTP Basic auth). AEAD-sealed when stored in
+    /// the `app_setting` table.
+    #[serde(default)]
+    pub metron_password: Option<String>,
+    /// Master toggle for Metron integration.
+    #[serde(default)]
+    pub metron_enabled: bool,
 }
 
 /// Hand-written `Debug` impl that redacts credentials. Stops `dbg!()`,
@@ -260,6 +270,9 @@ impl std::fmt::Debug for Config {
             .field("smtp_from", &self.smtp_from)
             .field("comicvine_api_key", &redact_opt(&self.comicvine_api_key))
             .field("comicvine_enabled", &self.comicvine_enabled)
+            .field("metron_username", &redact_opt(&self.metron_username))
+            .field("metron_password", &redact_opt(&self.metron_password))
+            .field("metron_enabled", &self.metron_enabled)
             .finish()
     }
 }
@@ -887,6 +900,39 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(b) => cfg.comicvine_enabled = b,
             None => bad_type(&row.key, "bool", &row.value),
         },
+        "metadata.metron.username" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, cfg.metron_username.as_deref(), s);
+                cfg.metron_username = if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.metron.password" => match row.value.as_str() {
+            Some(s) => {
+                if let Some(env_v) = cfg.metron_password.as_deref().filter(|p| !p.is_empty())
+                    && env_v != s
+                {
+                    tracing::warn!(
+                        key = "metadata.metron.password",
+                        "app_setting collision: env and DB disagree on this key; DB value wins"
+                    );
+                }
+                cfg.metron_password = if s.is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.metron.enabled" => match row.value.as_bool() {
+            Some(b) => cfg.metron_enabled = b,
+            None => bad_type(&row.key, "bool", &row.value),
+        },
 
         other => {
             tracing::debug!(key = %other, "app_setting row ignored (no overlay binding yet)");
@@ -1013,6 +1059,9 @@ mod tests {
             opds_panels_mode: "off".into(),
             comicvine_api_key: None,
             comicvine_enabled: false,
+            metron_username: None,
+            metron_password: None,
+            metron_enabled: false,
         }
     }
 }

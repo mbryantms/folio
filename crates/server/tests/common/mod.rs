@@ -93,6 +93,11 @@ pub struct SpawnOpts {
     pub comicvine_api_key: Option<String>,
     /// Master toggle for ComicVine integration (M1).
     pub comicvine_enabled: bool,
+    /// Metron credentials (M2). `username` + `password` must both be set
+    /// for the client to construct.
+    pub metron_username: Option<String>,
+    pub metron_password: Option<String>,
+    pub metron_enabled: bool,
 }
 
 impl TestApp {
@@ -146,6 +151,9 @@ impl TestApp {
             web_upstream_url: None,
             comicvine_api_key: None,
             comicvine_enabled: false,
+            metron_username: None,
+            metron_password: None,
+            metron_enabled: false,
         })
         .await
     }
@@ -156,6 +164,21 @@ impl TestApp {
         Self::spawn_inner(SpawnOpts {
             comicvine_api_key: Some(api_key.into()),
             comicvine_enabled: enabled,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
+    /// Spawn with Metron credentials (metadata-providers-1.0 M2 tests).
+    pub async fn spawn_with_metron(
+        username: impl Into<String>,
+        password: impl Into<String>,
+        enabled: bool,
+    ) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            metron_username: Some(username.into()),
+            metron_password: Some(password.into()),
+            metron_enabled: enabled,
             ..SpawnOpts::default()
         })
         .await
@@ -272,6 +295,9 @@ impl TestApp {
             archive_max_nesting: 1,
             comicvine_api_key: opts.comicvine_api_key.clone(),
             comicvine_enabled: opts.comicvine_enabled,
+            metron_username: opts.metron_username.clone(),
+            metron_password: opts.metron_password.clone(),
+            metron_enabled: opts.metron_enabled,
         };
 
         let jobs = JobRuntime::new(&redis_url, db.clone())

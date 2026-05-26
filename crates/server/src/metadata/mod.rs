@@ -19,6 +19,7 @@ pub mod cache;
 pub mod comicvine;
 pub mod field;
 pub mod identifier;
+pub mod metron;
 pub mod provider;
 pub mod rate_limit;
 pub mod writers;

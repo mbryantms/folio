@@ -198,13 +198,40 @@ async fn test_provider_404_for_unknown_id() {
 }
 
 #[tokio::test]
-async fn test_provider_404_for_metron_until_m2() {
+async fn test_provider_400_for_metron_without_credentials() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let resp = post(&app, &admin, "/api/admin/metadata/providers/metron/test").await;
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error"]["code"], "metadata.provider_not_in_m1");
+    assert_eq!(body["error"]["code"], "metadata.no_credentials");
+}
+
+#[tokio::test]
+async fn test_provider_409_for_metron_when_disabled() {
+    let app = TestApp::spawn_with_metron("u", "p", false).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = post(&app, &admin, "/api/admin/metadata/providers/metron/test").await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "metadata.disabled");
+}
+
+#[tokio::test]
+async fn list_providers_includes_metron_row() {
+    let app = TestApp::spawn_with_metron("u", "p", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = get(&app, &admin, "/api/admin/metadata/providers").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let providers = body["providers"].as_array().expect("providers");
+    let metron = providers
+        .iter()
+        .find(|p| p["id"] == "metron")
+        .expect("metron row");
+    assert_eq!(metron["configured"], true);
+    assert_eq!(metron["enabled"], true);
+    assert!(metron["quota"].is_object());
 }
 
 #[tokio::test]

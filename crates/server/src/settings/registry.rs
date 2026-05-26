@@ -207,6 +207,26 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Bool,
         is_secret: false,
     },
+    SettingDef {
+        // Metron username — used in the HTTP Basic auth header.
+        // Not strictly a secret (visible in admin UI) but the
+        // password slot below is, and the pair is meaningless alone.
+        key: "metadata.metron.username",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
+    SettingDef {
+        // Metron password — AEAD-sealed at rest.
+        key: "metadata.metron.password",
+        kind: SettingKind::String,
+        is_secret: true,
+    },
+    SettingDef {
+        // Master toggle for Metron integration.
+        key: "metadata.metron.enabled",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {
