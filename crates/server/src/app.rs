@@ -125,7 +125,8 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::admin_email::routes())
         .merge(api::admin_metadata::routes())
         .merge(api::metadata_search::routes())
-        .merge(api::external_ids::routes());
+        .merge(api::external_ids::routes())
+        .merge(api::covers::routes());
 
     bare.nest("/api", api)
 }

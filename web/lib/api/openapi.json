@@ -2642,6 +2642,39 @@
         }
       }
     },
+    "/api/issues/{id}/covers": {
+      "get": {
+        "operationId": "issue_covers_list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueCoversResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
     "/api/issues/{issue_id}/next-up": {
       "get": {
         "summary": "Resolve the next issue the user should read after the given one. Picks\nCBL > series; returns `source: \"none\"` when neither branch has a\nviable target.",
@@ -10401,6 +10434,109 @@
           "source_id": {
             "type": "string",
             "description": "For `issue_finished`: the `issues.id` BLAKE3 hex.\nFor `session_completed`: the `reading_sessions.id` UUID.\nFor `marker_created`: the `markers.id` UUID."
+          }
+        }
+      },
+      "IssueCoverRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "issue_id",
+          "kind",
+          "ordinal",
+          "fetched_at",
+          "is_active"
+        ],
+        "properties": {
+          "fetched_at": {
+            "type": "string"
+          },
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "issue_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`\"primary\" | \"variant\" | \"back\" | \"incentive\"`."
+          },
+          "ordinal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "source_external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CDN URL the provider returned. Frontend renders directly when\npresent."
+          },
+          "variant_artist_person_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "variant_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "IssueCoversResp": {
+        "type": "object",
+        "required": [
+          "issue_id",
+          "covers",
+          "fallback_primary_url"
+        ],
+        "properties": {
+          "covers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueCoverRow"
+            }
+          },
+          "fallback_primary_url": {
+            "type": "string",
+            "description": "Fallback URL the frontend can render when no `issue_cover` row\nexists (legacy issues whose primary cover is the page-thumb\npipeline). Always points at page 0's cover thumb."
+          },
+          "issue_id": {
+            "type": "string"
           }
         }
       },

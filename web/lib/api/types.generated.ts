@@ -1222,6 +1222,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/issues/{id}/covers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["issue_covers_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/issues/{issue_id}/next-up": {
         parameters: {
             query?: never;
@@ -4266,6 +4282,37 @@ export interface components {
              *     For `session_completed`: the `reading_sessions.id` UUID.
              *     For `marker_created`: the `markers.id` UUID. */
             source_id: string;
+        };
+        IssueCoverRow: {
+            fetched_at: string;
+            /** Format: int32 */
+            height?: number | null;
+            /** Format: uuid */
+            id: string;
+            is_active: boolean;
+            issue_id: string;
+            /** @description `"primary" | "variant" | "back" | "incentive"`. */
+            kind: string;
+            /** Format: int32 */
+            ordinal: number;
+            source_external_id?: string | null;
+            source_provider?: string | null;
+            /** @description CDN URL the provider returned. Frontend renders directly when
+             *     present. */
+            source_url?: string | null;
+            /** Format: uuid */
+            variant_artist_person_id?: string | null;
+            variant_label?: string | null;
+            /** Format: int32 */
+            width?: number | null;
+        };
+        IssueCoversResp: {
+            covers: components["schemas"]["IssueCoverRow"][];
+            /** @description Fallback URL the frontend can render when no `issue_cover` row
+             *     exists (legacy issues whose primary cover is the page-thumb
+             *     pipeline). Always points at page 0's cover thumb. */
+            fallback_primary_url: string;
+            issue_id: string;
         };
         IssueDetailView: {
             /** @description User-curated extra links beyond `web_url` (which mirrors ComicInfo).
@@ -8822,6 +8869,41 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueSearchView"];
                 };
+            };
+        };
+    };
+    issue_covers_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueCoversResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

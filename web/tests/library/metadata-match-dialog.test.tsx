@@ -29,20 +29,24 @@ let candidatesState = {
       },
 };
 
+// vitest hoists `vi.mock` factories above their lexical position, so
+// we inline the noop shape rather than referencing a shared const
+// from outside the factory (that throws "Cannot access X before
+// initialization" at module-load time).
 vi.mock("@/lib/api/mutations", () => ({
-  useSearchMetadataForSeries: () => ({
-    mutate: () => undefined,
-    isPending: false,
-  }),
-  useApplyMetadataForSeries: () => ({
-    mutate: () => undefined,
-    isPending: false,
-  }),
+  useSearchMetadataForSeries: () => ({ mutate: () => undefined, isPending: false }),
+  useSearchMetadataForIssue: () => ({ mutate: () => undefined, isPending: false }),
+  useApplyMetadataForSeries: () => ({ mutate: () => undefined, isPending: false }),
+  useApplyMetadataForIssue: () => ({ mutate: () => undefined, isPending: false }),
 }));
 
 vi.mock("@/lib/api/queries", () => ({
   useMe: () => ({ data: { role: "admin", id: "u1", email: "a@b.c" } }),
   useMetadataCandidatesSeries: () => candidatesState,
+  // The form calls both series + issue candidate hooks; the issue
+  // path is inactive in series-scope tests so just return an empty
+  // shell.
+  useMetadataCandidatesIssue: () => ({ data: undefined }),
 }));
 
 vi.mock("@/components/ui/scroll-area", () => ({
@@ -110,7 +114,7 @@ describe("<MetadataMatchForm>", () => {
     candidatesState = { data: undefined };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        seriesSlug: "saga",
+        scope: { kind: "series" as const, seriesSlug: "saga" },
         onClose: () => undefined,
         open: true,
       }),
@@ -153,7 +157,7 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        seriesSlug: "saga",
+        scope: { kind: "series" as const, seriesSlug: "saga" },
         onClose: () => undefined,
         open: true,
       }),
@@ -177,7 +181,7 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        seriesSlug: "saga",
+        scope: { kind: "series" as const, seriesSlug: "saga" },
         onClose: () => undefined,
         open: true,
       }),
@@ -197,7 +201,7 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        seriesSlug: "saga",
+        scope: { kind: "series" as const, seriesSlug: "saga" },
         onClose: () => undefined,
         open: true,
       }),

@@ -18,6 +18,7 @@ import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
 import { Description } from "@/components/library/Description";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
+import { IssueMetadataPanel } from "./IssueMetadataPanel";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
 import { UserRating } from "@/components/library/UserRating";
@@ -556,6 +557,12 @@ export default async function IssuePage({
           )}
         </div>
       </Tabs>
+
+      <IssueMetadataPanel
+        seriesSlug={seriesSlug}
+        issueSlug={issue.slug}
+        issueId={issue.id}
+      />
     </div>
   );
 }

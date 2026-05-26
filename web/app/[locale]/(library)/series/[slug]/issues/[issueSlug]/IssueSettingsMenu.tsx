@@ -15,6 +15,7 @@ import {
   RefreshCw,
   RotateCcw,
   Settings2,
+  Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -24,6 +25,7 @@ import {
   AddToCollectionDialog,
   type AddToCollectionTarget,
 } from "@/components/collections/AddToCollectionDialog";
+import { MetadataMatchDialog } from "@/components/library/MetadataMatchDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -153,6 +155,7 @@ export function IssueSettingsMenu({
   const addToWtr = useAddCollectionEntry(wtrId);
   const removeFromWtr = useRemoveCollectionEntry(wtrId);
   const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
+  const [metadataDialogOpen, setMetadataDialogOpen] = useState(false);
 
   const issueLabel = issue.title ?? `Issue ${issue.number ?? ""}`.trim();
 
@@ -311,6 +314,10 @@ export function IssueSettingsMenu({
               <Folder className="mr-2 h-4 w-4" />
               Add to collection…
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
+              <Sparkles className="mr-2 h-4 w-4" />
+              Fetch metadata…
+            </DropdownMenuItem>
             {canRead && (
               <DropdownMenuItem asChild>
                 <a href={`/opds/v1/issues/${issue.id}/file`} download>
@@ -381,6 +388,15 @@ export function IssueSettingsMenu({
         open={collectionDialogOpen}
         onOpenChange={setCollectionDialogOpen}
         target={collectionTarget}
+      />
+      <MetadataMatchDialog
+        open={metadataDialogOpen}
+        onOpenChange={setMetadataDialogOpen}
+        scope={{
+          kind: "issue",
+          seriesSlug: issue.series_slug,
+          issueSlug: issue.slug,
+        }}
       />
     </>
   );

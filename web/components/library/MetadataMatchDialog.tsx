@@ -35,26 +35,36 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import {
+  useApplyMetadataForIssue,
   useApplyMetadataForSeries,
+  useSearchMetadataForIssue,
   useSearchMetadataForSeries,
 } from "@/lib/api/mutations";
-import { useMe, useMetadataCandidatesSeries } from "@/lib/api/queries";
+import {
+  useMe,
+  useMetadataCandidatesIssue,
+  useMetadataCandidatesSeries,
+} from "@/lib/api/queries";
 import type { ApplyMode, CandidateView } from "@/lib/api/types";
+
+export type MetadataMatchScope =
+  | { kind: "series"; seriesSlug: string }
+  | { kind: "issue"; seriesSlug: string; issueSlug: string };
 
 export function MetadataMatchDialog({
   open,
   onOpenChange,
-  seriesSlug,
+  scope,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
-  seriesSlug: string;
+  scope: MetadataMatchScope;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <MetadataMatchForm
-          seriesSlug={seriesSlug}
+          scope={scope}
           onClose={() => onOpenChange(false)}
           open={open}
         />
@@ -68,11 +78,11 @@ export function MetadataMatchDialog({
  * (matches the EditMetadataDialog split pattern).
  */
 export function MetadataMatchForm({
-  seriesSlug,
+  scope,
   onClose,
   open,
 }: {
-  seriesSlug: string;
+  scope: MetadataMatchScope;
   onClose: () => void;
   /** Used to gate the auto-kickoff effect so the search only fires
    *  once when the dialog opens. */
@@ -80,10 +90,36 @@ export function MetadataMatchForm({
 }) {
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
-  const search = useSearchMetadataForSeries(seriesSlug);
-  const apply = useApplyMetadataForSeries(seriesSlug);
+  // Hooks must be unconditional. Call both sets — the empty-string
+  // `enabled` guard inside each hook short-circuits the inactive
+  // half so we don't fire two HTTP calls per render.
+  const seriesSearch = useSearchMetadataForSeries(
+    scope.kind === "series" ? scope.seriesSlug : "",
+  );
+  const issueSearch = useSearchMetadataForIssue(
+    scope.kind === "issue" ? scope.seriesSlug : "",
+    scope.kind === "issue" ? scope.issueSlug : "",
+  );
+  const seriesApply = useApplyMetadataForSeries(
+    scope.kind === "series" ? scope.seriesSlug : "",
+  );
+  const issueApply = useApplyMetadataForIssue(
+    scope.kind === "issue" ? scope.seriesSlug : "",
+    scope.kind === "issue" ? scope.issueSlug : "",
+  );
+  const search = scope.kind === "series" ? seriesSearch : issueSearch;
+  const apply = scope.kind === "series" ? seriesApply : issueApply;
   const [runId, setRunId] = React.useState<string | null>(null);
-  const candidates = useMetadataCandidatesSeries(seriesSlug, runId);
+  const seriesCandidates = useMetadataCandidatesSeries(
+    scope.kind === "series" ? scope.seriesSlug : "",
+    scope.kind === "series" ? runId : null,
+  );
+  const issueCandidates = useMetadataCandidatesIssue(
+    scope.kind === "issue" ? scope.seriesSlug : "",
+    scope.kind === "issue" ? scope.issueSlug : "",
+    scope.kind === "issue" ? runId : null,
+  );
+  const candidates = scope.kind === "series" ? seriesCandidates : issueCandidates;
   const [mode, setMode] = React.useState<ApplyMode>("fill_missing");
   const [applyCover, setApplyCover] = React.useState(true);
   const [overrideUserEdits, setOverrideUserEdits] = React.useState(false);

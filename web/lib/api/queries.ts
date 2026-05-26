@@ -356,6 +356,8 @@ export const queryKeys = {
     ["series", slug, "external-ids"] as const,
   externalIdsIssue: (slug: string, issueSlug: string) =>
     ["series", slug, "issues", issueSlug, "external-ids"] as const,
+  /** Cover gallery for an issue (M5.2). */
+  issueCovers: (issueId: string) => ["issues", issueId, "covers"] as const,
   /** Runtime-editable settings (M1 of runtime-config-admin). Registry
    *  + resolved values; mutated via PATCH /admin/settings. */
   adminSettings: ["admin", "settings"] as const,
@@ -1840,6 +1842,7 @@ export function useUserProgress() {
 import type {
   CandidatesResp,
   ExternalIdsListResp,
+  IssueCoversResp,
   SyncStatusResp,
 } from "./types";
 
@@ -1931,5 +1934,17 @@ export function useExternalIdsIssue(seriesSlug: string, issueSlug: string) {
       ),
     enabled: !!seriesSlug && !!issueSlug,
     staleTime: 30_000,
+  });
+}
+
+export function useIssueCovers(issueId: string) {
+  return useQuery({
+    queryKey: queryKeys.issueCovers(issueId),
+    queryFn: () =>
+      jsonFetch<IssueCoversResp>(
+        `/issues/${encodeURIComponent(issueId)}/covers`,
+      ),
+    enabled: !!issueId,
+    staleTime: 60_000,
   });
 }

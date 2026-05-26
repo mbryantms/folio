@@ -299,3 +299,89 @@ async fn external_ids_delete_404_when_no_link() {
     .await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+// ───────── /issues/{id}/covers ─────────
+
+#[tokio::test]
+async fn issue_covers_lists_active_rows_with_fallback_url() {
+    use common::seed::IssueSeed;
+    use sea_orm::{ActiveModelTrait, Set};
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let cbz = dir.path().join("issue.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy", 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    // Seed two issue_cover rows — one primary, one variant.
+    let now = chrono::Utc::now().fixed_offset();
+    entity::issue_cover::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        issue_id: Set(issue_id.clone()),
+        kind: Set("primary".into()),
+        ordinal: Set(0),
+        source_provider: Set(Some("comicvine".into())),
+        source_external_id: Set(Some("67890".into())),
+        source_url: Set(Some("https://cdn/super.jpg".into())),
+        variant_label: Set(None),
+        variant_artist_person_id: Set(None),
+        local_path: Set(format!("thumbs/issues/{issue_id}/covers/00.jpg")),
+        width: Set(None),
+        height: Set(None),
+        phash: Set(None),
+        dhash: Set(None),
+        ahash: Set(None),
+        fetched_at: Set(now),
+        is_active: Set(true),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    entity::issue_cover::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        issue_id: Set(issue_id.clone()),
+        kind: Set("variant".into()),
+        ordinal: Set(1),
+        source_provider: Set(Some("comicvine".into())),
+        source_external_id: Set(Some("67891".into())),
+        source_url: Set(Some("https://cdn/variant-b.jpg".into())),
+        variant_label: Set(Some("Cover B".into())),
+        variant_artist_person_id: Set(None),
+        local_path: Set(format!("thumbs/issues/{issue_id}/covers/01.jpg")),
+        width: Set(None),
+        height: Set(None),
+        phash: Set(None),
+        dhash: Set(None),
+        ahash: Set(None),
+        fetched_at: Set(now),
+        is_active: Set(true),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    let resp = get(&app, &admin, &format!("/api/issues/{issue_id}/covers")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let covers = body["covers"].as_array().unwrap();
+    assert_eq!(covers.len(), 2);
+    // Primary first (sorted by kind, ordinal).
+    let primary = covers.iter().find(|c| c["kind"] == "primary").unwrap();
+    assert_eq!(primary["source_url"], "https://cdn/super.jpg");
+    let variant = covers.iter().find(|c| c["kind"] == "variant").unwrap();
+    assert_eq!(variant["variant_label"], "Cover B");
+    // Fallback URL points at page 0 thumb.
+    let fb = body["fallback_primary_url"].as_str().unwrap();
+    assert!(fb.contains("/pages/0/thumb"));
+}
+
+#[tokio::test]
+async fn issue_covers_404_when_issue_missing() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = get(&app, &admin, "/api/issues/no-such-issue/covers").await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

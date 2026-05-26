@@ -15,6 +15,7 @@ pub mod audit;
 pub mod auth_config;
 pub mod cbl_lists;
 pub mod collections;
+pub mod covers;
 pub mod creators;
 pub mod csp;
 pub mod external_ids;

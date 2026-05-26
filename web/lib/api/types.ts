@@ -629,4 +629,6 @@ export type SyncStatusResp = Schemas["SyncStatusResp"];
 export type ExternalIdsListResp = Schemas["ExternalIdsListResp"];
 export type ExternalIdRow = Schemas["ExternalIdRow"];
 export type AddExternalIdReq = Schemas["AddExternalIdReq"];
+export type IssueCoversResp = Schemas["IssueCoversResp"];
+export type IssueCoverRow = Schemas["IssueCoverRow"];
 
