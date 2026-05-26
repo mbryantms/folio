@@ -101,3 +101,7 @@ releases        # GET /admin/server/releases — upstream-release availability c
 
 # ── server_releases.rs ──────────────────────────────────────
 check_releases   # GET /admin/server/releases — upstream-release poll
+
+# ── admin_metadata.rs ───────────────────────────────────────
+list_providers   # GET /admin/metadata/providers — read-only provider status + quota gauge
+

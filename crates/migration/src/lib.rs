@@ -73,6 +73,7 @@ mod m20261225_000001_credit_person_id;
 mod m20261226_000001_progress_is_backfill;
 mod m20261227_000001_hide_from_log;
 mod m20261228_000001_metadata_providers_schema;
+mod m20261229_000001_metadata_cache;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -154,6 +155,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261226_000001_progress_is_backfill::Migration),
             Box::new(m20261227_000001_hide_from_log::Migration),
             Box::new(m20261228_000001_metadata_providers_schema::Migration),
+            Box::new(m20261229_000001_metadata_cache::Migration),
         ]
     }
 }

@@ -42,6 +42,7 @@ pub mod library_user_access;
 pub mod location;
 pub mod log_widget;
 pub mod marker;
+pub mod metadata_cache;
 pub mod metadata_run;
 pub mod object;
 pub mod person;
@@ -106,6 +107,7 @@ pub mod prelude {
     pub use super::library_user_access::Entity as LibraryUserAccess;
     pub use super::location::Entity as Location;
     pub use super::marker::Entity as Marker;
+    pub use super::metadata_cache::Entity as MetadataCache;
     pub use super::metadata_run::Entity as MetadataRun;
     pub use super::object::Entity as Object;
     pub use super::person::Entity as Person;

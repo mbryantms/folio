@@ -834,6 +834,69 @@
         }
       }
     },
+    "/api/admin/metadata/providers": {
+      "get": {
+        "operationId": "admin_metadata_providers_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvidersListResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/metadata/providers/{id}/test": {
+      "post": {
+        "operationId": "admin_metadata_providers_test",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Provider id (`comicvine` | `metron`)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestProviderResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "credentials missing"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "unknown provider"
+          },
+          "409": {
+            "description": "provider disabled"
+          },
+          "502": {
+            "description": "provider responded with an error"
+          }
+        }
+      }
+    },
     "/api/admin/ocr/models": {
       "get": {
         "operationId": "admin_ocr_list",
@@ -11638,6 +11701,56 @@
           }
         }
       },
+      "ProviderView": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "enabled",
+          "configured"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "`true` when the credential is set but the master toggle is off\n— UI surfaces a \"Enable to test\" hint in that state."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`true` when an API key / credentials are set AND the master\n`metadata.<provider>.enabled` toggle is on."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identifier — `\"comicvine\"` | `\"metron\"` (M2)."
+          },
+          "label": {
+            "type": "string"
+          },
+          "quota": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QuotaView"
+              }
+            ]
+          }
+        }
+      },
+      "ProvidersListResp": {
+        "type": "object",
+        "required": [
+          "providers"
+        ],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderView"
+            }
+          }
+        }
+      },
       "PublicAuthConfigView": {
         "type": "object",
         "description": "Minimum surface for the unauthenticated `/sign-in` page. Mirrors a\nsubset of [`AuthConfigView`] but returns only the booleans the UI\nneeds to render the right CTAs — issuer/client_id are intentionally\nwithheld.",
@@ -11749,6 +11862,35 @@
             "type": "integer",
             "format": "int64",
             "description": "Sum across all queues — convenient for the topbar pill."
+          }
+        }
+      },
+      "QuotaView": {
+        "type": "object",
+        "properties": {
+          "remaining_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "remaining_hour": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "seconds_until_reset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -13554,6 +13696,27 @@
           },
           "to": {
             "type": "string"
+          }
+        }
+      },
+      "TestProviderResp": {
+        "type": "object",
+        "required": [
+          "ok",
+          "quota",
+          "duration_ms"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/QuotaView"
           }
         }
       },

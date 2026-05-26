@@ -1,18 +1,31 @@
-//! Metadata-provider integration plumbing (metadata-providers-1.0 M0).
+//! Metadata-provider integration plumbing.
 //!
-//! Houses the value types (`Identifier`, `Source`, `MetadataField`) and
-//! the writer helpers (`writers`) that every metadata-producing code
-//! path — scanner, bulk-edit dialog, M4 Apply jobs, manual
-//! `<ExternalIdsCard>` edits — funnels through. Single audited
-//! surface, single de-dup rule, single CSV-cache rebuild trigger.
-//!
-//! The provider HTTP clients (ComicVineClient / MetronClient) land in
-//! M1+ as a separate `crates/metadata/` crate; this module owns only
-//! the in-DB side of the integration.
+//! Layers in dependency order:
+//! - [`identifier`], [`field`] — value types (`Identifier`, `Source`,
+//!   `MetadataField`) shared across DB writes, provider responses, and
+//!   the `<ExternalIdsCard>` payload.
+//! - [`writers`] — single audited DB write surface (scanner, bulk-edit,
+//!   future Apply jobs, manual external-id edits all funnel through).
+//! - [`provider`] — `MetadataProvider` trait + `GenericMetadata`. The
+//!   only shape Apply jobs see; CV/Metron dialect dies at the client
+//!   boundary.
+//! - [`rate_limit`] — Redis-backed atomic token buckets. Per-provider,
+//!   per-window (CV hourly; Metron minute + day). Survives restarts.
+//! - [`cache`] — TTL-bounded JSON cache for normalized `GenericMetadata`
+//!   payloads (`metadata_cache` table from M1 migration).
+//! - [`comicvine`] — first concrete provider impl (M1).
 
+pub mod cache;
+pub mod comicvine;
 pub mod field;
 pub mod identifier;
+pub mod provider;
+pub mod rate_limit;
 pub mod writers;
 
 pub use field::MetadataField;
 pub use identifier::{Identifier, Source};
+pub use provider::{
+    GenericMetadata, IssueQuery, MetadataProvider, ProviderError, ProviderResult, QuotaSnapshot,
+    SeriesQuery,
+};

@@ -292,6 +292,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_metadata_providers_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/metadata/providers/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_metadata_providers_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ocr/models": {
         parameters: {
             query?: never;
@@ -4739,6 +4771,21 @@ export interface components {
             /** @description RFC 3339 timestamp of the most recent progress write. */
             updated_at: string;
         };
+        ProviderView: {
+            /** @description `true` when the credential is set but the master toggle is off
+             *     — UI surfaces a "Enable to test" hint in that state. */
+            configured: boolean;
+            /** @description `true` when an API key / credentials are set AND the master
+             *     `metadata.<provider>.enabled` toggle is on. */
+            enabled: boolean;
+            /** @description Stable identifier — `"comicvine"` | `"metron"` (M2). */
+            id: string;
+            label: string;
+            quota?: null | components["schemas"]["QuotaView"];
+        };
+        ProvidersListResp: {
+            providers: components["schemas"]["ProviderView"][];
+        };
         /** @description Minimum surface for the unauthenticated `/sign-in` page. Mirrors a
          *     subset of [`AuthConfigView`] but returns only the booleans the UI
          *     needs to render the right CTAs — issuer/client_id are intentionally
@@ -4790,6 +4837,14 @@ export interface components {
              * @description Sum across all queues — convenient for the topbar pill.
              */
             total: number;
+        };
+        QuotaView: {
+            /** Format: int32 */
+            remaining_day?: number | null;
+            /** Format: int32 */
+            remaining_hour?: number | null;
+            /** Format: int64 */
+            seconds_until_reset?: number | null;
         };
         /** @description Response shape — mirrors what the GET endpoints inline so callers don't
          *     need to refetch to refresh local state. */
@@ -5463,6 +5518,12 @@ export interface components {
             /** Format: int64 */
             duration_ms: number;
             to: string;
+        };
+        TestProviderResp: {
+            /** Format: int64 */
+            duration_ms: number;
+            ok: boolean;
+            quota: components["schemas"]["QuotaView"];
         };
         /**
          * @description `system` | `dark` | `light` | `amber`.
@@ -6715,6 +6776,89 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_providers_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProvidersListResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_providers_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Provider id (`comicvine` | `metron`) */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestProviderResp"];
+                };
+            };
+            /** @description credentials missing */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown provider */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider responded with an error */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

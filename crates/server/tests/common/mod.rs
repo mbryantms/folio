@@ -87,6 +87,12 @@ pub struct SpawnOpts {
     /// tests covering the fallback (see `tests/fallback_proxy.rs`)
     /// point it at a wiremock instance.
     pub web_upstream_url: Option<String>,
+    /// ComicVine API key. Some(_) wires the value into `Config`; tests
+    /// pair this with [`comicvine_enabled`] to exercise the M1 admin
+    /// surface.
+    pub comicvine_api_key: Option<String>,
+    /// Master toggle for ComicVine integration (M1).
+    pub comicvine_enabled: bool,
 }
 
 impl TestApp {
@@ -138,6 +144,19 @@ impl TestApp {
             oidc_trust_unverified_email: trust_unverified,
             library_root: None,
             web_upstream_url: None,
+            comicvine_api_key: None,
+            comicvine_enabled: false,
+        })
+        .await
+    }
+
+    /// Spawn with ComicVine credentials pointed at a wiremock instance
+    /// (metadata-providers-1.0 M1 tests).
+    pub async fn spawn_with_comicvine(api_key: impl Into<String>, enabled: bool) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            comicvine_api_key: Some(api_key.into()),
+            comicvine_enabled: enabled,
+            ..SpawnOpts::default()
         })
         .await
     }
@@ -251,6 +270,8 @@ impl TestApp {
             archive_max_entry_bytes: 512 * 1024 * 1024,
             archive_max_ratio: 200,
             archive_max_nesting: 1,
+            comicvine_api_key: opts.comicvine_api_key.clone(),
+            comicvine_enabled: opts.comicvine_enabled,
         };
 
         let jobs = JobRuntime::new(&redis_url, db.clone())

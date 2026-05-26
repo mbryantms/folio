@@ -186,6 +186,18 @@ pub struct Config {
     pub smtp_tls: String,
     #[serde(default)]
     pub smtp_from: Option<String>,
+
+    // Metadata providers (metadata-providers-1.0 M1)
+    /// ComicVine API key. Per-site key, account-bound. Always loaded
+    /// from `app_setting` (`metadata.comicvine.api_key`) — the env var
+    /// `COMIC_COMICVINE_API_KEY` is supported as a first-boot bootstrap.
+    #[serde(default)]
+    pub comicvine_api_key: Option<String>,
+    /// Master toggle for ComicVine integration. When `false`, the
+    /// admin "Test" endpoint short-circuits to a 409 and the search /
+    /// apply jobs will skip ComicVine in the provider priority list.
+    #[serde(default)]
+    pub comicvine_enabled: bool,
 }
 
 /// Hand-written `Debug` impl that redacts credentials. Stops `dbg!()`,
@@ -246,6 +258,8 @@ impl std::fmt::Debug for Config {
             .field("smtp_password", &redact_opt(&self.smtp_password))
             .field("smtp_tls", &self.smtp_tls)
             .field("smtp_from", &self.smtp_from)
+            .field("comicvine_api_key", &redact_opt(&self.comicvine_api_key))
+            .field("comicvine_enabled", &self.comicvine_enabled)
             .finish()
     }
 }
@@ -849,6 +863,31 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             None => bad_type(&row.key, "uint", &row.value),
         },
 
+        // ───────── Metadata providers (metadata-providers-1.0 M1) ─────────
+        "metadata.comicvine.api_key" => match row.value.as_str() {
+            Some(s) => {
+                // Secret — only divergence-flag, never log value.
+                if let Some(env_v) = cfg.comicvine_api_key.as_deref().filter(|p| !p.is_empty())
+                    && env_v != s
+                {
+                    tracing::warn!(
+                        key = "metadata.comicvine.api_key",
+                        "app_setting collision: env and DB disagree on this key; DB value wins"
+                    );
+                }
+                cfg.comicvine_api_key = if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(s.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.comicvine.enabled" => match row.value.as_bool() {
+            Some(b) => cfg.comicvine_enabled = b,
+            None => bad_type(&row.key, "bool", &row.value),
+        },
+
         other => {
             tracing::debug!(key = %other, "app_setting row ignored (no overlay binding yet)");
         }
@@ -972,6 +1011,8 @@ mod tests {
             smtp_tls: "starttls".into(),
             smtp_from: None,
             opds_panels_mode: "off".into(),
+            comicvine_api_key: None,
+            comicvine_enabled: false,
         }
     }
 }

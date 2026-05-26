@@ -193,6 +193,20 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::String,
         is_secret: false,
     },
+    // ───────── Metadata providers (metadata-providers-1.0 M1) ─────────
+    SettingDef {
+        // Per-site ComicVine API key. AEAD-sealed at rest.
+        key: "metadata.comicvine.api_key",
+        kind: SettingKind::String,
+        is_secret: true,
+    },
+    SettingDef {
+        // Master toggle — when false, CV search/apply jobs skip the
+        // provider and the test endpoint short-circuits to 409.
+        key: "metadata.comicvine.enabled",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {
