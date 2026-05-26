@@ -9,8 +9,8 @@ use axum::{
 use chrono::Utc;
 use entity::{issue, library_user_access, series};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, FromQueryResult, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set, Value, sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, FromQueryResult,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, Value, sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
 use server_macros::handler;
@@ -329,12 +329,13 @@ pub async fn update_series(
         // rationale.
         am.status_user_set_at = Set(Some(Utc::now().fixed_offset()));
     }
-    // TODO(M0c-metadata-providers): comicvine_id / metron_id PATCH
-    // now writes through writers::set_external_id (and the
-    // <ExternalIdsCard> in M5 is the canonical user surface for
-    // editing per-source IDs). Drop the request fields once the new
-    // path is wired.
-    let _ = (&req.comicvine_id, &req.metron_id);
+    // comicvine_id / metron_id live in external_ids now; applied
+    // via writers::set_external_id after the row update commits
+    // (see the Ok(updated) branch below). M5's <ExternalIdsCard>
+    // is the richer user surface; this PATCH stays for backwards
+    // compat with the existing series edit drawer.
+    let pending_cv = req.comicvine_id;
+    let pending_metron = req.metron_id;
     let normalized_summary = req.summary.as_ref().map(|v| {
         v.as_ref().and_then(|s| {
             let t = s.trim().to_owned();
@@ -350,6 +351,62 @@ pub async fn update_series(
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
     match am.update(&app.db).await {
         Ok(updated) => {
+            // Apply external-ID edits the user touched. Mirrors the
+            // per-issue PATCH flow in api/issues.rs.
+            use crate::metadata::writers::{self as writers, SetBy};
+            use crate::metadata::{Identifier, Source};
+            if let Some(opt) = pending_cv {
+                let res = match opt {
+                    Some(v) => {
+                        writers::set_external_id(
+                            &app.db,
+                            "series",
+                            &updated.id.to_string(),
+                            &Identifier::new(Source::ComicVine, v.to_string()),
+                            SetBy::User,
+                        )
+                        .await
+                    }
+                    None => {
+                        writers::delete_external_id(
+                            &app.db,
+                            "series",
+                            &updated.id.to_string(),
+                            Source::ComicVine,
+                        )
+                        .await
+                    }
+                };
+                if let Err(e) = res {
+                    tracing::error!(series_id = %updated.id, error = %e, "series external_id (comicvine) write failed");
+                }
+            }
+            if let Some(opt) = pending_metron {
+                let res = match opt {
+                    Some(v) => {
+                        writers::set_external_id(
+                            &app.db,
+                            "series",
+                            &updated.id.to_string(),
+                            &Identifier::new(Source::Metron, v.to_string()),
+                            SetBy::User,
+                        )
+                        .await
+                    }
+                    None => {
+                        writers::delete_external_id(
+                            &app.db,
+                            "series",
+                            &updated.id.to_string(),
+                            Source::Metron,
+                        )
+                        .await
+                    }
+                };
+                if let Err(e) = res {
+                    tracing::error!(series_id = %updated.id, error = %e, "series external_id (metron) write failed");
+                }
+            }
             if let Some(s) = new_slug {
                 crate::audit::record(
                     &app.db,
@@ -398,7 +455,10 @@ pub async fn update_series(
                 )
                 .await;
             }
-            Json(SeriesView::from(updated)).into_response()
+            let updated_id_text = updated.id.to_string();
+            let mut view = SeriesView::from(updated);
+            enrich_series_view_legacy_ids(&app.db, &mut view, &updated_id_text).await;
+            Json(view).into_response()
         }
         Err(e) => {
             tracing::error!(error = %e, "update series failed");
@@ -540,10 +600,11 @@ impl From<series::Model> for SeriesView {
             age_rating: m.age_rating,
             summary: m.summary,
             language_code: m.language_code,
-            // TODO(M0c-metadata-providers): JOIN external_ids and
-            // surface all per-source IDs, not just CV/Metron. Stub
-            // None preserves response shape until M5 ships the
-            // <ExternalIdsCard> endpoint that replaces these fields.
+            // CV/Metron IDs live in external_ids — the From impl
+            // can't reach the DB, so call sites populate via
+            // [`enrich_series_view_legacy_ids`] below. The full
+            // per-source set is exposed via M5's <ExternalIdsCard>
+            // endpoint; these two scalars stay for backwards compat.
             comicvine_id: None,
             metron_id: None,
             issue_count: None,
@@ -787,9 +848,10 @@ impl IssueDetailView {
             story_arc: m.story_arc,
             story_arc_number: m.story_arc_number,
             web_url: m.web_url,
-            // TODO(M0c-metadata-providers): replaced by
-            // <ExternalIdsCard> on the issue page (M5). Stub None
-            // preserves response shape during the migration window.
+            // CV / Metron / GTIN are in external_ids — populated by
+            // [`enrich_issue_detail_legacy_ids`] at the call sites.
+            // M5's <ExternalIdsCard> is the canonical full surface;
+            // these three stay on the response for backwards compat.
             gtin: None,
             comicvine_id: None,
             metron_id: None,
@@ -1575,6 +1637,29 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
         covers.entry(row.series_id).or_insert(row.id);
     }
 
+    // Batch-fetch external IDs once for the whole page so the
+    // per-row enrichment doesn't N+1.
+    let series_ids_text: Vec<String> = rows.iter().map(|r| r.id.to_string()).collect();
+    let id_rows = if series_ids_text.is_empty() {
+        Vec::new()
+    } else {
+        entity::external_id::Entity::find()
+            .filter(entity::external_id::Column::EntityType.eq("series"))
+            .filter(entity::external_id::Column::EntityId.is_in(series_ids_text))
+            .all(&app.db)
+            .await
+            .unwrap_or_default()
+    };
+    let mut by_series: HashMap<String, (Option<i64>, Option<i64>)> = HashMap::new();
+    for row in id_rows {
+        let entry = by_series.entry(row.entity_id.clone()).or_default();
+        match row.source.as_str() {
+            "comicvine" => entry.0 = row.external_id.parse::<i64>().ok(),
+            "metron" => entry.1 = row.external_id.parse::<i64>().ok(),
+            _ => {}
+        }
+    }
+
     rows.into_iter()
         .map(|s| {
             let series_id = s.id;
@@ -1583,9 +1668,46 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
             v.cover_url = covers
                 .get(&series_id)
                 .map(|id| format!("/issues/{id}/pages/0/thumb"));
+            if let Some((cv, metron)) = by_series.get(&series_id.to_string()) {
+                v.comicvine_id = *cv;
+                v.metron_id = *metron;
+            }
             v
         })
         .collect()
+}
+
+/// Populate `SeriesView.comicvine_id` + `.metron_id` from the
+/// `external_ids` table for a single series. Used by call sites that
+/// build a single `SeriesView` (PATCH response, single GET).
+async fn enrich_series_view_legacy_ids(
+    db: &DatabaseConnection,
+    view: &mut SeriesView,
+    series_id_text: &str,
+) {
+    if let Ok((cv, metron, _gtin)) =
+        crate::metadata::writers::fetch_legacy_id_trio(db, "series", series_id_text).await
+    {
+        view.comicvine_id = cv;
+        view.metron_id = metron;
+    }
+}
+
+/// Companion of [`enrich_series_view_legacy_ids`] for issue
+/// responses. Populates the legacy `gtin` / `comicvine_id` /
+/// `metron_id` fields on [`IssueDetailView`] from `external_ids`.
+pub(crate) async fn enrich_issue_detail_legacy_ids(
+    db: &DatabaseConnection,
+    view: &mut IssueDetailView,
+    issue_id: &str,
+) {
+    if let Ok((cv, metron, gtin)) =
+        crate::metadata::writers::fetch_legacy_id_trio(db, "issue", issue_id).await
+    {
+        view.comicvine_id = cv;
+        view.metron_id = metron;
+        view.gtin = gtin;
+    }
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -1894,6 +2016,7 @@ pub async fn get_one(
     v.last_issue_updated_at = last_updated.map(|t| t.to_rfc3339());
     v.earliest_year = earliest_year;
     v.latest_year = latest_year;
+    enrich_series_view_legacy_ids(&app.db, &mut v, &series_id_for_lookups.to_string()).await;
 
     // Per-user read-progress summary — computed against the *full* series,
     // not the 100-issue page the client typically pulls. Two cheap counts

@@ -626,12 +626,13 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         am.community_rating = Set(info.community_rating);
         am.review = Set(info.review.clone());
         am.web_url = Set(info.web.clone());
-        // TODO(M0c-metadata-providers): replaced by
-        // writers::set_external_id(entity_type='issue', source='gtin'|
-        // 'comicvine'|'metron', ...). Respects field_provenance
-        // 'user' rows automatically — no need for the manual
-        // `edited.contains(...)` checks at this layer.
-        let _ = (&info.gtin, &info.comicvine_id, &info.metron_id, &edited);
+        // External-ID writes (CV / Metron / GTIN from ComicInfo) move
+        // to the external_ids table via writers::set_legacy_id_trio.
+        // Called after the update lands (line ~669) so the issue row
+        // exists. `set_by=ComicInfo` lets writers::set_external_id's
+        // user-precedence rule skip rows where the user pinned a
+        // different value — replacing the old `edited.contains(...)`
+        // gates at this layer.
         // ComicInfo `<Count>` per-issue. The reconcile step computes
         // a per-series MAX over this column to refresh
         // `series.total_issues` and derive `status`.
@@ -668,6 +669,18 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         }
         let updated = am.update(db).await?;
         remember_primary_issue_path(db, &row_id, &path_str).await?;
+        // Persist CV / Metron / GTIN from ComicInfo into external_ids.
+        // User-pinned values (set_by='user') are skipped automatically.
+        crate::metadata::writers::set_legacy_id_trio(
+            db,
+            "issue",
+            &updated.id,
+            info.comicvine_id,
+            info.metron_id,
+            info.gtin.as_deref(),
+            crate::metadata::writers::SetBy::ComicInfo,
+        )
+        .await?;
         // F-1: pass the just-updated model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &updated).await?;
         stats.files_updated += 1;
@@ -745,9 +758,9 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             community_rating: Set(info.community_rating),
             review: Set(info.review.clone()),
             web_url: Set(info.web.clone()),
-            // TODO(M0c-metadata-providers): comicvine_id / metron_id /
-            // gtin moved to the external_ids table — written via
-            // writers::set_external_id below.
+            // CV / Metron / GTIN persist via writers::set_legacy_id_trio
+            // after the insert lands (a few lines down) — those live
+            // in the external_ids table now.
             deck: Set(None),
             store_date: Set(None),
             foc_date: Set(None),
@@ -775,6 +788,16 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         };
         let inserted = am.insert(db).await?;
         remember_primary_issue_path(db, &issue_id, &path_str).await?;
+        crate::metadata::writers::set_legacy_id_trio(
+            db,
+            "issue",
+            &inserted.id,
+            info.comicvine_id,
+            info.metron_id,
+            info.gtin.as_deref(),
+            crate::metadata::writers::SetBy::ComicInfo,
+        )
+        .await?;
         // F-1: pass the just-inserted model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &inserted).await?;
         stats.files_added += 1;

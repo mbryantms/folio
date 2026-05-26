@@ -241,12 +241,10 @@ async fn seed_matchable_issues(app: &TestApp) -> Uuid {
 
     // Insert three Invincible issues with CV IDs from the sample.
     // `Invincible #1` = CV 105347, `#2` = 105532, `#3` = 105533.
-    // TODO(M0c-metadata-providers): `_cv` was previously written into
-    // issues.comicvine_id at seed time; under the new schema it flows
-    // through writers::set_external_id (entity_type='issue',
-    // source='comicvine').
+    // CV ids live on external_ids (entity_type='issue',
+    // source='comicvine') post-M0; written below after the insert.
     let cv_ids = [(1, 105347i64), (2, 105532), (3, 105533)];
-    for (num, _cv) in cv_ids {
+    for (num, cv) in cv_ids {
         let issue_id = format!("{:0>62}{:02x}", series_id.simple(), num as u8);
         IssueAM {
             id: Set(issue_id.clone()),
@@ -322,6 +320,18 @@ async fn seed_matchable_issues(app: &TestApp) -> Uuid {
         .insert(&db)
         .await
         .unwrap();
+        server::metadata::writers::set_external_id(
+            &db,
+            "issue",
+            &issue_id,
+            &server::metadata::Identifier::new(
+                server::metadata::Source::ComicVine,
+                cv.to_string(),
+            ),
+            server::metadata::writers::SetBy::ComicInfo,
+        )
+        .await
+        .unwrap();
     }
 
     lib_id
@@ -369,19 +379,16 @@ async fn manual_match_overrides_survive_refresh() {
         .unwrap()
         .expect("Tech Jacket #1 entry");
 
-    // TODO(M0c-metadata-providers): rewrite to JOIN external_ids
-    // (source='comicvine', external_id='105347', entity_type='issue').
-    // For now match by series-name + issue-number — `seed_matchable_issues`
-    // creates exactly one "Invincible" series.
-    let invincible_series = entity::series::Entity::find()
-        .filter(entity::series::Column::NormalizedName.eq("invincible"))
+    // Resolve the seeded Invincible #1 by its CV id via external_ids.
+    let cv_row = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .filter(entity::external_id::Column::ExternalId.eq("105347"))
         .one(&db)
         .await
         .unwrap()
-        .expect("seeded Invincible series");
-    let target_issue = entity::issue::Entity::find()
-        .filter(entity::issue::Column::NumberRaw.eq("1"))
-        .filter(entity::issue::Column::SeriesId.eq(invincible_series.id))
+        .expect("seeded external_ids row for Invincible #1");
+    let target_issue = entity::issue::Entity::find_by_id(cv_row.entity_id)
         .one(&db)
         .await
         .unwrap()
@@ -458,19 +465,16 @@ async fn manual_match_increments_collection_count() {
         .await
         .unwrap()
         .expect("Tech Jacket #1 entry");
-    // TODO(M0c-metadata-providers): rewrite to JOIN external_ids
-    // (source='comicvine', external_id='105347', entity_type='issue').
-    // For now match by series-name + issue-number — `seed_matchable_issues`
-    // creates exactly one "Invincible" series.
-    let invincible_series = entity::series::Entity::find()
-        .filter(entity::series::Column::NormalizedName.eq("invincible"))
+    // Resolve the seeded Invincible #1 by its CV id via external_ids.
+    let cv_row = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .filter(entity::external_id::Column::ExternalId.eq("105347"))
         .one(&db)
         .await
         .unwrap()
-        .expect("seeded Invincible series");
-    let target_issue = entity::issue::Entity::find()
-        .filter(entity::issue::Column::NumberRaw.eq("1"))
-        .filter(entity::issue::Column::SeriesId.eq(invincible_series.id))
+        .expect("seeded external_ids row for Invincible #1");
+    let target_issue = entity::issue::Entity::find_by_id(cv_row.entity_id)
         .one(&db)
         .await
         .unwrap()

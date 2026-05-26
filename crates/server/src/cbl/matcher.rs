@@ -143,14 +143,53 @@ async fn build_id_lookup<C: ConnectionTrait>(
         return Ok(IdLookup::default());
     }
 
-    // TODO(M0c-metadata-providers): rewrite as a JOIN to
-    // external_ids (source IN ('comicvine','metron'), entity_type =
-    // 'issue', external_id IN ...). Returning an empty lookup here
-    // means CBL ID-based fast-path matches degrade to name-based
-    // matching during the M0a→M0c window — acceptable for the brief
-    // window since name-based matching still works.
-    let _ = (cv_ids, metron_ids, db);
-    let lookup = IdLookup::default();
+    // CV / Metron ids on `external_ids` are stored as TEXT; format
+    // the i32 inputs to match. Single query covers both sources.
+    let cv_strs: Vec<String> = cv_ids.iter().map(i32::to_string).collect();
+    let metron_strs: Vec<String> = metron_ids.iter().map(i32::to_string).collect();
+    let mut cond = sea_orm::Condition::any();
+    if !cv_strs.is_empty() {
+        cond = cond.add(
+            sea_orm::Condition::all()
+                .add(entity::external_id::Column::Source.eq("comicvine"))
+                .add(entity::external_id::Column::ExternalId.is_in(cv_strs)),
+        );
+    }
+    if !metron_strs.is_empty() {
+        cond = cond.add(
+            sea_orm::Condition::all()
+                .add(entity::external_id::Column::Source.eq("metron"))
+                .add(entity::external_id::Column::ExternalId.is_in(metron_strs)),
+        );
+    }
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    let id_rows = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(cond)
+        .all(db)
+        .await?;
+
+    let mut lookup = IdLookup::default();
+    for row in id_rows {
+        let Ok(numeric) = row.external_id.parse::<i64>() else {
+            continue;
+        };
+        if numeric < 0 || numeric > i64::from(i32::MAX) {
+            continue;
+        }
+        let k = numeric as i32;
+        match row.source.as_str() {
+            // Last-write-wins on the rare collision; CBL canon is a
+            // 1:1 ID→issue mapping so duplicate hits are a data bug.
+            "comicvine" => {
+                lookup.cv.insert(k, row.entity_id.clone());
+            }
+            "metron" => {
+                lookup.metron.insert(k, row.entity_id.clone());
+            }
+            _ => {}
+        }
+    }
     Ok(lookup)
 }
 

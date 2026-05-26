@@ -582,10 +582,18 @@ async fn series_json_status_and_summary_apply_on_first_scan() {
         "first scan must apply series.json description_text"
     );
     assert_eq!(series.total_issues, Some(43));
-    // TODO(M0c-metadata-providers): assertion rewritten to query
-    // external_ids (source='comicvine', entity_type='series') once
-    // scanner writes go through writers::set_external_id.
-    let _ = &series;
+    // ComicVine id from series.json now lives on external_ids
+    // (entity_type='series', source='comicvine').
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    let cv = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(series.id.to_string()))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("comicvine external_id row");
+    assert_eq!(cv.external_id, "69537");
 }
 
 #[tokio::test]

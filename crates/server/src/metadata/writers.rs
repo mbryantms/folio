@@ -232,6 +232,122 @@ pub async fn set_external_id<C: ConnectionTrait>(
     put_external_id(db, entity_type, entity_id, identifier, set_by).await
 }
 
+/// Convenience for the legacy `comicvine_id` + `metron_id` + `gtin`
+/// trio that used to live as fixed columns on `series` + `issues`.
+/// Used by the scanner (ComicInfo parse), bulk-edit dialog, and
+/// per-row PATCH endpoints — every legacy entry-point that knows
+/// only these three sources.
+///
+/// Each input that is `Some` becomes one `external_ids` row. The
+/// `set_by` precedence rules from [`set_external_id`] apply per row
+/// (user-set values are never silently overwritten).
+pub async fn set_legacy_id_trio<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    comicvine: Option<i64>,
+    metron: Option<i64>,
+    gtin: Option<&str>,
+    set_by: SetBy,
+) -> Result<(), DbErr> {
+    if let Some(cv) = comicvine {
+        set_external_id(
+            db,
+            entity_type,
+            entity_id,
+            &Identifier::new(Source::ComicVine, cv.to_string()),
+            set_by,
+        )
+        .await?;
+    }
+    if let Some(m) = metron {
+        set_external_id(
+            db,
+            entity_type,
+            entity_id,
+            &Identifier::new(Source::Metron, m.to_string()),
+            set_by,
+        )
+        .await?;
+    }
+    if let Some(g) = gtin
+        && !g.is_empty()
+    {
+        set_external_id(
+            db,
+            entity_type,
+            entity_id,
+            &Identifier::new(Source::Gtin, g),
+            set_by,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Inverse of [`set_legacy_id_trio`] — query the trio for a given
+/// `(entity_type, entity_id)` so legacy API response shapes that
+/// expose `comicvine_id` / `metron_id` / `gtin` keep working
+/// through the M0→M4 transition. Apply jobs and the new
+/// `<ExternalIdsCard>` payload should read [`fetch_all_external_ids`]
+/// instead, which returns the full list.
+pub async fn fetch_legacy_id_trio<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<(Option<i64>, Option<i64>, Option<String>), DbErr> {
+    let rows = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq(entity_type))
+        .filter(external_id::Column::EntityId.eq(entity_id))
+        .all(db)
+        .await?;
+    let mut cv = None;
+    let mut metron = None;
+    let mut gtin = None;
+    for row in rows {
+        match row.source.as_str() {
+            "comicvine" => cv = row.external_id.parse::<i64>().ok(),
+            "metron" => metron = row.external_id.parse::<i64>().ok(),
+            "gtin" => gtin = Some(row.external_id),
+            _ => {}
+        }
+    }
+    Ok((cv, metron, gtin))
+}
+
+/// Fetch every external identifier for `(entity_type, entity_id)`.
+/// Used by the M5 `<ExternalIdsCard>` GET endpoint.
+pub async fn fetch_all_external_ids<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<Vec<external_id::Model>, DbErr> {
+    external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq(entity_type))
+        .filter(external_id::Column::EntityId.eq(entity_id))
+        .all(db)
+        .await
+}
+
+/// Delete one (entity, source) external-id row. Used by PATCH
+/// handlers when the user explicitly clears a field (`gtin: null`,
+/// `comicvine_id: null`, etc. in the request body's double-`Option`
+/// shape) and by the M5 `<ExternalIdsCard>` "unlink" action.
+pub async fn delete_external_id<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    source: Source,
+) -> Result<(), DbErr> {
+    external_id::Entity::delete_many()
+        .filter(external_id::Column::EntityType.eq(entity_type))
+        .filter(external_id::Column::EntityId.eq(entity_id))
+        .filter(external_id::Column::Source.eq(source.as_str()))
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Field provenance — small helper used everywhere a write touches
 // a field that should survive future Apply jobs.

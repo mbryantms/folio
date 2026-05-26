@@ -136,6 +136,7 @@ const ALL_SOURCES: &[Source] = &[
     Source::Upc,
     Source::Asin,
     Source::Doi,
+    Source::Gtin,
 ];
 
 impl MetadataField {

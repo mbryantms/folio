@@ -436,8 +436,12 @@ async fn manual_override_freezes_status_but_total_and_summary_still_flow() {
     // only freezes status.
     assert_eq!(after.total_issues, Some(12));
     assert_eq!(after.summary.as_deref(), Some("Sidecar summary."));
-    // TODO(M0c-metadata-providers): assert via external_ids.
-    let _ = &after;
+    // CV id from sidecar lands on external_ids.
+    assert_eq!(
+        series_cv_id(&db, series).await,
+        Some("54321".into()),
+        "sidecar's CV id should flow through manual-status override"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -509,23 +513,50 @@ async fn description_text_seeds_summary_with_html_fallback() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn comicvine_id_only_backfills_when_null() {
+async fn comicvine_id_backfills_via_external_ids_and_respects_user_precedence() {
     let app = TestApp::spawn().await;
     let db = Database::connect(&app.db_url).await.unwrap();
 
     let lib = seed_library(&app, "lib").await;
-    // Series row arrives with no comicvine_id — sidecar fills it in.
+    // Series row arrives with no comicvine_id — sidecar fills it in
+    // via writers::set_external_id with set_by='comicinfo'.
     let s_empty = seed_series(&app, lib, "EmptyCv", "continuing", None).await;
     let meta = sidecar(None, None, None, None, Some(69537));
     reconcile_series_status(&db, s_empty, Some(&meta))
         .await
         .unwrap();
-    // TODO(M0c-metadata-providers): assert external_ids row.
-    let _ = (&app, s_empty);
+    assert_eq!(series_cv_id(&db, s_empty).await, Some("69537".into()));
 
-    // TODO(M0c-metadata-providers): test "pre-existing id wins" now
-    // lives in the writers::set_external_id unit tests (the helper
-    // checks set_by='user' and skips). Test left as a stub here
-    // because the M0c rewrite will reshape the surface entirely.
-    let _ = (s_empty, &db, &meta);
+    // Pre-existing id (e.g. set by an admin via PATCH) is left alone:
+    // writers::set_external_id skips when the existing row has
+    // set_by='user' and the value disagrees.
+    let s_set = seed_series(&app, lib, "PreSetCv", "continuing", None).await;
+    server::metadata::writers::set_external_id(
+        &db,
+        "series",
+        &s_set.to_string(),
+        &server::metadata::Identifier::new(server::metadata::Source::ComicVine, "11111"),
+        server::metadata::writers::SetBy::User,
+    )
+    .await
+    .unwrap();
+    reconcile_series_status(&db, s_set, Some(&meta))
+        .await
+        .unwrap();
+    // Sidecar's 69537 must NOT clobber the pre-existing user-set 11111.
+    assert_eq!(series_cv_id(&db, s_set).await, Some("11111".into()));
+}
+
+/// Helper: read the current ComicVine id text for a series via
+/// `external_ids`. Returns `None` when no comicvine row exists.
+async fn series_cv_id(db: &sea_orm::DatabaseConnection, series_id: uuid::Uuid) -> Option<String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(series_id.to_string()))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .one(db)
+        .await
+        .unwrap()
+        .map(|r| r.external_id)
 }

@@ -29,6 +29,11 @@ pub enum Source {
     Upc,
     Asin,
     Doi,
+    /// Generic Global Trade Item Number — used by the legacy `gtin`
+    /// column when the specific scheme (ISBN-13 vs UPC vs EAN-13)
+    /// isn't recorded. New writes should prefer [`Source::Isbn`] or
+    /// [`Source::Upc`] when the format is known.
+    Gtin,
 }
 
 impl Source {
@@ -48,6 +53,7 @@ impl Source {
             Source::Upc => "upc",
             Source::Asin => "asin",
             Source::Doi => "doi",
+            Source::Gtin => "gtin",
         }
     }
 
@@ -66,6 +72,7 @@ impl Source {
             Source::Upc => "UPC",
             Source::Asin => "ASIN",
             Source::Doi => "DOI",
+            Source::Gtin => "GTIN",
         }
     }
 }
@@ -107,6 +114,7 @@ impl FromStr for Source {
             "upc" => Source::Upc,
             "asin" => Source::Asin,
             "doi" => Source::Doi,
+            "gtin" => Source::Gtin,
             _ => return Err(UnknownSource(s.to_owned())),
         })
     }
@@ -237,7 +245,11 @@ pub fn canonical_url(source: Source, entity_type: &str, external_id: &str) -> Op
         // Barcodes / catalog identifiers — searchable but no canonical
         // first-party URL. The UI renders the bare id with a copy
         // button instead of a link.
-        (Source::Isbn, _) | (Source::Upc, _) | (Source::Asin, _) | (Source::Doi, _) => None,
+        (Source::Isbn, _)
+        | (Source::Upc, _)
+        | (Source::Asin, _)
+        | (Source::Doi, _)
+        | (Source::Gtin, _) => None,
 
         // Unknown combinations — caller can still create an
         // Identifier; the URL just stays None.
@@ -264,6 +276,7 @@ mod tests {
             Source::Upc,
             Source::Asin,
             Source::Doi,
+            Source::Gtin,
         ] {
             assert_eq!(s.as_str().parse::<Source>().unwrap(), s);
         }

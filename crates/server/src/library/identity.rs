@@ -148,10 +148,10 @@ pub async fn resolve_or_create(
     if let Some(row) = q.one(db).await?
         && !existing_folder_blocks_merge(&row, &folder_str)
     {
-        // Backfill folder_path so future scans take the fast path.
-        // TODO(M0c-metadata-providers): also pick up external IDs the
-        // previous scan didn't have via writers::set_external_id —
-        // this used to inline the comicvine_id/metron_id backfill.
+        // Backfill folder_path so future scans take the fast path,
+        // and pick up CV/Metron IDs the previous scan didn't have
+        // via writers::set_legacy_id_trio (user-precedence applies —
+        // user-set values aren't overwritten).
         let id = row.id;
         let needs_folder_backfill = row.folder_path.as_deref() != Some(folder_str.as_str());
         if needs_folder_backfill {
@@ -160,7 +160,16 @@ pub async fn resolve_or_create(
             am.updated_at = Set(Utc::now().fixed_offset());
             am.update(db).await?;
         }
-        let _ = (&hint.comicvine_id, &hint.metron_id);
+        crate::metadata::writers::set_legacy_id_trio(
+            db,
+            "series",
+            &id.to_string(),
+            hint.comicvine_id,
+            hint.metron_id,
+            None,
+            crate::metadata::writers::SetBy::ComicInfo,
+        )
+        .await?;
         return Ok(SeriesMatch::ByNormalizedNameYear { id });
     }
 
@@ -202,9 +211,8 @@ pub async fn resolve_or_create(
                 .language
                 .clone()
                 .unwrap_or_else(|| default_language.to_string())),
-            // TODO(M0c-metadata-providers): comicvine_id / metron_id /
-            // gtin moved to external_ids — written via
-            // writers::set_external_id after the insert.
+            // CV / Metron IDs persist via writers::set_legacy_id_trio
+            // after the insert lands — those live in external_ids now.
             series_group: Set(hint.series_group.clone()),
             alternate_names: Set(serde_json::json!([])),
             // New M0 columns; all NULL/false at scanner-insert time.
@@ -238,7 +246,19 @@ pub async fn resolve_or_create(
             preserve_canonical_order: Set(false),
         };
         match am.insert(db).await {
-            Ok(_) => return Ok(SeriesMatch::Created { id }),
+            Ok(_) => {
+                crate::metadata::writers::set_legacy_id_trio(
+                    db,
+                    "series",
+                    &id.to_string(),
+                    hint.comicvine_id,
+                    hint.metron_id,
+                    None,
+                    crate::metadata::writers::SetBy::ComicInfo,
+                )
+                .await?;
+                return Ok(SeriesMatch::Created { id });
+            }
             Err(e) if is_slug_unique_violation(&e) && attempts < 5 => {
                 tracing::warn!(
                     attempts,
@@ -291,15 +311,23 @@ fn existing_folder_blocks_merge(row: &series::Model, incoming_folder: &str) -> b
 /// scanned hint provides values that the row currently lacks. Never
 /// overwrites set values — admin edits and prior scans win.
 async fn backfill_external_ids(
-    _db: &sea_orm::DatabaseConnection,
-    _row: series::Model,
-    _hint: &SeriesIdentityHint,
+    db: &sea_orm::DatabaseConnection,
+    row: series::Model,
+    hint: &SeriesIdentityHint,
 ) -> anyhow::Result<()> {
-    // TODO(M0c-metadata-providers): rewrite to call
-    // writers::set_external_id(entity_type='series', source='comicvine'
-    // | 'metron', ...) when the hint has values the existing
-    // external_ids rows lack. The "never overwrite a set value"
-    // semantics now live in writers::set_external_id itself (skips
-    // when set_by='user', otherwise upserts).
+    // "Never overwrite a user-set value" lives in
+    // writers::set_external_id (skips when set_by='user' and the
+    // value disagrees, otherwise upserts). The old IS NULL-only
+    // check is no longer needed.
+    crate::metadata::writers::set_legacy_id_trio(
+        db,
+        "series",
+        &row.id.to_string(),
+        hint.comicvine_id,
+        hint.metron_id,
+        None,
+        crate::metadata::writers::SetBy::ComicInfo,
+    )
+    .await?;
     Ok(())
 }

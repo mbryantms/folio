@@ -144,11 +144,13 @@ pub async fn get_one(
     // UI uses this so credit chips link to /creators/<slug> directly
     // (matching how every other detail-page chip resolves).
     let creator_slugs = build_issue_creator_slugs(&app, &row.id).await;
+    let issue_id = row.id.clone();
     let mut view = IssueDetailView::from_model(row, &series_slug);
     view.user_rating = rating;
     view.series_reading_direction = series_dir;
     view.library_default_reading_direction = library_default_dir;
     view.creator_slugs = creator_slugs;
+    crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &issue_id).await;
     Json(view).into_response()
 }
 
@@ -468,10 +470,24 @@ pub async fn update(
     apply_str!(format, format, "format");
     apply_str!(manga, manga, "manga");
     apply_str!(web_url, web_url, "web_url");
-    // TODO(M0c-metadata-providers): gtin writes through
-    // writers::set_external_id(entity_type='issue', source='gtin', …).
-    // M5's <ExternalIdsCard> is the canonical user surface.
-    let _ = &req.gtin;
+    // gtin / comicvine_id / metron_id are on external_ids now, not
+    // the issue row. Track what the user touched here so we can
+    // apply via writers::set_external_id after the row update commits.
+    // None = field absent from request; Some(None) = explicit clear;
+    // Some(Some(v)) = set-to-v. SetBy::User skips writers's user-
+    // precedence gate (a user write always overrides a prior user
+    // write, which is exactly what we want).
+    let pending_gtin = req.gtin.clone();
+    let pending_cv = req.comicvine_id;
+    let pending_metron = req.metron_id;
+    if pending_gtin.is_some() {
+        edited.insert("gtin".into());
+        changes.insert(
+            "gtin".into(),
+            serde_json::json!(pending_gtin.as_ref().and_then(|o| o.clone())),
+        );
+        touched = true;
+    }
 
     // ── nullable scalar columns ──
     if let Some(v) = req.volume {
@@ -510,10 +526,16 @@ pub async fn update(
         changes.insert("sort_number".into(), serde_json::json!(v));
         touched = true;
     }
-    // TODO(M0c-metadata-providers): comicvine_id / metron_id PATCH
-    // routes through writers::set_external_id; M5's <ExternalIdsCard>
-    // is the canonical user surface for editing per-source IDs.
-    let _ = (&req.comicvine_id, &req.metron_id);
+    if let Some(opt) = pending_cv {
+        edited.insert("comicvine_id".into());
+        changes.insert("comicvine_id".into(), serde_json::json!(opt));
+        touched = true;
+    }
+    if let Some(opt) = pending_metron {
+        edited.insert("metron_id".into());
+        changes.insert("metron_id".into(), serde_json::json!(opt));
+        touched = true;
+    }
 
     if let Some(links) = req.additional_links {
         let normalized: Vec<IssueLink> = links
@@ -532,7 +554,10 @@ pub async fn update(
     }
 
     if !touched {
-        return Json(IssueDetailView::from_model(row, &series_slug)).into_response();
+        let row_id = row.id.clone();
+        let mut view = IssueDetailView::from_model(row, &series_slug);
+        crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &row_id).await;
+        return Json(view).into_response();
     }
 
     let edited_arr: Vec<String> = edited.into_iter().collect();
@@ -546,6 +571,70 @@ pub async fn update(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+
+    // Apply external-ID edits the user touched. Set-to-value writes
+    // route through writers::set_external_id (set_by='user');
+    // explicit clears delete the row outright.
+    use crate::metadata::writers::{self as writers, SetBy};
+    use crate::metadata::{Identifier, Source};
+    if let Some(opt) = pending_gtin {
+        let res = match opt {
+            Some(v) if !v.is_empty() => {
+                writers::set_external_id(
+                    &app.db,
+                    "issue",
+                    &updated.id,
+                    &Identifier::new(Source::Gtin, v),
+                    SetBy::User,
+                )
+                .await
+            }
+            _ => writers::delete_external_id(&app.db, "issue", &updated.id, Source::Gtin).await,
+        };
+        if let Err(e) = res {
+            tracing::error!(issue_id = %updated.id, error = %e, "issue external_id (gtin) write failed");
+        }
+    }
+    if let Some(opt) = pending_cv {
+        let res = match opt {
+            Some(v) => {
+                writers::set_external_id(
+                    &app.db,
+                    "issue",
+                    &updated.id,
+                    &Identifier::new(Source::ComicVine, v.to_string()),
+                    SetBy::User,
+                )
+                .await
+            }
+            None => {
+                writers::delete_external_id(&app.db, "issue", &updated.id, Source::ComicVine).await
+            }
+        };
+        if let Err(e) = res {
+            tracing::error!(issue_id = %updated.id, error = %e, "issue external_id (comicvine) write failed");
+        }
+    }
+    if let Some(opt) = pending_metron {
+        let res = match opt {
+            Some(v) => {
+                writers::set_external_id(
+                    &app.db,
+                    "issue",
+                    &updated.id,
+                    &Identifier::new(Source::Metron, v.to_string()),
+                    SetBy::User,
+                )
+                .await
+            }
+            None => {
+                writers::delete_external_id(&app.db, "issue", &updated.id, Source::Metron).await
+            }
+        };
+        if let Err(e) = res {
+            tracing::error!(issue_id = %updated.id, error = %e, "issue external_id (metron) write failed");
+        }
+    }
 
     audit::record(
         &app.db,
@@ -564,7 +653,10 @@ pub async fn update(
     )
     .await;
 
-    Json(IssueDetailView::from_model(updated, &series_slug)).into_response()
+    let updated_id = updated.id.clone();
+    let mut view = IssueDetailView::from_model(updated, &series_slug);
+    crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &updated_id).await;
+    Json(view).into_response()
 }
 
 // ───── POST /issues/{id}/scan ─────

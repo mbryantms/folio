@@ -288,11 +288,23 @@ where
         dirty = true;
     }
 
-    // TODO(M0c-metadata-providers): comicvine_id backfill now goes
-    // through writers::set_external_id(entity_type='series',
-    // source='comicvine', ...) — that helper's "skip if set_by='user'"
-    // semantics replace the old IS NULL check.
-    let _ = resolved_comicvine_id;
+    // CV id backfill routes through writers::set_external_id
+    // (entity_type='series', source='comicvine'). The helper's
+    // "skip if set_by='user'" semantics replace the old IS NULL
+    // check inline at this layer.
+    if let Some(cv) = resolved_comicvine_id {
+        crate::metadata::writers::set_external_id(
+            db,
+            "series",
+            &row.id.to_string(),
+            &crate::metadata::Identifier::new(
+                crate::metadata::Source::ComicVine,
+                cv.to_string(),
+            ),
+            crate::metadata::writers::SetBy::ComicInfo,
+        )
+        .await?;
+    }
 
     // ───── volume / name / publisher self-heal ─────
     //

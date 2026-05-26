@@ -320,20 +320,26 @@ async fn scan_issue_force_re_extracts_new_parser_fields() {
         .await
         .unwrap()
         .expect("issue row");
-    // TODO(M0c-metadata-providers): rewrite assertion to query
-    // external_ids table for source='comicvine'. The scanner test
-    // covers behaviour the metadata-providers integration must
-    // preserve — left as a stub until M0c rewires the scanner.
-    let _ = &issue_row;
+    // ComicVine id from the ComicInfo `<ComicVineID>` tag now lives
+    // on external_ids (entity_type='issue', source='comicvine').
+    assert_eq!(
+        cv_id_for_issue(&state.db, &issue_row.id).await,
+        Some("4242".into()),
+        "initial scan should populate external_ids[comicvine]"
+    );
 
     // Simulate "scanned with an older parser that didn't extract IDs"
-    // is harder now that the column lives in external_ids — the M0c
-    // rewrite of this test will delete the external_ids row instead.
-    let am: entity::issue::ActiveModel = issue_row.clone().into();
-    am.update(&state.db).await.unwrap();
+    // by deleting the external_ids row directly.
+    entity::external_id::Entity::delete_many()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::EntityId.eq(&issue_row.id))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .exec(&state.db)
+        .await
+        .unwrap();
 
     // force=false should hit the per-file fast path (size+mtime unchanged)
-    // and leave the column null.
+    // and leave the external_id row absent.
     let stats = scanner::scan_issue_file(&state, lib_id, &issue_row.id, false, None)
         .await
         .unwrap();
@@ -341,17 +347,14 @@ async fn scan_issue_force_re_extracts_new_parser_fields() {
         stats.files_unchanged, 1,
         "default scan should hit the fast path: {stats:?}",
     );
-    let row_after_default = IssueEntity::find_by_id(issue_row.id.clone())
-        .one(&state.db)
-        .await
-        .unwrap()
-        .unwrap();
-    // TODO(M0c-metadata-providers): assertion needs JOIN to
-    // external_ids; column was dropped in m20261228.
-    let _ = &row_after_default;
+    assert_eq!(
+        cv_id_for_issue(&state.db, &issue_row.id).await,
+        None,
+        "fast-path scan must not re-extract"
+    );
 
     // force=true re-parses the file even though size+mtime match, and the
-    // parser populates comicvine_id from the XML tag.
+    // parser repopulates external_ids[comicvine] from the XML tag.
     let stats = scanner::scan_issue_file(&state, lib_id, &issue_row.id, true, None)
         .await
         .unwrap();
@@ -363,14 +366,25 @@ async fn scan_issue_force_re_extracts_new_parser_fields() {
         stats.files_unchanged, 0,
         "force must skip fast-path: {stats:?}"
     );
-    let row_after_force = IssueEntity::find_by_id(issue_row.id.clone())
-        .one(&state.db)
+    assert_eq!(
+        cv_id_for_issue(&state.db, &issue_row.id).await,
+        Some("4242".into()),
+        "forced scan must repopulate external_ids[comicvine]"
+    );
+}
+
+/// Helper: read the current ComicVine id for an issue from
+/// `external_ids` (returns the raw stored text, not parsed).
+async fn cv_id_for_issue(db: &sea_orm::DatabaseConnection, issue_id: &str) -> Option<String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::EntityId.eq(issue_id))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .one(db)
         .await
         .unwrap()
-        .unwrap();
-    // TODO(M0c-metadata-providers): assertion needs JOIN to
-    // external_ids; column was dropped in m20261228.
-    let _ = &row_after_force;
+        .map(|r| r.external_id)
 }
 
 #[tokio::test]
