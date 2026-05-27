@@ -1,16 +1,17 @@
 "use client";
 
 /**
- * Tab shell for `/admin/metadata` (M6). Four tabs:
- *   - Dashboard — counts + quota gauges
- *   - Providers — per-provider test buttons
- *   - Review queue — pending medium/low candidates
- *   - Runs — paginated metadata_run history with detail drilldown
+ * Tab shell for `/admin/metadata`. Five tabs:
+ *   - Dashboard — counts + quota gauges (M6)
+ *   - Providers — per-provider test buttons + credential forms (M6)
+ *   - Review queue — pending medium/low candidates (M6)
+ *   - Runs — paginated metadata_run history with detail drilldown (M6)
+ *   - Settings — weekly-refresh toggle + cron + staleness (M7 follow-up)
  *
- * Settings (provider priority, threshold, cache TTLs, weekly refresh)
- * live on `/admin/settings` rather than here — the unified settings
- * page already surfaces every `metadata.*` key; duplicating the form
- * surface would just rot.
+ * The Settings tab landed 2026-05-26 after the M7 cron + bulk-refresh
+ * endpoint shipped without a UI surface — Folio has no generic
+ * `/admin/settings` page, so per-feature settings need their own
+ * forms.
  */
 
 import dynamic from "next/dynamic";
@@ -33,12 +34,17 @@ const RunsTab = dynamic(() => import("./RunsTab").then((m) => m.RunsTab), {
   ssr: false,
   loading: () => <Skeleton className="h-64 w-full" />,
 });
+const SettingsTab = dynamic(
+  () => import("./SettingsTab").then((m) => m.SettingsTab),
+  { ssr: false, loading: () => <Skeleton className="h-64 w-full" /> },
+);
 
 const TABS = [
   { value: "dashboard", label: "Dashboard" },
   { value: "providers", label: "Providers" },
   { value: "review", label: "Review queue" },
   { value: "runs", label: "Runs" },
+  { value: "settings", label: "Settings" },
 ] as const;
 type TabValue = (typeof TABS)[number]["value"];
 
@@ -64,6 +70,9 @@ export function AdminMetadataTabs() {
       </TabsContent>
       <TabsContent value="runs" className="pt-4">
         <RunsTab />
+      </TabsContent>
+      <TabsContent value="settings" className="pt-4">
+        <SettingsTab />
       </TabsContent>
     </Tabs>
   );
