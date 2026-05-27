@@ -72,9 +72,11 @@ impl MatchOutcomeKind {
 /// [`super::orchestrator::finalize_run`] inside the same transaction
 /// so the row + the candidates land atomically.
 ///
-/// `top_hamming` / `second_hamming` are stubbed `None` in M0 —
-/// matcher M4 will start passing them through once it computes
-/// per-candidate Hamming distance separately from the score bonus.
+/// Post-M4 the `top_hamming` / `second_hamming` columns receive the
+/// actual cover Hamming distance for the top + runner-up candidates
+/// when their phashes were available. The orchestrator's sort puts
+/// the bucket-priority winner first, so `top_hamming` will be the
+/// HIGH-bucket candidate's Hamming when one exists.
 pub async fn record<C: ConnectionTrait>(
     db: &C,
     run_id: Uuid,
@@ -84,15 +86,23 @@ pub async fn record<C: ConnectionTrait>(
     let kind = MatchOutcomeKind::classify(ranked);
     let top_score = ranked.first().map(|r| r.score.total).unwrap_or(0.0);
     let second_score = ranked.get(1).map(|r| r.score.total);
+    let top_hamming = ranked
+        .first()
+        .and_then(|r| r.score.cover_hamming)
+        .map(|d| d as i32);
+    let second_hamming = ranked
+        .get(1)
+        .and_then(|r| r.score.cover_hamming)
+        .map(|d| d as i32);
     let am = metadata_match_outcome::ActiveModel {
         id: Set(Uuid::new_v4()),
         run_id: Set(run_id),
         scope: Set(scope.to_owned()),
         outcome_kind: Set(kind.as_str().to_owned()),
         top_score: Set(top_score),
-        top_hamming: Set(None),
+        top_hamming: Set(top_hamming),
         second_score: Set(second_score),
-        second_hamming: Set(None),
+        second_hamming: Set(second_hamming),
         candidate_count: Set(ranked.len() as i32),
         created_at: Set(chrono::Utc::now().into()),
     };

@@ -245,8 +245,75 @@ impl RankedCandidate {
             "publisher": self.score.publisher,
             "issue_number": self.score.issue_number,
             "volume": self.score.volume,
+            // M4: surface the raw Hamming so the review-UI tooltip can
+            // explain "cover within 6 bits → HIGH" or "cover 24 bits
+            // off → LOW". null when no phash was available.
+            "cover_hamming": self.score.cover_hamming,
         })
     }
+}
+
+/// Apply matching-accuracy-1.0 M4's post-scoring ranking pass:
+///
+/// 1. **Gap-to-next-best guard**: When the two closest cover-Hamming
+///    candidates are within [`matcher::MIN_SCORE_DISTANCE`] bits of
+///    each other AND the winner is currently HIGH, downgrade the
+///    winner to MEDIUM. Mirrors ComicTagger's `min_score_distance`
+///    safeguard — when two real candidates have near-identical
+///    covers we can't be confident which is right, so the user picks
+///    explicitly instead of getting a one-click apply.
+/// 2. **Final sort** orders by bucket priority (HIGH first), then
+///    by cover Hamming ascending (lower = better match), then by
+///    text `total` descending. Pre-M4 the sort was text-only — that
+///    fought the cover-decides bucketing whenever a perfect-text +
+///    wrong-cover candidate would rank above a worse-text +
+///    perfect-cover one.
+pub(crate) fn finalize_ranking(ranked: &mut [RankedCandidate]) {
+    // Step 1: gap-to-next-best guard. Indexed walk so we can mutate
+    // `ranked[i0].bucket` without holding an aliasing reference.
+    let mut hamming_indices: Vec<usize> = (0..ranked.len())
+        .filter(|&i| ranked[i].score.cover_hamming.is_some())
+        .collect();
+    hamming_indices.sort_by_key(|&i| ranked[i].score.cover_hamming.unwrap());
+    if let (Some(&i0), Some(&i1)) = (hamming_indices.first(), hamming_indices.get(1)) {
+        let d0 = ranked[i0].score.cover_hamming.unwrap();
+        let d1 = ranked[i1].score.cover_hamming.unwrap();
+        if ranked[i0].bucket == Confidence::High
+            && d0 <= matcher::STRONG_SCORE_THRESH
+            && d1.saturating_sub(d0) < matcher::MIN_SCORE_DISTANCE
+        {
+            tracing::debug!(
+                top_hamming = d0,
+                second_hamming = d1,
+                "matcher gap-to-next-best: downgrading HIGH → MEDIUM (gap < 4 bits)",
+            );
+            ranked[i0].bucket = Confidence::Medium;
+        }
+    }
+
+    // Step 2: bucket priority asc → Hamming asc (None last) → total desc.
+    ranked.sort_by(|a, b| {
+        let bucket_order = |c: Confidence| -> u8 {
+            match c {
+                Confidence::High => 0,
+                Confidence::Medium => 1,
+                Confidence::Low => 2,
+            }
+        };
+        bucket_order(a.bucket)
+            .cmp(&bucket_order(b.bucket))
+            .then_with(|| {
+                let ka = a.score.cover_hamming.unwrap_or(u32::MAX);
+                let kb = b.score.cover_hamming.unwrap_or(u32::MAX);
+                ka.cmp(&kb)
+            })
+            .then_with(|| {
+                b.score
+                    .total
+                    .partial_cmp(&a.score.total)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
 }
 
 /// Finalize a run by persisting the ranked candidates + flipping the
@@ -412,12 +479,7 @@ pub async fn run_series_search(
         }
     }
 
-    ranked.sort_by(|a, b| {
-        b.score
-            .total
-            .partial_cmp(&a.score.total)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    finalize_ranking(&mut ranked);
 
     // If *every* enabled provider was quota-exhausted, surface that
     // as `awaiting_quota` instead of `completed-with-no-results` so
@@ -542,12 +604,7 @@ pub async fn run_issue_search(
         }
     }
 
-    ranked.sort_by(|a, b| {
-        b.score
-            .total
-            .partial_cmp(&a.score.total)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    finalize_ranking(&mut ranked);
 
     if ranked.is_empty() && surfaced_quota.is_some() {
         let resume = Utc::now() + chrono::Duration::seconds(surfaced_quota.unwrap_or(60) as i64);
@@ -629,6 +686,7 @@ async fn fetch_candidate_phashes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::matcher::Thresholds;
 
     #[test]
     fn stored_query_round_trips() {
@@ -647,5 +705,109 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // M4 — finalize_ranking gap-to-next-best guard + sort
+    // ────────────────────────────────────────────────────────────
+
+    fn fake_candidate(
+        text_total: f32,
+        cover_hamming: Option<u32>,
+        external_id: &str,
+    ) -> RankedCandidate {
+        let score = Score {
+            total: text_total,
+            cover_hamming,
+            ..Default::default()
+        };
+        let bucket = score.bucket(Thresholds::default());
+        RankedCandidate {
+            source: Source::ComicVine,
+            external_id: external_id.into(),
+            score,
+            bucket,
+            payload: CandidatePayload::Series(SeriesCandidate {
+                source: Source::ComicVine,
+                external_id: external_id.into(),
+                external_url: None,
+                name: external_id.into(),
+                year: None,
+                publisher: None,
+                issue_count: None,
+                cover_image_url: None,
+                deck: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn gap_guard_downgrades_winner_when_top_two_within_distance() {
+        // Two candidates at Hamming 6 and 9 — gap = 3 < MIN_SCORE_DISTANCE.
+        // Both individually would bucket HIGH (≤8 / ≤16), but the
+        // winner downgrades to MEDIUM because we can't be confident
+        // which one is right.
+        let mut ranked = vec![
+            fake_candidate(50.0, Some(6), "winner"),
+            fake_candidate(40.0, Some(9), "runner_up"),
+        ];
+        finalize_ranking(&mut ranked);
+
+        let winner = ranked.iter().find(|r| r.external_id == "winner").unwrap();
+        assert_eq!(winner.bucket, Confidence::Medium);
+        let runner_up = ranked
+            .iter()
+            .find(|r| r.external_id == "runner_up")
+            .unwrap();
+        // Runner-up at Hamming 9 stays Medium (9 ≤ MIN_SCORE_THRESH=16).
+        assert_eq!(runner_up.bucket, Confidence::Medium);
+    }
+
+    #[test]
+    fn gap_guard_keeps_winner_high_when_top_two_are_distant() {
+        // Hamming 4 + 18 — gap = 14 ≥ MIN_SCORE_DISTANCE. Winner is
+        // decisively the better match; stays HIGH.
+        let mut ranked = vec![
+            fake_candidate(50.0, Some(4), "winner"),
+            fake_candidate(40.0, Some(18), "runner_up"),
+        ];
+        finalize_ranking(&mut ranked);
+
+        assert_eq!(ranked[0].external_id, "winner");
+        assert_eq!(ranked[0].bucket, Confidence::High);
+        // Runner-up at Hamming 18 > MIN_SCORE_THRESH = LOW.
+        assert_eq!(ranked[1].external_id, "runner_up");
+        assert_eq!(ranked[1].bucket, Confidence::Low);
+    }
+
+    #[test]
+    fn sort_prefers_cover_match_over_perfect_text() {
+        // Candidate A: perfect text (90), no cover.
+        // Candidate B: low text (40), perfect cover (Hamming 0).
+        // M4 invariant: cover-match wins the top slot.
+        let mut ranked = vec![
+            fake_candidate(90.0, None, "text_only"),
+            fake_candidate(40.0, Some(0), "cover_match"),
+        ];
+        finalize_ranking(&mut ranked);
+
+        assert_eq!(ranked[0].external_id, "cover_match");
+        assert_eq!(ranked[0].bucket, Confidence::High);
+        assert_eq!(ranked[1].external_id, "text_only");
+        assert_eq!(ranked[1].bucket, Confidence::High); // 90 ≥ 80 text-only HIGH
+    }
+
+    #[test]
+    fn finalize_ranking_noop_on_empty_or_single() {
+        let mut empty: Vec<RankedCandidate> = vec![];
+        finalize_ranking(&mut empty);
+        assert!(empty.is_empty());
+
+        let mut one = vec![fake_candidate(50.0, Some(4), "only")];
+        finalize_ranking(&mut one);
+        assert_eq!(one.len(), 1);
+        // Single candidate at Hamming 4 stays HIGH — gap guard requires
+        // a runner-up to fire.
+        assert_eq!(one[0].bucket, Confidence::High);
     }
 }

@@ -99,10 +99,11 @@ impl Default for Thresholds {
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Score {
-    /// 0–100. Sum of weighted component scores. Capped at 100 even
-    /// when the optional cover-phash bonus would push the raw sum
-    /// higher — keeps the existing bucket-threshold semantics
-    /// (default 95 = HIGH) intact.
+    /// 0–100. Text-only sum of weighted component scores. Post-M4
+    /// the cover signal lives in [`Self::cover_hamming`] rather than
+    /// being folded into `total` — the bucket() helper consults
+    /// cover first and only falls back to `total` when no Hamming
+    /// is available.
     pub total: f32,
     /// Per-component breakdown — surfaced in the review UI as a tooltip
     /// so operators can see *why* a candidate scored as it did.
@@ -111,17 +112,36 @@ pub struct Score {
     pub publisher: f32,
     pub issue_number: f32,
     pub volume: f32,
-    /// 0..=W_COVER_PHASH. 0 when neither side has a hash (the safe
-    /// default — phash absence shouldn't penalize candidates that
-    /// otherwise look great on text fields). Positive only when both
-    /// local + candidate phashes are present + within
-    /// `COVER_PHASH_THRESHOLD` Hamming distance.
-    pub cover_phash: f32,
+    /// Raw cover-pHash Hamming distance (bits out of 64) when both
+    /// local + candidate hashes are present, else `None`. Matching-
+    /// accuracy-1.0 M4: this is the **primary** bucket discriminant —
+    /// when present, the cover decides the bucket regardless of text
+    /// score. Pre-M4 this slot was a `cover_phash: f32` bonus added
+    /// to `total`; the inversion is intentional and irreversible
+    /// without re-running golden-set calibration.
+    pub cover_hamming: Option<u32>,
 }
 
 impl Score {
+    /// Bucket a candidate. When the cover signal is present, the
+    /// ComicTagger Hamming ladder applies (see
+    /// [`STRONG_SCORE_THRESH`] / [`MIN_SCORE_THRESH`]) and the text
+    /// score is ignored. When absent, fall back to the operator-
+    /// tunable text thresholds from M1.
+    ///
+    /// This is the matching-accuracy-1.0 M4 inversion. Pre-M4 the
+    /// matcher used text + a small cover bonus and any candidate
+    /// scoring above 95 was HIGH — but text-only ceilings made HIGH
+    /// unreachable in practice. After M4 a near-identical cover
+    /// match wins HIGH on its own merits, and a wildly different
+    /// cover sinks an otherwise-perfect text match to LOW.
     pub fn bucket(self, thresholds: Thresholds) -> Confidence {
-        Confidence::from_score(self.total, thresholds)
+        match self.cover_hamming {
+            Some(d) if d <= STRONG_SCORE_THRESH => Confidence::High,
+            Some(d) if d <= MIN_SCORE_THRESH => Confidence::Medium,
+            Some(_) => Confidence::Low,
+            None => Confidence::from_score(self.total, thresholds),
+        }
     }
 }
 
@@ -137,20 +157,35 @@ const W_ISSUE_NUMBER: f32 = 15.0;
 /// the actual value once the detail-fetch round-trip is wired.
 #[allow(dead_code)]
 const W_VOLUME: f32 = 5.0;
-/// Max bonus a cover-phash match contributes — added on top of the
-/// existing 100-point scale, then the total is `.min(100)`-clamped.
-/// Tuned so a near-perfect cover match can lift a borderline text
-/// match (~88) over the HIGH threshold (95), but can't promote an
-/// obviously wrong name-match alone.
-///
-/// metadata-providers-1.0 M9.5.
-const W_COVER_PHASH: f32 = 10.0;
-/// Hamming-distance threshold at which the cover-phash score snaps
-/// to zero — past 20 bits out of 64, the images are visually
-/// different enough that a bonus would be noise. Inside the
-/// threshold, the score scales linearly from 1.0 (distance 0) to
-/// 0.0 (distance 20). Matches the default used by [`crate::metadata::phash`].
-const COVER_PHASH_THRESHOLD: u32 = 20;
+
+// ───────── cover-Hamming ladder (matching-accuracy-1.0 M4) ────────
+//
+// Lifted verbatim from ComicTagger's `IssueIdentifier` defaults
+// (`strong_score_thresh=8`, `min_score_thresh=16`,
+// `min_score_distance=4`). These are bits out of 64-bit pHash —
+// images within 8 bits are visually indistinguishable to a human
+// looking for "is this the same cover"; past 16 bits they're
+// almost certainly different printings.
+
+/// Cover Hamming distance at or below which a candidate is treated
+/// as a **strong** match. M4 changes the bucketing semantics so a
+/// strong-cover candidate is HIGH regardless of text score —
+/// matches ComicTagger's `strong_score_thresh`.
+pub const STRONG_SCORE_THRESH: u32 = 8;
+
+/// Cover Hamming distance ceiling for a MEDIUM bucket — beyond this
+/// the cover is decidedly different and the candidate drops to LOW
+/// (even if the text scored perfectly). Matches ComicTagger's
+/// `min_score_thresh`.
+pub const MIN_SCORE_THRESH: u32 = 16;
+
+/// Minimum bit-gap between the top + second cover-Hamming candidates
+/// before the top one is allowed to claim HIGH. When two candidates
+/// are within `MIN_SCORE_DISTANCE` bits of each other we can't be
+/// confident which is right; the winner gets downgraded to MEDIUM
+/// so the user picks explicitly. Matches ComicTagger's
+/// `min_score_distance`.
+pub const MIN_SCORE_DISTANCE: u32 = 4;
 
 // ───────── inputs ─────────
 
@@ -181,10 +216,10 @@ pub fn score_series(query: &SeriesQueryFacts, candidate: &SeriesCandidate) -> Sc
     score_series_with_phash(query, candidate, None, None)
 }
 
-/// Like [`score_series`] but also factors in cover-image similarity
-/// when both a local and a candidate phash are present. Either-None
-/// is fine — phash is bonus, never penalty. metadata-providers-1.0
-/// M9.5.
+/// Like [`score_series`] but also captures the cover-pHash Hamming
+/// distance when both sides have a hash. Post-M4 the Hamming feeds
+/// the primary bucketing decision (see [`Score::bucket`]); the text
+/// `total` is the tiebreaker and the fallback for the no-phash case.
 pub fn score_series_with_phash(
     query: &SeriesQueryFacts,
     candidate: &SeriesCandidate,
@@ -201,13 +236,8 @@ pub fn score_series_with_phash(
     // threshold for both series and issue scores.
     let issue_number = 0.0;
     let volume = 0.0; // SeriesCandidate doesn't carry volume; ignore.
-    let cover_phash = W_COVER_PHASH
-        * cover_hash_similarity(
-            local_cover_phash,
-            candidate_cover_phash,
-            COVER_PHASH_THRESHOLD,
-        );
-    let total = (name + year + publisher + issue_number + volume + cover_phash).min(100.0);
+    let cover_hamming = hamming_distance_opt(local_cover_phash, candidate_cover_phash);
+    let total = name + year + publisher + issue_number + volume;
     Score {
         total,
         name,
@@ -215,7 +245,7 @@ pub fn score_series_with_phash(
         publisher,
         issue_number,
         volume,
-        cover_phash,
+        cover_hamming,
     }
 }
 
@@ -224,8 +254,9 @@ pub fn score_issue(query: &IssueQueryFacts, candidate: &IssueCandidate) -> Score
     score_issue_with_phash(query, candidate, None, None)
 }
 
-/// Like [`score_issue`] but also factors in cover-image similarity
-/// when both phashes are present. metadata-providers-1.0 M9.5.
+/// Like [`score_issue`] but also captures the cover-pHash Hamming
+/// distance when both sides have a hash. See
+/// [`score_series_with_phash`] for the cover-decides rationale.
 pub fn score_issue_with_phash(
     query: &IssueQueryFacts,
     candidate: &IssueCandidate,
@@ -245,13 +276,8 @@ pub fn score_issue_with_phash(
     let issue_number = W_ISSUE_NUMBER
         * issue_number_similarity(&query.issue_number, candidate.issue_number.as_deref());
     let volume = 0.0;
-    let cover_phash = W_COVER_PHASH
-        * cover_hash_similarity(
-            local_cover_phash,
-            candidate_cover_phash,
-            COVER_PHASH_THRESHOLD,
-        );
-    let total = (name + year + publisher + issue_number + volume + cover_phash).min(100.0);
+    let cover_hamming = hamming_distance_opt(local_cover_phash, candidate_cover_phash);
+    let total = name + year + publisher + issue_number + volume;
     Score {
         total,
         name,
@@ -259,7 +285,17 @@ pub fn score_issue_with_phash(
         publisher,
         issue_number,
         volume,
-        cover_phash,
+        cover_hamming,
+    }
+}
+
+/// Convenience: compute Hamming distance only when both sides have
+/// a hash. Centralizes the `Option`-unwrap pattern so the score
+/// functions stay readable.
+fn hamming_distance_opt(a: Option<i64>, b: Option<i64>) -> Option<u32> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(crate::metadata::phash::hamming_distance(x, y)),
+        _ => None,
     }
 }
 
@@ -665,13 +701,11 @@ mod tests {
     }
 
     // ────────────────────────────────────────────────────────────
-    // M9.5 — cover-phash bonus
+    // M4 — cover-pHash as the primary bucket discriminant
     // ────────────────────────────────────────────────────────────
 
     #[test]
-    fn cover_phash_bonus_lifts_borderline_text_match() {
-        // Same series name + year, no publisher → 45 + 20 + 7.5 = 72.5.
-        // A perfect cover-phash match adds W_COVER_PHASH = 10 → 82.5.
+    fn score_captures_cover_hamming_when_both_phashes_present() {
         let q = SeriesQueryFacts {
             name: "Saga".into(),
             year: Some(2012),
@@ -679,15 +713,16 @@ mod tests {
             volume: None,
         };
         let c = series_candidate("Saga", Some(2012), None);
-        let no_phash = score_series(&q, &c);
-        let with_phash = score_series_with_phash(&q, &c, Some(0x1234), Some(0x1234));
-        assert!(with_phash.total > no_phash.total);
-        assert!((with_phash.total - (no_phash.total + W_COVER_PHASH)).abs() < 1e-3);
-        assert!((with_phash.cover_phash - W_COVER_PHASH).abs() < 1e-3);
+        let identical = score_series_with_phash(&q, &c, Some(0xABCD), Some(0xABCD));
+        assert_eq!(identical.cover_hamming, Some(0));
+
+        // Bit-set diff: 0 vs 0xFF = 8 bits flipped → Hamming 8.
+        let off_by_eight = score_series_with_phash(&q, &c, Some(0), Some(0xFF));
+        assert_eq!(off_by_eight.cover_hamming, Some(8));
     }
 
     #[test]
-    fn cover_phash_missing_either_side_is_zero_bonus() {
+    fn score_cover_hamming_is_none_when_either_side_missing() {
         let q = SeriesQueryFacts {
             name: "Saga".into(),
             year: Some(2012),
@@ -698,65 +733,74 @@ mod tests {
         let only_local = score_series_with_phash(&q, &c, Some(0x1234), None);
         let only_candidate = score_series_with_phash(&q, &c, None, Some(0x5678));
         let neither = score_series_with_phash(&q, &c, None, None);
-        let baseline = score_series(&q, &c);
         for s in [only_local, only_candidate, neither] {
-            assert!((s.total - baseline.total).abs() < 1e-3);
-            assert!((s.cover_phash - 0.0).abs() < 1e-3);
+            assert_eq!(s.cover_hamming, None);
         }
     }
 
     #[test]
-    fn cover_phash_distant_hashes_zero_bonus() {
-        // Hashes that differ in >= 20 bits (the threshold) should
-        // contribute nothing — the matcher shouldn't credit
-        // tangentially-similar covers.
-        let q = SeriesQueryFacts {
-            name: "Saga".into(),
-            year: Some(2012),
-            publisher: None,
-            volume: None,
-        };
-        let c = series_candidate("Saga", Some(2012), None);
-        // 0 vs all-1s = 64-bit Hamming distance = way past 20.
-        let s = score_series_with_phash(&q, &c, Some(0), Some(-1));
-        assert!((s.cover_phash - 0.0).abs() < 1e-3);
-    }
-
-    #[test]
-    fn cover_phash_total_caps_at_100() {
-        // Perfect text match (100) + perfect phash (10) = 110, but
-        // total must clamp at 100 to keep the existing bucket
-        // semantics intact.
-        let q = SeriesQueryFacts {
-            name: "Saga".into(),
-            year: Some(2012),
-            publisher: Some("Image Comics".into()),
-            volume: None,
-        };
-        let c = series_candidate("Saga", Some(2012), Some("Image Comics"));
-        let perfect_text = score_series(&q, &c);
-        assert!((perfect_text.total - 80.0).abs() < 1e-3); // 45+20+15 (issue+vol=0 for series)
-        let with_max_phash = score_series_with_phash(&q, &c, Some(0xABCD), Some(0xABCD));
-        assert!(with_max_phash.total <= 100.0);
-        // For this candidate the raw sum is 90 (80 + 10 phash), which
-        // doesn't trigger the clamp — but the helper *would* clamp if
-        // it did. Add a synthetic case to lock the invariant.
+    fn cover_within_strong_thresh_buckets_high_regardless_of_text() {
+        // Bad text score (would be LOW on its own) + cover Hamming 4
+        // → HIGH because cover decides. M4's central invariant.
         let s = Score {
-            total: (45.0_f32 + 30.0 + 15.0 + 15.0 + 5.0 + 10.0_f32).min(100.0),
+            total: 30.0,
+            cover_hamming: Some(4),
             ..Default::default()
         };
-        assert!(s.total <= 100.0);
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::High);
     }
 
     #[test]
-    fn cover_phash_helper_returns_expected_similarity() {
-        // Sanity: cover_hash_similarity is the surface the orchestrator
-        // calls — make sure the threshold + scaling match what the
-        // matcher's `_with_phash` functions compute internally.
+    fn cover_beyond_min_thresh_buckets_low_even_with_perfect_text() {
+        // Perfect text (100) but cover Hamming 30 → LOW because the
+        // cover veto overrides the text score.
+        let s = Score {
+            total: 100.0,
+            cover_hamming: Some(30),
+            ..Default::default()
+        };
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::Low);
+    }
+
+    #[test]
+    fn cover_in_medium_band_buckets_medium() {
+        // Hamming 12 sits between STRONG (8) and MIN (16) — MEDIUM.
+        let s = Score {
+            total: 50.0,
+            cover_hamming: Some(12),
+            ..Default::default()
+        };
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::Medium);
+    }
+
+    #[test]
+    fn no_cover_hash_falls_back_to_text_threshold() {
+        // No cover signal → text decides. 90 ≥ 80 (default HIGH).
+        let s = Score {
+            total: 90.0,
+            cover_hamming: None,
+            ..Default::default()
+        };
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::High);
+
+        // 50 < 60 (default MEDIUM) → LOW.
+        let s = Score {
+            total: 50.0,
+            cover_hamming: None,
+            ..Default::default()
+        };
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::Low);
+    }
+
+    #[test]
+    fn cover_hash_similarity_helper_still_returns_expected_values() {
+        // Helper is no longer wired into bucketing but stays in the
+        // public API for callers that want a 0..1 similarity (the
+        // M5 diff preview surfaces this in the per-field tooltip).
         assert_eq!(cover_hash_similarity(None, None, 20), 0.0);
         assert_eq!(cover_hash_similarity(Some(0), None, 20), 0.0);
         assert_eq!(cover_hash_similarity(Some(0), Some(0), 20), 1.0);
-        // 10 bits set on one side → distance = 10. similarity = 1 - 10/20 = 0.5.
+        // 10 bits set on one side → distance 10. similarity = 1 - 10/20 = 0.5.
         assert!((cover_hash_similarity(Some(0), Some(0x3FF), 20) - 0.5).abs() < 1e-3);
     }
 }
