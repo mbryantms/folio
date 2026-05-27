@@ -572,6 +572,37 @@ pub async fn update(
         }
     };
 
+    // Dual-write to field_provenance for every touched scalar that
+    // maps to a typed MetadataField. The legacy user_edited JSON
+    // column stays in place as the scanner's user-precedence source
+    // — this is the de-risking work for the upcoming metadata-
+    // sidecar-writeback plan, whose composer reads field_provenance
+    // to preserve user pins across provider applies.
+    //
+    // Failures here are logged but don't fail the PATCH — the row
+    // already updated, and the next provider apply will overwrite
+    // the field_provenance row anyway. Don't double-roll-back.
+    for key in &edited_arr {
+        if let Some(field) = patch_field_key_to_metadata_field(key)
+            && let Err(e) = crate::metadata::writers::write_field_provenance(
+                &app.db,
+                "issue",
+                &updated.id,
+                field,
+                crate::metadata::writers::SetBy::User,
+                None,
+            )
+            .await
+        {
+            tracing::warn!(
+                issue_id = %updated.id,
+                field = %key,
+                error = %e,
+                "issue PATCH: field_provenance dual-write failed (non-fatal)"
+            );
+        }
+    }
+
     // Apply external-ID edits the user touched. Set-to-value writes
     // route through writers::set_external_id (set_by='user');
     // explicit clears delete the row outright.
@@ -1193,18 +1224,44 @@ pub async fn bulk_metadata(
         // the scanner skips them on rescan. We add to the existing
         // set rather than replace so prior PATCH /issues edits stay
         // sticky.
+        let touched_names = req.patch.touched_field_names();
         let mut user_edited: BTreeSet<String> =
             serde_json::from_value(row.user_edited.clone()).unwrap_or_default();
-        for name in req.patch.touched_field_names() {
-            user_edited.insert(name.to_owned());
+        for name in &touched_names {
+            user_edited.insert((*name).to_owned());
         }
         am.user_edited = Set(serde_json::json!(
             user_edited.into_iter().collect::<Vec<_>>()
         ));
         am.updated_at = Set(chrono::Utc::now().fixed_offset());
 
+        let row_id = row.id.clone();
         match am.update(&app.db).await {
-            Ok(_) => updated += 1,
+            Ok(_) => {
+                updated += 1;
+                // Dual-write to field_provenance — same de-risking
+                // as the per-issue PATCH handler. Failures non-fatal.
+                for name in &touched_names {
+                    if let Some(field) = patch_field_key_to_metadata_field(name)
+                        && let Err(e) = crate::metadata::writers::write_field_provenance(
+                            &app.db,
+                            "issue",
+                            &row_id,
+                            field,
+                            crate::metadata::writers::SetBy::User,
+                            None,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            issue_id = %row_id,
+                            field = %name,
+                            error = %e,
+                            "bulk-metadata: field_provenance dual-write failed (non-fatal)"
+                        );
+                    }
+                }
+            }
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %row.id, "bulk-metadata update failed");
                 // Surface as not_found in the response — caller's
@@ -2094,4 +2151,64 @@ async fn visible_in_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) ->
         .ok()
         .flatten()
         .is_some()
+}
+
+/// Map a string key from `issue.user_edited` JSON to its
+/// corresponding [`MetadataField`] variant. Returns `None` for keys
+/// the typed enum doesn't cover yet — the legacy column still
+/// tracks them; only fields the matcher / composer / apply pipeline
+/// understand land in `field_provenance`.
+///
+/// Coverage today includes everything the upcoming sidecar-writeback
+/// plan's composer reads. Keys outside this set (e.g. `web_url`,
+/// `additional_links`, `alternate_series`, the per-role credit
+/// columns) stay in `user_edited` only — the scanner's legacy
+/// user-precedence check still respects them; the composer just
+/// doesn't have a slot for them.
+///
+/// metadata-providers-1.0 M10 dual-write.
+fn patch_field_key_to_metadata_field(key: &str) -> Option<crate::metadata::MetadataField> {
+    use crate::metadata::MetadataField;
+    use crate::metadata::identifier::Source;
+    match key {
+        "title" => Some(MetadataField::Title),
+        "summary" => Some(MetadataField::Summary),
+        "notes" => Some(MetadataField::Notes),
+        "publisher" => Some(MetadataField::Publisher),
+        "imprint" => Some(MetadataField::Imprint),
+        "language_code" => Some(MetadataField::LanguageCode),
+        "age_rating" => Some(MetadataField::AgeRating),
+        "format" => Some(MetadataField::Format),
+        "manga" => Some(MetadataField::Manga),
+        "volume" => Some(MetadataField::Volume),
+        // The user edits credit roles + character/team/location CSV
+        // strings directly today; the composer reads the junction-
+        // shaped MetadataField variants. Map each to its junction.
+        "writer" | "penciller" | "inker" | "colorist" | "letterer"
+        | "cover_artist" | "editor" | "translator" => Some(MetadataField::Credits),
+        "characters" => Some(MetadataField::Characters),
+        "teams" => Some(MetadataField::Teams),
+        "locations" => Some(MetadataField::Locations),
+        "story_arc" | "story_arc_number" => Some(MetadataField::StoryArcs),
+        "genre" => Some(MetadataField::Genres),
+        "tags" => Some(MetadataField::Tags),
+        // External-IDs already write field_provenance via
+        // writers::set_external_id's own provenance row (set_by='user'
+        // on the external_ids row itself, which the composer reads
+        // through a separate channel). The MetadataField::ExternalId
+        // arm is here for completeness in case a caller switches
+        // to the typed field path.
+        "gtin" => Some(MetadataField::ExternalId(Source::Gtin)),
+        "comicvine_id" => Some(MetadataField::ExternalId(Source::ComicVine)),
+        "metron_id" => Some(MetadataField::ExternalId(Source::Metron)),
+        // Year + cover-date split: PATCH writes y/m/d separately;
+        // the composer reads CoverDate. Map year-the-issue-field to
+        // CoverDate so a user edit on the cover year survives a
+        // provider apply.
+        "year" | "month" | "day" => Some(MetadataField::CoverDate),
+        // Fields with no MetadataField slot: web_url, additional_links,
+        // alternate_series, black_and_white, sort_number, number_raw.
+        // Stay in user_edited only.
+        _ => None,
+    }
 }

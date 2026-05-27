@@ -918,3 +918,138 @@ async fn series_view_includes_progress_summary_and_year_range() {
     assert_eq!(json["earliest_year"], 2012);
     assert_eq!(json["latest_year"], 2018);
 }
+
+// ────────────────────────────────────────────────────────────────
+// metadata-providers-1.0 M10 — dual-write to field_provenance.
+// De-risks the upcoming metadata-sidecar-writeback plan whose
+// composer reads field_provenance to preserve user pins across
+// provider applies. Without this dual-write, every user PATCH
+// after the M0 backfill would land only in `user_edited` and the
+// composer would silently overwrite the user's value.
+// ────────────────────────────────────────────────────────────────
+
+use entity::field_provenance;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn patch_writes_field_provenance_alongside_user_edited() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let (_lib, _series_id, series_slug, ids) = seed(
+        &app,
+        "patch-fp",
+        &[IssueSeed {
+            slug: "issue-1",
+            sort_number: Some(1.0),
+            number_raw: Some("1"),
+        }],
+    )
+    .await;
+    let issue_id = ids[0].clone();
+
+    let body = serde_json::json!({
+        "title": "User-pinned title",
+        "summary": "User-pinned summary",
+        "publisher": "User-pinned publisher",
+        "age_rating": "Mature 17+",
+        "genre": "Action,Adventure",
+        "tags": "tag-1,tag-2",
+        // Fields with no MetadataField slot — should land in
+        // user_edited only, not field_provenance.
+        "alternate_series": "Reprint",
+        "web_url": "https://example.com/issue/1",
+    });
+    let (status, _) = patch(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1"),
+        body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let prov = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq("issue"))
+        .filter(field_provenance::Column::EntityId.eq(&issue_id))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    let by_field: std::collections::BTreeMap<String, String> = prov
+        .iter()
+        .map(|r| (r.field.clone(), r.set_by.clone()))
+        .collect();
+
+    // Every mappable field landed with set_by='user'.
+    for field in ["title", "summary", "publisher", "age_rating", "genres", "tags"] {
+        assert_eq!(
+            by_field.get(field).map(|s| s.as_str()),
+            Some("user"),
+            "expected field_provenance row for {field} with set_by=user; got {by_field:?}"
+        );
+    }
+    // Unmapped fields didn't sneak into field_provenance.
+    assert!(
+        !by_field.contains_key("alternate_series"),
+        "alternate_series has no MetadataField mapping; shouldn't appear in field_provenance"
+    );
+    assert!(
+        !by_field.contains_key("web_url"),
+        "web_url has no MetadataField mapping; shouldn't appear in field_provenance"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn patch_overwrites_existing_provider_provenance_with_user() {
+    // The user-precedence rule the sidecar composer relies on: a
+    // user PATCH replaces an existing provider-applied
+    // field_provenance row with set_by='user'. Otherwise the
+    // composer might keep using the (now-stale) provider value.
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let (_lib, _series_id, series_slug, ids) = seed(
+        &app,
+        "patch-overwrite-fp",
+        &[IssueSeed {
+            slug: "issue-1",
+            sort_number: Some(1.0),
+            number_raw: Some("1"),
+        }],
+    )
+    .await;
+    let issue_id = ids[0].clone();
+
+    // Pre-seed a provider-applied provenance row for title.
+    use server::metadata::MetadataField;
+    use server::metadata::writers::{SetBy, write_field_provenance};
+    use server::metadata::identifier::Source;
+    write_field_provenance(
+        &app.state().db,
+        "issue",
+        &issue_id,
+        MetadataField::Title,
+        SetBy::Provider(Source::ComicVine),
+        Some("12345".into()),
+    )
+    .await
+    .unwrap();
+
+    // User PATCH should flip the row to set_by='user'.
+    let (status, _) = patch(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1"),
+        serde_json::json!({ "title": "User pin wins" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let row = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq("issue"))
+        .filter(field_provenance::Column::EntityId.eq(&issue_id))
+        .filter(field_provenance::Column::Field.eq("title"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.set_by, "user");
+}
