@@ -512,13 +512,26 @@ fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
         .flat_map(|c| {
             cv_credit_to_credit(c).into_iter().flat_map(|cc| {
                 if cc.role.is_empty() {
+                    // No role on the CV row — keep the credit but tag
+                    // it `"unknown"` so the consumer can decide. The
+                    // composer will drop it (no ComicInfo column);
+                    // MetronInfo's structured form would carry it.
                     vec![CreditCandidate { role: "unknown".into(), ..cc }]
                 } else {
                     cc.role
                         .split(',')
                         .map(|r| CreditCandidate {
                             name: cc.name.clone(),
-                            role: r.trim().to_lowercase(),
+                            // Canonicalize CV's role tags (e.g. `"cover"`
+                            // → `"CoverArtist"`) so the composer's
+                            // `eq_ignore_ascii_case("CoverArtist")`
+                            // filter actually fires. Roles ComicInfo
+                            // can't represent fall through to their
+                            // lowercased original — MetronInfo carries
+                            // them structurally.
+                            role: crate::metadata::provider::canonicalize_role(r)
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| r.trim().to_lowercase()),
                             ordinal: cc.ordinal,
                             identifiers: cc.identifiers.clone(),
                         })
@@ -849,8 +862,12 @@ mod tests {
         };
         let m = cv_issue_to_metadata(issue);
         assert_eq!(m.credits.len(), 2);
-        assert!(m.credits.iter().any(|c| c.role == "writer"));
-        assert!(m.credits.iter().any(|c| c.role == "cover"));
+        // Roles are canonicalized to the ComicInfo standard names —
+        // CV's `"cover"` becomes `"CoverArtist"`. The composer's
+        // per-role filter relies on this; assert it here so we catch
+        // regressions in the mapping at the provider boundary.
+        assert!(m.credits.iter().any(|c| c.role == "Writer"));
+        assert!(m.credits.iter().any(|c| c.role == "CoverArtist"));
         assert!(m.credits.iter().all(|c| c.name == "Brian K. Vaughan"));
         // Both credits carry the CV person id.
         assert!(m.credits.iter().all(|c| c.identifiers.len() == 1));

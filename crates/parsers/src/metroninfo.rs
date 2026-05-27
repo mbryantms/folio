@@ -98,7 +98,11 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
 
     let mut reader = Reader::from_reader(bytes);
     let cfg = reader.config_mut();
-    cfg.trim_text(true);
+    // See `comicinfo::parse` for the rationale — quick-xml 0.40 emits
+    // entity refs as separate events, so `trim_text(true)` would strip
+    // the whitespace adjacent to `&amp;` etc. Per-field trim still
+    // happens at assignment time on `text`.
+    cfg.trim_text(false);
     cfg.expand_empty_elements = true;
 
     let mut info = MetronInfo::default();
@@ -176,6 +180,25 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                     .and_then(|d| quick_xml::escape::unescape(&d).ok().map(|u| u.into_owned()))
                     .unwrap_or_default();
                 text.push_str(&s);
+            }
+            Ok(Event::GeneralRef(r)) => {
+                // quick-xml 0.40 surfaces `&lt;` / `&gt;` / `&amp;` (and
+                // other entity refs) as standalone `GeneralRef` events
+                // instead of inlining them in the Text bytes. Without
+                // this branch the angle brackets in HTML-bearing
+                // `<Summary>`/`<Description>` round-trips disappeared.
+                // See `comicinfo.rs` for the full incident note.
+                if let Ok(content) = r.decode() {
+                    if let Some(num) = content.strip_prefix('#') {
+                        if let Some(ch) = decode_numeric_char_ref(num) {
+                            text.push(ch);
+                        }
+                    } else if let Some(resolved) =
+                        quick_xml::escape::resolve_predefined_entity(&content)
+                    {
+                        text.push_str(resolved);
+                    }
+                }
             }
             Ok(Event::CData(t)) => {
                 text.push_str(&String::from_utf8_lossy(t.as_ref()));
@@ -285,6 +308,17 @@ pub fn serialize(info: &MetronInfo) -> String {
 
     out.push_str("</MetronInfo>\n");
     out
+}
+
+/// Mirror of `comicinfo::decode_numeric_char_ref`. Used by the
+/// `GeneralRef` branch above to resolve `&#NNN;` / `&#xHEX;` references.
+fn decode_numeric_char_ref(num: &str) -> Option<char> {
+    let codepoint = if let Some(hex) = num.strip_prefix('x').or_else(|| num.strip_prefix('X')) {
+        u32::from_str_radix(hex, 16).ok()?
+    } else {
+        num.parse::<u32>().ok()?
+    };
+    char::from_u32(codepoint)
 }
 
 fn is_typed_metron_info_leaf(name: &str) -> bool {

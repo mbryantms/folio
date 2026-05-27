@@ -248,9 +248,10 @@ pub async fn locations(
 }
 
 /// Distinct values pulled out of a CSV column on the `issues` table
-/// (`characters`, `teams`, `locations`). Splits on `[,;]` and trims
-/// each piece — same shape as `fn aggregate_csv` in the series API,
-/// so the picker surfaces the same strings the user sees as chips.
+/// (`characters`, `teams`, `locations`). Mirrors `aggregate_csv` /
+/// `split_csv`'s per-value rule: when the column contains `;` we use
+/// `;` as the sole separator (so names like `"Capes, Inc."` survive);
+/// otherwise we split on `,`.
 /// Output is the original casing of the first occurrence (case-
 /// insensitive dedup matches the aggregator).
 async fn fetch_distinct_issue_csv(
@@ -280,7 +281,10 @@ async fn fetch_distinct_issue_csv(
            FROM issues i
            JOIN series s ON s.id = i.series_id
            CROSS JOIN LATERAL unnest( \
-             regexp_split_to_array(coalesce(i.{column}, ''), '[,;]') \
+             regexp_split_to_array( \
+               coalesce(i.{column}, ''), \
+               CASE WHEN coalesce(i.{column}, '') LIKE '%;%' THEN ';' ELSE ',' END \
+             ) \
            ) AS piece
           WHERE i.removed_at IS NULL
             AND i.state = 'active'

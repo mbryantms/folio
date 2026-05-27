@@ -117,7 +117,17 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
 
     let mut reader = Reader::from_reader(bytes);
     let cfg = reader.config_mut();
-    cfg.trim_text(true);
+    // `trim_text(false)`: with quick-xml 0.40 emitting entity refs as
+    // separate `GeneralRef` events, `trim_text(true)` strips the
+    // whitespace adjacent to entities (e.g. `Covers &amp; Variants`
+    // arrives as Text("Covers ") + GeneralRef("amp") + Text(" Variants"),
+    // and trimming each Text event individually drops the surrounding
+    // spaces). Leading/trailing trim still happens at field-assignment
+    // time via `.trim()` on `current_text`, and `current_text.clear()`
+    // on every Start event throws away inter-element pretty-print
+    // whitespace, so disabling trim here is correct for both prose
+    // fields and indented XML.
+    cfg.trim_text(false);
     cfg.expand_empty_elements = true;
     // quick-xml does not resolve entities other than the five XML predefined ones
     // by default, so XXE is a non-issue. We additionally reject DOCTYPE.
@@ -203,6 +213,37 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
                     .and_then(|d| quick_xml::escape::unescape(&d).ok().map(|u| u.into_owned()))
                     .unwrap_or_default();
                 current_text.push_str(&s);
+            }
+            Ok(Event::GeneralRef(r)) => {
+                // quick-xml 0.40 changed how entity references inside
+                // text content are surfaced — `&lt;` / `&gt;` / `&amp;`
+                // (and any `&entity;` or `&#NNN;`) now arrive as
+                // standalone `GeneralRef` events instead of staying
+                // inline in the Text event's bytes. Pre-0.40 code paths
+                // (us included) only handled Text and silently dropped
+                // these events, which manifested as the angle brackets
+                // disappearing on round-trip: `<p>foo</p>` written into
+                // `<Summary>` was XML-escaped to `&lt;p&gt;foo&lt;/p&gt;`,
+                // and that came back as the bracket-stripped text
+                // `pfoo/p` (tag names preserved as text). Handle the
+                // event by resolving the entity to its character +
+                // pushing it into the current_text buffer alongside the
+                // surrounding Text events.
+                if let Ok(content) = r.decode() {
+                    if let Some(num) = content.strip_prefix('#') {
+                        if let Some(ch) = decode_numeric_char_ref(num) {
+                            current_text.push(ch);
+                        }
+                    } else if let Some(resolved) =
+                        quick_xml::escape::resolve_predefined_entity(&content)
+                    {
+                        current_text.push_str(resolved);
+                    }
+                    // Unknown entities (e.g. `&nbsp;` in pre-HTML5 ComicInfo
+                    // files) silently drop — same conservative posture as
+                    // pre-0.40, where `unescape()` would have errored and
+                    // the chained Option ladder fell back to empty.
+                }
             }
             Ok(Event::CData(t)) => {
                 current_text.push_str(&String::from_utf8_lossy(t.as_ref()));
@@ -473,6 +514,19 @@ fn push_attr(out: &mut String, name: &str, value: &str) {
     out.push_str("=\"");
     escape_xml_attr(out, value);
     out.push('"');
+}
+
+/// Decode a numeric character reference body (e.g. `x30` from `&#x30;`
+/// or `49` from `&#49;`) to its `char`. Returns `None` on parse failure
+/// or out-of-range codepoint, matching the old "unrecognized → drop"
+/// behaviour. Public-ish for the inline `GeneralRef` handler above.
+fn decode_numeric_char_ref(num: &str) -> Option<char> {
+    let codepoint = if let Some(hex) = num.strip_prefix('x').or_else(|| num.strip_prefix('X')) {
+        u32::from_str_radix(hex, 16).ok()?
+    } else {
+        num.parse::<u32>().ok()?
+    };
+    char::from_u32(codepoint)
 }
 
 /// Escape XML text-node content. Only `<`, `>`, `&` need escaping inside
@@ -987,5 +1041,35 @@ mod tests {
         p.double_page_inferred = None;
         let j = serde_json::to_value(&p).unwrap();
         assert!(j.get("double_page_inferred").is_none());
+    }
+
+    #[test]
+    fn parse_preserves_html_entities_in_text_content() {
+        // Regression for the quick-xml 0.40 `GeneralRef` behaviour
+        // change. Provider descriptions (ComicVine, etc.) are raw HTML;
+        // the composer XML-escapes them to `&lt;p&gt;...` when writing
+        // to `<Summary>`. Pre-fix, only `Event::Text` was handled, so
+        // the entity events were silently dropped and the round-trip
+        // produced `pRick Grimes/p` instead of `<p>Rick Grimes</p>`.
+        let xml = r#"<?xml version="1.0"?>
+<ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Summary>&lt;p&gt;&lt;i&gt;Rick Grimes&lt;/i&gt;&lt;/p&gt;&lt;h4&gt;Covers &amp; Variants&lt;/h4&gt;</Summary>
+</ComicInfo>"#;
+        let info = parse(xml.as_bytes()).expect("parse");
+        assert_eq!(
+            info.summary.as_deref(),
+            Some("<p><i>Rick Grimes</i></p><h4>Covers & Variants</h4>"),
+        );
+    }
+
+    #[test]
+    fn parse_decodes_numeric_character_references() {
+        let xml = r#"<?xml version="1.0"?>
+<ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Summary>caf&#xE9; &#8212; bistro</Summary>
+</ComicInfo>"#;
+        let info = parse(xml.as_bytes()).expect("parse");
+        // U+00E9 = é, U+2014 = em dash.
+        assert_eq!(info.summary.as_deref(), Some("café — bistro"));
     }
 }

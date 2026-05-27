@@ -1354,6 +1354,32 @@ fn merge_metron_into_comicinfo(info: &mut ComicInfo, m: &MetronInfo) {
         info.gtin = m.gtin.clone();
     }
 
+    // MetronInfo carries structured list fields (`<Team>`, `<Character>`,
+    // …); ComicInfo collapses them to a single `<Teams>…</Teams>` CSV. A
+    // name like "Capes, Inc." is ambiguous under any `,`-split. When
+    // MetronInfo is present we trust its boundaries and feed them
+    // through the same smart joiner the sidecar composer uses — `; `
+    // when any name contains a comma, else `, ` — so the rollup's
+    // `split_csv` (which splits on both) recovers the correct list.
+    if !m.teams.is_empty() {
+        info.teams = Some(join_csv_unambiguous(&m.teams));
+    }
+    if !m.characters.is_empty() {
+        info.characters = Some(join_csv_unambiguous(&m.characters));
+    }
+    if !m.locations.is_empty() {
+        info.locations = Some(join_csv_unambiguous(&m.locations));
+    }
+    if !m.tags.is_empty() {
+        info.tags = Some(join_csv_unambiguous(&m.tags));
+    }
+    if !m.genres.is_empty() {
+        info.genre = Some(join_csv_unambiguous(&m.genres));
+    }
+    if !m.story_arcs.is_empty() {
+        info.story_arc = Some(join_csv_unambiguous(&m.story_arcs));
+    }
+
     // Role-tagged credits collapse into ComicInfo's flat strings.
     if let Some(w) = m.writer() {
         info.writer = Some(w);
@@ -1379,6 +1405,14 @@ fn merge_metron_into_comicinfo(info: &mut ComicInfo, m: &MetronInfo) {
     if let Some(w) = m.translator() {
         info.translator = Some(w);
     }
+}
+
+/// Mirror of `sidecar_compose::join_unambiguous_csv`. Joins with `; `
+/// when any name contains a comma so the rollup's `split_csv` recovers
+/// the structured boundaries instead of fragmenting `"Capes, Inc."`.
+fn join_csv_unambiguous(names: &[String]) -> String {
+    let sep = if names.iter().any(|n| n.contains(',')) { "; " } else { ", " };
+    names.join(sep)
 }
 
 /// Spec §6.5 special_type detection. Heuristics applied in order:

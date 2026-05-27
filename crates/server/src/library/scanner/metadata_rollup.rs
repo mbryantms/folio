@@ -111,15 +111,26 @@ impl<'a> IssueMetadataInputs<'a> {
     }
 }
 
-/// Split a CSV-shaped ComicInfo field on `,` and `;`, trim each piece, and
-/// dedupe case-insensitively while keeping the first casing seen. Empty
-/// pieces are dropped. Used by both the per-issue write and any read-side
-/// callers that want to surface the raw split.
+/// Split a CSV-shaped ComicInfo field into trimmed, deduped pieces.
+///
+/// ComicInfo's `<Teams>` / `<Characters>` / `<Genre>` / etc. are flat
+/// strings; a name like `"Capes, Inc."` cannot survive a naive
+/// `,`-split. We pick the separator per-value:
+///
+///   - if the input contains `;`, split on `;` only (each piece may
+///     contain commas — `"Capes, Inc.; Comet Twins"` → 2 pieces)
+///   - otherwise split on `,` (the conventional ComicInfo case)
+///
+/// The sidecar composer and scanner both **write** with the matching
+/// rule (`; `-join when any name contains a comma, `, ` otherwise), so
+/// round-trip is lossless. Dedupe is case-insensitive, first casing
+/// wins. Empty pieces dropped.
 pub fn split_csv(value: &str) -> Vec<String> {
     use std::collections::HashSet;
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<String> = Vec::new();
-    for piece in value.split([',', ';']) {
+    let sep: char = if value.contains(';') { ';' } else { ',' };
+    for piece in value.split(sep) {
         let trimmed = piece.trim();
         if trimmed.is_empty() {
             continue;
@@ -740,7 +751,7 @@ mod tests {
     #[test]
     fn split_csv_trims_dedupes_and_keeps_first_casing() {
         assert_eq!(
-            split_csv("Action, Adventure ; sci-fi"),
+            split_csv("Action, Adventure, sci-fi"),
             vec!["Action", "Adventure", "sci-fi"],
         );
         assert_eq!(
@@ -748,7 +759,20 @@ mod tests {
             vec!["Brian K. Vaughan"],
         );
         assert!(split_csv("").is_empty());
-        assert!(split_csv(" , ;  ;").is_empty());
+        assert!(split_csv(" ,  ,").is_empty());
+    }
+
+    #[test]
+    fn split_csv_uses_semicolon_alone_when_present_so_names_can_contain_commas() {
+        // `"Capes, Inc."` → comma is part of the name; the joiner that
+        // produced this string used `; ` precisely so we'd recover the
+        // boundaries here.
+        assert_eq!(
+            split_csv("Capes, Inc.; Comet Twins"),
+            vec!["Capes, Inc.", "Comet Twins"],
+        );
+        // Same: a single comma-containing name with no separator at all.
+        assert_eq!(split_csv("Capes, Inc."), vec!["Capes", "Inc."]);
     }
 
     #[test]

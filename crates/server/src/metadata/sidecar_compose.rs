@@ -556,7 +556,21 @@ fn compose_csv_field(user_pinned: bool, db: Option<&str>, provider_names: &[&str
     if provider_names.is_empty() {
         return db.map(str::to_owned).filter(|s| !s.trim().is_empty());
     }
-    Some(provider_names.join(", "))
+    Some(join_unambiguous_csv(provider_names.iter().copied()))
+}
+
+/// Join names into a ComicInfo-shaped flat CSV. ComicInfo's `<Teams>` /
+/// `<Characters>` / etc. are inherently a single string — names with
+/// embedded commas (e.g. `"Capes, Inc."`) would round-trip to multiple
+/// pieces under any `,`-only split. Folio's parser already splits on
+/// both `,` and `;`, so when any name contains a comma we switch the
+/// joiner to `; `. Readers that only split on `,` will see one
+/// concatenated string for that field — same lossy outcome as before;
+/// our own scanner now recovers the boundaries.
+fn join_unambiguous_csv<'a, I: IntoIterator<Item = &'a str>>(names: I) -> String {
+    let names: Vec<&str> = names.into_iter().collect();
+    let sep = if names.iter().any(|n| n.contains(',')) { "; " } else { ", " };
+    names.join(sep)
 }
 
 /// MetronInfo list variant — same logic as the CSV path but emits a
@@ -624,7 +638,7 @@ fn compose_role<F: Fn(&issue::Model) -> Option<&str>>(
     if names.is_empty() {
         return db_column(ctx.issue).map(str::to_owned).filter(|s| !s.trim().is_empty());
     }
-    Some(names.join(", "))
+    Some(join_unambiguous_csv(names.iter().map(String::as_str)))
 }
 
 /// Pull `Vec<PageInfo>` out of the scanner's `issue.pages` JSON so the
@@ -1416,5 +1430,21 @@ mod tests {
     #[allow(dead_code)]
     fn _identifier_unused() -> Vec<Identifier> {
         Vec::new()
+    }
+
+    #[test]
+    fn join_unambiguous_csv_uses_semicolon_when_a_name_has_a_comma() {
+        // No commas → standard ", " joiner stays.
+        assert_eq!(join_unambiguous_csv(["Alpha", "Beta"]), "Alpha, Beta");
+        // "Capes, Inc." would shred under any ","-split — switch to "; ".
+        assert_eq!(
+            join_unambiguous_csv(["Capes, Inc.", "Comet Twins"]),
+            "Capes, Inc.; Comet Twins",
+        );
+        // Round-trip through the rollup's split_csv recovers two pieces:
+        // `split_csv` prefers `;` when present so embedded commas survive.
+        let csv = join_unambiguous_csv(["Capes, Inc.", "Comet Twins"]);
+        let parts = crate::library::scanner::metadata_rollup::split_csv(&csv);
+        assert_eq!(parts, vec!["Capes, Inc.".to_owned(), "Comet Twins".to_owned()]);
     }
 }

@@ -226,6 +226,56 @@ pub struct CreditCandidate {
     pub identifiers: Vec<crate::metadata::identifier::Identifier>,
 }
 
+/// Normalize a provider's raw role string to the canonical ComicInfo
+/// role name. ComicVine's API returns roles like `"cover"`, `"penciler"`
+/// (one L), `"editor in chief"` — none of which match the ComicInfo
+/// spec's PascalCase `CoverArtist` / `Penciller` / `Editor` columns
+/// the composer filters on. Without this normalization the composer's
+/// `eq_ignore_ascii_case("CoverArtist")` silently drops every CV cover
+/// credit and the rescan never lands those rows in the per-role CSV
+/// cache, leaving the diff stuck at "16 → 18".
+///
+/// Returns the canonical name when the role maps cleanly; returns
+/// `None` for roles ComicInfo can't represent (`"journalist"`,
+/// `"other"`, `"production"`, …). MetronInfo's structured
+/// `<Credit role="…">` element can still carry the original — that's
+/// orthogonal to this mapping.
+pub fn canonicalize_role(raw: &str) -> Option<&'static str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Lower-cased + whitespace-collapsed key so " Cover Artist " and
+    // "cover artist" hit the same arm.
+    let key: String = trimmed.to_ascii_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    match key.as_str() {
+        // Writers
+        "writer" | "writers" | "script" | "scripter" | "story" | "plotter" | "plot" => Some("Writer"),
+        // Pencillers (single + double L spellings; CV uses single L)
+        "penciler" | "penciller" | "pencils" | "artist" | "art" => Some("Penciller"),
+        // Inkers
+        "inker" | "inkers" | "inks" => Some("Inker"),
+        // Colorists (US + UK spellings)
+        "colorist" | "colorists" | "colors" | "colourist" | "colours" => Some("Colorist"),
+        // Letterers
+        "letterer" | "letterers" | "letters" => Some("Letterer"),
+        // Cover artists — CV's `"cover"` is the high-volume hit on
+        // variant-cover-heavy issues like Walking Dead #1.
+        "cover" | "covers" | "cover artist" | "coverartist" | "cover art" => Some("CoverArtist"),
+        // Editors
+        "editor" | "editors" | "editor in chief" | "executive editor" | "consulting editor"
+        | "associate editor" | "assistant editor" | "senior editor" | "managing editor"
+        | "group editor" => Some("Editor"),
+        // Translators
+        "translator" | "translators" | "translation" => Some("Translator"),
+        // Roles with no ComicInfo column (journalist, production,
+        // designer, photographer, …) — caller drops them from the
+        // ComicInfo-shaped output; MetronInfo + the structured
+        // junction still carry them.
+        _ => None,
+    }
+}
+
 /// One named non-credit entity (character / team / location /
 /// concept / object / arc / universe). The provider may carry
 /// per-relationship hints (first-appearance, died-in-issue).
@@ -319,5 +369,32 @@ mod tests {
         assert!(m.series_name.is_none());
         assert!(m.credits.is_empty());
         assert!(m.identifiers.is_empty());
+    }
+
+    #[test]
+    fn canonicalize_role_maps_provider_idioms_to_comic_info_names() {
+        // CV's high-volume case: `"cover"` → `"CoverArtist"`. Without
+        // this, the dozen-cover-artists problem from Walking Dead #1
+        // returns.
+        assert_eq!(canonicalize_role("cover"), Some("CoverArtist"));
+        assert_eq!(canonicalize_role("Cover"), Some("CoverArtist"));
+        assert_eq!(canonicalize_role("cover artist"), Some("CoverArtist"));
+        // CV's one-L `penciler` collides with ComicInfo's two-L
+        // `Penciller`.
+        assert_eq!(canonicalize_role("penciler"), Some("Penciller"));
+        assert_eq!(canonicalize_role("penciller"), Some("Penciller"));
+        // Synonyms that pull in extra mainstream tagger output.
+        assert_eq!(canonicalize_role("artist"), Some("Penciller"));
+        assert_eq!(canonicalize_role("scripter"), Some("Writer"));
+        assert_eq!(canonicalize_role("colourist"), Some("Colorist"));
+        assert_eq!(canonicalize_role("editor in chief"), Some("Editor"));
+        // Roles ComicInfo can't represent → None so the composer drops
+        // them. The structured junction + MetronInfo still carry them.
+        assert_eq!(canonicalize_role("journalist"), None);
+        assert_eq!(canonicalize_role("other"), None);
+        assert_eq!(canonicalize_role("production"), None);
+        // Empty / whitespace input → None.
+        assert_eq!(canonicalize_role(""), None);
+        assert_eq!(canonicalize_role("   "), None);
     }
 }

@@ -393,12 +393,42 @@ pub async fn compute_issue_diff(
     // the diff so the user sees what's actually going to land + the
     // Apply button enables when the only changes are these
     // non-scalar writes.
+    // Credits "proposed" count is restricted to roles ComicInfo can
+    // actually represent. The provider may return `"journalist"` /
+    // `"other"` rows that won't land in the per-role CSV cache (which
+    // is what `count_credits` reads); without this filter the proposed
+    // count overstates by those rows and the diff sticks at "16 → 18"
+    // even after a successful apply. See
+    // [`crate::metadata::provider::canonicalize_role`] for the mapping.
+    let proposed_credits_count = detail
+        .credits
+        .iter()
+        .filter(|c| {
+            // Roles arrive at the provider boundary already
+            // canonicalized for the high-volume cases (CV `cover` →
+            // `CoverArtist`). Treat any role that resolves to a known
+            // canonical name as "in scope", plus anything that's
+            // already PascalCase canonical.
+            crate::metadata::provider::canonicalize_role(&c.role).is_some()
+                || matches!(
+                    c.role.as_str(),
+                    "Writer"
+                        | "Penciller"
+                        | "Inker"
+                        | "Colorist"
+                        | "Letterer"
+                        | "CoverArtist"
+                        | "Editor"
+                        | "Translator"
+                )
+        })
+        .count();
     push_count_row(
         &mut rows,
         MetadataField::Credits,
         "Credits",
         count_credits(&row),
-        detail.credits.len(),
+        proposed_credits_count,
         &provenance,
         &provenance_full,
         &args,

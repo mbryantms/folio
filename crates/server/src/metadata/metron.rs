@@ -428,10 +428,18 @@ fn credit_to_credit(c: &MCredit) -> Vec<CreditCandidate> {
     c.role
         .iter()
         .filter_map(|r| {
-            let role = r.name.as_deref()?.trim().to_lowercase();
-            if role.is_empty() {
+            let raw = r.name.as_deref()?.trim();
+            if raw.is_empty() {
                 return None;
             }
+            // Canonicalize Metron's role tags (`"Artist"`, `"Cover"`,
+            // …) onto the ComicInfo standard names so the composer's
+            // per-role filter fires. See
+            // [`crate::metadata::provider::canonicalize_role`] for the
+            // full mapping rationale.
+            let role = crate::metadata::provider::canonicalize_role(raw)
+                .map(str::to_owned)
+                .unwrap_or_else(|| raw.to_lowercase());
             Some(CreditCandidate {
                 name: name.clone(),
                 role,
@@ -883,11 +891,14 @@ mod tests {
         assert_eq!(m.age_rating.as_deref(), Some("Teen Plus"));
         assert_eq!(m.series_name.as_deref(), Some("Saga"));
         assert_eq!(m.volume, Some(1));
-        // 3 credits: writer + cover (exploded from BKV's two roles) + artist.
+        // 3 credits: BKV's two roles ("Writer" + "Cover") exploded
+        // plus Fiona's single "Artist" role. Roles are canonicalized
+        // onto the ComicInfo standard names (`Cover`/`Artist` →
+        // `CoverArtist`/`Penciller`) at the provider boundary.
         assert_eq!(m.credits.len(), 3);
-        assert!(m.credits.iter().any(|c| c.role == "writer"));
-        assert!(m.credits.iter().any(|c| c.role == "cover"));
-        assert!(m.credits.iter().any(|c| c.role == "artist"));
+        assert!(m.credits.iter().any(|c| c.role == "Writer"));
+        assert!(m.credits.iter().any(|c| c.role == "CoverArtist"));
+        assert!(m.credits.iter().any(|c| c.role == "Penciller"));
         // Identifiers: Metron self + CV + GCD + UPC (ISBN empty → skipped).
         let ids: Vec<_> = m.identifiers.iter().map(|i| i.source).collect();
         assert!(ids.contains(&Source::Metron));

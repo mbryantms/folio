@@ -1578,9 +1578,10 @@ fn apply_issue_direct_column_filters(
 }
 
 /// CSV-includes-any against the issues' CSV-shaped metadata columns
-/// (`genre`, `tags`, credits, characters/teams/locations). Splits on
-/// `[,;]` to mirror the series-level `aggregate_csv` shape so chip
-/// values match between the two surfaces.
+/// (`genre`, `tags`, credits, characters/teams/locations). Same
+/// per-value split as `aggregate_csv` / `split_csv`: prefer `;` when
+/// the column value contains one, otherwise split on `,`. Keeps chip
+/// values aligned between the picker and the facet filter.
 fn apply_issue_csv_facet_filters(
     mut select: sea_orm::Select<issue::Entity>,
     q: &ListIssuesCrossQuery,
@@ -1609,7 +1610,10 @@ fn apply_issue_csv_facet_filters(
         let lowered: Vec<String> = values.iter().map(|s| s.to_lowercase()).collect();
         let sql = format!(
             "EXISTS (SELECT 1 FROM unnest( \
-               regexp_split_to_array(coalesce(issues.{column}, ''), '[,;]') \
+               regexp_split_to_array( \
+                 coalesce(issues.{column}, ''), \
+                 CASE WHEN coalesce(issues.{column}, '') LIKE '%;%' THEN ';' ELSE ',' END \
+               ) \
              ) AS piece WHERE lower(trim(piece)) = ANY($1))",
         );
         select = select.filter(Expr::cust_with_values(&sql, [Value::from(lowered)]));

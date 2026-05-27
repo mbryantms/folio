@@ -1225,9 +1225,11 @@ fn apply_series_credit_role_filters(
 }
 
 /// Cast / setting facets — characters, teams, locations live as CSV
-/// strings on `issues`, not in junction tables. Splitting on `[,;]`
-/// mirrors `aggregate_csv` so chip values match. Lowercased on both
-/// sides so matching is case-insensitive.
+/// strings on `issues`, not in junction tables. Per-value split rule
+/// mirrors `aggregate_csv` / `split_csv`: prefer `;` when the column
+/// value contains one (so names like `"Capes, Inc."` survive),
+/// otherwise split on `,`. Lowercased on both sides for case-
+/// insensitive matching.
 fn apply_series_cast_setting_filters(
     mut select: sea_orm::Select<series::Entity>,
     q: &ListSeriesQuery,
@@ -1251,7 +1253,10 @@ fn apply_series_cast_setting_filters(
                  AND i.state = 'active' \
                  AND EXISTS ( \
                    SELECT 1 FROM unnest( \
-                     regexp_split_to_array(coalesce(i.{column}, ''), '[,;]') \
+                     regexp_split_to_array( \
+                       coalesce(i.{column}, ''), \
+                       CASE WHEN coalesce(i.{column}, '') LIKE '%;%' THEN ';' ELSE ',' END \
+                     ) \
                    ) AS piece \
                    WHERE lower(trim(piece)) = ANY($1) \
                  ))",
@@ -2366,7 +2371,11 @@ fn aggregate_csv<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> Vec<S
     use std::collections::HashMap;
     let mut counts: HashMap<String, (String, usize)> = HashMap::new();
     for raw in values.into_iter().flatten() {
-        for piece in raw.split([',', ';']) {
+        // Same per-value rule as `metadata_rollup::split_csv`: prefer
+        // `;` when present so names containing commas (e.g.
+        // `"Capes, Inc."`) survive aggregation.
+        let sep: char = if raw.contains(';') { ';' } else { ',' };
+        for piece in raw.split(sep) {
             let trimmed = piece.trim();
             if trimmed.is_empty() {
                 continue;
