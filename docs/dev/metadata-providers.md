@@ -9,7 +9,10 @@ This document is the developer-facing architecture reference. For
 operator-side tuning (API keys, weekly refresh, troubleshooting),
 see [`metadata-operator-guide.md`](metadata-operator-guide.md). For
 the M0 schema changes that made this possible, see
-[`schema-restructure.md`](schema-restructure.md).
+[`schema-restructure.md`](schema-restructure.md). For the follow-up
+plan that inverts the canonical-source-of-truth from DB to archive
+XML (per-library opt-in flag, drift surfacing, flush button), see
+[`metadata-sidecar-writeback.md`](metadata-sidecar-writeback.md).
 
 ## Layering
 

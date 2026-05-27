@@ -302,8 +302,85 @@ There's no automatic rollback — apply writes are committed
 transactionally. To revert: re-run the apply with the previous
 provider's data, or manually edit the affected entity rows.
 
+## Archive writeback
+
+Per-library opt-in that inverts the apply pipeline: ComicInfo +
+MetronInfo XML get rewritten **into the archive** on every apply
+instead of just being committed to the DB. Downstream consumers (OPDS,
+ComicTagger, Komga, Mylar3, KOReader Sync) see the same data Folio
+sees. See [`metadata-sidecar-writeback.md`](metadata-sidecar-writeback.md)
+for the architecture; this section is the operator playbook.
+
+### Enabling on a library
+
+Two flags on the `libraries` row, both in
+`/admin/libraries/{slug}/settings`:
+
+1. **`allow_archive_writeback`** — master kill-switch. Off = Folio is
+   read-only against this library's archives. Default off.
+2. **`metadata_writeback_enabled`** — routes metadata apply through
+   the XML composer. Requires the master flag. Default off.
+
+Migration recipe per library:
+
+1. Flip both toggles on a low-stakes library first.
+2. Pick a single series, click **Fetch metadata** → **Apply**.
+3. Open one of the rewritten archives:
+   `unzip -p path/to/issue.cbz ComicInfo.xml | head -50`
+4. Confirm the XML carries the expected fields (per-role credits,
+   `<Web>`, `<Notes>` Folio attribution line with the
+   `[CVDB<id>]` token, the variant `<Pages>` / structured
+   `<Credit>` elements in MetronInfo).
+5. Watch the library's **Health** tab for any
+   `MetadataDriftFromXml` row (see below).
+6. Repeat on the rest of the libraries.
+
+### Drift dashboard
+
+When a writeback-enabled library has user pins that landed AFTER the
+issue's last sidecar rewrite, the library's Health tab shows a
+`MetadataDriftFromXml` row (severity `info`) with the count of drifted
+issues. This means: the DB knows about the edit; the archive XML still
+has the old value; downstream consumers reading the file see stale
+data.
+
+Click **Flush pins to archives** (or `POST /libraries/{slug}/metadata-drift/flush`)
+to compose XML from current DB state and enqueue per-issue rewrite
+jobs across every affected series. The row disappears once
+`last_rewrite_at` ticks past the pin `set_at` on every drifted issue.
+
+The synthesized row is admin-only and not persisted — it's recomputed
+every time the Health endpoint is queried, so a successful flush
+clears it on the next page refresh.
+
+### Rollout progress metric
+
+Prometheus gauge `comic_metadata_writeback_libraries_remaining`
+counts libraries still in legacy DB-direct mode. Refreshed at server
+boot and weekly at 04:00 UTC Monday. Once the gauge stays at zero
+across all your libraries, the follow-up code-quality cleanup PR can
+drop the legacy DB-direct apply branch — flag a maintainer.
+
+### Troubleshooting writeback
+
+- **Apply succeeded but archive bytes didn't change**: check
+  `archive_backup_retain_count` on the library (defaults to 1). The
+  rewrite rotates `.bak` slots; the original is preserved at
+  `<filename>.bak1.cbz` until rotated out. The rewrite worker logs
+  every successful swap with the source + tmp + final paths.
+- **`MetadataDriftFromXml` row appeared unexpectedly**: any user PATCH
+  through the Edit sheet creates drift until the next apply. The
+  Flush button is the operator-side resolution; the next provider
+  apply would carry the pins forward anyway via the composer.
+- **Rewrite stuck on a busy archive**: per-issue Redis mutex
+  `archive:rewrite:<issue_id>` with 120s TTL. A crashed worker
+  releases on TTL; a still-running rewrite holds the lock until it
+  finishes. Subsequent applies for the same issue skip with
+  `archive busy (mutex)` in `ApplyOutcome.sidecar_skip_reasons`.
+
 ## Files referenced
 
 - [`docs/dev/metadata-providers.md`](metadata-providers.md) — developer architecture
+- [`docs/dev/metadata-sidecar-writeback.md`](metadata-sidecar-writeback.md) — writeback architecture + risk matrix
 - [`docs/dev/schema-restructure.md`](schema-restructure.md) — M0 schema changes
 - [`docs/dev/runtime-configuration.md`](runtime-configuration.md) — env-vs-DB settings split (general)

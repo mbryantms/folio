@@ -269,6 +269,61 @@ Default admin (first registered user becomes admin):
   for tunables, and [`schema-restructure.md`](docs/dev/schema-restructure.md)
   for the M0 column-to-table migration.
 
+- **Metadata writeback** (metadata-sidecar-writeback-1.0): when a
+  library has both `allow_archive_writeback = true` AND
+  `metadata_writeback_enabled = true`, the apply path inverts: instead
+  of writing DB rows directly, it composes ComicInfo + MetronInfo
+  XML, rewrites both into the archive (atomic temp → fsync → .bak
+  rotate → rename → fsync-parent), and enqueues a scoped rescan so
+  the scanner re-ingests the freshly-written XML. The archive becomes
+  the canonical source; the DB is downstream cache. Legacy DB-direct
+  path stays for libraries with either flag off (dispatch lives in
+  `apply_issue` / `apply_series`).
+
+  **When adding a new metadata field**, the changeset must touch:
+  1. The Rust struct in `crates/parsers/src/comicinfo.rs` (and/or
+     `metroninfo.rs`).
+  2. The serializer's `write_*` block in the same file.
+  3. The composer in
+     [`crates/server/src/metadata/sidecar_compose.rs`](crates/server/src/metadata/sidecar_compose.rs)
+     (`compose_comicinfo` + `compose_metroninfo`).
+  4. The scanner ingest path —
+     [`process.rs`](crates/server/src/library/scanner/process.rs)
+     (read the parsed value, stamp the issue/series row) and, when the
+     field has a junction, the rollup in
+     [`metadata_rollup.rs`](crates/server/src/library/scanner/metadata_rollup.rs).
+
+  **Not the apply job.** The apply path runs the composer + enqueues
+  the rewrite; the scanner ingest is the single place where parsed XML
+  values become DB rows. Adding a direct `writers::set_*` call inside
+  `apply_issue_via_sidecar` / `apply_series_via_sidecar` for entity-row
+  writes bypasses the rescan-as-source-of-truth invariant and breaks
+  drift detection.
+
+  **Reviewer heuristic — reject PRs that:**
+  - Add a new `writers::set_*` call inside `apply_*_via_sidecar` for
+    a scalar / junction the composer can already emit. The XML +
+    scanner ingest is the canonical path; direct writers from the
+    sidecar apply path are reserved for **metadata-only** rows the
+    XML schemas don't carry (today: variant covers via
+    `set_issue_variants`).
+  - Add a synth row to `library_health_issue` via the scanner. Drift
+    surfacing is **synthesized per-request** in
+    [`api/health_issues.rs::list`](crates/server/src/api/health_issues.rs) —
+    not persisted, doesn't go through the `HealthCollector` lifecycle,
+    doesn't have dismiss/resolve semantics.
+  - Trigger an unscoped library scan from the apply path. Each
+    `RewriteIssueSidecarsJob` enqueues a per-issue scoped rescan
+    (`skip_rescan = false`); the series-scope apply overrides with
+    `skip_rescan = true` and fires one series-scoped rescan after the
+    fan-out completes. Library-wide rescans here would O(N²) the work.
+
+  See [`docs/dev/metadata-sidecar-writeback.md`](docs/dev/metadata-sidecar-writeback.md)
+  for the architecture, migration recipe, and risk matrix. The M7
+  rollout gauge is `comic_metadata_writeback_libraries_remaining` —
+  once it stays at zero, the follow-up cleanup PR drops the legacy
+  DB-direct apply branch.
+
 - **Cover-image perceptual hashes** (metadata-providers-1.0 M9):
   every new cover (provider-applied or scanner-extracted) gets
   `phash` + `dhash` + `ahash` computed at write time via
@@ -359,6 +414,7 @@ Default admin (first registered user becomes admin):
 - Logging conventions (#[handler] macro, severity levels, secret-redaction): [docs/dev/logging.md](docs/dev/logging.md)
 - Metadata providers architecture: [docs/dev/metadata-providers.md](docs/dev/metadata-providers.md)
 - Metadata providers operator guide (API keys, weekly refresh, troubleshooting): [docs/dev/metadata-operator-guide.md](docs/dev/metadata-operator-guide.md)
+- Metadata sidecar writeback (DB-canonical → XML-canonical inversion, per-library opt-in, drift surfacing): [docs/dev/metadata-sidecar-writeback.md](docs/dev/metadata-sidecar-writeback.md)
 - M0 schema restructure (external_ids + junctions + field_provenance + issue_cover): [docs/dev/schema-restructure.md](docs/dev/schema-restructure.md)
 - Active plans live under `~/.claude/plans/`; check the auto-memory index for
   what's currently in flight vs. shipped.
