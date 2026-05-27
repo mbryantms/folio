@@ -13,7 +13,9 @@ import { notFound, redirect } from "next/navigation";
 import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
 import { Description } from "@/components/library/Description";
+import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
+import { MetadataSyncStatusCard } from "@/components/library/MetadataSyncStatusCard";
 import { Stat } from "@/components/library/Stat";
 import { UserRating } from "@/components/library/UserRating";
 import { Badge } from "@/components/ui/badge";
@@ -50,7 +52,7 @@ import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
 
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
-import { SeriesMetadataPanel } from "./SeriesMetadataPanel";
+import { SeriesSourcesFooter } from "./SeriesSourcesFooter";
 
 type ProgressDelta = { records: ProgressLike[] };
 
@@ -261,6 +263,8 @@ export default async function SeriesPage({
           <TabsTrigger value="genres">Genres &amp; Tags</TabsTrigger>
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="external">External IDs</TabsTrigger>
+          <TabsTrigger value="sync">Metadata sync</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
         <TabsContent value="credits" className="pt-6">
@@ -387,21 +391,21 @@ export default async function SeriesPage({
                   series.last_issue_updated_at ?? series.updated_at,
                 ),
               },
-              {
-                label: "ComicVine ID",
-                value:
-                  series.comicvine_id != null
-                    ? String(series.comicvine_id)
-                    : null,
-              },
-              {
-                label: "Metron ID",
-                value:
-                  series.metron_id != null ? String(series.metron_id) : null,
-              },
-              { label: "GTIN", value: null },
+              // ComicVine ID + Metron ID + GTIN intentionally absent —
+              // they live in the External IDs tab alongside every other
+              // provider identifier (mirrors the issue page split).
             ]}
           />
+        </TabsContent>
+        <TabsContent value="external" className="pt-6">
+          <ExternalIdsCard
+            entityType="series"
+            seriesSlug={series.slug}
+            chrome="bare"
+          />
+        </TabsContent>
+        <TabsContent value="sync" className="pt-6">
+          <MetadataSyncStatusCard seriesSlug={series.slug} chrome="bare" />
         </TabsContent>
         <TabsContent value="activity" className="pt-6">
           <SeriesActivityTab
@@ -424,7 +428,7 @@ export default async function SeriesPage({
         initialQuery={initialQuery ?? ""}
       />
 
-      <SeriesMetadataPanel seriesSlug={series.slug} />
+      <SeriesSourcesFooter seriesSlug={series.slug} />
     </div>
   );
 }

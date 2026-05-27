@@ -39,8 +39,10 @@ const READING_DIRECTION_OPTIONS: Array<{ value: string; label: string }> = [
 
 /**
  * Series Edit drawer — companion to the per-issue Edit drawer. Surfaces the
- * series-wide fields (status, summary) plus the external-database identifiers
- * (ComicVine / Metron). On save we PATCH `/series/{slug}` and
+ * series-wide fields (status, summary, reading direction). Provider IDs
+ * (ComicVine volume, Metron series, etc.) live exclusively in the "External
+ * IDs" tab on the series page — the External IDs tab is the single typed-ID
+ * editor for both surfaces. On save we PATCH `/series/{slug}` and
  * `router.refresh()` so the server-rendered page picks up the new values.
  *
  * Genres + tags are no longer editable here: they're aggregated server-side
@@ -82,8 +84,6 @@ type FormState = {
   status: string;
   reading_direction: string;
   summary: string;
-  comicvine_id: string;
-  metron_id: string;
 };
 
 function initialState(s: SeriesView): FormState {
@@ -91,8 +91,6 @@ function initialState(s: SeriesView): FormState {
     status: s.status?.toLowerCase() ?? "continuing",
     reading_direction: s.reading_direction ?? "",
     summary: s.summary ?? "",
-    comicvine_id: s.comicvine_id != null ? String(s.comicvine_id) : "",
-    metron_id: s.metron_id != null ? String(s.metron_id) : "",
   };
 }
 
@@ -185,33 +183,10 @@ function EditForm({
             </Field>
           </Section>
 
-          <Section
-            title="External"
-            hint="Database IDs at the series level. ComicVine: volume id; Metron: series id."
-          >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="ComicVine volume ID" htmlFor="se-comicvine">
-                <Input
-                  id="se-comicvine"
-                  type="number"
-                  inputMode="numeric"
-                  value={form.comicvine_id}
-                  onChange={(e) => set("comicvine_id", e.target.value)}
-                  placeholder="e.g. 49901"
-                />
-              </Field>
-              <Field label="Metron series ID" htmlFor="se-metron">
-                <Input
-                  id="se-metron"
-                  type="number"
-                  inputMode="numeric"
-                  value={form.metron_id}
-                  onChange={(e) => set("metron_id", e.target.value)}
-                  placeholder="e.g. 1234"
-                />
-              </Field>
-            </div>
-          </Section>
+          {/* External-database IDs (ComicVine volume, Metron series,
+              GCD, etc.) live exclusively in the series page's
+              "External IDs" tab so the typed-ID surface is a single
+              editor instead of two competing ones. */}
         </div>
       </div>
 
@@ -328,13 +303,6 @@ function buildBody(prev: SeriesView, form: FormState): UpdateSeriesReq {
     body.summary = emptyToNull(form.summary);
   }
 
-  if (didChangeInt(prev.comicvine_id, form.comicvine_id)) {
-    body.comicvine_id = parseIntOrNull(form.comicvine_id);
-  }
-  if (didChangeInt(prev.metron_id, form.metron_id)) {
-    body.metron_id = parseIntOrNull(form.metron_id);
-  }
-
   return body;
 }
 
@@ -342,22 +310,7 @@ function didChangeStr(prev: string | null | undefined, next: string): boolean {
   return (prev ?? "") !== next.trim();
 }
 
-function didChangeInt(prev: number | null | undefined, next: string): boolean {
-  const trimmed = next.trim();
-  if (trimmed === "") return prev != null;
-  const n = Number.parseInt(trimmed, 10);
-  if (!Number.isFinite(n)) return false;
-  return n !== prev;
-}
-
 function emptyToNull(value: string): string | null {
   const t = value.trim();
   return t === "" ? null : t;
-}
-
-function parseIntOrNull(value: string): number | null {
-  const t = value.trim();
-  if (t === "") return null;
-  const n = Number.parseInt(t, 10);
-  return Number.isFinite(n) ? n : null;
 }

@@ -1,8 +1,8 @@
 "use client";
 
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, PinOff, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 
 import {
   AlertDialog,
@@ -26,10 +26,12 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  useClearIssueFieldPin,
   useForceRecreateIssuePageMap,
   useUpdateIssue,
   useUpdateSeries,
 } from "@/lib/api/mutations";
+import { formatRelativeDate } from "@/lib/format";
 import type {
   IssueDetailView,
   IssueLink,
@@ -43,6 +45,22 @@ import type { ReadState } from "@/lib/reading-state";
 import { IssueSettingsMenu } from "./IssueSettingsMenu";
 
 type FormLink = { label: string; url: string };
+
+/**
+ * Per-field pin-release plumbing for the Edit sheet. When a field name
+ * appears in `pinnedFields`, the matching `<Field pinField="…">` shows
+ * an inline `PinOff` icon that calls `onRelease(field)` — same backend
+ * mutation the MetadataMatchDialog uses ([DELETE …/field-provenance/{field}]).
+ * `pending` disables every icon while any release request is in
+ * flight, so a rapid double-click can't fire two `DELETE`s.
+ */
+type PinControl = {
+  pinnedFields: Set<string>;
+  onRelease: (field: string) => void;
+  pending: boolean;
+};
+
+const PinControlContext = createContext<PinControl | null>(null);
 
 const SERIES_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "", label: "—" },
@@ -164,6 +182,14 @@ function EditSheet({
             Edits are sticky and a future metadata refresh will not overwrite
             them.
           </SheetDescription>
+          {issue.last_rewrite_at && (
+            <p className="text-muted-foreground pt-1 text-xs">
+              {issue.last_rewrite_kind === "edit"
+                ? "Archive edited"
+                : "Sidecar metadata refreshed"}{" "}
+              {formatRelativeDate(issue.last_rewrite_at)}
+            </p>
+          )}
         </SheetHeader>
         <EditForm
           issue={issue}
@@ -210,12 +236,11 @@ type FormState = {
   format: string;
   black_and_white: "" | "yes" | "no";
   manga: "" | "Yes" | "YesAndRightToLeft" | "No";
-  // Ordering / external
+  // Ordering / external. Typed identifiers (GTIN, ComicVine, Metron, …)
+  // are NOT here — they live in the External IDs tab so there's a
+  // single editor for them.
   sort_number: string;
   web_url: string;
-  gtin: string;
-  comicvine_id: string;
-  metron_id: string;
   // Series-level convenience: edits flow to PATCH /series/{slug} on save.
   series_status: string;
 };
@@ -268,9 +293,6 @@ function initialState(
     })(),
     sort_number: issue.sort_number != null ? String(issue.sort_number) : "",
     web_url: issue.web_url ?? "",
-    gtin: issue.gtin ?? "",
-    comicvine_id: issue.comicvine_id != null ? String(issue.comicvine_id) : "",
-    metron_id: issue.metron_id != null ? String(issue.metron_id) : "",
     series_status: seriesStatus ?? "",
   };
 }
@@ -290,6 +312,25 @@ function EditForm({
   // `seriesId` — the route is `/series/{slug}` and the hook just inserts the
   // value verbatim. The mutation is only created when we have the series.
   const updateSeries = useUpdateSeries(issue.series_slug);
+
+  // Per-field pin-release: clicking the inline icon next to a pinned
+  // field's label fires this mutation, which clears the provenance row
+  // for that field so the next scanner pass / metadata fetch is allowed
+  // to overwrite. The icon only renders when the field is in
+  // `issue.user_edited`; non-pinned fields look identical to before.
+  const clearPin = useClearIssueFieldPin(issue.series_slug, issue.slug);
+  const pinnedFields = useMemo(
+    () => new Set(issue.user_edited),
+    [issue.user_edited],
+  );
+  const pinControl = useMemo<PinControl>(
+    () => ({
+      pinnedFields,
+      onRelease: (field: string) => clearPin.mutate({ field }),
+      pending: clearPin.isPending,
+    }),
+    [pinnedFields, clearPin.mutate, clearPin.isPending],
+  );
 
   const [form, setForm] = useState<FormState>(() =>
     initialState(issue, series?.status ?? null),
@@ -344,11 +385,22 @@ function EditForm({
   const isPending = update.isPending || updateSeries.isPending;
 
   return (
+    <PinControlContext.Provider value={pinControl}>
     <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="space-y-8">
+          {pinnedFields.size > 0 && (
+            <div className="border-border bg-muted/50 text-muted-foreground rounded-md border px-3 py-2 text-xs">
+              <span className="text-foreground font-medium">Locally edited.</span>{" "}
+              {pinnedFields.size} field{pinnedFields.size === 1 ? " is" : "s are"}{" "}
+              protected from scanner / metadata-fetch overwrites. Click the
+              <PinOff className="mx-1 inline h-3 w-3 align-text-bottom" />
+              icon next to a field to release it so future updates can flow
+              through.
+            </div>
+          )}
           <Section title="Identity" hint="Title and issue ordering.">
-            <Field label="Title" htmlFor="ed-title">
+            <Field label="Title" htmlFor="ed-title" pinField="title">
               <Input
                 id="ed-title"
                 value={form.title}
@@ -357,7 +409,7 @@ function EditForm({
               />
             </Field>
             <Row>
-              <Field label="Issue number" htmlFor="ed-number">
+              <Field label="Issue number" htmlFor="ed-number" pinField="number_raw">
                 <Input
                   id="ed-number"
                   value={form.number}
@@ -365,7 +417,7 @@ function EditForm({
                   placeholder="1, 1.5, Annual 2"
                 />
               </Field>
-              <Field label="Sort number" htmlFor="ed-sort">
+              <Field label="Sort number" htmlFor="ed-sort" pinField="sort_number">
                 <Input
                   id="ed-sort"
                   type="number"
@@ -377,7 +429,7 @@ function EditForm({
               </Field>
             </Row>
             <Row>
-              <Field label="Volume" htmlFor="ed-volume">
+              <Field label="Volume" htmlFor="ed-volume" pinField="volume">
                 <Input
                   id="ed-volume"
                   type="number"
@@ -395,7 +447,7 @@ function EditForm({
                   placeholder="Inherits from series"
                 />
               </Field>
-              <Field label="Alternate series" htmlFor="ed-alt-series">
+              <Field label="Alternate series" htmlFor="ed-alt-series" pinField="alternate_series">
                 <Input
                   id="ed-alt-series"
                   value={form.alternate_series}
@@ -404,7 +456,7 @@ function EditForm({
                 />
               </Field>
             </Row>
-            <Field label="Summary" htmlFor="ed-summary">
+            <Field label="Summary" htmlFor="ed-summary" pinField="summary">
               <Textarea
                 id="ed-summary"
                 rows={4}
@@ -413,7 +465,7 @@ function EditForm({
                 placeholder="Short synopsis shown above the metadata."
               />
             </Field>
-            <Field label="Notes" htmlFor="ed-notes">
+            <Field label="Notes" htmlFor="ed-notes" pinField="notes">
               <Textarea
                 id="ed-notes"
                 rows={3}
@@ -429,14 +481,14 @@ function EditForm({
             hint="Publisher and date the issue was released."
           >
             <Row>
-              <Field label="Publisher" htmlFor="ed-publisher">
+              <Field label="Publisher" htmlFor="ed-publisher" pinField="publisher">
                 <Input
                   id="ed-publisher"
                   value={form.publisher}
                   onChange={(e) => set("publisher", e.target.value)}
                 />
               </Field>
-              <Field label="Imprint" htmlFor="ed-imprint">
+              <Field label="Imprint" htmlFor="ed-imprint" pinField="imprint">
                 <Input
                   id="ed-imprint"
                   value={form.imprint}
@@ -445,7 +497,7 @@ function EditForm({
               </Field>
             </Row>
             <Row3>
-              <Field label="Year" htmlFor="ed-year">
+              <Field label="Year" htmlFor="ed-year" pinField="year">
                 <Input
                   id="ed-year"
                   type="number"
@@ -455,7 +507,7 @@ function EditForm({
                   onChange={(e) => set("year", e.target.value)}
                 />
               </Field>
-              <Field label="Month" htmlFor="ed-month">
+              <Field label="Month" htmlFor="ed-month" pinField="month">
                 <Input
                   id="ed-month"
                   type="number"
@@ -465,7 +517,7 @@ function EditForm({
                   onChange={(e) => set("month", e.target.value)}
                 />
               </Field>
-              <Field label="Day" htmlFor="ed-day">
+              <Field label="Day" htmlFor="ed-day" pinField="day">
                 <Input
                   id="ed-day"
                   type="number"
@@ -480,14 +532,14 @@ function EditForm({
 
           <Section title="Credits" hint="Comma- or semicolon-separated names.">
             <Row>
-              <Field label="Writer" htmlFor="ed-writer">
+              <Field label="Writer" htmlFor="ed-writer" pinField="writer">
                 <Input
                   id="ed-writer"
                   value={form.writer}
                   onChange={(e) => set("writer", e.target.value)}
                 />
               </Field>
-              <Field label="Penciller" htmlFor="ed-penciller">
+              <Field label="Penciller" htmlFor="ed-penciller" pinField="penciller">
                 <Input
                   id="ed-penciller"
                   value={form.penciller}
@@ -496,14 +548,14 @@ function EditForm({
               </Field>
             </Row>
             <Row>
-              <Field label="Inker" htmlFor="ed-inker">
+              <Field label="Inker" htmlFor="ed-inker" pinField="inker">
                 <Input
                   id="ed-inker"
                   value={form.inker}
                   onChange={(e) => set("inker", e.target.value)}
                 />
               </Field>
-              <Field label="Colorist" htmlFor="ed-colorist">
+              <Field label="Colorist" htmlFor="ed-colorist" pinField="colorist">
                 <Input
                   id="ed-colorist"
                   value={form.colorist}
@@ -512,14 +564,14 @@ function EditForm({
               </Field>
             </Row>
             <Row>
-              <Field label="Letterer" htmlFor="ed-letterer">
+              <Field label="Letterer" htmlFor="ed-letterer" pinField="letterer">
                 <Input
                   id="ed-letterer"
                   value={form.letterer}
                   onChange={(e) => set("letterer", e.target.value)}
                 />
               </Field>
-              <Field label="Cover artist" htmlFor="ed-cover-artist">
+              <Field label="Cover artist" htmlFor="ed-cover-artist" pinField="cover_artist">
                 <Input
                   id="ed-cover-artist"
                   value={form.cover_artist}
@@ -528,14 +580,14 @@ function EditForm({
               </Field>
             </Row>
             <Row>
-              <Field label="Editor" htmlFor="ed-editor">
+              <Field label="Editor" htmlFor="ed-editor" pinField="editor">
                 <Input
                   id="ed-editor"
                   value={form.editor}
                   onChange={(e) => set("editor", e.target.value)}
                 />
               </Field>
-              <Field label="Translator" htmlFor="ed-translator">
+              <Field label="Translator" htmlFor="ed-translator" pinField="translator">
                 <Input
                   id="ed-translator"
                   value={form.translator}
@@ -549,7 +601,7 @@ function EditForm({
             title="Cast & setting"
             hint="Story arc plus the people, teams, and places featured."
           >
-            <Field label="Characters" htmlFor="ed-characters">
+            <Field label="Characters" htmlFor="ed-characters" pinField="characters">
               <Input
                 id="ed-characters"
                 value={form.characters}
@@ -558,14 +610,14 @@ function EditForm({
               />
             </Field>
             <Row>
-              <Field label="Teams" htmlFor="ed-teams">
+              <Field label="Teams" htmlFor="ed-teams" pinField="teams">
                 <Input
                   id="ed-teams"
                   value={form.teams}
                   onChange={(e) => set("teams", e.target.value)}
                 />
               </Field>
-              <Field label="Locations" htmlFor="ed-locations">
+              <Field label="Locations" htmlFor="ed-locations" pinField="locations">
                 <Input
                   id="ed-locations"
                   value={form.locations}
@@ -574,14 +626,14 @@ function EditForm({
               </Field>
             </Row>
             <Row>
-              <Field label="Story arc" htmlFor="ed-story-arc">
+              <Field label="Story arc" htmlFor="ed-story-arc" pinField="story_arc">
                 <Input
                   id="ed-story-arc"
                   value={form.story_arc}
                   onChange={(e) => set("story_arc", e.target.value)}
                 />
               </Field>
-              <Field label="Story arc number" htmlFor="ed-story-arc-number">
+              <Field label="Story arc number" htmlFor="ed-story-arc-number" pinField="story_arc_number">
                 <Input
                   id="ed-story-arc-number"
                   value={form.story_arc_number}
@@ -597,7 +649,7 @@ function EditForm({
             hint="Genre, tags, language, format, and age rating."
           >
             <Row>
-              <Field label="Genre" htmlFor="ed-genre">
+              <Field label="Genre" htmlFor="ed-genre" pinField="genre">
                 <Input
                   id="ed-genre"
                   value={form.genre}
@@ -605,7 +657,7 @@ function EditForm({
                   placeholder="Action, Sci-Fi"
                 />
               </Field>
-              <Field label="Tags" htmlFor="ed-tags">
+              <Field label="Tags" htmlFor="ed-tags" pinField="tags">
                 <Input
                   id="ed-tags"
                   value={form.tags}
@@ -615,7 +667,7 @@ function EditForm({
               </Field>
             </Row>
             <Row3>
-              <Field label="Language" htmlFor="ed-lang">
+              <Field label="Language" htmlFor="ed-lang" pinField="language_code">
                 <Input
                   id="ed-lang"
                   value={form.language_code}
@@ -624,7 +676,7 @@ function EditForm({
                   maxLength={16}
                 />
               </Field>
-              <Field label="Age rating" htmlFor="ed-age">
+              <Field label="Age rating" htmlFor="ed-age" pinField="age_rating">
                 <Input
                   id="ed-age"
                   value={form.age_rating}
@@ -632,7 +684,7 @@ function EditForm({
                   placeholder="Teen, Mature 17+"
                 />
               </Field>
-              <Field label="Format" htmlFor="ed-format">
+              <Field label="Format" htmlFor="ed-format" pinField="format">
                 <Input
                   id="ed-format"
                   value={form.format}
@@ -642,7 +694,7 @@ function EditForm({
               </Field>
             </Row3>
             <Row>
-              <Field label="Black & white" htmlFor="ed-bw">
+              <Field label="Black & white" htmlFor="ed-bw" pinField="black_and_white">
                 <NativeSelect
                   id="ed-bw"
                   value={form.black_and_white}
@@ -656,7 +708,7 @@ function EditForm({
                   ]}
                 />
               </Field>
-              <Field label="Manga" htmlFor="ed-manga">
+              <Field label="Manga" htmlFor="ed-manga" pinField="manga">
                 <NativeSelect
                   id="ed-manga"
                   value={form.manga}
@@ -693,49 +745,17 @@ function EditForm({
 
           <Section
             title="External"
-            hint="Web link, external-database IDs, and additional links."
+            hint="Free-form web link plus any additional URLs. Typed identifiers (ComicVine, Metron, GCD, GTIN, ISBN, …) live in the External IDs tab so there's a single editor for them."
           >
-            <Row>
-              <Field label="Web URL" htmlFor="ed-web-url">
-                <Input
-                  id="ed-web-url"
-                  type="url"
-                  value={form.web_url}
-                  onChange={(e) => set("web_url", e.target.value)}
-                  placeholder="https://…"
-                />
-              </Field>
-              <Field label="GTIN" htmlFor="ed-gtin">
-                <Input
-                  id="ed-gtin"
-                  value={form.gtin}
-                  onChange={(e) => set("gtin", e.target.value)}
-                  placeholder="ISBN / EAN / UPC"
-                />
-              </Field>
-            </Row>
-            <Row>
-              <Field label="ComicVine issue ID" htmlFor="ed-comicvine">
-                <Input
-                  id="ed-comicvine"
-                  type="number"
-                  inputMode="numeric"
-                  value={form.comicvine_id}
-                  onChange={(e) => set("comicvine_id", e.target.value)}
-                  placeholder="e.g. 381432"
-                />
-              </Field>
-              <Field label="Metron issue ID" htmlFor="ed-metron">
-                <Input
-                  id="ed-metron"
-                  type="number"
-                  inputMode="numeric"
-                  value={form.metron_id}
-                  onChange={(e) => set("metron_id", e.target.value)}
-                  placeholder="e.g. 12345"
-                />
-              </Field>
-            </Row>
+            <Field label="Web URL" htmlFor="ed-web-url" pinField="web_url">
+              <Input
+                id="ed-web-url"
+                type="url"
+                value={form.web_url}
+                onChange={(e) => set("web_url", e.target.value)}
+                placeholder="https://…"
+              />
+            </Field>
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <Label>Additional links</Label>
@@ -802,6 +822,7 @@ function EditForm({
         </Button>
       </div>
     </form>
+    </PinControlContext.Provider>
   );
 }
 
@@ -830,15 +851,41 @@ function Section({
 function Field({
   label,
   htmlFor,
+  pinField,
   children,
 }: {
   label: string;
   htmlFor: string;
+  /** Canonical field name as it appears in `issue.user_edited` — e.g.
+   *  `"title"`, `"number_raw"`, `"writer"`. When present *and* the
+   *  field is currently pinned, an inline release icon renders next
+   *  to the label. Omit on fields the server can't represent in the
+   *  provenance table (e.g. `series_status` lives on the series row,
+   *  not the issue). */
+  pinField?: string;
   children: React.ReactNode;
 }) {
+  const pin = useContext(PinControlContext);
+  const isPinned = !!(pinField && pin?.pinnedFields.has(pinField));
   return (
     <div className="grid gap-1.5">
-      <Label htmlFor={htmlFor}>{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor={htmlFor}>{label}</Label>
+        {isPinned && pin && pinField && (
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="text-muted-foreground hover:text-foreground -my-1 h-6 w-6"
+            disabled={pin.pending}
+            onClick={() => pin.onRelease(pinField)}
+            aria-label={`Allow scans and metadata fetches to overwrite ${label}`}
+            title={`${label} is locally edited. Click to allow future scans / metadata fetches to overwrite.`}
+          >
+            <PinOff className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
       {children}
     </div>
   );
@@ -933,7 +980,6 @@ function buildPatchBody(
   str("age_rating", form.age_rating, prev.age_rating);
   str("format", form.format, prev.format);
   str("web_url", form.web_url, prev.web_url);
-  str("gtin", form.gtin, prev.gtin);
   str("manga", form.manga, prev.manga);
 
   // Integer fields.
@@ -953,14 +999,6 @@ function buildPatchBody(
   // Float field.
   if (didChangeNum(prev.sort_number, form.sort_number)) {
     body.sort_number = parseSortNumber(form.sort_number);
-  }
-
-  // External-database IDs (i64). Empty string → null.
-  if (didChangeInt(prev.comicvine_id, form.comicvine_id)) {
-    body.comicvine_id = parseIntOrNull(form.comicvine_id);
-  }
-  if (didChangeInt(prev.metron_id, form.metron_id)) {
-    body.metron_id = parseIntOrNull(form.metron_id);
   }
 
   // Tri-state black & white ("" | "yes" | "no") → bool | null.

@@ -33,7 +33,11 @@ export function SourcesFooter({ rows }: { rows: ExternalIdRow[] | undefined }) {
   );
   if (attributable.length === 0) return null;
   return (
-    <div className="text-muted-foreground mt-6 border-t pt-3 text-xs">
+    // Quiet TOS attribution — present, scannable, but visually unimportant.
+    // The border + text both get heavily downweighted alphas so the row
+    // only registers when a reader actively looks at it (the CV/Metron
+    // ToS only require that the link be findable, not prominent).
+    <div className="border-border/30 text-muted-foreground/60 mt-8 border-t pt-2 text-[11px]">
       Data from{" "}
       {attributable.map((r, i) => (
         <React.Fragment key={r.source}>
