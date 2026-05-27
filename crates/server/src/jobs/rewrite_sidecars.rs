@@ -82,6 +82,15 @@ pub struct RewriteIssueSidecarsJob {
     /// with the XML write that followed.
     pub triggering_run_id: Option<Uuid>,
     pub triggering_run_ordinal: Option<i32>,
+    /// Set to `true` by the series-scope apply path
+    /// ([`crate::metadata::apply::apply_series_via_sidecar`]). When
+    /// true, the worker writes the XML but does **not** enqueue a
+    /// per-issue rescan — the series caller has already scheduled a
+    /// single series-scoped rescan after the loop completes.
+    /// `#[serde(default)]` so jobs queued before M4 still deserialize
+    /// with the legacy "always rescan" behaviour.
+    #[serde(default)]
+    pub skip_rescan: bool,
 }
 
 pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Result<(), Error> {
@@ -107,7 +116,13 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
         return Ok(());
     }
 
-    let outcome = run_inner(&state, &job).await;
+    let outcome = rewrite_one_issue(
+        &state,
+        &job.issue_id,
+        job.comic_info_xml.clone(),
+        job.metron_info_xml.clone(),
+    )
+    .await;
     let mut redis = state.jobs.redis.clone();
     mutex::release(&mut redis, &job.issue_id).await;
 
@@ -115,9 +130,13 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
 
     // Best-effort scan enqueue after success — gated on the outcome
     // so failed rewrites don't trigger a rescan that would just
-    // re-ingest the original file. Errors here only log; the rewrite
-    // already landed and operators can re-trigger manually.
-    if let Ok(ref result) = outcome
+    // re-ingest the original file. The series-scope apply path sets
+    // `skip_rescan=true` because it already enqueued a single
+    // series-scoped rescan after the iteration. Errors here only log;
+    // the rewrite already landed and operators can re-trigger
+    // manually.
+    if !job.skip_rescan
+        && let Ok(ref result) = outcome
         && let Err(e) = enqueue_scoped_rescan(&state, &result.library_id, &result.series_id, &job.issue_id).await
     {
         tracing::error!(
@@ -131,16 +150,17 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
 }
 
 /// Inner result captured for audit + post-job rescan trigger.
-struct RewriteResult {
-    library_id: Uuid,
-    series_id: Uuid,
-    archive_path: PathBuf,
-    summary: RebuildSummary,
-    backup_path: Option<PathBuf>,
+pub(crate) struct RewriteResult {
+    pub library_id: Uuid,
+    pub series_id: Uuid,
+    pub archive_path: PathBuf,
+    #[allow(dead_code)]
+    pub summary: RebuildSummary,
+    pub backup_path: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
-enum WritebackError {
+pub(crate) enum WritebackError {
     #[error("issue {0} not found")]
     IssueGone(String),
     #[error("library {0} writeback disabled (allow_archive_writeback=false)")]
@@ -153,14 +173,31 @@ enum WritebackError {
     Archive(#[from] archive::ArchiveError),
 }
 
-async fn run_inner(
+/// Core write loop — opens the source archive, swaps in fresh ComicInfo
+/// + MetronInfo entries, atomic-renames over the original, invalidates
+/// the LRU + clears thumbnail stamps + stamps `last_rewrite_*`.
+///
+/// Caller-provided invariants:
+///   - The per-issue archive-rewrite mutex MUST be held when this is
+///     called. The apalis [`handle`] above claims it; the series-inline
+///     path in [`crate::metadata::apply::apply_series_via_sidecar`]
+///     claims it around each iteration.
+///   - The library must have `allow_archive_writeback=true`. This is
+///     re-checked here as defense in depth.
+///   - Caller does NOT enqueue a rescan; the apalis [`handle`] does
+///     it (gated by `RewriteIssueSidecarsJob::skip_rescan`). The
+///     series-inline path enqueues a single series-scope rescan after
+///     the iteration completes.
+pub(crate) async fn rewrite_one_issue(
     state: &AppState,
-    job: &RewriteIssueSidecarsJob,
+    issue_id: &str,
+    comic_info_xml: String,
+    metron_info_xml: String,
 ) -> Result<RewriteResult, WritebackError> {
     // Reload the issue row each time the worker fires so a concurrent
     // edit / move that landed between enqueue and now is reflected.
-    let Some(row) = issue::Entity::find_by_id(&job.issue_id).one(&state.db).await? else {
-        return Err(WritebackError::IssueGone(job.issue_id.clone()));
+    let Some(row) = issue::Entity::find_by_id(issue_id).one(&state.db).await? else {
+        return Err(WritebackError::IssueGone(issue_id.to_owned()));
     };
 
     // Defense-in-depth: the PATCH handler already refuses to set
@@ -179,11 +216,9 @@ async fn run_inner(
     let cfg = state.cfg();
     let limits = cfg.archive_limits();
 
-    // Snapshot the inputs needed across the spawn_blocking boundary so
-    // we can run the (potentially CPU-bound) rebuild on the blocking
-    // pool without holding async references over it.
-    let comic_info_xml = job.comic_info_xml.clone();
-    let metron_info_xml = job.metron_info_xml.clone();
+    // `comic_info_xml` / `metron_info_xml` are already owned (function
+    // takes them by value) — the spawn_blocking move closure consumes
+    // them across the boundary, no extra clone needed.
     let retain_count = lib.archive_backup_retain_count;
     let src_path = archive_path.clone();
 

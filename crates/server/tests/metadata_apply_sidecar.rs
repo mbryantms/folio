@@ -27,8 +27,27 @@ use serde_json::json;
 use server::jobs::metadata_apply::apply_issue_inline;
 use server::metadata::apply::{ApplyArgs, ApplyMode};
 use server::metadata::writers::CoverOverwritePolicy;
+use std::io::{Cursor, Write};
 use tempfile::tempdir;
 use uuid::Uuid;
+
+/// Build a minimal valid CBZ in memory — one stored (uncompressed)
+/// page entry whose bytes are the `label` string. Series-scope tests
+/// feed these bytes to `IssueSeed::insert`, which writes them to the
+/// `.cbz` path; the inline `rewrite_one_issue` helper can then open
+/// the file as a real zip.
+fn build_cbz_bytes(label: &str) -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("page-001.png", opts).unwrap();
+        zw.write_all(label.as_bytes()).unwrap();
+        zw.finish().unwrap();
+    }
+    buf.into_inner()
+}
 
 fn args(run_id: Uuid, ordinal: i32, mode: ApplyMode, override_user: bool) -> ApplyArgs {
     ApplyArgs {
@@ -295,6 +314,315 @@ async fn apply_issue_writeback_surfaces_suppressed_user_pins() {
         outcome.suppressed_user_pins.contains(&"title".to_owned()),
         "title pin must surface: {:?}",
         outcome.suppressed_user_pins,
+    );
+}
+
+#[tokio::test]
+async fn apply_series_with_writeback_enabled_composes_per_issue_and_triggers_one_rescan() {
+    // M4: series-scope apply walks every active issue, composes XMLs,
+    // and reports `composed_sidecars=N`. We seed 3 issues and assert
+    // they're all counted.
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let payloads: Vec<Vec<u8>> = (1..=3)
+        .map(|n| build_cbz_bytes(&format!("saga-page-{n}")))
+        .collect();
+    for (n, payload) in (1..=3).zip(payloads.iter()) {
+        let cbz = dir.path().join(format!("saga-{n:03}.cbz"));
+        IssueSeed::new(lib_id, series_id, &cbz, payload, n as f64)
+            .insert(&app.state().db)
+            .await;
+    }
+
+    // Cache series-level provider detail.
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    let series_payload = server::metadata::provider::GenericMetadata {
+        series_name: Some("Saga".into()),
+        publisher: Some("Image Comics".into()),
+        volume: Some(1),
+        year_began: Some(2012),
+        source_provider: Some(Source::ComicVine),
+        source_external_id: Some("4050-12345".into()),
+        ..Default::default()
+    };
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Series,
+        "12345",
+        &series_payload,
+    )
+    .await
+    .unwrap();
+
+    // Series-scope run + candidate.
+    let now = Utc::now().fixed_offset();
+    let run_id = Uuid::now_v7();
+    metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("series".into()),
+        scope_entity_id: Set(Some(series_id.to_string())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(1),
+        items_matched_high: Set(1),
+        items_matched_medium: Set(0),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        query: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    metadata_run_candidate::ActiveModel {
+        run_id: Set(run_id),
+        ordinal: Set(0),
+        source: Set("comicvine".into()),
+        external_id: Set("12345".into()),
+        bucket: Set("high".into()),
+        score: Set(95.0),
+        score_breakdown: Set(json!({})),
+        candidate: Set(json!({"kind": "series"})),
+        applied_at: Set(None),
+        dismissed_at: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    let outcome = server::jobs::metadata_apply::apply_series_inline(
+        &app.state(),
+        series_id,
+        args(run_id, 0, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_series");
+
+    // M4 path signals: composed_sidecars matches the three eligible
+    // issues; enqueued_rewrite=true; legacy applied_fields empty.
+    assert!(outcome.enqueued_rewrite);
+    assert_eq!(outcome.composed_sidecars, 3, "all three issues composed");
+    assert!(
+        outcome.sidecar_skip_reasons.is_empty(),
+        "no skip reasons expected: {:?}",
+        outcome.sidecar_skip_reasons,
+    );
+    assert!(outcome.applied_fields.is_empty());
+
+    // Run counts bumped on the apply (as if a single candidate was
+    // applied — items_applied=1, not 3, since the run is series-scope).
+    let run = metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("run present");
+    assert_eq!(run.items_applied, 1);
+}
+
+#[tokio::test]
+async fn apply_series_with_writeback_skips_removed_issues() {
+    // Only `state IN ('ok','recovered')` rows are eligible. Removed +
+    // malformed issues are skipped entirely (no entry in skip_reasons
+    // either — they aren't *attempted*).
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+
+    let ok_payload = build_cbz_bytes("saga-ok");
+    let removed_payload = build_cbz_bytes("saga-removed");
+    let cbz_ok = dir.path().join("saga-001.cbz");
+    IssueSeed::new(lib_id, series_id, &cbz_ok, &ok_payload, 1.0)
+        .insert(&app.state().db)
+        .await;
+    let cbz_removed = dir.path().join("saga-002.cbz");
+    IssueSeed::new(lib_id, series_id, &cbz_removed, &removed_payload, 2.0)
+        .with_state("removed")
+        .insert(&app.state().db)
+        .await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    let series_payload = server::metadata::provider::GenericMetadata {
+        series_name: Some("Saga".into()),
+        source_provider: Some(Source::ComicVine),
+        ..Default::default()
+    };
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Series,
+        "12345",
+        &series_payload,
+    )
+    .await
+    .unwrap();
+
+    let now = Utc::now().fixed_offset();
+    let run_id = Uuid::now_v7();
+    metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("series".into()),
+        scope_entity_id: Set(Some(series_id.to_string())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(1),
+        items_matched_high: Set(1),
+        items_matched_medium: Set(0),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        query: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    metadata_run_candidate::ActiveModel {
+        run_id: Set(run_id),
+        ordinal: Set(0),
+        source: Set("comicvine".into()),
+        external_id: Set("12345".into()),
+        bucket: Set("high".into()),
+        score: Set(95.0),
+        score_breakdown: Set(json!({})),
+        candidate: Set(json!({"kind": "series"})),
+        applied_at: Set(None),
+        dismissed_at: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    let outcome = server::jobs::metadata_apply::apply_series_inline(
+        &app.state(),
+        series_id,
+        args(run_id, 0, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_series");
+
+    assert_eq!(outcome.composed_sidecars, 1, "only the 'ok' issue is composed");
+    assert!(outcome.sidecar_skip_reasons.is_empty());
+}
+
+#[tokio::test]
+async fn apply_series_writeback_disabled_takes_legacy_path() {
+    // Library defaults: both writeback toggles OFF → legacy series
+    // apply path runs (touches series row, applied_fields non-empty).
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    let series_payload = server::metadata::provider::GenericMetadata {
+        series_name: Some("Saga (filled from provider)".into()),
+        publisher: Some("Image Comics".into()),
+        year_began: Some(2012),
+        source_provider: Some(Source::ComicVine),
+        ..Default::default()
+    };
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Series,
+        "12345",
+        &series_payload,
+    )
+    .await
+    .unwrap();
+
+    let now = Utc::now().fixed_offset();
+    let run_id = Uuid::now_v7();
+    metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("series".into()),
+        scope_entity_id: Set(Some(series_id.to_string())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(1),
+        items_matched_high: Set(1),
+        items_matched_medium: Set(0),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        query: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    metadata_run_candidate::ActiveModel {
+        run_id: Set(run_id),
+        ordinal: Set(0),
+        source: Set("comicvine".into()),
+        external_id: Set("12345".into()),
+        bucket: Set("high".into()),
+        score: Set(95.0),
+        score_breakdown: Set(json!({})),
+        candidate: Set(json!({"kind": "series"})),
+        applied_at: Set(None),
+        dismissed_at: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    let outcome = server::jobs::metadata_apply::apply_series_inline(
+        &app.state(),
+        series_id,
+        args(run_id, 0, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_series");
+
+    assert!(
+        !outcome.enqueued_rewrite,
+        "writeback OFF must NOT enqueue rewrites",
+    );
+    assert_eq!(outcome.composed_sidecars, 0);
+    // Legacy path filled the title via writers::*.
+    assert!(
+        !outcome.applied_fields.is_empty(),
+        "legacy path must populate applied_fields: {:?}",
+        outcome.applied_fields,
     );
 }
 

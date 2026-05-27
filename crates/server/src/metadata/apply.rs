@@ -116,6 +116,20 @@ pub struct ApplyOutcome {
     /// preserved" summary chip.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub suppressed_user_pins: Vec<String>,
+    /// Number of issue sidecars successfully rewritten — series-scope
+    /// apply only (M4). Zero on the issue-scope path.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub composed_sidecars: u32,
+    /// Per-issue skip reasons collected by the series-scope sidecar
+    /// apply path. One entry per issue that was eligible but couldn't
+    /// be rewritten (e.g., `"{issue_id}: no comicvine id"`). Empty on
+    /// the issue-scope path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sidecar_skip_reasons: Vec<String>,
+}
+
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -280,6 +294,20 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
         .ok_or_else(|| ApplyError::InvalidScope(format!("provider {source} not configured")))?;
     let detail = fetch_series_detail(state, &*provider, &candidate.external_id).await?;
 
+    // M4 dispatch: when both library writeback toggles are on, walk
+    // every issue in the series, write XMLs into each archive, and
+    // trigger a single series-scope rescan at the end. Legacy DB-direct
+    // path stays for unmigrated libraries (zero behaviour change).
+    let lib = entity::library::Entity::find_by_id(row.library_id)
+        .one(&state.db)
+        .await?;
+    if let Some(lib) = lib
+        && lib.metadata_writeback_enabled
+        && lib.allow_archive_writeback
+    {
+        return apply_series_via_sidecar(state, &args, &row, source, detail).await;
+    }
+
     let mut outcome = ApplyOutcome::default();
     let entity_id_str = series_uuid.to_string();
     let set_by = SetBy::Provider(source);
@@ -339,6 +367,170 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
     bump_series_sync(&state.db, series_uuid).await?;
 
     flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
+    bump_run_counts(&state.db, args.run_id, &outcome).await?;
+    Ok(outcome)
+}
+
+/// M4 of `metadata-sidecar-writeback-1.0`: series-scope XML-first apply.
+///
+/// Walks every active issue in the series, composes ComicInfo +
+/// MetronInfo per issue from the series-level provider detail merged
+/// with the issue's DB state, and writes both XMLs into each archive.
+/// One series-scope rescan fires at the end so the scanner ingests all
+/// freshly-written XMLs in a single pass.
+///
+/// The composer uses **series-level provider data** for every issue —
+/// it doesn't make N per-issue provider calls. This means issue-level
+/// fields that the provider has (e.g. issue title, cover_date) only
+/// land if they were already in the issue's DB row. The series apply
+/// is structurally a "refresh the series shape across all issues"
+/// operation; per-issue refresh is the issue-scope apply path.
+///
+/// Failure mode: per-issue errors (no provider id, write failure)
+/// accumulate in `ApplyOutcome.sidecar_skip_reasons`. The rescan
+/// still fires for the issues that succeeded.
+async fn apply_series_via_sidecar(
+    state: &AppState,
+    args: &ApplyArgs,
+    series_row: &series::Model,
+    _source: Source,
+    series_detail: GenericMetadata,
+) -> Result<ApplyOutcome, ApplyError> {
+    // Eligible issues: state='active' (the scanner's happy-path
+    // value — covers ComicInfo-present + MissingComicInfo files).
+    // Explicitly skip malformed / encrypted / removed since we can't
+    // safely rewrite those archives.
+    let issues = entity::issue::Entity::find()
+        .filter(entity::issue::Column::SeriesId.eq(series_row.id))
+        .filter(entity::issue::Column::State.eq("active"))
+        .all(&state.db)
+        .await?;
+
+    let series_external_ids = crate::metadata::sidecar_compose::load_external_ids(
+        &state.db,
+        "series",
+        &series_row.id.to_string(),
+    )
+    .await?;
+    let series_user_pins = if args.override_user_edits {
+        std::collections::HashSet::new()
+    } else {
+        crate::metadata::sidecar_compose::load_user_pins(
+            &state.db,
+            "series",
+            &series_row.id.to_string(),
+        )
+        .await?
+    };
+
+    let mut composed_sidecars: u32 = 0;
+    let mut skip_reasons: Vec<String> = Vec::new();
+    let mut suppressed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    let mut redis = state.jobs.redis.clone();
+
+    for issue_row in &issues {
+        let issue_external_ids = crate::metadata::sidecar_compose::load_external_ids(
+            &state.db,
+            "issue",
+            &issue_row.id,
+        )
+        .await?;
+        let issue_user_pins = if args.override_user_edits {
+            std::collections::HashSet::new()
+        } else {
+            crate::metadata::sidecar_compose::load_user_pins(
+                &state.db,
+                "issue",
+                &issue_row.id,
+            )
+            .await?
+        };
+
+        let ctx = crate::metadata::sidecar_compose::ComposeContext {
+            provider: &series_detail,
+            issue: issue_row,
+            series: series_row,
+            issue_external_ids: &issue_external_ids,
+            series_external_ids: &series_external_ids,
+            issue_user_pins: &issue_user_pins,
+            series_user_pins: &series_user_pins,
+        };
+
+        let pins = crate::metadata::sidecar_compose::enumerate_suppressed_pins(&ctx);
+        suppressed.extend(pins);
+
+        let ci = crate::metadata::sidecar_compose::compose_comicinfo(&ctx);
+        let mi = crate::metadata::sidecar_compose::compose_metroninfo(&ctx);
+        let ci_xml = parsers::comicinfo::serialize(&ci);
+        let mi_xml = parsers::metroninfo::serialize(&mi);
+
+        // Per-issue archive-rewrite mutex. Held just long enough to
+        // write this one archive — releases between iterations so
+        // concurrent issue-scope edits aren't blocked for the whole
+        // series fan-out.
+        let claimed = crate::archive_rewrite::mutex::try_claim(
+            &mut redis,
+            &issue_row.id,
+            crate::archive_rewrite::mutex::SIDECAR_TTL_SECS,
+        )
+        .await
+        .unwrap_or(false);
+        if !claimed {
+            skip_reasons.push(format!("{}: archive busy (mutex)", issue_row.id));
+            continue;
+        }
+
+        let result = crate::jobs::rewrite_sidecars::rewrite_one_issue(
+            state,
+            &issue_row.id,
+            ci_xml,
+            mi_xml,
+        )
+        .await;
+        crate::archive_rewrite::mutex::release(&mut redis, &issue_row.id).await;
+
+        match result {
+            Ok(_) => composed_sidecars += 1,
+            Err(e) => {
+                skip_reasons.push(format!("{}: {e}", issue_row.id));
+            }
+        }
+    }
+
+    // One series-scoped rescan after the loop so the scanner ingests
+    // every freshly-written XML in a single pass. Best-effort — if the
+    // enqueue itself fails, the writes already landed and the next
+    // scheduled scan will pick them up.
+    if composed_sidecars > 0
+        && let Err(e) = state
+            .jobs
+            .coalesce_scoped_scan(
+                series_row.library_id,
+                series_row.id,
+                None,
+                crate::jobs::scan_series::JobKind::Series,
+                None,
+                true,
+            )
+            .await
+    {
+        tracing::error!(
+            series_id = %series_row.id,
+            error = %e,
+            "series sidecar writeback: scoped rescan enqueue failed",
+        );
+    }
+
+    flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
+
+    let outcome = ApplyOutcome {
+        enqueued_rewrite: composed_sidecars > 0,
+        composed_sidecars,
+        sidecar_skip_reasons: skip_reasons,
+        suppressed_user_pins: suppressed.into_iter().collect(),
+        ..Default::default()
+    };
     bump_run_counts(&state.db, args.run_id, &outcome).await?;
     Ok(outcome)
 }
@@ -436,6 +628,9 @@ async fn apply_issue_via_sidecar(
             actor_ua: None,
             triggering_run_id: Some(args.run_id),
             triggering_run_ordinal: Some(args.ordinal),
+            // Issue-scope apply path: let the apalis worker enqueue the
+            // per-issue scoped rescan when it completes.
+            skip_rescan: false,
         })
         .await
         .map_err(|e| {
