@@ -74,7 +74,11 @@ pub fn ahash(img: &DynamicImage) -> i64 {
 /// rows = 64.
 pub fn dhash(img: &DynamicImage) -> i64 {
     let gray = img
-        .resize_exact(DHASH_WIDTH, HASH_SIDE, image::imageops::FilterType::Triangle)
+        .resize_exact(
+            DHASH_WIDTH,
+            HASH_SIDE,
+            image::imageops::FilterType::Triangle,
+        )
         .to_luma8();
     let mut bits: u64 = 0;
     let mut idx = 0usize;
@@ -95,7 +99,11 @@ pub fn dhash(img: &DynamicImage) -> i64 {
 /// low-frequency block (skipping the DC term), bit-set on > median.
 pub fn phash(img: &DynamicImage) -> i64 {
     let gray = img
-        .resize_exact(PHASH_SIDE, PHASH_SIDE, image::imageops::FilterType::Triangle)
+        .resize_exact(
+            PHASH_SIDE,
+            PHASH_SIDE,
+            image::imageops::FilterType::Triangle,
+        )
         .to_luma8();
     // Materialize the 32×32 pixel grid as f32 for the DCT pass.
     let mut grid = [[0.0f32; PHASH_SIDE as usize]; PHASH_SIDE as usize];
@@ -455,7 +463,9 @@ pub async fn run_backfill<C: ConnectionTrait>(
 // math substantially harder to read. The lint isn't load-bearing
 // here.
 #[allow(clippy::needless_range_loop)]
-fn dct2_2d(grid: &[[f32; PHASH_SIDE as usize]; PHASH_SIDE as usize]) -> [[f32; PHASH_SIDE as usize]; PHASH_SIDE as usize] {
+fn dct2_2d(
+    grid: &[[f32; PHASH_SIDE as usize]; PHASH_SIDE as usize],
+) -> [[f32; PHASH_SIDE as usize]; PHASH_SIDE as usize] {
     use std::f32::consts::PI;
     let n = PHASH_SIDE as usize;
     let mut row_pass = [[0.0f32; PHASH_SIDE as usize]; PHASH_SIDE as usize];
@@ -464,7 +474,8 @@ fn dct2_2d(grid: &[[f32; PHASH_SIDE as usize]; PHASH_SIDE as usize]) -> [[f32; P
         for u in 0..n {
             let mut sum = 0.0f32;
             for x in 0..n {
-                sum += grid[y][x] * (PI * (2.0 * x as f32 + 1.0) * u as f32 / (2.0 * n as f32)).cos();
+                sum +=
+                    grid[y][x] * (PI * (2.0 * x as f32 + 1.0) * u as f32 / (2.0 * n as f32)).cos();
             }
             row_pass[y][u] = sum;
         }
@@ -475,7 +486,8 @@ fn dct2_2d(grid: &[[f32; PHASH_SIDE as usize]; PHASH_SIDE as usize]) -> [[f32; P
         for v in 0..n {
             let mut sum = 0.0f32;
             for y in 0..n {
-                sum += row_pass[y][u] * (PI * (2.0 * y as f32 + 1.0) * v as f32 / (2.0 * n as f32)).cos();
+                sum += row_pass[y][u]
+                    * (PI * (2.0 * y as f32 + 1.0) * v as f32 / (2.0 * n as f32)).cos();
             }
             out[v][u] = sum;
         }
@@ -545,10 +557,7 @@ mod tests {
             .unwrap();
         let recoded = image::load_from_memory(buf.get_ref()).unwrap();
         let d = hamming_distance(phash(&original), phash(&recoded));
-        assert!(
-            d <= 4,
-            "phash should be JPEG-tolerant; got distance {d}"
-        );
+        assert!(d <= 4, "phash should be JPEG-tolerant; got distance {d}");
     }
 
     #[test]

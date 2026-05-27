@@ -18,9 +18,7 @@
 
 use entity::{field_provenance, issue};
 use sea_orm::sea_query::{Alias, Expr, Query};
-use sea_orm::{
-    ConnectionTrait, DatabaseBackend, FromQueryResult, Statement,
-};
+use sea_orm::{ConnectionTrait, DatabaseBackend, FromQueryResult, Statement};
 use uuid::Uuid;
 
 /// Per-library drift summary fed into the synthesized

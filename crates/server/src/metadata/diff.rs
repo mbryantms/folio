@@ -23,7 +23,6 @@
 //!
 //! metadata-providers-1.0 M5 — diff view.
 
-use crate::state::AppState;
 use crate::metadata::apply::{
     ApplyArgs, ApplyError, build_provider, classify_field, fetch_field_provenance_map,
     fetch_issue_detail, fetch_series_detail, load_candidate, load_run, parse_source,
@@ -32,6 +31,7 @@ use crate::metadata::field::MetadataField;
 use crate::metadata::identifier::Source;
 use crate::metadata::orchestrator;
 use crate::metadata::writers;
+use crate::state::AppState;
 use entity::{external_id, field_provenance, issue, series};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use serde::Serialize;
@@ -129,7 +129,10 @@ pub async fn compute_series_diff(
     };
     let series_uuid = Uuid::parse_str(series_id_str)
         .map_err(|e| ApplyError::InvalidScope(format!("scope_entity_id not uuid: {e}")))?;
-    let Some(row) = series::Entity::find_by_id(series_uuid).one(&state.db).await? else {
+    let Some(row) = series::Entity::find_by_id(series_uuid)
+        .one(&state.db)
+        .await?
+    else {
         return Err(ApplyError::SeriesGone);
     };
 
@@ -141,8 +144,7 @@ pub async fn compute_series_diff(
 
     let entity_id_str = series_uuid.to_string();
     let provenance = fetch_field_provenance_map(&state.db, "series", &entity_id_str).await?;
-    let provenance_full =
-        fetch_field_provenance_full(&state.db, "series", &entity_id_str).await?;
+    let provenance_full = fetch_field_provenance_full(&state.db, "series", &entity_id_str).await?;
 
     let mut rows = Vec::new();
 
@@ -247,13 +249,8 @@ pub async fn compute_series_diff(
         &args,
     );
 
-    let (conflicts, news) = classify_external_ids(
-        &state.db,
-        "series",
-        &entity_id_str,
-        &detail.identifiers,
-    )
-    .await?;
+    let (conflicts, news) =
+        classify_external_ids(&state.db, "series", &entity_id_str, &detail.identifiers).await?;
 
     let changes_count = rows
         .iter()
@@ -276,10 +273,7 @@ pub async fn compute_series_diff(
 
 // ───────── issue diff ─────────
 
-pub async fn compute_issue_diff(
-    state: &AppState,
-    args: ApplyArgs,
-) -> Result<DiffResp, ApplyError> {
+pub async fn compute_issue_diff(state: &AppState, args: ApplyArgs) -> Result<DiffResp, ApplyError> {
     let candidate = load_candidate(&state.db, args.run_id, args.ordinal).await?;
     let run = load_run(&state.db, args.run_id).await?;
     if run.scope != orchestrator::scope::ISSUE {
@@ -288,7 +282,10 @@ pub async fn compute_issue_diff(
     let Some(issue_id_str) = run.scope_entity_id.as_deref() else {
         return Err(ApplyError::IssueGone);
     };
-    let Some(row) = issue::Entity::find_by_id(issue_id_str).one(&state.db).await? else {
+    let Some(row) = issue::Entity::find_by_id(issue_id_str)
+        .one(&state.db)
+        .await?
+    else {
         return Err(ApplyError::IssueGone);
     };
 
@@ -300,8 +297,7 @@ pub async fn compute_issue_diff(
 
     let entity_id_str = row.id.clone();
     let provenance = fetch_field_provenance_map(&state.db, "issue", &entity_id_str).await?;
-    let provenance_full =
-        fetch_field_provenance_full(&state.db, "issue", &entity_id_str).await?;
+    let provenance_full = fetch_field_provenance_full(&state.db, "issue", &entity_id_str).await?;
 
     let mut rows = Vec::new();
     push_scalar(
@@ -513,13 +509,8 @@ pub async fn compute_issue_diff(
         &args,
     );
 
-    let (conflicts, news) = classify_external_ids(
-        &state.db,
-        "issue",
-        &entity_id_str,
-        &detail.identifiers,
-    )
-    .await?;
+    let (conflicts, news) =
+        classify_external_ids(&state.db, "issue", &entity_id_str, &detail.identifiers).await?;
 
     let changes_count = rows
         .iter()

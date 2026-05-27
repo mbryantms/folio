@@ -15,8 +15,8 @@ use crate::metadata::identifier::Source;
 use crate::metadata::provider::GenericMetadata;
 use chrono::{DateTime, Duration, Utc};
 use entity::metadata_cache;
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Set};
 use sea_orm::sea_query::OnConflict;
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Set};
 
 /// Logical entity types that get cached separately. Keys map 1:1 to
 /// the `entity` column on `metadata_cache` and the settings-registry
@@ -116,9 +116,8 @@ pub async fn put<C: ConnectionTrait>(
     external_id: &str,
     payload: &GenericMetadata,
 ) -> Result<(), sea_orm::DbErr> {
-    let json = serde_json::to_value(payload).map_err(|e| {
-        sea_orm::DbErr::Custom(format!("serialize GenericMetadata: {e}"))
-    })?;
+    let json = serde_json::to_value(payload)
+        .map_err(|e| sea_orm::DbErr::Custom(format!("serialize GenericMetadata: {e}")))?;
     let am = metadata_cache::ActiveModel {
         provider: Set(provider.as_str().to_string()),
         entity: Set(entity.as_str().to_string()),

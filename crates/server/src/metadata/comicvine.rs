@@ -81,7 +81,11 @@ struct Inner {
 impl ComicVineClient {
     /// Production constructor — points at `comicvine.gamespot.com/api`.
     pub fn new(api_key: String, redis: ConnectionManager) -> Self {
-        Self::with_base_url(api_key, "https://comicvine.gamespot.com/api".to_owned(), redis)
+        Self::with_base_url(
+            api_key,
+            "https://comicvine.gamespot.com/api".to_owned(),
+            redis,
+        )
     }
 
     /// Test constructor — points at an arbitrary base URL (wiremock).
@@ -116,12 +120,29 @@ impl ComicVineClient {
         db: &DatabaseConnection,
         external_id: &str,
     ) -> ProviderResult<GenericMetadata> {
-        let ttl = chrono::Duration::from_std(cache::CacheEntity::Series.default_ttl().to_std().unwrap()).unwrap_or(chrono::Duration::hours(168));
-        if let Ok(Some(hit)) = cache::get(db, Source::ComicVine, cache::CacheEntity::Series, external_id, ttl).await {
+        let ttl =
+            chrono::Duration::from_std(cache::CacheEntity::Series.default_ttl().to_std().unwrap())
+                .unwrap_or(chrono::Duration::hours(168));
+        if let Ok(Some(hit)) = cache::get(
+            db,
+            Source::ComicVine,
+            cache::CacheEntity::Series,
+            external_id,
+            ttl,
+        )
+        .await
+        {
             return Ok(hit);
         }
         let fresh = self.fetch_series(external_id).await?;
-        let _ = cache::put(db, Source::ComicVine, cache::CacheEntity::Series, external_id, &fresh).await;
+        let _ = cache::put(
+            db,
+            Source::ComicVine,
+            cache::CacheEntity::Series,
+            external_id,
+            &fresh,
+        )
+        .await;
         Ok(fresh)
     }
 
@@ -131,12 +152,29 @@ impl ComicVineClient {
         db: &DatabaseConnection,
         external_id: &str,
     ) -> ProviderResult<GenericMetadata> {
-        let ttl = chrono::Duration::from_std(cache::CacheEntity::Issue.default_ttl().to_std().unwrap()).unwrap_or(chrono::Duration::hours(24));
-        if let Ok(Some(hit)) = cache::get(db, Source::ComicVine, cache::CacheEntity::Issue, external_id, ttl).await {
+        let ttl =
+            chrono::Duration::from_std(cache::CacheEntity::Issue.default_ttl().to_std().unwrap())
+                .unwrap_or(chrono::Duration::hours(24));
+        if let Ok(Some(hit)) = cache::get(
+            db,
+            Source::ComicVine,
+            cache::CacheEntity::Issue,
+            external_id,
+            ttl,
+        )
+        .await
+        {
             return Ok(hit);
         }
         let fresh = self.fetch_issue(external_id).await?;
-        let _ = cache::put(db, Source::ComicVine, cache::CacheEntity::Issue, external_id, &fresh).await;
+        let _ = cache::put(
+            db,
+            Source::ComicVine,
+            cache::CacheEntity::Issue,
+            external_id,
+            &fresh,
+        )
+        .await;
         Ok(fresh)
     }
 
@@ -170,11 +208,10 @@ impl ComicVineClient {
     ) -> ProviderResult<T> {
         self.reserve_slot().await?;
         let url = format!("{}{}", self.inner.base_url, path);
-        let mut req = self
-            .inner
-            .http
-            .get(&url)
-            .query(&[("api_key", &self.inner.api_key), ("format", &"json".to_owned())]);
+        let mut req = self.inner.http.get(&url).query(&[
+            ("api_key", &self.inner.api_key),
+            ("format", &"json".to_owned()),
+        ]);
         if !extra_query.is_empty() {
             req = req.query(extra_query);
         }
@@ -192,7 +229,9 @@ impl ComicVineClient {
             // distinctly. 4xx (other than 429) we still try to parse
             // since the body usually carries a status_code envelope.
             if status.as_u16() == 429 {
-                return Err(ProviderError::QuotaExceeded { retry_after_secs: 60 });
+                return Err(ProviderError::QuotaExceeded {
+                    retry_after_secs: 60,
+                });
             }
             if status.is_server_error() {
                 return Err(ProviderError::Upstream(format!("HTTP {status}: {body}")));
@@ -201,13 +240,24 @@ impl ComicVineClient {
         // Parse the standard envelope first so we can map status_code
         // before the typed deserialize.
         let envelope: CvEnvelope<serde_json::Value> = serde_json::from_str(&body).map_err(|e| {
-            ProviderError::InvalidResponse(format!("envelope parse: {e}; body={}", truncate(&body, 256)))
+            ProviderError::InvalidResponse(format!(
+                "envelope parse: {e}; body={}",
+                truncate(&body, 256)
+            ))
         })?;
         match envelope.status_code.unwrap_or(1) {
             1 => {}
-            100 => return Err(ProviderError::Unauthorized(envelope.error.unwrap_or_default())),
+            100 => {
+                return Err(ProviderError::Unauthorized(
+                    envelope.error.unwrap_or_default(),
+                ));
+            }
             101 => return Err(ProviderError::NotFound(envelope.error.unwrap_or_default())),
-            107 => return Err(ProviderError::QuotaExceeded { retry_after_secs: 3600 }),
+            107 => {
+                return Err(ProviderError::QuotaExceeded {
+                    retry_after_secs: 3600,
+                });
+            }
             other => {
                 return Err(ProviderError::Upstream(format!(
                     "ComicVine status_code={other}: {}",
@@ -395,8 +445,14 @@ fn cv_issue_to_candidate(issue: &CvIssue) -> Option<IssueCandidate> {
         name: issue.name.clone(),
         cover_date: parse_date(&issue.cover_date),
         series_name: issue.volume.as_ref().and_then(|v| v.name.clone()),
-        series_year: issue.volume.as_ref().and_then(|v| parse_year(&v.start_year)),
-        series_external_id: issue.volume.as_ref().and_then(|v| v.id.map(|n| n.to_string())),
+        series_year: issue
+            .volume
+            .as_ref()
+            .and_then(|v| parse_year(&v.start_year)),
+        series_external_id: issue
+            .volume
+            .as_ref()
+            .and_then(|v| v.id.map(|n| n.to_string())),
         cover_image_url: cover,
     })
 }
@@ -441,10 +497,7 @@ fn cv_volume_to_metadata(v: CvVolume) -> GenericMetadata {
     }
 }
 
-fn cv_named_to_entity(
-    n: &CvNamedRef,
-    entity_type: &str,
-) -> Option<EntityCandidate> {
+fn cv_named_to_entity(n: &CvNamedRef, entity_type: &str) -> Option<EntityCandidate> {
     let name = n.name.clone().filter(|s| !s.trim().is_empty())?;
     let identifiers = match n.id {
         Some(id) => vec![Identifier::with_canonical_url(
@@ -516,7 +569,10 @@ fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
                     // it `"unknown"` so the consumer can decide. The
                     // composer will drop it (no ComicInfo column);
                     // MetronInfo's structured form would carry it.
-                    vec![CreditCandidate { role: "unknown".into(), ..cc }]
+                    vec![CreditCandidate {
+                        role: "unknown".into(),
+                        ..cc
+                    }]
                 } else {
                     cc.role
                         .split(',')
@@ -557,7 +613,10 @@ fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
         cover_image_alt_urls: alts,
         aliases: split_aliases(&issue.aliases),
         series_name: issue.volume.as_ref().and_then(|v| v.name.clone()),
-        year_began: issue.volume.as_ref().and_then(|v| parse_year(&v.start_year)),
+        year_began: issue
+            .volume
+            .as_ref()
+            .and_then(|v| parse_year(&v.start_year)),
         publisher: issue
             .volume
             .as_ref()

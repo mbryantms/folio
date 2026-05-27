@@ -67,12 +67,7 @@ struct Inner {
 
 impl MetronClient {
     pub fn new(username: &str, password: &str, redis: ConnectionManager) -> Self {
-        Self::with_base_url(
-            username,
-            password,
-            "https://metron.cloud".to_owned(),
-            redis,
-        )
+        Self::with_base_url(username, password, "https://metron.cloud".to_owned(), redis)
     }
 
     pub fn with_base_url(
@@ -110,13 +105,29 @@ impl MetronClient {
         db: &DatabaseConnection,
         external_id: &str,
     ) -> ProviderResult<GenericMetadata> {
-        let ttl = chrono::Duration::from_std(cache::CacheEntity::Series.default_ttl().to_std().unwrap())
-            .unwrap_or(chrono::Duration::hours(168));
-        if let Ok(Some(hit)) = cache::get(db, Source::Metron, cache::CacheEntity::Series, external_id, ttl).await {
+        let ttl =
+            chrono::Duration::from_std(cache::CacheEntity::Series.default_ttl().to_std().unwrap())
+                .unwrap_or(chrono::Duration::hours(168));
+        if let Ok(Some(hit)) = cache::get(
+            db,
+            Source::Metron,
+            cache::CacheEntity::Series,
+            external_id,
+            ttl,
+        )
+        .await
+        {
             return Ok(hit);
         }
         let fresh = self.fetch_series(external_id).await?;
-        let _ = cache::put(db, Source::Metron, cache::CacheEntity::Series, external_id, &fresh).await;
+        let _ = cache::put(
+            db,
+            Source::Metron,
+            cache::CacheEntity::Series,
+            external_id,
+            &fresh,
+        )
+        .await;
         Ok(fresh)
     }
 
@@ -125,13 +136,29 @@ impl MetronClient {
         db: &DatabaseConnection,
         external_id: &str,
     ) -> ProviderResult<GenericMetadata> {
-        let ttl = chrono::Duration::from_std(cache::CacheEntity::Issue.default_ttl().to_std().unwrap())
-            .unwrap_or(chrono::Duration::hours(24));
-        if let Ok(Some(hit)) = cache::get(db, Source::Metron, cache::CacheEntity::Issue, external_id, ttl).await {
+        let ttl =
+            chrono::Duration::from_std(cache::CacheEntity::Issue.default_ttl().to_std().unwrap())
+                .unwrap_or(chrono::Duration::hours(24));
+        if let Ok(Some(hit)) = cache::get(
+            db,
+            Source::Metron,
+            cache::CacheEntity::Issue,
+            external_id,
+            ttl,
+        )
+        .await
+        {
             return Ok(hit);
         }
         let fresh = self.fetch_issue(external_id).await?;
-        let _ = cache::put(db, Source::Metron, cache::CacheEntity::Issue, external_id, &fresh).await;
+        let _ = cache::put(
+            db,
+            Source::Metron,
+            cache::CacheEntity::Issue,
+            external_id,
+            &fresh,
+        )
+        .await;
         Ok(fresh)
     }
 
@@ -184,12 +211,11 @@ impl MetronClient {
             return Err(match status.as_u16() {
                 401 | 403 => ProviderError::Unauthorized(truncate(&body, 256).to_owned()),
                 404 => ProviderError::NotFound(truncate(&body, 256).to_owned()),
-                429 => ProviderError::QuotaExceeded { retry_after_secs: 60 },
+                429 => ProviderError::QuotaExceeded {
+                    retry_after_secs: 60,
+                },
                 500..=599 => ProviderError::Upstream(format!("HTTP {status}")),
-                _ => ProviderError::Upstream(format!(
-                    "HTTP {status}: {}",
-                    truncate(&body, 256)
-                )),
+                _ => ProviderError::Upstream(format!("HTTP {status}: {}", truncate(&body, 256))),
             });
         }
         serde_json::from_str::<T>(&body)
@@ -378,7 +404,9 @@ fn parse_metron_timestamp(raw: &Option<String>) -> Option<DateTime<Utc>> {
         return None;
     }
     // Metron timestamps are ISO-8601 / RFC-3339 UTC.
-    DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
 }
 
 fn parse_price(raw: &Option<String>) -> Option<f64> {
@@ -527,11 +555,7 @@ fn series_detail_to_metadata(s: MSeriesDetail) -> GenericMetadata {
         description: s.desc,
         publisher: s.publisher.as_ref().and_then(|p| p.name.clone()),
         imprint: s.imprint.as_ref().and_then(|p| p.name.clone()),
-        aliases: s
-            .associated
-            .iter()
-            .filter_map(|a| a.name.clone())
-            .collect(),
+        aliases: s.associated.iter().filter_map(|a| a.name.clone()).collect(),
         genres: s.genres.into_iter().filter_map(|g| g.name).collect(),
         identifiers,
         source_provider: Some(Source::Metron),
@@ -606,9 +630,8 @@ fn issue_detail_to_metadata(i: MIssueDetail) -> GenericMetadata {
         .iter()
         .filter_map(|r| {
             let label = r.issue.clone()?;
-            let identifiers = r
-                .id
-                .map(|id| {
+            let identifiers =
+                r.id.map(|id| {
                     vec![Identifier::with_canonical_url(
                         Source::Metron,
                         id.to_string(),
@@ -742,7 +765,11 @@ impl MetadataProvider for MetronClient {
         }
         params.push(("page_size", query.limit.clamp(1, 100).to_string()));
         let envelope: Paged<MSeriesList> = self.request("/api/series/", &params).await?;
-        Ok(envelope.results.iter().filter_map(series_list_to_candidate).collect())
+        Ok(envelope
+            .results
+            .iter()
+            .filter_map(series_list_to_candidate)
+            .collect())
     }
 
     async fn search_issue(&self, query: &IssueQuery) -> ProviderResult<Vec<IssueCandidate>> {
@@ -758,7 +785,11 @@ impl MetadataProvider for MetronClient {
         }
         params.push(("page_size", query.limit.clamp(1, 100).to_string()));
         let envelope: Paged<MIssueListItem> = self.request("/api/issue/", &params).await?;
-        Ok(envelope.results.iter().filter_map(issue_list_to_candidate).collect())
+        Ok(envelope
+            .results
+            .iter()
+            .filter_map(issue_list_to_candidate)
+            .collect())
     }
 
     async fn fetch_series(&self, external_id: &str) -> ProviderResult<GenericMetadata> {
@@ -832,8 +863,14 @@ mod tests {
         // 3 identifiers: Metron self + CV + GCD.
         assert_eq!(m.identifiers.len(), 3);
         let by_source = |s: Source| m.identifiers.iter().find(|i| i.source == s);
-        assert_eq!(by_source(Source::Metron).map(|i| i.id.as_str()), Some("123"));
-        assert_eq!(by_source(Source::ComicVine).map(|i| i.id.as_str()), Some("12345"));
+        assert_eq!(
+            by_source(Source::Metron).map(|i| i.id.as_str()),
+            Some("123")
+        );
+        assert_eq!(
+            by_source(Source::ComicVine).map(|i| i.id.as_str()),
+            Some("12345")
+        );
         assert_eq!(by_source(Source::Gcd).map(|i| i.id.as_str()), Some("98765"));
     }
 

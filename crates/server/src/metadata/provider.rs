@@ -247,10 +247,16 @@ pub fn canonicalize_role(raw: &str) -> Option<&'static str> {
     }
     // Lower-cased + whitespace-collapsed key so " Cover Artist " and
     // "cover artist" hit the same arm.
-    let key: String = trimmed.to_ascii_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    let key: String = trimmed
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     match key.as_str() {
         // Writers
-        "writer" | "writers" | "script" | "scripter" | "story" | "plotter" | "plot" => Some("Writer"),
+        "writer" | "writers" | "script" | "scripter" | "story" | "plotter" | "plot" => {
+            Some("Writer")
+        }
         // Pencillers (single + double L spellings; CV uses single L)
         "penciler" | "penciller" | "pencils" | "artist" | "art" => Some("Penciller"),
         // Inkers
@@ -355,7 +361,12 @@ mod tests {
 
     #[test]
     fn provider_error_transience_classification() {
-        assert!(ProviderError::QuotaExceeded { retry_after_secs: 30 }.is_transient());
+        assert!(
+            ProviderError::QuotaExceeded {
+                retry_after_secs: 30
+            }
+            .is_transient()
+        );
         assert!(ProviderError::Transport("dns".into()).is_transient());
         assert!(ProviderError::Upstream("503".into()).is_transient());
         assert!(!ProviderError::Unauthorized("bad key".into()).is_transient());

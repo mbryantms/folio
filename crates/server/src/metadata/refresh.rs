@@ -210,13 +210,8 @@ pub async fn fan_out_scope(
     let mut jobs_coalesced = 0usize;
     let mut jobs_failed = 0usize;
     for id in ids {
-        match crate::jobs::metadata_search::enqueue_series_search(
-            state,
-            id,
-            None,
-            trigger_kind,
-        )
-        .await
+        match crate::jobs::metadata_search::enqueue_series_search(state, id, None, trigger_kind)
+            .await
         {
             Ok(outcome) => {
                 if outcome.coalesced {

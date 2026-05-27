@@ -208,7 +208,12 @@ mod tests {
     fn parse_reply_denies_with_floor() {
         let r = parse_reply(&[0, 0, 0]).unwrap();
         // Denied always floors retry_after to ≥1 so callers never busy-loop.
-        assert_eq!(r, Reservation::Denied { retry_after_secs: 1 });
+        assert_eq!(
+            r,
+            Reservation::Denied {
+                retry_after_secs: 1
+            }
+        );
     }
 
     #[test]

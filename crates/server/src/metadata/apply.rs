@@ -35,9 +35,7 @@ use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::field::MetadataField;
 use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::metron::MetronClient;
-use crate::metadata::provider::{
-    GenericMetadata, MetadataProvider, ProviderError, ProviderResult,
-};
+use crate::metadata::provider::{GenericMetadata, MetadataProvider, ProviderError, ProviderResult};
 use crate::metadata::writers::{self, CoverOverwritePolicy, CoverWrite, CsvRebuildBatch, SetBy};
 use crate::state::AppState;
 use chrono::{Datelike, NaiveDate, Utc};
@@ -291,7 +289,10 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
     };
     let series_uuid = Uuid::parse_str(series_id_str)
         .map_err(|e| ApplyError::InvalidScope(format!("scope_entity_id not uuid: {e}")))?;
-    let Some(row) = series::Entity::find_by_id(series_uuid).one(&state.db).await? else {
+    let Some(row) = series::Entity::find_by_id(series_uuid)
+        .one(&state.db)
+        .await?
+    else {
         return Err(ApplyError::SeriesGone);
     };
 
@@ -335,27 +336,118 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
     let mut new = SeriesUpdates::default();
     let source_ext = detail.source_external_id.clone();
 
-    if let Some(v) = detail.series_name.as_deref().filter(|s| !s.trim().is_empty()) {
+    if let Some(v) = detail
+        .series_name
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
         let has = !row.name.trim().is_empty();
-        decide_scalar(has, &provenance, MetadataField::Title, &args, &mut outcome, || {
-            new.name = Some(v.to_owned());
-        });
+        decide_scalar(
+            has,
+            &provenance,
+            MetadataField::Title,
+            &args,
+            &mut outcome,
+            || {
+                new.name = Some(v.to_owned());
+            },
+        );
     }
-    decide_str(&row.sort_name, &detail.series_sort_name, MetadataField::SortName, &provenance, &args, &mut outcome, |v| new.sort_name = Some(v));
-    decide_str(&row.series_type, &detail.series_type, MetadataField::SeriesType, &provenance, &args, &mut outcome, |v| new.series_type = Some(v));
-    decide_i32(row.year, detail.year_began, MetadataField::YearBegan, &provenance, &args, &mut outcome, |v| new.year = Some(v));
-    decide_i32(row.year_end, detail.year_end, MetadataField::YearEnd, &provenance, &args, &mut outcome, |v| new.year_end = Some(v));
-    decide_i32(row.volume, detail.volume, MetadataField::Volume, &provenance, &args, &mut outcome, |v| new.volume = Some(v));
-    decide_str(&row.publisher, &detail.publisher, MetadataField::Publisher, &provenance, &args, &mut outcome, |v| new.publisher = Some(v));
-    decide_str(&row.imprint, &detail.imprint, MetadataField::Imprint, &provenance, &args, &mut outcome, |v| new.imprint = Some(v));
-    decide_str(&row.deck, &detail.deck, MetadataField::Deck, &provenance, &args, &mut outcome, |v| new.deck = Some(v));
-    decide_str(&row.summary, &detail.description, MetadataField::Description, &provenance, &args, &mut outcome, |v| new.summary = Some(v));
+    decide_str(
+        &row.sort_name,
+        &detail.series_sort_name,
+        MetadataField::SortName,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.sort_name = Some(v),
+    );
+    decide_str(
+        &row.series_type,
+        &detail.series_type,
+        MetadataField::SeriesType,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.series_type = Some(v),
+    );
+    decide_i32(
+        row.year,
+        detail.year_began,
+        MetadataField::YearBegan,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.year = Some(v),
+    );
+    decide_i32(
+        row.year_end,
+        detail.year_end,
+        MetadataField::YearEnd,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.year_end = Some(v),
+    );
+    decide_i32(
+        row.volume,
+        detail.volume,
+        MetadataField::Volume,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.volume = Some(v),
+    );
+    decide_str(
+        &row.publisher,
+        &detail.publisher,
+        MetadataField::Publisher,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.publisher = Some(v),
+    );
+    decide_str(
+        &row.imprint,
+        &detail.imprint,
+        MetadataField::Imprint,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.imprint = Some(v),
+    );
+    decide_str(
+        &row.deck,
+        &detail.deck,
+        MetadataField::Deck,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.deck = Some(v),
+    );
+    decide_str(
+        &row.summary,
+        &detail.description,
+        MetadataField::Description,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.summary = Some(v),
+    );
 
     if !detail.aliases.is_empty() {
         let has = !row.aliases.as_array().map(|a| a.is_empty()).unwrap_or(true);
-        decide_scalar(has, &provenance, MetadataField::Aliases, &args, &mut outcome, || {
-            new.aliases = Some(serde_json::to_value(&detail.aliases).unwrap_or(serde_json::json!([])));
-        });
+        decide_scalar(
+            has,
+            &provenance,
+            MetadataField::Aliases,
+            &args,
+            &mut outcome,
+            || {
+                new.aliases =
+                    Some(serde_json::to_value(&detail.aliases).unwrap_or(serde_json::json!([])));
+            },
+        );
     }
 
     // Apply pending updates + provenance writes in one pass.
@@ -437,21 +529,14 @@ async fn apply_series_via_sidecar(
     let mut redis = state.jobs.redis.clone();
 
     for issue_row in &issues {
-        let issue_external_ids = crate::metadata::sidecar_compose::load_external_ids(
-            &state.db,
-            "issue",
-            &issue_row.id,
-        )
-        .await?;
+        let issue_external_ids =
+            crate::metadata::sidecar_compose::load_external_ids(&state.db, "issue", &issue_row.id)
+                .await?;
         let issue_user_pins = if args.override_user_edits {
             std::collections::HashSet::new()
         } else {
-            crate::metadata::sidecar_compose::load_user_pins(
-                &state.db,
-                "issue",
-                &issue_row.id,
-            )
-            .await?
+            crate::metadata::sidecar_compose::load_user_pins(&state.db, "issue", &issue_row.id)
+                .await?
         };
 
         let ctx = crate::metadata::sidecar_compose::ComposeContext {
@@ -488,13 +573,9 @@ async fn apply_series_via_sidecar(
             continue;
         }
 
-        let result = crate::jobs::rewrite_sidecars::rewrite_one_issue(
-            state,
-            &issue_row.id,
-            ci_xml,
-            mi_xml,
-        )
-        .await;
+        let result =
+            crate::jobs::rewrite_sidecars::rewrite_one_issue(state, &issue_row.id, ci_xml, mi_xml)
+                .await;
         crate::archive_rewrite::mutex::release(&mut redis, &issue_row.id).await;
 
         match result {
@@ -610,8 +691,7 @@ async fn apply_issue_via_sidecar(
 
     let comic_info = crate::metadata::sidecar_compose::compose_comicinfo(&ctx);
     let metron_info = crate::metadata::sidecar_compose::compose_metroninfo(&ctx);
-    let suppressed_user_pins =
-        crate::metadata::sidecar_compose::enumerate_suppressed_pins(&ctx);
+    let suppressed_user_pins = crate::metadata::sidecar_compose::enumerate_suppressed_pins(&ctx);
 
     let comic_info_xml = parsers::comicinfo::serialize(&comic_info);
     let metron_info_xml = parsers::metroninfo::serialize(&metron_info);
@@ -640,9 +720,7 @@ async fn apply_issue_via_sidecar(
             skip_rescan: false,
         })
         .await
-        .map_err(|e| {
-            ApplyError::InvalidScope(format!("rewrite_sidecars push failed: {e}"))
-        })?;
+        .map_err(|e| ApplyError::InvalidScope(format!("rewrite_sidecars push failed: {e}")))?;
 
     // Variant covers: metadata-only persistence — these don't live in
     // the sidecar XML (neither ComicInfo nor MetronInfo carries them),
@@ -699,7 +777,10 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     let Some(issue_id_str) = run.scope_entity_id.as_deref() else {
         return Err(ApplyError::IssueGone);
     };
-    let Some(row) = issue::Entity::find_by_id(issue_id_str).one(&state.db).await? else {
+    let Some(row) = issue::Entity::find_by_id(issue_id_str)
+        .one(&state.db)
+        .await?
+    else {
         return Err(ApplyError::IssueGone);
     };
 
@@ -741,8 +822,24 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     let mut new = IssueUpdates::default();
     let source_ext = detail.source_external_id.clone();
 
-    decide_str(&row.title, &detail.title, MetadataField::Title, &provenance, &args, &mut outcome, |v| new.title = Some(v));
-    decide_str(&row.number_raw, &detail.issue_number, MetadataField::Format, &provenance, &args, &mut outcome, |v| new.number_raw = Some(v));
+    decide_str(
+        &row.title,
+        &detail.title,
+        MetadataField::Title,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.title = Some(v),
+    );
+    decide_str(
+        &row.number_raw,
+        &detail.issue_number,
+        MetadataField::Format,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.number_raw = Some(v),
+    );
 
     // Cover date — split into y/m/d on issue.
     let current_cover_date = row
@@ -752,32 +849,101 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         .and_then(|((y, m), d)| NaiveDate::from_ymd_opt(y, m as u32, d as u32));
     if let Some(incoming_date) = detail.cover_date {
         let has = current_cover_date.is_some();
-        decide_scalar(has, &provenance, MetadataField::CoverDate, &args, &mut outcome, || {
-            new.cover_date = Some(incoming_date);
-        });
+        decide_scalar(
+            has,
+            &provenance,
+            MetadataField::CoverDate,
+            &args,
+            &mut outcome,
+            || {
+                new.cover_date = Some(incoming_date);
+            },
+        );
     }
 
     let current_store = row.store_date.map(date_from_db);
     if let Some(incoming_date) = detail.store_date {
         let has = current_store.is_some();
-        decide_scalar(has, &provenance, MetadataField::StoreDate, &args, &mut outcome, || {
-            new.store_date = Some(incoming_date);
-        });
+        decide_scalar(
+            has,
+            &provenance,
+            MetadataField::StoreDate,
+            &args,
+            &mut outcome,
+            || {
+                new.store_date = Some(incoming_date);
+            },
+        );
     }
     let current_foc = row.foc_date.map(date_from_db);
     if let Some(incoming_date) = detail.foc_date {
         let has = current_foc.is_some();
-        decide_scalar(has, &provenance, MetadataField::FocDate, &args, &mut outcome, || {
-            new.foc_date = Some(incoming_date);
-        });
+        decide_scalar(
+            has,
+            &provenance,
+            MetadataField::FocDate,
+            &args,
+            &mut outcome,
+            || {
+                new.foc_date = Some(incoming_date);
+            },
+        );
     }
 
-    decide_str(&row.deck, &detail.deck, MetadataField::Deck, &provenance, &args, &mut outcome, |v| new.deck = Some(v));
-    decide_str(&row.summary, &detail.description, MetadataField::Description, &provenance, &args, &mut outcome, |v| new.summary = Some(v));
-    decide_str(&row.age_rating, &detail.age_rating, MetadataField::AgeRating, &provenance, &args, &mut outcome, |v| new.age_rating = Some(v));
-    decide_i32(row.page_count, detail.page_count, MetadataField::PageCount, &provenance, &args, &mut outcome, |v| new.page_count = Some(v));
-    decide_str(&row.sku, &detail.sku, MetadataField::Sku, &provenance, &args, &mut outcome, |v| new.sku = Some(v));
-    decide_f64(row.price, detail.price, MetadataField::Price, &provenance, &args, &mut outcome, |v| new.price = Some(v));
+    decide_str(
+        &row.deck,
+        &detail.deck,
+        MetadataField::Deck,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.deck = Some(v),
+    );
+    decide_str(
+        &row.summary,
+        &detail.description,
+        MetadataField::Description,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.summary = Some(v),
+    );
+    decide_str(
+        &row.age_rating,
+        &detail.age_rating,
+        MetadataField::AgeRating,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.age_rating = Some(v),
+    );
+    decide_i32(
+        row.page_count,
+        detail.page_count,
+        MetadataField::PageCount,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.page_count = Some(v),
+    );
+    decide_str(
+        &row.sku,
+        &detail.sku,
+        MetadataField::Sku,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.sku = Some(v),
+    );
+    decide_f64(
+        row.price,
+        detail.price,
+        MetadataField::Price,
+        &provenance,
+        &args,
+        &mut outcome,
+        |v| new.price = Some(v),
+    );
 
     apply_issue_updates(&state.db, &entity_id_str, &new).await?;
     write_provenance_for_applied(
@@ -823,7 +989,9 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
 
     if !detail.characters.is_empty()
         && should_apply(
-            row.characters.as_deref().is_some_and(|s| !s.trim().is_empty()),
+            row.characters
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty()),
             &provenance,
             MetadataField::Characters,
             &args,
@@ -831,8 +999,7 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     {
         let mut specs: Vec<writers::CharacterSpec> = Vec::with_capacity(detail.characters.len());
         for c in &detail.characters {
-            let id =
-                writers::upsert_character(&state.db, &c.name, &c.identifiers, set_by).await?;
+            let id = writers::upsert_character(&state.db, &c.name, &c.identifiers, set_by).await?;
             specs.push((id, c.is_first_appearance, c.died_in_issue.unwrap_or(false)));
         }
         writers::set_issue_characters(
@@ -884,7 +1051,9 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
 
     if !detail.locations.is_empty()
         && should_apply(
-            row.locations.as_deref().is_some_and(|s| !s.trim().is_empty()),
+            row.locations
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty()),
             &provenance,
             MetadataField::Locations,
             &args,
@@ -892,8 +1061,7 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     {
         let mut specs: Vec<writers::LocationSpec> = Vec::with_capacity(detail.locations.len());
         for l in &detail.locations {
-            let id =
-                writers::upsert_location(&state.db, &l.name, &l.identifiers, set_by).await?;
+            let id = writers::upsert_location(&state.db, &l.name, &l.identifiers, set_by).await?;
             specs.push((id, l.is_first_appearance));
         }
         writers::set_issue_locations(
@@ -913,7 +1081,9 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
 
     if !detail.story_arcs.is_empty()
         && should_apply(
-            row.story_arc.as_deref().is_some_and(|s| !s.trim().is_empty()),
+            row.story_arc
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty()),
             &provenance,
             MetadataField::StoryArcs,
             &args,
@@ -921,8 +1091,7 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     {
         let mut specs: Vec<writers::ArcSpec> = Vec::with_capacity(detail.story_arcs.len());
         for a in &detail.story_arcs {
-            let id =
-                writers::upsert_story_arc(&state.db, &a.name, &a.identifiers, set_by).await?;
+            let id = writers::upsert_story_arc(&state.db, &a.name, &a.identifiers, set_by).await?;
             specs.push((id, a.position_in_arc));
         }
         writers::set_issue_story_arcs(
@@ -951,7 +1120,11 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     {
         match provider.fetch_cover(url).await {
             Ok(bytes) => {
-                let primary_ident = detail.identifiers.iter().find(|i| i.source == source).cloned();
+                let primary_ident = detail
+                    .identifiers
+                    .iter()
+                    .find(|i| i.source == source)
+                    .cloned();
                 let cover_write = CoverWrite {
                     issue_id: &entity_id_str,
                     kind: "primary",
@@ -1006,13 +1179,7 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         .map(|s| s.contains(&MetadataField::CoverVariants.key()))
         .unwrap_or(true);
     if variants_selected && !detail.variants.is_empty() {
-        match writers::set_issue_variants(
-            &state.db,
-            &entity_id_str,
-            &detail.variants,
-            set_by,
-        )
-        .await
+        match writers::set_issue_variants(&state.db, &entity_id_str, &detail.variants, set_by).await
         {
             Ok(n) => outcome.variants_written = n as u32,
             Err(e) => tracing::warn!(
@@ -1059,7 +1226,9 @@ fn decide_str<F: FnOnce(String)>(
         return;
     };
     let has = current.as_deref().is_some_and(|s| !s.trim().is_empty());
-    decide_scalar(has, provenance, field, args, outcome, || apply(value.to_owned()));
+    decide_scalar(has, provenance, field, args, outcome, || {
+        apply(value.to_owned())
+    });
 }
 
 fn decide_i32<F: FnOnce(i32)>(
@@ -1072,7 +1241,9 @@ fn decide_i32<F: FnOnce(i32)>(
     apply: F,
 ) {
     let Some(value) = incoming else { return };
-    decide_scalar(current.is_some(), provenance, field, args, outcome, || apply(value));
+    decide_scalar(current.is_some(), provenance, field, args, outcome, || {
+        apply(value)
+    });
 }
 
 fn decide_f64<F: FnOnce(f64)>(
@@ -1085,7 +1256,9 @@ fn decide_f64<F: FnOnce(f64)>(
     apply: F,
 ) {
     let Some(value) = incoming else { return };
-    decide_scalar(current.is_some(), provenance, field, args, outcome, || apply(value));
+    decide_scalar(current.is_some(), provenance, field, args, outcome, || {
+        apply(value)
+    });
 }
 
 // ───────── update collectors ─────────
@@ -1304,23 +1477,42 @@ pub(crate) fn parse_source(s: &str) -> Option<Source> {
     Source::from_str(s).ok()
 }
 
-pub(crate) fn build_provider(state: &AppState, source: Source) -> Option<Arc<dyn MetadataProvider>> {
+pub(crate) fn build_provider(
+    state: &AppState,
+    source: Source,
+) -> Option<Arc<dyn MetadataProvider>> {
     let cfg = state.cfg();
     match source {
         Source::ComicVine => {
-            let key = cfg.comicvine_api_key.clone().filter(|s| !s.trim().is_empty())?;
+            let key = cfg
+                .comicvine_api_key
+                .clone()
+                .filter(|s| !s.trim().is_empty())?;
             if !cfg.comicvine_enabled {
                 return None;
             }
-            Some(Arc::new(ComicVineClient::new(key, state.jobs.redis.clone())))
+            Some(Arc::new(ComicVineClient::new(
+                key,
+                state.jobs.redis.clone(),
+            )))
         }
         Source::Metron => {
-            let username = cfg.metron_username.clone().filter(|s| !s.trim().is_empty())?;
-            let password = cfg.metron_password.clone().filter(|s| !s.trim().is_empty())?;
+            let username = cfg
+                .metron_username
+                .clone()
+                .filter(|s| !s.trim().is_empty())?;
+            let password = cfg
+                .metron_password
+                .clone()
+                .filter(|s| !s.trim().is_empty())?;
             if !cfg.metron_enabled {
                 return None;
             }
-            Some(Arc::new(MetronClient::new(&username, &password, state.jobs.redis.clone())))
+            Some(Arc::new(MetronClient::new(
+                &username,
+                &password,
+                state.jobs.redis.clone(),
+            )))
         }
         _ => None,
     }
@@ -1332,15 +1524,29 @@ pub(crate) async fn fetch_series_detail(
     external_id: &str,
 ) -> ProviderResult<GenericMetadata> {
     let source = provider.id();
-    let ttl = chrono::Duration::from_std(cache::CacheEntity::Series.default_ttl().to_std().unwrap())
-        .unwrap_or(chrono::Duration::hours(168));
-    if let Ok(Some(hit)) =
-        cache::get(&state.db, source, cache::CacheEntity::Series, external_id, ttl).await
+    let ttl =
+        chrono::Duration::from_std(cache::CacheEntity::Series.default_ttl().to_std().unwrap())
+            .unwrap_or(chrono::Duration::hours(168));
+    if let Ok(Some(hit)) = cache::get(
+        &state.db,
+        source,
+        cache::CacheEntity::Series,
+        external_id,
+        ttl,
+    )
+    .await
     {
         return Ok(hit);
     }
     let fresh = provider.fetch_series(external_id).await?;
-    let _ = cache::put(&state.db, source, cache::CacheEntity::Series, external_id, &fresh).await;
+    let _ = cache::put(
+        &state.db,
+        source,
+        cache::CacheEntity::Series,
+        external_id,
+        &fresh,
+    )
+    .await;
     Ok(fresh)
 }
 
@@ -1352,13 +1558,26 @@ pub(crate) async fn fetch_issue_detail(
     let source = provider.id();
     let ttl = chrono::Duration::from_std(cache::CacheEntity::Issue.default_ttl().to_std().unwrap())
         .unwrap_or(chrono::Duration::hours(24));
-    if let Ok(Some(hit)) =
-        cache::get(&state.db, source, cache::CacheEntity::Issue, external_id, ttl).await
+    if let Ok(Some(hit)) = cache::get(
+        &state.db,
+        source,
+        cache::CacheEntity::Issue,
+        external_id,
+        ttl,
+    )
+    .await
     {
         return Ok(hit);
     }
     let fresh = provider.fetch_issue(external_id).await?;
-    let _ = cache::put(&state.db, source, cache::CacheEntity::Issue, external_id, &fresh).await;
+    let _ = cache::put(
+        &state.db,
+        source,
+        cache::CacheEntity::Issue,
+        external_id,
+        &fresh,
+    )
+    .await;
     Ok(fresh)
 }
 
@@ -1550,26 +1769,66 @@ mod tests {
     #[test]
     fn decision_matrix_empty_db_applies_under_both_modes() {
         let prov = HashMap::new();
-        assert!(should_apply(false, &prov, MetadataField::Title, &args(ApplyMode::FillMissing, false)));
-        assert!(should_apply(false, &prov, MetadataField::Title, &args(ApplyMode::ReplaceAll, false)));
+        assert!(should_apply(
+            false,
+            &prov,
+            MetadataField::Title,
+            &args(ApplyMode::FillMissing, false)
+        ));
+        assert!(should_apply(
+            false,
+            &prov,
+            MetadataField::Title,
+            &args(ApplyMode::ReplaceAll, false)
+        ));
     }
 
     #[test]
     fn decision_matrix_user_set_is_sacred_unless_override() {
         let mut prov = HashMap::new();
         prov.insert(MetadataField::Title.key(), "user".into());
-        assert!(!should_apply(false, &prov, MetadataField::Title, &args(ApplyMode::FillMissing, false)));
-        assert!(!should_apply(false, &prov, MetadataField::Title, &args(ApplyMode::ReplaceAll, false)));
-        assert!(should_apply(false, &prov, MetadataField::Title, &args(ApplyMode::FillMissing, true)));
-        assert!(should_apply(true, &prov, MetadataField::Title, &args(ApplyMode::ReplaceAll, true)));
+        assert!(!should_apply(
+            false,
+            &prov,
+            MetadataField::Title,
+            &args(ApplyMode::FillMissing, false)
+        ));
+        assert!(!should_apply(
+            false,
+            &prov,
+            MetadataField::Title,
+            &args(ApplyMode::ReplaceAll, false)
+        ));
+        assert!(should_apply(
+            false,
+            &prov,
+            MetadataField::Title,
+            &args(ApplyMode::FillMissing, true)
+        ));
+        assert!(should_apply(
+            true,
+            &prov,
+            MetadataField::Title,
+            &args(ApplyMode::ReplaceAll, true)
+        ));
     }
 
     #[test]
     fn decision_matrix_non_user_provenance_respects_mode() {
         let mut prov = HashMap::new();
         prov.insert(MetadataField::Title.key(), "comicinfo".into());
-        assert!(!should_apply(true, &prov, MetadataField::Title, &args(ApplyMode::FillMissing, false)));
-        assert!(should_apply(true, &prov, MetadataField::Title, &args(ApplyMode::ReplaceAll, false)));
+        assert!(!should_apply(
+            true,
+            &prov,
+            MetadataField::Title,
+            &args(ApplyMode::FillMissing, false)
+        ));
+        assert!(should_apply(
+            true,
+            &prov,
+            MetadataField::Title,
+            &args(ApplyMode::ReplaceAll, false)
+        ));
     }
 
     #[test]

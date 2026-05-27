@@ -95,8 +95,16 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         // Series-level fields. Title at the series level == `<Series>`
         // in ComicInfo. The Anansi schema fuses series+issue into one
         // doc per archive.
-        series: prefer_user_str(ctx.is_series_pinned("title"), &ctx.series.name, ctx.provider.series_name.as_deref()),
-        volume: prefer_user_int(ctx.is_series_pinned("volume"), ctx.series.volume, ctx.provider.volume),
+        series: prefer_user_str(
+            ctx.is_series_pinned("title"),
+            &ctx.series.name,
+            ctx.provider.series_name.as_deref(),
+        ),
+        volume: prefer_user_int(
+            ctx.is_series_pinned("volume"),
+            ctx.series.volume,
+            ctx.provider.volume,
+        ),
         // ComicInfo `<Count>` reflects "total issues in the series".
         // `series.total_issues` is the scanner-managed aggregate (a
         // MAX over per-issue `comicinfo_count` values); we forward it
@@ -186,7 +194,11 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
             ctx.issue.scan_information.as_deref(),
             ctx.provider.scan_information.as_deref(),
         ),
-        web: ctx.provider.source_url.clone().or_else(|| ctx.issue.web_url.clone()),
+        web: ctx
+            .provider
+            .source_url
+            .clone()
+            .or_else(|| ctx.issue.web_url.clone()),
         // CV / Metron IDs land in their dedicated typed fields. Issue
         // is the canonical scope for IDs we expose to other readers
         // (ComicTagger / Mylar / Komga).
@@ -198,32 +210,56 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         characters: compose_csv_field(
             ctx.is_issue_pinned("characters"),
             ctx.issue.characters.as_deref(),
-            &ctx.provider.characters.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            &ctx.provider
+                .characters
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
         ),
         teams: compose_csv_field(
             ctx.is_issue_pinned("teams"),
             ctx.issue.teams.as_deref(),
-            &ctx.provider.teams.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            &ctx.provider
+                .teams
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
         ),
         locations: compose_csv_field(
             ctx.is_issue_pinned("locations"),
             ctx.issue.locations.as_deref(),
-            &ctx.provider.locations.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
+            &ctx.provider
+                .locations
+                .iter()
+                .map(|l| l.name.as_str())
+                .collect::<Vec<_>>(),
         ),
         tags: compose_csv_field(
             ctx.is_issue_pinned("tags"),
             ctx.issue.tags.as_deref(),
-            &ctx.provider.tags.iter().map(String::as_str).collect::<Vec<_>>(),
+            &ctx.provider
+                .tags
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
         ),
         genre: compose_csv_field(
             ctx.is_issue_pinned("genres"),
             ctx.issue.genre.as_deref(),
-            &ctx.provider.genres.iter().map(String::as_str).collect::<Vec<_>>(),
+            &ctx.provider
+                .genres
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
         ),
         story_arc: compose_csv_field(
             ctx.is_issue_pinned("story_arcs"),
             ctx.issue.story_arc.as_deref(),
-            &ctx.provider.story_arcs.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            &ctx.provider
+                .story_arcs
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>(),
         ),
         story_arc_number: ctx.issue.story_arc_number.clone(),
         // Per-role credits. ComicInfo's flat columns map 1:1 with the
@@ -273,7 +309,11 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         push_role_csv(&mut credits, "Inker", ctx.issue.inker.as_deref());
         push_role_csv(&mut credits, "Colorist", ctx.issue.colorist.as_deref());
         push_role_csv(&mut credits, "Letterer", ctx.issue.letterer.as_deref());
-        push_role_csv(&mut credits, "CoverArtist", ctx.issue.cover_artist.as_deref());
+        push_role_csv(
+            &mut credits,
+            "CoverArtist",
+            ctx.issue.cover_artist.as_deref(),
+        );
         push_role_csv(&mut credits, "Editor", ctx.issue.editor.as_deref());
         push_role_csv(&mut credits, "Translator", ctx.issue.translator.as_deref());
     } else {
@@ -365,12 +405,20 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         story_arcs: compose_list(
             ctx.is_issue_pinned("story_arcs"),
             ctx.issue.story_arc.as_deref(),
-            ctx.provider.story_arcs.iter().map(|a| a.name.clone()).collect(),
+            ctx.provider
+                .story_arcs
+                .iter()
+                .map(|a| a.name.clone())
+                .collect(),
         ),
         characters: compose_list(
             ctx.is_issue_pinned("characters"),
             ctx.issue.characters.as_deref(),
-            ctx.provider.characters.iter().map(|c| c.name.clone()).collect(),
+            ctx.provider
+                .characters
+                .iter()
+                .map(|c| c.name.clone())
+                .collect(),
         ),
         teams: compose_list(
             ctx.is_issue_pinned("teams"),
@@ -380,7 +428,11 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         locations: compose_list(
             ctx.is_issue_pinned("locations"),
             ctx.issue.locations.as_deref(),
-            ctx.provider.locations.iter().map(|l| l.name.clone()).collect(),
+            ctx.provider
+                .locations
+                .iter()
+                .map(|l| l.name.clone())
+                .collect(),
         ),
         tags: compose_list(
             ctx.is_issue_pinned("tags"),
@@ -502,7 +554,11 @@ fn folio_audit_line(ctx: &ComposeContext) -> Option<String> {
     }
 }
 
-fn prefer_user_opt_str(user_pinned: bool, db: Option<&str>, provider: Option<&str>) -> Option<String> {
+fn prefer_user_opt_str(
+    user_pinned: bool,
+    db: Option<&str>,
+    provider: Option<&str>,
+) -> Option<String> {
     let pick = if user_pinned { db } else { provider.or(db) };
     pick.filter(|s| !s.trim().is_empty()).map(str::to_owned)
 }
@@ -549,7 +605,11 @@ fn prefer_external_id_str(
 /// fields use the DB value (already CSV); otherwise we synthesize from
 /// the provider's structured Vec. Provider order is preserved; an
 /// empty result yields `None` so the serializer omits the element.
-fn compose_csv_field(user_pinned: bool, db: Option<&str>, provider_names: &[&str]) -> Option<String> {
+fn compose_csv_field(
+    user_pinned: bool,
+    db: Option<&str>,
+    provider_names: &[&str],
+) -> Option<String> {
     if user_pinned {
         return db.map(str::to_owned).filter(|s| !s.trim().is_empty());
     }
@@ -569,13 +629,21 @@ fn compose_csv_field(user_pinned: bool, db: Option<&str>, provider_names: &[&str
 /// our own scanner now recovers the boundaries.
 fn join_unambiguous_csv<'a, I: IntoIterator<Item = &'a str>>(names: I) -> String {
     let names: Vec<&str> = names.into_iter().collect();
-    let sep = if names.iter().any(|n| n.contains(',')) { "; " } else { ", " };
+    let sep = if names.iter().any(|n| n.contains(',')) {
+        "; "
+    } else {
+        ", "
+    };
     names.join(sep)
 }
 
 /// MetronInfo list variant — same logic as the CSV path but emits a
 /// `Vec<String>` (the schema uses container/leaf form, not CSV).
-fn compose_list(user_pinned: bool, db_csv: Option<&str>, provider_names: Vec<String>) -> Vec<String> {
+fn compose_list(
+    user_pinned: bool,
+    db_csv: Option<&str>,
+    provider_names: Vec<String>,
+) -> Vec<String> {
     if user_pinned {
         return split_csv(db_csv);
     }
@@ -625,7 +693,9 @@ fn compose_role<F: Fn(&issue::Model) -> Option<&str>>(
     let role_pin = role_label.to_ascii_lowercase();
     let pinned = ctx.is_issue_pinned("credits") || ctx.is_issue_pinned(&role_pin);
     if pinned {
-        return db_column(ctx.issue).map(str::to_owned).filter(|s| !s.trim().is_empty());
+        return db_column(ctx.issue)
+            .map(str::to_owned)
+            .filter(|s| !s.trim().is_empty());
     }
     // Filter provider credits by role label.
     let names: Vec<String> = ctx
@@ -636,7 +706,9 @@ fn compose_role<F: Fn(&issue::Model) -> Option<&str>>(
         .map(|c| c.name.clone())
         .collect();
     if names.is_empty() {
-        return db_column(ctx.issue).map(str::to_owned).filter(|s| !s.trim().is_empty());
+        return db_column(ctx.issue)
+            .map(str::to_owned)
+            .filter(|s| !s.trim().is_empty());
     }
     Some(join_unambiguous_csv(names.iter().map(String::as_str)))
 }
@@ -683,7 +755,10 @@ pub async fn load_external_ids(
         .filter(external_id::Column::EntityId.eq(entity_id))
         .all(db)
         .await?;
-    Ok(rows.into_iter().map(|r| (r.source, r.external_id)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.source, r.external_id))
+        .collect())
 }
 
 /// Load the set of field keys pinned by the user on `(entity_type,
@@ -709,9 +784,7 @@ pub async fn load_user_pins(
 /// audit-payload `suppressed_user_pins` array so retrospective drill-
 /// downs surface exactly which fields were preserved against the
 /// provider's offering.
-pub fn enumerate_suppressed_pins(
-    ctx: &ComposeContext,
-) -> Vec<String> {
+pub fn enumerate_suppressed_pins(ctx: &ComposeContext) -> Vec<String> {
     let mut out: Vec<&str> = Vec::new();
     // Issue-level keys whose composer reads from DB when pinned.
     for k in [
@@ -1035,12 +1108,17 @@ mod tests {
             series_user_pins: &empty_pins(),
         };
         let ci = compose_comicinfo(&ctx);
-        let notes = ci.notes.expect("attribution emits Notes even when none existed");
+        let notes = ci
+            .notes
+            .expect("attribution emits Notes even when none existed");
         // New shape: single Folio-tag line, Mylar3-readable [CVDBxxx] token.
         assert!(notes.starts_with("Tagged with Folio on "), "{notes}");
         assert!(notes.contains("ComicVine (id=12345)"), "{notes}");
         assert!(notes.contains("CC-BY-NC-SA"), "{notes}");
-        assert!(notes.contains("[CVDB12345]"), "Mylar3 sync token missing: {notes}");
+        assert!(
+            notes.contains("[CVDB12345]"),
+            "Mylar3 sync token missing: {notes}"
+        );
     }
 
     #[test]
@@ -1177,11 +1255,11 @@ mod tests {
         let notes = ci.notes.unwrap();
         let mut iter = notes.split("\n\n");
         assert!(iter.next().unwrap().starts_with("Tagged with Folio on "));
-        assert_eq!(
-            iter.next(),
-            Some("Editorial: variant covers by 5 artists."),
+        assert_eq!(iter.next(), Some("Editorial: variant covers by 5 artists."),);
+        assert!(
+            iter.next().is_none(),
+            "expected exactly two blocks: {notes}"
         );
-        assert!(iter.next().is_none(), "expected exactly two blocks: {notes}");
     }
 
     #[test]
@@ -1311,7 +1389,10 @@ mod tests {
             Some(["Fiona Staples".to_string()].as_slice()),
         );
         assert_eq!(mi.characters, vec!["Alana".to_string()]);
-        assert_eq!(mi.tags, vec!["science-fiction".to_string(), "romance".into()]);
+        assert_eq!(
+            mi.tags,
+            vec!["science-fiction".to_string(), "romance".into()]
+        );
     }
 
     #[test]
@@ -1422,7 +1503,10 @@ mod tests {
         };
         let ci = compose_comicinfo(&ctx);
         // No notes anywhere — no provider notes, no DB notes, GCD source.
-        assert!(ci.notes.is_none(), "GCD source must not emit CC-BY-NC-SA line");
+        assert!(
+            ci.notes.is_none(),
+            "GCD source must not emit CC-BY-NC-SA line"
+        );
     }
 
     // Silence the unused-import warning on Identifier — held for future
@@ -1445,6 +1529,9 @@ mod tests {
         // `split_csv` prefers `;` when present so embedded commas survive.
         let csv = join_unambiguous_csv(["Capes, Inc.", "Comet Twins"]);
         let parts = crate::library::scanner::metadata_rollup::split_csv(&csv);
-        assert_eq!(parts, vec!["Capes, Inc.".to_owned(), "Comet Twins".to_owned()]);
+        assert_eq!(
+            parts,
+            vec!["Capes, Inc.".to_owned(), "Comet Twins".to_owned()]
+        );
     }
 }

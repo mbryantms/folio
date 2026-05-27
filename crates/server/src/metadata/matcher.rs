@@ -383,9 +383,7 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
         curr[0] = i + 1;
         for (j, cb) in b.iter().enumerate() {
             let cost = usize::from(ca != cb);
-            curr[j + 1] = (curr[j] + 1)
-                .min(prev[j + 1] + 1)
-                .min(prev[j] + cost);
+            curr[j + 1] = (curr[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -436,8 +434,14 @@ mod tests {
     fn normalize_strips_articles_and_punctuation() {
         assert_eq!(normalize_for_match("The Walking Dead"), "walking dead");
         assert_eq!(normalize_for_match("Spider-Man!"), "spiderman");
-        assert_eq!(normalize_for_match("X-Men: First Class"), "xmen first class");
-        assert_eq!(normalize_for_match("  whitespace   chaos  "), "whitespace chaos");
+        assert_eq!(
+            normalize_for_match("X-Men: First Class"),
+            "xmen first class"
+        );
+        assert_eq!(
+            normalize_for_match("  whitespace   chaos  "),
+            "whitespace chaos"
+        );
     }
 
     #[test]
@@ -466,7 +470,10 @@ mod tests {
     fn publisher_similarity_substring_match() {
         assert_eq!(publisher_similarity(Some("Marvel"), Some("Marvel")), 1.0);
         // Case-insensitive equality.
-        assert_eq!(publisher_similarity(Some("Image Comics"), Some("image comics")), 1.0);
+        assert_eq!(
+            publisher_similarity(Some("Image Comics"), Some("image comics")),
+            1.0
+        );
         // Substring credit.
         assert!((publisher_similarity(Some("DC"), Some("DC Comics")) - 0.7).abs() < 1e-3);
         // Hard mismatch.
