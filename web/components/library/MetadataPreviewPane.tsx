@@ -46,6 +46,14 @@ export type MetadataPreviewPaneProps = {
    *  rows render their checkbox disabled rather than implying the
    *  user could opt in. */
   canOverride: boolean;
+  /** When set, BlockedByUser rows get a "Revert pin" button that
+   *  clears the user pin via this callback. Returning a Promise lets
+   *  the parent surface in-flight state on the button (greying out
+   *  until the mutation completes); the caller is expected to refetch
+   *  the diff query after success so the row re-classifies. The
+   *  series-scope dialog leaves this `undefined` (series-scope pin
+   *  revert isn't surfaced in M5.3). */
+  onRevertPin?: (field: string) => Promise<void>;
 };
 
 /** Decision strings that map to actionable writes. Anything else
@@ -163,7 +171,25 @@ export function MetadataPreviewPane({
   onApply,
   isApplying,
   canOverride,
+  onRevertPin,
 }: MetadataPreviewPaneProps) {
+  // Per-row reverting state so the Revert-pin button can disable
+  // itself while the mutation is in flight. Tracks the field key
+  // currently being cleared (or `null` when idle); the diff refetch
+  // that follows clears the row out of the `blocked_by_user` bucket
+  // and the row vanishes naturally.
+  const [revertingField, setRevertingField] = React.useState<string | null>(
+    null,
+  );
+  const handleRevert = async (field: string) => {
+    if (!onRevertPin || revertingField) return;
+    setRevertingField(field);
+    try {
+      await onRevertPin(field);
+    } finally {
+      setRevertingField(null);
+    }
+  };
   const toggleField = (key: string) => {
     const next = new Set(selectedFields);
     if (next.has(key)) next.delete(key);
@@ -199,6 +225,13 @@ export function MetadataPreviewPane({
   const changesCount = data.changes_count;
   const newIdsCount = data.external_ids_new.length;
   const conflictsCount = data.external_id_conflicts.length;
+  // M5.3 — suppressed-pins summary. Counts rows where the user has
+  // a pin that the apply will preserve (i.e. the proposed value would
+  // be blocked by the user-precedence rule). Renders alongside the
+  // "N changes pending" line for symmetry.
+  const suppressedPinsCount = data.rows.filter(
+    (r) => r.decision === "blocked_by_user",
+  ).length;
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -207,11 +240,19 @@ export function MetadataPreviewPane({
           <Button variant="ghost" size="sm" onClick={onBack} disabled={isApplying}>
             <ChevronLeft className="mr-1.5 h-4 w-4" /> Back
           </Button>
-          <p className="text-muted-foreground">
-            {changesCount === 0
-              ? "Nothing would change with the current settings."
-              : `${changesCount} change${changesCount === 1 ? "" : "s"} pending.`}
-          </p>
+          <div className="text-muted-foreground flex flex-col items-end gap-0.5">
+            <p>
+              {changesCount === 0
+                ? "Nothing would change with the current settings."
+                : `${changesCount} change${changesCount === 1 ? "" : "s"} pending.`}
+            </p>
+            {suppressedPinsCount > 0 && (
+              <p className="text-amber-700 dark:text-amber-400">
+                {suppressedPinsCount} of your edit
+                {suppressedPinsCount === 1 ? "" : "s"} will be preserved.
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="max-h-[55vh] overflow-y-auto pr-3">
@@ -263,6 +304,27 @@ export function MetadataPreviewPane({
                           </TooltipTrigger>
                           <TooltipContent side="top">{provenance}</TooltipContent>
                         </Tooltip>
+                        {row.decision === "blocked_by_user" && onRevertPin && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs"
+                            disabled={
+                              isApplying || revertingField === row.field
+                            }
+                            onClick={() => void handleRevert(row.field)}
+                          >
+                            {revertingField === row.field ? (
+                              <>
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                Reverting
+                              </>
+                            ) : (
+                              "Revert pin"
+                            )}
+                          </Button>
+                        )}
                       </div>
                       <div className="text-muted-foreground grid grid-cols-1 gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr]">
                         <span className="text-muted-foreground/80 uppercase tracking-wider text-[10px]">

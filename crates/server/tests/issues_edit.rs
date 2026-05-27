@@ -289,6 +289,25 @@ async fn patch(
     (status, body_json(resp.into_body()).await)
 }
 
+async fn delete_req(app: &TestApp, auth: &Authed, uri: &str) -> (StatusCode, serde_json::Value) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(uri)
+                .header(header::COOKIE, auth.cookie())
+                .header("X-CSRF-Token", auth.csrf.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
 async fn get(app: &TestApp, auth: &Authed, uri: &str) -> (StatusCode, serde_json::Value) {
     let resp = app
         .router
@@ -1058,4 +1077,148 @@ async fn patch_overwrites_existing_provider_provenance_with_user() {
         .unwrap()
         .unwrap();
     assert_eq!(row.set_by, "user");
+}
+
+#[tokio::test]
+async fn delete_field_pin_clears_user_provenance_and_syncs_user_edited() {
+    // M5.3 endpoint: DELETE /series/{s}/issues/{i}/field-provenance/{field}
+    // clears a user pin so the next provider apply can write the field.
+    // Also syncs `issue.user_edited` (the JSON list the scanner consults).
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let series_slug = "delete-pin-series";
+    let (_lib_id, _series_id, _series_slug, ids) = seed(
+        &app,
+        series_slug,
+        &[IssueSeed {
+            slug: "issue-1",
+            sort_number: Some(1.0),
+            number_raw: Some("1"),
+        }],
+    )
+    .await;
+    let issue_id = ids[0].clone();
+
+    // User PATCHes the title — flips provenance to set_by='user' AND
+    // adds "title" to user_edited.
+    let (status, _) = patch(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1"),
+        serde_json::json!({ "title": "My pinned title" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Sanity: provenance row + user_edited reflect the pin.
+    let row = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq("issue"))
+        .filter(field_provenance::Column::EntityId.eq(&issue_id))
+        .filter(field_provenance::Column::Field.eq("title"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.set_by, "user");
+
+    // DELETE the pin.
+    let (status, body) = delete_req(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1/field-provenance/title"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cleared"], serde_json::Value::Bool(true));
+
+    // Provenance row is gone.
+    let row = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq("issue"))
+        .filter(field_provenance::Column::EntityId.eq(&issue_id))
+        .filter(field_provenance::Column::Field.eq("title"))
+        .one(&app.state().db)
+        .await
+        .unwrap();
+    assert!(row.is_none(), "user pin should be deleted");
+
+    // user_edited synced — title dropped from the JSON list.
+    use entity::issue;
+    let issue_row = issue::Entity::find_by_id(&issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let edited: Vec<String> =
+        serde_json::from_value(issue_row.user_edited).unwrap_or_default();
+    assert!(
+        !edited.iter().any(|f| f == "title"),
+        "title should be dropped from user_edited; got {edited:?}",
+    );
+
+    // Idempotent: deleting again returns cleared=false (no row to drop).
+    let (status, body) = delete_req(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1/field-provenance/title"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cleared"], serde_json::Value::Bool(false));
+}
+
+#[tokio::test]
+async fn delete_field_pin_refuses_to_clear_provider_set_provenance() {
+    // Guard: clear_user_pin only deletes set_by='user' rows. A
+    // provider-set row (e.g. set_by='comicvine') survives the DELETE.
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let series_slug = "delete-pin-provider-series";
+    let (_lib_id, _series_id, _series_slug, ids) = seed(
+        &app,
+        series_slug,
+        &[IssueSeed {
+            slug: "issue-1",
+            sort_number: Some(1.0),
+            number_raw: Some("1"),
+        }],
+    )
+    .await;
+    let issue_id = ids[0].clone();
+
+    // Seed a provider-set row directly.
+    use server::metadata::MetadataField;
+    use server::metadata::identifier::Source;
+    use server::metadata::writers::{SetBy, write_field_provenance};
+    write_field_provenance(
+        &app.state().db,
+        "issue",
+        &issue_id,
+        MetadataField::Title,
+        SetBy::Provider(Source::ComicVine),
+        Some("12345".into()),
+    )
+    .await
+    .unwrap();
+
+    let (status, body) = delete_req(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1/field-provenance/title"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["cleared"], serde_json::Value::Bool(false),
+        "provider-set rows are not user pins — must not delete",
+    );
+
+    let row = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq("issue"))
+        .filter(field_provenance::Column::EntityId.eq(&issue_id))
+        .filter(field_provenance::Column::Field.eq("title"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("provider-set row should still exist");
+    assert_eq!(row.set_by, "comicvine");
 }

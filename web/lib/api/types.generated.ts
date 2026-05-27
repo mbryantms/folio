@@ -2750,6 +2750,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{series_slug}/issues/{issue_slug}/field-provenance/{field}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["issues_clear_field_pin"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{series_slug}/issues/{issue_slug}/health-issues": {
         parameters: {
             query?: never;
@@ -4619,6 +4635,15 @@ export interface components {
             imprint?: string | null;
             inker?: string | null;
             language_code?: string | null;
+            /** @description ISO-8601 timestamp of the last in-place rewrite of this issue's
+             *     archive bytes (from `metadata-sidecar-writeback-1.0` M3+ or
+             *     `archive-rewrite-1.0` M2+). `None` when Folio has never
+             *     rewritten the file. Surfaces in the UI as a "Metadata last
+             *     written {kind} on {date}" badge. */
+            last_rewrite_at?: string | null;
+            /** @description `"sidecar"` (XML refresh) or `"edit"` (page bytes touched).
+             *     Paired with [`Self::last_rewrite_at`]. */
+            last_rewrite_kind?: string | null;
             letterer?: string | null;
             /** @description Parent library's `default_reading_direction` (`"ltr"` | `"rtl"`).
              *     The reader consults this as a fallback below ComicInfo
@@ -12329,6 +12354,43 @@ export interface operations {
         responses: {
             /** @description confirmed */
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issues_clear_field_pin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+                /** @description MetadataField::key() — e.g. `title`, `credits`, `cover.variants` */
+                field: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description pin cleared (or no-op when none existed) */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

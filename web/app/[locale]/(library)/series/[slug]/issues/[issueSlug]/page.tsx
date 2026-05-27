@@ -305,6 +305,14 @@ export default async function IssuePage({
                 issueSlug={issue.slug}
               />
             </div>
+            {issue.last_rewrite_at && (
+              <p className="text-muted-foreground text-xs">
+                {issue.last_rewrite_kind === "edit"
+                  ? "Archive edited"
+                  : "Sidecar metadata refreshed"}{" "}
+                {formatRelativeDate(issue.last_rewrite_at)}
+              </p>
+            )}
           </div>
           {issue.summary && <Description text={issue.summary} />}
         </div>

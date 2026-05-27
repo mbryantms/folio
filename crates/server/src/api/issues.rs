@@ -41,6 +41,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(bulk_metadata))
         .routes(routes!(get_one))
         .routes(routes!(update))
+        .routes(routes!(clear_field_pin))
         .routes(routes!(scan_issue))
         .routes(routes!(next_in_series))
         .routes(routes!(list_issue_health))
@@ -705,6 +706,86 @@ pub struct ScanIssueQuery {
 
 fn default_true() -> bool {
     true
+}
+
+#[utoipa::path(
+    operation_id = "issues_clear_field_pin",
+    delete,
+    path = "/series/{series_slug}/issues/{issue_slug}/field-provenance/{field}",
+    params(
+        ("series_slug" = String, Path,),
+        ("issue_slug" = String, Path,),
+        ("field" = String, Path, description = "MetadataField::key() — e.g. `title`, `credits`, `cover.variants`"),
+    ),
+    responses(
+        (status = 200, description = "pin cleared (or no-op when none existed)"),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "issue not found"),
+    )
+)]
+#[handler]
+pub async fn clear_field_pin(
+    State(app): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath((series_slug, issue_slug, field)): AxPath<(String, String, String)>,
+) -> impl IntoResponse {
+    let row = match find_by_slugs(&app.db, &series_slug, &issue_slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if !visible_in_library(&app, &user, row.library_id).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    }
+    // Also drop the field from `issue.user_edited` — the JSON list the
+    // scanner consults to skip user-pinned columns on rescan. Without
+    // this the next scan would still treat the field as user-pinned
+    // (the list and the field_provenance row are paired bookkeeping).
+    let cleared = match crate::metadata::writers::clear_user_pin(
+        &app.db,
+        "issue",
+        &row.id,
+        &field,
+    )
+    .await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(issue_id = row.id, field, error = %e, "clear_field_pin failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    // user_edited JSON list — best-effort sync.
+    if cleared {
+        let mut edited: Vec<String> =
+            serde_json::from_value(row.user_edited.clone()).unwrap_or_default();
+        let before = edited.len();
+        edited.retain(|f| f != &field);
+        if edited.len() != before {
+            let mut am: issue::ActiveModel = row.clone().into();
+            am.user_edited = sea_orm::Set(serde_json::to_value(&edited).unwrap_or_default());
+            am.updated_at = sea_orm::Set(chrono::Utc::now().fixed_offset());
+            if let Err(e) = am.update(&app.db).await {
+                tracing::warn!(issue_id = row.id, field, error = %e, "user_edited sync failed");
+            }
+        }
+    }
+
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: user.id,
+            action: "admin.issue.field_pin_clear",
+            target_type: Some("issue"),
+            target_id: Some(row.id.clone()),
+            payload: serde_json::json!({"field": field, "cleared": cleared}),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+
+    (StatusCode::OK, Json(serde_json::json!({"cleared": cleared}))).into_response()
 }
 
 #[utoipa::path(

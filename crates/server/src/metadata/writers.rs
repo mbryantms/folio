@@ -1471,6 +1471,41 @@ pub async fn apply_cover<C: ConnectionTrait>(
 }
 
 // ─────────────────────────────────────────────────────────────────
+// User-pin clear (M5.3 — Revert-pin button surface).
+// ─────────────────────────────────────────────────────────────────
+
+/// Delete a user pin (`field_provenance` row with `set_by='user'`) on
+/// a single field. Returns `true` if a row was found + deleted,
+/// `false` when no user pin existed for that field (caller can ignore
+/// — the user-precedence rule was already off).
+///
+/// Provider-set rows are left untouched: a write of a user-pin clear
+/// must not silently nuke a `set_by='comicvine'` row that the next
+/// apply would re-overwrite anyway. Guards a hostile / mis-targeted
+/// DELETE that could otherwise clobber audit provenance.
+pub async fn clear_user_pin<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    field_key: &str,
+) -> Result<bool, sea_orm::DbErr> {
+    use entity::field_provenance;
+    let Some(row) = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq(entity_type))
+        .filter(field_provenance::Column::EntityId.eq(entity_id))
+        .filter(field_provenance::Column::Field.eq(field_key))
+        .filter(field_provenance::Column::SetBy.eq("user"))
+        .one(db)
+        .await?
+    else {
+        return Ok(false);
+    };
+    let am: field_provenance::ActiveModel = row.into();
+    am.delete(db).await?;
+    Ok(true)
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Variant covers.
 // ─────────────────────────────────────────────────────────────────
 

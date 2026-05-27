@@ -756,6 +756,17 @@ pub struct IssueDetailView {
     /// Empty until the get_one handler populates it.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub creator_slugs: std::collections::HashMap<String, String>,
+    /// ISO-8601 timestamp of the last in-place rewrite of this issue's
+    /// archive bytes (from `metadata-sidecar-writeback-1.0` M3+ or
+    /// `archive-rewrite-1.0` M2+). `None` when Folio has never
+    /// rewritten the file. Surfaces in the UI as a "Metadata last
+    /// written {kind} on {date}" badge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_rewrite_at: Option<String>,
+    /// `"sidecar"` (XML refresh) or `"edit"` (page bytes touched).
+    /// Paired with [`Self::last_rewrite_at`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_rewrite_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -869,6 +880,8 @@ impl IssueDetailView {
             pages: serde_json::from_value(m.pages).unwrap_or_default(),
             comic_info_raw: m.comic_info_raw,
             creator_slugs: std::collections::HashMap::new(),
+            last_rewrite_at: m.last_rewrite_at.map(|t| t.to_rfc3339()),
+            last_rewrite_kind: m.last_rewrite_kind,
         }
     }
 }

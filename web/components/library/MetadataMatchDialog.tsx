@@ -41,6 +41,7 @@ import { apiMutate } from "@/lib/api/mutations";
 import {
   useApplyMetadataForIssue,
   useApplyMetadataForSeries,
+  useClearIssueFieldPin,
 } from "@/lib/api/mutations";
 import {
   useLibrary,
@@ -118,6 +119,19 @@ export function MetadataMatchForm({
     scope.kind === "issue" ? scope.issueSlug : "",
   );
   const apply = scope.kind === "series" ? seriesApply : issueApply;
+  // M5.3 — issue-scope Revert-pin support. Series-scope diff lives on
+  // the series row, not the issue row; surfacing series-scope pin
+  // revert is a follow-up.
+  const clearIssuePin = useClearIssueFieldPin(
+    scope.kind === "issue" ? scope.seriesSlug : "",
+    scope.kind === "issue" ? scope.issueSlug : "",
+  );
+  const onRevertPin =
+    scope.kind === "issue"
+      ? async (field: string) => {
+          await clearIssuePin.mutateAsync({ field });
+        }
+      : undefined;
   const qc = useQueryClient();
   const [runId, setRunId] = React.useState<string | null>(null);
   const [searchPending, setSearchPending] = React.useState(false);
@@ -508,6 +522,7 @@ export function MetadataMatchForm({
           onApply={onConfirmApply}
           isApplying={apply.isPending}
           canOverride={isAdmin}
+          onRevertPin={onRevertPin}
         />
       ) : (
         <ScrollArea className="max-h-[50vh] pr-3 [&>div>div]:block!">

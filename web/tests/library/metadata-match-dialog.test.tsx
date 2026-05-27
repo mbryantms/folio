@@ -52,6 +52,11 @@ vi.mock("@/lib/api/mutations", () => ({
     isPending: false,
     isSuccess: false,
   }),
+  useClearIssueFieldPin: () => ({
+    mutate: () => undefined,
+    mutateAsync: async () => ({ cleared: true }),
+    isPending: false,
+  }),
 }));
 
 vi.mock("@tanstack/react-query", async (importOriginal) => {

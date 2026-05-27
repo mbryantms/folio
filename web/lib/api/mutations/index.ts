@@ -806,6 +806,40 @@ export function useUpdateIssue(seriesSlug: string, issueSlug: string) {
 }
 
 /**
+ * `DELETE /series/{series_slug}/issues/{issue_slug}/field-provenance/{field}`
+ * — clear a user pin on a single field. Used by the MetadataMatchDialog
+ * preview pane's per-row "Revert pin" button (M5.3): on success the diff
+ * is refetched so the row re-classifies live to `WouldFill` /
+ * `WouldReplace` and the user can Apply normally.
+ */
+export function useClearIssueFieldPin(
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  const qc = useQueryClient();
+  return useApiMutation<{ cleared: boolean }, { field: string }>(
+    ({ field }) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/field-provenance/${encodeURIComponent(field)}`,
+      method: "DELETE",
+    }),
+    {
+      successMessage: "Pin cleared",
+      onSuccess: () => {
+        // Invalidate the diff query so the preview pane re-fetches and
+        // the row's `decision` drops out of `blocked_by_user`.
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "issues", issueSlug, "metadata"],
+          exact: false,
+        });
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "issues", issueSlug],
+        });
+      },
+    },
+  );
+}
+
+/**
  * `POST /series/{series_slug}/issues/{issue_slug}/scan` — narrow per-folder
  * rescan rooted at the issue's series. The user-facing affordance is "Scan
  * issue" (consistent with "Scan library" / "Scan series").

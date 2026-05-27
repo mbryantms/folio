@@ -6233,6 +6233,49 @@
         }
       }
     },
+    "/api/series/{series_slug}/issues/{issue_slug}/field-provenance/{field}": {
+      "delete": {
+        "operationId": "issues_clear_field_pin",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "field",
+            "in": "path",
+            "description": "MetadataField::key() — e.g. `title`, `credits`, `cover.variants`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "pin cleared (or no-op when none existed)"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
     "/api/series/{series_slug}/issues/{issue_slug}/health-issues": {
       "get": {
         "summary": "Tranche B of recovery-visibility (`~/.claude/plans/recovery-visibility-1.0.md`).\nReturns the open `library_health_issues` rows whose payload `path`\nmatches this issue's file. The issue detail page renders a small\nbadge when this list is non-empty, and the reader fires a one-time\ntoast on issue open. Resolved + dismissed rows are excluded — the\nbadge represents \"things you can still act on right now.\"",
@@ -11391,6 +11434,20 @@
               "string",
               "null"
             ]
+          },
+          "last_rewrite_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO-8601 timestamp of the last in-place rewrite of this issue's\narchive bytes (from `metadata-sidecar-writeback-1.0` M3+ or\n`archive-rewrite-1.0` M2+). `None` when Folio has never\nrewritten the file. Surfaces in the UI as a \"Metadata last\nwritten {kind} on {date}\" badge."
+          },
+          "last_rewrite_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`\"sidecar\"` (XML refresh) or `\"edit\"` (page bytes touched).\nPaired with [`Self::last_rewrite_at`]."
           },
           "letterer": {
             "type": [
