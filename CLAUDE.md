@@ -328,12 +328,58 @@ Default admin (first registered user becomes admin):
   every new cover (provider-applied or scanner-extracted) gets
   `phash` + `dhash` + `ahash` computed at write time via
   [`crate::metadata::phash`](crates/server/src/metadata/phash.rs).
-  Decode failures soft-fail (column stays NULL; backfill job
-  picks it up later). The matcher's `cover_phash` component (M9.5)
-  is bonus-on-top with a hard cap at +10 on the 100-point scale —
-  don't promote it above that without re-calibrating
-  `metadata.auto_apply_threshold` (a higher phash weight lets a
-  perfect cover match rescue an obviously wrong text match).
+  Decode failures soft-fail (column stays NULL; backfill job picks
+  it up later).
+
+- **Matching engine** (matching-accuracy-1.0): the matcher inverts
+  the pre-M4 weighted-bonus model — cover-pHash is now the
+  **primary** bucket discriminant. [`Score::bucket`](crates/server/src/metadata/matcher.rs)
+  consults `cover_hamming` first using ComicTagger's verbatim
+  ladder (`STRONG_SCORE_THRESH=8`, `MIN_SCORE_THRESH=16`,
+  `MIN_ALTERNATE_SCORE_THRESH=12` for variant-source matches,
+  `MIN_SCORE_DISTANCE=4` for the gap-to-next-best guard). Text
+  scoring is the fallback when no phash is available. Don't add a
+  weighted `cover_phash` bonus back onto `total` — the M4 inversion
+  is intentional and the golden regression suite at
+  [`crates/server/tests/matching_accuracy_golden.rs`](crates/server/tests/matching_accuracy_golden.rs)
+  enforces it.
+
+  **Pre-filter** ([`orchestrator::pre_filter_series`](crates/server/src/metadata/orchestrator.rs))
+  drops candidates BEFORE scoring on (a) hard year gate
+  (`cand > local + 1`) and (b) per-library
+  `metadata_publisher_blacklist`. Always build via
+  `PreFilter::from_library(...)` so bad JSON shape soft-fails
+  instead of panicking.
+
+  **Text pipeline**:
+  [`metadata::title_norm::sanitize_title`](crates/server/src/metadata/title_norm.rs)
+  + [`metadata::ratcliff::three_pass_ratio`](crates/server/src/metadata/ratcliff.rs)
+  mirror ComicTagger's normalization step-for-step so the same
+  inputs produce the same comparison keys both tools would. The
+  23-word article list is lifted verbatim; don't tune per-language
+  without re-calibrating against the golden suite.
+
+  **Reviewer heuristics — reject PRs that:**
+  - Add a weighted `cover_phash` field back to `Score` or fold
+    cover similarity into `score.total`. M4 inverted this
+    deliberately.
+  - Change any of the cover-Hamming ladder constants
+    (`STRONG_SCORE_THRESH`, `MIN_SCORE_THRESH`,
+    `MIN_SCORE_DISTANCE`, `MIN_ALTERNATE_SCORE_THRESH`) without
+    re-running the golden suite AND adding boundary fixtures.
+  - Introduce a new operator-tunable threshold without the full
+    settings-registry + `Config` field + `apply_setting` branch +
+    UI surface chain. The pattern:
+    [`metadata.auto_apply_threshold`](crates/server/src/settings/registry.rs)
+    is the template.
+  - Read `library.metadata_publisher_blacklist` directly instead
+    of `PreFilter::from_library`. The JSON column tolerates bad
+    shape; the helper's `as_array().filter_map()` is the only path
+    that doesn't panic on operator-written garbage.
+
+  See [`docs/dev/matching-accuracy.md`](docs/dev/matching-accuracy.md)
+  for the full pipeline diagram, operator-tunable knob list,
+  telemetry recipe, and the fixture-adding playbook.
 
 ## Editing rules
 
@@ -415,6 +461,7 @@ Default admin (first registered user becomes admin):
 - Metadata providers architecture: [docs/dev/metadata-providers.md](docs/dev/metadata-providers.md)
 - Metadata providers operator guide (API keys, weekly refresh, troubleshooting): [docs/dev/metadata-operator-guide.md](docs/dev/metadata-operator-guide.md)
 - Metadata sidecar writeback (DB-canonical → XML-canonical inversion, per-library opt-in, drift surfacing): [docs/dev/metadata-sidecar-writeback.md](docs/dev/metadata-sidecar-writeback.md)
+- Matching accuracy (ComicTagger-derived heuristics, threshold tuning, fixture-adding playbook): [docs/dev/matching-accuracy.md](docs/dev/matching-accuracy.md)
 - M0 schema restructure (external_ids + junctions + field_provenance + issue_cover): [docs/dev/schema-restructure.md](docs/dev/schema-restructure.md)
 - Active plans live under `~/.claude/plans/`; check the auto-memory index for
   what's currently in flight vs. shipped.
