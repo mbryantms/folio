@@ -34,6 +34,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list))
         .routes(routes!(admin_list))
         .routes(routes!(dismiss))
+        .routes(routes!(flush_metadata_drift))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -110,17 +111,70 @@ pub async fn list(
         .order_by_desc(library_health_issue::Column::Severity)
         .order_by_desc(library_health_issue::Column::LastSeenAt);
 
-    match select.all(&app.db).await {
-        Ok(rows) => Json(
-            rows.into_iter()
-                .map(HealthIssueView::from)
-                .collect::<Vec<_>>(),
-        )
-        .into_response(),
+    let rows = match select.all(&app.db).await {
+        Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "list health issues failed");
-            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
+    };
+    let mut views: Vec<HealthIssueView> = rows.into_iter().map(HealthIssueView::from).collect();
+
+    // M6 of metadata-sidecar-writeback-1.0: synthesize a virtual
+    // `MetadataDriftFromXml` row when the library is in writeback mode
+    // AND has user pins that haven't been written into XML yet. The row
+    // is NOT persisted — it's computed per request — so dismiss/resolve
+    // don't apply to it (the UI recognizes the synthetic id prefix and
+    // hides those affordances). Skipped for libraries with writeback
+    // off, since "drift from XML" is meaningless there.
+    if lib.metadata_writeback_enabled
+        && !q.include_resolved.unwrap_or(false)
+        && !q.include_dismissed.unwrap_or(false)
+    {
+        match crate::metadata::drift::count_drift_in_library(&app.db, uuid).await {
+            Ok(summary) if !summary.is_empty() => {
+                views.insert(0, synth_metadata_drift_row(&summary));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::error!(error = %e, library_id = %uuid, "drift query failed; omitting synth row");
+            }
+        }
+    }
+
+    Json(views).into_response()
+}
+
+/// Stable id for the synthesized drift row. The `synth:` prefix is the
+/// signal to UI code that dismiss/resolve don't apply — see the
+/// frontend's HealthIssueRow.tsx.
+const SYNTH_METADATA_DRIFT_ID: &str = "synth:metadata_drift_from_xml";
+
+/// Build the in-memory `MetadataDriftFromXml` row. Has no DB backing —
+/// the dismiss endpoint rejects this id on lookup, which is fine because
+/// the row's only verb is the flush endpoint (the row naturally
+/// disappears on next request after a successful flush + rescan).
+fn synth_metadata_drift_row(summary: &crate::metadata::drift::DriftSummary) -> HealthIssueView {
+    let now = chrono::Utc::now().fixed_offset().to_rfc3339();
+    HealthIssueView {
+        id: SYNTH_METADATA_DRIFT_ID.to_owned(),
+        kind: "MetadataDriftFromXml".to_owned(),
+        severity: "info".to_owned(),
+        fingerprint: SYNTH_METADATA_DRIFT_ID.to_owned(),
+        payload: serde_json::json!({
+            "drifted_issue_count": summary.drifted_issue_count,
+            "drifted_series_count": summary.drifted_series_count,
+            "affected_series_ids": summary
+                .affected_series_ids
+                .iter()
+                .map(|u| u.to_string())
+                .collect::<Vec<_>>(),
+        }),
+        first_seen_at: now.clone(),
+        last_seen_at: now,
+        resolved_at: None,
+        dismissed_at: None,
+        scan_id: None,
     }
 }
 
@@ -366,4 +420,277 @@ pub async fn dismiss(
     );
 
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// Response body for the metadata-drift flush endpoint.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FlushMetadataDriftResp {
+    /// Number of per-issue rewrite jobs enqueued.
+    pub enqueued_rewrites: u32,
+    /// Number of issues that were drift-eligible but couldn't be
+    /// composed (missing archive, busy mutex, …). Operator can re-run
+    /// the flush to retry.
+    pub skipped: u32,
+}
+
+/// `POST /libraries/{slug}/metadata-drift/flush` — admin-only.
+///
+/// M6 one-click action paired with the synthesized `MetadataDriftFromXml`
+/// health row. Walks every drifted series in the library, composes the
+/// ComicInfo + MetronInfo XML from the current DB state (the composer
+/// reads `field_provenance.set_by='user'` rows and prefers them over the
+/// provider-blank fallback), and enqueues a `RewriteIssueSidecarsJob`
+/// per drifted issue. The series-scope rescan is **not** triggered here
+/// — each per-issue job re-enqueues its own scoped rescan on completion
+/// (same as the issue-scope apply path) — so a partial fan-out failure
+/// doesn't strand the successful issues.
+///
+/// Returns 409 when the library has `metadata_writeback_enabled=false`
+/// (the synth row never appears in that mode either; the 409 protects
+/// scripted callers).
+#[utoipa::path(
+    operation_id = "library_metadata_drift_flush",
+    post,
+    path = "/libraries/{slug}/metadata-drift/flush",
+    params(("slug" = String, Path,)),
+    responses(
+        (status = 200, body = FlushMetadataDriftResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "library not found"),
+        (status = 409, description = "writeback disabled on this library"),
+    )
+)]
+#[handler]
+pub async fn flush_metadata_drift(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath(slug): AxPath<String>,
+) -> impl IntoResponse {
+    let lib = match crate::api::libraries::find_by_slug(&app.db, &slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if !lib.metadata_writeback_enabled || !lib.allow_archive_writeback {
+        return error(
+            StatusCode::CONFLICT,
+            "writeback_disabled",
+            "library does not have writeback enabled",
+        );
+    }
+
+    let summary = match crate::metadata::drift::count_drift_in_library(&app.db, lib.id).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, library_id = %lib.id, "drift query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if summary.is_empty() {
+        record_admin_action!(
+            db = &app.db,
+            ctx = &ctx,
+            actor = actor.id,
+            action = "admin.library.metadata_drift.flush",
+            target = ("library", lib.id.to_string()),
+            payload = serde_json::json!({
+                "drifted_issue_count": 0,
+                "enqueued_rewrites": 0,
+            }),
+        );
+        return Json(FlushMetadataDriftResp {
+            enqueued_rewrites: 0,
+            skipped: 0,
+        })
+        .into_response();
+    }
+
+    let (enqueued, skipped) =
+        enqueue_drift_flush_for_series(&app, &summary.affected_series_ids).await;
+
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.library.metadata_drift.flush",
+        target = ("library", lib.id.to_string()),
+        payload = serde_json::json!({
+            "drifted_issue_count": summary.drifted_issue_count,
+            "drifted_series_count": summary.drifted_series_count,
+            "enqueued_rewrites": enqueued,
+            "skipped": skipped,
+        }),
+    );
+
+    Json(FlushMetadataDriftResp {
+        enqueued_rewrites: enqueued,
+        skipped,
+    })
+    .into_response()
+}
+
+/// Walk every series in `series_ids`, compose ComicInfo + MetronInfo for
+/// each drifted issue from the current DB state, and push a
+/// `RewriteIssueSidecarsJob` per issue onto the apalis queue. Returns
+/// `(enqueued, skipped)`.
+///
+/// "Compose from DB state" means we feed the composer an empty
+/// `GenericMetadata` so the no-provider branch falls through to the DB
+/// columns — which already reflect the user pins. The composer still
+/// reads `field_provenance` to determine which junctions / external_ids
+/// were user-set vs provider-set so the new XML carries the right
+/// provenance markers.
+async fn enqueue_drift_flush_for_series(
+    app: &AppState,
+    series_ids: &[Uuid],
+) -> (u32, u32) {
+    use apalis::prelude::Storage;
+    use entity::{issue, series};
+    use sea_orm::EntityTrait;
+
+    let mut enqueued: u32 = 0;
+    let mut skipped: u32 = 0;
+    let empty_provider = crate::metadata::provider::GenericMetadata::default();
+
+    for series_uuid in series_ids {
+        let series_id_str = series_uuid.to_string();
+        let series_row = match series::Entity::find_by_id(*series_uuid)
+            .one(&app.db)
+            .await
+        {
+            Ok(Some(r)) => r,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::error!(error = %e, series_id = %series_uuid, "drift flush: series load failed");
+                continue;
+            }
+        };
+
+        let drifted = match crate::metadata::drift::drifted_issues_in_series(&app.db, *series_uuid)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, series_id = %series_uuid, "drift flush: per-series query failed");
+                continue;
+            }
+        };
+
+        let series_external_ids = match crate::metadata::sidecar_compose::load_external_ids(
+            &app.db,
+            "series",
+            &series_id_str,
+        )
+        .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(error = %e, series_id = %series_uuid, "drift flush: series external_ids load failed");
+                continue;
+            }
+        };
+        let series_user_pins = match crate::metadata::sidecar_compose::load_user_pins(
+            &app.db,
+            "series",
+            &series_id_str,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, series_id = %series_uuid, "drift flush: series pin load failed");
+                continue;
+            }
+        };
+
+        for issue_id in &drifted {
+            let issue_row = match issue::Entity::find_by_id(issue_id.as_str())
+                .one(&app.db)
+                .await
+            {
+                Ok(Some(r)) => r,
+                Ok(None) => {
+                    skipped += 1;
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, %issue_id, "drift flush: issue load failed");
+                    skipped += 1;
+                    continue;
+                }
+            };
+            let issue_external_ids = match crate::metadata::sidecar_compose::load_external_ids(
+                &app.db,
+                "issue",
+                issue_id,
+            )
+            .await
+            {
+                Ok(m) => m,
+                Err(_) => {
+                    skipped += 1;
+                    continue;
+                }
+            };
+            let issue_user_pins = match crate::metadata::sidecar_compose::load_user_pins(
+                &app.db,
+                "issue",
+                issue_id,
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(_) => {
+                    skipped += 1;
+                    continue;
+                }
+            };
+
+            let cctx = crate::metadata::sidecar_compose::ComposeContext {
+                provider: &empty_provider,
+                issue: &issue_row,
+                series: &series_row,
+                issue_external_ids: &issue_external_ids,
+                series_external_ids: &series_external_ids,
+                issue_user_pins: &issue_user_pins,
+                series_user_pins: &series_user_pins,
+            };
+            let ci = crate::metadata::sidecar_compose::compose_comicinfo(&cctx);
+            let mi = crate::metadata::sidecar_compose::compose_metroninfo(&cctx);
+            let suppressed = crate::metadata::sidecar_compose::enumerate_suppressed_pins(&cctx);
+            let ci_xml = parsers::comicinfo::serialize(&ci);
+            let mi_xml = parsers::metroninfo::serialize(&mi);
+
+            let mut storage = app.jobs.rewrite_issue_sidecars_storage.clone();
+            let push = storage
+                .push(crate::jobs::rewrite_sidecars::RewriteIssueSidecarsJob {
+                    issue_id: issue_id.clone(),
+                    comic_info_xml: ci_xml,
+                    metron_info_xml: mi_xml,
+                    suppressed_user_pins: suppressed,
+                    actor_id: None,
+                    actor_ip: None,
+                    actor_ua: None,
+                    // Drift flush has no triggering metadata_run — it's a
+                    // composer-only pass driven by user-pin state, not by
+                    // a provider candidate.
+                    triggering_run_id: None,
+                    triggering_run_ordinal: None,
+                    // Let each worker enqueue its own scoped rescan;
+                    // partial fan-out failure shouldn't strand the
+                    // succeeding issues.
+                    skip_rescan: false,
+                })
+                .await;
+            match push {
+                Ok(_) => enqueued += 1,
+                Err(e) => {
+                    tracing::error!(error = %e, %issue_id, "drift flush: rewrite job enqueue failed");
+                    skipped += 1;
+                }
+            }
+        }
+    }
+
+    (enqueued, skipped)
 }

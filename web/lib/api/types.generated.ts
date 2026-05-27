@@ -1437,6 +1437,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/libraries/{slug}/metadata-drift/flush": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /libraries/{slug}/metadata-drift/flush` — admin-only.
+         * @description M6 one-click action paired with the synthesized `MetadataDriftFromXml`
+         *     health row. Walks every drifted series in the library, composes the
+         *     ComicInfo + MetronInfo XML from the current DB state (the composer
+         *     reads `field_provenance.set_by='user'` rows and prefers them over the
+         *     provider-blank fallback), and enqueues a `RewriteIssueSidecarsJob`
+         *     per drifted issue. The series-scope rescan is **not** triggered here
+         *     — each per-issue job re-enqueues its own scoped rescan on completion
+         *     (same as the issue-scope apply path) — so a partial fan-out failure
+         *     doesn't strand the successful issues.
+         *
+         *     Returns 409 when the library has `metadata_writeback_enabled=false`
+         *     (the synth row never appears in that mode either; the 409 protects
+         *     scripted callers).
+         */
+        post: operations["library_metadata_drift_flush"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/libraries/{slug}/metadata/refresh": {
         parameters: {
             query?: never;
@@ -4504,6 +4536,21 @@ export interface components {
          * @enum {string}
          */
         FitMode: "width" | "height" | "original";
+        /** @description Response body for the metadata-drift flush endpoint. */
+        FlushMetadataDriftResp: {
+            /**
+             * Format: int32
+             * @description Number of per-issue rewrite jobs enqueued.
+             */
+            enqueued_rewrites: number;
+            /**
+             * Format: int32
+             * @description Number of issues that were drift-eligible but couldn't be
+             *     composed (missing archive, busy mutex, …). Operator can re-run
+             *     the flush to retry.
+             */
+            skipped: number;
+        };
         FunnelBucket: {
             /** @description One of `"0-25"`, `"25-50"`, `"50-75"`, `"75-99"`, `"100"`. */
             bucket: string;
@@ -9808,6 +9855,48 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    library_metadata_drift_flush: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlushMetadataDriftResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description writeback disabled on this library */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

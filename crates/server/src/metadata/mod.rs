@@ -19,6 +19,7 @@ pub mod apply;
 pub mod cache;
 pub mod comicvine;
 pub mod diff;
+pub mod drift;
 pub mod field;
 pub mod identifier;
 pub mod matcher;
