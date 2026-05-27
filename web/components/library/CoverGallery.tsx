@@ -31,34 +31,79 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useIssueCovers } from "@/lib/api/queries";
 import type { IssueCoverRow } from "@/lib/api/types";
 
-export function CoverGallery({ issueId }: { issueId: string }) {
+/**
+ * `chrome` controls the outer wrapper:
+ *   - `"card"` (default): `<Card>` with a "Covers ({n})" header. Used by the
+ *     legacy panel layout + standalone surfaces. Returns `null` when the
+ *     issue has only a primary cover (no variants to show — the page
+ *     header already displays the primary).
+ *   - `"bare"`: drops the `<Card>` chrome. Caller owns the section title
+ *     (e.g. the parent tab label is "Covers"). Always renders even when
+ *     only the primary exists, because tab content shouldn't silently
+ *     disappear after the user clicked the tab.
+ */
+export function CoverGallery({
+  issueId,
+  chrome = "card",
+}: {
+  issueId: string;
+  chrome?: "card" | "bare";
+}) {
   const q = useIssueCovers(issueId);
   const data = q.data;
 
-  // Hide the surface entirely until we either have variants OR we
-  // know there's nothing to show.
   if (q.isLoading) {
+    const loading = (
+      <div className="text-muted-foreground flex items-center gap-2 py-3 text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+      </div>
+    );
+    if (chrome === "bare") return loading;
     return (
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium">Covers</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="text-muted-foreground flex items-center gap-2 py-3 text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-          </div>
-        </CardContent>
+        <CardContent>{loading}</CardContent>
       </Card>
     );
   }
+
   if (!data || data.covers.length === 0) {
+    if (chrome === "bare") {
+      // Tab content: render an empty-state instead of silently
+      // collapsing — clicking the tab and seeing nothing is worse than
+      // an explicit "No covers yet" message.
+      return (
+        <p className="text-muted-foreground text-sm">
+          No covers recorded for this issue yet. Run a metadata fetch from a
+          provider that returns variant covers (Metron) to populate this list.
+        </p>
+      );
+    }
     return null;
   }
-  // If the only cover is the primary slot and we have no variants,
-  // skip rendering — the issue page header already shows the primary
-  // cover, so a single-tile gallery is redundant.
+
+  // Card mode: hide the gallery when only the primary exists (the
+  // issue-page header already shows it; a single-tile gallery is
+  // redundant). Bare mode always renders because the tab label is
+  // already a commitment to show something.
   const variantCount = data.covers.filter((c) => c.kind !== "primary").length;
-  if (variantCount === 0) return null;
+  if (chrome === "card" && variantCount === 0) return null;
+
+  const grid = (
+    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+      {data.covers.map((c) => (
+        <CoverTile
+          key={c.id}
+          row={c}
+          fallbackUrl={data.fallback_primary_url}
+        />
+      ))}
+    </ul>
+  );
+
+  if (chrome === "bare") return grid;
 
   return (
     <Card>
@@ -67,17 +112,7 @@ export function CoverGallery({ issueId }: { issueId: string }) {
           Covers ({data.covers.length})
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-          {data.covers.map((c) => (
-            <CoverTile
-              key={c.id}
-              row={c}
-              fallbackUrl={data.fallback_primary_url}
-            />
-          ))}
-        </ul>
-      </CardContent>
+      <CardContent>{grid}</CardContent>
     </Card>
   );
 }

@@ -1,44 +1,30 @@
 "use client";
 
 /**
- * Issue-page metadata panel (metadata-providers-1.0 M5.2).
+ * Issue-page sources footer — the CV/Metron TOS attribution surface.
  *
- * Mirrors `<SeriesMetadataPanel>` for the issue page. Mounts the
- * external-ids card + cover gallery + sources footer. The dialog
- * itself opens from the IssueSettingsMenu's "Fetch metadata…" item
- * (parent owns dialog state so the dropdown auto-closes on select).
+ * Originally a wider "Issue metadata panel" with `<ExternalIdsCard>`,
+ * `<CoverGallery>`, and `<SourcesFooter>` stacked in a 2-col grid.
+ * The first two moved into the page's `<Tabs>` row (so the issue
+ * page has a tab-per-section model end-to-end); only the attribution
+ * footer remains here because it must stay visible regardless of
+ * which tab the user has open.
  *
- * Issues don't carry the per-entity "Auto-sync pause" toggle —
- * `metadata_sync_paused` lives on the series row, not the issue —
- * so the SyncStatusCard isn't mounted here.
+ * Kept as a separate client component so the server-rendered
+ * `page.tsx` can stay an `async function` without pulling
+ * `useExternalIdsIssue` into the SSR path.
  */
 
-import { CoverGallery } from "@/components/library/CoverGallery";
-import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { SourcesFooter } from "@/components/library/SourcesFooter";
 import { useExternalIdsIssue } from "@/lib/api/queries";
 
-export function IssueMetadataPanel({
+export function IssueSourcesFooter({
   seriesSlug,
   issueSlug,
-  issueId,
 }: {
   seriesSlug: string;
   issueSlug: string;
-  issueId: string;
 }) {
   const externalIds = useExternalIdsIssue(seriesSlug, issueSlug);
-  return (
-    <section className="grid gap-4 sm:grid-cols-2">
-      <ExternalIdsCard
-        entityType="issue"
-        seriesSlug={seriesSlug}
-        issueSlug={issueSlug}
-      />
-      <CoverGallery issueId={issueId} />
-      <div className="sm:col-span-2">
-        <SourcesFooter rows={externalIds.data?.rows} />
-      </div>
-    </section>
-  );
+  return <SourcesFooter rows={externalIds.data?.rows} />;
 }

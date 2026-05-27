@@ -59,9 +59,22 @@ const SOURCES: Array<{ value: string; label: string }> = [
   { value: "asin", label: "ASIN" },
 ];
 
-export type ExternalIdsCardProps =
+export type ExternalIdsCardProps = (
   | { entityType: "series"; seriesSlug: string }
-  | { entityType: "issue"; seriesSlug: string; issueSlug: string };
+  | { entityType: "issue"; seriesSlug: string; issueSlug: string }
+) & {
+  /**
+   * `"card"` (default): wraps content in a [`<Card>`] with a "External IDs"
+   * header — matches the series-page panel + legacy issue-page layout.
+   *
+   * `"bare"`: drops the `<Card>` chrome entirely (no header, no border).
+   * Caller is responsible for the section title. Used by the issue page
+   * tabs where the tab label IS the title and a nested card would
+   * visually clash with the other tabs' content (MetadataGrid, ChipList,
+   * etc. — none of which use Cards).
+   */
+  chrome?: "card" | "bare";
+};
 
 export function ExternalIdsCard(props: ExternalIdsCardProps) {
   const seriesList = useExternalIdsSeries(
@@ -121,23 +134,41 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
     );
   };
 
-  return (
+  const chrome = props.chrome ?? "card";
+  const header =
+    chrome === "card" ? (
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-sm font-medium">External IDs</CardTitle>
+        {!adding && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setAdding(true)}
+            aria-label="Add identifier"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </CardHeader>
+    ) : (
+      // Bare mode: tab label is the title; only surface the "+ Add"
+      // affordance, right-aligned, on a thin row above the list. Keeps
+      // the action discoverable without a heavy header.
+      !adding && (
+        <div className="flex justify-end pb-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setAdding(true)}
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" /> Add ID
+          </Button>
+        </div>
+      )
+    );
+
+  const body = (
     <>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-sm font-medium">External IDs</CardTitle>
-          {!adding && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setAdding(true)}
-              aria-label="Add identifier"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
           {query.isLoading ? (
             <div className="text-muted-foreground flex items-center gap-2 py-3">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -246,8 +277,22 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
               </div>
             </form>
           )}
-        </CardContent>
-      </Card>
+    </>
+  );
+
+  return (
+    <>
+      {chrome === "card" ? (
+        <Card>
+          {header}
+          <CardContent className="space-y-2 text-sm">{body}</CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-2 text-sm">
+          {header}
+          {body}
+        </div>
+      )}
 
       <AlertDialog
         open={confirmRemove !== null}

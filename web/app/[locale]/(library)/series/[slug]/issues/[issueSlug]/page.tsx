@@ -18,9 +18,11 @@ import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
 import { Description } from "@/components/library/Description";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
+import { CoverGallery } from "@/components/library/CoverGallery";
+import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
 
-import { IssueMetadataPanel } from "./IssueMetadataPanel";
+import { IssueSourcesFooter } from "./IssueMetadataPanel";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
 import { UserRating } from "@/components/library/UserRating";
@@ -325,6 +327,8 @@ export default async function IssuePage({
           <TabsTrigger value="credits">Credits</TabsTrigger>
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
           <TabsTrigger value="genres">Genres &amp; Tags</TabsTrigger>
+          <TabsTrigger value="covers">Covers</TabsTrigger>
+          <TabsTrigger value="external-ids">External IDs</TabsTrigger>
           <TabsTrigger value="notes">Notes</TabsTrigger>
           {hasActivity && <TabsTrigger value="activity">Activity</TabsTrigger>}
         </TabsList>
@@ -383,18 +387,11 @@ export default async function IssuePage({
                 { label: "Story arc", value: issue.story_arc },
                 { label: "Story arc number", value: issue.story_arc_number },
                 { label: "GTIN", value: issue.gtin },
-                {
-                  label: "ComicVine ID",
-                  value:
-                    issue.comicvine_id != null
-                      ? String(issue.comicvine_id)
-                      : null,
-                },
-                {
-                  label: "Metron ID",
-                  value:
-                    issue.metron_id != null ? String(issue.metron_id) : null,
-                },
+                // ComicVine ID + Metron ID intentionally absent — they
+                // live in the "External IDs" tab alongside every other
+                // provider identifier. Surfacing them twice was confusing
+                // (the Details grid showed two while the panel below
+                // showed N including those two).
                 { label: "Pages", value: formatPageCount(issue.page_count) },
                 {
                   label: "Reading time",
@@ -542,6 +539,27 @@ export default async function IssuePage({
 
           <TabsContent
             forceMount
+            value="covers"
+            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
+          >
+            <CoverGallery issueId={issue.id} chrome="bare" />
+          </TabsContent>
+
+          <TabsContent
+            forceMount
+            value="external-ids"
+            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
+          >
+            <ExternalIdsCard
+              entityType="issue"
+              seriesSlug={seriesSlug}
+              issueSlug={issue.slug}
+              chrome="bare"
+            />
+          </TabsContent>
+
+          <TabsContent
+            forceMount
             value="notes"
             className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
@@ -565,11 +583,12 @@ export default async function IssuePage({
         </div>
       </Tabs>
 
-      <IssueMetadataPanel
-        seriesSlug={seriesSlug}
-        issueSlug={issue.slug}
-        issueId={issue.id}
-      />
+      {/* TOS attribution footer (ComicVine / Metron require source
+       * links on every page using their data). The External IDs and
+       * Covers content has moved into the Tabs row above; the footer
+       * stays standalone because attribution must remain visible
+       * regardless of which tab the user has open. */}
+      <IssueSourcesFooter seriesSlug={seriesSlug} issueSlug={issue.slug} />
     </div>
   );
 }
