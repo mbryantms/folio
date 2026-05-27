@@ -264,6 +264,28 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Uint,
         is_secret: false,
     },
+    // ───────── Match-bucket thresholds (matching-accuracy-1.0 M1) ────
+    SettingDef {
+        // Score at or above which a candidate is bucketed HIGH. Default
+        // 80 — the ComicTagger-style ladder ships its primary
+        // discriminator on cover Hamming in M4, but until then this
+        // threshold has to be reachable by text-only scoring so the
+        // matcher can produce decisive matches. Pre-M1 the matcher
+        // hardcoded 95, which series scoring can never reach (cap is
+        // 90 without cover) — every match landed Medium-or-Low.
+        key: "metadata.auto_apply_threshold",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
+    SettingDef {
+        // Score at or above which a candidate is bucketed MEDIUM (when
+        // below HIGH). Default 60 — drops the pre-M1 hardcoded 70 so
+        // legitimate text-match candidates that fall short of the new
+        // HIGH cutoff don't immediately collapse to LOW.
+        key: "metadata.match_medium_threshold",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

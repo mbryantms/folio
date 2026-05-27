@@ -231,6 +231,18 @@ pub struct Config {
     /// and the weekly cron's older-than-window branch. Default 180.
     #[serde(default = "default_stale_after_days")]
     pub metadata_stale_after_days: u32,
+
+    /// Score (0–100) at or above which a search candidate is bucketed
+    /// HIGH. Default 80 — see
+    /// [`default_metadata_auto_apply_threshold`] for the rationale.
+    /// Matching-accuracy-1.0 M1.
+    #[serde(default = "default_metadata_auto_apply_threshold")]
+    pub metadata_auto_apply_threshold: u32,
+
+    /// Score (0–100) at or above which a search candidate is bucketed
+    /// MEDIUM (when below HIGH). Default 60. Matching-accuracy-1.0 M1.
+    #[serde(default = "default_metadata_match_medium_threshold")]
+    pub metadata_match_medium_threshold: u32,
 }
 
 fn default_weekly_refresh_cron() -> String {
@@ -241,6 +253,22 @@ fn default_weekly_refresh_window_days() -> u32 {
 }
 fn default_stale_after_days() -> u32 {
     180
+}
+
+/// Pre-M1 the matcher hardcoded 95, which series scoring can never
+/// reach (text ceiling is 90 without cover). After M1 the operator
+/// can tune this; the new default is 80 so legitimate text-only
+/// matches reach HIGH. M4's cover-decides ladder will let operators
+/// tighten this back up safely.
+fn default_metadata_auto_apply_threshold() -> u32 {
+    80
+}
+
+/// Pre-M1 the matcher hardcoded 70 as the MEDIUM cutoff. M1 drops
+/// the default to 60 so candidates that barely miss the new HIGH
+/// threshold don't immediately collapse into LOW.
+fn default_metadata_match_medium_threshold() -> u32 {
+    60
 }
 
 /// Hand-written `Debug` impl that redacts credentials. Stops `dbg!()`,
@@ -997,6 +1025,14 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(n) => cfg.metadata_stale_after_days = n as u32,
             None => bad_type(&row.key, "uint", &row.value),
         },
+        "metadata.auto_apply_threshold" => match row.value.as_u64() {
+            Some(n) => cfg.metadata_auto_apply_threshold = n.min(100) as u32,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "metadata.match_medium_threshold" => match row.value.as_u64() {
+            Some(n) => cfg.metadata_match_medium_threshold = n.min(100) as u32,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
 
         other => {
             tracing::debug!(key = %other, "app_setting row ignored (no overlay binding yet)");
@@ -1130,6 +1166,8 @@ mod tests {
             metadata_weekly_refresh_cron: default_weekly_refresh_cron(),
             metadata_weekly_refresh_window_days: default_weekly_refresh_window_days(),
             metadata_stale_after_days: default_stale_after_days(),
+            metadata_auto_apply_threshold: default_metadata_auto_apply_threshold(),
+            metadata_match_medium_threshold: default_metadata_match_medium_threshold(),
         }
     }
 }

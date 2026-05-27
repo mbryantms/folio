@@ -36,14 +36,17 @@ pub enum Confidence {
 }
 
 impl Confidence {
-    /// Threshold used to compute the bucket. `Score::bucket` honors the
-    /// operator-tunable HIGH threshold from `metadata.auto_apply_threshold`
-    /// — pass it in rather than reading config here so the matcher stays
-    /// pure.
-    pub fn from_score(score: f32, high_threshold: f32) -> Self {
-        if score >= high_threshold {
+    /// Map a total score onto a bucket. Both thresholds are operator-
+    /// tunable via the settings registry — `metadata.auto_apply_threshold`
+    /// drives HIGH and `metadata.match_medium_threshold` drives MEDIUM
+    /// — so calibration is reachable from the admin UI without a
+    /// redeploy. Pre-matching-accuracy-M1 the matcher hardcoded
+    /// `95 / 70` here, which series text scoring could never reach
+    /// (text ceiling = 90); every match landed Medium-or-Low.
+    pub fn from_score(score: f32, t: Thresholds) -> Self {
+        if score >= t.high {
             Confidence::High
-        } else if score >= 70.0 {
+        } else if score >= t.medium {
             Confidence::Medium
         } else {
             Confidence::Low
@@ -56,6 +59,41 @@ impl Confidence {
             Confidence::Medium => "medium",
             Confidence::Low => "low",
         }
+    }
+}
+
+/// Operator-tunable bucket boundaries. Built once per search from
+/// the live [`crate::config::Config`] overlay and passed through the
+/// orchestrator so every candidate buckets against the same numbers.
+///
+/// HIGH-side comes from `metadata.auto_apply_threshold` (default 80
+/// post-M1); MEDIUM-side from `metadata.match_medium_threshold`
+/// (default 60). Inputs are `f32` to avoid an int→float dance at
+/// every call.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Thresholds {
+    pub high: f32,
+    pub medium: f32,
+}
+
+impl Thresholds {
+    /// Constructor; clamps each value to `[0, 100]` since we want
+    /// thresholds in the same units as `Score::total`.
+    pub fn new(high: f32, medium: f32) -> Self {
+        Self {
+            high: high.clamp(0.0, 100.0),
+            medium: medium.clamp(0.0, 100.0),
+        }
+    }
+}
+
+impl Default for Thresholds {
+    /// The post-M1 defaults — used by the matcher's own unit tests +
+    /// any caller that doesn't carry a `Config` (golden-set fixtures,
+    /// quick repl drives). Production paths always thread the live
+    /// values via `from_config`.
+    fn default() -> Self {
+        Self::new(80.0, 60.0)
     }
 }
 
@@ -82,8 +120,8 @@ pub struct Score {
 }
 
 impl Score {
-    pub fn bucket(self, high_threshold: f32) -> Confidence {
-        Confidence::from_score(self.total, high_threshold)
+    pub fn bucket(self, thresholds: Thresholds) -> Confidence {
+        Confidence::from_score(self.total, thresholds)
     }
 }
 
@@ -508,8 +546,8 @@ mod tests {
         // number + volume weights stay zero for series-only matching).
         assert!((s.total - 80.0).abs() < 1e-3);
         // HIGH bucket with the default 75 threshold; MEDIUM with 95.
-        assert_eq!(s.bucket(75.0), Confidence::High);
-        assert_eq!(s.bucket(95.0), Confidence::Medium);
+        assert_eq!(s.bucket(Thresholds::new(75.0, 70.0)), Confidence::High);
+        assert_eq!(s.bucket(Thresholds::new(95.0, 70.0)), Confidence::Medium);
     }
 
     #[test]
@@ -524,7 +562,7 @@ mod tests {
         let s = score_series(&q, &c);
         // 45 + 0 (year too far) + 15 = 60 → LOW.
         assert!((s.total - 60.0).abs() < 1e-3);
-        assert_eq!(s.bucket(75.0), Confidence::Low);
+        assert_eq!(s.bucket(Thresholds::new(75.0, 70.0)), Confidence::Low);
     }
 
     #[test]
@@ -540,8 +578,8 @@ mod tests {
         let s = score_issue(&q, &c);
         // 45 name + 20 year + 7.5 pub (none, half-credit) + 15 issue = 87.5.
         assert!((s.total - 87.5).abs() < 1e-3);
-        assert_eq!(s.bucket(80.0), Confidence::High);
-        assert_eq!(s.bucket(95.0), Confidence::Medium);
+        assert_eq!(s.bucket(Thresholds::new(80.0, 70.0)), Confidence::High);
+        assert_eq!(s.bucket(Thresholds::new(95.0, 70.0)), Confidence::Medium);
     }
 
     #[test]
@@ -557,8 +595,73 @@ mod tests {
         let s = score_issue(&q, &c);
         // 45 + 20 + 7.5 + 0 = 72.5 — MEDIUM at the 75 threshold.
         assert!((s.total - 72.5).abs() < 1e-3);
-        assert_eq!(s.bucket(75.0), Confidence::Medium);
-        assert_eq!(s.bucket(95.0), Confidence::Medium);
+        assert_eq!(s.bucket(Thresholds::new(75.0, 70.0)), Confidence::Medium);
+        assert_eq!(s.bucket(Thresholds::new(95.0, 70.0)), Confidence::Medium);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // matching-accuracy-1.0 M1 — operator-tunable thresholds
+    // ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn default_thresholds_match_post_m1_defaults() {
+        let t = Thresholds::default();
+        assert!((t.high - 80.0).abs() < 1e-3);
+        assert!((t.medium - 60.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn default_thresholds_bucket_typical_text_scores() {
+        // A 90-score (perfect series text) reaches HIGH under the new
+        // defaults — pre-M1 it landed Medium because the matcher
+        // hardcoded high=95.
+        let s = Score {
+            total: 90.0,
+            ..Default::default()
+        };
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::High);
+
+        // A 65-score (one component drift) stays MEDIUM (>=60).
+        let s = Score {
+            total: 65.0,
+            ..Default::default()
+        };
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::Medium);
+
+        // A 55-score collapses to LOW.
+        let s = Score {
+            total: 55.0,
+            ..Default::default()
+        };
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::Low);
+    }
+
+    #[test]
+    fn medium_threshold_is_independent_of_high() {
+        // Operator dials HIGH up to 95 but keeps MEDIUM at 60 — score
+        // 80 should be MEDIUM (not collapse to LOW).
+        let s = Score {
+            total: 80.0,
+            ..Default::default()
+        };
+        let strict = Thresholds::new(95.0, 60.0);
+        assert_eq!(s.bucket(strict), Confidence::Medium);
+
+        // Same threshold pair, score 50 → LOW (below medium=60).
+        let s = Score {
+            total: 50.0,
+            ..Default::default()
+        };
+        assert_eq!(s.bucket(strict), Confidence::Low);
+    }
+
+    #[test]
+    fn thresholds_new_clamps_out_of_range_inputs() {
+        // Inputs outside `[0, 100]` get clamped — guards against the
+        // settings UI sending `1000` or `-5` after a stray keystroke.
+        let t = Thresholds::new(150.0, -25.0);
+        assert!((t.high - 100.0).abs() < 1e-3);
+        assert!((t.medium - 0.0).abs() < 1e-3);
     }
 
     // ────────────────────────────────────────────────────────────

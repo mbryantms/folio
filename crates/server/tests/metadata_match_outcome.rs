@@ -12,7 +12,7 @@ use serde_json::json;
 use server::metadata::comicvine::ComicVineClient;
 use server::metadata::identifier::Source;
 use server::metadata::match_outcome::{self, MatchOutcomeKind};
-use server::metadata::matcher::SeriesQueryFacts;
+use server::metadata::matcher::{SeriesQueryFacts, Thresholds};
 use server::metadata::orchestrator::{self, StartRunArgs, StoredQuery};
 use server::metadata::provider::MetadataProvider;
 use std::sync::Arc;
@@ -86,10 +86,16 @@ async fn orchestrator_stamps_match_outcome_on_completed_run() {
         volume: None,
     };
     let run_id = start_series_run(&app, &facts).await;
-    let ranked =
-        orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0, None)
-            .await
-            .expect("orchestrator");
+    let ranked = orchestrator::run_series_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        Thresholds::new(75.0, 70.0),
+        None,
+    )
+    .await
+    .expect("orchestrator");
     assert_eq!(ranked.len(), 2);
 
     let rows = metadata_match_outcome::Entity::find()

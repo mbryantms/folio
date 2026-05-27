@@ -31,6 +31,8 @@ type RefreshSettings = {
   cron: string;
   windowDays: number;
   staleAfterDays: number;
+  autoApplyThreshold: number;
+  matchMediumThreshold: number;
 };
 
 function readInitial(values: Record<string, unknown>): RefreshSettings {
@@ -54,6 +56,8 @@ function readInitial(values: Record<string, unknown>): RefreshSettings {
     cron: str("metadata.weekly_refresh_cron", "0 0 4 * * 0"),
     windowDays: num("metadata.weekly_refresh_window_days", 14),
     staleAfterDays: num("metadata.stale_after_days", 180),
+    autoApplyThreshold: num("metadata.auto_apply_threshold", 80),
+    matchMediumThreshold: num("metadata.match_medium_threshold", 60),
   };
 }
 
@@ -74,7 +78,7 @@ export function SettingsTab() {
     byKey[row.key] = row.value;
   }
   const initial = readInitial(byKey);
-  const formKey = `${initial.enabled ? "1" : "0"}-${initial.cron}-${initial.windowDays}-${initial.staleAfterDays}`;
+  const formKey = `${initial.enabled ? "1" : "0"}-${initial.cron}-${initial.windowDays}-${initial.staleAfterDays}-${initial.autoApplyThreshold}-${initial.matchMediumThreshold}`;
 
   return (
     <SettingsForm
@@ -108,12 +112,20 @@ function SettingsForm({
   const [staleAfterDays, setStaleAfterDays] = React.useState(
     String(initial.staleAfterDays),
   );
+  const [autoApply, setAutoApply] = React.useState(
+    String(initial.autoApplyThreshold),
+  );
+  const [matchMedium, setMatchMedium] = React.useState(
+    String(initial.matchMediumThreshold),
+  );
 
   const dirty =
     enabled !== initial.enabled ||
     cron.trim() !== initial.cron ||
     Number(windowDays) !== initial.windowDays ||
-    Number(staleAfterDays) !== initial.staleAfterDays;
+    Number(staleAfterDays) !== initial.staleAfterDays ||
+    Number(autoApply) !== initial.autoApplyThreshold ||
+    Number(matchMedium) !== initial.matchMediumThreshold;
 
   const handle = (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,6 +144,24 @@ function SettingsForm({
     const s = Number(staleAfterDays);
     if (Number.isFinite(s) && s >= 0 && s !== initial.staleAfterDays) {
       patch["metadata.stale_after_days"] = s;
+    }
+    const a = Number(autoApply);
+    if (
+      Number.isFinite(a)
+      && a >= 0
+      && a <= 100
+      && a !== initial.autoApplyThreshold
+    ) {
+      patch["metadata.auto_apply_threshold"] = a;
+    }
+    const m = Number(matchMedium);
+    if (
+      Number.isFinite(m)
+      && m >= 0
+      && m <= 100
+      && m !== initial.matchMediumThreshold
+    ) {
+      patch["metadata.match_medium_threshold"] = m;
     }
     void onSubmit(patch);
   };
@@ -229,6 +259,60 @@ function SettingsForm({
             A series is &ldquo;stale&rdquo; when
             <code className="mx-1">last_metadata_sync_at</code>
             is null or older than this many days. Default 180.
+          </p>
+        </div>
+      </section>
+
+      <section className="space-y-3 border-t border-border/40 pt-5">
+        <header className="space-y-1">
+          <h3 className="text-base font-semibold">Match thresholds</h3>
+          <p className="text-muted-foreground text-xs">
+            Score (0&ndash;100) cutoffs the matcher uses to bucket
+            candidates. The HIGH threshold defaults to 80 so legitimate
+            text-only matches reach &ldquo;Strong match&rdquo; status;
+            tighten it once you&rsquo;ve verified the matcher is
+            consistent on your library, or loosen if you&rsquo;re
+            getting too many candidates dumped to review.
+          </p>
+        </header>
+        <div className="grid gap-1.5">
+          <Label htmlFor="auto-apply-threshold">
+            Auto-apply / HIGH threshold
+          </Label>
+          <Input
+            id="auto-apply-threshold"
+            type="number"
+            min={0}
+            max={100}
+            value={autoApply}
+            onChange={(e) => setAutoApply(e.target.value)}
+            className="w-32"
+          />
+          <p className="text-muted-foreground text-[11px]">
+            Candidates scoring at or above this land in the HIGH bucket
+            (one-click apply, surfaced as &ldquo;Strong match&rdquo;).
+            Default 80. ComicTagger&rsquo;s reference value is 90 — go
+            higher if you want stricter, lower if matches keep landing
+            in Medium.
+          </p>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="match-medium-threshold">
+            MEDIUM threshold
+          </Label>
+          <Input
+            id="match-medium-threshold"
+            type="number"
+            min={0}
+            max={100}
+            value={matchMedium}
+            onChange={(e) => setMatchMedium(e.target.value)}
+            className="w-32"
+          />
+          <p className="text-muted-foreground text-[11px]">
+            Candidates between this and the HIGH threshold land in the
+            MEDIUM bucket (visible in the review queue). Below this is
+            LOW (hidden by default). Default 60.
           </p>
         </div>
       </section>

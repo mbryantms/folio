@@ -23,7 +23,9 @@
 use crate::config::Config;
 use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::identifier::Source;
-use crate::metadata::matcher::{self, Confidence, IssueQueryFacts, Score, SeriesQueryFacts};
+use crate::metadata::matcher::{
+    self, Confidence, IssueQueryFacts, Score, SeriesQueryFacts, Thresholds,
+};
 use crate::metadata::metron::MetronClient;
 use crate::metadata::provider::{
     IssueCandidate, IssueQuery, MetadataProvider, ProviderError, SeriesCandidate, SeriesQuery,
@@ -334,7 +336,7 @@ pub async fn run_series_search(
     run_id: Uuid,
     providers: &[Arc<dyn MetadataProvider>],
     facts: &SeriesQueryFacts,
-    high_threshold: f32,
+    thresholds: Thresholds,
     local_series_id: Option<Uuid>,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
     if let Err(e) = mark_searching(db, run_id).await {
@@ -381,7 +383,7 @@ pub async fn run_series_search(
                 for (c, cand_phash) in candidates.into_iter().zip(candidate_phashes) {
                     let score =
                         matcher::score_series_with_phash(facts, &c, local_phash, cand_phash);
-                    let bucket = score.bucket(high_threshold);
+                    let bucket = score.bucket(thresholds);
                     ranked.push(RankedCandidate {
                         source: c.source,
                         external_id: c.external_id.clone(),
@@ -461,7 +463,7 @@ pub async fn run_issue_search(
     providers: &[Arc<dyn MetadataProvider>],
     facts: &IssueQueryFacts,
     series_external_id_by_provider: &[(Source, String)],
-    high_threshold: f32,
+    thresholds: Thresholds,
     local_issue_id: Option<&str>,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
     if let Err(e) = mark_searching(db, run_id).await {
@@ -511,7 +513,7 @@ pub async fn run_issue_search(
                 };
                 for (c, cand_phash) in candidates.into_iter().zip(candidate_phashes) {
                     let score = matcher::score_issue_with_phash(facts, &c, local_phash, cand_phash);
-                    let bucket = score.bucket(high_threshold);
+                    let bucket = score.bucket(thresholds);
                     ranked.push(RankedCandidate {
                         source: c.source,
                         external_id: c.external_id.clone(),

@@ -306,6 +306,11 @@ impl TestApp {
             metadata_weekly_refresh_cron: "0 0 4 * * 0".into(),
             metadata_weekly_refresh_window_days: 14,
             metadata_stale_after_days: 180,
+            // matching-accuracy-1.0 M1 defaults. Tests that need to
+            // exercise the threshold-override path override these
+            // explicitly via SpawnOpts.
+            metadata_auto_apply_threshold: 80,
+            metadata_match_medium_threshold: 60,
         };
 
         let jobs = JobRuntime::new(&redis_url, db.clone())

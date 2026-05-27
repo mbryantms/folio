@@ -127,20 +127,19 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
     );
     let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
     if providers.is_empty() {
-        if let Err(e) = orchestrator::fail_run(&state.db, run_id, "no providers configured").await
-        {
+        if let Err(e) = orchestrator::fail_run(&state.db, run_id, "no providers configured").await {
             tracing::error!(error = %e, "metadata search: fail_run write failed");
         }
         release_series_slot(&state, series_id).await;
         return Ok(());
     }
-    let threshold = high_threshold(&state);
+    let thresholds = thresholds(&state);
     match orchestrator::run_series_search(
         &state.db,
         run_id,
         &providers,
         &facts,
-        threshold,
+        thresholds,
         Some(series_id),
     )
     .await
@@ -196,21 +195,20 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
     );
     let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
     if providers.is_empty() {
-        if let Err(e) = orchestrator::fail_run(&state.db, run_id, "no providers configured").await
-        {
+        if let Err(e) = orchestrator::fail_run(&state.db, run_id, "no providers configured").await {
             tracing::error!(error = %e, "metadata search: fail_run write failed");
         }
         release_issue_slot(&state, &issue_id).await;
         return Ok(());
     }
-    let threshold = high_threshold(&state);
+    let thresholds = thresholds(&state);
     match orchestrator::run_issue_search(
         &state.db,
         run_id,
         &providers,
         &facts,
         &series_external_ids,
-        threshold,
+        thresholds,
         Some(issue_id.as_str()),
     )
     .await
@@ -236,11 +234,17 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
 
 // ───────── helpers ─────────
 
-fn high_threshold(_state: &AppState) -> f32 {
-    // M5 plumbs `metadata.auto_apply_threshold` (default 95) through
-    // the settings overlay. Until that lands, hard-code the default
-    // so the matcher buckets are stable.
-    95.0
+/// Read the live HIGH + MEDIUM thresholds from the settings overlay.
+/// matching-accuracy-1.0 M1: pre-M1 the function returned a hardcoded
+/// 95 (which series text scoring can't reach) and the MEDIUM cutoff
+/// was hardcoded at 70 inside `Confidence::from_score`. Both now flow
+/// from the registry so operators can tune via `/admin/metadata`.
+fn thresholds(state: &AppState) -> crate::metadata::matcher::Thresholds {
+    let cfg = state.cfg();
+    crate::metadata::matcher::Thresholds::new(
+        cfg.metadata_auto_apply_threshold as f32,
+        cfg.metadata_match_medium_threshold as f32,
+    )
 }
 
 /// Synchronous variant used by tests that want to drive the
@@ -259,7 +263,7 @@ pub async fn run_series_inline(
         run_id,
         &providers,
         &facts,
-        high_threshold(state),
+        thresholds(state),
         Some(series_id),
     )
     .await;
@@ -281,7 +285,7 @@ pub async fn run_issue_inline(
         &providers,
         &facts,
         &series_external_ids,
-        high_threshold(state),
+        thresholds(state),
         Some(issue_id.as_str()),
     )
     .await;

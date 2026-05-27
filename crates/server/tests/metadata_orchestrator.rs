@@ -19,11 +19,9 @@ use sea_orm::EntityTrait;
 use serde_json::json;
 use server::metadata::comicvine::ComicVineClient;
 use server::metadata::identifier::Source;
-use server::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
+use server::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts, Thresholds};
 use server::metadata::metron::MetronClient;
-use server::metadata::orchestrator::{
-    self, status, StartRunArgs, StoredQuery,
-};
+use server::metadata::orchestrator::{self, StartRunArgs, StoredQuery, status};
 use server::metadata::provider::MetadataProvider;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -111,9 +109,9 @@ async fn run_series_search_fuses_two_providers_and_sorts_by_score() {
     Mock::given(method("GET"))
         .and(path("/api/series/"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(paged_metron(json!([
-                metron_series_list(300, "Saga", 2012),
-            ]))),
+            ResponseTemplate::new(200).set_body_json(paged_metron(json!([metron_series_list(
+                300, "Saga", 2012
+            ),]))),
         )
         .mount(&metron_mock)
         .await;
@@ -140,9 +138,16 @@ async fn run_series_search_fuses_two_providers_and_sorts_by_score() {
         volume: None,
     };
     let run_id = start_series_run(&app, &facts).await;
-    let ranked = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0, None)
-        .await
-        .expect("orchestrator search");
+    let ranked = orchestrator::run_series_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        Thresholds::new(75.0, 70.0),
+        None,
+    )
+    .await
+    .expect("orchestrator search");
     // 3 results: 2 from CV + 1 from Metron.
     assert_eq!(ranked.len(), 3);
     // Sorted descending by score.
@@ -184,9 +189,11 @@ async fn run_series_search_yields_awaiting_quota_when_all_providers_exhausted() 
         .await;
 
     let app = TestApp::spawn().await;
-    let providers: Vec<Arc<dyn MetadataProvider>> = vec![Arc::new(
-        ComicVineClient::with_base_url("k".into(), cv_mock.uri(), app.state().jobs.redis.clone()),
-    )];
+    let providers: Vec<Arc<dyn MetadataProvider>> = vec![Arc::new(ComicVineClient::with_base_url(
+        "k".into(),
+        cv_mock.uri(),
+        app.state().jobs.redis.clone(),
+    ))];
     let facts = SeriesQueryFacts {
         name: "Saga".into(),
         year: None,
@@ -194,9 +201,16 @@ async fn run_series_search_yields_awaiting_quota_when_all_providers_exhausted() 
         volume: None,
     };
     let run_id = start_series_run(&app, &facts).await;
-    let err = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0, None)
-        .await
-        .expect_err("should signal QuotaExceeded");
+    let err = orchestrator::run_series_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        Thresholds::new(75.0, 70.0),
+        None,
+    )
+    .await
+    .expect_err("should signal QuotaExceeded");
     assert!(matches!(
         err,
         server::metadata::provider::ProviderError::QuotaExceeded { .. }
@@ -219,9 +233,11 @@ async fn run_series_search_fails_when_provider_errors_and_no_candidates() {
         .await;
 
     let app = TestApp::spawn().await;
-    let providers: Vec<Arc<dyn MetadataProvider>> = vec![Arc::new(
-        ComicVineClient::with_base_url("k".into(), cv_mock.uri(), app.state().jobs.redis.clone()),
-    )];
+    let providers: Vec<Arc<dyn MetadataProvider>> = vec![Arc::new(ComicVineClient::with_base_url(
+        "k".into(),
+        cv_mock.uri(),
+        app.state().jobs.redis.clone(),
+    ))];
     let facts = SeriesQueryFacts {
         name: "Saga".into(),
         year: None,
@@ -229,9 +245,16 @@ async fn run_series_search_fails_when_provider_errors_and_no_candidates() {
         volume: None,
     };
     let run_id = start_series_run(&app, &facts).await;
-    let err = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0, None)
-        .await
-        .expect_err("should fail");
+    let err = orchestrator::run_series_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        Thresholds::new(75.0, 70.0),
+        None,
+    )
+    .await
+    .expect_err("should fail");
     let _ = err;
     let run = entity::metadata_run::Entity::find_by_id(run_id)
         .one(&app.state().db)
@@ -256,9 +279,8 @@ async fn run_series_search_partial_failure_still_finalizes() {
     Mock::given(method("GET"))
         .and(path("/api/series/"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(paged_metron(json!([
-                metron_series_list(11, "Saga", 2012),
-            ]))),
+            ResponseTemplate::new(200)
+                .set_body_json(paged_metron(json!([metron_series_list(11, "Saga", 2012),]))),
         )
         .mount(&metron_mock)
         .await;
@@ -284,9 +306,16 @@ async fn run_series_search_partial_failure_still_finalizes() {
         volume: None,
     };
     let run_id = start_series_run(&app, &facts).await;
-    let ranked = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0, None)
-        .await
-        .expect("partial success still finalizes");
+    let ranked = orchestrator::run_series_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        Thresholds::new(75.0, 70.0),
+        None,
+    )
+    .await
+    .expect("partial success still finalizes");
     assert_eq!(ranked.len(), 1);
     assert_eq!(ranked[0].source, Source::Metron);
     let run = entity::metadata_run::Entity::find_by_id(run_id)
@@ -352,9 +381,17 @@ async fn run_issue_search_buckets_high_when_number_and_name_match() {
     )
     .await
     .unwrap();
-    let ranked = orchestrator::run_issue_search(&app.state().db, run_id, &providers, &facts, &[], 80.0, None)
-        .await
-        .unwrap();
+    let ranked = orchestrator::run_issue_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        &[],
+        Thresholds::new(80.0, 70.0),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(ranked.len(), 1);
     // Per matcher unit tests: perfect issue match scores 87.5 with
     // missing publisher (half-credit) — HIGH at 80.0 threshold.
