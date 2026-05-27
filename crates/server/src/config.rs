@@ -243,6 +243,12 @@ pub struct Config {
     /// MEDIUM (when below HIGH). Default 60. Matching-accuracy-1.0 M1.
     #[serde(default = "default_metadata_match_medium_threshold")]
     pub metadata_match_medium_threshold: u32,
+
+    /// Max alternate-cover URLs the orchestrator fetches per candidate.
+    /// Default 3. Set to 0 to disable variant fetching entirely
+    /// (primary cover only). Matching-accuracy-1.0 M5.
+    #[serde(default = "default_metadata_alternate_cover_fetch_cap")]
+    pub metadata_alternate_cover_fetch_cap: u32,
 }
 
 fn default_weekly_refresh_cron() -> String {
@@ -269,6 +275,13 @@ fn default_metadata_auto_apply_threshold() -> u32 {
 /// threshold don't immediately collapse into LOW.
 fn default_metadata_match_medium_threshold() -> u32 {
     60
+}
+
+/// Default alternate-cover fetch cap. 3 keeps the per-search fetch
+/// ceiling at ~100 (25 candidates × 4 covers each), well within sane
+/// provider-CDN load. Matching-accuracy-1.0 M5.
+fn default_metadata_alternate_cover_fetch_cap() -> u32 {
+    3
 }
 
 /// Hand-written `Debug` impl that redacts credentials. Stops `dbg!()`,
@@ -1033,6 +1046,13 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(n) => cfg.metadata_match_medium_threshold = n.min(100) as u32,
             None => bad_type(&row.key, "uint", &row.value),
         },
+        "metadata.alternate_cover_fetch_cap" => match row.value.as_u64() {
+            // Clamp at 32 — anything beyond is a typo (variants per
+            // issue rarely exceed 10 even in the foil-heavy modern
+            // era).
+            Some(n) => cfg.metadata_alternate_cover_fetch_cap = n.min(32) as u32,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
 
         other => {
             tracing::debug!(key = %other, "app_setting row ignored (no overlay binding yet)");
@@ -1168,6 +1188,7 @@ mod tests {
             metadata_stale_after_days: default_stale_after_days(),
             metadata_auto_apply_threshold: default_metadata_auto_apply_threshold(),
             metadata_match_medium_threshold: default_metadata_match_medium_threshold(),
+            metadata_alternate_cover_fetch_cap: default_metadata_alternate_cover_fetch_cap(),
         }
     }
 }

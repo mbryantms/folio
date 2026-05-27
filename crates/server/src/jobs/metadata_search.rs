@@ -135,6 +135,7 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
     }
     let thresholds = thresholds(&state);
     let pre_filter = pre_filter_for_library(&state, library_id).await;
+    let alt_cap = state.cfg().metadata_alternate_cover_fetch_cap;
     match orchestrator::run_series_search(
         &state.db,
         run_id,
@@ -142,6 +143,7 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
         &facts,
         thresholds,
         &pre_filter,
+        alt_cap,
         Some(series_id),
     )
     .await
@@ -204,6 +206,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         return Ok(());
     }
     let thresholds = thresholds(&state);
+    let alt_cap = state.cfg().metadata_alternate_cover_fetch_cap;
     match orchestrator::run_issue_search(
         &state.db,
         run_id,
@@ -211,6 +214,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         &facts,
         &series_external_ids,
         thresholds,
+        alt_cap,
         Some(issue_id.as_str()),
     )
     .await
@@ -296,6 +300,7 @@ pub async fn run_series_inline(
         &facts,
         thresholds(state),
         &crate::metadata::orchestrator::PreFilter::default(),
+        state.cfg().metadata_alternate_cover_fetch_cap,
         Some(series_id),
     )
     .await;
@@ -318,6 +323,7 @@ pub async fn run_issue_inline(
         &facts,
         &series_external_ids,
         thresholds(state),
+        state.cfg().metadata_alternate_cover_fetch_cap,
         Some(issue_id.as_str()),
     )
     .await;

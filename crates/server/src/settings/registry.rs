@@ -286,6 +286,17 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Uint,
         is_secret: false,
     },
+    SettingDef {
+        // Max alternate-cover URLs the orchestrator fetches per
+        // candidate (matching-accuracy-1.0 M5). Default 3 — primary
+        // + 3 variants per candidate keeps the per-search fetch
+        // ceiling at 4 * SEARCH_LIMIT_PER_PROVIDER (~100), which is
+        // well within sane provider-CDN load. Set to 0 to disable
+        // variant fetching entirely (only primary covers are hashed).
+        key: "metadata.alternate_cover_fetch_cap",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

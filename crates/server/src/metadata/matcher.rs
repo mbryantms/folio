@@ -119,7 +119,20 @@ pub struct Score {
     /// score. Pre-M4 this slot was a `cover_phash: f32` bonus added
     /// to `total`; the inversion is intentional and irreversible
     /// without re-running golden-set calibration.
+    ///
+    /// Matching-accuracy-1.0 M5: when the candidate carries variant
+    /// covers, this holds the **minimum** Hamming across primary +
+    /// alternates. The `matched_via_alternate` flag flags which side
+    /// the min came from so [`Self::bucket`] can apply the stricter
+    /// `MIN_ALTERNATE_SCORE_THRESH` ceiling when needed.
     pub cover_hamming: Option<u32>,
+    /// True when the winning cover-Hamming came from an alternate /
+    /// variant cover rather than the candidate's primary. The
+    /// bucketer applies [`MIN_ALTERNATE_SCORE_THRESH`] instead of
+    /// [`MIN_SCORE_THRESH`] for the MEDIUM ceiling — a variant
+    /// match needs to be tighter to qualify since the candidate's
+    /// "real" cover may differ.
+    pub matched_via_alternate: bool,
 }
 
 impl Score {
@@ -136,9 +149,18 @@ impl Score {
     /// match wins HIGH on its own merits, and a wildly different
     /// cover sinks an otherwise-perfect text match to LOW.
     pub fn bucket(self, thresholds: Thresholds) -> Confidence {
+        // M5: stricter MEDIUM ceiling when the winning cover is an
+        // alternate. HIGH stays at ≤ STRONG_SCORE_THRESH either way
+        // — a near-perfect cover match is decisive regardless of
+        // which slot it came from.
+        let medium_ceiling = if self.matched_via_alternate {
+            MIN_ALTERNATE_SCORE_THRESH
+        } else {
+            MIN_SCORE_THRESH
+        };
         match self.cover_hamming {
             Some(d) if d <= STRONG_SCORE_THRESH => Confidence::High,
-            Some(d) if d <= MIN_SCORE_THRESH => Confidence::Medium,
+            Some(d) if d <= medium_ceiling => Confidence::Medium,
             Some(_) => Confidence::Low,
             None => Confidence::from_score(self.total, thresholds),
         }
@@ -187,6 +209,14 @@ pub const MIN_SCORE_THRESH: u32 = 16;
 /// `min_score_distance`.
 pub const MIN_SCORE_DISTANCE: u32 = 4;
 
+/// Tighter MEDIUM-band ceiling that applies when the winning cover
+/// is an **alternate** (variant) rather than the candidate's primary
+/// cover. Mirrors ComicTagger's `min_alternate_score_thresh`. Beyond
+/// 12 bits a variant match is too speculative to surface as MEDIUM
+/// — the user would have to verify it manually anyway. Primary-cover
+/// matches still use [`MIN_SCORE_THRESH`] (16) as the ceiling.
+pub const MIN_ALTERNATE_SCORE_THRESH: u32 = 12;
+
 // ───────── inputs ─────────
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -213,18 +243,24 @@ pub struct IssueQueryFacts {
 /// [`score_series_with_phash`] for the no-phash path — call the
 /// `_with_phash` variant directly when both sides have been hashed.
 pub fn score_series(query: &SeriesQueryFacts, candidate: &SeriesCandidate) -> Score {
-    score_series_with_phash(query, candidate, None, None)
+    score_series_with_phash(query, candidate, None, &[])
 }
 
 /// Like [`score_series`] but also captures the cover-pHash Hamming
 /// distance when both sides have a hash. Post-M4 the Hamming feeds
 /// the primary bucketing decision (see [`Score::bucket`]); the text
 /// `total` is the tiebreaker and the fallback for the no-phash case.
+///
+/// `candidate_cover_phashes` — index 0 is the primary cover, indices
+/// 1..N are alternates. Each slot is `Option<i64>` so a fetch failure
+/// can drop just that variant without losing the others. M5: the
+/// minimum Hamming wins; `Score::matched_via_alternate` records
+/// whether it came from a non-primary slot.
 pub fn score_series_with_phash(
     query: &SeriesQueryFacts,
     candidate: &SeriesCandidate,
     local_cover_phash: Option<i64>,
-    candidate_cover_phash: Option<i64>,
+    candidate_cover_phashes: &[Option<i64>],
 ) -> Score {
     let name = W_NAME * name_similarity(&query.name, &candidate.name);
     let year = W_YEAR * year_similarity(query.year, candidate.year);
@@ -236,7 +272,8 @@ pub fn score_series_with_phash(
     // threshold for both series and issue scores.
     let issue_number = 0.0;
     let volume = 0.0; // SeriesCandidate doesn't carry volume; ignore.
-    let cover_hamming = hamming_distance_opt(local_cover_phash, candidate_cover_phash);
+    let (cover_hamming, matched_via_alternate) =
+        best_cover_match(local_cover_phash, candidate_cover_phashes);
     let total = name + year + publisher + issue_number + volume;
     Score {
         total,
@@ -246,22 +283,24 @@ pub fn score_series_with_phash(
         issue_number,
         volume,
         cover_hamming,
+        matched_via_alternate,
     }
 }
 
 /// Score a single issue candidate against the local issue facts.
 pub fn score_issue(query: &IssueQueryFacts, candidate: &IssueCandidate) -> Score {
-    score_issue_with_phash(query, candidate, None, None)
+    score_issue_with_phash(query, candidate, None, &[])
 }
 
 /// Like [`score_issue`] but also captures the cover-pHash Hamming
 /// distance when both sides have a hash. See
-/// [`score_series_with_phash`] for the cover-decides rationale.
+/// [`score_series_with_phash`] for the cover-decides rationale and
+/// the index-0-is-primary convention.
 pub fn score_issue_with_phash(
     query: &IssueQueryFacts,
     candidate: &IssueCandidate,
     local_cover_phash: Option<i64>,
-    candidate_cover_phash: Option<i64>,
+    candidate_cover_phashes: &[Option<i64>],
 ) -> Score {
     let name = W_NAME
         * name_similarity(
@@ -276,7 +315,8 @@ pub fn score_issue_with_phash(
     let issue_number = W_ISSUE_NUMBER
         * issue_number_similarity(&query.issue_number, candidate.issue_number.as_deref());
     let volume = 0.0;
-    let cover_hamming = hamming_distance_opt(local_cover_phash, candidate_cover_phash);
+    let (cover_hamming, matched_via_alternate) =
+        best_cover_match(local_cover_phash, candidate_cover_phashes);
     let total = name + year + publisher + issue_number + volume;
     Score {
         total,
@@ -286,16 +326,39 @@ pub fn score_issue_with_phash(
         issue_number,
         volume,
         cover_hamming,
+        matched_via_alternate,
     }
 }
 
-/// Convenience: compute Hamming distance only when both sides have
-/// a hash. Centralizes the `Option`-unwrap pattern so the score
-/// functions stay readable.
-fn hamming_distance_opt(a: Option<i64>, b: Option<i64>) -> Option<u32> {
-    match (a, b) {
-        (Some(x), Some(y)) => Some(crate::metadata::phash::hamming_distance(x, y)),
-        _ => None,
+/// Multi-cover Hamming reducer. `candidate_phashes[0]` is the
+/// candidate's primary cover; `candidate_phashes[1..]` are alternates
+/// in the order the provider listed them. Returns the minimum Hamming
+/// distance plus a flag indicating whether the winning cover came
+/// from an alternate slot — the bucketer uses the flag to apply
+/// [`MIN_ALTERNATE_SCORE_THRESH`] instead of [`MIN_SCORE_THRESH`].
+///
+/// Matching-accuracy-1.0 M5. Returns `(None, false)` when no
+/// (local, candidate) hash pair is present.
+fn best_cover_match(local: Option<i64>, candidate_phashes: &[Option<i64>]) -> (Option<u32>, bool) {
+    let Some(local) = local else {
+        return (None, false);
+    };
+    let mut best: Option<(u32, bool)> = None;
+    for (i, cand) in candidate_phashes.iter().enumerate() {
+        let Some(cand) = cand else {
+            continue;
+        };
+        let d = crate::metadata::phash::hamming_distance(local, *cand);
+        let from_alt = i > 0;
+        best = match best {
+            None => Some((d, from_alt)),
+            Some((b, _)) if d < b => Some((d, from_alt)),
+            other => other,
+        };
+    }
+    match best {
+        Some((d, alt)) => (Some(d), alt),
+        None => (None, false),
     }
 }
 
@@ -450,6 +513,7 @@ mod tests {
             issue_count: None,
             cover_image_url: None,
             deck: None,
+            alternate_cover_urls: Vec::new(),
         }
     }
 
@@ -469,6 +533,7 @@ mod tests {
             series_year,
             series_external_id: None,
             cover_image_url: None,
+            alternate_cover_urls: Vec::new(),
         }
     }
 
@@ -686,11 +751,12 @@ mod tests {
             volume: None,
         };
         let c = series_candidate("Saga", Some(2012), None);
-        let identical = score_series_with_phash(&q, &c, Some(0xABCD), Some(0xABCD));
+        let identical = score_series_with_phash(&q, &c, Some(0xABCD), &[Some(0xABCD)]);
         assert_eq!(identical.cover_hamming, Some(0));
+        assert!(!identical.matched_via_alternate);
 
         // Bit-set diff: 0 vs 0xFF = 8 bits flipped → Hamming 8.
-        let off_by_eight = score_series_with_phash(&q, &c, Some(0), Some(0xFF));
+        let off_by_eight = score_series_with_phash(&q, &c, Some(0), &[Some(0xFF)]);
         assert_eq!(off_by_eight.cover_hamming, Some(8));
     }
 
@@ -703,9 +769,9 @@ mod tests {
             volume: None,
         };
         let c = series_candidate("Saga", Some(2012), None);
-        let only_local = score_series_with_phash(&q, &c, Some(0x1234), None);
-        let only_candidate = score_series_with_phash(&q, &c, None, Some(0x5678));
-        let neither = score_series_with_phash(&q, &c, None, None);
+        let only_local = score_series_with_phash(&q, &c, Some(0x1234), &[None]);
+        let only_candidate = score_series_with_phash(&q, &c, None, &[Some(0x5678)]);
+        let neither = score_series_with_phash(&q, &c, None, &[]);
         for s in [only_local, only_candidate, neither] {
             assert_eq!(s.cover_hamming, None);
         }
@@ -775,5 +841,105 @@ mod tests {
         assert_eq!(cover_hash_similarity(Some(0), Some(0), 20), 1.0);
         // 10 bits set on one side → distance 10. similarity = 1 - 10/20 = 0.5.
         assert!((cover_hash_similarity(Some(0), Some(0x3FF), 20) - 0.5).abs() < 1e-3);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // M5 — alternate-cover support
+    // ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn best_cover_match_picks_minimum_across_alternates() {
+        // Local 0; candidate primary 0xFF (8 bits), alternate 0x3
+        // (2 bits). Min = 2, won by alternate.
+        let (d, alt) = best_cover_match(Some(0), &[Some(0xFF), Some(0x3)]);
+        assert_eq!(d, Some(2));
+        assert!(alt, "winner came from alternate slot");
+
+        // Same call, alternate is the WORSE match. Min stays primary.
+        let (d, alt) = best_cover_match(Some(0), &[Some(0x3), Some(0xFF)]);
+        assert_eq!(d, Some(2));
+        assert!(!alt);
+    }
+
+    #[test]
+    fn best_cover_match_returns_none_when_no_local_or_all_candidate_nones() {
+        let (d, alt) = best_cover_match(None, &[Some(0), Some(0)]);
+        assert_eq!(d, None);
+        assert!(!alt);
+
+        let (d, alt) = best_cover_match(Some(0), &[None, None]);
+        assert_eq!(d, None);
+        assert!(!alt);
+    }
+
+    #[test]
+    fn alternate_match_within_strong_thresh_still_buckets_high() {
+        // Hamming 4 from alternate slot → HIGH. The strict-alternate
+        // threshold only kicks in for the MEDIUM band; HIGH is the
+        // same for primary + alternate.
+        let s = Score {
+            total: 30.0,
+            cover_hamming: Some(4),
+            matched_via_alternate: true,
+            ..Default::default()
+        };
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::High);
+    }
+
+    #[test]
+    fn alternate_match_in_medium_band_uses_strict_threshold() {
+        // Hamming 14 — primary-source candidate is MEDIUM (≤16);
+        // alternate-source candidate drops to LOW (>12).
+        let primary = Score {
+            total: 30.0,
+            cover_hamming: Some(14),
+            matched_via_alternate: false,
+            ..Default::default()
+        };
+        assert_eq!(primary.bucket(Thresholds::default()), Confidence::Medium);
+
+        let alternate = Score {
+            total: 30.0,
+            cover_hamming: Some(14),
+            matched_via_alternate: true,
+            ..Default::default()
+        };
+        assert_eq!(alternate.bucket(Thresholds::default()), Confidence::Low);
+    }
+
+    #[test]
+    fn alternate_match_below_strict_threshold_stays_medium() {
+        // Hamming 11 — both primary + alternate land MEDIUM.
+        for alt in [false, true] {
+            let s = Score {
+                total: 30.0,
+                cover_hamming: Some(11),
+                matched_via_alternate: alt,
+                ..Default::default()
+            };
+            assert_eq!(
+                s.bucket(Thresholds::default()),
+                Confidence::Medium,
+                "alt={alt}",
+            );
+        }
+    }
+
+    #[test]
+    fn variants_in_score_input_route_to_alternate_path() {
+        // Local 0; candidate primary 0xFFFF (16 bits), alternate
+        // 0xF (4 bits). Min = 4 via alternate. With M5 default
+        // thresholds, alternate Hamming ≤ STRONG → HIGH.
+        let q = SeriesQueryFacts {
+            name: "Saga".into(),
+            year: Some(2012),
+            publisher: None,
+            volume: None,
+        };
+        let c = series_candidate("Saga", Some(2012), None);
+        let s = score_series_with_phash(&q, &c, Some(0), &[Some(0xFFFF), Some(0xF)]);
+        assert_eq!(s.cover_hamming, Some(4));
+        assert!(s.matched_via_alternate);
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::High);
     }
 }

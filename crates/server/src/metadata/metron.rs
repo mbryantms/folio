@@ -495,6 +495,11 @@ fn series_list_to_candidate(s: &MSeriesList) -> Option<SeriesCandidate> {
         issue_count: s.issue_count,
         cover_image_url: None,
         deck: None,
+        // Metron /api/series list response doesn't carry covers;
+        // primary + variants live on the issue-detail endpoint via
+        // `images[]` / `variants[]`. Populated by M5.x follow-up
+        // when the orchestrator pre-fetches top-K candidate details.
+        alternate_cover_urls: Vec::new(),
     })
 }
 
@@ -517,6 +522,9 @@ fn issue_list_to_candidate(i: &MIssueListItem) -> Option<IssueCandidate> {
         series_year: series_ref.and_then(|s| s.year_began),
         series_external_id: series_ref.and_then(|s| s.id.map(|n| n.to_string())),
         cover_image_url: i.image.clone(),
+        // Same as series search above — variants come from the
+        // issue-detail `variants[]` payload, not list responses.
+        alternate_cover_urls: Vec::new(),
     })
 }
 

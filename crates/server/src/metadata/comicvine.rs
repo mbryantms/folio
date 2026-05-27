@@ -427,6 +427,11 @@ fn cv_volume_to_candidate(v: &CvVolume) -> Option<SeriesCandidate> {
         issue_count: v.count_of_issues,
         cover_image_url: cover,
         deck: v.deck.clone(),
+        // CV /volumes search response doesn't surface variant covers;
+        // they live on the issue-detail endpoint via `associated_images`.
+        // Populated by M5.x follow-up when the orchestrator pre-fetches
+        // top-K candidate details.
+        alternate_cover_urls: Vec::new(),
     })
 }
 
@@ -454,6 +459,9 @@ fn cv_issue_to_candidate(issue: &CvIssue) -> Option<IssueCandidate> {
             .as_ref()
             .and_then(|v| v.id.map(|n| n.to_string())),
         cover_image_url: cover,
+        // CV /issues search response doesn't surface variant covers;
+        // populated by detail-fetch follow-up.
+        alternate_cover_urls: Vec::new(),
     })
 }
 

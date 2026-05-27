@@ -96,6 +96,7 @@ async fn orchestrator_stamps_match_outcome_on_completed_run() {
         &facts,
         Thresholds::new(75.0, 70.0),
         &PreFilter::default(),
+        3,
         None,
     )
     .await

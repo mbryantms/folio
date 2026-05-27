@@ -150,6 +150,7 @@ async fn run_series_search_fuses_two_providers_and_sorts_by_score() {
         &facts,
         Thresholds::new(75.0, 70.0),
         &PreFilter::default(),
+        3,
         None,
     )
     .await
@@ -214,6 +215,7 @@ async fn run_series_search_yields_awaiting_quota_when_all_providers_exhausted() 
         &facts,
         Thresholds::new(75.0, 70.0),
         &PreFilter::default(),
+        3,
         None,
     )
     .await
@@ -259,6 +261,7 @@ async fn run_series_search_fails_when_provider_errors_and_no_candidates() {
         &facts,
         Thresholds::new(75.0, 70.0),
         &PreFilter::default(),
+        3,
         None,
     )
     .await
@@ -321,6 +324,7 @@ async fn run_series_search_partial_failure_still_finalizes() {
         &facts,
         Thresholds::new(75.0, 70.0),
         &PreFilter::default(),
+        3,
         None,
     )
     .await
@@ -397,6 +401,7 @@ async fn run_issue_search_buckets_high_when_number_and_name_match() {
         &facts,
         &[],
         Thresholds::new(80.0, 70.0),
+        3,
         None,
     )
     .await

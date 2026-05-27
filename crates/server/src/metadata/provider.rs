@@ -121,6 +121,16 @@ pub struct SeriesCandidate {
     pub issue_count: Option<i32>,
     pub cover_image_url: Option<String>,
     pub deck: Option<String>,
+    /// Variant-cover image URLs (matching-accuracy-1.0 M5). When a
+    /// provider surfaces multiple covers per series (CV's
+    /// `associated_images`, Metron's `images[]`), the orchestrator
+    /// fetches + hashes each one and the matcher takes the **minimum**
+    /// Hamming distance to the local cover. Stricter threshold applies
+    /// when the winning cover is an alternate (see
+    /// [`crate::metadata::matcher::MIN_ALTERNATE_SCORE_THRESH`]).
+    /// Empty for search responses that don't carry variant URLs.
+    #[serde(default)]
+    pub alternate_cover_urls: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -135,6 +145,13 @@ pub struct IssueCandidate {
     pub series_year: Option<i32>,
     pub series_external_id: Option<String>,
     pub cover_image_url: Option<String>,
+    /// Variant-cover image URLs (matching-accuracy-1.0 M5). Mirrors
+    /// the field on [`SeriesCandidate`] — the matcher takes the min
+    /// Hamming distance against the local cover so a foil/variant
+    /// candidate isn't penalized for differing from the local copy
+    /// when one of its alternates matches.
+    #[serde(default)]
+    pub alternate_cover_urls: Vec<String>,
 }
 
 // ───────── normalized detail (read by M4 Apply jobs) ─────────

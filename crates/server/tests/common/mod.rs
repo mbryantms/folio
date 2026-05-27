@@ -311,6 +311,8 @@ impl TestApp {
             // explicitly via SpawnOpts.
             metadata_auto_apply_threshold: 80,
             metadata_match_medium_threshold: 60,
+            // matching-accuracy-1.0 M5 — variant fetch cap, default 3.
+            metadata_alternate_cover_fetch_cap: 3,
         };
 
         let jobs = JobRuntime::new(&redis_url, db.clone())

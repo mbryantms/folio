@@ -150,6 +150,7 @@ mod tests {
                 issue_count: None,
                 cover_image_url: None,
                 deck: None,
+                alternate_cover_urls: Vec::new(),
             }),
         }
     }

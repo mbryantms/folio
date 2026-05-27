@@ -498,6 +498,10 @@ const COVER_PHASH_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from
 /// that doesn't yet thread a series id).
 ///
 /// metadata-providers-1.0 M9.5.
+// 8 args is borderline-noisy but every one is a distinct knob; the
+// natural fix is a `MatchOpts` struct that bundles thresholds +
+// pre_filter + alt_cap, tracked as a follow-up.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_series_search(
     db: &DatabaseConnection,
     run_id: Uuid,
@@ -505,6 +509,7 @@ pub async fn run_series_search(
     facts: &SeriesQueryFacts,
     thresholds: Thresholds,
     pre_filter: &PreFilter,
+    alternate_cover_fetch_cap: u32,
     local_series_id: Option<Uuid>,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
     if let Err(e) = mark_searching(db, run_id).await {
@@ -537,24 +542,28 @@ pub async fn run_series_search(
                 // library settings + the hard year gate would reject
                 // before any phash fetching or scoring runs.
                 let candidates = pre_filter_series(candidates, facts, pre_filter);
-                // Parallel-fetch candidate covers when both sides are
-                // hashable. When local_phash is None we know the
-                // bonus is zero regardless, so skip the network.
-                let candidate_phashes: Vec<Option<i64>> = if local_phash.is_some() {
-                    fetch_candidate_phashes(
-                        &http,
-                        candidates
-                            .iter()
-                            .map(|c| c.cover_image_url.as_deref())
-                            .collect(),
-                    )
-                    .await
+                // M5: build the [primary, alternates...] URL slice
+                // per candidate so the matcher can pick the min
+                // Hamming across variants. When local_phash is None
+                // we skip the network entirely.
+                let candidate_phashes: Vec<Vec<Option<i64>>> = if local_phash.is_some() {
+                    let urls_per_candidate: Vec<Vec<Option<&str>>> = candidates
+                        .iter()
+                        .map(|c| {
+                            cover_urls_for_candidate(
+                                c.cover_image_url.as_deref(),
+                                &c.alternate_cover_urls,
+                                alternate_cover_fetch_cap,
+                            )
+                        })
+                        .collect();
+                    fetch_phashes_per_candidate(&http, &urls_per_candidate).await
                 } else {
-                    vec![None; candidates.len()]
+                    candidates.iter().map(|_| Vec::new()).collect()
                 };
-                for (c, cand_phash) in candidates.into_iter().zip(candidate_phashes) {
+                for (c, cand_phashes) in candidates.into_iter().zip(candidate_phashes) {
                     let score =
-                        matcher::score_series_with_phash(facts, &c, local_phash, cand_phash);
+                        matcher::score_series_with_phash(facts, &c, local_phash, &cand_phashes);
                     let bucket = score.bucket(thresholds);
                     ranked.push(RankedCandidate {
                         source: c.source,
@@ -624,6 +633,7 @@ pub async fn run_series_search(
 ///
 /// `local_issue_id` enables cover-phash scoring per M9.5 — pass
 /// `None` to disable.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_issue_search(
     db: &DatabaseConnection,
     run_id: Uuid,
@@ -631,6 +641,7 @@ pub async fn run_issue_search(
     facts: &IssueQueryFacts,
     series_external_id_by_provider: &[(Source, String)],
     thresholds: Thresholds,
+    alternate_cover_fetch_cap: u32,
     local_issue_id: Option<&str>,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
     if let Err(e) = mark_searching(db, run_id).await {
@@ -670,20 +681,24 @@ pub async fn run_issue_search(
                 // don't carry publisher, so the operator's blacklist
                 // is enforced at the series-search side instead).
                 let candidates = pre_filter_issue(candidates, facts);
-                let candidate_phashes: Vec<Option<i64>> = if local_phash.is_some() {
-                    fetch_candidate_phashes(
-                        &http,
-                        candidates
-                            .iter()
-                            .map(|c| c.cover_image_url.as_deref())
-                            .collect(),
-                    )
-                    .await
+                let candidate_phashes: Vec<Vec<Option<i64>>> = if local_phash.is_some() {
+                    let urls_per_candidate: Vec<Vec<Option<&str>>> = candidates
+                        .iter()
+                        .map(|c| {
+                            cover_urls_for_candidate(
+                                c.cover_image_url.as_deref(),
+                                &c.alternate_cover_urls,
+                                alternate_cover_fetch_cap,
+                            )
+                        })
+                        .collect();
+                    fetch_phashes_per_candidate(&http, &urls_per_candidate).await
                 } else {
-                    vec![None; candidates.len()]
+                    candidates.iter().map(|_| Vec::new()).collect()
                 };
-                for (c, cand_phash) in candidates.into_iter().zip(candidate_phashes) {
-                    let score = matcher::score_issue_with_phash(facts, &c, local_phash, cand_phash);
+                for (c, cand_phashes) in candidates.into_iter().zip(candidate_phashes) {
+                    let score =
+                        matcher::score_issue_with_phash(facts, &c, local_phash, &cand_phashes);
                     let bucket = score.bucket(thresholds);
                     ranked.push(RankedCandidate {
                         source: c.source,
@@ -759,21 +774,52 @@ pub async fn fetch_candidates<C: ConnectionTrait>(
         .await
 }
 
-// ───────── M9.5 cover-phash helper ─────────
+// ───────── cover-phash helpers (M9.5 + M5) ─────────
 
-/// Parallel-fetch + hash N candidate covers. Returns hashes in the
-/// same order as the input URLs — `None` for any URL that's missing,
-/// times out, or fails to decode. Bounded by `COVER_PHASH_FETCH_TIMEOUT`
-/// per request; the per-batch wallclock is at most that timeout
-/// because every fetch runs concurrently.
+/// Build the [primary, alternates...] URL slice the matcher consumes.
+/// The first slot is **always** the primary (None when the candidate
+/// has no cover URL); subsequent slots are alternates capped at
+/// `cap`. Caller passes the resulting Vec through
+/// [`fetch_phashes_per_candidate`] for parallel hashing.
 ///
-/// metadata-providers-1.0 M9.5.
-async fn fetch_candidate_phashes(
+/// Matching-accuracy-1.0 M5.
+fn cover_urls_for_candidate<'a>(
+    primary: Option<&'a str>,
+    alternates: &'a [String],
+    cap: u32,
+) -> Vec<Option<&'a str>> {
+    let mut out: Vec<Option<&'a str>> = Vec::with_capacity(1 + alternates.len().min(cap as usize));
+    out.push(primary);
+    for url in alternates.iter().take(cap as usize) {
+        out.push(Some(url.as_str()));
+    }
+    out
+}
+
+/// Parallel-fetch + hash every URL across every candidate. Returns
+/// one `Vec<Option<i64>>` per candidate, in the same order as the
+/// input — slot 0 = primary phash, slots 1.. = alternate phashes,
+/// each `None` when the URL was missing / timed out / failed to
+/// decode. Per-request timeout: [`COVER_PHASH_FETCH_TIMEOUT`].
+///
+/// Matching-accuracy-1.0 M5. Pre-M5 the orchestrator fetched a
+/// single phash per candidate via `fetch_candidate_phashes`; this
+/// replaces that helper.
+async fn fetch_phashes_per_candidate(
     http: &reqwest::Client,
-    urls: Vec<Option<&str>>,
-) -> Vec<Option<i64>> {
+    urls_per_candidate: &[Vec<Option<&str>>],
+) -> Vec<Vec<Option<i64>>> {
     use futures::future::join_all;
-    let futures: Vec<_> = urls
+    // Flatten into a single batch so all fetches run in one
+    // join_all (vs nested join_all, which serializes batches).
+    let mut offsets: Vec<usize> = Vec::with_capacity(urls_per_candidate.len() + 1);
+    offsets.push(0);
+    let mut flat: Vec<Option<&str>> = Vec::new();
+    for batch in urls_per_candidate {
+        flat.extend_from_slice(batch);
+        offsets.push(flat.len());
+    }
+    let futures: Vec<_> = flat
         .iter()
         .map(|maybe_url| async move {
             match maybe_url {
@@ -789,7 +835,13 @@ async fn fetch_candidate_phashes(
             }
         })
         .collect();
-    join_all(futures).await
+    let flat_hashes: Vec<Option<i64>> = join_all(futures).await;
+    // Slice the flat result back into per-candidate Vecs.
+    let mut out: Vec<Vec<Option<i64>>> = Vec::with_capacity(urls_per_candidate.len());
+    for w in offsets.windows(2) {
+        out.push(flat_hashes[w[0]..w[1]].to_vec());
+    }
+    out
 }
 
 #[cfg(test)]
@@ -846,6 +898,7 @@ mod tests {
                 issue_count: None,
                 cover_image_url: None,
                 deck: None,
+                alternate_cover_urls: Vec::new(),
             }),
         }
     }
@@ -935,6 +988,7 @@ mod tests {
             issue_count: None,
             cover_image_url: None,
             deck: None,
+            alternate_cover_urls: Vec::new(),
         }
     }
 
@@ -1020,6 +1074,43 @@ mod tests {
         assert_eq!(out.len(), 0, "lowercase blacklist matches sanitized form");
     }
 
+    // ────────────────────────────────────────────────────────────
+    // M5 — cover-urls cap helper
+    // ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cover_urls_includes_primary_and_caps_alternates() {
+        let alts: Vec<String> = (0..5).map(|i| format!("alt-{i}")).collect();
+        // cap=3 → primary + 3 alternates = 4 slots.
+        let urls = cover_urls_for_candidate(Some("primary"), &alts, 3);
+        assert_eq!(urls.len(), 4);
+        assert_eq!(urls[0], Some("primary"));
+        assert_eq!(urls[1], Some("alt-0"));
+        assert_eq!(urls[2], Some("alt-1"));
+        assert_eq!(urls[3], Some("alt-2"));
+    }
+
+    #[test]
+    fn cover_urls_cap_zero_emits_primary_only() {
+        let alts: Vec<String> = vec!["alt".into()];
+        let urls = cover_urls_for_candidate(Some("primary"), &alts, 0);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0], Some("primary"));
+    }
+
+    #[test]
+    fn cover_urls_primary_none_preserves_slot() {
+        // When the candidate has no primary cover, slot 0 is None
+        // so the matcher's index-0-is-primary convention stays
+        // intact — phash[0] simply ends up None.
+        let alts: Vec<String> = vec!["alt-a".into(), "alt-b".into()];
+        let urls = cover_urls_for_candidate(None, &alts, 3);
+        assert_eq!(urls.len(), 3);
+        assert_eq!(urls[0], None);
+        assert_eq!(urls[1], Some("alt-a"));
+        assert_eq!(urls[2], Some("alt-b"));
+    }
+
     #[test]
     fn pre_filter_issue_runs_year_gate_only() {
         let facts = IssueQueryFacts {
@@ -1041,6 +1132,7 @@ mod tests {
                 series_year: Some(2012),
                 series_external_id: None,
                 cover_image_url: None,
+                alternate_cover_urls: Vec::new(),
             },
             IssueCandidate {
                 source: Source::ComicVine,
@@ -1053,6 +1145,7 @@ mod tests {
                 series_year: Some(2099),
                 series_external_id: None,
                 cover_image_url: None,
+                alternate_cover_urls: Vec::new(),
             },
         ];
         let out = pre_filter_issue(candidates, &facts);
