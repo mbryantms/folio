@@ -24,6 +24,7 @@ pub mod identifier;
 pub mod matcher;
 pub mod metron;
 pub mod orchestrator;
+pub mod phash;
 pub mod provider;
 pub mod rate_limit;
 pub mod refresh;

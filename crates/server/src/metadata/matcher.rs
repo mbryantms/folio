@@ -273,6 +273,38 @@ fn normalize_for_match(s: &str) -> String {
 /// Standard Levenshtein distance, char-aware (works on non-ASCII without
 /// surprises). O(n*m) memory + time; matched strings here are short
 /// comic-series names (<60 chars) so the cost is negligible.
+/// Cover-image perceptual hash similarity. Returns 0..=1.0 — 1.0 for
+/// hashes within `0` Hamming distance, scaling linearly down to 0 at
+/// `threshold` and beyond. Either-None returns 0 (matcher should
+/// fall back to other signals).
+///
+/// Default `threshold = 20` for `phash` works well across CV/Metron
+/// variants per the M9 plan; 8 is the right call for "essentially
+/// the same image" matching.
+///
+/// **Integration status:** the per-candidate search responses don't
+/// carry cover hashes today (providers return a thumbnail URL but
+/// we'd need to fetch + decode each one to hash, which would burn
+/// the per-provider quota during a search). So this helper is
+/// surfaced for the Apply-path / diff-preview path where the
+/// candidate detail (including the cover URL) is already in hand.
+/// Promoting it into [`score_series`] / [`score_issue`] is M9.5.
+///
+/// metadata-providers-1.0 M9.
+pub fn cover_hash_similarity(
+    local_hash: Option<i64>,
+    candidate_hash: Option<i64>,
+    threshold: u32,
+) -> f32 {
+    match (local_hash, candidate_hash) {
+        (Some(a), Some(b)) => {
+            let d = crate::metadata::phash::hamming_distance(a, b);
+            crate::metadata::phash::similarity_score(d, threshold)
+        }
+        _ => 0.0,
+    }
+}
+
 pub fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();

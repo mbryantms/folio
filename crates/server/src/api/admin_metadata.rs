@@ -48,6 +48,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(get_run))
         .routes(routes!(list_review_queue))
         .routes(routes!(dismiss_candidate))
+        .routes(routes!(run_phash_backfill))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -866,3 +867,50 @@ pub async fn dismiss_candidate(
     Json(DismissResp { dismissed: true }).into_response()
 }
 
+
+
+// ───────── /admin/metadata/phash-backfill ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_phash_backfill",
+    post,
+    path = "/admin/metadata/phash-backfill",
+    responses(
+        (status = 200, body = crate::metadata::phash::BackfillOutcome),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn run_phash_backfill(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+) -> Response {
+    let data_path = app.cfg().data_path.clone();
+    let outcome = match crate::metadata::phash::run_backfill(&app.db, &data_path).await {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::error!(error = %e, "phash backfill: query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: actor.id,
+            action: "admin.metadata.phash_backfill",
+            target_type: None,
+            target_id: None,
+            payload: serde_json::json!({
+                "considered": outcome.considered,
+                "hashed": outcome.hashed,
+                "skipped": outcome.skipped,
+                "errored": outcome.errored,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+    Json(outcome).into_response()
+}

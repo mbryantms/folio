@@ -308,6 +308,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/phash-backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_phash_backfill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/providers": {
         parameters: {
             query?: never;
@@ -3419,6 +3435,19 @@ export interface components {
             auth_mode: string;
             local: components["schemas"]["LocalConfigView"];
             oidc: components["schemas"]["OidcConfigView"];
+        };
+        /** @description Outcome of a phash backfill sweep — exposed via the admin
+         *     endpoint so the operator can see how many rows landed in each
+         *     category. */
+        BackfillOutcome: {
+            /** @description Rows visited (had `phash IS NULL` at the start of the sweep). */
+            considered: number;
+            /** @description Rows that errored during DB update. */
+            errored: number;
+            /** @description Rows whose hashes wrote successfully. */
+            hashed: number;
+            /** @description Rows skipped because the file was missing or undecodable. */
+            skipped: number;
         };
         /** @description Body for `POST /me/collections/{id}/members/bulk-add`. Each
          *     member follows the same `(entry_kind, ref_id)` shape as the
@@ -7488,6 +7517,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DashboardResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_phash_backfill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillOutcome"];
                 };
             };
             /** @description admin only */

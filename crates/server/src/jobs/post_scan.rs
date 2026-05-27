@@ -252,6 +252,20 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                 ThumbsJobKind::Cover | ThumbsJobKind::CoverAndStrip
             ) {
                 stamp_done(&app, &row).await;
+                // metadata-providers-1.0 M9: compute perceptual
+                // hashes on the freshly-written cover thumbnail and
+                // upsert an `issue_cover` row of source='archive_extracted'.
+                // Failure here is non-fatal — the cover still
+                // displays, the matching-engine just doesn't get a
+                // phash boost for this issue until the backfill job
+                // catches it.
+                if let Err(e) = persist_cover_phash(&app, &row).await {
+                    tracing::debug!(
+                        issue_id = %row.id,
+                        error = %e,
+                        "thumbs job: cover phash extraction failed (non-fatal)"
+                    );
+                }
             }
             if matches!(
                 job.kind,
@@ -819,5 +833,32 @@ pub async fn handle_dictionary(job: DictionaryJob, _state: Data<AppState>) -> Re
     // a separate dictionary. The job slot is kept so the cron schedule
     // doesn't need to be rewritten if the decision is ever revisited.
     tracing::trace!(library_id = %job.library_id, "post_scan_dictionary (no-op)");
+    Ok(())
+}
+
+/// Compute perceptual hashes on the issue's cover thumbnail + upsert
+/// an `issue_cover (source_provider='archive_extracted')` row.
+/// Idempotent on rescan; fails soft (returns Err but the caller
+/// logs at debug level rather than retrying).
+///
+/// metadata-providers-1.0 M9.
+async fn persist_cover_phash(app: &AppState, row: &issue::Model) -> anyhow::Result<()> {
+    let data_dir = app.cfg().data_path.clone();
+    let issue_id = row.id.clone();
+    let Some(cover_path) = thumbnails::find_existing_cover(&data_dir, &issue_id) else {
+        return Ok(()); // No cover on disk — nothing to hash.
+    };
+    let rel = cover_path
+        .strip_prefix(&data_dir)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| cover_path.to_string_lossy().into_owned());
+    let cover_path_for_spawn = cover_path.clone();
+    let img = tokio::task::spawn_blocking(move || {
+        let bytes = std::fs::read(&cover_path_for_spawn)?;
+        image::load_from_memory(&bytes)
+            .map_err(|e| std::io::Error::other(format!("decode: {e}")))
+    })
+    .await??;
+    crate::metadata::phash::upsert_archive_cover_hashes(&app.db, &issue_id, &rel, &img).await?;
     Ok(())
 }

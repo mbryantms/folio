@@ -1423,6 +1423,27 @@ pub async fn apply_cover<C: ConnectionTrait>(
     }
     std::fs::write(&on_disk, write.bytes)?;
 
+    // metadata-providers-1.0 M9: compute perceptual hashes on the
+    // bytes as we write. Decode failures don't block the cover write
+    // — phash columns stay NULL and the backfill job can recover
+    // later. The decode is in-thread because the bytes are already
+    // in memory; for archive covers the post-scan thumbnail job
+    // hashes from the resized buffer instead.
+    let (p, d, a) = match image::load_from_memory(write.bytes) {
+        Ok(img) => {
+            let (p, d, a) = crate::metadata::phash::all_hashes(&img);
+            (Some(p), Some(d), Some(a))
+        }
+        Err(e) => {
+            tracing::debug!(
+                issue_id = write.issue_id,
+                error = %e,
+                "apply_cover: phash skipped — image decode failed"
+            );
+            (None, None, None)
+        }
+    };
+
     let now = chrono::Utc::now().fixed_offset();
     let am = issue_cover::ActiveModel {
         id: Set(cover_id),
@@ -1437,9 +1458,9 @@ pub async fn apply_cover<C: ConnectionTrait>(
         local_path: Set(rel_path),
         width: Set(write.width),
         height: Set(write.height),
-        phash: Set(None),
-        dhash: Set(None),
-        ahash: Set(None),
+        phash: Set(p),
+        dhash: Set(d),
+        ahash: Set(a),
         fetched_at: Set(now),
         is_active: Set(true),
     };

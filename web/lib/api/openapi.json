@@ -854,6 +854,26 @@
         }
       }
     },
+    "/api/admin/metadata/phash-backfill": {
+      "post": {
+        "operationId": "metadata_phash_backfill",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillOutcome"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/providers": {
       "get": {
         "operationId": "admin_metadata_providers_list",
@@ -8132,6 +8152,38 @@
           },
           "oidc": {
             "$ref": "#/components/schemas/OidcConfigView"
+          }
+        }
+      },
+      "BackfillOutcome": {
+        "type": "object",
+        "description": "Outcome of a phash backfill sweep — exposed via the admin\nendpoint so the operator can see how many rows landed in each\ncategory.",
+        "required": [
+          "considered",
+          "hashed",
+          "skipped",
+          "errored"
+        ],
+        "properties": {
+          "considered": {
+            "type": "integer",
+            "description": "Rows visited (had `phash IS NULL` at the start of the sweep).",
+            "minimum": 0
+          },
+          "errored": {
+            "type": "integer",
+            "description": "Rows that errored during DB update.",
+            "minimum": 0
+          },
+          "hashed": {
+            "type": "integer",
+            "description": "Rows whose hashes wrote successfully.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "description": "Rows skipped because the file was missing or undecodable.",
+            "minimum": 0
           }
         }
       },
