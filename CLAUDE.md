@@ -233,6 +233,53 @@ Default admin (first registered user becomes admin):
   and `web/tests/api/cbl-entries-next-page.test.ts` anchor the
   invariant — keep those passing.
 
+- **Metadata-provider writes** (metadata-providers-1.0): every
+  write to provider-touched data (`external_ids`, junctions like
+  `issue_credits` / `issue_characters` / etc., scalar fields with
+  provenance tracking, covers) goes through the audited writer
+  surface in [`crates/server/src/metadata/writers.rs`](crates/server/src/metadata/writers.rs)
+  — never raw `INSERT INTO issue_credits` or
+  `am.title = Set(...)` from a new metadata handler. The writers
+  enforce the **user-precedence rule**: a row with
+  `field_provenance.set_by='user'` (or `external_ids.set_by='user'`)
+  is never silently overwritten by a non-user write. Bypassing the
+  rule requires the explicit `override_user_edits` flag, which is
+  admin-only and audited as `metadata_apply_force`.
+
+  **Reviewer heuristic — reject PRs that:**
+  - Add direct ActiveModel writes to `issue_credits`, `issue_characters`,
+    `issue_teams`, `issue_locations`, `issue_arcs`, `issue_concepts`,
+    `issue_objects`, `issue_universes`, `issue_genres`, `issue_tags`,
+    `issue_reprints`, or any `series_*` junction. The
+    `writers::set_issue_*` / `set_series_*` helpers are the only
+    audited write surface; they also rebuild the CSV read-cache
+    on the parent issue/series (see `docs/dev/schema-restructure.md`
+    "denormalized read-cache" section).
+  - Add `INSERT INTO external_ids` from a non-writers caller.
+    Always `writers::set_external_id` so the precedence rule fires.
+  - Iterate `MetadataField::iter()` without an `is_junction()` /
+    `is_cover()` guard. The flat-column update path and the
+    junction-reconcile path can't share a switch.
+  - Read provider data from `issue.user_edited` JSON. That column
+    is being retired; consult `field_provenance` via
+    `fetch_field_provenance_map` instead.
+
+  See [`docs/dev/metadata-providers.md`](docs/dev/metadata-providers.md)
+  for the architecture, [`metadata-operator-guide.md`](docs/dev/metadata-operator-guide.md)
+  for tunables, and [`schema-restructure.md`](docs/dev/schema-restructure.md)
+  for the M0 column-to-table migration.
+
+- **Cover-image perceptual hashes** (metadata-providers-1.0 M9):
+  every new cover (provider-applied or scanner-extracted) gets
+  `phash` + `dhash` + `ahash` computed at write time via
+  [`crate::metadata::phash`](crates/server/src/metadata/phash.rs).
+  Decode failures soft-fail (column stays NULL; backfill job
+  picks it up later). The matcher's `cover_phash` component (M9.5)
+  is bonus-on-top with a hard cap at +10 on the 100-point scale —
+  don't promote it above that without re-calibrating
+  `metadata.auto_apply_threshold` (a higher phash weight lets a
+  perfect cover match rescue an obviously wrong text match).
+
 ## Editing rules
 
 - Server tests must hit a real DB via `TestApp::spawn()`; never mock sea-orm.
@@ -310,5 +357,8 @@ Default admin (first registered user becomes admin):
 - Runtime-config split (env vs DB): [docs/dev/runtime-configuration.md](docs/dev/runtime-configuration.md)
 - OCR pipeline (detector + recognizer + cache + admin surfaces): [docs/dev/ocr.md](docs/dev/ocr.md)
 - Logging conventions (#[handler] macro, severity levels, secret-redaction): [docs/dev/logging.md](docs/dev/logging.md)
+- Metadata providers architecture: [docs/dev/metadata-providers.md](docs/dev/metadata-providers.md)
+- Metadata providers operator guide (API keys, weekly refresh, troubleshooting): [docs/dev/metadata-operator-guide.md](docs/dev/metadata-operator-guide.md)
+- M0 schema restructure (external_ids + junctions + field_provenance + issue_cover): [docs/dev/schema-restructure.md](docs/dev/schema-restructure.md)
 - Active plans live under `~/.claude/plans/`; check the auto-memory index for
   what's currently in flight vs. shipped.
