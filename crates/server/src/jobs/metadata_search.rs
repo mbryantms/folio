@@ -135,7 +135,16 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
         return Ok(());
     }
     let threshold = high_threshold(&state);
-    match orchestrator::run_series_search(&state.db, run_id, &providers, &facts, threshold).await {
+    match orchestrator::run_series_search(
+        &state.db,
+        run_id,
+        &providers,
+        &facts,
+        threshold,
+        Some(series_id),
+    )
+    .await
+    {
         Ok(ranked) => {
             tracing::info!(
                 run_id = %run_id,
@@ -202,6 +211,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         &facts,
         &series_external_ids,
         threshold,
+        Some(issue_id.as_str()),
     )
     .await
     {
@@ -250,6 +260,7 @@ pub async fn run_series_inline(
         &providers,
         &facts,
         high_threshold(state),
+        Some(series_id),
     )
     .await;
     release_series_slot(state, series_id).await;
@@ -271,6 +282,7 @@ pub async fn run_issue_inline(
         &facts,
         &series_external_ids,
         high_threshold(state),
+        Some(issue_id.as_str()),
     )
     .await;
     release_issue_slot(state, &issue_id).await;

@@ -140,7 +140,7 @@ async fn run_series_search_fuses_two_providers_and_sorts_by_score() {
         volume: None,
     };
     let run_id = start_series_run(&app, &facts).await;
-    let ranked = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0)
+    let ranked = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0, None)
         .await
         .expect("orchestrator search");
     // 3 results: 2 from CV + 1 from Metron.
@@ -194,7 +194,7 @@ async fn run_series_search_yields_awaiting_quota_when_all_providers_exhausted() 
         volume: None,
     };
     let run_id = start_series_run(&app, &facts).await;
-    let err = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0)
+    let err = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0, None)
         .await
         .expect_err("should signal QuotaExceeded");
     assert!(matches!(
@@ -229,7 +229,7 @@ async fn run_series_search_fails_when_provider_errors_and_no_candidates() {
         volume: None,
     };
     let run_id = start_series_run(&app, &facts).await;
-    let err = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0)
+    let err = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0, None)
         .await
         .expect_err("should fail");
     let _ = err;
@@ -284,7 +284,7 @@ async fn run_series_search_partial_failure_still_finalizes() {
         volume: None,
     };
     let run_id = start_series_run(&app, &facts).await;
-    let ranked = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0)
+    let ranked = orchestrator::run_series_search(&app.state().db, run_id, &providers, &facts, 75.0, None)
         .await
         .expect("partial success still finalizes");
     assert_eq!(ranked.len(), 1);
@@ -352,7 +352,7 @@ async fn run_issue_search_buckets_high_when_number_and_name_match() {
     )
     .await
     .unwrap();
-    let ranked = orchestrator::run_issue_search(&app.state().db, run_id, &providers, &facts, &[], 80.0)
+    let ranked = orchestrator::run_issue_search(&app.state().db, run_id, &providers, &facts, &[], 80.0, None)
         .await
         .unwrap();
     assert_eq!(ranked.len(), 1);

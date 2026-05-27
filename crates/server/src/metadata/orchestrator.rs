@@ -294,23 +294,49 @@ pub async fn finalize_run(
 
 const SEARCH_LIMIT_PER_PROVIDER: u32 = 25;
 
+/// Timeout for the per-candidate cover-image phash fetch.
+/// Aggressive on purpose — covers are small + CDN-cached upstream,
+/// and a slow CDN shouldn't stall the whole search-ranking pass.
+const COVER_PHASH_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Run a series search across `providers`, score with the matcher,
 /// rank, and finalize the run. Returns the ranked list (also
 /// persisted to `metadata_run_candidate`).
+///
+/// When `local_series_id` is `Some`, the orchestrator looks up the
+/// series's representative cover phash + fetches every candidate's
+/// cover URL in parallel + hashes them, feeding the (local,
+/// candidate) phash pair into [`matcher::score_series_with_phash`]
+/// so cover-image similarity contributes to the rank. Pass `None`
+/// to disable (tests + the future cross-library bulk-refresh path
+/// that doesn't yet thread a series id).
+///
+/// metadata-providers-1.0 M9.5.
 pub async fn run_series_search(
     db: &DatabaseConnection,
     run_id: Uuid,
     providers: &[Arc<dyn MetadataProvider>],
     facts: &SeriesQueryFacts,
     high_threshold: f32,
+    local_series_id: Option<Uuid>,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
     if let Err(e) = mark_searching(db, run_id).await {
         return Err(ProviderError::Transport(format!("db: {e}")));
     }
 
+    // Pre-fetch the local phash once; missing is fine — the scorer
+    // skips the phash bonus silently and we fall back to text-only.
+    let local_phash = match local_series_id {
+        Some(id) => crate::metadata::phash::series_representative_phash(db, id)
+            .await
+            .unwrap_or(None),
+        None => None,
+    };
+
     let mut ranked = Vec::new();
     let mut surfaced_quota: Option<u64> = None;
     let mut last_error: Option<ProviderError> = None;
+    let http = reqwest::Client::new();
     for p in providers {
         let q = SeriesQuery {
             name: facts.name.clone(),
@@ -320,8 +346,25 @@ pub async fn run_series_search(
         };
         match p.search_series(&q).await {
             Ok(candidates) => {
-                for c in candidates {
-                    let score = matcher::score_series(facts, &c);
+                // Parallel-fetch candidate covers when both sides are
+                // hashable. When local_phash is None we know the
+                // bonus is zero regardless, so skip the network.
+                let candidate_phashes: Vec<Option<i64>> = if local_phash.is_some() {
+                    fetch_candidate_phashes(
+                        &http,
+                        candidates.iter().map(|c| c.cover_image_url.as_deref()).collect(),
+                    )
+                    .await
+                } else {
+                    vec![None; candidates.len()]
+                };
+                for (c, cand_phash) in candidates.into_iter().zip(candidate_phashes) {
+                    let score = matcher::score_series_with_phash(
+                        facts,
+                        &c,
+                        local_phash,
+                        cand_phash,
+                    );
                     let bucket = score.bucket(high_threshold);
                     ranked.push(RankedCandidate {
                         source: c.source,
@@ -393,6 +436,9 @@ pub async fn run_series_search(
 /// Run an issue search across `providers`. Same shape as
 /// [`run_series_search`]; the issue-specific bits live in
 /// [`matcher::score_issue`].
+///
+/// `local_issue_id` enables cover-phash scoring per M9.5 — pass
+/// `None` to disable.
 pub async fn run_issue_search(
     db: &DatabaseConnection,
     run_id: Uuid,
@@ -400,14 +446,23 @@ pub async fn run_issue_search(
     facts: &IssueQueryFacts,
     series_external_id_by_provider: &[(Source, String)],
     high_threshold: f32,
+    local_issue_id: Option<&str>,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
     if let Err(e) = mark_searching(db, run_id).await {
         return Err(ProviderError::Transport(format!("db: {e}")));
     }
 
+    let local_phash = match local_issue_id {
+        Some(id) => crate::metadata::phash::issue_phash(db, id)
+            .await
+            .unwrap_or(None),
+        None => None,
+    };
+
     let mut ranked = Vec::new();
     let mut surfaced_quota: Option<u64> = None;
     let mut last_error: Option<ProviderError> = None;
+    let http = reqwest::Client::new();
     for p in providers {
         // If we already know the provider's series id (because the
         // series was previously matched), narrow the query — saves a
@@ -426,8 +481,22 @@ pub async fn run_issue_search(
         };
         match p.search_issue(&q).await {
             Ok(candidates) => {
-                for c in candidates {
-                    let score = matcher::score_issue(facts, &c);
+                let candidate_phashes: Vec<Option<i64>> = if local_phash.is_some() {
+                    fetch_candidate_phashes(
+                        &http,
+                        candidates.iter().map(|c| c.cover_image_url.as_deref()).collect(),
+                    )
+                    .await
+                } else {
+                    vec![None; candidates.len()]
+                };
+                for (c, cand_phash) in candidates.into_iter().zip(candidate_phashes) {
+                    let score = matcher::score_issue_with_phash(
+                        facts,
+                        &c,
+                        local_phash,
+                        cand_phash,
+                    );
                     let bucket = score.bucket(high_threshold);
                     ranked.push(RankedCandidate {
                         source: c.source,
@@ -506,6 +575,39 @@ pub async fn fetch_candidates<C: ConnectionTrait>(
         .order_by_asc(metadata_run_candidate::Column::Ordinal)
         .all(db)
         .await
+}
+
+// ───────── M9.5 cover-phash helper ─────────
+
+/// Parallel-fetch + hash N candidate covers. Returns hashes in the
+/// same order as the input URLs — `None` for any URL that's missing,
+/// times out, or fails to decode. Bounded by `COVER_PHASH_FETCH_TIMEOUT`
+/// per request; the per-batch wallclock is at most that timeout
+/// because every fetch runs concurrently.
+///
+/// metadata-providers-1.0 M9.5.
+async fn fetch_candidate_phashes(
+    http: &reqwest::Client,
+    urls: Vec<Option<&str>>,
+) -> Vec<Option<i64>> {
+    use futures::future::join_all;
+    let futures: Vec<_> = urls
+        .iter()
+        .map(|maybe_url| async move {
+            match maybe_url {
+                Some(url) => {
+                    crate::metadata::phash::fetch_and_hash_cover(
+                        http,
+                        url,
+                        COVER_PHASH_FETCH_TIMEOUT,
+                    )
+                    .await
+                }
+                None => None,
+            }
+        })
+        .collect();
+    join_all(futures).await
 }
 
 #[cfg(test)]

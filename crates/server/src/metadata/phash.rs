@@ -269,6 +269,128 @@ pub async fn backfill_row<C: ConnectionTrait>(
     Ok(true)
 }
 
+/// Look up the representative perceptual hash for a series — used by
+/// M9.5's search-side ranking to compare against candidate covers.
+/// Picks the lowest-`ordinal` primary cover with a non-null phash on
+/// any active issue in the series, preferring archive-extracted rows
+/// (the user's actual file) over provider-applied ones (which could
+/// be drift from a prior, possibly-wrong match).
+///
+/// Returns `None` when no issue in the series has a hashed cover yet
+/// — the scorer falls back to text-only matching in that case.
+///
+/// metadata-providers-1.0 M9.5.
+pub async fn series_representative_phash<C: ConnectionTrait>(
+    db: &C,
+    series_id: uuid::Uuid,
+) -> Result<Option<i64>, sea_orm::DbErr> {
+    use sea_orm::{DatabaseBackend, FromQueryResult, Statement};
+    #[derive(FromQueryResult)]
+    struct Row {
+        phash: i64,
+    }
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        // Join issue → issue_cover; prefer archive_extracted (sort
+        // key 0) over other sources (1). Within each tier, prefer
+        // the earliest issue (created_at ASC) so series with a long
+        // run still pick a stable representative.
+        r"SELECT ic.phash
+          FROM issue i
+          JOIN issue_cover ic
+            ON ic.issue_id = i.id
+           AND ic.kind = 'primary'
+           AND ic.ordinal = 0
+           AND ic.phash IS NOT NULL
+          WHERE i.series_id = $1
+            AND i.state = 'active'
+            AND i.removed_at IS NULL
+          ORDER BY
+            CASE WHEN ic.source_provider = 'archive_extracted' THEN 0 ELSE 1 END,
+            i.created_at ASC
+          LIMIT 1",
+        [series_id.into()],
+    );
+    Ok(Row::find_by_statement(stmt).one(db).await?.map(|r| r.phash))
+}
+
+/// Look up the perceptual hash for a single issue's primary cover.
+/// Same archive-extracted preference as
+/// [`series_representative_phash`].
+///
+/// metadata-providers-1.0 M9.5.
+pub async fn issue_phash<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+) -> Result<Option<i64>, sea_orm::DbErr> {
+    use sea_orm::{DatabaseBackend, FromQueryResult, Statement};
+    #[derive(FromQueryResult)]
+    struct Row {
+        phash: i64,
+    }
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r"SELECT ic.phash
+          FROM issue_cover ic
+          WHERE ic.issue_id = $1
+            AND ic.kind = 'primary'
+            AND ic.ordinal = 0
+            AND ic.phash IS NOT NULL
+          ORDER BY
+            CASE WHEN ic.source_provider = 'archive_extracted' THEN 0 ELSE 1 END
+          LIMIT 1",
+        [issue_id.into()],
+    );
+    Ok(Row::find_by_statement(stmt).one(db).await?.map(|r| r.phash))
+}
+
+/// Fetch + decode + hash a remote cover image. Failure soft-returns
+/// `None` so a slow CDN / decode error never blocks the search-side
+/// scoring. Bounded by an aggressive timeout — covers are tiny and a
+/// search shouldn't stall waiting on one.
+///
+/// metadata-providers-1.0 M9.5.
+pub async fn fetch_and_hash_cover(
+    client: &reqwest::Client,
+    url: &str,
+    timeout: std::time::Duration,
+) -> Option<i64> {
+    let res = match tokio::time::timeout(timeout, client.get(url).send()).await {
+        Ok(Ok(r)) if r.status().is_success() => r,
+        Ok(Ok(r)) => {
+            tracing::debug!(url, status = %r.status(), "phash fetch: non-2xx");
+            return None;
+        }
+        Ok(Err(e)) => {
+            tracing::debug!(url, error = %e, "phash fetch: transport error");
+            return None;
+        }
+        Err(_) => {
+            tracing::debug!(url, "phash fetch: timeout");
+            return None;
+        }
+    };
+    let bytes = match tokio::time::timeout(timeout, res.bytes()).await {
+        Ok(Ok(b)) => b,
+        Ok(Err(e)) => {
+            tracing::debug!(url, error = %e, "phash fetch: body read failed");
+            return None;
+        }
+        Err(_) => {
+            tracing::debug!(url, "phash fetch: body timeout");
+            return None;
+        }
+    };
+    // Decoding can be CPU-intensive on large covers; punt to a
+    // blocking task so the async runtime stays free.
+    let bytes_for_blocking = bytes.to_vec();
+    let img = tokio::task::spawn_blocking(move || image::load_from_memory(&bytes_for_blocking))
+        .await
+        .ok()?
+        .ok()?;
+    Some(phash(&img))
+}
+
 /// Outcome of a phash backfill sweep — exposed via the admin
 /// endpoint so the operator can see how many rows landed in each
 /// category.
