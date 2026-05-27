@@ -8630,6 +8630,17 @@
             "type": "integer",
             "format": "int32"
           },
+          "match_outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MatchOutcomeView",
+                "description": "Match-outcome classification (matching-accuracy-1.0 M8).\n`None` while the run is still searching; populated once it\ncompletes. Drives the MetadataMatchDialog state — one-click\napply on `SingleGoodMatch`, warning copy on `SingleBadCover`,\nflat list on `MultiGood` / `MultiBadCover`, empty state on\n`NoMatches`."
+              }
+            ]
+          },
           "providers": {
             "type": "array",
             "items": {
@@ -12503,6 +12514,30 @@
           "all",
           "any"
         ]
+      },
+      "MatchOutcomeView": {
+        "type": "object",
+        "description": "Discriminated view of the matcher's outcome classification.\nVocabulary mirrors [`crate::metadata::match_outcome::MatchOutcomeKind`]:\n`single_good`, `multi_good`, `single_bad_cover`, `multi_bad_cover`,\n`no_match`.\n\n`top_hamming` is the top candidate's cover-pHash Hamming distance\nwhen a phash pair was available, else `null`. `matched_via_alternate`\ntells the UI whether the top match came from a variant (drives the\n\"via alternate cover\" badge).",
+        "required": [
+          "kind",
+          "matched_via_alternate"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "matched_via_alternate": {
+            "type": "boolean"
+          },
+          "top_hamming": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "MatchQualityResp": {
         "type": "object",

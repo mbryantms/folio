@@ -26,6 +26,11 @@ let candidatesState = {
         }>;
         providers: string[];
         error_summary: string | null;
+        match_outcome?: {
+          kind: string;
+          top_hamming?: number;
+          matched_via_alternate: boolean;
+        };
       },
 };
 
@@ -235,6 +240,216 @@ describe("<MetadataMatchForm>", () => {
     );
     expect(html).toContain("out of quota");
     expect(html).toContain("Retry");
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // matching-accuracy-1.0 M8 — MatchOutcomeBanner per-variant copy
+  // ────────────────────────────────────────────────────────────
+
+  it("renders the SingleGoodMatch banner with one-click Apply button", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["comicvine"],
+        error_summary: null,
+        candidates: [
+          {
+            source: "comicvine",
+            external_id: "1",
+            bucket: "high",
+            score: 92.5,
+            candidate: { name: "Saga", year: 2012 },
+          },
+        ],
+        match_outcome: {
+          kind: "single_good",
+          top_hamming: 4,
+          matched_via_alternate: false,
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("Strong match");
+    expect(html).toContain("Saga (2012)");
+    expect(html).toContain("Apply");
+    expect(html).toContain("Show details");
+  });
+
+  it("flags via-alternate-cover when the top match came from a variant", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["metron"],
+        error_summary: null,
+        candidates: [
+          {
+            source: "metron",
+            external_id: "1",
+            bucket: "high",
+            score: 80,
+            candidate: { name: "Saga", year: 2012 },
+          },
+        ],
+        match_outcome: {
+          kind: "single_good",
+          top_hamming: 4,
+          matched_via_alternate: true,
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("via alternate cover");
+  });
+
+  it("renders the MultipleGoodMatches banner for multi_good", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["comicvine", "metron"],
+        error_summary: null,
+        candidates: [
+          {
+            source: "comicvine",
+            external_id: "a",
+            bucket: "high",
+            score: 92,
+            candidate: { name: "Saga", year: 2012 },
+          },
+          {
+            source: "metron",
+            external_id: "b",
+            bucket: "high",
+            score: 90,
+            candidate: { name: "Saga", year: 2012 },
+          },
+        ],
+        match_outcome: {
+          kind: "multi_good",
+          matched_via_alternate: false,
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("Multiple strong matches");
+    expect(html).toContain("Pick the right candidate");
+  });
+
+  it("renders the SingleBadCoverScore banner with the Hamming distance", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["comicvine"],
+        error_summary: null,
+        candidates: [
+          {
+            source: "comicvine",
+            external_id: "1",
+            bucket: "medium",
+            score: 75,
+            candidate: { name: "Saga", year: 2012 },
+          },
+        ],
+        match_outcome: {
+          kind: "single_bad_cover",
+          top_hamming: 14,
+          matched_via_alternate: false,
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("One plausible match");
+    expect(html).toContain("cover");
+    expect(html).toContain("14 bits");
+  });
+
+  it("renders the MultipleBadCoverScores banner for multi_bad_cover", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["comicvine"],
+        error_summary: null,
+        candidates: [
+          {
+            source: "comicvine",
+            external_id: "a",
+            bucket: "medium",
+            score: 70,
+            candidate: { name: "Saga", year: 2012 },
+          },
+          {
+            source: "comicvine",
+            external_id: "b",
+            bucket: "low",
+            score: 50,
+            candidate: { name: "Saga Adventures", year: 2013 },
+          },
+        ],
+        match_outcome: {
+          kind: "multi_bad_cover",
+          matched_via_alternate: false,
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("No strong match");
+    expect(html).toContain("Review the candidates");
+  });
+
+  it("renders no MatchOutcome banner for no_match (empty-state row already handles it)", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["comicvine"],
+        error_summary: null,
+        candidates: [],
+        match_outcome: {
+          kind: "no_match",
+          matched_via_alternate: false,
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    // Banner shouldn't appear; the existing empty-state row does.
+    expect(html).not.toContain("Strong match");
+    expect(html).not.toContain("Multiple strong matches");
+    expect(html).not.toContain("One plausible match");
+    expect(html).toContain("No matches");
   });
 
   it("surfaces the admin-only override toggle", () => {

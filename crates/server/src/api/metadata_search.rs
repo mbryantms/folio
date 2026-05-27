@@ -20,7 +20,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::{issue, library_user_access, metadata_run, series};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -88,6 +90,31 @@ pub struct CandidatesResp {
     pub items_matched_low: i32,
     pub error_summary: Option<String>,
     pub candidates: Vec<CandidateView>,
+    /// Match-outcome classification (matching-accuracy-1.0 M8).
+    /// `None` while the run is still searching; populated once it
+    /// completes. Drives the MetadataMatchDialog state — one-click
+    /// apply on `SingleGoodMatch`, warning copy on `SingleBadCover`,
+    /// flat list on `MultiGood` / `MultiBadCover`, empty state on
+    /// `NoMatches`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_outcome: Option<MatchOutcomeView>,
+}
+
+/// Discriminated view of the matcher's outcome classification.
+/// Vocabulary mirrors [`crate::metadata::match_outcome::MatchOutcomeKind`]:
+/// `single_good`, `multi_good`, `single_bad_cover`, `multi_bad_cover`,
+/// `no_match`.
+///
+/// `top_hamming` is the top candidate's cover-pHash Hamming distance
+/// when a phash pair was available, else `null`. `matched_via_alternate`
+/// tells the UI whether the top match came from a variant (drives the
+/// "via alternate cover" badge).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MatchOutcomeView {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_hamming: Option<u32>,
+    pub matched_via_alternate: bool,
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -203,7 +230,11 @@ pub async fn search_series(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
 
     let facts = SeriesQueryFacts {
@@ -243,7 +274,11 @@ pub async fn search_series(
         Ok(id) => id,
         Err(e) => {
             tracing::error!(error = %e, "metadata_search: start_run failed");
-            return error(StatusCode::BAD_GATEWAY, "metadata.queue", "run insert failed");
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "metadata.queue",
+                "run insert failed",
+            );
         }
     };
 
@@ -284,7 +319,11 @@ pub async fn search_series(
     {
         tracing::error!(error = %e, "metadata_search: push to queue failed");
         let _ = orchestrator::fail_run(&app.db, new_run_id, "queue push failed").await;
-        return error(StatusCode::BAD_GATEWAY, "metadata.queue", "queue push failed");
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "metadata.queue",
+            "queue push failed",
+        );
     }
 
     (
@@ -321,30 +360,40 @@ pub async fn candidates_series(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
 
     let run = match q.run_id {
         Some(id) => match orchestrator::fetch_run(&app.db, id).await {
             Ok(Some(r)) => r,
             Ok(None) => {
-                return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "metadata.run_not_found",
+                    "no such run",
+                );
             }
             Err(e) => {
                 tracing::error!(error = %e, "metadata_search: fetch_run failed");
                 return error(StatusCode::BAD_GATEWAY, "internal", "internal");
             }
         },
-        None => match latest_run_for_scope(&app, orchestrator::scope::SERIES, &s.id.to_string()).await {
-            Some(r) => r,
-            None => {
-                return error(
-                    StatusCode::NOT_FOUND,
-                    "metadata.run_not_found",
-                    "no run yet for this series",
-                );
+        None => {
+            match latest_run_for_scope(&app, orchestrator::scope::SERIES, &s.id.to_string()).await {
+                Some(r) => r,
+                None => {
+                    return error(
+                        StatusCode::NOT_FOUND,
+                        "metadata.run_not_found",
+                        "no run yet for this series",
+                    );
+                }
             }
-        },
+        }
     };
 
     // Guard cross-entity poking via ?run_id= — only return runs that
@@ -394,7 +443,11 @@ pub async fn sync_status_series(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     let linked = entity::external_id::Entity::find()
         .filter(entity::external_id::Column::EntityType.eq("series"))
@@ -463,7 +516,11 @@ async fn toggle_metadata_sync_paused(
         Err(resp) => return resp,
     };
     if !user_can_see_library(app, user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     let was = s.metadata_sync_paused;
     let mut am: entity::series::ActiveModel = s.clone().into();
@@ -531,7 +588,11 @@ pub async fn search_issue(
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
 
     let Some(issue_number) = i.number_raw.clone().filter(|s| !s.trim().is_empty()) else {
@@ -579,7 +640,11 @@ pub async fn search_issue(
         Ok(id) => id,
         Err(e) => {
             tracing::error!(error = %e, "metadata_search issue: start_run failed");
-            return error(StatusCode::BAD_GATEWAY, "metadata.queue", "run insert failed");
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "metadata.queue",
+                "run insert failed",
+            );
         }
     };
 
@@ -618,7 +683,11 @@ pub async fn search_issue(
     {
         tracing::error!(error = %e, "metadata_search issue: push failed");
         let _ = orchestrator::fail_run(&app.db, new_run_id, "queue push failed").await;
-        return error(StatusCode::BAD_GATEWAY, "metadata.queue", "queue push failed");
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "metadata.queue",
+            "queue push failed",
+        );
     }
 
     (
@@ -652,13 +721,21 @@ pub async fn candidates_issue(
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     let run = match q.run_id {
         Some(id) => match orchestrator::fetch_run(&app.db, id).await {
             Ok(Some(r)) => r,
             Ok(None) => {
-                return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "metadata.run_not_found",
+                    "no such run",
+                );
             }
             Err(e) => {
                 tracing::error!(error = %e, "metadata_search issue: fetch_run failed");
@@ -734,9 +811,17 @@ fn map_diff_err(e: apply::ApplyError) -> Response {
             "issue.not_found",
             "issue no longer exists",
         ),
-        ApplyError::InvalidScope(msg) => error(StatusCode::BAD_REQUEST, "metadata.invalid_scope", &msg),
-        ApplyError::Provider(_) => error(StatusCode::BAD_GATEWAY, "metadata.provider", "upstream provider error"),
-        ApplyError::Db(_) | ApplyError::Io(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        ApplyError::InvalidScope(msg) => {
+            error(StatusCode::BAD_REQUEST, "metadata.invalid_scope", &msg)
+        }
+        ApplyError::Provider(_) => error(
+            StatusCode::BAD_GATEWAY,
+            "metadata.provider",
+            "upstream provider error",
+        ),
+        ApplyError::Db(_) | ApplyError::Io(_) => {
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        }
     }
 }
 
@@ -765,11 +850,23 @@ pub async fn proposed_diff_series(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     // Sanity-check run scope before paying the provider round trip.
-    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id).await.ok().flatten() else {
-        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
     };
     if run.scope != orchestrator::scope::SERIES
         || run.scope_entity_id.as_deref() != Some(s.id.to_string().as_str())
@@ -814,7 +911,11 @@ pub async fn apply_series(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     if req.override_user_edits && user.role != "admin" {
         return error(
@@ -829,7 +930,11 @@ pub async fn apply_series(
         .ok()
         .flatten()
     else {
-        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
     };
     if run.scope != orchestrator::scope::SERIES
         || run.scope_entity_id.as_deref() != Some(s.id.to_string().as_str())
@@ -868,7 +973,10 @@ pub async fn apply_series(
             actor_id: Some(user.id),
             actor_ip: ctx.ip_string(),
             actor_ua: ctx.user_agent.clone(),
-            selected_fields: req.selected_fields.clone().map(std::collections::HashSet::from_iter),
+            selected_fields: req
+                .selected_fields
+                .clone()
+                .map(std::collections::HashSet::from_iter),
             override_external_id_sources: req
                 .override_external_id_sources
                 .iter()
@@ -878,7 +986,11 @@ pub async fn apply_series(
         .await
     {
         tracing::error!(error = %e, "metadata_apply series: push failed");
-        return error(StatusCode::BAD_GATEWAY, "metadata.queue", "queue push failed");
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "metadata.queue",
+            "queue push failed",
+        );
     }
 
     (
@@ -922,10 +1034,22 @@ pub async fn proposed_diff_issue(
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
-    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id).await.ok().flatten() else {
-        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
     };
     if run.scope != orchestrator::scope::ISSUE
         || run.scope_entity_id.as_deref() != Some(i.id.as_str())
@@ -969,7 +1093,11 @@ pub async fn apply_issue(
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     if req.override_user_edits && user.role != "admin" {
         return error(
@@ -983,7 +1111,11 @@ pub async fn apply_issue(
         .ok()
         .flatten()
     else {
-        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
     };
     if run.scope != orchestrator::scope::ISSUE
         || run.scope_entity_id.as_deref() != Some(i.id.as_str())
@@ -1022,7 +1154,10 @@ pub async fn apply_issue(
             actor_id: Some(user.id),
             actor_ip: ctx.ip_string(),
             actor_ua: ctx.user_agent.clone(),
-            selected_fields: req.selected_fields.clone().map(std::collections::HashSet::from_iter),
+            selected_fields: req
+                .selected_fields
+                .clone()
+                .map(std::collections::HashSet::from_iter),
             override_external_id_sources: req
                 .override_external_id_sources
                 .iter()
@@ -1032,7 +1167,11 @@ pub async fn apply_issue(
         .await
     {
         tracing::error!(error = %e, "metadata_apply issue: push failed");
-        return error(StatusCode::BAD_GATEWAY, "metadata.queue", "queue push failed");
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "metadata.queue",
+            "queue push failed",
+        );
     }
 
     (
@@ -1097,7 +1236,11 @@ pub async fn refresh_library_metadata(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, lib.id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     let Ok(scope) = q.scope.parse::<RefreshScope>() else {
         return error(
@@ -1106,13 +1249,7 @@ pub async fn refresh_library_metadata(
             "scope must be one of: unmatched, stale, all, recent",
         );
     };
-    match refresh::fan_out_scope(
-        &app,
-        lib.id,
-        scope,
-        orchestrator::trigger_kind::BULK_ACTION,
-    )
-    .await
+    match refresh::fan_out_scope(&app, lib.id, scope, orchestrator::trigger_kind::BULK_ACTION).await
     {
         Ok(RefreshOutcome {
             series_eligible,
@@ -1133,11 +1270,7 @@ pub async fn refresh_library_metadata(
             .into_response(),
         Err(e) => {
             tracing::error!(error = %e, library_id = %lib.id, "metadata refresh fan-out failed");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            )
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
     }
 }
@@ -1194,6 +1327,17 @@ async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> Cand
     let rows = orchestrator::fetch_candidates(&app.db, run.id)
         .await
         .unwrap_or_default();
+
+    // M8: derive the outcome classification once the run is finished.
+    // While the run is still in `queued` / `searching` we emit
+    // `None` so the dialog renders its in-flight state instead of
+    // a misleading "no match" snapshot.
+    let match_outcome = if run.status == orchestrator::status::COMPLETED {
+        Some(build_match_outcome_view(&rows))
+    } else {
+        None
+    };
+
     let candidates = rows
         .into_iter()
         .map(|r| CandidateView {
@@ -1217,6 +1361,36 @@ async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> Cand
         items_matched_low: run.items_matched_low,
         error_summary: run.error_summary,
         candidates,
+        match_outcome,
+    }
+}
+
+/// Classify the run's ranked-candidate list into a [`MatchOutcomeView`].
+/// Reads `top_hamming` + `matched_via_alternate` from the per-row
+/// `score_breakdown` JSON (populated by the orchestrator in M4 + M5).
+///
+/// Matching-accuracy-1.0 M8.
+fn build_match_outcome_view(rows: &[entity::metadata_run_candidate::Model]) -> MatchOutcomeView {
+    let kind = match (rows.len(), rows.first().map(|r| r.bucket.as_str())) {
+        (0, _) => "no_match",
+        (1, Some("high")) => "single_good",
+        (1, _) => "single_bad_cover",
+        (_, Some("high")) => "multi_good",
+        _ => "multi_bad_cover",
+    };
+    let top_row = rows.first();
+    let top_hamming = top_row
+        .and_then(|r| r.score_breakdown.get("cover_hamming"))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32);
+    let matched_via_alternate = top_row
+        .and_then(|r| r.score_breakdown.get("matched_via_alternate"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    MatchOutcomeView {
+        kind: kind.to_owned(),
+        top_hamming,
+        matched_via_alternate,
     }
 }
 

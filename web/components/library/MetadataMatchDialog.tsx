@@ -55,6 +55,7 @@ import { useScanEvents } from "@/lib/api/scan-events";
 import type {
   ApplyMode,
   CandidateView,
+  MatchOutcomeView,
   SearchStartedResp,
 } from "@/lib/api/types";
 
@@ -316,6 +317,24 @@ export function MetadataMatchForm({
     // that strands the search kick's onSuccess.
   };
 
+  // M8: one-click apply for `single_good_match`. Skips the preview
+  // pane — empty `selected_fields` is the apply-all signal the
+  // backend already understands. Operator can still cancel via Esc
+  // since the mutation finalizes asynchronously.
+  const onOneClickApply = () => {
+    if (!runId) return;
+    setPickedOrdinal(0);
+    apply.mutate({
+      run_id: runId,
+      ordinal: 0,
+      mode,
+      apply_cover: applyCover,
+      override_user_edits: overrideUserEdits,
+      selected_fields: [],
+      override_external_id_sources: [],
+    });
+  };
+
   // M5.2 — When the target library has `metadata_writeback_enabled=true`,
   // an apply enqueues a downstream `RewriteIssueSidecarsJob` which then
   // triggers a scoped scanner rescan. The DB cache reflects the new
@@ -553,23 +572,34 @@ export function MetadataMatchForm({
               </button>
             </div>
           ) : (
-            <ul className="space-y-2 py-2">
-              {(candidates.data?.candidates ?? []).map((c, i) => (
-                <CandidateRow
-                  key={`${c.source}-${c.external_id}-${i}`}
-                  c={c}
-                  ordinal={i}
-                  disabled={apply.isPending}
-                  isApplying={apply.isPending && pickedOrdinal === i}
-                  onApply={() => onEnterPreview(i)}
+            <>
+              {candidates.data?.match_outcome && (
+                <MatchOutcomeBanner
+                  outcome={candidates.data.match_outcome}
+                  topCandidate={candidates.data.candidates[0]}
+                  isApplying={apply.isPending && pickedOrdinal === 0}
+                  onOneClickApply={onOneClickApply}
+                  onShowDetails={() => onEnterPreview(0)}
                 />
-              ))}
-              {isFinalized && (candidates.data?.candidates.length ?? 0) === 0 && (
-                <li className="text-muted-foreground py-8 text-center text-sm">
-                  No matches. Try editing the series name or year.
-                </li>
               )}
-            </ul>
+              <ul className="space-y-2 py-2">
+                {(candidates.data?.candidates ?? []).map((c, i) => (
+                  <CandidateRow
+                    key={`${c.source}-${c.external_id}-${i}`}
+                    c={c}
+                    ordinal={i}
+                    disabled={apply.isPending}
+                    isApplying={apply.isPending && pickedOrdinal === i}
+                    onApply={() => onEnterPreview(i)}
+                  />
+                ))}
+                {isFinalized && (candidates.data?.candidates.length ?? 0) === 0 && (
+                  <li className="text-muted-foreground py-8 text-center text-sm">
+                    No matches. Try editing the series name or year.
+                  </li>
+                )}
+              </ul>
+            </>
           )}
         </ScrollArea>
       )}
@@ -589,6 +619,151 @@ export function MetadataMatchForm({
       </DialogFooter>
     </>
   );
+}
+
+/**
+ * Match-outcome banner (matching-accuracy-1.0 M8).
+ *
+ * Renders header copy + a primary-action button per outcome variant —
+ * the dialog state machine ComicTagger uses for the same UX cue:
+ *   - `single_good`         → "Strong match: …" + one-click Apply
+ *   - `multi_good`          → "Multiple strong matches" + pick from list
+ *   - `single_bad_cover`    → "One plausible match — cover doesn't match"
+ *   - `multi_bad_cover`     → "No strong match. Review or re-search"
+ *   - `no_match`            → no banner (the empty-state row handles it)
+ */
+function MatchOutcomeBanner({
+  outcome,
+  topCandidate,
+  isApplying,
+  onOneClickApply,
+  onShowDetails,
+}: {
+  outcome: MatchOutcomeView;
+  topCandidate: CandidateView | undefined;
+  isApplying: boolean;
+  onOneClickApply: () => void;
+  onShowDetails: () => void;
+}) {
+  if (outcome.kind === "no_match") {
+    return null;
+  }
+  const topName = topCandidate
+    ? extractCandidateTitle(topCandidate)
+    : "Top candidate";
+  const altBadge = outcome.matched_via_alternate ? (
+    <span className="text-muted-foreground ml-2 text-[10px] uppercase tracking-wide">
+      via alternate cover
+    </span>
+  ) : null;
+
+  if (outcome.kind === "single_good") {
+    return (
+      <div className="bg-emerald-500/5 border-emerald-500/30 my-2 rounded-md border p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">
+              Strong match: {topName}
+              {altBadge}
+            </p>
+            <p className="text-muted-foreground text-xs">
+              Apply now to write every field. Use{" "}
+              <button
+                type="button"
+                onClick={onShowDetails}
+                className="underline underline-offset-2"
+              >
+                Show details
+              </button>{" "}
+              to pick fields first.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={onOneClickApply}
+            disabled={isApplying}
+          >
+            {isApplying ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                Applying
+              </>
+            ) : (
+              "Apply"
+            )}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (outcome.kind === "multi_good") {
+    return (
+      <div className="bg-muted/40 border-border my-2 rounded-md border p-3">
+        <p className="text-sm font-medium">Multiple strong matches</p>
+        <p className="text-muted-foreground text-xs">
+          Pick the right candidate from the list below — every option is
+          a plausible match.
+        </p>
+      </div>
+    );
+  }
+
+  if (outcome.kind === "single_bad_cover") {
+    return (
+      <div className="bg-amber-500/5 border-amber-500/30 my-2 rounded-md border p-3">
+        <p className="text-sm font-medium">
+          One plausible match — cover doesn&rsquo;t match{altBadge}
+        </p>
+        <p className="text-muted-foreground text-xs">
+          {outcome.top_hamming != null
+            ? `Cover Hamming distance ${outcome.top_hamming} bits — verify before applying.`
+            : "No cover comparison available. Verify the match by reviewing the details before applying."}
+        </p>
+      </div>
+    );
+  }
+
+  // multi_bad_cover
+  return (
+    <div className="bg-muted/40 border-border my-2 rounded-md border p-3">
+      <p className="text-sm font-medium">No strong match</p>
+      <p className="text-muted-foreground text-xs">
+        Review the candidates below or re-search with different facts
+        (try editing the series name or year).
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Pull a readable title out of the candidate payload for the banner.
+ * `CandidateView.candidate` is the raw provider payload — series
+ * candidates carry `name + year`; issue candidates carry
+ * `series_name + issue_number`. Best-effort; the dialog will still
+ * render even if neither field is present.
+ */
+function extractCandidateTitle(c: CandidateView): string {
+  const payload =
+    c.candidate && typeof c.candidate === "object"
+      ? (c.candidate as Record<string, unknown>)
+      : {};
+  const seriesName =
+    typeof payload.name === "string"
+      ? payload.name
+      : typeof payload.series_name === "string"
+        ? payload.series_name
+        : null;
+  const issueNumber =
+    typeof payload.issue_number === "string" ? payload.issue_number : null;
+  const year = typeof payload.year === "number" ? payload.year : null;
+  if (seriesName && issueNumber) {
+    return `${seriesName} #${issueNumber}`;
+  }
+  if (seriesName && year) {
+    return `${seriesName} (${year})`;
+  }
+  return seriesName ?? c.external_id;
 }
 
 function CandidateRow({

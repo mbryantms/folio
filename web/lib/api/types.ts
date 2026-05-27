@@ -622,6 +622,7 @@ export type AppPasswordScope = "read" | "read+progress";
 export type SearchStartedResp = Schemas["SearchStartedResp"];
 export type CandidatesResp = Schemas["CandidatesResp"];
 export type CandidateView = Schemas["CandidateView"];
+export type MatchOutcomeView = Schemas["MatchOutcomeView"];
 export type ApplyAcceptedResp = Schemas["ApplyAcceptedResp"];
 export type ApplyMode = Schemas["ApplyMode"];
 export type ApplyCoverPolicy = Schemas["ApplyCoverPolicy"];

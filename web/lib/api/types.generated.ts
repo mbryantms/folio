@@ -3677,6 +3677,7 @@ export interface components {
             items_matched_medium: number;
             /** Format: int32 */
             items_total: number;
+            match_outcome?: null | components["schemas"]["MatchOutcomeView"];
             providers: string[];
             /** Format: uuid */
             run_id: string;
@@ -5050,6 +5051,21 @@ export interface components {
         };
         /** @enum {string} */
         MatchMode: "all" | "any";
+        /** @description Discriminated view of the matcher's outcome classification.
+         *     Vocabulary mirrors [`crate::metadata::match_outcome::MatchOutcomeKind`]:
+         *     `single_good`, `multi_good`, `single_bad_cover`, `multi_bad_cover`,
+         *     `no_match`.
+         *
+         *     `top_hamming` is the top candidate's cover-pHash Hamming distance
+         *     when a phash pair was available, else `null`. `matched_via_alternate`
+         *     tells the UI whether the top match came from a variant (drives the
+         *     "via alternate cover" badge). */
+        MatchOutcomeView: {
+            kind: string;
+            matched_via_alternate: boolean;
+            /** Format: int32 */
+            top_hamming?: number | null;
+        };
         MatchQualityResp: {
             last_28d: components["schemas"]["MatchQualityWindow"][];
             /** @description Distribution of outcomes within the trailing 7 days. The

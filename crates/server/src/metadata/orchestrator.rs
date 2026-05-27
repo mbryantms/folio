@@ -249,6 +249,9 @@ impl RankedCandidate {
             // explain "cover within 6 bits → HIGH" or "cover 24 bits
             // off → LOW". null when no phash was available.
             "cover_hamming": self.score.cover_hamming,
+            // M5: flag whether the winning cover came from a variant.
+            // Drives the dialog's "via alternate cover" badge.
+            "matched_via_alternate": self.score.matched_via_alternate,
         })
     }
 }
