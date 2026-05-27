@@ -390,6 +390,7 @@ export const queryKeys = {
   issueCovers: (issueId: string) => ["issues", issueId, "covers"] as const,
   // ── M6 admin surface ──
   adminMetadataDashboard: ["admin", "metadata", "dashboard"] as const,
+  adminMetadataMatchQuality: ["admin", "metadata", "match-quality"] as const,
   adminMetadataProviders: ["admin", "metadata", "providers"] as const,
   adminMetadataRuns: (filters: {
     library_id?: string;
@@ -2066,6 +2067,7 @@ export function useIssueCovers(issueId: string) {
 
 import type {
   DashboardResp,
+  MatchQualityResp,
   ProvidersListResp,
   ReviewQueueResp,
   RunDetailResp,
@@ -2076,6 +2078,16 @@ export function useAdminMetadataDashboard() {
   return useQuery({
     queryKey: queryKeys.adminMetadataDashboard,
     queryFn: () => jsonFetch<DashboardResp>(`/admin/metadata/dashboard`),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useAdminMetadataMatchQuality() {
+  return useQuery({
+    queryKey: queryKeys.adminMetadataMatchQuality,
+    queryFn: () =>
+      jsonFetch<MatchQualityResp>(`/admin/metadata/match-quality`),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });

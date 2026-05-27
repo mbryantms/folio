@@ -112,3 +112,6 @@ list_runs           # GET /admin/metadata/runs — paginated run history
 get_run             # GET /admin/metadata/runs/{id} — single run detail
 list_review_queue   # GET /admin/metadata/review-queue — pending medium/low matches
 
+# ── admin_metadata.rs (matching-accuracy-1.0 M0) ─────────────
+match_quality       # GET /admin/metadata/match-quality — read-only outcome distribution
+

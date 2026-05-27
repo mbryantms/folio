@@ -12,8 +12,11 @@ import { CheckCircle2, Loader2, Search, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useAdminMetadataDashboard } from "@/lib/api/queries";
-import type { ProviderView } from "@/lib/api/types";
+import {
+  useAdminMetadataDashboard,
+  useAdminMetadataMatchQuality,
+} from "@/lib/api/queries";
+import type { MatchQualityWindow, ProviderView } from "@/lib/api/types";
 
 export function DashboardTab() {
   const q = useAdminMetadataDashboard();
@@ -70,6 +73,124 @@ export function DashboardTab() {
           ))}
         </CardContent>
       </Card>
+
+      <MatchQualityCard />
+    </div>
+  );
+}
+
+/**
+ * Match-quality distribution (matching-accuracy-1.0 M0).
+ *
+ * Renders the rolling 7d + 28d bucket counts so the operator can see
+ * whether the matcher is producing decisive single-good matches or
+ * dropping everything into the review queue. Lands BEFORE the M2 / M4
+ * matcher tuning so the trend has a real before/after baseline once
+ * those ship.
+ */
+const OUTCOME_LABELS: Record<string, string> = {
+  single_good: "Single strong match",
+  multi_good: "Multiple strong matches",
+  single_bad_cover: "One weak match",
+  multi_bad_cover: "Multiple weak matches",
+  no_match: "No matches",
+};
+const OUTCOME_ORDER = [
+  "single_good",
+  "multi_good",
+  "single_bad_cover",
+  "multi_bad_cover",
+  "no_match",
+];
+
+function MatchQualityCard() {
+  const q = useAdminMetadataMatchQuality();
+  if (q.isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Match quality</CardTitle>
+        </CardHeader>
+        <CardContent className="text-muted-foreground flex items-center gap-2 text-sm">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!q.data) return null;
+  const { last_7d, last_28d, total_7d, total_28d } = q.data;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">Match quality</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {total_7d === 0 && total_28d === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            No search runs in the last 28 days — kick one off to start
+            collecting baseline telemetry.
+          </p>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <MatchQualityWindowView
+              title="Last 7 days"
+              total={total_7d}
+              rows={last_7d}
+            />
+            <MatchQualityWindowView
+              title="Last 28 days"
+              total={total_28d}
+              rows={last_28d}
+            />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MatchQualityWindowView({
+  title,
+  total,
+  rows,
+}: {
+  title: string;
+  total: number;
+  rows: MatchQualityWindow[];
+}) {
+  // Server returns only buckets with count > 0; fill in zeros so the
+  // operator can see "no_match: 0" instead of a missing row that's
+  // easy to misread as "haven't measured".
+  const byKind = new Map(rows.map((r) => [r.kind, r.count] as const));
+  const display = OUTCOME_ORDER.map((kind) => ({
+    kind,
+    count: byKind.get(kind) ?? 0,
+  }));
+
+  return (
+    <div className="space-y-2">
+      <div className="text-muted-foreground flex items-center justify-between text-xs uppercase tracking-wide">
+        <span>{title}</span>
+        <span>{total.toLocaleString()} total</span>
+      </div>
+      <ul className="space-y-1 text-sm">
+        {display.map((d) => {
+          const pct = total > 0 ? Math.round((d.count / total) * 100) : 0;
+          return (
+            <li
+              key={d.kind}
+              className="flex items-center justify-between gap-3"
+            >
+              <span>{OUTCOME_LABELS[d.kind] ?? d.kind}</span>
+              <span className="text-muted-foreground tabular-nums">
+                {d.count.toLocaleString()}{" "}
+                <span className="text-xs">({pct}%)</span>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

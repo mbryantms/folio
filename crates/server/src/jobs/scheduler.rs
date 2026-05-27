@@ -33,6 +33,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_prune_auth_sessions(&scheduler, &state).await;
     register_metadata_weekly_refresh(&scheduler, &state).await;
     register_writeback_migration_progress(&scheduler, &state).await;
+    register_metadata_match_outcome_prune(&scheduler, &state).await;
     Ok(scheduler)
 }
 
@@ -487,10 +488,7 @@ async fn run_metadata_weekly_refresh(state: &AppState) {
     use crate::metadata::orchestrator::trigger_kind;
     use crate::metadata::refresh::{self, RefreshScope};
 
-    let libraries: Vec<_> = match entity::library::Entity::find()
-        .all(&state.db)
-        .await
-    {
+    let libraries: Vec<_> = match entity::library::Entity::find().all(&state.db).await {
         Ok(rows) => rows,
         Err(e) => {
             tracing::warn!(error = %e, "metadata weekly refresh: list libraries failed");
@@ -504,7 +502,14 @@ async fn run_metadata_weekly_refresh(state: &AppState) {
         // refreshes (likely provider-side change). Stale runs
         // second so the per-entity coalesce gate naturally dedupes
         // anything that just landed in the recent fan-out.
-        match refresh::fan_out_scope(state, lib.id, RefreshScope::Recent, trigger_kind::WEEKLY_REFRESH).await {
+        match refresh::fan_out_scope(
+            state,
+            lib.id,
+            RefreshScope::Recent,
+            trigger_kind::WEEKLY_REFRESH,
+        )
+        .await
+        {
             Ok(out) => {
                 recent_total += out.jobs_enqueued;
                 tracing::info!(
@@ -517,9 +522,18 @@ async fn run_metadata_weekly_refresh(state: &AppState) {
                     "metadata weekly refresh: per-library fan-out",
                 );
             }
-            Err(e) => tracing::warn!(library_id = %lib.id, error = %e, "weekly refresh recent fan-out failed"),
+            Err(e) => {
+                tracing::warn!(library_id = %lib.id, error = %e, "weekly refresh recent fan-out failed")
+            }
         }
-        match refresh::fan_out_scope(state, lib.id, RefreshScope::Stale, trigger_kind::WEEKLY_REFRESH).await {
+        match refresh::fan_out_scope(
+            state,
+            lib.id,
+            RefreshScope::Stale,
+            trigger_kind::WEEKLY_REFRESH,
+        )
+        .await
+        {
             Ok(out) => {
                 stale_total += out.jobs_enqueued;
                 tracing::info!(
@@ -532,7 +546,9 @@ async fn run_metadata_weekly_refresh(state: &AppState) {
                     "metadata weekly refresh: per-library fan-out",
                 );
             }
-            Err(e) => tracing::warn!(library_id = %lib.id, error = %e, "weekly refresh stale fan-out failed"),
+            Err(e) => {
+                tracing::warn!(library_id = %lib.id, error = %e, "weekly refresh stale fan-out failed")
+            }
         }
     }
     tracing::info!(
@@ -574,9 +590,7 @@ async fn register_writeback_migration_progress(scheduler: &JobScheduler, state: 
                     "scheduler: add writeback_migration_progress failed",
                 );
             } else {
-                tracing::info!(
-                    "writeback_migration_progress registered (04:00 UTC Monday)",
-                );
+                tracing::info!("writeback_migration_progress registered (04:00 UTC Monday)",);
             }
         }
         Err(e) => tracing::error!(
@@ -602,6 +616,55 @@ pub async fn refresh_writeback_remaining_gauge(state: &AppState) {
         Err(e) => tracing::warn!(
             error = %e,
             "writeback migration progress: count query failed",
+        ),
+    }
+}
+
+/// Matching-accuracy-1.0 M0: nightly sweep of the `metadata_match_outcome`
+/// telemetry table. The `metadata_run` FK CASCADE handles run-deletion
+/// side; this sweep targets long-lived runs whose outcome rows are no
+/// longer interesting and acts as a safety net so the table can't grow
+/// unbounded if no one purges runs. Runs at 03:30 UTC — half an hour
+/// after the existing `scan_runs` prune so the two don't contend.
+async fn register_metadata_match_outcome_prune(scheduler: &JobScheduler, state: &AppState) {
+    const RETENTION_DAYS: i64 = 90;
+    let state = state.clone();
+    let job_result = Job::new_async("0 30 3 * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            match crate::metadata::match_outcome::prune(&state.db, RETENTION_DAYS).await {
+                Ok(n) => {
+                    if n > 0 {
+                        tracing::info!(
+                            deleted = n,
+                            retention_days = RETENTION_DAYS,
+                            "metadata_match_outcome pruned",
+                        );
+                    }
+                }
+                Err(e) => tracing::error!(
+                    error = %e,
+                    "metadata_match_outcome prune failed",
+                ),
+            }
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(
+                    error = %e,
+                    "scheduler: add metadata_match_outcome_prune failed",
+                );
+            } else {
+                tracing::info!(
+                    "metadata_match_outcome prune registered (03:30 UTC daily, keep=90d)",
+                );
+            }
+        }
+        Err(e) => tracing::error!(
+            error = %e,
+            "scheduler: build metadata_match_outcome_prune failed",
         ),
     }
 }

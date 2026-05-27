@@ -854,6 +854,26 @@
         }
       }
     },
+    "/api/admin/metadata/match-quality": {
+      "get": {
+        "operationId": "admin_metadata_match_quality",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchQualityResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/phash-backfill": {
       "post": {
         "operationId": "metadata_phash_backfill",
@@ -12465,6 +12485,56 @@
           "all",
           "any"
         ]
+      },
+      "MatchQualityResp": {
+        "type": "object",
+        "required": [
+          "last_7d",
+          "last_28d",
+          "total_7d",
+          "total_28d"
+        ],
+        "properties": {
+          "last_28d": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MatchQualityWindow"
+            }
+          },
+          "last_7d": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MatchQualityWindow"
+            },
+            "description": "Distribution of outcomes within the trailing 7 days. The\nshape mirrors what the M8 dialog will use, so the dashboard\ncan speak the same vocabulary once cover-decides ships in M4."
+          },
+          "total_28d": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_7d": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total rows in each window — denominator for any percentage UI."
+          }
+        }
+      },
+      "MatchQualityWindow": {
+        "type": "object",
+        "required": [
+          "kind",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`single_good | multi_good | single_bad_cover | multi_bad_cover | no_match`"
+          }
+        }
       },
       "MeResp": {
         "type": "object",

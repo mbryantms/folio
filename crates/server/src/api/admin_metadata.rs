@@ -44,6 +44,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list_providers))
         .routes(routes!(test_provider))
         .routes(routes!(dashboard))
+        .routes(routes!(match_quality))
         .routes(routes!(list_runs))
         .routes(routes!(get_run))
         .routes(routes!(list_review_queue))
@@ -93,10 +94,7 @@ pub struct TestProviderResp {
     )
 )]
 #[handler]
-pub async fn list_providers(
-    State(app): State<AppState>,
-    _admin: RequireAdmin,
-) -> Response {
+pub async fn list_providers(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
     let cfg = app.cfg();
     let mut providers = Vec::new();
 
@@ -273,11 +271,7 @@ pub async fn test_provider(
                 "duration_ms": duration_ms,
                 "error": e.to_string(),
             });
-            (
-                status,
-                payload,
-                error(status, code, &e.to_string()),
-            )
+            (status, payload, error(status, code, &e.to_string()))
         }
     };
 
@@ -302,7 +296,9 @@ pub async fn test_provider(
 fn classify(err: &ProviderError) -> (StatusCode, &'static str) {
     match err {
         ProviderError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "metadata.unauthorized"),
-        ProviderError::QuotaExceeded { .. } => (StatusCode::TOO_MANY_REQUESTS, "metadata.quota_exceeded"),
+        ProviderError::QuotaExceeded { .. } => {
+            (StatusCode::TOO_MANY_REQUESTS, "metadata.quota_exceeded")
+        }
         ProviderError::NotFound(_) => (StatusCode::NOT_FOUND, "metadata.not_found"),
         ProviderError::Transport(_) => (StatusCode::BAD_GATEWAY, "metadata.transport"),
         ProviderError::InvalidResponse(_) => (StatusCode::BAD_GATEWAY, "metadata.invalid_response"),
@@ -319,11 +315,7 @@ fn snapshot_to_view(snap: crate::metadata::provider::QuotaSnapshot) -> QuotaView
 }
 
 fn comicvine_client(app: &AppState) -> ComicVineClient {
-    let key = app
-        .cfg()
-        .comicvine_api_key
-        .clone()
-        .unwrap_or_default();
+    let key = app.cfg().comicvine_api_key.clone().unwrap_or_default();
     ComicVineClient::new(key, app.jobs.redis.clone())
 }
 
@@ -399,15 +391,12 @@ pub async fn dashboard(State(app): State<AppState>, _admin: RequireAdmin) -> Res
 
     let seven_days_ago = chrono::Utc::now() - chrono::Duration::days(7);
     let applies_last_7_days = audit_log::Entity::find()
-        .filter(
-            audit_log::Column::Action
-                .is_in([
-                    "admin.series.metadata_apply",
-                    "admin.series.metadata_apply_force",
-                    "admin.issue.metadata_apply",
-                    "admin.issue.metadata_apply_force",
-                ]),
-        )
+        .filter(audit_log::Column::Action.is_in([
+            "admin.series.metadata_apply",
+            "admin.series.metadata_apply_force",
+            "admin.issue.metadata_apply",
+            "admin.issue.metadata_apply_force",
+        ]))
         .filter(audit_log::Column::CreatedAt.gte(seven_days_ago.fixed_offset()))
         .count(&app.db)
         .await
@@ -422,7 +411,11 @@ pub async fn dashboard(State(app): State<AppState>, _admin: RequireAdmin) -> Res
         .unwrap_or(false);
     let cv_enabled = cfg.comicvine_enabled && cv_key_set;
     let cv_quota = if cv_key_set {
-        comicvine_client(&app).quota().await.ok().map(snapshot_to_view)
+        comicvine_client(&app)
+            .quota()
+            .await
+            .ok()
+            .map(snapshot_to_view)
     } else {
         None
     };
@@ -498,6 +491,96 @@ async fn matched_series_count(app: &AppState) -> i64 {
         .flatten()
         .map(|r| r.c)
         .unwrap_or(0)
+}
+
+// ───────── GET /admin/metadata/match-quality ─────────
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MatchQualityWindow {
+    /// `single_good | multi_good | single_bad_cover | multi_bad_cover | no_match`
+    pub kind: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MatchQualityResp {
+    /// Distribution of outcomes within the trailing 7 days. The
+    /// shape mirrors what the M8 dialog will use, so the dashboard
+    /// can speak the same vocabulary once cover-decides ships in M4.
+    pub last_7d: Vec<MatchQualityWindow>,
+    pub last_28d: Vec<MatchQualityWindow>,
+    /// Total rows in each window — denominator for any percentage UI.
+    pub total_7d: i64,
+    pub total_28d: i64,
+}
+
+#[utoipa::path(
+    operation_id = "admin_metadata_match_quality",
+    get,
+    path = "/admin/metadata/match-quality",
+    responses(
+        (status = 200, body = MatchQualityResp),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn match_quality(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
+    let now = chrono::Utc::now();
+    let cutoff_7d = now - chrono::Duration::days(7);
+    let cutoff_28d = now - chrono::Duration::days(28);
+
+    let last_7d = match outcome_distribution(&app, cutoff_7d).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "match_quality 7d query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let last_28d = match outcome_distribution(&app, cutoff_28d).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "match_quality 28d query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let total_7d = last_7d.iter().map(|w| w.count).sum();
+    let total_28d = last_28d.iter().map(|w| w.count).sum();
+
+    Json(MatchQualityResp {
+        last_7d,
+        last_28d,
+        total_7d,
+        total_28d,
+    })
+    .into_response()
+}
+
+async fn outcome_distribution(
+    app: &AppState,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<MatchQualityWindow>, sea_orm::DbErr> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        kind: String,
+        c: i64,
+    }
+    let stmt = Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "SELECT outcome_kind AS kind, COUNT(*)::bigint AS c \
+         FROM metadata_match_outcome \
+         WHERE created_at >= $1 \
+         GROUP BY outcome_kind",
+        [sea_orm::Value::from(since.fixed_offset())],
+    );
+    let rows = Row::find_by_statement(stmt).all(&app.db).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| MatchQualityWindow {
+            kind: r.kind,
+            count: r.c,
+        })
+        .collect())
 }
 
 // ───────── GET /admin/metadata/runs ─────────
@@ -655,7 +738,11 @@ pub async fn get_run(
         .ok()
         .flatten()
     else {
-        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
     };
     let query = run.query.clone();
     let candidates = metadata_run_candidate::Entity::find()
@@ -866,8 +953,6 @@ pub async fn dismiss_candidate(
     .await;
     Json(DismissResp { dismissed: true }).into_response()
 }
-
-
 
 // ───────── /admin/metadata/phash-backfill ─────────
 

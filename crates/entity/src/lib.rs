@@ -43,6 +43,7 @@ pub mod location;
 pub mod log_widget;
 pub mod marker;
 pub mod metadata_cache;
+pub mod metadata_match_outcome;
 pub mod metadata_run;
 pub mod metadata_run_candidate;
 pub mod object;
@@ -109,6 +110,7 @@ pub mod prelude {
     pub use super::location::Entity as Location;
     pub use super::marker::Entity as Marker;
     pub use super::metadata_cache::Entity as MetadataCache;
+    pub use super::metadata_match_outcome::Entity as MetadataMatchOutcome;
     pub use super::metadata_run::Entity as MetadataRun;
     pub use super::metadata_run_candidate::Entity as MetadataRunCandidate;
     pub use super::object::Entity as Object;

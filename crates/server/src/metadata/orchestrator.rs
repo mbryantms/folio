@@ -23,9 +23,7 @@
 use crate::config::Config;
 use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::identifier::Source;
-use crate::metadata::matcher::{
-    self, Confidence, IssueQueryFacts, Score, SeriesQueryFacts,
-};
+use crate::metadata::matcher::{self, Confidence, IssueQueryFacts, Score, SeriesQueryFacts};
 use crate::metadata::metron::MetronClient;
 use crate::metadata::provider::{
     IssueCandidate, IssueQuery, MetadataProvider, ProviderError, SeriesCandidate, SeriesQuery,
@@ -74,10 +72,7 @@ pub mod scope {
 /// Priority: Metron first (richer + native cross-source IDs), then
 /// ComicVine. The M5 admin UI exposes a drag-reorder of this list;
 /// for now the priority is hard-coded.
-pub fn build_providers(
-    cfg: &Config,
-    redis: ConnectionManager,
-) -> Vec<Arc<dyn MetadataProvider>> {
+pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn MetadataProvider>> {
     let mut out: Vec<Arc<dyn MetadataProvider>> = Vec::new();
 
     let metron_user_set = cfg
@@ -93,7 +88,11 @@ pub fn build_providers(
     if cfg.metron_enabled && metron_user_set && metron_pass_set {
         let username = cfg.metron_username.clone().unwrap_or_default();
         let password = cfg.metron_password.clone().unwrap_or_default();
-        out.push(Arc::new(MetronClient::new(&username, &password, redis.clone())));
+        out.push(Arc::new(MetronClient::new(
+            &username,
+            &password,
+            redis.clone(),
+        )));
     }
 
     let cv_key_set = cfg
@@ -135,7 +134,10 @@ pub struct StartRunArgs<'a> {
     pub query: StoredQuery,
 }
 
-pub async fn start_run<C: ConnectionTrait>(db: &C, args: StartRunArgs<'_>) -> Result<Uuid, sea_orm::DbErr> {
+pub async fn start_run<C: ConnectionTrait>(
+    db: &C,
+    args: StartRunArgs<'_>,
+) -> Result<Uuid, sea_orm::DbErr> {
     let id = Uuid::now_v7();
     let now = Utc::now();
     let query_json = serde_json::to_value(&args.query)
@@ -147,7 +149,11 @@ pub async fn start_run<C: ConnectionTrait>(db: &C, args: StartRunArgs<'_>) -> Re
         library_id: Set(args.library_id),
         triggered_by: Set(args.triggered_by),
         trigger_kind: Set(args.trigger_kind.to_owned()),
-        providers: Set(args.providers.iter().map(|p| p.as_str().to_owned()).collect()),
+        providers: Set(args
+            .providers
+            .iter()
+            .map(|p| p.as_str().to_owned())
+            .collect()),
         status: Set(status::QUEUED.to_owned()),
         started_at: Set(now.into()),
         finished_at: Set(None),
@@ -167,7 +173,10 @@ pub async fn start_run<C: ConnectionTrait>(db: &C, args: StartRunArgs<'_>) -> Re
     Ok(id)
 }
 
-pub async fn mark_searching<C: ConnectionTrait>(db: &C, run_id: Uuid) -> Result<(), sea_orm::DbErr> {
+pub async fn mark_searching<C: ConnectionTrait>(
+    db: &C,
+    run_id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
     let Some(row) = metadata_run::Entity::find_by_id(run_id).one(db).await? else {
         return Ok(());
     };
@@ -251,6 +260,7 @@ pub async fn finalize_run(
         tx.rollback().await?;
         return Ok(());
     };
+    let scope = row.scope.clone();
     let mut high = 0;
     let mut medium = 0;
     let mut low = 0;
@@ -286,6 +296,13 @@ pub async fn finalize_run(
     am.items_matched_low = Set(low);
     am.items_no_match = Set(if total == 0 { 1 } else { 0 });
     am.update(&tx).await?;
+
+    // Matching-accuracy-1.0 M0: stamp one outcome row alongside the
+    // candidates so the dashboard can render rolling distribution
+    // before any matcher tuning ships. Same transaction so the row +
+    // candidates land atomically.
+    crate::metadata::match_outcome::record(&tx, run_id, &scope, ranked).await?;
+
     tx.commit().await?;
     Ok(())
 }
@@ -352,19 +369,18 @@ pub async fn run_series_search(
                 let candidate_phashes: Vec<Option<i64>> = if local_phash.is_some() {
                     fetch_candidate_phashes(
                         &http,
-                        candidates.iter().map(|c| c.cover_image_url.as_deref()).collect(),
+                        candidates
+                            .iter()
+                            .map(|c| c.cover_image_url.as_deref())
+                            .collect(),
                     )
                     .await
                 } else {
                     vec![None; candidates.len()]
                 };
                 for (c, cand_phash) in candidates.into_iter().zip(candidate_phashes) {
-                    let score = matcher::score_series_with_phash(
-                        facts,
-                        &c,
-                        local_phash,
-                        cand_phash,
-                    );
+                    let score =
+                        matcher::score_series_with_phash(facts, &c, local_phash, cand_phash);
                     let bucket = score.bucket(high_threshold);
                     ranked.push(RankedCandidate {
                         source: c.source,
@@ -484,19 +500,17 @@ pub async fn run_issue_search(
                 let candidate_phashes: Vec<Option<i64>> = if local_phash.is_some() {
                     fetch_candidate_phashes(
                         &http,
-                        candidates.iter().map(|c| c.cover_image_url.as_deref()).collect(),
+                        candidates
+                            .iter()
+                            .map(|c| c.cover_image_url.as_deref())
+                            .collect(),
                     )
                     .await
                 } else {
                     vec![None; candidates.len()]
                 };
                 for (c, cand_phash) in candidates.into_iter().zip(candidate_phashes) {
-                    let score = matcher::score_issue_with_phash(
-                        facts,
-                        &c,
-                        local_phash,
-                        cand_phash,
-                    );
+                    let score = matcher::score_issue_with_phash(facts, &c, local_phash, cand_phash);
                     let bucket = score.bucket(high_threshold);
                     ranked.push(RankedCandidate {
                         source: c.source,

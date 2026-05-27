@@ -308,6 +308,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/match-quality": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_metadata_match_quality"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/phash-backfill": {
         parameters: {
             query?: never;
@@ -5023,6 +5039,26 @@ export interface components {
         };
         /** @enum {string} */
         MatchMode: "all" | "any";
+        MatchQualityResp: {
+            last_28d: components["schemas"]["MatchQualityWindow"][];
+            /** @description Distribution of outcomes within the trailing 7 days. The
+             *     shape mirrors what the M8 dialog will use, so the dashboard
+             *     can speak the same vocabulary once cover-decides ships in M4. */
+            last_7d: components["schemas"]["MatchQualityWindow"][];
+            /** Format: int64 */
+            total_28d: number;
+            /**
+             * Format: int64
+             * @description Total rows in each window — denominator for any percentage UI.
+             */
+            total_7d: number;
+        };
+        MatchQualityWindow: {
+            /** Format: int64 */
+            count: number;
+            /** @description `single_good | multi_good | single_bad_cover | multi_bad_cover | no_match` */
+            kind: string;
+        };
         MeResp: {
             accent_color?: null | components["schemas"]["AccentColor"];
             /** @description M6a: per-user opt-out for reading-activity capture. */
@@ -7633,6 +7669,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DashboardResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_match_quality: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchQualityResp"];
                 };
             };
             /** @description admin only */

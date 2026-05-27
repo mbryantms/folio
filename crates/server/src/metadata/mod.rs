@@ -22,6 +22,7 @@ pub mod diff;
 pub mod drift;
 pub mod field;
 pub mod identifier;
+pub mod match_outcome;
 pub mod matcher;
 pub mod metron;
 pub mod orchestrator;

@@ -638,6 +638,8 @@ export type ExternalIdConflictRow = Schemas["ExternalIdConflictRow"];
 export type ExternalIdNewRow = Schemas["ExternalIdNewRow"];
 // M6 admin surface
 export type DashboardResp = Schemas["DashboardResp"];
+export type MatchQualityResp = Schemas["MatchQualityResp"];
+export type MatchQualityWindow = Schemas["MatchQualityWindow"];
 export type ProviderView = Schemas["ProviderView"];
 export type QuotaView = Schemas["QuotaView"];
 export type RunsListResp = Schemas["RunsListResp"];
