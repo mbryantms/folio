@@ -125,31 +125,82 @@ flight.
 
 ## Matching engine
 
-`matcher::score_series_with_phash` / `score_issue_with_phash` produce
-a `Score` with weighted components:
+The matcher's architecture inverted in `matching-accuracy-1.0` M4 —
+cover-pHash is now the **primary** bucket discriminant, not a small
+bonus on top of text scoring. See
+[`docs/dev/matching-accuracy.md`](matching-accuracy.md) for the
+full pipeline + operator-knob inventory; the short version lives
+here.
+
+`matcher::score_*_with_phash` produces a `Score` with text-only
+components + the raw cover Hamming distance:
 
 | Component       | Weight | Sources |
 |-----------------|--------|---------|
-| name            | 45     | normalized Levenshtein on (query, candidate) |
-| year            | 20     | exact match=1, off-by-one=0.5, NULL=0.5 |
-| publisher       | 15     | normalized equality; NULL=0.5 |
+| name            | 45     | sanitize_title + Ratcliff/Obershelp similarity (M2) |
+| year            | 20     | exact match=1, off-by-one=0.75, NULL=0.5 |
+| publisher       | 15     | sanitize_title equality + substring credit; NULL=0.5 |
 | issue_number    | 15     | issue queries only; series queries collapse to 0 |
 | volume          | 5      | reserved (providers don't return this in search) |
-| cover_phash     | 10     | M9.5 — Hamming distance ≤ 20 bits, scales 1.0→0 |
+| cover_hamming   | —      | M4: raw bit-distance, NOT folded into `total` |
 
-Total **clamps at 100**. Cover-phash is bonus-on-top of the existing
-text scoring; a perfect text match (~90) plus perfect cover match
-caps at 100 rather than overflowing. The HIGH/MEDIUM/LOW buckets are
-computed against the operator-tunable
-`metadata.auto_apply_threshold` (default 95).
+`Score::bucket()` consults `cover_hamming` FIRST. The ComicTagger
+ladder (lifted verbatim):
 
-The phash bonus is *zero* when either side is missing a hash. Local
-phash comes from `issue_cover` (preferring `source_provider='archive_extracted'`
-over provider-applied rows so user-pinned images win over potentially-
-wrong prior matches). Candidate phash is computed on-the-fly from
-the candidate's `cover_image_url` via a parallel fan-out (capped at
-25 covers × 3s timeout per search; see `fetch_candidate_phashes` in
-`orchestrator.rs`).
+| Cover Hamming                       | Bucket                                                       |
+|-------------------------------------|--------------------------------------------------------------|
+| 0–8 (`STRONG_SCORE_THRESH`)         | HIGH — cover decides regardless of text                      |
+| 9–16 (`MIN_SCORE_THRESH`)           | MEDIUM (primary cover)                                       |
+| 9–12 (`MIN_ALTERNATE_SCORE_THRESH`) | MEDIUM — tighter when winning cover came from an alternate   |
+| 17+                                 | LOW (cover veto sinks even a perfect text match)             |
+| `None` (no phash on either side)    | text fallback at operator thresholds                         |
+
+Text-fallback thresholds are operator-tunable:
+
+- `metadata.auto_apply_threshold` — HIGH cutoff. Default 80 (was
+  hardcoded 95 pre-M1; unreachable for series scoring with text
+  ceiling of 90).
+- `metadata.match_medium_threshold` — MEDIUM cutoff. Default 60.
+
+**Variant covers (M5)**: `score_*_with_phash` takes
+`candidate_cover_phashes: &[Option<i64>]` — slot 0 is the primary
+cover, slots 1.. are alternates. The matcher picks the minimum
+Hamming and flags `Score::matched_via_alternate=true` when the
+winner came from a non-primary slot, which routes the bucketer
+through the stricter alternate ceiling.
+
+**Gap-to-next-best guard (M4)**:
+`orchestrator::finalize_ranking` looks at the top two
+cover-Hamming candidates after sort — if both are HIGH-eligible
+(≤ 8) but within 4 bits of each other (`MIN_SCORE_DISTANCE`), the
+winner downgrades to MEDIUM. Two near-identical covers in the same
+candidate set means we can't be confident which is right — the
+user picks explicitly.
+
+**Pre-filter (M3)**: `orchestrator::pre_filter_series` drops
+candidates BEFORE scoring on (a) hard year gate
+(`cand > local + 1`) and (b) per-library
+`metadata_publisher_blacklist`. Pre-M3 these scored Medium because
+the year/publisher components gave partial credit; the gate now
+removes them outright.
+
+Local phash comes from `issue_cover` (preferring
+`source_provider='archive_extracted'` over provider-applied rows so
+user-pinned images win over potentially-wrong prior matches).
+Candidate phashes are computed on-the-fly from
+`SeriesCandidate.cover_image_url` + `alternate_cover_urls` via a
+parallel fan-out — see `fetch_phashes_per_candidate` in
+`orchestrator.rs`. Capped at
+`metadata.alternate_cover_fetch_cap` URLs per candidate (default
+3, settable to 0 to disable variant fetching).
+
+**Cover page selection (M6)**: the scanner stamps
+`issue.cover_page_index` from ComicInfo's
+`<Page Type="FrontCover" Image="N"/>` marker when present;
+defaults to 0 (page 0) otherwise. Both the post-scan thumbnail
+worker and the phash pipeline read this column so multi-cover
+archives surface the right image to the matcher instead of always
+the first page.
 
 ## Apply pipeline
 
