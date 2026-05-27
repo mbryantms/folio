@@ -26,6 +26,7 @@ pub mod metron;
 pub mod orchestrator;
 pub mod provider;
 pub mod rate_limit;
+pub mod refresh;
 pub mod writers;
 
 pub use field::MetadataField;

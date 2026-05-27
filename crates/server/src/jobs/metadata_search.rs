@@ -286,3 +286,100 @@ pub fn series_stored_query(facts: &SeriesQueryFacts) -> StoredQuery {
 pub fn issue_stored_query(facts: &IssueQueryFacts) -> StoredQuery {
     StoredQuery::Issue(facts.clone())
 }
+
+// ───────── bulk-refresh enqueue helper (M7) ─────────
+
+/// Outcome of a single [`enqueue_series_search`] call — surfaces
+/// whether the per-entity coalesce gate kicked in so the caller can
+/// distinguish a fresh enqueue from a reuse of an in-flight run.
+#[derive(Debug, Clone)]
+pub struct EnqueueOutcome {
+    pub run_id: Uuid,
+    /// `true` when the per-entity Redis slot was already held by an
+    /// earlier in-flight run; the caller's run row was discarded
+    /// and the winner's id is returned.
+    pub coalesced: bool,
+}
+
+/// Start a metadata-search run + push the apalis job for one series.
+/// Reuses the same orchestrator/coalesce/storage path the API
+/// handler uses, so bulk-refresh fan-outs and per-series user
+/// clicks land on the same per-entity gates and budget controls.
+///
+/// `triggered_by` is the actor uuid for user-driven flows; pass
+/// `None` for cron/system fan-outs (the metadata_run row stores it
+/// as nullable). `trigger_kind` should be one of the constants in
+/// [`crate::metadata::orchestrator::trigger_kind`].
+///
+/// metadata-providers-1.0 M7.
+pub async fn enqueue_series_search(
+    state: &AppState,
+    series_id: Uuid,
+    triggered_by: Option<Uuid>,
+    trigger_kind: &'static str,
+) -> Result<EnqueueOutcome, anyhow::Error> {
+    use entity::series;
+    use sea_orm::EntityTrait;
+
+    let Some(row) = series::Entity::find_by_id(series_id).one(&state.db).await? else {
+        return Err(anyhow::anyhow!("series {series_id} not found"));
+    };
+    let facts = SeriesQueryFacts {
+        name: row.name.clone(),
+        year: row.year,
+        publisher: row.publisher.clone(),
+        volume: row.volume,
+    };
+    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
+    if providers.is_empty() {
+        return Err(anyhow::anyhow!("no metadata providers configured"));
+    }
+    let providers_listed: Vec<_> = providers.iter().map(|p| p.id()).collect();
+
+    let new_run_id = orchestrator::start_run(
+        &state.db,
+        orchestrator::StartRunArgs {
+            scope: orchestrator::scope::SERIES,
+            scope_entity_id: Some(row.id.to_string()),
+            library_id: Some(row.library_id),
+            triggered_by,
+            trigger_kind,
+            providers: &providers_listed,
+            query: series_stored_query(&facts),
+        },
+    )
+    .await?;
+
+    let winner_run_id = reserve_series_slot(state, row.id, new_run_id).await?;
+    if winner_run_id != new_run_id {
+        // Existing run already in flight — discard the speculative
+        // row + return the winner's id with coalesced=true.
+        use sea_orm::EntityTrait;
+        let _ = entity::metadata_run::Entity::delete_by_id(new_run_id)
+            .exec(&state.db)
+            .await;
+        return Ok(EnqueueOutcome {
+            run_id: winner_run_id,
+            coalesced: true,
+        });
+    }
+
+    let mut storage = state.jobs.metadata_search_series_storage.clone();
+    if let Err(e) = storage
+        .push(SearchSeriesJob {
+            run_id: new_run_id,
+            series_id: row.id,
+            library_id: Some(row.library_id),
+            facts,
+        })
+        .await
+    {
+        let _ = orchestrator::fail_run(&state.db, new_run_id, "queue push failed").await;
+        return Err(anyhow::Error::from(e));
+    }
+
+    Ok(EnqueueOutcome {
+        run_id: new_run_id,
+        coalesced: false,
+    })
+}

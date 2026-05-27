@@ -31,6 +31,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_close_dangling_sessions(&scheduler, &state).await;
     register_cbl_refresh_sweep(&scheduler, &state).await;
     register_prune_auth_sessions(&scheduler, &state).await;
+    register_metadata_weekly_refresh(&scheduler, &state).await;
     Ok(scheduler)
 }
 
@@ -413,4 +414,129 @@ async fn register_reconcile_sweep(scheduler: &JobScheduler, state: &AppState) {
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build reconcile_sweep failed"),
     }
+}
+
+/// metadata-providers-1.0 M7 — weekly metadata refresh sweep.
+///
+/// **Gated on `metadata.weekly_refresh_enabled`**. When the setting
+/// is false (default), the job is registered but its handler
+/// short-circuits at every fire. When the setting is true, the
+/// handler walks every active library and fans out per-series
+/// search jobs for two scopes:
+///
+/// 1. **Recent window** — series whose `last_issue_added_at` falls
+///    inside `metadata.weekly_refresh_window_days` (default 14d).
+///    Mirrors the Mylar pattern: newly-published issues are the
+///    ones whose provider records are most likely to have changed.
+/// 2. **Stale** — series whose `last_metadata_sync_at` is null or
+///    older than `metadata.stale_after_days` (default 180d). The
+///    long-tail catch-up; honors the per-series mutex so duplicate
+///    in-flight runs coalesce automatically.
+///
+/// Per-library quota burn is bounded by [`refresh::REFRESH_BATCH_CAP`]
+/// (currently 200 series per scope per library). On a multi-library
+/// deploy that adds up to thousands of fan-out jobs per week, but
+/// the per-provider Redis token bucket throttles outbound HTTP so
+/// the upstream provider only ever sees its configured per-window
+/// budget.
+///
+/// Why we re-read the cron string each fire isn't possible (cron
+/// schedule is locked at registration time by tokio_cron_scheduler):
+/// hot-reload of the cron expression requires a server restart.
+/// The settings UI flags this with a `since=2026-Q3` note in
+/// `docs/dev/runtime-configuration.md`. Toggling the enabled bool
+/// IS live, since that gate is checked inside the handler.
+async fn register_metadata_weekly_refresh(scheduler: &JobScheduler, state: &AppState) {
+    let state = state.clone();
+    let cron_expr = {
+        let cfg = state.cfg();
+        cfg.metadata_weekly_refresh_cron.clone()
+    };
+    let job_result = Job::new_async(cron_expr.as_str(), move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            let cfg = state.cfg();
+            if !cfg.metadata_weekly_refresh_enabled {
+                tracing::debug!(
+                    "metadata weekly refresh: disabled (metadata.weekly_refresh_enabled=false)"
+                );
+                return;
+            }
+            tracing::info!("metadata weekly refresh: starting sweep");
+            run_metadata_weekly_refresh(&state).await;
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add metadata_weekly_refresh failed");
+            } else {
+                tracing::info!(cron = %cron_expr, "metadata weekly refresh registered");
+            }
+        }
+        Err(e) => tracing::error!(
+            error = %e,
+            cron = %cron_expr,
+            "scheduler: build metadata_weekly_refresh failed (invalid cron?)"
+        ),
+    }
+}
+
+async fn run_metadata_weekly_refresh(state: &AppState) {
+    use crate::metadata::orchestrator::trigger_kind;
+    use crate::metadata::refresh::{self, RefreshScope};
+
+    let libraries: Vec<_> = match entity::library::Entity::find()
+        .all(&state.db)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(error = %e, "metadata weekly refresh: list libraries failed");
+            return;
+        }
+    };
+    let mut recent_total = 0usize;
+    let mut stale_total = 0usize;
+    for lib in libraries {
+        // Recent window first — these are the higher-value
+        // refreshes (likely provider-side change). Stale runs
+        // second so the per-entity coalesce gate naturally dedupes
+        // anything that just landed in the recent fan-out.
+        match refresh::fan_out_scope(state, lib.id, RefreshScope::Recent, trigger_kind::WEEKLY_REFRESH).await {
+            Ok(out) => {
+                recent_total += out.jobs_enqueued;
+                tracing::info!(
+                    library_id = %lib.id,
+                    eligible = out.series_eligible,
+                    enqueued = out.jobs_enqueued,
+                    coalesced = out.jobs_coalesced,
+                    failed = out.jobs_failed,
+                    scope = "recent",
+                    "metadata weekly refresh: per-library fan-out",
+                );
+            }
+            Err(e) => tracing::warn!(library_id = %lib.id, error = %e, "weekly refresh recent fan-out failed"),
+        }
+        match refresh::fan_out_scope(state, lib.id, RefreshScope::Stale, trigger_kind::WEEKLY_REFRESH).await {
+            Ok(out) => {
+                stale_total += out.jobs_enqueued;
+                tracing::info!(
+                    library_id = %lib.id,
+                    eligible = out.series_eligible,
+                    enqueued = out.jobs_enqueued,
+                    coalesced = out.jobs_coalesced,
+                    failed = out.jobs_failed,
+                    scope = "stale",
+                    "metadata weekly refresh: per-library fan-out",
+                );
+            }
+            Err(e) => tracing::warn!(library_id = %lib.id, error = %e, "weekly refresh stale fan-out failed"),
+        }
+    }
+    tracing::info!(
+        recent_enqueued = recent_total,
+        stale_enqueued = stale_total,
+        "metadata weekly refresh: sweep complete",
+    );
 }

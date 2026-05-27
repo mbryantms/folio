@@ -208,6 +208,39 @@ pub struct Config {
     /// Master toggle for Metron integration.
     #[serde(default)]
     pub metron_enabled: bool,
+
+    // Weekly metadata refresh (metadata-providers-1.0 M7)
+    /// Master toggle for the weekly metadata-refresh cron. **Off by
+    /// default** — auto-fetching has API-quota implications, so the
+    /// operator must opt in. Per user directive 2026-05-26: metadata
+    /// never auto-updates unless the operator explicitly enables it.
+    #[serde(default)]
+    pub metadata_weekly_refresh_enabled: bool,
+    /// 6-field cron expression for the weekly refresh sweep. Default
+    /// `0 0 4 * * 0` = 04:00 UTC every Sunday.
+    #[serde(default = "default_weekly_refresh_cron")]
+    pub metadata_weekly_refresh_cron: String,
+    /// Mylar-pattern "recently published" window. Series whose
+    /// `last_issue_added_at` falls within this many days get re-
+    /// fetched on every weekly run regardless of staleness; older
+    /// series only re-fetch when their `last_metadata_sync_at`
+    /// crosses [`Self::metadata_stale_after_days`].
+    #[serde(default = "default_weekly_refresh_window_days")]
+    pub metadata_weekly_refresh_window_days: u32,
+    /// "Stale" threshold for `/libraries/{slug}/metadata/refresh?scope=stale`
+    /// and the weekly cron's older-than-window branch. Default 180.
+    #[serde(default = "default_stale_after_days")]
+    pub metadata_stale_after_days: u32,
+}
+
+fn default_weekly_refresh_cron() -> String {
+    "0 0 4 * * 0".to_owned()
+}
+fn default_weekly_refresh_window_days() -> u32 {
+    14
+}
+fn default_stale_after_days() -> u32 {
+    180
 }
 
 /// Hand-written `Debug` impl that redacts credentials. Stops `dbg!()`,
@@ -942,6 +975,28 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(b) => cfg.metron_enabled = b,
             None => bad_type(&row.key, "bool", &row.value),
         },
+        // ──── metadata-providers-1.0 M7 ────
+        "metadata.weekly_refresh_enabled" => match row.value.as_bool() {
+            Some(b) => cfg.metadata_weekly_refresh_enabled = b,
+            None => bad_type(&row.key, "bool", &row.value),
+        },
+        "metadata.weekly_refresh_cron" => match row.value.as_str() {
+            Some(s) => {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    cfg.metadata_weekly_refresh_cron = trimmed.to_owned();
+                }
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.weekly_refresh_window_days" => match row.value.as_u64() {
+            Some(n) => cfg.metadata_weekly_refresh_window_days = n as u32,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "metadata.stale_after_days" => match row.value.as_u64() {
+            Some(n) => cfg.metadata_stale_after_days = n as u32,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
 
         other => {
             tracing::debug!(key = %other, "app_setting row ignored (no overlay binding yet)");
@@ -1071,6 +1126,10 @@ mod tests {
             metron_username: None,
             metron_password: None,
             metron_enabled: false,
+            metadata_weekly_refresh_enabled: false,
+            metadata_weekly_refresh_cron: default_weekly_refresh_cron(),
+            metadata_weekly_refresh_window_days: default_weekly_refresh_window_days(),
+            metadata_stale_after_days: default_stale_after_days(),
         }
     }
 }

@@ -33,6 +33,7 @@ use crate::metadata::apply::{self, ApplyArgs, ApplyMode};
 use crate::metadata::diff::{self, DiffResp};
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
 use crate::metadata::orchestrator;
+use crate::metadata::refresh::{self, RefreshOutcome, RefreshScope};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
@@ -50,6 +51,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(candidates_issue))
         .routes(routes!(proposed_diff_issue))
         .routes(routes!(apply_issue))
+        .routes(routes!(refresh_library_metadata))
 }
 
 // ───────── response shapes ─────────
@@ -1042,6 +1044,102 @@ pub async fn apply_issue(
         }),
     )
         .into_response()
+}
+
+// ───────── /libraries/{slug}/metadata/refresh ─────────
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct RefreshLibraryQuery {
+    /// `unmatched` | `stale` | `all` | `recent` (default `stale`).
+    /// `unmatched` is the cheapest scope and the right default for
+    /// "I just added a library, get me caught up". `stale` is what
+    /// the weekly cron uses. `all` is the operator escape hatch.
+    /// `recent` mirrors the Mylar "last N days" window.
+    #[serde(default = "default_refresh_scope")]
+    pub scope: String,
+}
+
+fn default_refresh_scope() -> String {
+    "stale".to_owned()
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RefreshLibraryResp {
+    pub library_id: Uuid,
+    pub scope: String,
+    pub series_eligible: usize,
+    pub jobs_enqueued: usize,
+    pub jobs_coalesced: usize,
+    pub jobs_failed: usize,
+}
+
+#[utoipa::path(
+    operation_id = "metadata_refresh_library",
+    post,
+    path = "/libraries/{slug}/metadata/refresh",
+    params(("slug" = String, Path), RefreshLibraryQuery),
+    responses(
+        (status = 202, body = RefreshLibraryResp),
+        (status = 400, description = "unknown scope"),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "library not found"),
+    )
+)]
+#[handler]
+pub async fn refresh_library_metadata(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path(slug): Path<String>,
+    Query(q): Query<RefreshLibraryQuery>,
+) -> Response {
+    let lib = match crate::api::libraries::find_by_slug(&app.db, &slug).await {
+        Ok(l) => l,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(&app, &user, lib.id).await {
+        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+    }
+    let Ok(scope) = q.scope.parse::<RefreshScope>() else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "metadata.invalid_scope",
+            "scope must be one of: unmatched, stale, all, recent",
+        );
+    };
+    match refresh::fan_out_scope(
+        &app,
+        lib.id,
+        scope,
+        orchestrator::trigger_kind::BULK_ACTION,
+    )
+    .await
+    {
+        Ok(RefreshOutcome {
+            series_eligible,
+            jobs_enqueued,
+            jobs_coalesced,
+            jobs_failed,
+        }) => (
+            StatusCode::ACCEPTED,
+            Json(RefreshLibraryResp {
+                library_id: lib.id,
+                scope: scope.as_str().to_owned(),
+                series_eligible,
+                jobs_enqueued,
+                jobs_coalesced,
+                jobs_failed,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, library_id = %lib.id, "metadata refresh fan-out failed");
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            )
+        }
+    }
 }
 
 // ───────── helpers ─────────

@@ -227,6 +227,43 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Bool,
         is_secret: false,
     },
+    // ───────── Weekly refresh + staleness (metadata-providers-1.0 M7) ─────────
+    SettingDef {
+        // Master toggle for the weekly metadata-refresh cron. OFF by
+        // default — every operator who wants automatic re-fetching
+        // has to opt in (API quota implications). Per user feedback
+        // 2026-05-26: metadata never auto-updates unless the user
+        // explicitly says.
+        key: "metadata.weekly_refresh_enabled",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
+    SettingDef {
+        // 6-field cron expression (tokio_cron_scheduler shape).
+        // Default `0 0 4 * * 0` = 04:00 UTC every Sunday — outside any
+        // reasonable user-traffic peak and aligned to provider quota
+        // refill windows.
+        key: "metadata.weekly_refresh_cron",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
+    SettingDef {
+        // Mylar-pattern "recently published" window. Series whose
+        // `last_issue_added_at` is within this window get re-fetched
+        // every weekly run regardless of staleness; older series only
+        // re-fetch when `last_metadata_sync_at` crosses
+        // `stale_after_days`.
+        key: "metadata.weekly_refresh_window_days",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
+    SettingDef {
+        // Drives `/libraries/{slug}/metadata/refresh?scope=stale` and
+        // the weekly cron's older-than-window branch. Default 180d.
+        key: "metadata.stale_after_days",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

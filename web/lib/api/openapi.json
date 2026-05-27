@@ -3222,6 +3222,51 @@
         }
       }
     },
+    "/api/libraries/{slug}/metadata/refresh": {
+      "post": {
+        "operationId": "metadata_refresh_library",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`unmatched` | `stale` | `all` | `recent` (default `stale`).\n`unmatched` is the cheapest scope and the right default for\n\"I just added a library, get me caught up\". `stale` is what\nthe weekly cron uses. `all` is the operator escape hatch.\n`recent` mirrors the Mylar \"last N days\" window.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshLibraryResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "unknown scope"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      }
+    },
     "/api/libraries/{slug}/removed": {
       "get": {
         "operationId": "reconcile_list_removed",
@@ -13863,6 +13908,42 @@
           },
           "totals": {
             "$ref": "#/components/schemas/TotalsView"
+          }
+        }
+      },
+      "RefreshLibraryResp": {
+        "type": "object",
+        "required": [
+          "library_id",
+          "scope",
+          "series_eligible",
+          "jobs_enqueued",
+          "jobs_coalesced",
+          "jobs_failed"
+        ],
+        "properties": {
+          "jobs_coalesced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "jobs_enqueued": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "jobs_failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "library_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "series_eligible": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },

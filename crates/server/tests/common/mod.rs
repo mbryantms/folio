@@ -298,6 +298,14 @@ impl TestApp {
             metron_username: opts.metron_username.clone(),
             metron_password: opts.metron_password.clone(),
             metron_enabled: opts.metron_enabled,
+            // metadata-providers-1.0 M7: weekly refresh defaults. Off
+            // in tests by default — the cron isn't relevant to most
+            // suites, and the scope-resolver tests pass explicit
+            // values to `eligible_series_for_scope`.
+            metadata_weekly_refresh_enabled: false,
+            metadata_weekly_refresh_cron: "0 0 4 * * 0".into(),
+            metadata_weekly_refresh_window_days: 14,
+            metadata_stale_after_days: 180,
         };
 
         let jobs = JobRuntime::new(&redis_url, db.clone())
