@@ -43,12 +43,14 @@ import {
   useApplyMetadataForSeries,
 } from "@/lib/api/mutations";
 import {
+  useLibrary,
   useMe,
   useMetadataCandidatesIssue,
   useMetadataCandidatesSeries,
   useMetadataProposedDiffIssue,
   useMetadataProposedDiffSeries,
 } from "@/lib/api/queries";
+import { useScanEvents } from "@/lib/api/scan-events";
 import type {
   ApplyMode,
   CandidateView,
@@ -61,8 +63,8 @@ import {
 } from "@/components/library/MetadataPreviewPane";
 
 export type MetadataMatchScope =
-  | { kind: "series"; seriesSlug: string }
-  | { kind: "issue"; seriesSlug: string; issueSlug: string };
+  | { kind: "series"; seriesSlug: string; libraryId: string }
+  | { kind: "issue"; seriesSlug: string; issueSlug: string; libraryId: string };
 
 export function MetadataMatchDialog({
   open,
@@ -300,14 +302,98 @@ export function MetadataMatchForm({
     // that strands the search kick's onSuccess.
   };
 
-  // Close the dialog when the apply mutation resolves successfully.
+  // M5.2 — When the target library has `metadata_writeback_enabled=true`,
+  // an apply enqueues a downstream `RewriteIssueSidecarsJob` which then
+  // triggers a scoped scanner rescan. The DB cache reflects the new
+  // metadata only after that rescan finishes. Auto-close-on-apply would
+  // hand the user back to an issue page that still shows the old data
+  // for 1-3 seconds. Instead we transition into a `waiting_for_rescan`
+  // state, watch the scan WebSocket for a `scan.completed` event
+  // matching this library, and close then.
+  const libraryQ = useLibrary(scope.libraryId);
+  const writebackEnabled = Boolean(
+    libraryQ.data?.metadata_writeback_enabled &&
+      libraryQ.data?.allow_archive_writeback,
+  );
+  // Watershed timestamp set at apply-time. We ignore any `scan.completed`
+  // event whose payload `at` predates it (the user might have triggered
+  // a scan elsewhere; we want our scan, not the earlier one).
+  const [applyAt, setApplyAt] = React.useState<number | null>(null);
+  // `apply.isSuccess` resolves when the apply-API POST returned 202,
+  // not when the rewrite + rescan actually finished. We use it as the
+  // trigger to enter the waiting state.
   React.useEffect(() => {
-    if (apply.isSuccess) onClose();
-    // onClose is stable enough (parent owns it via useState setter
-    // for the open boolean) that adding it to deps would loop only
-    // if the parent re-creates the setter unnecessarily.
+    if (!apply.isSuccess) return;
+    if (!writebackEnabled) {
+      onClose();
+      return;
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- legitimate transition: apply success triggers wait-for-rescan.
+    setApplyAt(Date.now());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apply.isSuccess]);
+  }, [apply.isSuccess, writebackEnabled]);
+
+  // Subscribe to the library's scan events only when waiting. The
+  // existing `useScanEvents` hook auto-reconnects + filters by
+  // libraryId server-side, and tolerates re-subscribes (module-level
+  // ticket dedupe).
+  const waitingForRescan = applyAt !== null;
+  const scanEvents = useScanEvents({
+    libraryId: waitingForRescan ? scope.libraryId : undefined,
+    // The dialog already owns "Apply succeeded" feedback; don't toast.
+    toastCompletions: false,
+    toastErrors: false,
+  });
+  // Watch the events buffer for a `scan.completed` for this library.
+  // The subscription only starts when `applyAt` is set, so any
+  // completed event in the buffer is by definition post-apply — no
+  // need to filter by timestamp (the `scan.completed` payload doesn't
+  // carry one anyway; `scan.started` does, but we don't need it).
+  React.useEffect(() => {
+    if (!waitingForRescan) return;
+    const completed = scanEvents.events.find((e) => e.type === "scan.completed");
+    if (completed) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- WS event arrival is the trigger; resetting `applyAt` to null also tears down the subscription on the next render.
+      setApplyAt(null);
+      onClose();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanEvents.events, waitingForRescan]);
+
+  // 30s timeout fallback — close anyway with an info toast so the user
+  // isn't stuck if the WS missed the event (rare; broadcast lag,
+  // disconnect-reconnect, etc.). The rewrite has already landed by this
+  // point; the data will refresh on the next page navigation.
+  React.useEffect(() => {
+    if (!waitingForRescan) return;
+    const t = setTimeout(() => {
+      setApplyAt(null);
+      toast.info("Refresh may take a moment — close and reopen the page to see the latest data.");
+      onClose();
+    }, 30_000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitingForRescan]);
+
+  // Series-scope progress chip — derived from `scan.progress` events.
+  // The scanner emits these continuously while it walks the series;
+  // the latest `series_scanned/series_total` gives a usable progress
+  // hint for the user. Issue-scope rescans are too short to be worth
+  // a progress bar — the spinner alone is fine.
+  //
+  // Computed inline (no useMemo) so the react-compiler's preservation
+  // analysis doesn't have to bend around a `for`-loop with a return
+  // inside. The compiler handles surrounding memoization automatically.
+  let seriesProgress: { done: number; total: number } | null = null;
+  if (waitingForRescan && scope.kind === "series") {
+    for (let i = scanEvents.events.length - 1; i >= 0; i--) {
+      const e = scanEvents.events[i];
+      if (e.type === "scan.progress" && e.series_total > 0) {
+        seriesProgress = { done: e.series_scanned, total: e.series_total };
+        break;
+      }
+    }
+  }
 
   const restart = () => {
     setRunId(null);
@@ -321,17 +407,42 @@ export function MetadataMatchForm({
       <DialogHeader>
         <DialogTitle>Fetch metadata</DialogTitle>
         <DialogDescription>
-          {isPolling
-            ? "Searching providers…"
-            : runStatus === "awaiting_quota"
-              ? "Providers are out of quota — try again shortly."
-              : runStatus === "failed"
-                ? "Search failed — see Error below."
-                : `${candidates.data?.candidates.length ?? 0} match${
-                    (candidates.data?.candidates.length ?? 0) === 1 ? "" : "es"
-                  } from ${candidates.data?.providers.join(", ") ?? "providers"}.`}
+          {waitingForRescan
+            ? scope.kind === "series"
+              ? seriesProgress
+                ? `Writing sidecars + scanning ${seriesProgress.done}/${seriesProgress.total}…`
+                : "Writing sidecars + scanning series…"
+              : "Writing sidecar + refreshing…"
+            : isPolling
+              ? "Searching providers…"
+              : runStatus === "awaiting_quota"
+                ? "Providers are out of quota — try again shortly."
+                : runStatus === "failed"
+                  ? "Search failed — see Error below."
+                  : `${candidates.data?.candidates.length ?? 0} match${
+                      (candidates.data?.candidates.length ?? 0) === 1
+                        ? ""
+                        : "es"
+                    } from ${
+                      candidates.data?.providers.join(", ") ?? "providers"
+                    }.`}
         </DialogDescription>
       </DialogHeader>
+
+      {waitingForRescan && (
+        <div className="text-muted-foreground flex items-center gap-2 py-2 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {scope.kind === "series" && seriesProgress ? (
+            <span>
+              Rescanning series ({seriesProgress.done} of {seriesProgress.total})
+            </span>
+          ) : (
+            <span>
+              Sidecar written — waiting for the rescan to ingest the new XML…
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-3 pb-2">
         <div className="flex items-center gap-2">

@@ -396,6 +396,7 @@ export function IssueSettingsMenu({
           kind: "issue",
           seriesSlug: issue.series_slug,
           issueSlug: issue.slug,
+          libraryId: issue.library_id,
         }}
       />
     </>

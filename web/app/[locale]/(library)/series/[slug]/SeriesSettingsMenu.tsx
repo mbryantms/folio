@@ -299,7 +299,7 @@ export function SeriesSettingsMenu({
       <MetadataMatchDialog
         open={metadataDialogOpen}
         onOpenChange={setMetadataDialogOpen}
-        scope={{ kind: "series", seriesSlug }}
+        scope={{ kind: "series", seriesSlug, libraryId }}
       />
     </>
   );

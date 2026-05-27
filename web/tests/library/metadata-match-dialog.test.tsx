@@ -76,6 +76,19 @@ vi.mock("@/lib/api/queries", () => ({
   // PreviewPane coverage lives in its own test file.
   useMetadataProposedDiffSeries: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
   useMetadataProposedDiffIssue: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
+  // M5.2 — dialog queries the library to learn whether writeback is on
+  // (drives the wait-for-rescan flow). Default-off in tests since the
+  // immediate-close path is what the existing assertions cover.
+  useLibrary: () => ({
+    data: {
+      allow_archive_writeback: false,
+      metadata_writeback_enabled: false,
+    },
+  }),
+}));
+
+vi.mock("@/lib/api/scan-events", () => ({
+  useScanEvents: () => ({ status: "open" as const, events: [] }),
 }));
 
 vi.mock("@/components/ui/scroll-area", () => ({
@@ -143,7 +156,7 @@ describe("<MetadataMatchForm>", () => {
     candidatesState = { data: undefined };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga" },
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
         onClose: () => undefined,
         open: true,
       }),
@@ -186,7 +199,7 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga" },
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
         onClose: () => undefined,
         open: true,
       }),
@@ -210,7 +223,7 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga" },
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
         onClose: () => undefined,
         open: true,
       }),
@@ -230,7 +243,7 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga" },
+        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
         onClose: () => undefined,
         open: true,
       }),
