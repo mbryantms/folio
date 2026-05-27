@@ -28,6 +28,7 @@ pub mod phash;
 pub mod provider;
 pub mod rate_limit;
 pub mod refresh;
+pub mod sidecar_compose;
 pub mod writers;
 
 pub use field::MetadataField;
