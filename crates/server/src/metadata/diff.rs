@@ -386,6 +386,103 @@ pub async fn compute_issue_diff(
         &args,
     );
 
+    // ── junction + variant rows ───────────────────────────────────
+    // The apply path writes more than the 7 scalars above: credits,
+    // characters, teams, locations, story arcs, tags, genres, variant
+    // covers. M5.1 surfaces these as synthetic count-shaped rows in
+    // the diff so the user sees what's actually going to land + the
+    // Apply button enables when the only changes are these
+    // non-scalar writes.
+    push_count_row(
+        &mut rows,
+        MetadataField::Credits,
+        "Credits",
+        count_credits(&row),
+        detail.credits.len(),
+        &provenance,
+        &provenance_full,
+        &args,
+    );
+    push_count_row(
+        &mut rows,
+        MetadataField::Characters,
+        "Characters",
+        count_csv(row.characters.as_deref()),
+        detail.characters.len(),
+        &provenance,
+        &provenance_full,
+        &args,
+    );
+    push_count_row(
+        &mut rows,
+        MetadataField::Teams,
+        "Teams",
+        count_csv(row.teams.as_deref()),
+        detail.teams.len(),
+        &provenance,
+        &provenance_full,
+        &args,
+    );
+    push_count_row(
+        &mut rows,
+        MetadataField::Locations,
+        "Locations",
+        count_csv(row.locations.as_deref()),
+        detail.locations.len(),
+        &provenance,
+        &provenance_full,
+        &args,
+    );
+    push_count_row(
+        &mut rows,
+        MetadataField::StoryArcs,
+        "Story arcs",
+        count_csv(row.story_arc.as_deref()),
+        detail.story_arcs.len(),
+        &provenance,
+        &provenance_full,
+        &args,
+    );
+    push_count_row(
+        &mut rows,
+        MetadataField::Tags,
+        "Tags",
+        count_csv(row.tags.as_deref()),
+        detail.tags.len(),
+        &provenance,
+        &provenance_full,
+        &args,
+    );
+    push_count_row(
+        &mut rows,
+        MetadataField::Genres,
+        "Genres",
+        count_csv(row.genre.as_deref()),
+        detail.genres.len(),
+        &provenance,
+        &provenance_full,
+        &args,
+    );
+    // Variant covers — count the active variant rows in `issue_cover`
+    // and the provider's non-empty `variants` Vec. The composer skips
+    // entries with no image URL so we match that filter here too.
+    let current_variant_count = count_active_variant_rows(&state.db, &entity_id_str).await?;
+    let incoming_variant_count = detail
+        .variants
+        .iter()
+        .filter(|v| v.image_url.as_deref().is_some_and(|s| !s.trim().is_empty()))
+        .count();
+    push_count_row(
+        &mut rows,
+        MetadataField::CoverVariants,
+        "Variant covers",
+        current_variant_count,
+        incoming_variant_count,
+        &provenance,
+        &provenance_full,
+        &args,
+    );
+
     let (conflicts, news) = classify_external_ids(
         &state.db,
         "issue",
@@ -414,6 +511,102 @@ pub async fn compute_issue_diff(
 }
 
 // ───────── helpers ─────────
+
+/// Synthetic diff row for an issue's junction / variant fields. Counts
+/// stand in for the per-row contents (which would be too verbose for a
+/// pre-apply preview); the user-facing decision logic mirrors
+/// [`crate::metadata::apply::classify_field`] except `no_change` is a
+/// heuristic — equal counts likely means equal contents, but the
+/// composer overwrites the junction anyway in `replace_all` mode if
+/// names differ. The row is still actionable in that case via the
+/// per-row checkbox.
+#[allow(clippy::too_many_arguments)]
+fn push_count_row(
+    rows: &mut Vec<ScalarDiffRow>,
+    field: MetadataField,
+    label: &str,
+    current_count: usize,
+    incoming_count: usize,
+    provenance: &HashMap<String, String>,
+    provenance_full: &HashMap<String, field_provenance::Model>,
+    args: &ApplyArgs,
+) {
+    let user_set = provenance.get(&field.key()).map(|s| s.as_str()) == Some("user");
+    let decision = if incoming_count == 0 {
+        crate::metadata::apply::DiffDecision::NoIncomingValue
+    } else if user_set && !args.override_user_edits {
+        crate::metadata::apply::DiffDecision::BlockedByUser
+    } else if current_count == 0 {
+        crate::metadata::apply::DiffDecision::WouldFill
+    } else if current_count == incoming_count {
+        // Heuristic: equal counts likely = same contents. Names might
+        // differ but the diff isn't deep enough to detect that. Users
+        // can still toggle on the row to force a rewrite.
+        crate::metadata::apply::DiffDecision::NoChange
+    } else if matches!(args.mode, crate::metadata::apply::ApplyMode::ReplaceAll) {
+        crate::metadata::apply::DiffDecision::WouldReplace
+    } else {
+        crate::metadata::apply::DiffDecision::SkippedFillMissingHasValue
+    };
+
+    let (current_set_by, current_set_at) = provenance_full
+        .get(&field.key())
+        .map(|p| (Some(p.set_by.clone()), Some(p.set_at.to_rfc3339())))
+        .unwrap_or((None, None));
+    rows.push(ScalarDiffRow {
+        field: field.key(),
+        label: label.to_owned(),
+        current_value: Some(format_count(current_count)),
+        proposed_value: Some(format_count(incoming_count)),
+        decision: decision.as_str().to_owned(),
+        current_set_by,
+        current_set_at,
+    });
+}
+
+fn format_count(n: usize) -> String {
+    match n {
+        0 => "none".to_owned(),
+        1 => "1 item".to_owned(),
+        n => format!("{n} items"),
+    }
+}
+
+/// Count entries in a comma-separated string field. Empty / NULL → 0.
+fn count_csv(csv: Option<&str>) -> usize {
+    csv.map(|s| s.split(',').filter(|p| !p.trim().is_empty()).count())
+        .unwrap_or(0)
+}
+
+/// Aggregate count across the per-role credit columns on the issue
+/// row. Mirrors the data the legacy apply path writes through
+/// [`writers::set_issue_credits`].
+fn count_credits(row: &issue::Model) -> usize {
+    count_csv(row.writer.as_deref())
+        + count_csv(row.penciller.as_deref())
+        + count_csv(row.inker.as_deref())
+        + count_csv(row.colorist.as_deref())
+        + count_csv(row.letterer.as_deref())
+        + count_csv(row.cover_artist.as_deref())
+        + count_csv(row.editor.as_deref())
+        + count_csv(row.translator.as_deref())
+}
+
+/// Count active variant cover rows in `issue_cover` for the issue.
+async fn count_active_variant_rows(
+    db: &DatabaseConnection,
+    issue_id: &str,
+) -> Result<usize, sea_orm::DbErr> {
+    use entity::issue_cover;
+    use sea_orm::PaginatorTrait;
+    let n = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::IsActive.eq(true))
+        .count(db)
+        .await?;
+    Ok(n as usize)
+}
 
 #[allow(clippy::too_many_arguments)]
 fn push_scalar(

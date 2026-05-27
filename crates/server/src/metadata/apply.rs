@@ -650,8 +650,17 @@ async fn apply_issue_via_sidecar(
     // surface. Write them regardless of the sidecar XML path; the next
     // scoped rescan won't touch `issue_cover` rows since the XML
     // doesn't carry them, and that's intentional.
+    // Variant covers — same gate as the legacy path. The XML doesn't
+    // carry variants (neither ComicInfo nor MetronInfo schema does),
+    // so we still write them straight to the `issue_cover` table
+    // even on the XML-first path.
+    let variants_selected = args
+        .selected_fields
+        .as_ref()
+        .map(|s| s.contains(&MetadataField::CoverVariants.key()))
+        .unwrap_or(true);
     let mut variants_written = 0u32;
-    if !detail.variants.is_empty() {
+    if variants_selected && !detail.variants.is_empty() {
         match crate::metadata::writers::set_issue_variants(
             &state.db,
             &row.id,
@@ -987,11 +996,16 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     // Variant covers (metadata-only — store source_url, no byte
     // download). The `<CoverGallery>` UI renders directly from
     // `issue_cover.source_url` so the variant tiles show up without a
-    // local artifact. v1 unconditionally writes variants whenever the
-    // provider returned any; respecting `args.apply_cover` would
-    // surprise the user (they didn't see a separate "fetch variant
-    // covers" checkbox — the dialog has one cover toggle).
-    if !detail.variants.is_empty() {
+    // local artifact. The diff preview surfaces a "Variant covers"
+    // row keyed on `MetadataField::CoverVariants.key()`; when the
+    // user unchecks it, `args.selected_fields` no longer contains
+    // that key and we skip the write.
+    let variants_selected = args
+        .selected_fields
+        .as_ref()
+        .map(|s| s.contains(&MetadataField::CoverVariants.key()))
+        .unwrap_or(true);
+    if variants_selected && !detail.variants.is_empty() {
         match writers::set_issue_variants(
             &state.db,
             &entity_id_str,

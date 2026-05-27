@@ -886,3 +886,303 @@ async fn apply_series_empty_selected_fields_writes_nothing_scalar() {
         .unwrap();
     assert!(cv_row.is_some(), "CV external_id row should be written regardless");
 }
+
+// ───────── M5.1 — junction + variant rows in issue diff ─────────
+
+/// Helper: seed an issue + a candidate run whose detail payload carries
+/// scalar fields + junctions + variant covers. Returns the issue id +
+/// the (run_id, ordinal) for `compute_issue_diff` / `apply_issue_*`.
+async fn seed_issue_with_junction_candidate(
+    app: &TestApp,
+    dir: &std::path::Path,
+) -> (String, Uuid, i32) {
+    let lib_id = LibrarySeed::new(dir).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let cbz = dir.join("saga-1.cbz");
+    let issue_id = common::seed::IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::{Identifier, Source};
+    let payload = server::metadata::provider::GenericMetadata {
+        title: Some("Chapter One".into()),
+        issue_number: Some("1".into()),
+        description: Some("desc".into()),
+        page_count: Some(44),
+        credits: vec![
+            server::metadata::provider::CreditCandidate {
+                name: "Brian K. Vaughan".into(),
+                role: "Writer".into(),
+                ordinal: None,
+                identifiers: vec![],
+            },
+            server::metadata::provider::CreditCandidate {
+                name: "Fiona Staples".into(),
+                role: "Penciller".into(),
+                ordinal: None,
+                identifiers: vec![],
+            },
+        ],
+        characters: vec![
+            server::metadata::provider::EntityCandidate {
+                name: "Alana".into(),
+                identifiers: vec![],
+                is_first_appearance: false,
+                died_in_issue: None,
+                disbanded_in_issue: None,
+                position_in_arc: None,
+            },
+            server::metadata::provider::EntityCandidate {
+                name: "Marko".into(),
+                identifiers: vec![],
+                is_first_appearance: false,
+                died_in_issue: None,
+                disbanded_in_issue: None,
+                position_in_arc: None,
+            },
+        ],
+        teams: vec![],
+        locations: vec![],
+        story_arcs: vec![server::metadata::provider::EntityCandidate {
+            name: "The Will".into(),
+            identifiers: vec![],
+            is_first_appearance: false,
+            died_in_issue: None,
+            disbanded_in_issue: None,
+            position_in_arc: None,
+        }],
+        tags: vec!["sci-fi".into(), "romance".into()],
+        genres: vec!["sci-fi".into()],
+        variants: vec![
+            server::metadata::provider::VariantCoverCandidate {
+                label: Some("Cory Walker variant".into()),
+                artist_name: Some("Cory Walker".into()),
+                identifiers: vec![],
+                image_url: Some("https://cdn.example.com/saga-1-walker.jpg".into()),
+            },
+            server::metadata::provider::VariantCoverCandidate {
+                label: Some("Dave McCaig variant".into()),
+                artist_name: Some("Dave McCaig".into()),
+                identifiers: vec![],
+                image_url: Some("https://cdn.example.com/saga-1-mccaig.jpg".into()),
+            },
+        ],
+        identifiers: vec![Identifier::with_canonical_url(Source::ComicVine, "67890", "issue")],
+        source_provider: Some(Source::ComicVine),
+        source_external_id: Some("67890".into()),
+        ..Default::default()
+    };
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &payload,
+    )
+    .await
+    .unwrap();
+
+    // Issue-scope run + candidate.
+    let now = Utc::now().fixed_offset();
+    let run_id = Uuid::now_v7();
+    metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("issue".into()),
+        scope_entity_id: Set(Some(issue_id.clone())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(1),
+        items_matched_high: Set(1),
+        items_matched_medium: Set(0),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        query: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    metadata_run_candidate::ActiveModel {
+        run_id: Set(run_id),
+        ordinal: Set(0),
+        source: Set("comicvine".into()),
+        external_id: Set("67890".into()),
+        bucket: Set("high".into()),
+        score: Set(95.0),
+        score_breakdown: Set(json!({})),
+        candidate: Set(json!({"kind": "issue"})),
+        applied_at: Set(None),
+        dismissed_at: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    (issue_id, run_id, 0)
+}
+
+#[tokio::test]
+async fn compute_issue_diff_surfaces_junctions_when_db_is_empty() {
+    use server::metadata::diff;
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let (_issue_id, run_id, ordinal) = seed_issue_with_junction_candidate(&app, dir.path()).await;
+
+    let diff = diff::compute_issue_diff(
+        &app.state(),
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("diff");
+
+    // Credits: DB empty (IssueSeed leaves credit columns NULL) +
+    // provider has 2 → would_fill.
+    let credits = diff.rows.iter().find(|r| r.field == "credits").expect("credits row");
+    assert_eq!(credits.decision, "would_fill");
+    assert_eq!(credits.current_value.as_deref(), Some("none"));
+    assert_eq!(credits.proposed_value.as_deref(), Some("2 items"));
+
+    // Characters: 2 from provider → would_fill.
+    let chars = diff.rows.iter().find(|r| r.field == "characters").unwrap();
+    assert_eq!(chars.decision, "would_fill");
+    assert_eq!(chars.proposed_value.as_deref(), Some("2 items"));
+
+    // Teams: provider has 0 → no_incoming_value.
+    let teams = diff.rows.iter().find(|r| r.field == "teams").unwrap();
+    assert_eq!(teams.decision, "no_incoming_value");
+
+    // Story arcs: 1 from provider → would_fill.
+    let arcs = diff.rows.iter().find(|r| r.field == "story_arcs").unwrap();
+    assert_eq!(arcs.decision, "would_fill");
+    assert_eq!(arcs.proposed_value.as_deref(), Some("1 item"));
+
+    // Tags: 2 from provider → would_fill.
+    let tags = diff.rows.iter().find(|r| r.field == "tags").unwrap();
+    assert_eq!(tags.decision, "would_fill");
+
+    // Genres: 1 from provider → would_fill.
+    let genres = diff.rows.iter().find(|r| r.field == "genres").unwrap();
+    assert_eq!(genres.decision, "would_fill");
+
+    // Variant covers: 2 from provider, 0 in DB → would_fill.
+    let variants = diff.rows.iter().find(|r| r.field == "cover.variants").unwrap();
+    assert_eq!(variants.decision, "would_fill");
+    assert_eq!(variants.proposed_value.as_deref(), Some("2 items"));
+
+    // changes_count must be high enough that Apply enables — at least
+    // credits + characters + story_arcs + tags + genres + variants + new
+    // CV external_id = 7.
+    assert!(
+        diff.changes_count >= 7,
+        "changes_count = {} should reflect the junction + variant rows",
+        diff.changes_count,
+    );
+}
+
+#[tokio::test]
+async fn compute_issue_diff_variants_no_change_when_counts_match() {
+    use entity::issue_cover;
+    use server::metadata::diff;
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let (issue_id, run_id, ordinal) = seed_issue_with_junction_candidate(&app, dir.path()).await;
+
+    // Pre-seed 2 active variant rows in `issue_cover` so the diff sees
+    // matching counts (heuristic → no_change).
+    let now = Utc::now().fixed_offset();
+    for (ordinal_n, url) in [
+        (1i32, "https://existing/a.jpg"),
+        (2, "https://existing/b.jpg"),
+    ] {
+        issue_cover::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            issue_id: Set(issue_id.clone()),
+            kind: Set("variant".into()),
+            ordinal: Set(ordinal_n),
+            source_provider: Set(Some("comicvine".into())),
+            source_external_id: Set(None),
+            source_url: Set(Some(url.into())),
+            variant_label: Set(Some(format!("Variant {ordinal_n}"))),
+            variant_artist_person_id: Set(None),
+            local_path: Set(String::new()),
+            width: Set(None),
+            height: Set(None),
+            phash: Set(None),
+            dhash: Set(None),
+            ahash: Set(None),
+            fetched_at: Set(now),
+            is_active: Set(true),
+        }
+        .insert(&app.state().db)
+        .await
+        .unwrap();
+    }
+
+    let diff = diff::compute_issue_diff(
+        &app.state(),
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("diff");
+
+    let variants = diff.rows.iter().find(|r| r.field == "cover.variants").unwrap();
+    assert_eq!(variants.decision, "no_change", "matching counts → no_change");
+    assert_eq!(variants.current_value.as_deref(), Some("2 items"));
+    assert_eq!(variants.proposed_value.as_deref(), Some("2 items"));
+}
+
+#[tokio::test]
+async fn apply_issue_respects_variants_toggled_off_in_selected_fields() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let (issue_id, run_id, ordinal) = seed_issue_with_junction_candidate(&app, dir.path()).await;
+
+    // Pass selected_fields WITHOUT "cover.variants" — apply path must
+    // skip the variant write even though the provider returned 2.
+    let mut selected = std::collections::HashSet::new();
+    selected.insert("title".to_owned());
+    selected.insert("credits".to_owned());
+
+    let outcome = server::jobs::metadata_apply::apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        ApplyArgs {
+            run_id,
+            ordinal,
+            mode: ApplyMode::FillMissing,
+            apply_cover: false,
+            cover_overwrite_policy: CoverOverwritePolicy::WhenMissing,
+            override_user_edits: false,
+            actor_id: None,
+            selected_fields: Some(selected),
+            override_external_id_sources: std::collections::HashSet::new(),
+        },
+    )
+    .await
+    .expect("apply_issue");
+
+    assert_eq!(
+        outcome.variants_written, 0,
+        "selected_fields excluded cover.variants — must skip",
+    );
+
+    use entity::issue_cover;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    let rows = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(&issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 0, "no variant rows written");
+}
