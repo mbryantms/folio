@@ -238,6 +238,273 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
     Ok(info)
 }
 
+/// Emit a ComicInfo.xml document from `info`. UTF-8, 2-space indent,
+/// LF line endings. The element order matches the Anansi-project schema
+/// so a parse → serialize round-trip produces a stable file diff.
+///
+/// Rules:
+///
+///   - Typed fields are emitted first, in schema order. Any field whose
+///     value is empty / `None` is omitted (no `<X/>` placeholders).
+///   - Unknown leaf elements preserved in [`ComicInfo::raw`] are emitted
+///     **after** the typed fields. Entries that match a typed field name
+///     are *not* re-emitted from `raw` — the typed field wins, even if
+///     the user mutated the struct without updating `raw`. This makes
+///     the serializer the single source of truth on the wire.
+///   - `<Pages>` block is emitted last (matches schema position).
+///   - Boolean `BlackAndWhite` is normalized to `"Yes"` / `"No"`.
+///   - All text values are XML-escaped via [`escape_xml_text`].
+///
+/// Module M1 of [`metadata-sidecar-writeback-1.0`](../../../../../.claude/plans/metadata-sidecar-writeback-1.0.md).
+pub fn serialize(info: &ComicInfo) -> String {
+    let mut out = String::with_capacity(1024);
+    out.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
+    out.push_str("<ComicInfo xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n");
+
+    write_opt_str(&mut out, "Title", &info.title);
+    write_opt_str(&mut out, "Series", &info.series);
+    write_opt_str(&mut out, "Number", &info.number);
+    write_opt_int(&mut out, "Count", info.count);
+    write_opt_int(&mut out, "Volume", info.volume);
+    write_opt_str(&mut out, "AlternateSeries", &info.alternate_series);
+    write_opt_str(&mut out, "AlternateNumber", &info.alternate_number);
+    write_opt_int(&mut out, "AlternateCount", info.alternate_count);
+    write_opt_str(&mut out, "Summary", &info.summary);
+    write_opt_str(&mut out, "Notes", &info.notes);
+    write_opt_int(&mut out, "Year", info.year);
+    write_opt_int(&mut out, "Month", info.month);
+    write_opt_int(&mut out, "Day", info.day);
+    write_opt_str(&mut out, "Writer", &info.writer);
+    write_opt_str(&mut out, "Penciller", &info.penciller);
+    write_opt_str(&mut out, "Inker", &info.inker);
+    write_opt_str(&mut out, "Colorist", &info.colorist);
+    write_opt_str(&mut out, "Letterer", &info.letterer);
+    write_opt_str(&mut out, "CoverArtist", &info.cover_artist);
+    write_opt_str(&mut out, "Editor", &info.editor);
+    write_opt_str(&mut out, "Translator", &info.translator);
+    write_opt_str(&mut out, "Publisher", &info.publisher);
+    write_opt_str(&mut out, "Imprint", &info.imprint);
+    write_opt_str(&mut out, "Genre", &info.genre);
+    write_opt_str(&mut out, "Tags", &info.tags);
+    write_opt_str(&mut out, "Web", &info.web);
+    write_opt_int(&mut out, "PageCount", info.page_count);
+    write_opt_str(&mut out, "LanguageISO", &info.language_iso);
+    write_opt_str(&mut out, "Format", &info.format);
+    if let Some(b) = info.black_and_white {
+        write_text(&mut out, "BlackAndWhite", if b { "Yes" } else { "No" });
+    }
+    write_opt_str(&mut out, "Manga", &info.manga);
+    write_opt_str(&mut out, "Characters", &info.characters);
+    write_opt_str(&mut out, "Teams", &info.teams);
+    write_opt_str(&mut out, "Locations", &info.locations);
+    write_opt_str(&mut out, "ScanInformation", &info.scan_information);
+    write_opt_str(&mut out, "StoryArc", &info.story_arc);
+    write_opt_str(&mut out, "StoryArcNumber", &info.story_arc_number);
+    write_opt_str(&mut out, "SeriesGroup", &info.series_group);
+    write_opt_str(&mut out, "AgeRating", &info.age_rating);
+    if let Some(r) = info.community_rating {
+        // ComicInfo's schema specifies CommunityRating as a 0.0..=5.0
+        // float; emit with two decimals for stability across round-trips.
+        write_text(&mut out, "CommunityRating", &format!("{r:.2}"));
+    }
+    write_opt_str(&mut out, "MainCharacterOrTeam", &info.main_character_or_team);
+    write_opt_str(&mut out, "Review", &info.review);
+    write_opt_str(&mut out, "GTIN", &info.gtin);
+    // External-database IDs (extension fields — ComicTagger / Metron-Tagger
+    // de facto names).
+    if let Some(n) = info.comicvine_id {
+        write_text(&mut out, "ComicVineID", &n.to_string());
+    }
+    if let Some(n) = info.comicvine_series_id {
+        write_text(&mut out, "ComicVineSeriesID", &n.to_string());
+    }
+    if let Some(n) = info.metron_id {
+        write_text(&mut out, "MetronID", &n.to_string());
+    }
+    if let Some(n) = info.metron_series_id {
+        write_text(&mut out, "MetronSeriesID", &n.to_string());
+    }
+
+    // Raw passthrough: emit any leaf from `info.raw` that doesn't
+    // correspond to a typed field we already wrote. Preserves vendor
+    // custom elements (e.g. `<MainCharacterOrTeam>` aliases, `<X-…>`
+    // namespaces) across the round-trip.
+    for (k, v) in &info.raw {
+        if is_typed_comic_info_field(k) {
+            continue;
+        }
+        write_text(&mut out, k, v);
+    }
+
+    // Pages block — last, matches schema position.
+    if !info.pages.is_empty() {
+        out.push_str("  <Pages>\n");
+        for p in &info.pages {
+            out.push_str("    <Page");
+            push_attr(&mut out, "Image", &p.image.to_string());
+            if let Some(ref t) = p.kind {
+                push_attr(&mut out, "Type", t);
+            }
+            if let Some(dp) = p.double_page {
+                push_attr(&mut out, "DoublePage", if dp { "true" } else { "false" });
+            }
+            if let Some(sz) = p.image_size {
+                push_attr(&mut out, "ImageSize", &sz.to_string());
+            }
+            if let Some(ref k) = p.key {
+                push_attr(&mut out, "Key", k);
+            }
+            if let Some(ref b) = p.bookmark {
+                push_attr(&mut out, "Bookmark", b);
+            }
+            if let Some(w) = p.image_width {
+                push_attr(&mut out, "ImageWidth", &w.to_string());
+            }
+            if let Some(h) = p.image_height {
+                push_attr(&mut out, "ImageHeight", &h.to_string());
+            }
+            // `double_page_inferred` is internal to the scanner; never
+            // emit it to disk.
+            out.push_str("/>\n");
+        }
+        out.push_str("  </Pages>\n");
+    }
+
+    out.push_str("</ComicInfo>\n");
+    out
+}
+
+/// True if `name` corresponds to a typed `ComicInfo` field that
+/// [`serialize`] emits directly. Used to filter the raw-passthrough loop
+/// so a typed field isn't duplicated. The id-alias forms (ComicvineID,
+/// MetronInfoIssueID, etc.) collapse to their canonical form.
+fn is_typed_comic_info_field(name: &str) -> bool {
+    matches!(
+        name,
+        "Title"
+            | "Series"
+            | "Number"
+            | "Count"
+            | "Volume"
+            | "AlternateSeries"
+            | "AlternateNumber"
+            | "AlternateCount"
+            | "Summary"
+            | "Notes"
+            | "Year"
+            | "Month"
+            | "Day"
+            | "Writer"
+            | "Penciller"
+            | "Inker"
+            | "Colorist"
+            | "Letterer"
+            | "CoverArtist"
+            | "Editor"
+            | "Translator"
+            | "Publisher"
+            | "Imprint"
+            | "Genre"
+            | "Tags"
+            | "Web"
+            | "PageCount"
+            | "LanguageISO"
+            | "Format"
+            | "BlackAndWhite"
+            | "Manga"
+            | "Characters"
+            | "Teams"
+            | "Locations"
+            | "ScanInformation"
+            | "StoryArc"
+            | "StoryArcNumber"
+            | "SeriesGroup"
+            | "AgeRating"
+            | "CommunityRating"
+            | "MainCharacterOrTeam"
+            | "Review"
+            | "GTIN"
+            | "ComicVineID"
+            | "ComicVineId"
+            | "ComicvineID"
+            | "Comicvineid"
+            | "ComicVineSeriesID"
+            | "ComicVineSeriesId"
+            | "ComicVineVolumeID"
+            | "ComicVineVolumeId"
+            | "MetronID"
+            | "MetronId"
+            | "MetronInfoIssueID"
+            | "MetronSeriesID"
+            | "MetronSeriesId"
+            | "MetronInfoSeriesID"
+            // Pages is a container, not a leaf — its `raw` value (if any
+            // accidental leaf-form ingestion happened) is irrelevant.
+            | "Pages"
+            | "Page"
+    )
+}
+
+fn write_opt_str(out: &mut String, name: &str, v: &Option<String>) {
+    if let Some(s) = v.as_deref().filter(|s| !s.trim().is_empty()) {
+        write_text(out, name, s);
+    }
+}
+
+fn write_opt_int(out: &mut String, name: &str, v: Option<i32>) {
+    if let Some(n) = v {
+        write_text(out, name, &n.to_string());
+    }
+}
+
+fn write_text(out: &mut String, name: &str, value: &str) {
+    out.push_str("  <");
+    out.push_str(name);
+    out.push('>');
+    escape_xml_text(out, value);
+    out.push_str("</");
+    out.push_str(name);
+    out.push_str(">\n");
+}
+
+fn push_attr(out: &mut String, name: &str, value: &str) {
+    out.push(' ');
+    out.push_str(name);
+    out.push_str("=\"");
+    escape_xml_attr(out, value);
+    out.push('"');
+}
+
+/// Escape XML text-node content. Only `<`, `>`, `&` need escaping inside
+/// element text (per XML 1.0); we also escape `"` and `'` defensively
+/// since some downstream consumers don't strictly tokenize.
+fn escape_xml_text(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+/// Escape XML attribute-value content. Strict: must escape the quote
+/// character we're using (`"`) plus `<`, `&`. `>` and `'` are escaped
+/// for symmetry.
+fn escape_xml_attr(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+}
+
 fn page_from_attrs(attrs: &BTreeMap<String, String>) -> Option<PageInfo> {
     let image: i32 = attrs.get("Image")?.parse().ok()?;
     Some(PageInfo {
@@ -527,6 +794,169 @@ mod tests {
         let xml = r#"<ComicInfo><Manga>YesAndRightToLeft</Manga></ComicInfo>"#;
         let info = parse(xml.as_bytes()).unwrap();
         assert_eq!(info.manga.as_deref(), Some("YesAndRightToLeft"));
+    }
+
+    // ───────── serializer tests ─────────
+
+    #[test]
+    fn serialize_parse_round_trip_preserves_typed_fields() {
+        let parsed = parse(SAMPLE.as_bytes()).expect("parse");
+        let xml = serialize(&parsed);
+        let reparsed = parse(xml.as_bytes()).expect("reparse");
+
+        assert_eq!(reparsed.title, parsed.title);
+        assert_eq!(reparsed.series, parsed.series);
+        assert_eq!(reparsed.number, parsed.number);
+        assert_eq!(reparsed.count, parsed.count);
+        assert_eq!(reparsed.volume, parsed.volume);
+        assert_eq!(reparsed.summary, parsed.summary);
+        assert_eq!(reparsed.year, parsed.year);
+        assert_eq!(reparsed.month, parsed.month);
+        assert_eq!(reparsed.writer, parsed.writer);
+        assert_eq!(reparsed.penciller, parsed.penciller);
+        assert_eq!(reparsed.publisher, parsed.publisher);
+        assert_eq!(reparsed.page_count, parsed.page_count);
+        assert_eq!(reparsed.language_iso, parsed.language_iso);
+        assert_eq!(reparsed.black_and_white, parsed.black_and_white);
+        assert_eq!(reparsed.manga, parsed.manga);
+        assert_eq!(reparsed.age_rating, parsed.age_rating);
+        assert_eq!(reparsed.web, parsed.web);
+    }
+
+    #[test]
+    fn serialize_round_trip_preserves_pages() {
+        let parsed = parse(SAMPLE.as_bytes()).expect("parse");
+        let xml = serialize(&parsed);
+        let reparsed = parse(xml.as_bytes()).expect("reparse");
+
+        assert_eq!(reparsed.pages.len(), parsed.pages.len());
+        for (orig, back) in parsed.pages.iter().zip(reparsed.pages.iter()) {
+            assert_eq!(orig.image, back.image);
+            assert_eq!(orig.kind, back.kind);
+            assert_eq!(orig.double_page, back.double_page);
+            assert_eq!(orig.image_size, back.image_size);
+            assert_eq!(orig.image_width, back.image_width);
+            assert_eq!(orig.image_height, back.image_height);
+        }
+    }
+
+    #[test]
+    fn serialize_passes_through_unknown_raw_elements() {
+        let parsed = parse(SAMPLE.as_bytes()).expect("parse");
+        // SAMPLE includes `<CustomField>not part of schema</CustomField>`.
+        // It must survive the round trip via the `raw` passthrough.
+        let xml = serialize(&parsed);
+        assert!(xml.contains("<CustomField>"), "raw element dropped: {xml}");
+        assert!(xml.contains("not part of schema"));
+
+        let reparsed = parse(xml.as_bytes()).expect("reparse");
+        assert_eq!(
+            reparsed.raw.get("CustomField").map(String::as_str),
+            Some("not part of schema"),
+        );
+    }
+
+    #[test]
+    fn serialize_omits_empty_fields() {
+        let info = ComicInfo {
+            title: Some("Only Title".into()),
+            ..ComicInfo::default()
+        };
+        let xml = serialize(&info);
+        assert!(xml.contains("<Title>Only Title</Title>"));
+        assert!(!xml.contains("<Series"));
+        assert!(!xml.contains("<Pages>"));
+        // Whitespace-only also omitted.
+        let info = ComicInfo {
+            title: Some("   ".into()),
+            ..ComicInfo::default()
+        };
+        let xml = serialize(&info);
+        assert!(!xml.contains("<Title"), "{xml}");
+    }
+
+    #[test]
+    fn serialize_escapes_xml_special_chars() {
+        let info = ComicInfo {
+            title: Some("Tom & Jerry: <ep1>".into()),
+            summary: Some("She said \"hi\"".into()),
+            ..ComicInfo::default()
+        };
+        let xml = serialize(&info);
+        assert!(xml.contains("<Title>Tom &amp; Jerry: &lt;ep1&gt;</Title>"));
+        // `"` is fine inside element text (not an attribute).
+        assert!(xml.contains("<Summary>She said \"hi\"</Summary>"));
+    }
+
+    #[test]
+    fn serialize_emits_black_and_white_yes_no() {
+        let mut info = ComicInfo {
+            black_and_white: Some(true),
+            ..ComicInfo::default()
+        };
+        let xml = serialize(&info);
+        assert!(xml.contains("<BlackAndWhite>Yes</BlackAndWhite>"));
+        info.black_and_white = Some(false);
+        let xml = serialize(&info);
+        assert!(xml.contains("<BlackAndWhite>No</BlackAndWhite>"));
+    }
+
+    #[test]
+    fn serialize_emits_external_ids_canonical_tag_names() {
+        let info = ComicInfo {
+            comicvine_id: Some(12345),
+            metron_id: Some(987),
+            comicvine_series_id: Some(67890),
+            ..ComicInfo::default()
+        };
+        let xml = serialize(&info);
+        assert!(xml.contains("<ComicVineID>12345</ComicVineID>"));
+        assert!(xml.contains("<MetronID>987</MetronID>"));
+        assert!(xml.contains("<ComicVineSeriesID>67890</ComicVineSeriesID>"));
+
+        // Round-trip through the parser.
+        let reparsed = parse(xml.as_bytes()).unwrap();
+        assert_eq!(reparsed.comicvine_id, Some(12345));
+        assert_eq!(reparsed.metron_id, Some(987));
+        assert_eq!(reparsed.comicvine_series_id, Some(67890));
+    }
+
+    #[test]
+    fn serialize_id_alias_in_raw_does_not_duplicate_typed_field() {
+        // If the user's archive originally had `<ComicvineID>` (alt
+        // casing), the parser populates both the typed field AND `raw`
+        // (under the source name). On serialize, we must NOT re-emit the
+        // raw alias — the typed `<ComicVineID>` already wrote the value.
+        let mut info = ComicInfo {
+            comicvine_id: Some(99),
+            ..ComicInfo::default()
+        };
+        info.raw.insert("ComicvineID".into(), "99".into());
+        let xml = serialize(&info);
+        // Exactly one tag for the ID. The alias spelling must NOT appear.
+        assert!(xml.contains("<ComicVineID>99</ComicVineID>"));
+        assert!(!xml.contains("<ComicvineID>"));
+    }
+
+    #[test]
+    fn serialize_pages_block_omits_internal_double_page_inferred() {
+        let mut info = ComicInfo::default();
+        info.pages.push(PageInfo {
+            image: 0,
+            kind: Some("FrontCover".into()),
+            double_page: None,
+            image_size: None,
+            key: None,
+            bookmark: None,
+            image_width: Some(800),
+            image_height: Some(1200),
+            // Internal field — must never serialize to disk.
+            double_page_inferred: Some(true),
+        });
+        let xml = serialize(&info);
+        assert!(xml.contains("<Page Image=\"0\""));
+        assert!(!xml.contains("DoublePageInferred"));
+        assert!(!xml.contains("double_page_inferred"));
     }
 
     #[test]

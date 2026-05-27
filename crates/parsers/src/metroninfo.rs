@@ -190,6 +190,212 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
     Ok(info)
 }
 
+/// Emit a MetronInfo.xml document from `info`. UTF-8, 2-space indent.
+///
+/// Element order matches the de-facto MetronInfo schema (Metron-Tagger
+/// output) so a parse → serialize round-trip produces a stable diff.
+///
+/// Rules:
+///
+///   - Scalar fields are emitted first in schema order, omitting empty
+///     / `None` values.
+///   - `<ID source="…">…</ID>` elements come next, sorted by source key
+///     for deterministic output.
+///   - List elements (`StoryArcs`, `Characters`, `Teams`, `Locations`,
+///     `Tags`, `Genres`) are emitted only when the corresponding `Vec`
+///     is non-empty, in canonical container/leaf form
+///     (`<StoryArcs><StoryArc>…</StoryArc></StoryArcs>`).
+///   - `<Credits>` is emitted from the `credits` BTreeMap: one `<Credit>`
+///     per (role, creator) pair, preserving multiplicity (Vec order).
+///     Roles are iterated in BTreeMap key order; creators within a role
+///     in Vec order.
+///   - Unknown scalar leafs in [`MetronInfo::raw`] are passed through
+///     after the typed scalars but before the list elements. Entries
+///     matching a typed field name are not re-emitted (the typed value
+///     wins, even if the caller mutated the struct without updating
+///     `raw`).
+///   - Text values are XML-escaped via [`escape_xml_text`].
+///
+/// Module M1 of [`metadata-sidecar-writeback-1.0`](../../../../../.claude/plans/metadata-sidecar-writeback-1.0.md).
+pub fn serialize(info: &MetronInfo) -> String {
+    let mut out = String::with_capacity(1024);
+    out.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
+    out.push_str("<MetronInfo xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n");
+
+    write_opt_str(&mut out, "Title", &info.title);
+    write_opt_str(&mut out, "Series", &info.series);
+    write_opt_str(&mut out, "Publisher", &info.publisher);
+    write_opt_str(&mut out, "Imprint", &info.imprint);
+    write_opt_str(&mut out, "Number", &info.number);
+    write_opt_int(&mut out, "Volume", info.volume);
+    write_opt_int(&mut out, "Year", info.year);
+    write_opt_int(&mut out, "Month", info.month);
+    write_opt_int(&mut out, "Day", info.day);
+    write_opt_str(&mut out, "Summary", &info.summary);
+    write_opt_str(&mut out, "Notes", &info.notes);
+    write_opt_str(&mut out, "AgeRating", &info.age_rating);
+    write_opt_str(&mut out, "Language", &info.language);
+    write_opt_str(&mut out, "Manga", &info.manga);
+    write_opt_str(&mut out, "GTIN", &info.gtin);
+
+    // Raw passthrough for unknown scalar elements. Done after typed
+    // scalars; before lists. Filters typed names so duplicates don't
+    // appear when the parser populated raw alongside the typed field.
+    for (k, v) in &info.raw {
+        if is_typed_metron_info_leaf(k) {
+            continue;
+        }
+        write_text(&mut out, k, v);
+    }
+
+    // External IDs — `<ID source="…">value</ID>`. BTreeMap iterates in
+    // key order, so output is deterministic.
+    for (source, value) in &info.ids {
+        out.push_str("  <ID source=\"");
+        escape_xml_attr(&mut out, source);
+        out.push_str("\">");
+        escape_xml_text(&mut out, value);
+        out.push_str("</ID>\n");
+    }
+
+    // Lists.
+    write_list(&mut out, "StoryArcs", "StoryArc", &info.story_arcs);
+    write_list(&mut out, "Characters", "Character", &info.characters);
+    write_list(&mut out, "Teams", "Team", &info.teams);
+    write_list(&mut out, "Locations", "Location", &info.locations);
+    write_list(&mut out, "Tags", "Tag", &info.tags);
+    write_list(&mut out, "Genres", "Genre", &info.genres);
+
+    // Credits — last block.
+    if !info.credits.is_empty() && info.credits.values().any(|v| !v.is_empty()) {
+        out.push_str("  <Credits>\n");
+        for (role, creators) in &info.credits {
+            for creator in creators {
+                out.push_str("    <Credit role=\"");
+                escape_xml_attr(&mut out, role);
+                out.push_str("\">\n");
+                out.push_str("      <Creator><Name>");
+                escape_xml_text(&mut out, creator);
+                out.push_str("</Name></Creator>\n");
+                out.push_str("    </Credit>\n");
+            }
+        }
+        out.push_str("  </Credits>\n");
+    }
+
+    out.push_str("</MetronInfo>\n");
+    out
+}
+
+fn is_typed_metron_info_leaf(name: &str) -> bool {
+    matches!(
+        name,
+        "Title"
+            | "Series"
+            | "Publisher"
+            | "Imprint"
+            | "Number"
+            | "Volume"
+            | "Year"
+            | "Month"
+            | "Day"
+            | "Summary"
+            | "Notes"
+            | "AgeRating"
+            | "Language"
+            | "Manga"
+            | "GTIN"
+            // Containers + their leaf names — never re-emit raw form
+            // (the lists themselves were structured under the right
+            // parent, and the parser stores each terminal leaf into
+            // `raw` under its own name).
+            | "StoryArcs"
+            | "StoryArc"
+            | "Characters"
+            | "Character"
+            | "Teams"
+            | "Team"
+            | "Locations"
+            | "Location"
+            | "Tags"
+            | "Tag"
+            | "Genres"
+            | "Genre"
+            | "Credits"
+            | "Credit"
+            | "Creator"
+            | "Name"
+            | "ID"
+    )
+}
+
+fn write_list(out: &mut String, container: &str, leaf: &str, items: &[String]) {
+    if items.is_empty() {
+        return;
+    }
+    out.push_str("  <");
+    out.push_str(container);
+    out.push_str(">\n");
+    for it in items {
+        out.push_str("    <");
+        out.push_str(leaf);
+        out.push('>');
+        escape_xml_text(out, it);
+        out.push_str("</");
+        out.push_str(leaf);
+        out.push_str(">\n");
+    }
+    out.push_str("  </");
+    out.push_str(container);
+    out.push_str(">\n");
+}
+
+fn write_opt_str(out: &mut String, name: &str, v: &Option<String>) {
+    if let Some(s) = v.as_deref().filter(|s| !s.trim().is_empty()) {
+        write_text(out, name, s);
+    }
+}
+
+fn write_opt_int(out: &mut String, name: &str, v: Option<i32>) {
+    if let Some(n) = v {
+        write_text(out, name, &n.to_string());
+    }
+}
+
+fn write_text(out: &mut String, name: &str, value: &str) {
+    out.push_str("  <");
+    out.push_str(name);
+    out.push('>');
+    escape_xml_text(out, value);
+    out.push_str("</");
+    out.push_str(name);
+    out.push_str(">\n");
+}
+
+fn escape_xml_text(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+fn escape_xml_attr(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+}
+
 fn assign(
     info: &mut MetronInfo,
     path: &[String],
@@ -327,6 +533,128 @@ mod tests {
         );
         assert_eq!(info.ids.get("metron").map(String::as_str), Some("12345"));
         assert_eq!(info.ids.get("comicvine").map(String::as_str), Some("67890"));
+    }
+
+    #[test]
+    fn serialize_round_trip_preserves_scalars() {
+        let parsed = parse(SAMPLE.as_bytes()).expect("parse");
+        let xml = serialize(&parsed);
+        let reparsed = parse(xml.as_bytes()).expect("reparse");
+
+        assert_eq!(reparsed.title, parsed.title);
+        assert_eq!(reparsed.series, parsed.series);
+        assert_eq!(reparsed.publisher, parsed.publisher);
+        assert_eq!(reparsed.number, parsed.number);
+        assert_eq!(reparsed.volume, parsed.volume);
+        assert_eq!(reparsed.year, parsed.year);
+        assert_eq!(reparsed.month, parsed.month);
+        assert_eq!(reparsed.summary, parsed.summary);
+        assert_eq!(reparsed.age_rating, parsed.age_rating);
+        assert_eq!(reparsed.manga, parsed.manga);
+    }
+
+    #[test]
+    fn serialize_round_trip_preserves_lists() {
+        let parsed = parse(SAMPLE.as_bytes()).expect("parse");
+        let xml = serialize(&parsed);
+        let reparsed = parse(xml.as_bytes()).expect("reparse");
+
+        assert_eq!(reparsed.story_arcs, parsed.story_arcs);
+        assert_eq!(reparsed.characters, parsed.characters);
+    }
+
+    #[test]
+    fn serialize_round_trip_preserves_credits_with_same_role() {
+        // SAMPLE has two `Penciller` credits — Fiona Staples + (Co-artist).
+        // The Vec must round-trip with multiplicity AND order preserved.
+        let parsed = parse(SAMPLE.as_bytes()).expect("parse");
+        let xml = serialize(&parsed);
+        let reparsed = parse(xml.as_bytes()).expect("reparse");
+
+        assert_eq!(
+            reparsed.credits.get("Penciller").map(Vec::as_slice),
+            Some(["Fiona Staples".to_string(), "(Co-artist)".to_string()].as_slice()),
+        );
+        assert_eq!(
+            reparsed.credits.get("Writer").map(Vec::as_slice),
+            Some(["Brian K. Vaughan".to_string()].as_slice()),
+        );
+    }
+
+    #[test]
+    fn serialize_round_trip_preserves_external_ids() {
+        let parsed = parse(SAMPLE.as_bytes()).expect("parse");
+        let xml = serialize(&parsed);
+        // Each `<ID source="…">value</ID>` round-trips.
+        assert!(xml.contains(r#"<ID source="metron">12345</ID>"#), "{xml}");
+        assert!(xml.contains(r#"<ID source="comicvine">67890</ID>"#), "{xml}");
+
+        let reparsed = parse(xml.as_bytes()).expect("reparse");
+        assert_eq!(reparsed.ids.get("metron").map(String::as_str), Some("12345"));
+        assert_eq!(
+            reparsed.ids.get("comicvine").map(String::as_str),
+            Some("67890"),
+        );
+    }
+
+    #[test]
+    fn serialize_passes_through_unknown_raw_scalars() {
+        let xml = r#"<?xml version="1.0"?>
+<MetronInfo>
+  <Title>X</Title>
+  <X-Custom-Vendor>vendor-specific-payload</X-Custom-Vendor>
+</MetronInfo>"#;
+        let parsed = parse(xml.as_bytes()).expect("parse");
+        assert_eq!(
+            parsed.raw.get("X-Custom-Vendor").map(String::as_str),
+            Some("vendor-specific-payload"),
+        );
+
+        let out = serialize(&parsed);
+        assert!(
+            out.contains("<X-Custom-Vendor>vendor-specific-payload</X-Custom-Vendor>"),
+            "raw passthrough dropped: {out}",
+        );
+
+        let reparsed = parse(out.as_bytes()).expect("reparse");
+        assert_eq!(
+            reparsed.raw.get("X-Custom-Vendor").map(String::as_str),
+            Some("vendor-specific-payload"),
+        );
+    }
+
+    #[test]
+    fn serialize_omits_empty_fields() {
+        let info = MetronInfo {
+            title: Some("Only Title".into()),
+            ..MetronInfo::default()
+        };
+        let xml = serialize(&info);
+        assert!(xml.contains("<Title>Only Title</Title>"));
+        assert!(!xml.contains("<Series"));
+        assert!(!xml.contains("<StoryArcs"));
+        assert!(!xml.contains("<Credits"));
+        assert!(!xml.contains("<ID "));
+    }
+
+    #[test]
+    fn serialize_escapes_xml_special_chars() {
+        let info = MetronInfo {
+            title: Some("Tom & Jerry: <ep1>".into()),
+            ..MetronInfo::default()
+        };
+        let xml = serialize(&info);
+        assert!(xml.contains("<Title>Tom &amp; Jerry: &lt;ep1&gt;</Title>"), "{xml}");
+    }
+
+    #[test]
+    fn serialize_id_source_attr_is_escaped() {
+        let mut info = MetronInfo::default();
+        // Hostile source key (the source registry caps names but we
+        // defend regardless — XML attribute escape must run).
+        info.ids.insert("evil\"src".into(), "999".into());
+        let xml = serialize(&info);
+        assert!(xml.contains(r#"<ID source="evil&quot;src">999</ID>"#), "{xml}");
     }
 
     #[test]
