@@ -126,6 +126,13 @@ pub struct ApplyOutcome {
     /// the issue-scope path.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sidecar_skip_reasons: Vec<String>,
+    /// Count of variant cover rows persisted to `issue_cover` from
+    /// the provider's `variants: Vec<VariantCoverCandidate>`. v1
+    /// stores metadata only (source_url + label); the gallery
+    /// renders from the CDN URL. Zero when the provider returns no
+    /// variants.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub variants_written: u32,
 }
 
 fn is_zero_u32(n: &u32) -> bool {
@@ -637,11 +644,37 @@ async fn apply_issue_via_sidecar(
             ApplyError::InvalidScope(format!("rewrite_sidecars push failed: {e}"))
         })?;
 
+    // Variant covers: metadata-only persistence — these don't live in
+    // the sidecar XML (neither ComicInfo nor MetronInfo carries them),
+    // they're presentational DB rows that drive the `<CoverGallery>`
+    // surface. Write them regardless of the sidecar XML path; the next
+    // scoped rescan won't touch `issue_cover` rows since the XML
+    // doesn't carry them, and that's intentional.
+    let mut variants_written = 0u32;
+    if !detail.variants.is_empty() {
+        match crate::metadata::writers::set_issue_variants(
+            &state.db,
+            &row.id,
+            &detail.variants,
+            crate::metadata::writers::SetBy::Provider(source),
+        )
+        .await
+        {
+            Ok(n) => variants_written = n as u32,
+            Err(e) => tracing::warn!(
+                issue_id = row.id,
+                error = %e,
+                "apply_issue_via_sidecar: variant covers write failed",
+            ),
+        }
+    }
+
     flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
 
     let outcome = ApplyOutcome {
         enqueued_rewrite: true,
         suppressed_user_pins,
+        variants_written,
         ..Default::default()
     };
     bump_run_counts(&state.db, args.run_id, &outcome).await?;
@@ -948,6 +981,31 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
             Err(e) => {
                 outcome.cover_skipped_reason = Some(format!("fetch_failed: {e}"));
             }
+        }
+    }
+
+    // Variant covers (metadata-only — store source_url, no byte
+    // download). The `<CoverGallery>` UI renders directly from
+    // `issue_cover.source_url` so the variant tiles show up without a
+    // local artifact. v1 unconditionally writes variants whenever the
+    // provider returned any; respecting `args.apply_cover` would
+    // surprise the user (they didn't see a separate "fetch variant
+    // covers" checkbox — the dialog has one cover toggle).
+    if !detail.variants.is_empty() {
+        match writers::set_issue_variants(
+            &state.db,
+            &entity_id_str,
+            &detail.variants,
+            set_by,
+        )
+        .await
+        {
+            Ok(n) => outcome.variants_written = n as u32,
+            Err(e) => tracing::warn!(
+                issue_id = entity_id_str,
+                error = %e,
+                "apply_issue: variant covers write failed; primary cover (if any) is unaffected",
+            ),
         }
     }
 
@@ -1371,7 +1429,12 @@ async fn bump_run_counts(
         // rescan triggered by the rewrite job, but the user-facing
         // contract is still "I applied this candidate" — count it as
         // an apply.
-        || outcome.enqueued_rewrite;
+        || outcome.enqueued_rewrite
+        // Variant covers (issue_cover rows) are presentational DB
+        // writes outside the XML pipeline. Count them as an apply
+        // even when nothing else lands (rare: provider has variants
+        // but neither primary cover nor any text fields).
+        || outcome.variants_written > 0;
     let mut am: metadata_run::ActiveModel = row.into();
     if any_write {
         am.items_applied = Set(active_i32(&am.items_applied) + 1);

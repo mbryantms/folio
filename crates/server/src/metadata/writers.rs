@@ -1471,6 +1471,103 @@ pub async fn apply_cover<C: ConnectionTrait>(
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Variant covers.
+// ─────────────────────────────────────────────────────────────────
+
+/// Upsert one [`issue_cover`] row per variant from a provider's
+/// `Vec<VariantCoverCandidate>`. Variants are stored *metadata-only*
+/// — `source_url` (CDN) and `variant_label` are persisted, but no
+/// bytes are downloaded. The UI's [`web/components/library/
+/// CoverGallery.tsx`] renders straight from `source_url`.
+///
+/// Idempotency: every existing variant row for the issue is
+/// **deleted** before inserting the fresh set. Variants are
+/// presentational — no audit trail needed — and the table has a
+/// `UNIQUE (issue_id, kind, ordinal)` constraint that would block a
+/// re-apply if we merely deactivated. Primary cover rows are
+/// untouched (`apply_cover` handles that slot via `kind='primary'`).
+///
+/// Ordinals start at 1 (the primary slot is ordinal 0 with kind
+/// `'primary'`). Insert order matches the provider's `Vec` order so
+/// the gallery's `ORDER BY kind, ordinal` displays variants in
+/// publisher-supplied sequence.
+///
+/// Returns the count of variant rows inserted.
+pub async fn set_issue_variants<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    variants: &[crate::metadata::provider::VariantCoverCandidate],
+    set_by: SetBy,
+) -> Result<usize, sea_orm::DbErr> {
+    // Delete every existing variant row so the upsert reflects only
+    // the provider's current variant set. Primary rows
+    // (`kind='primary'`) are not touched.
+    issue_cover::Entity::delete_many()
+        .filter(issue_cover::Column::IssueId.eq(issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .exec(db)
+        .await?;
+
+    if variants.is_empty() {
+        return Ok(0);
+    }
+
+    let now = chrono::Utc::now().fixed_offset();
+    let provider_str = match set_by {
+        SetBy::Provider(s) => Some(s.as_str().to_owned()),
+        // For non-provider sources we still emit the variants but
+        // leave `source_provider` NULL (the variant has no provider
+        // attribution in those cases — typically only the ComicInfo
+        // primary is what put it on disk).
+        SetBy::User
+        | SetBy::ComicInfo
+        | SetBy::MetronInfo
+        | SetBy::ScannerInference
+        | SetBy::ScannerFolderTag
+        | SetBy::CrossReference => None,
+    };
+    let mut inserted = 0usize;
+    for (idx, v) in variants.iter().enumerate() {
+        // Skip variants with no image URL — they're useless to the
+        // gallery surface and pollute the table.
+        let Some(image_url) = v.image_url.as_deref().filter(|s| !s.trim().is_empty()) else {
+            continue;
+        };
+        let primary_ident = v.identifiers.first();
+        let am = issue_cover::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            issue_id: Set(issue_id.to_owned()),
+            kind: Set("variant".into()),
+            // 1-based; the primary slot owns ordinal 0.
+            ordinal: Set((idx + 1) as i32),
+            source_provider: Set(provider_str.clone()),
+            source_external_id: Set(primary_ident.map(|i| i.id.clone())),
+            source_url: Set(Some(image_url.to_owned())),
+            variant_label: Set(v
+                .label
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_owned)),
+            variant_artist_person_id: Set(None),
+            // Metadata-only: no bytes downloaded. The gallery renders
+            // from `source_url`; a future backfill job could populate
+            // `local_path` if/when CDN takedowns become a real concern.
+            local_path: Set(String::new()),
+            width: Set(None),
+            height: Set(None),
+            phash: Set(None),
+            dhash: Set(None),
+            ahash: Set(None),
+            fetched_at: Set(now),
+            is_active: Set(true),
+        };
+        am.insert(db).await?;
+        inserted += 1;
+    }
+    Ok(inserted)
+}
+
+// ─────────────────────────────────────────────────────────────────
 // CSV cache rebuild (debounced per transaction).
 // ─────────────────────────────────────────────────────────────────
 

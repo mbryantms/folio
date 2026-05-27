@@ -174,8 +174,8 @@ pub(crate) enum WritebackError {
 }
 
 /// Core write loop — opens the source archive, swaps in fresh ComicInfo
-/// + MetronInfo entries, atomic-renames over the original, invalidates
-/// the LRU + clears thumbnail stamps + stamps `last_rewrite_*`.
+/// and MetronInfo entries, atomic-renames over the original, invalidates
+/// the LRU, clears thumbnail stamps, and bumps `last_rewrite_*`.
 ///
 /// Caller-provided invariants:
 ///   - The per-issue archive-rewrite mutex MUST be held when this is

@@ -111,6 +111,32 @@ async fn seed_issue_run(app: &TestApp, issue_id: &str, source: &str) -> (Uuid, i
     (run_id, 0)
 }
 
+fn stub_provider_payload_with_variants() -> server::metadata::provider::GenericMetadata {
+    let mut payload = stub_provider_payload();
+    payload.variants = vec![
+        server::metadata::provider::VariantCoverCandidate {
+            label: Some("Cory Walker variant".into()),
+            artist_name: Some("Cory Walker".into()),
+            identifiers: vec![],
+            image_url: Some("https://cdn.example.com/saga-1-walker.jpg".into()),
+        },
+        server::metadata::provider::VariantCoverCandidate {
+            label: Some("Dave McCaig variant".into()),
+            artist_name: Some("Dave McCaig".into()),
+            identifiers: vec![],
+            image_url: Some("https://cdn.example.com/saga-1-mccaig.jpg".into()),
+        },
+        // A variant with no image URL — composer should skip it.
+        server::metadata::provider::VariantCoverCandidate {
+            label: Some("Ghost variant".into()),
+            artist_name: None,
+            identifiers: vec![],
+            image_url: None,
+        },
+    ];
+    payload
+}
+
 fn stub_provider_payload() -> server::metadata::provider::GenericMetadata {
     use server::metadata::identifier::{Identifier, Source};
     server::metadata::provider::GenericMetadata {
@@ -314,6 +340,149 @@ async fn apply_issue_writeback_surfaces_suppressed_user_pins() {
         outcome.suppressed_user_pins.contains(&"title".to_owned()),
         "title pin must surface: {:?}",
         outcome.suppressed_user_pins,
+    );
+}
+
+#[tokio::test]
+async fn apply_issue_with_writeback_writes_variant_covers_to_issue_cover_table() {
+    // Variant covers travel outside the XML — they live in DB as
+    // `issue_cover` rows with `kind='variant'`. The `<CoverGallery>`
+    // surface needs them to actually appear in the UI; without this
+    // wiring the gallery auto-hides because it only sees the primary
+    // row.
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let cbz_payload = build_cbz_bytes("saga-1");
+    let issue_id = IssueSeed::new(lib_id, series_id, &dir.path().join("saga-1.cbz"), &cbz_payload, 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &stub_provider_payload_with_variants(),
+    )
+    .await
+    .unwrap();
+
+    let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
+    let outcome = apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_issue");
+
+    // Provider returned 3 variants but one had no image_url — only
+    // 2 land in the table, and outcome.variants_written reflects the
+    // actual insert count (not the input length).
+    assert_eq!(outcome.variants_written, 2, "no-URL variant must be skipped");
+    use entity::issue_cover;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+    let rows = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(&issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::IsActive.eq(true))
+        .order_by_asc(issue_cover::Column::Ordinal)
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2, "the no-URL variant must be skipped");
+    assert_eq!(rows[0].variant_label.as_deref(), Some("Cory Walker variant"));
+    assert_eq!(
+        rows[0].source_url.as_deref(),
+        Some("https://cdn.example.com/saga-1-walker.jpg"),
+    );
+    assert_eq!(rows[0].ordinal, 1, "primary owns ordinal 0; variants start at 1");
+    assert!(rows[0].local_path.is_empty(), "v1 stores metadata-only — no bytes downloaded");
+    assert_eq!(rows[1].variant_label.as_deref(), Some("Dave McCaig variant"));
+    assert_eq!(rows[1].ordinal, 2);
+    assert_eq!(rows[0].source_provider.as_deref(), Some("comicvine"));
+}
+
+#[tokio::test]
+async fn apply_issue_variant_covers_idempotent_no_dupes() {
+    // Re-applying must NOT accumulate stale variant rows. The writer
+    // deactivates the previous variant set before inserting the fresh
+    // one.
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let cbz_payload = build_cbz_bytes("saga-1");
+    let issue_id = IssueSeed::new(lib_id, series_id, &dir.path().join("saga-1.cbz"), &cbz_payload, 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &stub_provider_payload_with_variants(),
+    )
+    .await
+    .unwrap();
+
+    let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
+    let _ = apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("first apply");
+
+    // Re-seed a fresh run and apply again with the same candidate.
+    let (run_id2, ordinal2) = seed_issue_run(&app, &issue_id, "comicvine").await;
+    let _ = apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id2, ordinal2, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("second apply");
+
+    use entity::issue_cover;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    let active_rows = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(&issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::IsActive.eq(true))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(
+        active_rows.len(),
+        2,
+        "second apply must not accumulate variant rows",
+    );
+    let inactive_rows = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(&issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::IsActive.eq(false))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(
+        inactive_rows.len(),
+        0,
+        "variants are presentational; re-apply deletes prior rows (no audit trail needed)",
     );
 }
 
