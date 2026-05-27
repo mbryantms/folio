@@ -119,6 +119,11 @@ pub struct ApplySeriesJob {
     /// M5 per-source override for external_ids conflicts.
     #[serde(default)]
     pub override_external_id_sources: std::collections::HashSet<String>,
+    /// Matching-accuracy-1.0 M12: flag the auto-apply path so the
+    /// audit step uses the distinct `metadata_auto_apply` action.
+    /// `#[serde(default)]` so pre-M12 queued jobs still deserialize.
+    #[serde(default)]
+    pub is_auto: bool,
 }
 
 pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result<(), Error> {
@@ -136,6 +141,7 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         actor_ua,
         selected_fields,
         override_external_id_sources,
+        is_auto,
     } = job;
 
     let claimed = match try_claim_series_mutex(&state, series_id).await {
@@ -173,6 +179,7 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         actor_ip.as_deref(),
         actor_ua.as_deref(),
         override_user_edits,
+        is_auto,
         &outcome,
     )
     .await;
@@ -201,6 +208,10 @@ pub struct ApplyIssueJob {
     /// M5 per-source override for external_ids conflicts.
     #[serde(default)]
     pub override_external_id_sources: std::collections::HashSet<String>,
+    /// Matching-accuracy-1.0 M12: flag the auto-apply path so the
+    /// audit step uses the distinct `metadata_auto_apply` action.
+    #[serde(default)]
+    pub is_auto: bool,
 }
 
 pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(), Error> {
@@ -218,6 +229,7 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
         actor_ua,
         selected_fields,
         override_external_id_sources,
+        is_auto,
     } = job;
 
     let claimed = match try_claim_issue_mutex(&state, &issue_id).await {
@@ -255,6 +267,7 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
         actor_ip.as_deref(),
         actor_ua.as_deref(),
         override_user_edits,
+        is_auto,
         &outcome,
     )
     .await;
@@ -265,7 +278,7 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
 // ───────── audit ─────────
 
 #[allow(clippy::too_many_arguments)]
-async fn audit_apply(
+pub(crate) async fn audit_apply(
     state: &AppState,
     kind: &str,
     target_id: String,
@@ -275,43 +288,53 @@ async fn audit_apply(
     actor_ip: Option<&str>,
     actor_ua: Option<&str>,
     override_user_edits: bool,
+    is_auto: bool,
     outcome: &Result<ApplyOutcome, ApplyError>,
 ) {
-    let action_owned = if override_user_edits {
-        format!("admin.{kind}.metadata_apply_force")
-    } else {
-        format!("admin.{kind}.metadata_apply")
+    // matching-accuracy-1.0 M12: `metadata_auto_apply` is the distinct
+    // action emitted by the cron / bulk-fetch auto-apply path. Manual
+    // applies stay on `metadata_apply` / `metadata_apply_force` so
+    // operators can grep + filter cleanly.
+    let action_owned = match (is_auto, override_user_edits) {
+        (true, _) => format!("admin.{kind}.metadata_auto_apply"),
+        (false, true) => format!("admin.{kind}.metadata_apply_force"),
+        (false, false) => format!("admin.{kind}.metadata_apply"),
     };
     let payload = match outcome {
         Ok(o) => serde_json::json!({
             "run_id": run_id,
             "ordinal": ordinal,
             "outcome": o,
+            "is_auto": is_auto,
         }),
         Err(e) => serde_json::json!({
             "run_id": run_id,
             "ordinal": ordinal,
             "error": e.to_string(),
+            "is_auto": is_auto,
         }),
     };
     let Some(actor_id) = actor_id else {
-        // Non-user-initiated apply (future cron). Still useful to
-        // audit but `audit::record` requires an actor; treat as a
-        // system actor when this lands. For now, log-only.
+        // Anonymous run — weekly cron has no triggered_by. `audit::record`
+        // requires an actor UUID, so we structured-log instead. The
+        // `event=metadata_auto_apply` field is the grep handle operators
+        // use to find these.
         tracing::info!(
+            event = "metadata_auto_apply",
             run_id = %run_id,
             ordinal,
             kind,
             target_id,
+            is_auto,
             ?payload,
-            "metadata_apply: anonymous run; no audit row"
+            "metadata_apply: anonymous run; structured-log only"
         );
         return;
     };
     // SAFETY: leak the per-job string so the &'static expected by
     // AuditEntry is satisfied. Audit action names are a small
-    // bounded set ({series|issue} × {apply|apply_force}) so the
-    // leak is bounded at 4 strings per process lifetime.
+    // bounded set ({series|issue} × {apply | apply_force | auto_apply})
+    // so the leak is bounded at 6 strings per process lifetime.
     let action: &'static str = Box::leak(action_owned.into_boxed_str());
     let target_type: &'static str = match kind {
         "series" => "series",

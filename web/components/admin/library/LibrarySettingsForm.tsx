@@ -58,6 +58,7 @@ const schema = z
     metadata_publisher_blacklist: z.array(z.string().min(1)).default([]),
     filename_ignore_leading_numbers: z.boolean().default(false),
     filename_assume_issue_one: z.boolean().default(false),
+    metadata_auto_apply_strong_matches: z.boolean().default(false),
   })
   .refine(
     (v) => !v.metadata_writeback_enabled || v.allow_archive_writeback,
@@ -90,6 +91,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       metadata_publisher_blacklist: [],
       filename_ignore_leading_numbers: false,
       filename_assume_issue_one: false,
+      metadata_auto_apply_strong_matches: false,
     },
   });
 
@@ -108,6 +110,8 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         metadata_publisher_blacklist: lib.data.metadata_publisher_blacklist ?? [],
         filename_ignore_leading_numbers: lib.data.filename_ignore_leading_numbers,
         filename_assume_issue_one: lib.data.filename_assume_issue_one,
+        metadata_auto_apply_strong_matches:
+          lib.data.metadata_auto_apply_strong_matches,
       });
     }
   }, [lib.data, form]);
@@ -130,6 +134,8 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       metadata_publisher_blacklist: values.metadata_publisher_blacklist,
       filename_ignore_leading_numbers: values.filename_ignore_leading_numbers,
       filename_assume_issue_one: values.filename_assume_issue_one,
+      metadata_auto_apply_strong_matches:
+        values.metadata_auto_apply_strong_matches,
       scan_schedule_cron:
         values.scan_schedule_cron.trim() === ""
           ? null
@@ -446,6 +452,35 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                       infer issue 1. Closes the one-shot / first-issue
                       case where curation has stripped the{" "}
                       <span className="font-mono">#1</span>.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="metadata_auto_apply_strong_matches"
+              render={({ field }) => (
+                <FormItem className="flex items-start justify-between gap-6">
+                  <div className="space-y-1">
+                    <FormLabel>
+                      Auto-apply strong matches
+                    </FormLabel>
+                    <FormDescription>
+                      When checked, Folio applies metadata
+                      automatically when a non-manual search (weekly
+                      cron, bulk-fetch) finds exactly one candidate,
+                      its cover image matches yours within 8 bits of
+                      Hamming distance, and no other candidate is
+                      comparably close. User-edited fields are still
+                      preserved. All other matches stay in the review
+                      queue.
                     </FormDescription>
                   </div>
                   <FormControl>

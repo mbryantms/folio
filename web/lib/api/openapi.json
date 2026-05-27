@@ -11999,7 +11999,8 @@
           "archive_backup_retain_days",
           "metadata_publisher_blacklist",
           "filename_ignore_leading_numbers",
-          "filename_assume_issue_one"
+          "filename_assume_issue_one",
+          "metadata_auto_apply_strong_matches"
         ],
         "properties": {
           "allow_archive_writeback": {
@@ -12055,6 +12056,10 @@
               "string",
               "null"
             ]
+          },
+          "metadata_auto_apply_strong_matches": {
+            "type": "boolean",
+            "description": "When true, non-manual searches that produce a strict\nSingleGood outcome auto-apply the top candidate. User-edit\nprecedence still fires. Matching-accuracy-1.0 M12."
           },
           "metadata_publisher_blacklist": {
             "type": "array",
@@ -16822,6 +16827,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "metadata_auto_apply_strong_matches": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Toggle the auto-apply path for SingleGood matches on\nnon-manual searches (matching-accuracy M12)."
           },
           "metadata_publisher_blacklist": {
             "type": [

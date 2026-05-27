@@ -80,6 +80,7 @@ mod m20270101_000001_match_outcomes;
 mod m20270102_000001_library_publisher_blacklist;
 mod m20270103_000001_library_filename_inference_flags;
 mod m20270104_000001_issue_cover_page_index;
+mod m20270105_000001_library_auto_apply_strong_matches;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -168,6 +169,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270102_000001_library_publisher_blacklist::Migration),
             Box::new(m20270103_000001_library_filename_inference_flags::Migration),
             Box::new(m20270104_000001_issue_cover_page_index::Migration),
+            Box::new(m20270105_000001_library_auto_apply_strong_matches::Migration),
         ]
     }
 }

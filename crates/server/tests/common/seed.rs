@@ -99,9 +99,10 @@ impl<'a> LibrarySeed<'a> {
             metadata_writeback_enabled: Set(self.metadata_writeback_enabled),
             archive_backup_retain_count: Set(1),
             archive_backup_retain_days: Set(30),
-        metadata_publisher_blacklist: Set(serde_json::json!([])),
-        filename_ignore_leading_numbers: Set(false),
-        filename_assume_issue_one: Set(false),
+            metadata_publisher_blacklist: Set(serde_json::json!([])),
+            filename_ignore_leading_numbers: Set(false),
+            filename_assume_issue_one: Set(false),
+            metadata_auto_apply_strong_matches: Set(false),
         }
         .insert(db)
         .await
@@ -345,7 +346,7 @@ impl<'a> IssueSeed<'a> {
             comicinfo_count: Set(None),
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),
-        cover_page_index: Set(0),
+            cover_page_index: Set(0),
         }
         .insert(db)
         .await

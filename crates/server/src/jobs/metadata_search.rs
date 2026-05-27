@@ -154,6 +154,11 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
                 results = ranked.len(),
                 "metadata search: series job complete"
             );
+            // M12: auto-apply SingleGoodMatch on non-manual runs when
+            // the library has the toggle on. Fires AFTER finalize_run
+            // commits the candidates so any failure here doesn't
+            // strand the search row.
+            maybe_auto_apply_series(&state, run_id, &ranked, library_id, series_id).await;
         }
         Err(e) => {
             tracing::warn!(
@@ -186,7 +191,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
     let SearchIssueJob {
         run_id,
         issue_id,
-        library_id: _library_id,
+        library_id,
         facts,
         series_external_ids,
     } = job;
@@ -225,6 +230,9 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
                 results = ranked.len(),
                 "metadata search: issue job complete"
             );
+            // M12: auto-apply SingleGoodMatch on non-manual runs when
+            // the library has the toggle on.
+            maybe_auto_apply_issue(&state, run_id, &ranked, library_id, &issue_id).await;
         }
         Err(e) => {
             tracing::warn!(
@@ -436,4 +444,179 @@ pub async fn enqueue_series_search(
         run_id: new_run_id,
         coalesced: false,
     })
+}
+
+// ───────── M12: opt-in auto-apply on SingleGoodMatch ─────────
+
+/// Auto-apply the top series candidate when:
+/// - The library has `metadata_auto_apply_strong_matches = true`.
+/// - The run was non-manual (weekly cron / bulk-fetch / scanner —
+///   not a user clicking "Fetch metadata" in the dialog).
+/// - The matcher classified the result as
+///   [`crate::metadata::match_outcome::MatchOutcomeKind::SingleGood`].
+///
+/// Soft-fails on every error path (settings lookup, library
+/// lookup, queue push). The search row stays valid; the operator
+/// can manually apply from the dialog instead. Matching-accuracy-1.0 M12.
+async fn maybe_auto_apply_series(
+    state: &AppState,
+    run_id: Uuid,
+    ranked: &[crate::metadata::orchestrator::RankedCandidate],
+    library_id: Option<Uuid>,
+    series_id: Uuid,
+) {
+    use crate::metadata::match_outcome::MatchOutcomeKind;
+    if MatchOutcomeKind::classify(ranked) != MatchOutcomeKind::SingleGood {
+        return;
+    }
+    let Some(library_id) = library_id else {
+        return;
+    };
+    let (allow_auto, trigger_kind, triggered_by) =
+        match auto_apply_eligibility(state, run_id, library_id).await {
+            Some(t) => t,
+            None => return,
+        };
+    if !allow_auto {
+        return;
+    }
+    if trigger_kind == crate::metadata::orchestrator::trigger_kind::MANUAL {
+        return;
+    }
+    use apalis::prelude::Storage;
+    let mut storage = state.jobs.metadata_apply_series_storage.clone();
+    let push_result = storage
+        .push(crate::jobs::metadata_apply::ApplySeriesJob {
+            run_id,
+            ordinal: 0,
+            series_id,
+            mode: crate::metadata::apply::ApplyMode::FillMissing,
+            apply_cover: true,
+            cover_overwrite_policy:
+                crate::jobs::metadata_apply::CoverPolicy::WhenMissing,
+            override_user_edits: false,
+            actor_id: triggered_by,
+            actor_ip: None,
+            actor_ua: None,
+            selected_fields: None,
+            override_external_id_sources: Default::default(),
+            is_auto: true,
+        })
+        .await;
+    match push_result {
+        Ok(_) => tracing::info!(
+            run_id = %run_id,
+            series_id = %series_id,
+            trigger_kind,
+            "metadata auto-apply: SingleGoodMatch enqueued (series)",
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            run_id = %run_id,
+            series_id = %series_id,
+            "metadata auto-apply: queue push failed (series)",
+        ),
+    }
+}
+
+/// Issue-scope sibling of [`maybe_auto_apply_series`].
+async fn maybe_auto_apply_issue(
+    state: &AppState,
+    run_id: Uuid,
+    ranked: &[crate::metadata::orchestrator::RankedCandidate],
+    library_id: Option<Uuid>,
+    issue_id: &str,
+) {
+    use crate::metadata::match_outcome::MatchOutcomeKind;
+    if MatchOutcomeKind::classify(ranked) != MatchOutcomeKind::SingleGood {
+        return;
+    }
+    let Some(library_id) = library_id else {
+        return;
+    };
+    let (allow_auto, trigger_kind, triggered_by) =
+        match auto_apply_eligibility(state, run_id, library_id).await {
+            Some(t) => t,
+            None => return,
+        };
+    if !allow_auto {
+        return;
+    }
+    if trigger_kind == crate::metadata::orchestrator::trigger_kind::MANUAL {
+        return;
+    }
+    use apalis::prelude::Storage;
+    let mut storage = state.jobs.metadata_apply_issue_storage.clone();
+    let push_result = storage
+        .push(crate::jobs::metadata_apply::ApplyIssueJob {
+            run_id,
+            ordinal: 0,
+            issue_id: issue_id.to_owned(),
+            mode: crate::metadata::apply::ApplyMode::FillMissing,
+            apply_cover: true,
+            cover_overwrite_policy:
+                crate::jobs::metadata_apply::CoverPolicy::WhenMissing,
+            override_user_edits: false,
+            actor_id: triggered_by,
+            actor_ip: None,
+            actor_ua: None,
+            selected_fields: None,
+            override_external_id_sources: Default::default(),
+            is_auto: true,
+        })
+        .await;
+    match push_result {
+        Ok(_) => tracing::info!(
+            run_id = %run_id,
+            issue_id,
+            trigger_kind,
+            "metadata auto-apply: SingleGoodMatch enqueued (issue)",
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            run_id = %run_id,
+            issue_id,
+            "metadata auto-apply: queue push failed (issue)",
+        ),
+    }
+}
+
+/// Loads the library row + the metadata_run row and returns
+/// `Some((allow_auto, trigger_kind, triggered_by))` when both are
+/// readable. Returns `None` on any DB error so the caller short-
+/// circuits — the auto-apply path soft-fails to "leave the search
+/// row for manual review".
+async fn auto_apply_eligibility(
+    state: &AppState,
+    run_id: Uuid,
+    library_id: Uuid,
+) -> Option<(bool, String, Option<Uuid>)> {
+    use sea_orm::EntityTrait;
+    let library = match entity::library::Entity::find_by_id(library_id)
+        .one(&state.db)
+        .await
+    {
+        Ok(Some(l)) => l,
+        Ok(None) => return None,
+        Err(e) => {
+            tracing::warn!(error = %e, %library_id, "auto-apply eligibility: library lookup failed");
+            return None;
+        }
+    };
+    let run = match entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&state.db)
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => return None,
+        Err(e) => {
+            tracing::warn!(error = %e, %run_id, "auto-apply eligibility: run lookup failed");
+            return None;
+        }
+    };
+    Some((
+        library.metadata_auto_apply_strong_matches,
+        run.trigger_kind,
+        run.triggered_by,
+    ))
 }

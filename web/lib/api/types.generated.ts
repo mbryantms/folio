@@ -4883,6 +4883,10 @@ export interface components {
             /** @description Library Scanner v1 (Milestone 4) settings. */
             ignore_globs: string[];
             last_scan_at?: string | null;
+            /** @description When true, non-manual searches that produce a strict
+             *     SingleGood outcome auto-apply the top candidate. User-edit
+             *     precedence still fires. Matching-accuracy-1.0 M12. */
+            metadata_auto_apply_strong_matches: boolean;
             /** @description Publisher names the matcher's pre-filter should drop before
              *     scoring. Comparison is case-insensitive against the
              *     title-sanitized form so "DC Comics" / "dc comics" / "DC" all
@@ -6701,6 +6705,9 @@ export interface components {
              *     generated regardless. */
             generate_page_thumbs_on_scan?: boolean | null;
             ignore_globs?: string[] | null;
+            /** @description Toggle the auto-apply path for SingleGood matches on
+             *     non-manual searches (matching-accuracy M12). */
+            metadata_auto_apply_strong_matches?: boolean | null;
             /** @description Replace the per-library publisher blacklist (matching-accuracy
              *     M3). Tri-state: omitted = leave unchanged; explicit `null` =
              *     clear to empty. Comparison at filter time is case-insensitive

@@ -180,6 +180,7 @@ mod tests {
             metadata_publisher_blacklist: serde_json::json!([]),
             filename_ignore_leading_numbers: false,
             filename_assume_issue_one: false,
+            metadata_auto_apply_strong_matches: false,
         }
     }
 

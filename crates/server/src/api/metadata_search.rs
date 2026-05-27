@@ -982,6 +982,7 @@ pub async fn apply_series(
                 .iter()
                 .cloned()
                 .collect(),
+            is_auto: false,
         })
         .await
     {
@@ -1163,6 +1164,7 @@ pub async fn apply_issue(
                 .iter()
                 .cloned()
                 .collect(),
+            is_auto: false,
         })
         .await
     {

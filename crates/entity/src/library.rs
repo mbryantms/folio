@@ -92,6 +92,14 @@ pub struct Model {
     /// Matching-accuracy-1.0 M7.
     #[serde(default)]
     pub filename_assume_issue_one: bool,
+    /// When true, non-manual searches (weekly cron, bulk-fetch
+    /// toolbar) that produce a `MatchOutcomeKind::SingleGood`
+    /// outcome auto-apply the top candidate. The user-edit
+    /// precedence rule still fires, so pinned fields stay sacred.
+    /// Manual searches (dialog kick) never auto-apply regardless.
+    /// Matching-accuracy-1.0 M12.
+    #[serde(default)]
+    pub metadata_auto_apply_strong_matches: bool,
 }
 
 fn default_archive_backup_retain_count() -> i32 {

@@ -121,6 +121,10 @@ pub struct LibraryView {
     /// When true the scanner's filename inferer assumes issue `1`
     /// when no issue number is detected. Matching-accuracy-1.0 M7.
     pub filename_assume_issue_one: bool,
+    /// When true, non-manual searches that produce a strict
+    /// SingleGood outcome auto-apply the top candidate. User-edit
+    /// precedence still fires. Matching-accuracy-1.0 M12.
+    pub metadata_auto_apply_strong_matches: bool,
 }
 
 impl From<library::Model> for LibraryView {
@@ -163,6 +167,7 @@ impl From<library::Model> for LibraryView {
                 .unwrap_or_default(),
             filename_ignore_leading_numbers: m.filename_ignore_leading_numbers,
             filename_assume_issue_one: m.filename_assume_issue_one,
+            metadata_auto_apply_strong_matches: m.metadata_auto_apply_strong_matches,
         }
     }
 }
@@ -242,6 +247,11 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub filename_assume_issue_one: Option<bool>,
+    /// Toggle the auto-apply path for SingleGood matches on
+    /// non-manual searches (matching-accuracy M12).
+    #[serde(default)]
+    #[garde(skip)]
+    pub metadata_auto_apply_strong_matches: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
@@ -488,6 +498,7 @@ pub async fn create(
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
+        metadata_auto_apply_strong_matches: Set(false),
     };
     match am.insert(&app.db).await {
         Ok(m) => {
@@ -637,6 +648,9 @@ pub async fn update_settings(
     }
     if let Some(b) = req.filename_assume_issue_one {
         am.filename_assume_issue_one = Set(b);
+    }
+    if let Some(b) = req.metadata_auto_apply_strong_matches {
+        am.metadata_auto_apply_strong_matches = Set(b);
     }
     if let Some(cron_opt) = req.scan_schedule_cron {
         let normalized = cron_opt.and_then(|s| {
