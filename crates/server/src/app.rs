@@ -332,6 +332,29 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     // by the partial index `issues_thumbs_pending_idx`.
     let _ = crate::jobs::post_scan::enqueue_pending_all_libraries(&state).await;
 
+    // Archive-rewrite startup sweep (M0 of metadata-sidecar-writeback-1.0):
+    // walk every `library.root_path` and remove orphan `.tmp` siblings
+    // older than 10 min. Crashed rewrites leave these behind; without the
+    // sweep they accumulate forever. Skipped libraries with read errors
+    // (mount went away, perm issue) — logged inside `walk_and_remove`.
+    {
+        use entity::library;
+        use sea_orm::EntityTrait;
+        if let Ok(libs) = library::Entity::find().all(&state.db).await {
+            let roots: Vec<std::path::PathBuf> = libs
+                .into_iter()
+                .map(|l| std::path::PathBuf::from(l.root_path))
+                .collect();
+            let removed = crate::archive_rewrite::startup_cleanup(
+                roots,
+                std::time::Duration::from_secs(10 * 60),
+            );
+            if removed > 0 {
+                tracing::info!(removed, "archive_rewrite startup: cleaned orphan .tmp");
+            }
+        }
+    }
+
     // Shared shutdown token: HTTP server and apalis monitor both
     // observe cancellation, so a single SIGTERM drains both cleanly.
     // M4 of code-quality-cleanup-1.0 — before this, the apalis monitor

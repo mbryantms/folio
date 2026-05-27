@@ -12,6 +12,7 @@ pub mod cb7;
 pub mod cbr;
 pub mod cbt;
 pub mod cbz;
+pub mod cbz_write;
 pub mod comic_archive;
 pub mod entry_name;
 

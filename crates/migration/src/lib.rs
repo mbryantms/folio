@@ -75,6 +75,7 @@ mod m20261227_000001_hide_from_log;
 mod m20261228_000001_metadata_providers_schema;
 mod m20261229_000001_metadata_cache;
 mod m20261230_000001_metadata_run_candidates;
+mod m20261231_000001_archive_writeback_schema;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -158,6 +159,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261228_000001_metadata_providers_schema::Migration),
             Box::new(m20261229_000001_metadata_cache::Migration),
             Box::new(m20261230_000001_metadata_run_candidates::Migration),
+            Box::new(m20261231_000001_archive_writeback_schema::Migration),
         ]
     }
 }

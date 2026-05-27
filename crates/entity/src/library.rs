@@ -53,6 +53,35 @@ pub struct Model {
     /// works regardless of this flag.
     #[serde(default)]
     pub generate_page_thumbs_on_scan: bool,
+    /// Hard prerequisite for any code path that mutates archive bytes:
+    /// sidecar writeback (`metadata-sidecar-writeback-1.0`) and page edits
+    /// (`archive-rewrite-1.0`). Default false so no library starts
+    /// rewriting bytes without explicit operator consent.
+    #[serde(default)]
+    pub allow_archive_writeback: bool,
+    /// When true *and* `allow_archive_writeback` is also true, provider
+    /// apply (`metadata-sidecar-writeback-1.0` M3+) writes fresh
+    /// ComicInfo.xml + MetronInfo.xml into the archive and enqueues a
+    /// scoped rescan. When false, apply takes the legacy DB-direct path.
+    /// Per-library so operators migrate gradually.
+    #[serde(default)]
+    pub metadata_writeback_enabled: bool,
+    /// How many `.bak` siblings to keep per archive (1..=5). Default 1
+    /// — one undo slot. Capped at 5 to bound disk pressure.
+    #[serde(default = "default_archive_backup_retain_count")]
+    pub archive_backup_retain_count: i32,
+    /// Auto-prune `.bak` files older than this. Default 30 days; `0` =
+    /// keep forever.
+    #[serde(default = "default_archive_backup_retain_days")]
+    pub archive_backup_retain_days: i32,
+}
+
+fn default_archive_backup_retain_count() -> i32 {
+    1
+}
+
+fn default_archive_backup_retain_days() -> i32 {
+    30
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

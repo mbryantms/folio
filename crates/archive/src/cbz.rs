@@ -131,6 +131,94 @@ impl Cbz {
         &self.skipped
     }
 
+    /// Number of raw entries in the underlying zip — used by
+    /// [`crate::cbz_write::Rebuilder`] to walk the source archive in
+    /// original order. Includes entries filtered out of [`Self::entries`]
+    /// (Thumbs.db, dotfiles, __MACOSX, …); the writer applies the same
+    /// skip rules so trash doesn't propagate.
+    pub(crate) fn inner_entry_count(&self) -> usize {
+        self.archive.len()
+    }
+
+    /// Peek the raw stored name of the entry at zip-index `ordinal`,
+    /// without decompressing or copying. Used by the rebuilder to look
+    /// up the per-entry op in the plan before deciding to copy / skip /
+    /// replace.
+    pub(crate) fn raw_entry_name(&mut self, ordinal: usize) -> Result<String, ArchiveError> {
+        match &mut self.archive {
+            OpenedZip::File(a) => Ok(a
+                .by_index_raw(ordinal)
+                .map_err(map_zip_err)?
+                .name()
+                .to_string()),
+            OpenedZip::Mem(a) => Ok(a
+                .by_index_raw(ordinal)
+                .map_err(map_zip_err)?
+                .name()
+                .to_string()),
+        }
+    }
+
+    /// True if the entry name at `ordinal` would be filtered by the open
+    /// path's skip rules (`Thumbs.db`, dotfiles, `__MACOSX`, sidecar text
+    /// suffixes). Exposed so the rebuilder mirrors the reader's filter
+    /// exactly — keeps the round-trip property "open(write(X)) sees the
+    /// same entries as open(X)" honest.
+    pub(crate) fn raw_entry_is_skipped(&mut self, ordinal: usize) -> Result<bool, ArchiveError> {
+        let name = self.raw_entry_name(ordinal)?;
+        Ok(is_skipped(&name))
+    }
+
+    /// Stream-copy the entry at zip-index `ordinal` into `dst` verbatim
+    /// (preserves compression method + compressed bytes). Returns the
+    /// raw stored name + uncompressed size of the entry that was
+    /// copied — caller uses these to track which plan keys have been
+    /// consumed and to enforce output caps.
+    pub(crate) fn raw_copy_to<W>(
+        &mut self,
+        ordinal: usize,
+        dst: &mut zip::ZipWriter<W>,
+    ) -> Result<RawEntryInfo, ArchiveError>
+    where
+        W: std::io::Write + std::io::Seek,
+    {
+        match &mut self.archive {
+            OpenedZip::File(a) => {
+                let zf = a.by_index_raw(ordinal).map_err(map_zip_err)?;
+                let info = RawEntryInfo {
+                    name: zf.name().to_string(),
+                    uncompressed_size: zf.size(),
+                };
+                dst.raw_copy_file(zf).map_err(map_zip_err)?;
+                Ok(info)
+            }
+            OpenedZip::Mem(a) => {
+                let zf = a.by_index_raw(ordinal).map_err(map_zip_err)?;
+                let info = RawEntryInfo {
+                    name: zf.name().to_string(),
+                    uncompressed_size: zf.size(),
+                };
+                dst.raw_copy_file(zf).map_err(map_zip_err)?;
+                Ok(info)
+            }
+        }
+    }
+}
+
+/// Returned by [`Cbz::raw_copy_to`] so the rebuilder can keep a running
+/// `total_uncompressed` for cap enforcement without re-statting entries.
+#[derive(Debug, Clone)]
+pub(crate) struct RawEntryInfo {
+    /// Stored entry name. Held for the sister plan's edit path which
+    /// needs to know which name actually landed in the output (e.g. when
+    /// reordering pages, the writer renames entries contiguously).
+    #[allow(dead_code)]
+    pub name: String,
+    pub uncompressed_size: u64,
+}
+
+impl Cbz {
+
     /// Build the index/entry tables. Shared between the happy-path (File)
     /// open and the recovery-path (in-memory cursor over rewritten bytes).
     fn finish(

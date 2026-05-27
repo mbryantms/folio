@@ -16,6 +16,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,16 +41,29 @@ const THUMBNAIL_FORMATS: {
   { value: "png", label: "PNG", hint: "Lossless, larger files" },
 ];
 
-const schema = z.object({
-  ignore_globs: z.array(z.string().min(1)).default([]),
-  scan_schedule_cron: z
-    .string()
-    .refine((v) => validateCron(v).ok, "Invalid cron expression")
-    .default(""),
-  report_missing_comicinfo: z.boolean().default(false),
-  soft_delete_days: z.number().int().min(0).max(365).default(7),
-  generate_page_thumbs_on_scan: z.boolean().default(false),
-});
+const schema = z
+  .object({
+    ignore_globs: z.array(z.string().min(1)).default([]),
+    scan_schedule_cron: z
+      .string()
+      .refine((v) => validateCron(v).ok, "Invalid cron expression")
+      .default(""),
+    report_missing_comicinfo: z.boolean().default(false),
+    soft_delete_days: z.number().int().min(0).max(365).default(7),
+    generate_page_thumbs_on_scan: z.boolean().default(false),
+    allow_archive_writeback: z.boolean().default(false),
+    metadata_writeback_enabled: z.boolean().default(false),
+    archive_backup_retain_count: z.number().int().min(1).max(5).default(1),
+    archive_backup_retain_days: z.number().int().min(0).max(3650).default(30),
+  })
+  .refine(
+    (v) => !v.metadata_writeback_enabled || v.allow_archive_writeback,
+    {
+      message:
+        "Metadata writeback requires Archive writeback (master toggle) to be on first.",
+      path: ["metadata_writeback_enabled"],
+    },
+  );
 
 type FormValues = z.infer<typeof schema>;
 
@@ -66,6 +80,10 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       report_missing_comicinfo: false,
       soft_delete_days: 7,
       generate_page_thumbs_on_scan: false,
+      allow_archive_writeback: false,
+      metadata_writeback_enabled: false,
+      archive_backup_retain_count: 1,
+      archive_backup_retain_days: 30,
     },
   });
 
@@ -77,6 +95,10 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         report_missing_comicinfo: lib.data.report_missing_comicinfo,
         soft_delete_days: lib.data.soft_delete_days,
         generate_page_thumbs_on_scan: lib.data.generate_page_thumbs_on_scan,
+        allow_archive_writeback: lib.data.allow_archive_writeback,
+        metadata_writeback_enabled: lib.data.metadata_writeback_enabled,
+        archive_backup_retain_count: lib.data.archive_backup_retain_count,
+        archive_backup_retain_days: lib.data.archive_backup_retain_days,
       });
     }
   }, [lib.data, form]);
@@ -92,6 +114,10 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       report_missing_comicinfo: values.report_missing_comicinfo,
       soft_delete_days: values.soft_delete_days,
       generate_page_thumbs_on_scan: values.generate_page_thumbs_on_scan,
+      allow_archive_writeback: values.allow_archive_writeback,
+      metadata_writeback_enabled: values.metadata_writeback_enabled,
+      archive_backup_retain_count: values.archive_backup_retain_count,
+      archive_backup_retain_days: values.archive_backup_retain_days,
       scan_schedule_cron:
         values.scan_schedule_cron.trim() === ""
           ? null
@@ -218,6 +244,133 @@ export function LibrarySettingsForm({ id }: { id: string }) {
             />
           </CardContent>
         </Card>
+        <Card>
+          <CardContent className="space-y-5 p-6">
+            <div>
+              <h3 className="text-foreground text-sm font-semibold tracking-tight">
+                Archive writeback
+              </h3>
+              <p className="text-muted-foreground mt-1 text-xs">
+                Gates every code path that modifies bytes inside this
+                library&rsquo;s archives — sidecar metadata refresh and
+                page-byte edits. Off by default; flip on when you&rsquo;re
+                ready to start rewriting files. A backup of the previous
+                version is kept next to each archive.
+              </p>
+            </div>
+            <FormField
+              control={form.control}
+              name="allow_archive_writeback"
+              render={({ field }) => (
+                <FormItem className="flex items-start justify-between gap-6">
+                  <div className="space-y-1">
+                    <FormLabel>Allow archive writeback</FormLabel>
+                    <FormDescription>
+                      Master toggle. Must be on before any other writeback
+                      option here can take effect.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="metadata_writeback_enabled"
+              render={({ field }) => {
+                const masterOff = !form.watch("allow_archive_writeback");
+                return (
+                  <FormItem
+                    className={cn(
+                      "flex items-start justify-between gap-6",
+                      masterOff && "opacity-60",
+                    )}
+                  >
+                    <div className="space-y-1">
+                      <FormLabel>Write metadata sidecars on apply</FormLabel>
+                      <FormDescription>
+                        When a metadata refresh runs (ComicVine / Metron),
+                        write fresh <span className="font-mono">ComicInfo.xml</span>{" "}
+                        and <span className="font-mono">MetronInfo.xml</span>{" "}
+                        into the archive instead of just updating the
+                        database. The library becomes self-describing —
+                        export anywhere.
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        disabled={masterOff}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
+            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="archive_backup_retain_count"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Backup slots per archive</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={5}
+                        value={field.value}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n)) field.onChange(n);
+                        }}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      How many <span className="font-mono">.bak</span> versions
+                      to keep next to each rewritten archive. 1 = one undo
+                      slot; max 5.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="archive_backup_retain_days"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Backup retention (days)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={3650}
+                        value={field.value}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n)) field.onChange(n);
+                        }}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Backups older than this are pruned by the nightly
+                      cleanup. 0 keeps backups forever.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </CardContent>
+        </Card>
         <ThumbnailSettingsCard
           enabled={thumbnailSettings.data?.enabled ?? true}
           format={(thumbnailSettings.data?.format as ThumbnailFormat | undefined) ?? "webp"}
@@ -250,6 +403,15 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                 scan_schedule_cron: lib.data.scan_schedule_cron ?? "",
                 report_missing_comicinfo: lib.data.report_missing_comicinfo,
                 soft_delete_days: lib.data.soft_delete_days,
+                generate_page_thumbs_on_scan:
+                  lib.data.generate_page_thumbs_on_scan,
+                allow_archive_writeback: lib.data.allow_archive_writeback,
+                metadata_writeback_enabled:
+                  lib.data.metadata_writeback_enabled,
+                archive_backup_retain_count:
+                  lib.data.archive_backup_retain_count,
+                archive_backup_retain_days:
+                  lib.data.archive_backup_retain_days,
               })
             }
           >

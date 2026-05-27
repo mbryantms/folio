@@ -11844,9 +11844,27 @@
           "report_missing_comicinfo",
           "file_watch_enabled",
           "soft_delete_days",
-          "generate_page_thumbs_on_scan"
+          "generate_page_thumbs_on_scan",
+          "allow_archive_writeback",
+          "metadata_writeback_enabled",
+          "archive_backup_retain_count",
+          "archive_backup_retain_days"
         ],
         "properties": {
+          "allow_archive_writeback": {
+            "type": "boolean",
+            "description": "Hard prerequisite for any code path that mutates archive bytes\n(sidecar writeback + page edits). Default false; admin flips on\nwhen ready to start rewriting files for this library."
+          },
+          "archive_backup_retain_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many `.bak` siblings to keep per archive after a rewrite.\n1..=5; default 1."
+          },
+          "archive_backup_retain_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Auto-prune `.bak` files older than this many days. Default 30;\n`0` = keep forever."
+          },
           "dedupe_by_content": {
             "type": "boolean"
           },
@@ -11878,6 +11896,10 @@
               "string",
               "null"
             ]
+          },
+          "metadata_writeback_enabled": {
+            "type": "boolean",
+            "description": "When true AND `allow_archive_writeback` is also true, provider\napply takes the XML-first path: worker writes ComicInfo.xml +\nMetronInfo.xml into the archive and enqueues a scoped rescan.\nPer-library so operators migrate gradually."
           },
           "name": {
             "type": "string"
@@ -16502,6 +16524,29 @@
         "type": "object",
         "description": "Body for `PATCH /libraries/{id}` (Milestone 4). Every field is optional;\nonly the keys present in the body are updated.",
         "properties": {
+          "allow_archive_writeback": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Master toggle gating any code path that mutates archive bytes\nin this library. Default false. Independent of\n`metadata_writeback_enabled` (the metadata-XML toggle), which\nhas this as a hard prerequisite — flipping `allow_archive_writeback`\noff while `metadata_writeback_enabled` is on returns 422."
+          },
+          "archive_backup_retain_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`.bak` retention slots, 1..=5. CHECK constraint enforced at DB\nlevel; garde validates here to surface a friendly 422."
+          },
+          "archive_backup_retain_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Days a `.bak` file lives before the daily prune cron removes\nit; `0` = keep forever. Non-negative."
+          },
           "file_watch_enabled": {
             "type": [
               "boolean",
@@ -16523,6 +16568,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "metadata_writeback_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "When true, provider apply writes ComicInfo.xml + MetronInfo.xml\nto the archive and enqueues a scoped rescan\n(`metadata-sidecar-writeback-1.0` M3+). Requires\n`allow_archive_writeback=true`."
           },
           "report_missing_comicinfo": {
             "type": [

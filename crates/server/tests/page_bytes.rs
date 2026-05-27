@@ -106,6 +106,10 @@ async fn seed_issue(app: &TestApp, file_path: &std::path::Path, file_size: i64) 
         thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
         thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
         generate_page_thumbs_on_scan: Set(false),
+        allow_archive_writeback: Set(false),
+        metadata_writeback_enabled: Set(false),
+        archive_backup_retain_count: Set(1),
+        archive_backup_retain_days: Set(30),
     }
     .insert(&db)
     .await
@@ -227,6 +231,8 @@ async fn seed_issue(app: &TestApp, file_path: &std::path::Path, file_size: i64) 
         additional_links: Set(serde_json::json!([])),
         user_edited: Set(serde_json::json!([])),
         comicinfo_count: Set(None),
+        last_rewrite_at: Set(None),
+        last_rewrite_kind: Set(None),
     }
     .insert(&db)
     .await

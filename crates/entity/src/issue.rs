@@ -195,6 +195,20 @@ pub struct Model {
     /// Treat NULL or `<= 0` as "no signal".
     #[sea_orm(nullable)]
     pub comicinfo_count: Option<i32>,
+
+    /// Timestamp of the last rewrite of this archive's bytes — set when
+    /// either the sidecar-writeback path (`metadata-sidecar-writeback-1.0`)
+    /// or the page-edit path (`archive-rewrite-1.0`) commits a new file
+    /// via the atomic-swap helper. NULL means the archive has never been
+    /// rewritten by Folio.
+    #[sea_orm(nullable)]
+    pub last_rewrite_at: Option<DateTimeWithTimeZone>,
+    /// What kind of rewrite produced [`Self::last_rewrite_at`]:
+    /// `'sidecar'` (metadata-only XML refresh) or `'edit'` (page bytes
+    /// modified). NULL when `last_rewrite_at` is NULL. Helps the
+    /// audit-log surface and the issue-detail status row tell them apart.
+    #[sea_orm(nullable)]
+    pub last_rewrite_kind: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

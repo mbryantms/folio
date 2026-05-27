@@ -156,6 +156,10 @@ async fn seed_library(app: &TestApp, name: &str) -> Uuid {
         thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
         thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
         generate_page_thumbs_on_scan: Set(false),
+        allow_archive_writeback: Set(false),
+        metadata_writeback_enabled: Set(false),
+        archive_backup_retain_count: Set(1),
+        archive_backup_retain_days: Set(30),
     }
     .insert(&db)
     .await

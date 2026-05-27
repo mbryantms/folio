@@ -173,6 +173,10 @@ mod tests {
             thumbnail_cover_quality: crate::library::thumbnails::DEFAULT_COVER_QUALITY as i32,
             thumbnail_page_quality: crate::library::thumbnails::DEFAULT_STRIP_QUALITY as i32,
             generate_page_thumbs_on_scan: false,
+            allow_archive_writeback: false,
+            metadata_writeback_enabled: false,
+            archive_backup_retain_count: 1,
+            archive_backup_retain_days: 30,
         }
     }
 

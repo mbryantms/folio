@@ -4760,6 +4760,22 @@ export interface components {
             library_ids: string[];
         };
         LibraryView: {
+            /** @description Hard prerequisite for any code path that mutates archive bytes
+             *     (sidecar writeback + page edits). Default false; admin flips on
+             *     when ready to start rewriting files for this library. */
+            allow_archive_writeback: boolean;
+            /**
+             * Format: int32
+             * @description How many `.bak` siblings to keep per archive after a rewrite.
+             *     1..=5; default 1.
+             */
+            archive_backup_retain_count: number;
+            /**
+             * Format: int32
+             * @description Auto-prune `.bak` files older than this many days. Default 30;
+             *     `0` = keep forever.
+             */
+            archive_backup_retain_days: number;
             dedupe_by_content: boolean;
             default_language: string;
             default_reading_direction: string;
@@ -4772,6 +4788,11 @@ export interface components {
             /** @description Library Scanner v1 (Milestone 4) settings. */
             ignore_globs: string[];
             last_scan_at?: string | null;
+            /** @description When true AND `allow_archive_writeback` is also true, provider
+             *     apply takes the XML-first path: worker writes ComicInfo.xml +
+             *     MetronInfo.xml into the archive and enqueues a scoped rescan.
+             *     Per-library so operators migrate gradually. */
+            metadata_writeback_enabled: boolean;
             name: string;
             report_missing_comicinfo: boolean;
             root_path: string;
@@ -6515,12 +6536,35 @@ export interface components {
         /** @description Body for `PATCH /libraries/{id}` (Milestone 4). Every field is optional;
          *     only the keys present in the body are updated. */
         UpdateLibraryReq: {
+            /** @description Master toggle gating any code path that mutates archive bytes
+             *     in this library. Default false. Independent of
+             *     `metadata_writeback_enabled` (the metadata-XML toggle), which
+             *     has this as a hard prerequisite — flipping `allow_archive_writeback`
+             *     off while `metadata_writeback_enabled` is on returns 422. */
+            allow_archive_writeback?: boolean | null;
+            /**
+             * Format: int32
+             * @description `.bak` retention slots, 1..=5. CHECK constraint enforced at DB
+             *     level; garde validates here to surface a friendly 422.
+             */
+            archive_backup_retain_count?: number | null;
+            /**
+             * Format: int32
+             * @description Days a `.bak` file lives before the daily prune cron removes
+             *     it; `0` = keep forever. Non-negative.
+             */
+            archive_backup_retain_days?: number | null;
             file_watch_enabled?: boolean | null;
             /** @description Toggle the per-library opt-in for auto-generating page-strip
              *     thumbnails on every post-scan pass. Cover thumbs are always
              *     generated regardless. */
             generate_page_thumbs_on_scan?: boolean | null;
             ignore_globs?: string[] | null;
+            /** @description When true, provider apply writes ComicInfo.xml + MetronInfo.xml
+             *     to the archive and enqueues a scoped rescan
+             *     (`metadata-sidecar-writeback-1.0` M3+). Requires
+             *     `allow_archive_writeback=true`. */
+            metadata_writeback_enabled?: boolean | null;
             report_missing_comicinfo?: boolean | null;
             /** @description Cron expression. `null` clears it; an empty string is treated as null.
              *     Tri-state: omitted = leave unchanged; explicit `null` = clear. */

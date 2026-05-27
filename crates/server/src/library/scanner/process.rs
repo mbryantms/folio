@@ -808,6 +808,12 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             // ComicInfo `<Count>` — see the update path above for why
             // we capture this per-issue.
             comicinfo_count: Set(info.count),
+            // Archive rewrite bookkeeping — set by the sidecar / edit
+            // workers (M3+ of metadata-sidecar-writeback-1.0 and M2+
+            // of archive-rewrite-1.0). NULL for issues Folio has never
+            // rewritten the bytes of.
+            last_rewrite_at: Set(None),
+            last_rewrite_kind: Set(None),
         };
         let inserted = am.insert(db).await?;
         remember_primary_issue_path(db, &issue_id, &path_str).await?;

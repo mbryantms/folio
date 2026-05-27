@@ -6,6 +6,7 @@ pub mod observability;
 pub mod secrets;
 
 pub mod api;
+pub mod archive_rewrite;
 pub mod audit;
 pub mod auth;
 pub mod cbl;

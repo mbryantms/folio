@@ -16,8 +16,8 @@ use axum::{
 };
 use entity::{issue, library, library_user_access, scan_run, series};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, ModelTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set,
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ModelTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -95,6 +95,21 @@ pub struct LibraryView {
     /// alongside the always-on cover thumbnails. See migration
     /// `m20261211_000001_generate_page_thumbs_on_scan` for rationale.
     pub generate_page_thumbs_on_scan: bool,
+    /// Hard prerequisite for any code path that mutates archive bytes
+    /// (sidecar writeback + page edits). Default false; admin flips on
+    /// when ready to start rewriting files for this library.
+    pub allow_archive_writeback: bool,
+    /// When true AND `allow_archive_writeback` is also true, provider
+    /// apply takes the XML-first path: worker writes ComicInfo.xml +
+    /// MetronInfo.xml into the archive and enqueues a scoped rescan.
+    /// Per-library so operators migrate gradually.
+    pub metadata_writeback_enabled: bool,
+    /// How many `.bak` siblings to keep per archive after a rewrite.
+    /// 1..=5; default 1.
+    pub archive_backup_retain_count: i32,
+    /// Auto-prune `.bak` files older than this many days. Default 30;
+    /// `0` = keep forever.
+    pub archive_backup_retain_days: i32,
 }
 
 impl From<library::Model> for LibraryView {
@@ -122,6 +137,10 @@ impl From<library::Model> for LibraryView {
             soft_delete_days: m.soft_delete_days,
             scan_schedule_cron: m.scan_schedule_cron,
             generate_page_thumbs_on_scan: m.generate_page_thumbs_on_scan,
+            allow_archive_writeback: m.allow_archive_writeback,
+            metadata_writeback_enabled: m.metadata_writeback_enabled,
+            archive_backup_retain_count: m.archive_backup_retain_count,
+            archive_backup_retain_days: m.archive_backup_retain_days,
         }
     }
 }
@@ -159,6 +178,31 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub generate_page_thumbs_on_scan: Option<bool>,
+    /// Master toggle gating any code path that mutates archive bytes
+    /// in this library. Default false. Independent of
+    /// `metadata_writeback_enabled` (the metadata-XML toggle), which
+    /// has this as a hard prerequisite — flipping `allow_archive_writeback`
+    /// off while `metadata_writeback_enabled` is on returns 422.
+    #[serde(default)]
+    #[garde(skip)]
+    pub allow_archive_writeback: Option<bool>,
+    /// When true, provider apply writes ComicInfo.xml + MetronInfo.xml
+    /// to the archive and enqueues a scoped rescan
+    /// (`metadata-sidecar-writeback-1.0` M3+). Requires
+    /// `allow_archive_writeback=true`.
+    #[serde(default)]
+    #[garde(skip)]
+    pub metadata_writeback_enabled: Option<bool>,
+    /// `.bak` retention slots, 1..=5. CHECK constraint enforced at DB
+    /// level; garde validates here to surface a friendly 422.
+    #[serde(default)]
+    #[garde(inner(range(min = 1, max = 5)))]
+    pub archive_backup_retain_count: Option<i32>,
+    /// Days a `.bak` file lives before the daily prune cron removes
+    /// it; `0` = keep forever. Non-negative.
+    #[serde(default)]
+    #[garde(inner(range(min = 0)))]
+    pub archive_backup_retain_days: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
@@ -394,6 +438,14 @@ pub async fn create(
         thumbnail_cover_quality: Set(crate::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
         thumbnail_page_quality: Set(crate::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
         generate_page_thumbs_on_scan: Set(req.generate_page_thumbs_on_scan),
+        // Archive writeback opts-in: both off by default so a fresh
+        // library never starts rewriting bytes without explicit consent.
+        // Per-library admin settings page flips these once the operator
+        // is ready.
+        allow_archive_writeback: Set(false),
+        metadata_writeback_enabled: Set(false),
+        archive_backup_retain_count: Set(1),
+        archive_backup_retain_days: Set(30),
     };
     match am.insert(&app.db).await {
         Ok(m) => {
@@ -499,6 +551,35 @@ pub async fn update_settings(
     }
     if let Some(b) = req.generate_page_thumbs_on_scan {
         am.generate_page_thumbs_on_scan = Set(b);
+    }
+    // Archive writeback opts. `metadata_writeback_enabled` requires
+    // `allow_archive_writeback`; turning off the master with the metadata
+    // toggle still on is a 422 — operator must turn off both, or just the
+    // metadata one first. We read whichever value is being set this turn,
+    // and fall back to the pre-existing column for the other side of the
+    // check (so partial PATCHes don't bypass the rule).
+    let prev_allow = matches!(am.allow_archive_writeback, ActiveValue::Unchanged(true));
+    let prev_meta = matches!(am.metadata_writeback_enabled, ActiveValue::Unchanged(true));
+    let new_allow = req.allow_archive_writeback.unwrap_or(prev_allow);
+    let new_meta = req.metadata_writeback_enabled.unwrap_or(prev_meta);
+    if new_meta && !new_allow {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation.archive_writeback_dependency",
+            "metadata_writeback_enabled requires allow_archive_writeback=true",
+        );
+    }
+    if let Some(b) = req.allow_archive_writeback {
+        am.allow_archive_writeback = Set(b);
+    }
+    if let Some(b) = req.metadata_writeback_enabled {
+        am.metadata_writeback_enabled = Set(b);
+    }
+    if let Some(n) = req.archive_backup_retain_count {
+        am.archive_backup_retain_count = Set(n);
+    }
+    if let Some(n) = req.archive_backup_retain_days {
+        am.archive_backup_retain_days = Set(n);
     }
     if let Some(cron_opt) = req.scan_schedule_cron {
         let normalized = cron_opt.and_then(|s| {
