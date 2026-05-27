@@ -80,6 +80,18 @@ pub struct Model {
     /// match the same entry. Matching-accuracy-1.0 M3.
     #[serde(default)]
     pub metadata_publisher_blacklist: Json,
+    /// When true, the filename inferer drops any leading numeric
+    /// token before parsing the series name. Closes the common
+    /// Mylar-style numbering case (`001 - Saga.cbz`).
+    /// Matching-accuracy-1.0 M7.
+    #[serde(default)]
+    pub filename_ignore_leading_numbers: bool,
+    /// When true, the filename inferer assumes issue `1` when no
+    /// issue number is detected. Closes the one-shot / first-issue
+    /// case where the operator's curation strips the `#1`.
+    /// Matching-accuracy-1.0 M7.
+    #[serde(default)]
+    pub filename_assume_issue_one: bool,
 }
 
 fn default_archive_backup_retain_count() -> i32 {

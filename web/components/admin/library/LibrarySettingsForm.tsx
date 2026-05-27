@@ -56,6 +56,8 @@ const schema = z
     archive_backup_retain_count: z.number().int().min(1).max(5).default(1),
     archive_backup_retain_days: z.number().int().min(0).max(3650).default(30),
     metadata_publisher_blacklist: z.array(z.string().min(1)).default([]),
+    filename_ignore_leading_numbers: z.boolean().default(false),
+    filename_assume_issue_one: z.boolean().default(false),
   })
   .refine(
     (v) => !v.metadata_writeback_enabled || v.allow_archive_writeback,
@@ -86,6 +88,8 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       archive_backup_retain_count: 1,
       archive_backup_retain_days: 30,
       metadata_publisher_blacklist: [],
+      filename_ignore_leading_numbers: false,
+      filename_assume_issue_one: false,
     },
   });
 
@@ -102,6 +106,8 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         archive_backup_retain_count: lib.data.archive_backup_retain_count,
         archive_backup_retain_days: lib.data.archive_backup_retain_days,
         metadata_publisher_blacklist: lib.data.metadata_publisher_blacklist ?? [],
+        filename_ignore_leading_numbers: lib.data.filename_ignore_leading_numbers,
+        filename_assume_issue_one: lib.data.filename_assume_issue_one,
       });
     }
   }, [lib.data, form]);
@@ -122,6 +128,8 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       archive_backup_retain_count: values.archive_backup_retain_count,
       archive_backup_retain_days: values.archive_backup_retain_days,
       metadata_publisher_blacklist: values.metadata_publisher_blacklist,
+      filename_ignore_leading_numbers: values.filename_ignore_leading_numbers,
+      filename_assume_issue_one: values.filename_assume_issue_one,
       scan_schedule_cron:
         values.scan_schedule_cron.trim() === ""
           ? null
@@ -395,6 +403,57 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                     <TagInput value={field.value} onChange={field.onChange} />
                   </FormControl>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="filename_ignore_leading_numbers"
+              render={({ field }) => (
+                <FormItem className="flex items-start justify-between gap-6">
+                  <div className="space-y-1">
+                    <FormLabel>
+                      Filename: ignore leading numbers
+                    </FormLabel>
+                    <FormDescription>
+                      Drops any leading numeric token from the filename
+                      before inferring the series. Closes the common
+                      Mylar-style numbering case where{" "}
+                      <span className="font-mono">001 - Saga.cbz</span> would
+                      otherwise parse as series &ldquo;001&rdquo;.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="filename_assume_issue_one"
+              render={({ field }) => (
+                <FormItem className="flex items-start justify-between gap-6">
+                  <div className="space-y-1">
+                    <FormLabel>
+                      Filename: assume issue 1 when none detected
+                    </FormLabel>
+                    <FormDescription>
+                      When the filename has no detectable issue number,
+                      infer issue 1. Closes the one-shot / first-issue
+                      case where curation has stripped the{" "}
+                      <span className="font-mono">#1</span>.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
                 </FormItem>
               )}
             />

@@ -1636,7 +1636,11 @@ async fn process_planned_folder(
     let series_id = if let Some(series_id) = known_series_id {
         series_id
     } else {
-        let mut hint = process::peek_identity_hint(&archives[0], state.cfg().archive_limits());
+        let mut hint = process::peek_identity_hint(
+            &archives[0],
+            state.cfg().archive_limits(),
+            process::filename_opts(lib),
+        );
 
         // Folder-leaf `V<N>` fallback. Filename inference rejects
         // `V<year>` after the plausibility fix; the folder leaf is the

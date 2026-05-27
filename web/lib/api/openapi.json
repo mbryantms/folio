@@ -11986,7 +11986,9 @@
           "metadata_writeback_enabled",
           "archive_backup_retain_count",
           "archive_backup_retain_days",
-          "metadata_publisher_blacklist"
+          "metadata_publisher_blacklist",
+          "filename_ignore_leading_numbers",
+          "filename_assume_issue_one"
         ],
         "properties": {
           "allow_archive_writeback": {
@@ -12014,6 +12016,14 @@
           },
           "file_watch_enabled": {
             "type": "boolean"
+          },
+          "filename_assume_issue_one": {
+            "type": "boolean",
+            "description": "When true the scanner's filename inferer assumes issue `1`\nwhen no issue number is detected. Matching-accuracy-1.0 M7."
+          },
+          "filename_ignore_leading_numbers": {
+            "type": "boolean",
+            "description": "When true the scanner's filename inferer drops a leading\nnumeric token before parsing the series. Matching-accuracy-1.0 M7."
           },
           "generate_page_thumbs_on_scan": {
             "type": "boolean",
@@ -16747,6 +16757,20 @@
               "boolean",
               "null"
             ]
+          },
+          "filename_assume_issue_one": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Toggle filename inference's assume-issue-one fallback\n(matching-accuracy M7)."
+          },
+          "filename_ignore_leading_numbers": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Toggle filename inference's drop-leading-numbers pass\n(matching-accuracy M7)."
           },
           "generate_page_thumbs_on_scan": {
             "type": [

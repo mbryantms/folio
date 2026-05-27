@@ -4868,6 +4868,12 @@ export interface components {
             default_language: string;
             default_reading_direction: string;
             file_watch_enabled: boolean;
+            /** @description When true the scanner's filename inferer assumes issue `1`
+             *     when no issue number is detected. Matching-accuracy-1.0 M7. */
+            filename_assume_issue_one: boolean;
+            /** @description When true the scanner's filename inferer drops a leading
+             *     numeric token before parsing the series. Matching-accuracy-1.0 M7. */
+            filename_ignore_leading_numbers: boolean;
             /** @description When true, the post-scan pipeline auto-enqueues page-strip thumbnails
              *     alongside the always-on cover thumbnails. See migration
              *     `m20261211_000001_generate_page_thumbs_on_scan` for rationale. */
@@ -6668,6 +6674,12 @@ export interface components {
              */
             archive_backup_retain_days?: number | null;
             file_watch_enabled?: boolean | null;
+            /** @description Toggle filename inference's assume-issue-one fallback
+             *     (matching-accuracy M7). */
+            filename_assume_issue_one?: boolean | null;
+            /** @description Toggle filename inference's drop-leading-numbers pass
+             *     (matching-accuracy M7). */
+            filename_ignore_leading_numbers?: boolean | null;
             /** @description Toggle the per-library opt-in for auto-generating page-strip
              *     thumbnails on every post-scan pass. Cover thumbs are always
              *     generated regardless. */

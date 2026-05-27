@@ -20,6 +20,23 @@ pub struct InferredName {
     pub extras: Vec<String>,
 }
 
+/// Per-library tuning for [`infer_with_opts`]. Both default OFF
+/// (the conservative shape that matches our pre-M7 behavior). Mirror
+/// the two ComicTagger toggles that close the most common
+/// false-negative inference cases.
+///
+/// Matching-accuracy-1.0 M7.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InferOpts {
+    /// When true, drop any leading numeric token from the filename
+    /// before parsing. Closes the `001 - Saga.cbz` case where the
+    /// leading number is curation padding, not a series identifier.
+    pub ignore_leading_numbers: bool,
+    /// When true, infer `1` as the issue number when no number is
+    /// detected. Closes the one-shot / first-issue case.
+    pub assume_issue_one: bool,
+}
+
 /// Strip extension and common scanner-tags directory remnants from the filename.
 fn strip_extension(name: &str) -> &str {
     let ext_pos = name.rfind('.').unwrap_or(name.len());
@@ -127,6 +144,12 @@ pub fn plausible_volume(v: i32, year: Option<i32>) -> bool {
 }
 
 pub fn infer(filename: &str) -> InferredName {
+    infer_with_opts(filename, InferOpts::default())
+}
+
+/// Like [`infer`] but honors the per-library [`InferOpts`] toggles.
+/// Matching-accuracy-1.0 M7.
+pub fn infer_with_opts(filename: &str, opts: InferOpts) -> InferredName {
     let stem = strip_extension(filename);
     let (mut base, groups) = pull_groups(stem);
     let mut out = InferredName::default();
@@ -135,6 +158,21 @@ pub fn infer(filename: &str) -> InferredName {
     // We scan from the right because filename usually ends with the issue token
     // before the bracketed groups (which we've already stripped).
     let mut tokens: Vec<&str> = base.split_whitespace().collect();
+
+    // M7 ignore-leading-numbers: drop a bare leading numeric token if
+    // present + there's more after it. Matches ComicTagger's
+    // `_drop_leading_volume_number` heuristic — covers the common
+    // `001 - Saga.cbz` shape where the leading number is curation
+    // padding, not a series identifier. Applied BEFORE the right-end
+    // pop loop so it can't conflict with the bare-number-as-issue
+    // capture below.
+    if opts.ignore_leading_numbers
+        && tokens.len() > 1
+        && tokens[0].chars().all(|c| c.is_ascii_digit() || c == '.')
+    {
+        tokens.remove(0);
+    }
+
     while let Some(&last) = tokens.last() {
         if let Some(rest) = last.strip_prefix('#')
             && rest.chars().all(|c| c.is_ascii_digit() || c == '.')
@@ -222,6 +260,15 @@ pub fn infer(filename: &str) -> InferredName {
     }
 
     out.series = base.trim().to_string();
+
+    // M7 assume-issue-one: when no number was detected anywhere in
+    // the filename, fall back to "1". Closes the one-shot /
+    // first-issue case where the operator's curation strips the
+    // `#1`. Only fires when the operator opts in per-library.
+    if opts.assume_issue_one && out.number.is_none() {
+        out.number = Some("1".to_string());
+    }
+
     out
 }
 
@@ -373,5 +420,88 @@ mod tests {
         fn never_panics(s in ".{0,200}") {
             let _ = infer(&s);
         }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // M7 — InferOpts per-library toggles
+    // ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn ignore_leading_numbers_strips_curation_padding() {
+        // Default (off) — leading number stays as series prefix.
+        let off = infer("001 - Saga.cbz");
+        assert!(off.series.contains("001"), "got series = {:?}", off.series);
+
+        // Toggle on — leading number dropped, series clean.
+        let on = infer_with_opts(
+            "001 - Saga.cbz",
+            InferOpts {
+                ignore_leading_numbers: true,
+                ..InferOpts::default()
+            },
+        );
+        assert_eq!(on.series, "- Saga");
+    }
+
+    #[test]
+    fn ignore_leading_numbers_does_not_strip_lone_number() {
+        // `001.cbz` with one token only — guard says don't drop, else
+        // we'd end up with an empty series for issue-only filenames.
+        let i = infer_with_opts(
+            "001.cbz",
+            InferOpts {
+                ignore_leading_numbers: true,
+                ..InferOpts::default()
+            },
+        );
+        assert!(!i.series.is_empty() || i.number.is_some());
+    }
+
+    #[test]
+    fn assume_issue_one_fires_when_no_number_detected() {
+        // Filename with no `#` token: pre-M7 → no inferred number.
+        let off = infer("Saga - Origin.cbz");
+        assert_eq!(off.number, None);
+
+        // Toggle on → assume `1`.
+        let on = infer_with_opts(
+            "Saga - Origin.cbz",
+            InferOpts {
+                assume_issue_one: true,
+                ..InferOpts::default()
+            },
+        );
+        assert_eq!(on.number.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn assume_issue_one_does_not_clobber_detected_number() {
+        // Filename has #5 — toggle shouldn't overwrite to 1.
+        let i = infer_with_opts(
+            "Saga #5.cbz",
+            InferOpts {
+                assume_issue_one: true,
+                ..InferOpts::default()
+            },
+        );
+        assert_eq!(i.number.as_deref(), Some("5"));
+    }
+
+    #[test]
+    fn both_toggles_compose_cleanly() {
+        // `001 Saga.cbz` with leading-numbers off → series = "001 Saga"
+        // (or something containing 001), no detected number.
+        // With BOTH toggles → leading 001 dropped, no number detected
+        // since "001" was popped as a leading token (not a trailing
+        // issue token), so assume_issue_one fires → number = "1".
+        let i = infer_with_opts(
+            "001 Saga.cbz",
+            InferOpts {
+                ignore_leading_numbers: true,
+                assume_issue_one: true,
+            },
+        );
+        assert_eq!(i.series, "Saga");
+        assert_eq!(i.number.as_deref(), Some("1"));
     }
 }

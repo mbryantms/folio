@@ -111,6 +111,8 @@ async fn seed_issue(app: &TestApp, file_path: &std::path::Path, file_size: i64) 
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
+        filename_ignore_leading_numbers: Set(false),
+        filename_assume_issue_one: Set(false),
     }
     .insert(&db)
     .await

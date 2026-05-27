@@ -486,12 +486,14 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         return Ok(());
     };
 
-    // Filename inference fills gaps.
+    // Filename inference fills gaps. M7: honor per-library
+    // ComicTagger-style toggles for leading-number stripping and
+    // assume-issue-one.
     let leaf = path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or_default();
-    let inferred = filename::infer(leaf);
+    let inferred = filename::infer_with_opts(leaf, filename_opts(lib));
 
     let series_publisher = info.publisher.clone().or(inferred.publisher.clone());
 
@@ -1501,7 +1503,21 @@ pub fn read_series_json(folder: &Path) -> Option<SeriesMetadata> {
 /// pipeline runs against; if the file can't be opened or has no ComicInfo,
 /// filename inference still gives us a usable Series name (or the literal
 /// "Unknown Series" fallback).
-pub fn peek_identity_hint(path: &Path, limits: ArchiveLimits) -> SeriesIdentityHint {
+/// Build a [`filename::InferOpts`] from the library row. Matching-
+/// accuracy-1.0 M7. Both flags default OFF; operators flip them
+/// per-library via the settings card.
+pub(crate) fn filename_opts(lib: &library::Model) -> filename::InferOpts {
+    filename::InferOpts {
+        ignore_leading_numbers: lib.filename_ignore_leading_numbers,
+        assume_issue_one: lib.filename_assume_issue_one,
+    }
+}
+
+pub fn peek_identity_hint(
+    path: &Path,
+    limits: ArchiveLimits,
+    infer_opts: filename::InferOpts,
+) -> SeriesIdentityHint {
     let info = match parse_archive_with(path, ParseMode::IdentityOnly, limits) {
         ArchiveOutcome::Ok { info, metron, .. } => {
             // Apply MetronInfo precedence so the identity hint reflects the
@@ -1518,7 +1534,7 @@ pub fn peek_identity_hint(path: &Path, limits: ArchiveLimits) -> SeriesIdentityH
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or_default();
-    let inferred = filename::infer(leaf);
+    let inferred = filename::infer_with_opts(leaf, infer_opts);
 
     let series_name = info
         .series

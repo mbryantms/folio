@@ -115,6 +115,12 @@ pub struct LibraryView {
     /// title-sanitized form so "DC Comics" / "dc comics" / "DC" all
     /// match the same entry. Matching-accuracy-1.0 M3.
     pub metadata_publisher_blacklist: Vec<String>,
+    /// When true the scanner's filename inferer drops a leading
+    /// numeric token before parsing the series. Matching-accuracy-1.0 M7.
+    pub filename_ignore_leading_numbers: bool,
+    /// When true the scanner's filename inferer assumes issue `1`
+    /// when no issue number is detected. Matching-accuracy-1.0 M7.
+    pub filename_assume_issue_one: bool,
 }
 
 impl From<library::Model> for LibraryView {
@@ -155,6 +161,8 @@ impl From<library::Model> for LibraryView {
                         .collect()
                 })
                 .unwrap_or_default(),
+            filename_ignore_leading_numbers: m.filename_ignore_leading_numbers,
+            filename_assume_issue_one: m.filename_assume_issue_one,
         }
     }
 }
@@ -224,6 +232,16 @@ pub struct UpdateLibraryReq {
     #[serde(default, deserialize_with = "deserialize_some")]
     #[garde(skip)]
     pub metadata_publisher_blacklist: Option<Option<Vec<String>>>,
+    /// Toggle filename inference's drop-leading-numbers pass
+    /// (matching-accuracy M7).
+    #[serde(default)]
+    #[garde(skip)]
+    pub filename_ignore_leading_numbers: Option<bool>,
+    /// Toggle filename inference's assume-issue-one fallback
+    /// (matching-accuracy M7).
+    #[serde(default)]
+    #[garde(skip)]
+    pub filename_assume_issue_one: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
@@ -468,6 +486,8 @@ pub async fn create(
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
+        filename_ignore_leading_numbers: Set(false),
+        filename_assume_issue_one: Set(false),
     };
     match am.insert(&app.db).await {
         Ok(m) => {
@@ -611,6 +631,12 @@ pub async fn update_settings(
             .filter(|s| !s.is_empty())
             .collect();
         am.metadata_publisher_blacklist = Set(serde_json::json!(cleaned));
+    }
+    if let Some(b) = req.filename_ignore_leading_numbers {
+        am.filename_ignore_leading_numbers = Set(b);
+    }
+    if let Some(b) = req.filename_assume_issue_one {
+        am.filename_assume_issue_one = Set(b);
     }
     if let Some(cron_opt) = req.scan_schedule_cron {
         let normalized = cron_opt.and_then(|s| {
