@@ -285,16 +285,14 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         }
     }
 
-    let mut ids: BTreeMap<String, String> = ctx.issue_external_ids.clone();
-    // Series-scope IDs that MetronInfo recognises via dedicated sources.
-    // Sources unique to the series row (typically "comicvine_series" etc.
-    // — though our `external_id` table key is the bare source string and
-    // is stored on the series entity, so the iteration is uniform) are
-    // merged in too.
-    for (k, v) in ctx.series_external_ids {
-        ids.entry(format!("{k}_series"))
-            .or_insert_with(|| v.clone());
-    }
+    // MetronInfo's `<IDs>` block is issue-scoped by spec — recognised
+    // `source` values are the bare provider names (metron, comicvine,
+    // gcd, marvel, locg, mu, isbn, upc, asin, doi). Series-scope IDs
+    // do NOT belong here under any `_series` suffix (non-standard;
+    // other readers ignore or warn). They live in the DB and surface
+    // via ComicInfo's typed `<ComicVineSeriesID>` / `<MetronSeriesID>`
+    // extension fields (which ComicTagger does recognise).
+    let ids: BTreeMap<String, String> = ctx.issue_external_ids.clone();
 
     let mut info = MetronInfo {
         title: prefer_user_opt_str(
@@ -410,57 +408,98 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
 
 // ───────── helpers ─────────
 
-/// Append the CC-BY-NC-SA attribution suffix to `<Notes>` when the
-/// candidate came from ComicVine or Metron. If the issue already has
-/// notes, the new line goes after a blank-line separator.
+/// Build the `<Notes>` element value.
+///
+/// The composer treats `<Notes>` differently from other fields. Notes
+/// is a free-form audit-trail field — most archives in the wild carry
+/// a stale "Tagged with ComicTagger 1.3.5 on YYYY-MM-DD..." line from
+/// whatever tool last wrote the sidecar. Preserving that line on a
+/// fresh Folio write would be actively misleading: the file *was*
+/// written by Folio, just now, from a CV/Metron pull — but the text
+/// would still claim ComicTagger wrote it on a date weeks ago.
+///
+/// Behaviour:
+///   - **User-pinned**: preserve `issue.notes` verbatim, drop the
+///     attribution. The user's text wins absolutely.
+///   - **Otherwise**: drop `issue.notes` entirely (stale historical
+///     tracer). Emit a fresh Folio audit-trail line; append provider
+///     notes content (if any) below.
+///
+/// The Folio line is Mylar3-readable: `[CVDB<id>]` and `[MetronID<id>]`
+/// tokens are bracket-suffixed so Mylar3's sync regex still pulls the
+/// CV ID out of the notes element.
 fn compose_notes(ctx: &ComposeContext) -> Option<String> {
-    let user_pinned = ctx.is_issue_pinned("notes");
-    let base = prefer_user_opt_str(
-        user_pinned,
-        ctx.issue.notes.as_deref(),
-        ctx.provider.notes.as_deref(),
-    );
-
-    // Attribution only fires for CV/Metron, and never when the user
-    // pinned the Notes field — the user's text wins entirely in that
-    // case (no surprise concatenation onto a deliberate edit).
-    if user_pinned {
-        return base;
+    if ctx.is_issue_pinned("notes") {
+        return ctx
+            .issue
+            .notes
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned);
     }
 
-    let line = attribution_line(ctx);
-    match (base, line) {
-        (Some(b), Some(l)) if !b.contains(&l) => Some(format!("{b}\n\n{l}")),
-        (Some(b), _) => Some(b),
-        (None, Some(l)) => Some(l),
-        (None, None) => None,
+    let mut lines: Vec<String> = Vec::with_capacity(2);
+    if let Some(audit) = folio_audit_line(ctx) {
+        lines.push(audit);
     }
+    if let Some(provider_notes) = ctx
+        .provider
+        .notes
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        lines.push(provider_notes.to_owned());
+    }
+
+    if lines.is_empty() {
+        return None;
+    }
+    Some(lines.join("\n\n"))
 }
 
-fn attribution_line(ctx: &ComposeContext) -> Option<String> {
+/// One-line audit-trail entry — when the source is CV or Metron, emits
+/// a line in the canonical ComicTagger/Mylar3-readable shape with the
+/// CC-BY-NC-SA attribution baked in. Other sources (GCD, ComicInfo-
+/// derived applies) return `None`.
+///
+/// Format: `Tagged with Folio on YYYY-MM-DD HH:MM:SS — sources …
+/// (CC-BY-NC-SA where applicable).  [CVDB<id>][MetronID<id>]`
+fn folio_audit_line(ctx: &ComposeContext) -> Option<String> {
     let source = ctx.source()?;
     if !matches!(source, Source::ComicVine | Source::Metron) {
         return None;
     }
+    let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
     let cv = ctx.issue_external_ids.get("comicvine");
     let metron = ctx.issue_external_ids.get("metron");
-    let mut parts: Vec<String> = Vec::with_capacity(2);
+
+    let mut sources: Vec<String> = Vec::with_capacity(2);
+    let mut tokens = String::new();
     if let Some(id) = cv {
-        parts.push(format!("ComicVine (id={id})"));
+        sources.push(format!("ComicVine (id={id})"));
+        tokens.push_str(&format!("[CVDB{id}]"));
     }
     if let Some(id) = metron {
-        parts.push(format!("Metron (id={id})"));
+        sources.push(format!("Metron (id={id})"));
+        tokens.push_str(&format!("[MetronID{id}]"));
     }
-    if parts.is_empty() {
-        // Source provider is set but no identifiable id (rare — caller
-        // wired it without populating external_ids). Still emit a bare
-        // attribution; the operator can disambiguate by audit row.
-        parts.push(source.label().to_string());
+    if sources.is_empty() {
+        // Source set on the candidate but no ID landed in the
+        // external_id map yet (rare — caller didn't populate it). Bare
+        // attribution; the audit-log row carries the actual identity.
+        sources.push(source.label().to_string());
     }
-    Some(format!(
-        "Sources: {} — CC-BY-NC-SA where applicable",
-        parts.join(", "),
-    ))
+
+    let body = format!(
+        "Tagged with Folio on {timestamp} — sources {sources_clause} \
+        (CC-BY-NC-SA where applicable).",
+        sources_clause = sources.join(", "),
+    );
+    if tokens.is_empty() {
+        Some(body)
+    } else {
+        Some(format!("{body}  {tokens}"))
+    }
 }
 
 fn prefer_user_opt_str(user_pinned: bool, db: Option<&str>, provider: Option<&str>) -> Option<String> {
@@ -983,8 +1022,37 @@ mod tests {
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci.notes.expect("attribution emits Notes even when none existed");
+        // New shape: single Folio-tag line, Mylar3-readable [CVDBxxx] token.
+        assert!(notes.starts_with("Tagged with Folio on "), "{notes}");
         assert!(notes.contains("ComicVine (id=12345)"), "{notes}");
         assert!(notes.contains("CC-BY-NC-SA"), "{notes}");
+        assert!(notes.contains("[CVDB12345]"), "Mylar3 sync token missing: {notes}");
+    }
+
+    #[test]
+    fn compose_audit_line_includes_both_cv_and_metron_tokens() {
+        let series = make_series("Saga");
+        let issue = make_issue("X");
+        let provider = make_provider();
+        let mut ids = empty_ids();
+        ids.insert("comicvine".into(), "12345".into());
+        ids.insert("metron".into(), "987".into());
+
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &ids,
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+        };
+        let ci = compose_comicinfo(&ctx);
+        let notes = ci.notes.unwrap();
+        assert!(notes.contains("ComicVine (id=12345)"));
+        assert!(notes.contains("Metron (id=987)"));
+        assert!(notes.contains("[CVDB12345]"));
+        assert!(notes.contains("[MetronID987]"));
     }
 
     #[test]
@@ -1018,10 +1086,20 @@ mod tests {
     }
 
     #[test]
-    fn compose_attribution_concatenates_with_existing_notes() {
+    fn compose_notes_drops_stale_historical_db_text_on_unpinned_path() {
+        // Real-world case: a previous ComicTagger write left a "Tagged
+        // with the ninjas.walk.alone fork of ComicTagger 1.3.5 on
+        // 2026-05-17 21:44:24.  [CVDB1144240]" line in `issue.notes`.
+        // When Folio composes a fresh sidecar from a provider pull, the
+        // stale ComicTagger trace MUST be dropped — propagating it would
+        // claim ComicTagger wrote a file Folio just wrote.
         let series = make_series("Saga");
         let mut issue = make_issue("X");
-        issue.notes = Some("Scanner identified file: saga-001.cbz.".into());
+        issue.notes = Some(
+            "Tagged with the ninjas.walk.alone fork of ComicTagger 1.3.5 \
+             using info from Comic Vine on 2026-05-17 21:44:24.  [CVDB1144240]"
+                .into(),
+        );
 
         let provider = make_provider();
         let mut ids = empty_ids();
@@ -1038,8 +1116,58 @@ mod tests {
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci.notes.unwrap();
-        assert!(notes.starts_with("Scanner identified file: saga-001.cbz."), "{notes}");
-        assert!(notes.contains("CC-BY-NC-SA"), "{notes}");
+        assert!(
+            !notes.contains("ComicTagger"),
+            "stale ComicTagger trace must be dropped: {notes}",
+        );
+        assert!(
+            !notes.contains("ninjas.walk.alone"),
+            "stale tool fork must be dropped: {notes}",
+        );
+        // Folio's fresh attribution + CVDB token replace it.
+        assert!(notes.starts_with("Tagged with Folio on "), "{notes}");
+        assert!(notes.contains("[CVDB12345]"), "{notes}");
+        // The historical [CVDB1144240] from the prior tagger MUST NOT
+        // appear — the Folio-tag line carries the current CV id, not
+        // the historical one.
+        assert!(
+            !notes.contains("[CVDB1144240]"),
+            "stale historical CV id must be dropped: {notes}",
+        );
+    }
+
+    #[test]
+    fn compose_notes_appends_provider_notes_below_audit_line() {
+        // When Metron returns editorial notes, append them below the
+        // Folio-tag line with a blank-line separator. (Metron does have
+        // a `notes` field in their schema; CV typically doesn't.)
+        let series = make_series("Saga");
+        let issue = make_issue("X");
+        let mut provider = make_provider();
+        provider.source_provider = Some(Source::Metron);
+        provider.notes = Some("Editorial: variant covers by 5 artists.".into());
+
+        let mut ids = empty_ids();
+        ids.insert("metron".into(), "987".into());
+
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &ids,
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+        };
+        let ci = compose_comicinfo(&ctx);
+        let notes = ci.notes.unwrap();
+        let mut iter = notes.split("\n\n");
+        assert!(iter.next().unwrap().starts_with("Tagged with Folio on "));
+        assert_eq!(
+            iter.next(),
+            Some("Editorial: variant covers by 5 artists."),
+        );
+        assert!(iter.next().is_none(), "expected exactly two blocks: {notes}");
     }
 
     #[test]
@@ -1100,6 +1228,47 @@ mod tests {
             ci.raw.get("MainCharacterOrTeam").map(String::as_str),
             Some("Alana"),
         );
+    }
+
+    #[test]
+    fn compose_metroninfo_drops_series_ids_from_ids_map() {
+        // MetronInfo's `<IDs>` block is issue-scoped by spec — no
+        // recognised `*_series` source. Series-scope IDs live in DB +
+        // (for ComicInfo) the typed `<ComicVineSeriesID>` slot. The
+        // composer must NOT inject `_series`-suffixed entries.
+        let series = make_series("Saga");
+        let issue = make_issue("X");
+        let provider = make_provider();
+        let mut iids = empty_ids();
+        iids.insert("comicvine".into(), "12345".into());
+        let mut sids = empty_ids();
+        sids.insert("comicvine".into(), "49901".into());
+        sids.insert("gcd".into(), "229870".into());
+        sids.insert("metron".into(), "13281".into());
+
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &iids,
+            series_external_ids: &sids,
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+        };
+        let mi = compose_metroninfo(&ctx);
+        // Issue-level CV ID lands in MetronInfo.
+        assert_eq!(mi.ids.get("comicvine").map(String::as_str), Some("12345"));
+        // No `*_series` suffix anywhere — non-standard and confuses
+        // other readers (Komga, Mylar3, KOReader).
+        for key in mi.ids.keys() {
+            assert!(
+                !key.ends_with("_series"),
+                "MetronInfo ids must not carry a _series suffix; got `{key}`",
+            );
+        }
+        assert!(!mi.ids.contains_key("comicvine_series"));
+        assert!(!mi.ids.contains_key("gcd_series"));
+        assert!(!mi.ids.contains_key("metron_series"));
     }
 
     #[test]
