@@ -301,14 +301,25 @@ fn hamming_distance_opt(a: Option<i64>, b: Option<i64>) -> Option<u32> {
 
 // ───────── similarity primitives ─────────
 
-/// Returns 1.0 for an exact normalized-name match, falling to 0.0 for a
-/// completely different string. Uses normalized-Levenshtein:
-/// `1 - distance / max(len_a, len_b)`. Both inputs are normalized (case-
-/// folded, stripped of leading articles, alphanumerics-only) before the
-/// distance is computed.
+/// Returns 1.0 for an exact normalized-name match, falling toward
+/// 0.0 for divergent strings. Matching-accuracy-1.0 M2 ported the
+/// pipeline to ComicTagger's normalization shape:
+///
+/// 1. [`crate::metadata::title_norm::sanitize_title`] folds case +
+///    decomposes NFKD + drops articles, so `"The X-Men"` and
+///    `"X-Men"` produce the same key.
+/// 2. [`crate::metadata::ratcliff::three_pass_ratio`] is the
+///    Ratcliff/Obershelp similarity Python's `difflib` uses; the
+///    three-pass upper-bound chain short-circuits when the value
+///    can't reach the operator-configurable text threshold.
+///
+/// Pre-M2 this function used Levenshtein on a simpler ASCII-only
+/// normalization, which scored "Spider-Man" vs "Spider Man" lower
+/// than ComicTagger would and broke matches on accented-character
+/// titles ("Pokémon" vs "Pokemon"). The new shape closes that gap.
 pub fn name_similarity(a: &str, b: &str) -> f32 {
-    let a = normalize_for_match(a);
-    let b = normalize_for_match(b);
+    let a = crate::metadata::title_norm::sanitize_title(a);
+    let b = crate::metadata::title_norm::sanitize_title(b);
     if a.is_empty() && b.is_empty() {
         return 1.0;
     }
@@ -318,12 +329,12 @@ pub fn name_similarity(a: &str, b: &str) -> f32 {
     if a == b {
         return 1.0;
     }
-    let distance = levenshtein(&a, &b);
-    let max_len = a.chars().count().max(b.chars().count()) as f32;
-    if max_len <= 0.0 {
-        return 0.0;
-    }
-    (1.0 - (distance as f32 / max_len)).clamp(0.0, 1.0)
+    // Pass `0.0` as the gate so we always get the real ratio — the
+    // bucketing path applies its own threshold (M1's
+    // `match_medium_threshold` after `* W_NAME`). The three-pass
+    // short-circuit is reserved for the M3 pre-filter that needs to
+    // discard candidates *before* scoring.
+    crate::metadata::ratcliff::three_pass_ratio(&a, &b, 0.0)
 }
 
 /// Returns 1.0 for an exact year match, 0.75 for ±1, 0.0 otherwise.
@@ -346,12 +357,14 @@ pub fn year_similarity(a: Option<i32>, b: Option<i32>) -> f32 {
 /// Case-insensitive substring match: 1.0 for case-insensitive equality
 /// after normalization, 0.7 when one is a substring of the other, 0.0
 /// otherwise. Missing on either side scores 0.5 (don't punish lack of
-/// signal).
+/// signal). Shares the title sanitizer with [`name_similarity`] so
+/// `"DC Comics"` and `"DC"` both normalize to `"dc"` / `"dc comics"`
+/// — substring-equal under the M2 rules.
 pub fn publisher_similarity(a: Option<&str>, b: Option<&str>) -> f32 {
     match (a, b) {
         (Some(a), Some(b)) => {
-            let na = normalize_for_match(a);
-            let nb = normalize_for_match(b);
+            let na = crate::metadata::title_norm::sanitize_title(a);
+            let nb = crate::metadata::title_norm::sanitize_title(b);
             if na.is_empty() || nb.is_empty() {
                 0.5
             } else if na == nb {
@@ -387,29 +400,6 @@ pub fn issue_number_similarity(query: &str, candidate: Option<&str>) -> f32 {
 
 // ───────── helpers ─────────
 
-/// Fold case + strip leading "The ", "A ", "An ", + keep only alphanumerics
-/// + collapse repeated whitespace. The result is a deterministic key for
-///   comparing comic series names across providers and the local DB.
-fn normalize_for_match(s: &str) -> String {
-    let lower = s.to_lowercase();
-    let trimmed = lower
-        .trim()
-        .strip_prefix("the ")
-        .or_else(|| lower.trim().strip_prefix("a "))
-        .or_else(|| lower.trim().strip_prefix("an "))
-        .unwrap_or_else(|| lower.trim());
-    trimmed
-        .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// Standard Levenshtein distance, char-aware (works on non-ASCII without
-/// surprises). O(n*m) memory + time; matched strings here are short
-/// comic-series names (<60 chars) so the cost is negligible.
 /// Cover-image perceptual hash similarity. Returns 0..=1.0 — 1.0 for
 /// hashes within `0` Hamming distance, scaling linearly down to 0 at
 /// `threshold` and beyond. Either-None returns 0 (matcher should
@@ -440,28 +430,6 @@ pub fn cover_hash_similarity(
         }
         _ => 0.0,
     }
-}
-
-pub fn levenshtein(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    if a.is_empty() {
-        return b.len();
-    }
-    if b.is_empty() {
-        return a.len();
-    }
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut curr = vec![0usize; b.len() + 1];
-    for (i, ca) in a.iter().enumerate() {
-        curr[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cost = usize::from(ca != cb);
-            curr[j + 1] = (curr[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-    prev[b.len()]
 }
 
 // ───────── tests ─────────
@@ -505,28 +473,33 @@ mod tests {
     }
 
     #[test]
-    fn normalize_strips_articles_and_punctuation() {
-        assert_eq!(normalize_for_match("The Walking Dead"), "walking dead");
-        assert_eq!(normalize_for_match("Spider-Man!"), "spiderman");
-        assert_eq!(
-            normalize_for_match("X-Men: First Class"),
-            "xmen first class"
-        );
-        assert_eq!(
-            normalize_for_match("  whitespace   chaos  "),
-            "whitespace chaos"
-        );
+    fn name_similarity_exact_vs_off_by_one() {
+        // Equal after sanitize → 1.0.
+        assert!((name_similarity("Saga", "Saga") - 1.0).abs() < 1e-3);
+        // Article + case folding via `sanitize_title`.
+        assert!((name_similarity("the saga", "Saga") - 1.0).abs() < 1e-3);
+        // Ratcliff/Obershelp matches: "sa" + "g" = 3 chars out of 8 →
+        // 0.75. Same number Levenshtein would give for this specific
+        // 1-edit pair, by coincidence.
+        assert!((name_similarity("Saga", "Sage") - 0.75).abs() < 1e-3);
+        // Nothing meaningful in common.
+        assert!(name_similarity("Saga", "Watchmen") < 0.4);
     }
 
     #[test]
-    fn name_similarity_exact_vs_off_by_one() {
-        assert!((name_similarity("Saga", "Saga") - 1.0).abs() < 1e-3);
-        // Case + article folding.
-        assert!((name_similarity("the saga", "Saga") - 1.0).abs() < 1e-3);
-        // One char off in a 4-char string — distance 1 / max 4 → 0.75.
-        assert!((name_similarity("Saga", "Sage") - 0.75).abs() < 1e-3);
-        // Nothing in common.
-        assert!(name_similarity("Saga", "Watchmen") < 0.4);
+    fn name_similarity_handles_unicode_and_articles() {
+        // M2: NFKD strips the accent in `Pokémon` so it equals
+        // `Pokemon` for matching purposes (was 0.778 under pre-M2
+        // Levenshtein because of the multi-byte 'é' bumping the
+        // char count).
+        assert!((name_similarity("Pokémon", "Pokemon") - 1.0).abs() < 1e-3);
+        // Article-strip via `sanitize_title`: `It's` → quotes
+        // dropped → `its` → article-stripped. Right side has no
+        // article. Both reduce to `wonderful life`.
+        assert!((name_similarity("It's a Wonderful Life", "Wonderful Life") - 1.0).abs() < 1e-3,);
+        // Punctuation differences are word boundaries, not penalties:
+        // `Spider-Man` and `Spider Man` both sanitize to `spider man`.
+        assert!((name_similarity("Spider-Man", "Spider Man") - 1.0).abs() < 1e-3);
     }
 
     #[test]

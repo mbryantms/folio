@@ -134,6 +134,13 @@ slug = { workspace = true }
 reqwest = { workspace = true }
 ipnet = { workspace = true }
 
+# Title normalization (matching-accuracy-1.0 M2): NFKD form folds ligatures
+# + accent decomposition before our casefold + article-strip pass, so
+# "Pokémon" and "Pokemon" land on the same key. Already pulled in
+# transitively via `url`/`idna`; promoting it to direct keeps the call
+# site readable.
+unicode-normalization = "0.1"
+
 # Used solely for posix_fadvise on Unix (perf hint to kernel readahead before
 # BLAKE3-hashing a CBZ). Already a transitive dep via tokio/sqlx; pulling it
 # direct keeps the call site clean.

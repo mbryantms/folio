@@ -29,8 +29,10 @@ pub mod orchestrator;
 pub mod phash;
 pub mod provider;
 pub mod rate_limit;
+pub mod ratcliff;
 pub mod refresh;
 pub mod sidecar_compose;
+pub mod title_norm;
 pub mod writeback_progress;
 pub mod writers;
 
