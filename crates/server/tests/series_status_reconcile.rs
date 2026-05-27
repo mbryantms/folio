@@ -204,6 +204,7 @@ async fn seed_issue_with_count(
         comicinfo_count: Set(comicinfo_count),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await

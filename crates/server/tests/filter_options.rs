@@ -283,6 +283,7 @@ async fn seed_library_with_metadata(
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await
@@ -1239,6 +1240,7 @@ async fn seed_series_with_issue_csv(
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await
@@ -1618,6 +1620,7 @@ async fn seed_issue_full(
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await

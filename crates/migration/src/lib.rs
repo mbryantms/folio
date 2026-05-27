@@ -79,6 +79,7 @@ mod m20261231_000001_archive_writeback_schema;
 mod m20270101_000001_match_outcomes;
 mod m20270102_000001_library_publisher_blacklist;
 mod m20270103_000001_library_filename_inference_flags;
+mod m20270104_000001_issue_cover_page_index;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -166,6 +167,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270101_000001_match_outcomes::Migration),
             Box::new(m20270102_000001_library_publisher_blacklist::Migration),
             Box::new(m20270103_000001_library_filename_inference_flags::Migration),
+            Box::new(m20270104_000001_issue_cover_page_index::Migration),
         ]
     }
 }

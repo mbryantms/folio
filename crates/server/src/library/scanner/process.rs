@@ -611,6 +611,15 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             am.age_rating = Set(info.age_rating.clone());
         }
         am.page_count = Set(resolved_page_count);
+        // M6: stamp the cover-page index from ComicInfo's
+        // `<Page Type="FrontCover"/>` marker. Re-stamp on every
+        // ingest so a ComicInfo edit that moves the cover triggers
+        // a fresh thumbnail extraction (handled by the
+        // content_changed branch below — `thumbnail_version = 0`
+        // re-enqueues the post-scan thumb job which re-reads this
+        // column for the page index).
+        am.cover_page_index =
+            Set(parsers::comicinfo::front_cover_page_index(&info.pages).unwrap_or(0));
         am.pages = Set(pages_json);
         am.comic_info_raw = Set(comic_info_raw);
         am.alternate_series = Set(info.alternate_series.clone());
@@ -759,6 +768,9 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             manga: Set(info.manga.clone()),
             age_rating: Set(info.age_rating.clone()),
             page_count: Set(resolved_page_count),
+            cover_page_index: Set(
+                parsers::comicinfo::front_cover_page_index(&info.pages).unwrap_or(0)
+            ),
             pages: Set(pages_json),
             comic_info_raw: Set(comic_info_raw),
             alternate_series: Set(info.alternate_series.clone()),
@@ -1413,7 +1425,11 @@ fn merge_metron_into_comicinfo(info: &mut ComicInfo, m: &MetronInfo) {
 /// when any name contains a comma so the rollup's `split_csv` recovers
 /// the structured boundaries instead of fragmenting `"Capes, Inc."`.
 fn join_csv_unambiguous(names: &[String]) -> String {
-    let sep = if names.iter().any(|n| n.contains(',')) { "; " } else { ", " };
+    let sep = if names.iter().any(|n| n.contains(',')) {
+        "; "
+    } else {
+        ", "
+    };
     names.join(sep)
 }
 
@@ -1630,9 +1646,7 @@ fn user_edited_set(value: &serde_json::Value) -> std::collections::HashSet<Strin
 /// + trailing tags both work since the regex doesn't anchor.
 ///
 /// metadata-providers-1.0 M8.
-pub fn parse_series_folder_tags(
-    folder_name: &str,
-) -> Vec<crate::metadata::identifier::Identifier> {
+pub fn parse_series_folder_tags(folder_name: &str) -> Vec<crate::metadata::identifier::Identifier> {
     use crate::metadata::identifier::{Identifier, Source};
     // Hand-rolled to avoid adding a regex dep for one scanner pattern.
     // Walks the string once; on `[` looks for prefix-then-hyphen-then-
@@ -1659,7 +1673,8 @@ pub fn parse_series_folder_tags(
             p += 1;
         }
         let prefix_len = p - start;
-        if !(PREFIX_MIN..=PREFIX_MAX).contains(&prefix_len) || p >= bytes.len() || bytes[p] != b'-' {
+        if !(PREFIX_MIN..=PREFIX_MAX).contains(&prefix_len) || p >= bytes.len() || bytes[p] != b'-'
+        {
             i = start;
             continue;
         }
@@ -1974,8 +1989,10 @@ mod tests {
         // Per the plan: "unknown prefix ignored". A typo or a
         // not-yet-supported source shouldn't break ingest.
         assert_eq!(tag_pair("Saga (2012) [foo-12345]"), Vec::new());
-        assert_eq!(tag_pair("Saga (2012) [xy-12345] [cv-1]"),
-                   vec![("comicvine".into(), "1".into())]);
+        assert_eq!(
+            tag_pair("Saga (2012) [xy-12345] [cv-1]"),
+            vec![("comicvine".into(), "1".into())]
+        );
     }
 
     #[test]

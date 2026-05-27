@@ -293,6 +293,7 @@ async fn seed_one_issue(app: &TestApp, slug_prefix: &str) -> (Uuid, Uuid, String
         comicinfo_count: Set(Some(0)),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await
@@ -385,6 +386,7 @@ async fn seed_extra_issue(
         comicinfo_count: Set(Some(0)),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await

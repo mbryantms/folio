@@ -260,6 +260,7 @@ async fn seed_issue(app: &TestApp) -> String {
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await
@@ -750,6 +751,7 @@ async fn seed_series_with_issues(app: &TestApp, n_issues: usize) -> (Uuid, Vec<S
             comicinfo_count: Set(None),
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
         }
         .insert(&db)
         .await

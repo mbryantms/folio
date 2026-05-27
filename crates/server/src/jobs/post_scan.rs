@@ -166,6 +166,12 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     let issue_id = row.id.clone();
     let file_path = row.file_path.clone();
     let kind = job.kind;
+    // M6: capture the per-issue cover page from the row. Pre-M6 the
+    // post-scan worker always read page 0; now it reads whatever the
+    // scanner stamped from ComicInfo's `<Page Type="FrontCover"/>`
+    // marker. Clamped to `usize::MAX` for safety against a negative
+    // value (the column is NOT NULL but defensive).
+    let cover_page_index: usize = row.cover_page_index.max(0) as usize;
     // `ArchiveLimits` is `Copy`; capture before spawn_blocking so the
     // post-scan archive open honors any `COMIC_ARCHIVE_MAX_*` overrides.
     let archive_limits = app.cfg().archive_limits();
@@ -182,7 +188,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                             &mut *archive,
                             &issue_id,
                             thumbnails::Variant::Cover,
-                            0,
+                            cover_page_index,
                             format,
                             quality,
                         )?;
@@ -204,7 +210,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                             &mut *archive,
                             &issue_id,
                             thumbnails::Variant::Cover,
-                            0,
+                            cover_page_index,
                             format,
                             quality,
                         )?;

@@ -197,6 +197,7 @@ async fn seed_issue(app: &TestApp, file_path: &Path, pages: usize) -> String {
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await
@@ -483,6 +484,7 @@ async fn worker_marks_error_on_unreadable_archive() {
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await

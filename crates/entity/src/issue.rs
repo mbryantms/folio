@@ -209,6 +209,14 @@ pub struct Model {
     /// audit-log surface and the issue-detail status row tell them apart.
     #[sea_orm(nullable)]
     pub last_rewrite_kind: Option<String>,
+
+    /// 0-based page index to use as the cover when extracting the
+    /// thumbnail + computing the perceptual hash. Stamped by the
+    /// scanner from ComicInfo's `<Page Image="N" Type="FrontCover"/>`
+    /// marker; 0 (page 0) by default + when the marker is absent.
+    /// Matching-accuracy-1.0 M6.
+    #[serde(default)]
+    pub cover_page_index: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

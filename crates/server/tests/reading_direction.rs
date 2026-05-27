@@ -252,6 +252,7 @@ async fn seed(
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await
@@ -503,6 +504,7 @@ async fn seed_manga_issues(
             comicinfo_count: Set(None),
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
         }
         .insert(db)
         .await

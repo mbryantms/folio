@@ -962,6 +962,7 @@ mod tests {
             comicinfo_count: Some(12),
             last_rewrite_at: None,
             last_rewrite_kind: None,
+            cover_page_index: 0,
         }
     }
 

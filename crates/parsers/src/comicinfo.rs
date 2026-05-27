@@ -107,6 +107,30 @@ pub struct PageInfo {
     pub double_page_inferred: Option<bool>,
 }
 
+/// Pick the cover-page index from a parsed `<Pages>` block.
+///
+/// Returns the `Image` attribute of the first `<Page Type="FrontCover"/>`
+/// entry when present, else `None`. Matching-accuracy-1.0 M6: the
+/// scanner stamps `issue.cover_page_index` from this signal so the
+/// thumbnail + phash pipeline grabs the right page from the archive
+/// (instead of always page 0). MetronInfo has no equivalent marker
+/// so this helper is ComicInfo-only.
+///
+/// Returns `None` when:
+/// - No `<Page>` carries `Type="FrontCover"` (the default — most
+///   ComicInfo files omit `Type`).
+/// - The `Image` index is negative (which would be a malformed
+///   ComicInfo).
+///
+/// `None` is the "fall back to page 0" signal at the call site.
+pub fn front_cover_page_index(pages: &[PageInfo]) -> Option<i32> {
+    pages
+        .iter()
+        .find(|p| p.kind.as_deref() == Some("FrontCover"))
+        .map(|p| p.image)
+        .filter(|&i| i >= 0)
+}
+
 pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
     if bytes.len() > MAX_INPUT_BYTES {
         return Err(ParseError::TooLarge {
@@ -806,6 +830,58 @@ mod tests {
         let info = parse(b"<ComicInfo></ComicInfo>").expect("parse");
         assert!(info.title.is_none());
         assert!(info.pages.is_empty());
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // M6 — front_cover_page_index helper
+    // ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn front_cover_page_index_picks_first_marked_page() {
+        let xml = br#"<ComicInfo>
+            <Pages>
+                <Page Image="0" Type="Story"/>
+                <Page Image="3" Type="FrontCover"/>
+                <Page Image="7" Type="BackCover"/>
+            </Pages>
+        </ComicInfo>"#;
+        let info = parse(xml).expect("parse");
+        assert_eq!(front_cover_page_index(&info.pages), Some(3));
+    }
+
+    #[test]
+    fn front_cover_page_index_returns_none_when_no_marker() {
+        // Typical ComicInfo — `<Page>` entries without `Type` attrs.
+        let xml = br#"<ComicInfo>
+            <Pages>
+                <Page Image="0"/>
+                <Page Image="1"/>
+            </Pages>
+        </ComicInfo>"#;
+        let info = parse(xml).expect("parse");
+        assert_eq!(front_cover_page_index(&info.pages), None);
+    }
+
+    #[test]
+    fn front_cover_page_index_returns_none_on_empty_pages_block() {
+        let xml = b"<ComicInfo></ComicInfo>";
+        let info = parse(xml).expect("parse");
+        assert_eq!(front_cover_page_index(&info.pages), None);
+    }
+
+    #[test]
+    fn front_cover_page_index_uses_first_match_when_multiple() {
+        // Defensive: malformed ComicInfo with two FrontCover markers
+        // → pick the first one. Mirrors what the scanner does today
+        // for any "first wins" tag (`<Series>` etc.).
+        let xml = br#"<ComicInfo>
+            <Pages>
+                <Page Image="2" Type="FrontCover"/>
+                <Page Image="5" Type="FrontCover"/>
+            </Pages>
+        </ComicInfo>"#;
+        let info = parse(xml).expect("parse");
+        assert_eq!(front_cover_page_index(&info.pages), Some(2));
     }
 
     #[test]

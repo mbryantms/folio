@@ -1421,3 +1421,108 @@ async fn declared_doublepage_is_not_overridden_by_probe() {
     // ComicInfo here.
     assert_eq!(pages[0].image_width, Some(2400));
 }
+
+// ────────────────────────────────────────────────────────────
+// matching-accuracy-1.0 M6 — cover_page_index stamping
+// ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn scanner_stamps_cover_page_index_from_comicinfo_front_cover_marker() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Cover Index (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    // ComicInfo with `<Page Image="2" Type="FrontCover"/>` — scanner
+    // should stamp issue.cover_page_index = 2 instead of the page-0
+    // default. The thumbnail / phash workers then read page 2 from
+    // the archive instead of page 0.
+    let comic_info = r#"<?xml version="1.0"?>
+<ComicInfo>
+    <Series>Cover Index</Series>
+    <Number>1</Number>
+    <Pages>
+        <Page Image="0" Type="Story"/>
+        <Page Image="1" Type="Story"/>
+        <Page Image="2" Type="FrontCover"/>
+    </Pages>
+</ComicInfo>"#;
+    write_minimal_cbz(&folder.join("Cover Index 001.cbz"), Some(comic_info), 1);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issue = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("issue row");
+    assert_eq!(
+        issue.cover_page_index, 2,
+        "cover_page_index should reflect the FrontCover marker"
+    );
+}
+
+#[tokio::test]
+async fn scanner_defaults_cover_page_index_to_zero_when_no_marker() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Default Cover (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    // No ComicInfo at all — pre-M6 default behavior preserved.
+    write_minimal_cbz(&folder.join("Default Cover 001.cbz"), None, 1);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issue = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("issue row");
+    assert_eq!(
+        issue.cover_page_index, 0,
+        "cover_page_index defaults to 0 when no FrontCover marker"
+    );
+}
+
+#[tokio::test]
+async fn scanner_defaults_cover_page_index_to_zero_when_pages_untyped() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Untyped Pages (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    // ComicInfo with a `<Pages>` block but no `Type` attrs — the
+    // typical case for most ComicInfo files in the wild.
+    let comic_info = r#"<?xml version="1.0"?>
+<ComicInfo>
+    <Series>Untyped Pages</Series>
+    <Number>1</Number>
+    <Pages>
+        <Page Image="0"/>
+        <Page Image="1"/>
+    </Pages>
+</ComicInfo>"#;
+    write_minimal_cbz(&folder.join("Untyped Pages 001.cbz"), Some(comic_info), 1);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issue = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("issue row");
+    assert_eq!(
+        issue.cover_page_index, 0,
+        "cover_page_index defaults to 0 when no Type attrs"
+    );
+}

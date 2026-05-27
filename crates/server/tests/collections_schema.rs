@@ -201,6 +201,7 @@ async fn seed_library_series_issue(db_url: &str) -> (Uuid, Uuid, String) {
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await

@@ -286,6 +286,7 @@ async fn seed_issue(app: &TestApp, lib_id: Uuid, series_id: Uuid, idx: u8) -> St
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
     }
     .insert(&db)
     .await

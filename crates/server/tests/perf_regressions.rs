@@ -378,6 +378,7 @@ async fn seed_library(
                 comicinfo_count: Set(Some(0)),
                 last_rewrite_at: Set(None),
                 last_rewrite_kind: Set(None),
+        cover_page_index: Set(0),
             }
             .insert(&db)
             .await
