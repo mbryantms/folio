@@ -28,7 +28,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set,
     Statement,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::time::Instant;
 use uuid::Uuid;
@@ -199,6 +199,13 @@ struct ParsedArchive {
     /// degraded paths. Stored on `issues.state` so downstream consumers
     /// (UI, page-bytes guard) can react to the partial-data state.
     parse_state: &'static str,
+    /// Full MetronInfo `<ID source="...">` map when MetronInfo.xml was
+    /// present. Kept separately from `info` (which only carries the
+    /// legacy CV/Metron/GTIN trio) so the per-issue ingest can write
+    /// every external identifier — GCD, Marvel, LoCG, ISBN, etc. —
+    /// straight to `external_ids` with `SetBy::MetronInfo`.
+    /// metadata-providers-1.0 M8.
+    metron_ids: Option<BTreeMap<String, String>>,
 }
 
 /// Outcome of the by-content-hash dedupe check, when no row was found
@@ -343,11 +350,14 @@ async fn parse_archive_for_ingest(
         merge_metron_into_comicinfo(&mut info, m);
     }
 
+    let metron_ids = metron_opt.as_ref().map(|m| m.ids.clone());
+
     Ok(Some(ParsedArchive {
         hash,
         info,
         actual_pages,
         parse_state,
+        metron_ids,
     }))
 }
 
@@ -470,6 +480,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         info,
         actual_pages,
         parse_state,
+        metron_ids,
     }) = parse_archive_for_ingest(state, lib, path, size, stats, health).await?
     else {
         return Ok(());
@@ -681,6 +692,18 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             crate::metadata::writers::SetBy::ComicInfo,
         )
         .await?;
+        // metadata-providers-1.0 M8: MetronInfo's `<ID source="…">` list
+        // carries IDs for any number of providers (GCD, Marvel, LoCG,
+        // ISBN, etc.) — not just CV/Metron. Write each one so cross-
+        // source matching downstream can short-circuit on a known ID
+        // instead of running another search. The legacy trio above
+        // already covered metron/comicvine but is restricted to
+        // SetBy::ComicInfo; re-writing them under SetBy::MetronInfo
+        // here is harmless (set_external_id is idempotent and the
+        // user-precedence rule is symmetric across non-user set_by).
+        if let Some(ids) = &metron_ids {
+            write_metroninfo_external_ids(db, "issue", &updated.id, ids).await?;
+        }
         // F-1: pass the just-updated model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &updated).await?;
         stats.files_updated += 1;
@@ -798,6 +821,11 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             crate::metadata::writers::SetBy::ComicInfo,
         )
         .await?;
+        // metadata-providers-1.0 M8 — see the matching block on the
+        // update path above for the cross-source-IDs rationale.
+        if let Some(ids) = &metron_ids {
+            write_metroninfo_external_ids(db, "issue", &inserted.id, ids).await?;
+        }
         // F-1: pass the just-inserted model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &inserted).await?;
         stats.files_added += 1;
@@ -1530,6 +1558,160 @@ fn user_edited_set(value: &serde_json::Value) -> std::collections::HashSet<Strin
         .unwrap_or_default()
 }
 
+/// Detect identifier tags in a series folder name —
+/// `\[([a-z]{2,6})-(\d+)\]` resolved against the [`Source`] prefix
+/// registry. Pre-tagged libraries (metron-tagger output, ComicTagger,
+/// hand-tagged folders) emit one or more `[cv-12345]`, `[metron-67890]`,
+/// `[gcd-…]` etc. tokens in the folder name. Each detected token
+/// becomes an `external_ids` row on the series, letting the metadata-
+/// providers matcher short-circuit on a known ID instead of running a
+/// full search.
+///
+/// Source-agnostic by design: adding a new prefix needs only an entry
+/// in `Source::from_str` (`crates/server/src/metadata/identifier.rs`).
+/// Unknown prefixes are dropped silently. Mixed-case (`[CV-...]`) is
+/// normalized by `Source::from_str`. Embedded tags (`Saga [cv-12345] (2012)`)
+/// + trailing tags both work since the regex doesn't anchor.
+///
+/// metadata-providers-1.0 M8.
+pub fn parse_series_folder_tags(
+    folder_name: &str,
+) -> Vec<crate::metadata::identifier::Identifier> {
+    use crate::metadata::identifier::{Identifier, Source};
+    // Hand-rolled to avoid adding a regex dep for one scanner pattern.
+    // Walks the string once; on `[` looks for prefix-then-hyphen-then-
+    // digits-then-`]`. Anything off-pattern is skipped, never panicked.
+    let bytes = folder_name.as_bytes();
+    let mut out: Vec<Identifier> = Vec::new();
+    let mut seen: std::collections::HashSet<Source> = std::collections::HashSet::new();
+    let mut i = 0;
+    // 2..=12 covers every alias in `Source::from_str` (longest is
+    // `mangaupdates` at 12). The plan's spec text wrote {2,6} but
+    // immediately listed `comicvine` (9 chars) and `metron` (6) as
+    // canonical — widening to 12 honors the alias list, which is the
+    // real contract operators write to.
+    const PREFIX_MIN: usize = 2;
+    const PREFIX_MAX: usize = 12;
+    while i < bytes.len() {
+        if bytes[i] != b'[' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut p = start;
+        while p < bytes.len() && p - start < PREFIX_MAX && bytes[p].is_ascii_alphabetic() {
+            p += 1;
+        }
+        let prefix_len = p - start;
+        if !(PREFIX_MIN..=PREFIX_MAX).contains(&prefix_len) || p >= bytes.len() || bytes[p] != b'-' {
+            i = start;
+            continue;
+        }
+        let id_start = p + 1;
+        let mut q = id_start;
+        while q < bytes.len() && bytes[q].is_ascii_digit() {
+            q += 1;
+        }
+        if q == id_start || q >= bytes.len() || bytes[q] != b']' {
+            i = start;
+            continue;
+        }
+        // Safe: prefix + id are ASCII slices we just walked byte-wise.
+        let prefix = std::str::from_utf8(&bytes[start..p]).unwrap_or_default();
+        let id = std::str::from_utf8(&bytes[id_start..q]).unwrap_or_default();
+        match prefix.parse::<Source>() {
+            Ok(source) => {
+                // Dedupe by source — a folder with multiple tags for
+                // the same provider keeps the first occurrence.
+                // Subsequent rows would collide on the
+                // (entity, source) unique key anyway; explicit skip
+                // keeps the write path quiet.
+                if seen.insert(source) {
+                    out.push(Identifier::new(source, id));
+                }
+            }
+            Err(_) => {
+                // Unknown prefix — accept silently per the plan
+                // ("unknown prefix ignored"). Operator can grep the
+                // trace log if they suspect a typo.
+                tracing::debug!(prefix, "scanner: ignoring unknown folder-tag prefix");
+            }
+        }
+        i = q + 1;
+    }
+    out
+}
+
+/// Persist the [`parse_series_folder_tags`] output onto the series
+/// row. Called once per `process_folder`, after series identity is
+/// resolved. User-pinned values (`set_by='user'`) are protected by
+/// `set_external_id`'s precedence rule.
+///
+/// metadata-providers-1.0 M8.
+pub async fn write_series_folder_tags<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+    folder_name: &str,
+) -> Result<usize, sea_orm::DbErr> {
+    let identifiers = parse_series_folder_tags(folder_name);
+    let count = identifiers.len();
+    let series_id_str = series_id.to_string();
+    for identifier in identifiers {
+        crate::metadata::writers::set_external_id(
+            db,
+            "series",
+            &series_id_str,
+            &identifier,
+            crate::metadata::writers::SetBy::ScannerFolderTag,
+        )
+        .await?;
+    }
+    Ok(count)
+}
+
+/// Persist every MetronInfo `<ID source="...">` row as an
+/// `external_ids` entry. Unknown sources (anything `Source::FromStr`
+/// doesn't recognize) are skipped silently — a future MetronInfo
+/// extension that adds a new source key shouldn't blow up the
+/// scanner.
+///
+/// User-pinned values (`set_by='user'`) are protected by
+/// `set_external_id`'s precedence rule, so this re-write is safe to
+/// run on every rescan.
+///
+/// metadata-providers-1.0 M8.
+async fn write_metroninfo_external_ids<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    ids: &BTreeMap<String, String>,
+) -> Result<(), sea_orm::DbErr> {
+    for (raw_source, raw_id) in ids {
+        let trimmed = raw_id.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(source) = raw_source.parse::<crate::metadata::identifier::Source>() else {
+            tracing::debug!(
+                entity_id,
+                source = raw_source,
+                "scanner: ignoring MetronInfo ID with unknown source"
+            );
+            continue;
+        };
+        let identifier = crate::metadata::identifier::Identifier::new(source, trimmed);
+        crate::metadata::writers::set_external_id(
+            db,
+            entity_type,
+            entity_id,
+            &identifier,
+            crate::metadata::writers::SetBy::MetronInfo,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1643,5 +1825,123 @@ mod tests {
             detect_special_type(None, "Series 001.cbz", true, None),
             None
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // metadata-providers-1.0 M8 — folder-name identifier tags.
+    // ─────────────────────────────────────────────────────────────
+
+    fn tag_pair(folder: &str) -> Vec<(String, String)> {
+        parse_series_folder_tags(folder)
+            .into_iter()
+            .map(|i| (i.source.as_str().to_owned(), i.id))
+            .collect()
+    }
+
+    #[test]
+    fn folder_tags_recognize_canonical_prefixes() {
+        // Every prefix the plan calls out (`cv`, `comicvine`, `metron`,
+        // `gcd`, `marvel`, `locg`) resolves through the same
+        // `Source::from_str` registry the rest of the codebase uses.
+        assert_eq!(
+            tag_pair("Saga (2012) [cv-12345]"),
+            vec![("comicvine".into(), "12345".into())]
+        );
+        assert_eq!(
+            tag_pair("Saga (2012) [comicvine-12345]"),
+            vec![("comicvine".into(), "12345".into())]
+        );
+        assert_eq!(
+            tag_pair("Saga (2012) [metron-67890]"),
+            vec![("metron".into(), "67890".into())]
+        );
+        assert_eq!(
+            tag_pair("Saga (2012) [gcd-111]"),
+            vec![("gcd".into(), "111".into())]
+        );
+        assert_eq!(
+            tag_pair("Saga (2012) [marvel-222]"),
+            vec![("marvel".into(), "222".into())]
+        );
+        assert_eq!(
+            tag_pair("Saga (2012) [locg-333]"),
+            vec![("locg".into(), "333".into())]
+        );
+    }
+
+    #[test]
+    fn folder_tags_mixed_case_normalizes() {
+        // Source::from_str lowercases internally, so authors writing
+        // `[CV-...]`, `[Comicvine-...]`, `[METRON-...]` all land on
+        // the same Source — operators copy-paste from a variety of
+        // tools and we shouldn't punish stylistic drift.
+        assert_eq!(
+            tag_pair("Saga [CV-12345]"),
+            vec![("comicvine".into(), "12345".into())]
+        );
+        assert_eq!(
+            tag_pair("Saga [Comicvine-12345]"),
+            vec![("comicvine".into(), "12345".into())]
+        );
+        assert_eq!(
+            tag_pair("Saga [METRON-67890]"),
+            vec![("metron".into(), "67890".into())]
+        );
+    }
+
+    #[test]
+    fn folder_tags_multiple_sources_in_one_name() {
+        let pairs = tag_pair("Saga (2012) [cv-12345] [metron-67890] [gcd-111]");
+        assert_eq!(pairs.len(), 3);
+        assert!(pairs.contains(&("comicvine".into(), "12345".into())));
+        assert!(pairs.contains(&("metron".into(), "67890".into())));
+        assert!(pairs.contains(&("gcd".into(), "111".into())));
+    }
+
+    #[test]
+    fn folder_tags_embedded_vs_trailing() {
+        // Tags anywhere in the string are accepted — embedded between
+        // words (`Saga [cv-12345] (2012)`) and trailing
+        // (`Saga (2012) [cv-12345]`) are both common authoring styles.
+        assert_eq!(
+            tag_pair("Saga [cv-12345] (2012)"),
+            vec![("comicvine".into(), "12345".into())]
+        );
+        assert_eq!(
+            tag_pair("[cv-12345] Saga (2012)"),
+            vec![("comicvine".into(), "12345".into())]
+        );
+    }
+
+    #[test]
+    fn folder_tags_unknown_prefix_silently_ignored() {
+        // Per the plan: "unknown prefix ignored". A typo or a
+        // not-yet-supported source shouldn't break ingest.
+        assert_eq!(tag_pair("Saga (2012) [foo-12345]"), Vec::new());
+        assert_eq!(tag_pair("Saga (2012) [xy-12345] [cv-1]"),
+                   vec![("comicvine".into(), "1".into())]);
+    }
+
+    #[test]
+    fn folder_tags_malformed_tokens_skipped() {
+        // Off-pattern tokens — empty id, alpha id, missing hyphen,
+        // unclosed bracket — must not panic or yield bogus rows.
+        assert_eq!(tag_pair("Saga [cv-]"), Vec::new());
+        assert_eq!(tag_pair("Saga [cv-abc]"), Vec::new());
+        assert_eq!(tag_pair("Saga [cv12345]"), Vec::new());
+        assert_eq!(tag_pair("Saga [cv-12345"), Vec::new());
+        assert_eq!(tag_pair("Saga cv-12345]"), Vec::new());
+        assert_eq!(tag_pair("Saga (2012)"), Vec::new());
+        assert_eq!(tag_pair(""), Vec::new());
+    }
+
+    #[test]
+    fn folder_tags_dedupe_same_source() {
+        // Two tags for the same provider in one folder name keep the
+        // first occurrence — the (entity, source) unique key on
+        // external_ids would reject the second anyway; explicit dedupe
+        // keeps the write loop quiet.
+        let pairs = tag_pair("Saga [cv-1] [cv-2]");
+        assert_eq!(pairs, vec![("comicvine".into(), "1".into())]);
     }
 }

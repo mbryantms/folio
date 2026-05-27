@@ -80,6 +80,18 @@ pub struct ApplyArgs {
     pub cover_overwrite_policy: CoverOverwritePolicy,
     pub override_user_edits: bool,
     pub actor_id: Option<Uuid>,
+    /// Optional per-field opt-in from the M5 preview pane. When
+    /// `Some`, only fields whose `MetadataField::key()` is present
+    /// will be written (subject to the normal user-precedence rule).
+    /// When `None`, the old "apply every field that should_apply
+    /// permits" behaviour holds — preserves backwards compat for
+    /// callers that haven't been updated to send the opt-in set.
+    pub selected_fields: Option<std::collections::HashSet<String>>,
+    /// Per-source overrides from the M5 external-IDs conflict
+    /// surface. When a source is in this set, the user has
+    /// explicitly opted in to "Use theirs" on that conflict — the
+    /// candidate's value replaces the user-set row.
+    pub override_external_id_sources: std::collections::HashSet<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -127,13 +139,23 @@ pub enum ApplyError {
 // ───────── decision matrix ─────────
 
 /// Single source of truth for the apply decision. See module-level
-/// matrix doc.
-fn should_apply(
+/// matrix doc. Visible to siblings so the M5 diff module can mirror
+/// the live Apply logic without re-implementing the matrix.
+pub(crate) fn should_apply(
     db_has_value: bool,
     provenance: &HashMap<String, String>,
     field: MetadataField,
     args: &ApplyArgs,
 ) -> bool {
+    // M5 per-field opt-in gate: when the preview pane has explicitly
+    // chosen a subset of fields, anything not in that set is skipped
+    // *before* the matrix runs. None = legacy "apply everything"
+    // semantics (preserved for callers that don't yet send the set).
+    if let Some(selected) = &args.selected_fields
+        && !selected.contains(&field.key())
+    {
+        return false;
+    }
     let user_set = provenance.get(&field.key()).map(|s| s.as_str()) == Some("user");
     if user_set && !args.override_user_edits {
         return false;
@@ -142,6 +164,84 @@ fn should_apply(
         return true;
     }
     matches!(args.mode, ApplyMode::ReplaceAll)
+}
+
+/// Reason a candidate field would (or would not) be applied — drives
+/// the diff UI's per-row badge / disabled-checkbox state. M5 diff
+/// view.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DiffDecision {
+    /// Field is empty in DB; would write on Apply.
+    WouldFill,
+    /// Field is set by a non-user source; mode is ReplaceAll so would
+    /// overwrite.
+    WouldReplace,
+    /// Field is set to the same proposed value; nothing to do.
+    NoChange,
+    /// Field is user-set; user-precedence rule blocks unless override
+    /// is on.
+    BlockedByUser,
+    /// Field has a value and mode is FillMissing; nothing to do.
+    SkippedFillMissingHasValue,
+    /// Candidate has no value for this field.
+    NoIncomingValue,
+}
+
+impl DiffDecision {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            DiffDecision::WouldFill => "would_fill",
+            DiffDecision::WouldReplace => "would_replace",
+            DiffDecision::NoChange => "no_change",
+            DiffDecision::BlockedByUser => "blocked_by_user",
+            DiffDecision::SkippedFillMissingHasValue => "skipped_fill_missing_has_value",
+            DiffDecision::NoIncomingValue => "no_incoming_value",
+        }
+    }
+
+    /// True for decisions that represent an actionable change the
+    /// user can opt in to. Currently used only by the diff-module
+    /// unit tests; the runtime API serializes [`as_str`] and the
+    /// web client computes default-checked state from that string,
+    /// so the helper is `cfg(test)`-only in production builds.
+    #[cfg(test)]
+    pub(crate) fn would_change(self) -> bool {
+        matches!(self, DiffDecision::WouldFill | DiffDecision::WouldReplace)
+    }
+}
+
+/// Classify a per-field decision into a [`DiffDecision`] without
+/// writing. Mirrors [`should_apply`] but tracks the *reason* a write
+/// would or would not happen so the preview UI can render
+/// per-row status. M5 diff view.
+pub(crate) fn classify_field(
+    current_value: Option<&str>,
+    incoming_value: Option<&str>,
+    provenance: &HashMap<String, String>,
+    field: MetadataField,
+    args: &ApplyArgs,
+) -> DiffDecision {
+    let has_incoming = incoming_value.is_some_and(|s| !s.trim().is_empty());
+    if !has_incoming {
+        return DiffDecision::NoIncomingValue;
+    }
+    let has_current = current_value.is_some_and(|s| !s.trim().is_empty());
+    let user_set = provenance.get(&field.key()).map(|s| s.as_str()) == Some("user");
+    if user_set && !args.override_user_edits {
+        return DiffDecision::BlockedByUser;
+    }
+    if !has_current {
+        return DiffDecision::WouldFill;
+    }
+    // Same-value short-circuit: nothing to do even in ReplaceAll mode.
+    if current_value.map(str::trim) == incoming_value.map(str::trim) {
+        return DiffDecision::NoChange;
+    }
+    if matches!(args.mode, ApplyMode::ReplaceAll) {
+        DiffDecision::WouldReplace
+    } else {
+        DiffDecision::SkippedFillMissingHasValue
+    }
 }
 
 // ───────── series apply ─────────
@@ -776,7 +876,7 @@ async fn bump_issue_sync(db: &DatabaseConnection, issue_id: &str) -> Result<(), 
 
 // ───────── shared helpers ─────────
 
-async fn load_candidate(
+pub(crate) async fn load_candidate(
     db: &DatabaseConnection,
     run_id: Uuid,
     ordinal: i32,
@@ -787,7 +887,7 @@ async fn load_candidate(
         .ok_or(ApplyError::CandidateNotFound { run_id, ordinal })
 }
 
-async fn load_run(
+pub(crate) async fn load_run(
     db: &DatabaseConnection,
     run_id: Uuid,
 ) -> Result<metadata_run::Model, ApplyError> {
@@ -797,12 +897,12 @@ async fn load_run(
         .ok_or_else(|| ApplyError::InvalidScope(format!("run {run_id} not found")))
 }
 
-fn parse_source(s: &str) -> Option<Source> {
+pub(crate) fn parse_source(s: &str) -> Option<Source> {
     use std::str::FromStr;
     Source::from_str(s).ok()
 }
 
-fn build_provider(state: &AppState, source: Source) -> Option<Arc<dyn MetadataProvider>> {
+pub(crate) fn build_provider(state: &AppState, source: Source) -> Option<Arc<dyn MetadataProvider>> {
     let cfg = state.cfg();
     match source {
         Source::ComicVine => {
@@ -824,7 +924,7 @@ fn build_provider(state: &AppState, source: Source) -> Option<Arc<dyn MetadataPr
     }
 }
 
-async fn fetch_series_detail(
+pub(crate) async fn fetch_series_detail(
     state: &AppState,
     provider: &dyn MetadataProvider,
     external_id: &str,
@@ -842,7 +942,7 @@ async fn fetch_series_detail(
     Ok(fresh)
 }
 
-async fn fetch_issue_detail(
+pub(crate) async fn fetch_issue_detail(
     state: &AppState,
     provider: &dyn MetadataProvider,
     external_id: &str,
@@ -860,7 +960,7 @@ async fn fetch_issue_detail(
     Ok(fresh)
 }
 
-async fn fetch_field_provenance_map(
+pub(crate) async fn fetch_field_provenance_map(
     db: &DatabaseConnection,
     entity_type: &str,
     entity_id: &str,
@@ -1030,6 +1130,8 @@ mod tests {
             cover_overwrite_policy: CoverOverwritePolicy::WhenMissing,
             override_user_edits: override_user,
             actor_id: None,
+            selected_fields: None,
+            override_external_id_sources: std::collections::HashSet::new(),
         }
     }
 

@@ -133,6 +133,8 @@ fn args(run_id: Uuid, ordinal: i32, mode: ApplyMode, override_user: bool) -> App
         cover_overwrite_policy: CoverOverwritePolicy::WhenMissing,
         override_user_edits: override_user,
         actor_id: None,
+        selected_fields: None,
+        override_external_id_sources: std::collections::HashSet::new(),
     }
 }
 
@@ -632,4 +634,255 @@ async fn apply_issue_writes_credits_through_writer_helpers() {
     assert_eq!(row.title.as_deref(), Some("Issue 1"));
     // CSV cache was rebuilt → writer column populated.
     assert_eq!(row.writer.as_deref(), Some("Brian K. Vaughan"));
+}
+
+// ────────────────────────────────────────────────────────────────
+// metadata-providers-1.0 M5 — diff endpoint + selected_fields-
+// respecting apply. The preview pane reads the diff to render
+// per-field checkboxes; apply then echoes back only the user-
+// selected field keys.
+// ────────────────────────────────────────────────────────────────
+
+async fn seed_series_with_filled_payload(app: &TestApp) -> (Uuid, Uuid, i32) {
+    use server::metadata::cache;
+    use server::metadata::identifier::{Identifier, Source};
+
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Some Other Name").insert(&app.state().db).await;
+    let row = series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: series::ActiveModel = row.into();
+    am.publisher = Set(None);
+    am.year = Set(None);
+    am.summary = Set(None);
+    am.update(&app.state().db).await.unwrap();
+    let prefilled = server::metadata::provider::GenericMetadata {
+        series_name: Some("Saga".into()),
+        year_began: Some(2012),
+        publisher: Some("Image Comics".into()),
+        deck: Some("Sci-fi epic.".into()),
+        description: Some("Full description body.".into()),
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            "12345",
+            "series",
+        )],
+        source_provider: Some(Source::ComicVine),
+        source_external_id: Some("12345".into()),
+        ..Default::default()
+    };
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Series,
+        "12345",
+        &prefilled,
+    )
+    .await
+    .unwrap();
+    let (run_id, ordinal) = seed_run_with_candidate(app, series_id, "12345", "comicvine").await;
+    (series_id, run_id, ordinal)
+}
+
+#[tokio::test]
+async fn compute_series_diff_classifies_per_field_decisions() {
+    use server::metadata::diff;
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let (_series_id, run_id, ordinal) = seed_series_with_filled_payload(&app).await;
+    let diff = diff::compute_series_diff(
+        &app.state(),
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("diff");
+    assert_eq!(diff.scope, "series");
+    assert_eq!(diff.source, "comicvine");
+    assert!(!diff.rows.is_empty());
+
+    // Title is non-empty in DB ("Some Other Name") and the candidate's
+    // "Saga" disagrees — FillMissing mode → SkippedFillMissingHasValue.
+    let title_row = diff.rows.iter().find(|r| r.field == "title").expect("title row");
+    assert_eq!(title_row.decision, "skipped_fill_missing_has_value");
+    assert_eq!(title_row.current_value.as_deref(), Some("Some Other Name"));
+    assert_eq!(title_row.proposed_value.as_deref(), Some("Saga"));
+
+    // year_began was cleared in the seed — would_fill.
+    let year_row = diff
+        .rows
+        .iter()
+        .find(|r| r.field == "year_began")
+        .expect("year_began row");
+    assert_eq!(year_row.decision, "would_fill");
+    assert_eq!(year_row.current_value, None);
+    assert_eq!(year_row.proposed_value.as_deref(), Some("2012"));
+
+    // publisher: cleared, would_fill.
+    let pub_row = diff
+        .rows
+        .iter()
+        .find(|r| r.field == "publisher")
+        .expect("publisher row");
+    assert_eq!(pub_row.decision, "would_fill");
+
+    // changes_count counts the would_fill / would_replace rows + new
+    // external_ids. The new external_id row for ComicVine pushes it
+    // up by one.
+    assert!(
+        diff.changes_count >= 3,
+        "expected at least year + publisher + description + cv external_id, got {}",
+        diff.changes_count
+    );
+    assert_eq!(diff.external_ids_new.len(), 1);
+    assert_eq!(diff.external_ids_new[0].source, "comicvine");
+}
+
+#[tokio::test]
+async fn compute_series_diff_replace_all_flips_decisions() {
+    use server::metadata::diff;
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let (_series_id, run_id, ordinal) = seed_series_with_filled_payload(&app).await;
+    let diff = diff::compute_series_diff(
+        &app.state(),
+        args(run_id, ordinal, ApplyMode::ReplaceAll, false),
+    )
+    .await
+    .expect("diff");
+
+    // Title under ReplaceAll → would_replace (different current value,
+    // no user-set provenance).
+    let title_row = diff.rows.iter().find(|r| r.field == "title").unwrap();
+    assert_eq!(title_row.decision, "would_replace");
+}
+
+#[tokio::test]
+async fn compute_series_diff_blocks_user_set_unless_override() {
+    use server::metadata::diff;
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let (series_id, run_id, ordinal) = seed_series_with_filled_payload(&app).await;
+
+    // Mark the title as user-set.
+    field_provenance::ActiveModel {
+        entity_type: Set("series".into()),
+        entity_id: Set(series_id.to_string()),
+        field: Set("title".into()),
+        set_by: Set("user".into()),
+        set_at: Set(Utc::now().fixed_offset()),
+        source_external_id: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    let diff = diff::compute_series_diff(
+        &app.state(),
+        args(run_id, ordinal, ApplyMode::ReplaceAll, false),
+    )
+    .await
+    .expect("diff");
+    let title_row = diff.rows.iter().find(|r| r.field == "title").unwrap();
+    assert_eq!(title_row.decision, "blocked_by_user");
+    assert_eq!(title_row.current_set_by.as_deref(), Some("user"));
+    assert!(title_row.current_set_at.is_some());
+
+    // With override_user_edits → would_replace.
+    let diff2 = diff::compute_series_diff(
+        &app.state(),
+        args(run_id, ordinal, ApplyMode::ReplaceAll, true),
+    )
+    .await
+    .expect("diff");
+    let title_row2 = diff2.rows.iter().find(|r| r.field == "title").unwrap();
+    assert_eq!(title_row2.decision, "would_replace");
+}
+
+#[tokio::test]
+async fn apply_series_respects_selected_fields_opt_in() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let (series_id, run_id, ordinal) = seed_series_with_filled_payload(&app).await;
+
+    // Only opt-in to year_began. publisher + description must NOT
+    // write even though they're would-fill.
+    let mut selected = std::collections::HashSet::new();
+    selected.insert("year_began".to_owned());
+    let outcome = apply_series_inline(
+        &app.state(),
+        series_id,
+        ApplyArgs {
+            run_id,
+            ordinal,
+            mode: ApplyMode::FillMissing,
+            apply_cover: false,
+            cover_overwrite_policy: CoverOverwritePolicy::WhenMissing,
+            override_user_edits: false,
+            actor_id: None,
+            selected_fields: Some(selected),
+            override_external_id_sources: std::collections::HashSet::new(),
+        },
+    )
+    .await
+    .expect("apply_series");
+
+    assert!(outcome.applied_fields.contains(&"year_began".to_owned()));
+    assert!(
+        !outcome.applied_fields.contains(&"publisher".to_owned()),
+        "publisher was not in selected_fields — must not write"
+    );
+    assert!(
+        !outcome.applied_fields.contains(&"description".to_owned()),
+        "description was not in selected_fields — must not write"
+    );
+
+    let updated = series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.year, Some(2012));
+    assert_eq!(updated.publisher, None, "publisher cell untouched");
+    assert_eq!(updated.summary, None, "description cell untouched");
+}
+
+#[tokio::test]
+async fn apply_series_empty_selected_fields_writes_nothing_scalar() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let (series_id, run_id, ordinal) = seed_series_with_filled_payload(&app).await;
+
+    let outcome = apply_series_inline(
+        &app.state(),
+        series_id,
+        ApplyArgs {
+            run_id,
+            ordinal,
+            mode: ApplyMode::FillMissing,
+            apply_cover: false,
+            cover_overwrite_policy: CoverOverwritePolicy::WhenMissing,
+            override_user_edits: false,
+            actor_id: None,
+            selected_fields: Some(std::collections::HashSet::new()),
+            override_external_id_sources: std::collections::HashSet::new(),
+        },
+    )
+    .await
+    .expect("apply_series");
+
+    // With an empty selected_fields set, no scalar fields write.
+    // External_ids are written regardless of the per-field set
+    // (they're a separate channel — the preview's per-source toggles
+    // live in `override_external_id_sources` instead). Verify no
+    // scalar landed but the CV external_id row did.
+    assert!(outcome.applied_fields.is_empty(),
+        "no scalar field should write when selected_fields is empty, got: {:?}",
+        outcome.applied_fields);
+    let cv_row = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq("series"))
+        .filter(external_id::Column::EntityId.eq(series_id.to_string()))
+        .filter(external_id::Column::Source.eq("comicvine"))
+        .one(&app.state().db)
+        .await
+        .unwrap();
+    assert!(cv_row.is_some(), "CV external_id row should be written regardless");
 }

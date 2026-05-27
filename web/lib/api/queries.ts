@@ -348,6 +348,36 @@ export const queryKeys = {
       "candidates",
       runId ?? "latest",
     ] as const,
+  /** Proposed-diff (M5 preview pane). Keyed by run+ordinal+mode+
+   *  override so flipping any of these arguments triggers a refetch. */
+  metadataDiffSeries: (
+    slug: string,
+    runId: string,
+    ordinal: number,
+    mode: string,
+    override: boolean,
+  ) =>
+    ["series", slug, "metadata", "diff", runId, ordinal, mode, override] as const,
+  metadataDiffIssue: (
+    slug: string,
+    issueSlug: string,
+    runId: string,
+    ordinal: number,
+    mode: string,
+    override: boolean,
+  ) =>
+    [
+      "series",
+      slug,
+      "issues",
+      issueSlug,
+      "metadata",
+      "diff",
+      runId,
+      ordinal,
+      mode,
+      override,
+    ] as const,
   /** Sync-status card (last_metadata_sync_at + paused). */
   metadataSyncStatusSeries: (slug: string) =>
     ["series", slug, "metadata", "status"] as const,
@@ -1853,6 +1883,7 @@ export function useUserProgress() {
 
 import type {
   CandidatesResp,
+  DiffResp,
   ExternalIdsListResp,
   IssueCoversResp,
   SyncStatusResp,
@@ -1910,6 +1941,76 @@ export function useMetadataCandidatesIssue(
         ? false
         : 1500;
     },
+  });
+}
+
+/** M5 preview pane — fetches the per-field diff for one candidate so
+ *  the dialog can render a "what will change" preview before the
+ *  user commits. `staleTime` is short (10s) so toggling the mode
+ *  picker / override toggle re-runs the server-side classifier on
+ *  the same cached provider detail (the apply pipeline's cache layer
+ *  carries the cost). */
+export function useMetadataProposedDiffSeries(
+  seriesSlug: string,
+  runId: string | null,
+  ordinal: number | null,
+  mode: "fill_missing" | "replace_all",
+  overrideUserEdits: boolean,
+) {
+  return useQuery({
+    queryKey: queryKeys.metadataDiffSeries(
+      seriesSlug,
+      runId ?? "",
+      ordinal ?? -1,
+      mode,
+      overrideUserEdits,
+    ),
+    queryFn: () => {
+      const qs = new URLSearchParams({
+        run_id: runId!,
+        ordinal: String(ordinal!),
+        mode,
+        override_user_edits: String(overrideUserEdits),
+      });
+      return jsonFetch<DiffResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/metadata/proposed-diff?${qs.toString()}`,
+      );
+    },
+    enabled: !!seriesSlug && !!runId && ordinal != null && ordinal >= 0,
+    staleTime: 10_000,
+  });
+}
+
+export function useMetadataProposedDiffIssue(
+  seriesSlug: string,
+  issueSlug: string,
+  runId: string | null,
+  ordinal: number | null,
+  mode: "fill_missing" | "replace_all",
+  overrideUserEdits: boolean,
+) {
+  return useQuery({
+    queryKey: queryKeys.metadataDiffIssue(
+      seriesSlug,
+      issueSlug,
+      runId ?? "",
+      ordinal ?? -1,
+      mode,
+      overrideUserEdits,
+    ),
+    queryFn: () => {
+      const qs = new URLSearchParams({
+        run_id: runId!,
+        ordinal: String(ordinal!),
+        mode,
+        override_user_edits: String(overrideUserEdits),
+      });
+      return jsonFetch<DiffResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/proposed-diff?${qs.toString()}`,
+      );
+    },
+    enabled: !!seriesSlug && !!issueSlug && !!runId && ordinal != null && ordinal >= 0,
+    staleTime: 10_000,
   });
 }
 

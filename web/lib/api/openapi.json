@@ -6896,6 +6896,87 @@
         }
       }
     },
+    "/api/series/{slug}/issues/{issue_slug}/metadata/proposed-diff": {
+      "get": {
+        "operationId": "metadata_proposed_diff_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "ordinal",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ApplyMode"
+            }
+          },
+          {
+            "name": "override_user_edits",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid run scope"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue / run / candidate not found"
+          },
+          "502": {
+            "description": "provider error"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/issues/{issue_slug}/metadata/search": {
       "post": {
         "operationId": "metadata_search_issue",
@@ -7067,6 +7148,79 @@
           },
           "404": {
             "description": "series not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/proposed-diff": {
+      "get": {
+        "operationId": "metadata_proposed_diff_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "ordinal",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ApplyMode"
+            }
+          },
+          {
+            "name": "override_user_edits",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid run scope"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series / run / candidate not found"
+          },
+          "502": {
+            "description": "provider error"
           }
         }
       }
@@ -7801,6 +7955,13 @@
             "format": "int32",
             "description": "0-based rank from the orchestrator (lower = higher score)."
           },
+          "override_external_id_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "M5 conflict-resolution: per-source list of external-ID rows\nwhere the user has opted to \"Use theirs\". The candidate's\nvalue replaces the user-set row for these sources. Other\nconflicts stay sacred."
+          },
           "override_user_edits": {
             "type": "boolean",
             "description": "Bypass the user-precedence rule. Admin-only; non-admin callers\nget 403 if they request it."
@@ -7809,6 +7970,16 @@
             "type": "string",
             "format": "uuid",
             "description": "The run row produced by `POST .../metadata/search`. Required so\nthe apply job can read the chosen candidate back from\n`metadata_run_candidate` rather than re-fetching from the\nprovider."
+          },
+          "selected_fields": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "M5 preview-pane opt-in: when present, only the named fields\n(by `MetadataField::key()`) are applied; everything else is\nskipped. When absent, the legacy \"apply every eligible field\"\nbehaviour applies (preserves backward compat for older\nclients)."
           }
         }
       },
@@ -10053,6 +10224,67 @@
           }
         }
       },
+      "DiffResp": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "ordinal",
+          "scope",
+          "source",
+          "source_external_id",
+          "rows",
+          "external_id_conflicts",
+          "external_ids_new",
+          "changes_count"
+        ],
+        "properties": {
+          "changes_count": {
+            "type": "integer",
+            "description": "Count of rows whose decision would actually write a value\n(`would_fill` + `would_replace`). Lets the preview header\nsummarize \"5 changes\" without the client re-walking the rows.",
+            "minimum": 0
+          },
+          "external_id_conflicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdConflictRow"
+            },
+            "description": "Only present when the candidate carries external_ids that\ndisagree with user-set rows on the same entity."
+          },
+          "external_ids_new": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdNewRow"
+            },
+            "description": "Provider IDs the candidate brought that the entity doesn't\nhave yet (no conflict — would just add)."
+          },
+          "ordinal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScalarDiffRow"
+            },
+            "description": "Per-field rows, ordered by enum declaration (groups\nscalars-then-junctions-then-covers)."
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`\"series\" | \"issue\"` — echoes the run scope so the client\ncan render the right header copy."
+          },
+          "source": {
+            "type": "string",
+            "description": "`\"comicvine\" | \"metron\"` — which provider supplied the\ncandidate. Drives the \"Apply from <provider>\" copy."
+          },
+          "source_external_id": {
+            "type": "string"
+          }
+        }
+      },
       "DirEntry": {
         "type": "object",
         "required": [
@@ -10511,6 +10743,45 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "ExternalIdConflictRow": {
+        "type": "object",
+        "description": "External-ID conflict row — surfaces in the preview pane as an\namber row with a Keep mine / Use theirs control.",
+        "required": [
+          "source",
+          "current_external_id",
+          "proposed_external_id"
+        ],
+        "properties": {
+          "current_external_id": {
+            "type": "string",
+            "description": "Current user-set external id."
+          },
+          "proposed_external_id": {
+            "type": "string",
+            "description": "The candidate's proposed external id (always different from\n`current_external_id`; same-value rows are filtered out)."
+          },
+          "source": {
+            "type": "string",
+            "description": "`\"comicvine\" | \"metron\" | …` from [`Source::as_str`]."
+          }
+        }
+      },
+      "ExternalIdNewRow": {
+        "type": "object",
+        "description": "Provider external id the entity doesn't carry yet — apply will\njust add the row, no conflict.",
+        "required": [
+          "source",
+          "external_id"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
           }
         }
       },
@@ -14361,6 +14632,57 @@
               "null"
             ],
             "description": "`None` for system views (admin-curated, visible to every user)."
+          }
+        }
+      },
+      "ScalarDiffRow": {
+        "type": "object",
+        "description": "What the preview pane needs to render one row of the diff table.",
+        "required": [
+          "field",
+          "label",
+          "decision"
+        ],
+        "properties": {
+          "current_set_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO-8601 timestamp of the last write to this field, or `null`."
+          },
+          "current_set_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`set_by` for the current row's provenance (`\"user\"` /\n`\"comicvine\"` / `\"metroninfo\"` / …). `null` when the field has\nno provenance row."
+          },
+          "current_value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "String-formatted current value, or `null` if the DB cell is\nempty / NULL. Always a string so client rendering is uniform\nacross int/str/date/float fields."
+          },
+          "decision": {
+            "type": "string",
+            "description": "One of the [`DiffDecision`] variants — drives default checked\nstate + per-row badge in the preview pane."
+          },
+          "field": {
+            "type": "string",
+            "description": "`MetadataField::key()` — stable string identifier the apply\npayload echoes back in `selected_fields`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Human-readable label for the field, derived once on the\nserver so every client renders the same string."
+          },
+          "proposed_value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "String-formatted proposed value from the provider candidate."
           }
         }
       },

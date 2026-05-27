@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Circle, FolderPlus, ListChecks, Pencil } from "lucide-react";
+import { Check, Circle, FolderPlus, ListChecks, Pencil, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import {
@@ -26,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { apiMutate } from "@/lib/api/mutations";
 import { useBulkMarkProgress } from "@/lib/api/mutations";
 import { useSeriesIssuesInfinite } from "@/lib/api/queries";
 import { useSelection } from "@/lib/selection/use-selection";
@@ -165,6 +167,46 @@ export function IssuesPanel({
     entry_kind: "issue" as const,
     ref_id: id,
   }));
+
+  const [bulkFetchPending, setBulkFetchPending] = useState(false);
+  const runBulkMetadataFetch = async () => {
+    const ids = selection.selected;
+    if (ids.size === 0) return;
+    const slugs = items
+      .filter((iss) => ids.has(iss.id))
+      .map((iss) => iss.slug);
+    if (slugs.length === 0) return;
+    setBulkFetchPending(true);
+    const toastId = toast.loading(
+      `Searching providers for ${slugs.length} issue${slugs.length === 1 ? "" : "s"}…`,
+    );
+    // POST only enqueues the search job — returns ~immediately. Run in
+    // parallel; the server's per-provider token bucket gates the actual
+    // upstream calls. Surface a single summary toast at the end.
+    const results = await Promise.allSettled(
+      slugs.map((slug) =>
+        apiMutate({
+          path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(slug)}/metadata/search`,
+          method: "POST",
+        }),
+      ),
+    );
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.length - ok;
+    if (failed === 0) {
+      toast.success(`Queued metadata search for ${ok} issue${ok === 1 ? "" : "s"}.`, {
+        id: toastId,
+      });
+    } else if (ok === 0) {
+      toast.error(`Failed to queue any metadata searches (${failed} error${failed === 1 ? "" : "s"}).`, {
+        id: toastId,
+      });
+    } else {
+      toast.message(`Queued ${ok}, ${failed} failed.`, { id: toastId });
+    }
+    setBulkFetchPending(false);
+    selection.clear();
+  };
 
   // Auto-fetch the next page when the sentinel scrolls into view.
   useEffect(() => {
@@ -329,6 +371,13 @@ export function IssuesPanel({
             label: "Edit metadata…",
             icon: Pencil,
             onClick: () => setEditMetadataOpen(true),
+          },
+          {
+            id: "fetch-metadata",
+            label: "Fetch metadata",
+            icon: Sparkles,
+            onClick: () => void runBulkMetadataFetch(),
+            disabled: bulkFetchPending,
           },
         ]}
         onDone={() => selection.exit()}

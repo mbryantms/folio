@@ -15,8 +15,9 @@ mod common;
 
 use common::TestApp;
 use entity::{
-    issue::Entity as IssueEntity, library::ActiveModel as LibraryAM,
-    library_health_issue::Entity as HealthEntity, series::Entity as SeriesEntity,
+    external_id::Entity as ExternalIdEntity, issue::Entity as IssueEntity,
+    library::ActiveModel as LibraryAM, library_health_issue::Entity as HealthEntity,
+    series::Entity as SeriesEntity,
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use server::library::scanner;
@@ -744,4 +745,251 @@ async fn series_json_takes_effect_even_when_folder_mtime_unchanged() {
         "rescan must apply sidecar description even when folder mtime was unchanged"
     );
     assert_eq!(after_second.total_issues, Some(7));
+}
+
+// ────────────────────────────────────────────────────────────────
+// metadata-providers-1.0 M8 — scanner-side cross-source identifier
+// ingest. Two flavors:
+//   1. MetronInfo `<ID source="...">` propagates the full set of
+//      provider IDs (GCD / Marvel / LoCG / etc.) into external_ids,
+//      not just the legacy CV+Metron+GTIN trio.
+//   2. Series-folder identifier tags (`[cv-12345]`, `[metron-67890]`)
+//      land as `external_ids` rows on the series row with
+//      `set_by='scanner_folder_tag'`.
+// ────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn metroninfo_writes_full_external_ids_set() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Omega (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    // ComicInfo only carries the legacy trio; MetronInfo carries the
+    // richer provider-id set. The scanner must persist every ID, not
+    // just metron + comicvine.
+    let comic_info = r#"<?xml version="1.0"?>
+        <ComicInfo>
+            <Series>Omega</Series>
+            <Number>1</Number>
+        </ComicInfo>"#;
+    let metron_info = r#"<?xml version="1.0"?>
+        <MetronInfo>
+            <Series>Omega</Series>
+            <Number>1</Number>
+            <ID source="metron">11111</ID>
+            <ID source="comicvine">22222</ID>
+            <ID source="gcd">33333</ID>
+            <ID source="marvel">44444</ID>
+            <ID source="locg">55555</ID>
+        </MetronInfo>"#;
+    write_cbz_with_xml(
+        &folder.join("Omega 001.cbz"),
+        1,
+        2,
+        Some(comic_info),
+        Some(metron_info),
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issue = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
+    let rows = ExternalIdEntity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::EntityId.eq(issue.id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    let mut by_source: std::collections::BTreeMap<String, (String, String)> =
+        std::collections::BTreeMap::new();
+    for r in rows {
+        by_source.insert(r.source.clone(), (r.external_id, r.set_by));
+    }
+
+    // Every MetronInfo source must materialize an external_ids row.
+    assert_eq!(by_source.get("metron").map(|t| t.0.as_str()), Some("11111"));
+    assert_eq!(
+        by_source.get("comicvine").map(|t| t.0.as_str()),
+        Some("22222")
+    );
+    assert_eq!(by_source.get("gcd").map(|t| t.0.as_str()), Some("33333"));
+    assert_eq!(by_source.get("marvel").map(|t| t.0.as_str()), Some("44444"));
+    assert_eq!(by_source.get("locg").map(|t| t.0.as_str()), Some("55555"));
+
+    // The cross-source rows MetronInfo provided that ComicInfo never
+    // mentions must carry `set_by='metroninfo'` so the precedence rule
+    // (user > everyone-else) stays auditable.
+    assert_eq!(by_source.get("gcd").map(|t| t.1.as_str()), Some("metroninfo"));
+    assert_eq!(
+        by_source.get("marvel").map(|t| t.1.as_str()),
+        Some("metroninfo")
+    );
+    assert_eq!(by_source.get("locg").map(|t| t.1.as_str()), Some("metroninfo"));
+}
+
+#[tokio::test]
+async fn metroninfo_unknown_id_source_silently_skipped() {
+    // A MetronInfo with a `<ID source="future_provider">` (not in the
+    // Source::FromStr registry) must not break ingest — we add a row
+    // for every known source and skip the rest.
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Tau (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    let metron_info = r#"<?xml version="1.0"?>
+        <MetronInfo>
+            <Series>Tau</Series>
+            <Number>1</Number>
+            <ID source="metron">77777</ID>
+            <ID source="future_provider">9999</ID>
+        </MetronInfo>"#;
+    write_cbz_with_xml(
+        &folder.join("Tau 001.cbz"),
+        1,
+        2,
+        None,
+        Some(metron_info),
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issue = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
+    let rows = ExternalIdEntity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::EntityId.eq(issue.id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    let sources: std::collections::BTreeSet<String> =
+        rows.iter().map(|r| r.source.clone()).collect();
+    assert!(sources.contains("metron"));
+    assert!(
+        !sources.contains("future_provider"),
+        "unknown MetronInfo source must not land in external_ids"
+    );
+}
+
+#[tokio::test]
+async fn series_folder_tags_create_external_ids_rows() {
+    // Folder name carries `[cv-...]` and `[metron-...]` tags. After
+    // scan, the series row must have one `external_ids` row per known
+    // tag with `set_by='scanner_folder_tag'`.
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp
+        .path()
+        .join("Saga (2012) [cv-77777] [metron-88888] [gcd-99999]");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    // Need a CBZ in the folder so the scanner walks past the
+    // empty-folder skip — minimal ComicInfo is enough.
+    let comic_info = r#"<?xml version="1.0"?><ComicInfo><Series>Saga</Series><Number>1</Number></ComicInfo>"#;
+    write_cbz_with_xml(
+        &folder.join("Saga 001.cbz"),
+        1,
+        2,
+        Some(comic_info),
+        None,
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let series = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let rows = ExternalIdEntity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(series.id.to_string()))
+        .all(&state.db)
+        .await
+        .unwrap();
+    let by_source: std::collections::BTreeMap<String, (String, String)> = rows
+        .into_iter()
+        .map(|r| (r.source, (r.external_id, r.set_by)))
+        .collect();
+    assert_eq!(
+        by_source.get("comicvine").map(|t| (t.0.as_str(), t.1.as_str())),
+        Some(("77777", "scanner_folder_tag"))
+    );
+    assert_eq!(
+        by_source.get("metron").map(|t| (t.0.as_str(), t.1.as_str())),
+        Some(("88888", "scanner_folder_tag"))
+    );
+    assert_eq!(
+        by_source.get("gcd").map(|t| (t.0.as_str(), t.1.as_str())),
+        Some(("99999", "scanner_folder_tag"))
+    );
+}
+
+#[tokio::test]
+async fn series_folder_tag_does_not_overwrite_user_pinned() {
+    // The user-precedence rule on set_external_id must protect a
+    // user-set value when a later rescan picks up a different tag for
+    // the same source. (Tests the writer's contract via the scanner
+    // path, not just the writer in isolation.)
+    use server::metadata::{
+        identifier::{Identifier, Source},
+        writers::{SetBy, set_external_id},
+    };
+
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Phi (2020) [cv-11111]");
+    std::fs::create_dir_all(&folder).unwrap();
+    let comic_info = r#"<?xml version="1.0"?><ComicInfo><Series>Phi</Series><Number>1</Number></ComicInfo>"#;
+    write_cbz_with_xml(
+        &folder.join("Phi 001.cbz"),
+        1,
+        2,
+        Some(comic_info),
+        None,
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let series = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let series_id_str = series.id.to_string();
+
+    // User overrides the folder-tag value.
+    set_external_id(
+        &state.db,
+        "series",
+        &series_id_str,
+        &Identifier::new(Source::ComicVine, "99999"),
+        SetBy::User,
+    )
+    .await
+    .unwrap();
+
+    // Re-scan — folder tag would say `11111` again but user's `99999`
+    // must survive.
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let row = ExternalIdEntity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(&series_id_str))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.external_id, "99999", "user value must win over folder-tag rescan");
+    assert_eq!(row.set_by, "user");
 }

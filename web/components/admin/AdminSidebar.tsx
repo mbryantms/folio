@@ -12,8 +12,22 @@ import {
 import { UserFooter } from "@/components/shell/UserFooter";
 import { cn } from "@/lib/utils";
 
-import type { NavSection } from "./nav";
+import { MetadataUnmatchedBadge } from "./MetadataUnmatchedBadge";
+import type { DynamicBadge, NavSection } from "./nav";
 import { navIcons } from "./nav-icons";
+
+function DynamicBadgeFor({
+  kind,
+  collapsed,
+}: {
+  kind: DynamicBadge;
+  collapsed: boolean;
+}) {
+  switch (kind) {
+    case "metadata-unmatched":
+      return <MetadataUnmatchedBadge collapsed={collapsed} />;
+  }
+}
 
 export function AdminSidebar({
   sections,
@@ -69,7 +83,7 @@ export function AdminSidebar({
                     <Link
                       href={item.href}
                       className={cn(
-                        "flex items-center rounded-md transition-colors",
+                        "relative flex items-center rounded-md transition-colors",
                         collapsed
                           ? "size-9 justify-center"
                           : "gap-2.5 px-3 py-1.5",
@@ -88,6 +102,12 @@ export function AdminSidebar({
                         <span className="text-muted-foreground/60 ml-auto text-[10px] tracking-wider uppercase">
                           soon
                         </span>
+                      ) : null}
+                      {item.dynamicBadge ? (
+                        <DynamicBadgeFor
+                          kind={item.dynamicBadge}
+                          collapsed={collapsed}
+                        />
                       ) : null}
                     </Link>
                   );

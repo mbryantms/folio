@@ -1709,6 +1709,22 @@ async fn process_planned_folder(
     };
     stats.record_phase_parallel("identity", identity_started.elapsed());
 
+    // metadata-providers-1.0 M8: detect identifier tags in the series
+    // folder name (`[cv-12345]`, `[metron-67890]`, `[gcd-…]`) and
+    // persist them as `external_ids` rows. Runs every scan — the
+    // writer is idempotent and user-pinned values are protected. Side
+    // effect is small (a few INSERT/UPDATE per series) so even a
+    // re-scan with no folder-name change is cheap.
+    if let Some(folder_leaf) = folder.file_name().and_then(|n| n.to_str())
+        && let Err(e) = process::write_series_folder_tags(&state.db, series_id, folder_leaf).await
+    {
+        tracing::warn!(
+            error = %e,
+            folder = %folder.display(),
+            "scanner: failed to persist series folder-tag external_ids"
+        );
+    }
+
     state.events.emit(ScanEvent::SeriesUpdated {
         library_id: lib.id,
         series_id,

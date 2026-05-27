@@ -46,12 +46,19 @@ import {
   useMe,
   useMetadataCandidatesIssue,
   useMetadataCandidatesSeries,
+  useMetadataProposedDiffIssue,
+  useMetadataProposedDiffSeries,
 } from "@/lib/api/queries";
 import type {
   ApplyMode,
   CandidateView,
   SearchStartedResp,
 } from "@/lib/api/types";
+
+import {
+  MetadataPreviewPane,
+  defaultSelectedFields,
+} from "@/components/library/MetadataPreviewPane";
 
 export type MetadataMatchScope =
   | { kind: "series"; seriesSlug: string }
@@ -68,7 +75,7 @@ export function MetadataMatchDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-2xl">
         <MetadataMatchForm
           scope={scope}
           onClose={() => onOpenChange(false)}
@@ -127,6 +134,47 @@ export function MetadataMatchForm({
   const [applyCover, setApplyCover] = React.useState(true);
   const [overrideUserEdits, setOverrideUserEdits] = React.useState(false);
   const [pickedOrdinal, setPickedOrdinal] = React.useState<number | null>(null);
+  // M5 preview-pane state: when set, the dialog switches from the
+  // candidate-list view to the diff preview for the chosen ordinal.
+  const [previewOrdinal, setPreviewOrdinal] = React.useState<number | null>(
+    null,
+  );
+  const [selectedFields, setSelectedFields] = React.useState<Set<string>>(
+    new Set(),
+  );
+  const [overrideExternalIdSources, setOverrideExternalIdSources] =
+    React.useState<Set<string>>(new Set());
+  const seriesDiff = useMetadataProposedDiffSeries(
+    scope.kind === "series" ? scope.seriesSlug : "",
+    scope.kind === "series" ? runId : null,
+    scope.kind === "series" ? previewOrdinal : null,
+    mode,
+    overrideUserEdits,
+  );
+  const issueDiff = useMetadataProposedDiffIssue(
+    scope.kind === "issue" ? scope.seriesSlug : "",
+    scope.kind === "issue" ? scope.issueSlug : "",
+    scope.kind === "issue" ? runId : null,
+    scope.kind === "issue" ? previewOrdinal : null,
+    mode,
+    overrideUserEdits,
+  );
+  const diffQuery = scope.kind === "series" ? seriesDiff : issueDiff;
+  // Seed the default-checked set the first time a diff resolves for a
+  // given ordinal. Tracked by a ref so re-renders for the same diff
+  // don't re-stomp user toggle state.
+  const lastSeededOrdinal = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    if (
+      previewOrdinal != null &&
+      diffQuery.data &&
+      lastSeededOrdinal.current !== previewOrdinal
+    ) {
+      setSelectedFields(defaultSelectedFields(diffQuery.data));
+      setOverrideExternalIdSources(new Set());
+      lastSeededOrdinal.current = previewOrdinal;
+    }
+  }, [previewOrdinal, diffQuery.data]);
 
   // Auto-kick the search via raw apiMutate — NOT useApiMutation.
   // Backstory: TanStack Query v5's useMutation observer ends up
@@ -222,15 +270,30 @@ export function MetadataMatchForm({
     runStatus === "failed" ||
     runStatus === "awaiting_quota";
 
-  const onApply = (ordinal: number) => {
-    if (!runId) return;
+  // M5: clicking a candidate's "Preview" now stages the diff view
+  // instead of immediately writing. The actual apply fires from the
+  // preview pane's "Apply N changes" button via `onConfirmApply`.
+  const onEnterPreview = (ordinal: number) => {
+    setPreviewOrdinal(ordinal);
     setPickedOrdinal(ordinal);
+    // Reset per-ordinal selection state; seeded once diff resolves.
+    lastSeededOrdinal.current = null;
+    setSelectedFields(new Set());
+    setOverrideExternalIdSources(new Set());
+  };
+  const onExitPreview = () => {
+    setPreviewOrdinal(null);
+  };
+  const onConfirmApply = () => {
+    if (!runId || previewOrdinal == null) return;
     apply.mutate({
       run_id: runId,
-      ordinal,
+      ordinal: previewOrdinal,
       mode,
       apply_cover: applyCover,
       override_user_edits: overrideUserEdits,
+      selected_fields: Array.from(selectedFields),
+      override_external_id_sources: Array.from(overrideExternalIdSources),
     });
     // The auto-close happens via the apply.isSuccess watcher below
     // rather than a per-call onSuccess — same StrictMode-remount race
@@ -315,53 +378,75 @@ export function MetadataMatchForm({
         </div>
       )}
 
-      <ScrollArea className="max-h-[50vh] pr-3">
-        {searchError ? (
-          <div className="text-destructive py-6 text-sm">
-            {searchError}{" "}
-            <button onClick={restart} className="underline">
-              Retry
-            </button>
-          </div>
-        ) : isPolling ? (
-          <div className="text-muted-foreground flex items-center justify-center gap-2 py-12 text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" /> Searching providers…
-          </div>
-        ) : runStatus === "awaiting_quota" ? (
-          <div className="text-muted-foreground py-6 text-sm">
-            Every configured provider is out of quota right now.{" "}
-            <button onClick={restart} className="underline">
-              Retry
-            </button>{" "}
-            once the budget refills.
-          </div>
-        ) : runStatus === "failed" ? (
-          <div className="text-destructive py-6 text-sm">
-            Error: {candidates.data?.error_summary ?? "unknown failure"}.{" "}
-            <button onClick={restart} className="underline">
-              Retry
-            </button>
-          </div>
-        ) : (
-          <ul className="space-y-2 py-2">
-            {(candidates.data?.candidates ?? []).map((c, i) => (
-              <CandidateRow
-                key={`${c.source}-${c.external_id}-${i}`}
-                c={c}
-                ordinal={i}
-                disabled={apply.isPending}
-                isApplying={apply.isPending && pickedOrdinal === i}
-                onApply={() => onApply(i)}
-              />
-            ))}
-            {isFinalized && (candidates.data?.candidates.length ?? 0) === 0 && (
-              <li className="text-muted-foreground py-8 text-center text-sm">
-                No matches. Try editing the series name or year.
-              </li>
-            )}
-          </ul>
-        )}
-      </ScrollArea>
+      {previewOrdinal != null ? (
+        <MetadataPreviewPane
+          data={diffQuery.data}
+          isLoading={diffQuery.isLoading || diffQuery.isFetching}
+          errorMessage={
+            diffQuery.error
+              ? diffQuery.error instanceof Error
+                ? diffQuery.error.message
+                : "Failed to compute preview."
+              : null
+          }
+          selectedFields={selectedFields}
+          overrideExternalIdSources={overrideExternalIdSources}
+          onChangeSelected={setSelectedFields}
+          onChangeOverrideSources={setOverrideExternalIdSources}
+          onBack={onExitPreview}
+          onApply={onConfirmApply}
+          isApplying={apply.isPending}
+          canOverride={isAdmin}
+        />
+      ) : (
+        <ScrollArea className="max-h-[50vh] pr-3 [&>div>div]:block!">
+          {searchError ? (
+            <div className="text-destructive py-6 text-sm">
+              {searchError}{" "}
+              <button onClick={restart} className="underline">
+                Retry
+              </button>
+            </div>
+          ) : isPolling ? (
+            <div className="text-muted-foreground flex items-center justify-center gap-2 py-12 text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" /> Searching providers…
+            </div>
+          ) : runStatus === "awaiting_quota" ? (
+            <div className="text-muted-foreground py-6 text-sm">
+              Every configured provider is out of quota right now.{" "}
+              <button onClick={restart} className="underline">
+                Retry
+              </button>{" "}
+              once the budget refills.
+            </div>
+          ) : runStatus === "failed" ? (
+            <div className="text-destructive py-6 text-sm">
+              Error: {candidates.data?.error_summary ?? "unknown failure"}.{" "}
+              <button onClick={restart} className="underline">
+                Retry
+              </button>
+            </div>
+          ) : (
+            <ul className="space-y-2 py-2">
+              {(candidates.data?.candidates ?? []).map((c, i) => (
+                <CandidateRow
+                  key={`${c.source}-${c.external_id}-${i}`}
+                  c={c}
+                  ordinal={i}
+                  disabled={apply.isPending}
+                  isApplying={apply.isPending && pickedOrdinal === i}
+                  onApply={() => onEnterPreview(i)}
+                />
+              ))}
+              {isFinalized && (candidates.data?.candidates.length ?? 0) === 0 && (
+                <li className="text-muted-foreground py-8 text-center text-sm">
+                  No matches. Try editing the series name or year.
+                </li>
+              )}
+            </ul>
+          )}
+        </ScrollArea>
+      )}
 
       <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
         <Button
@@ -396,7 +481,7 @@ function CandidateRow({
   const parsed = parseCandidatePayload(c.candidate);
   const _ = ordinal;
   return (
-    <li className="bg-card flex gap-3 rounded-md border p-3">
+    <li className="bg-muted/40 hover:bg-muted/60 flex gap-3 rounded-md p-3 transition-colors">
       {parsed.cover_image_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -429,7 +514,7 @@ function CandidateRow({
                 <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Applying
               </>
             ) : (
-              "Apply"
+              "Preview"
             )}
           </Button>
         </div>

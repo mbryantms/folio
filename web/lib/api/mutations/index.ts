@@ -2234,6 +2234,14 @@ export type ApplyMetadataInput = {
   apply_cover?: boolean;
   cover_overwrite_policy?: ApplyCoverPolicy;
   override_user_edits?: boolean;
+  /** M5 preview pane — opt-in per-field list (by `MetadataField::key()`).
+   *  When unset/null, the legacy "apply every eligible field"
+   *  behaviour applies. When set, only the named fields write. */
+  selected_fields?: string[];
+  /** M5 external-IDs conflict surface — per-source list of rows the
+   *  user has flipped to "Use theirs" so the apply replaces a user-
+   *  set external_id with the candidate's value. */
+  override_external_id_sources?: string[];
 };
 
 export function useApplyMetadataForSeries(seriesSlug: string) {

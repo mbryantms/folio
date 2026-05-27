@@ -32,12 +32,20 @@ export type IconName =
   | "UserCog"
   | "Users";
 
+/** Discriminator for live count badges rendered next to a nav label.
+ *  Resolved client-side in `<AdminSidebar>` so the server layout can
+ *  stay synchronous. Add a case here + a render branch in the
+ *  sidebar when introducing a new dynamic-count surface. */
+export type DynamicBadge = "metadata-unmatched";
+
 export type NavItem = {
   href: string;
   label: string;
   icon: IconName;
   /** Marks pages that are placeholders shipped in M1 — drop this when M2–M6 fill them in. */
   placeholder?: boolean;
+  /** Render a live count pill (e.g. unmatched-series total for the Metadata entry). */
+  dynamicBadge?: DynamicBadge;
   /**
    * When true, only highlight this nav item when the current path
    * matches `href` exactly — no descendant match. Use for "index"
@@ -92,8 +100,16 @@ export function adminNav(localePrefix: string): NavSection[] {
       label: "Content",
       items: [
         // metadata-providers-1.0 M6 — provider/quota dashboard +
-        // review queue + run history at `/admin/metadata`.
-        { href: p("/metadata"), label: "Metadata", icon: "Sparkles" },
+        // review queue + run history at `/admin/metadata`. The
+        // `metadata-unmatched` badge surfaces the dashboard's
+        // `series_unmatched` count so operators see backlog at a
+        // glance without opening the page.
+        {
+          href: p("/metadata"),
+          label: "Metadata",
+          icon: "Sparkles",
+          dynamicBadge: "metadata-unmatched",
+        },
       ],
     },
     {

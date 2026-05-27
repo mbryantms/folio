@@ -631,6 +631,11 @@ export type ExternalIdRow = Schemas["ExternalIdRow"];
 export type AddExternalIdReq = Schemas["AddExternalIdReq"];
 export type IssueCoversResp = Schemas["IssueCoversResp"];
 export type IssueCoverRow = Schemas["IssueCoverRow"];
+// M5 preview pane / proposed-diff
+export type DiffResp = Schemas["DiffResp"];
+export type ScalarDiffRow = Schemas["ScalarDiffRow"];
+export type ExternalIdConflictRow = Schemas["ExternalIdConflictRow"];
+export type ExternalIdNewRow = Schemas["ExternalIdNewRow"];
 // M6 admin surface
 export type DashboardResp = Schemas["DashboardResp"];
 export type ProviderView = Schemas["ProviderView"];

@@ -2958,6 +2958,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/issues/{issue_slug}/metadata/proposed-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_proposed_diff_issue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/issues/{issue_slug}/metadata/search": {
         parameters: {
             query?: never;
@@ -3016,6 +3032,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["metadata_pause_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/proposed-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_proposed_diff_series"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3319,6 +3351,11 @@ export interface components {
              * @description 0-based rank from the orchestrator (lower = higher score).
              */
             ordinal: number;
+            /** @description M5 conflict-resolution: per-source list of external-ID rows
+             *     where the user has opted to "Use theirs". The candidate's
+             *     value replaces the user-set row for these sources. Other
+             *     conflicts stay sacred. */
+            override_external_id_sources?: string[];
             /** @description Bypass the user-precedence rule. Admin-only; non-admin callers
              *     get 403 if they request it. */
             override_user_edits?: boolean;
@@ -3330,6 +3367,12 @@ export interface components {
              *     provider.
              */
             run_id: string;
+            /** @description M5 preview-pane opt-in: when present, only the named fields
+             *     (by `MetadataField::key()`) are applied; everything else is
+             *     skipped. When absent, the legacy "apply every eligible field"
+             *     behaviour applies (preserves backward compat for older
+             *     clients). */
+            selected_fields?: string[] | null;
         };
         AuditEntryView: {
             action: string;
@@ -4168,6 +4211,32 @@ export interface components {
             /** Format: int64 */
             sessions: number;
         };
+        DiffResp: {
+            /** @description Count of rows whose decision would actually write a value
+             *     (`would_fill` + `would_replace`). Lets the preview header
+             *     summarize "5 changes" without the client re-walking the rows. */
+            changes_count: number;
+            /** @description Only present when the candidate carries external_ids that
+             *     disagree with user-set rows on the same entity. */
+            external_id_conflicts: components["schemas"]["ExternalIdConflictRow"][];
+            /** @description Provider IDs the candidate brought that the entity doesn't
+             *     have yet (no conflict — would just add). */
+            external_ids_new: components["schemas"]["ExternalIdNewRow"][];
+            /** Format: int32 */
+            ordinal: number;
+            /** @description Per-field rows, ordered by enum declaration (groups
+             *     scalars-then-junctions-then-covers). */
+            rows: components["schemas"]["ScalarDiffRow"][];
+            /** Format: uuid */
+            run_id: string;
+            /** @description `"series" | "issue"` — echoes the run scope so the client
+             *     can render the right header copy. */
+            scope: string;
+            /** @description `"comicvine" | "metron"` — which provider supplied the
+             *     candidate. Drives the "Apply from <provider>" copy. */
+            source: string;
+            source_external_id: string;
+        };
         DirEntry: {
             name: string;
             path: string;
@@ -4324,6 +4393,23 @@ export interface components {
             slug: string;
             /** Format: int32 */
             year?: number | null;
+        };
+        /** @description External-ID conflict row — surfaces in the preview pane as an
+         *     amber row with a Keep mine / Use theirs control. */
+        ExternalIdConflictRow: {
+            /** @description Current user-set external id. */
+            current_external_id: string;
+            /** @description The candidate's proposed external id (always different from
+             *     `current_external_id`; same-value rows are filtered out). */
+            proposed_external_id: string;
+            /** @description `"comicvine" | "metron" | …` from [`Source::as_str`]. */
+            source: string;
+        };
+        /** @description Provider external id the entity doesn't carry yet — apply will
+         *     just add the row, no conflict. */
+        ExternalIdNewRow: {
+            external_id: string;
+            source: string;
         };
         ExternalIdRow: {
             external_id: string;
@@ -5677,6 +5763,30 @@ export interface components {
             updated_at: string;
             /** @description `None` for system views (admin-curated, visible to every user). */
             user_id?: string | null;
+        };
+        /** @description What the preview pane needs to render one row of the diff table. */
+        ScalarDiffRow: {
+            /** @description ISO-8601 timestamp of the last write to this field, or `null`. */
+            current_set_at?: string | null;
+            /** @description `set_by` for the current row's provenance (`"user"` /
+             *     `"comicvine"` / `"metroninfo"` / …). `null` when the field has
+             *     no provenance row. */
+            current_set_by?: string | null;
+            /** @description String-formatted current value, or `null` if the DB cell is
+             *     empty / NULL. Always a string so client rendering is uniform
+             *     across int/str/date/float fields. */
+            current_value?: string | null;
+            /** @description One of the [`DiffDecision`] variants — drives default checked
+             *     state + per-row badge in the preview pane. */
+            decision: string;
+            /** @description `MetadataField::key()` — stable string identifier the apply
+             *     payload echoes back in `selected_fields`. */
+            field: string;
+            /** @description Human-readable label for the field, derived once on the
+             *     server so every client renders the same string. */
+            label: string;
+            /** @description String-formatted proposed value from the provider candidate. */
+            proposed_value?: string | null;
         };
         /** @description One entry in the `scan-all` response — what happened for a given
          *     library. `was_already_running=true` means apalis's in-flight
@@ -12717,6 +12827,61 @@ export interface operations {
             };
         };
     };
+    metadata_proposed_diff_issue: {
+        parameters: {
+            query: {
+                run_id: string;
+                ordinal: number;
+                mode?: components["schemas"]["ApplyMode"];
+                override_user_edits?: boolean;
+            };
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffResp"];
+                };
+            };
+            /** @description invalid run scope */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue / run / candidate not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_search_issue: {
         parameters: {
             query?: never;
@@ -12887,6 +13052,60 @@ export interface operations {
             };
             /** @description series not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_proposed_diff_series: {
+        parameters: {
+            query: {
+                run_id: string;
+                ordinal: number;
+                mode?: components["schemas"]["ApplyMode"];
+                override_user_edits?: boolean;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffResp"];
+                };
+            };
+            /** @description invalid run scope */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / run / candidate not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider error */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

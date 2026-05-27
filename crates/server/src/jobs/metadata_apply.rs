@@ -112,6 +112,13 @@ pub struct ApplySeriesJob {
     pub actor_id: Option<Uuid>,
     pub actor_ip: Option<String>,
     pub actor_ua: Option<String>,
+    /// M5 per-field opt-in from the preview pane. `#[serde(default)]`
+    /// so pre-M5 queued jobs still deserialize.
+    #[serde(default)]
+    pub selected_fields: Option<std::collections::HashSet<String>>,
+    /// M5 per-source override for external_ids conflicts.
+    #[serde(default)]
+    pub override_external_id_sources: std::collections::HashSet<String>,
 }
 
 pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result<(), Error> {
@@ -127,6 +134,8 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         actor_id,
         actor_ip,
         actor_ua,
+        selected_fields,
+        override_external_id_sources,
     } = job;
 
     let claimed = match try_claim_series_mutex(&state, series_id).await {
@@ -149,6 +158,8 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         cover_overwrite_policy: cover_overwrite_policy.into(),
         override_user_edits,
         actor_id,
+        selected_fields,
+        override_external_id_sources,
     };
 
     let outcome = apply::apply_series(&state, args).await;
@@ -183,6 +194,13 @@ pub struct ApplyIssueJob {
     pub actor_id: Option<Uuid>,
     pub actor_ip: Option<String>,
     pub actor_ua: Option<String>,
+    /// M5 per-field opt-in from the preview pane. `#[serde(default)]`
+    /// so pre-M5 queued jobs still deserialize.
+    #[serde(default)]
+    pub selected_fields: Option<std::collections::HashSet<String>>,
+    /// M5 per-source override for external_ids conflicts.
+    #[serde(default)]
+    pub override_external_id_sources: std::collections::HashSet<String>,
 }
 
 pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(), Error> {
@@ -198,6 +216,8 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
         actor_id,
         actor_ip,
         actor_ua,
+        selected_fields,
+        override_external_id_sources,
     } = job;
 
     let claimed = match try_claim_issue_mutex(&state, &issue_id).await {
@@ -220,6 +240,8 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
         cover_overwrite_policy: cover_overwrite_policy.into(),
         override_user_edits,
         actor_id,
+        selected_fields,
+        override_external_id_sources,
     };
 
     let outcome = apply::apply_issue(&state, args).await;

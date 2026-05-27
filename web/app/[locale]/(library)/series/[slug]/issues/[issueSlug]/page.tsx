@@ -18,6 +18,8 @@ import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
 import { Description } from "@/components/library/Description";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
+import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
+
 import { IssueMetadataPanel } from "./IssueMetadataPanel";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
@@ -294,6 +296,11 @@ export default async function IssuePage({
                 initial={issue.user_rating ?? null}
                 label="Your rating"
                 variant="inline"
+              />
+              <ProviderBadgesRow
+                scope="issue"
+                seriesSlug={issue.series_slug}
+                issueSlug={issue.slug}
               />
             </div>
           </div>

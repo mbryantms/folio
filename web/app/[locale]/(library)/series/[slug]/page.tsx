@@ -46,6 +46,8 @@ import {
 
 import { readerUrl } from "@/lib/urls";
 
+import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
+
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
 import { SeriesMetadataPanel } from "./SeriesMetadataPanel";
@@ -205,6 +207,7 @@ export default async function SeriesPage({
                 label="Series rating"
                 variant="inline"
               />
+              <ProviderBadgesRow scope="series" seriesSlug={series.slug} />
             </div>
           </div>
           <Description text={series.summary} />

@@ -29,7 +29,8 @@ use uuid::Uuid;
 use super::error;
 use crate::auth::CurrentUser;
 use crate::jobs::{metadata_apply, metadata_search};
-use crate::metadata::apply::ApplyMode;
+use crate::metadata::apply::{self, ApplyArgs, ApplyMode};
+use crate::metadata::diff::{self, DiffResp};
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
 use crate::metadata::orchestrator;
 use crate::middleware::RequestContext;
@@ -40,12 +41,14 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(search_series))
         .routes(routes!(candidates_series))
+        .routes(routes!(proposed_diff_series))
         .routes(routes!(apply_series))
         .routes(routes!(pause_series))
         .routes(routes!(resume_series))
         .routes(routes!(sync_status_series))
         .routes(routes!(search_issue))
         .routes(routes!(candidates_issue))
+        .routes(routes!(proposed_diff_issue))
         .routes(routes!(apply_issue))
 }
 
@@ -118,6 +121,19 @@ pub struct ApplyRequest {
     /// get 403 if they request it.
     #[serde(default)]
     pub override_user_edits: bool,
+    /// M5 preview-pane opt-in: when present, only the named fields
+    /// (by `MetadataField::key()`) are applied; everything else is
+    /// skipped. When absent, the legacy "apply every eligible field"
+    /// behaviour applies (preserves backward compat for older
+    /// clients).
+    #[serde(default)]
+    pub selected_fields: Option<Vec<String>>,
+    /// M5 conflict-resolution: per-source list of external-ID rows
+    /// where the user has opted to "Use theirs". The candidate's
+    /// value replaces the user-set row for these sources. Other
+    /// conflicts stay sacred.
+    #[serde(default)]
+    pub override_external_id_sources: Vec<String>,
 }
 
 fn default_fill_missing() -> ApplyMode {
@@ -670,6 +686,104 @@ pub async fn candidates_issue(
     Json(build_candidates_resp(&app, run).await).into_response()
 }
 
+// ───────── /series/{slug}/metadata/proposed-diff ─────────
+
+/// Diff request — mirrors the [`ApplyRequest`] shape so the client
+/// can preview exactly what the apply would do. M5 preview pane.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct ProposedDiffQuery {
+    pub run_id: Uuid,
+    pub ordinal: i32,
+    #[serde(default = "default_fill_missing")]
+    pub mode: ApplyMode,
+    #[serde(default)]
+    pub override_user_edits: bool,
+}
+
+fn make_diff_args(q: &ProposedDiffQuery) -> ApplyArgs {
+    ApplyArgs {
+        run_id: q.run_id,
+        ordinal: q.ordinal,
+        mode: q.mode,
+        apply_cover: false, // diff doesn't preview cover bytes — keep it cheap
+        cover_overwrite_policy: crate::metadata::writers::CoverOverwritePolicy::WhenMissing,
+        override_user_edits: q.override_user_edits,
+        actor_id: None,
+        selected_fields: None,
+        override_external_id_sources: std::collections::HashSet::new(),
+    }
+}
+
+fn map_diff_err(e: apply::ApplyError) -> Response {
+    use apply::ApplyError;
+    match e {
+        ApplyError::CandidateNotFound { .. } => error(
+            StatusCode::NOT_FOUND,
+            "metadata.candidate_not_found",
+            "candidate not found",
+        ),
+        ApplyError::SeriesGone => error(
+            StatusCode::NOT_FOUND,
+            "series.not_found",
+            "series no longer exists",
+        ),
+        ApplyError::IssueGone => error(
+            StatusCode::NOT_FOUND,
+            "issue.not_found",
+            "issue no longer exists",
+        ),
+        ApplyError::InvalidScope(msg) => error(StatusCode::BAD_REQUEST, "metadata.invalid_scope", &msg),
+        ApplyError::Provider(_) => error(StatusCode::BAD_GATEWAY, "metadata.provider", "upstream provider error"),
+        ApplyError::Db(_) | ApplyError::Io(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+    }
+}
+
+#[utoipa::path(
+    operation_id = "metadata_proposed_diff_series",
+    get,
+    path = "/series/{slug}/metadata/proposed-diff",
+    params(("slug" = String, Path), ProposedDiffQuery),
+    responses(
+        (status = 200, body = DiffResp),
+        (status = 400, description = "invalid run scope"),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "series / run / candidate not found"),
+        (status = 502, description = "provider error"),
+    )
+)]
+#[handler]
+pub async fn proposed_diff_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path(slug): Path<String>,
+    Query(q): Query<ProposedDiffQuery>,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+    }
+    // Sanity-check run scope before paying the provider round trip.
+    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id).await.ok().flatten() else {
+        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    };
+    if run.scope != orchestrator::scope::SERIES
+        || run.scope_entity_id.as_deref() != Some(s.id.to_string().as_str())
+    {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "run does not belong to this series",
+        );
+    }
+    match diff::compute_series_diff(&app, make_diff_args(&q)).await {
+        Ok(resp) => Json(resp).into_response(),
+        Err(e) => map_diff_err(e),
+    }
+}
+
 // ───────── /series/{slug}/metadata/apply ─────────
 
 #[utoipa::path(
@@ -752,6 +866,12 @@ pub async fn apply_series(
             actor_id: Some(user.id),
             actor_ip: ctx.ip_string(),
             actor_ua: ctx.user_agent.clone(),
+            selected_fields: req.selected_fields.clone().map(std::collections::HashSet::from_iter),
+            override_external_id_sources: req
+                .override_external_id_sources
+                .iter()
+                .cloned()
+                .collect(),
         })
         .await
     {
@@ -768,6 +888,56 @@ pub async fn apply_series(
         }),
     )
         .into_response()
+}
+
+// ───────── /series/{slug}/issues/{issue_slug}/metadata/proposed-diff ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_proposed_diff_issue",
+    get,
+    path = "/series/{slug}/issues/{issue_slug}/metadata/proposed-diff",
+    params(
+        ("slug" = String, Path),
+        ("issue_slug" = String, Path),
+        ProposedDiffQuery,
+    ),
+    responses(
+        (status = 200, body = DiffResp),
+        (status = 400, description = "invalid run scope"),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "issue / run / candidate not found"),
+        (status = 502, description = "provider error"),
+    )
+)]
+#[handler]
+pub async fn proposed_diff_issue(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path((slug, issue_slug)): Path<(String, String)>,
+    Query(q): Query<ProposedDiffQuery>,
+) -> Response {
+    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+    }
+    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id).await.ok().flatten() else {
+        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    };
+    if run.scope != orchestrator::scope::ISSUE
+        || run.scope_entity_id.as_deref() != Some(i.id.as_str())
+    {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "run does not belong to this issue",
+        );
+    }
+    match diff::compute_issue_diff(&app, make_diff_args(&q)).await {
+        Ok(resp) => Json(resp).into_response(),
+        Err(e) => map_diff_err(e),
+    }
 }
 
 // ───────── /series/{slug}/issues/{issue_slug}/metadata/apply ─────────
@@ -850,6 +1020,12 @@ pub async fn apply_issue(
             actor_id: Some(user.id),
             actor_ip: ctx.ip_string(),
             actor_ua: ctx.user_agent.clone(),
+            selected_fields: req.selected_fields.clone().map(std::collections::HashSet::from_iter),
+            override_external_id_sources: req
+                .override_external_id_sources
+                .iter()
+                .cloned()
+                .collect(),
         })
         .await
     {

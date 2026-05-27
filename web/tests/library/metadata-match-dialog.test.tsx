@@ -71,6 +71,11 @@ vi.mock("@/lib/api/queries", () => ({
   // path is inactive in series-scope tests so just return an empty
   // shell.
   useMetadataCandidatesIssue: () => ({ data: undefined }),
+  // M5 preview pane — the candidate-list rendering tests don't drill
+  // into the preview, so a no-op shell is sufficient. Component-level
+  // PreviewPane coverage lives in its own test file.
+  useMetadataProposedDiffSeries: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
+  useMetadataProposedDiffIssue: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
 }));
 
 vi.mock("@/components/ui/scroll-area", () => ({
