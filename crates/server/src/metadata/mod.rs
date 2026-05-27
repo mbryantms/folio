@@ -30,6 +30,7 @@ pub mod provider;
 pub mod rate_limit;
 pub mod refresh;
 pub mod sidecar_compose;
+pub mod writeback_progress;
 pub mod writers;
 
 pub use field::MetadataField;

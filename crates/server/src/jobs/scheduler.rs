@@ -32,6 +32,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_cbl_refresh_sweep(&scheduler, &state).await;
     register_prune_auth_sessions(&scheduler, &state).await;
     register_metadata_weekly_refresh(&scheduler, &state).await;
+    register_writeback_migration_progress(&scheduler, &state).await;
     Ok(scheduler)
 }
 
@@ -539,4 +540,68 @@ async fn run_metadata_weekly_refresh(state: &AppState) {
         stale_enqueued = stale_total,
         "metadata weekly refresh: sweep complete",
     );
+}
+
+/// M7 of `metadata-sidecar-writeback-1.0`: emit a Prometheus gauge for
+/// operator visibility into the writeback rollout. Value = count of
+/// libraries that still have `metadata_writeback_enabled=false`. Once
+/// the gauge hits zero in production the legacy DB-direct apply path
+/// in [`crate::metadata::apply::apply_issue`] /
+/// [`crate::metadata::apply::apply_series`] is provably dead and the
+/// follow-up code-quality PR can rip it out.
+///
+/// Runs weekly at 04:00 UTC Monday — chosen so operators see fresh
+/// numbers at the start of a maintenance window. The metric is also
+/// refreshed at server startup so an operator who just flipped a flag
+/// doesn't wait a week to see the delta.
+async fn register_writeback_migration_progress(scheduler: &JobScheduler, state: &AppState) {
+    // Refresh once at registration time so the gauge has a meaningful
+    // value before the first scheduled tick.
+    refresh_writeback_remaining_gauge(state).await;
+
+    let state = state.clone();
+    let job_result = Job::new_async("0 0 4 * * 1", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            refresh_writeback_remaining_gauge(&state).await;
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(
+                    error = %e,
+                    "scheduler: add writeback_migration_progress failed",
+                );
+            } else {
+                tracing::info!(
+                    "writeback_migration_progress registered (04:00 UTC Monday)",
+                );
+            }
+        }
+        Err(e) => tracing::error!(
+            error = %e,
+            "scheduler: build writeback_migration_progress failed",
+        ),
+    }
+}
+
+/// Run the `metadata_writeback_enabled=false` count and stamp the
+/// Prometheus gauge. Extracted so integration tests can call it
+/// directly (the scheduler harness needs a running tokio_cron_scheduler
+/// and a clock tick to fire the closure).
+pub async fn refresh_writeback_remaining_gauge(state: &AppState) {
+    match crate::metadata::writeback_progress::count_libraries_without_writeback(&state.db).await {
+        Ok(n) => {
+            metrics::gauge!("comic_metadata_writeback_libraries_remaining").set(n as f64);
+            tracing::info!(
+                libraries_remaining = n,
+                "writeback migration progress refreshed",
+            );
+        }
+        Err(e) => tracing::warn!(
+            error = %e,
+            "writeback migration progress: count query failed",
+        ),
+    }
 }
