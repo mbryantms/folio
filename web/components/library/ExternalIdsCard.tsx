@@ -25,6 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -167,118 +168,136 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
       )
     );
 
-  const body = (
-    <>
-          {query.isLoading ? (
-            <div className="text-muted-foreground flex items-center gap-2 py-3">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-            </div>
-          ) : rows.length === 0 && !adding ? (
-            <div className="text-muted-foreground py-3">
-              No identifiers linked yet.
-            </div>
-          ) : (
-            <ul className="divide-y">
-              {rows.map((r) => (
-                <li
-                  key={r.source}
-                  className="flex items-center justify-between py-2"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{r.source_label}</span>
-                      {r.set_by === "user" && (
-                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">
-                          User-set
-                        </span>
-                      )}
-                    </div>
-                    {r.external_url ? (
-                      <a
-                        href={r.external_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-muted-foreground block truncate text-xs hover:underline"
-                      >
-                        {r.external_id} ↗
-                      </a>
-                    ) : (
-                      <code className="text-muted-foreground block truncate text-xs">
-                        {r.external_id}
-                      </code>
+  const body =
+    chrome === "card" ? (
+      // Card layout: the original divided-list rendering. Used by the
+      // series-page panel + any other caller that wants the Card chrome.
+      <>
+        {query.isLoading ? (
+          <div className="text-muted-foreground flex items-center gap-2 py-3">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </div>
+        ) : rows.length === 0 && !adding ? (
+          <div className="text-muted-foreground py-3">
+            No identifiers linked yet.
+          </div>
+        ) : (
+          <ul className="divide-y">
+            {rows.map((r) => (
+              <li
+                key={r.source}
+                className="flex items-center justify-between py-2"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{r.source_label}</span>
+                    {r.set_by === "user" && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">
+                        User-set
+                      </span>
                     )}
                   </div>
+                  {r.external_url ? (
+                    <a
+                      href={r.external_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-muted-foreground block truncate text-xs hover:underline"
+                    >
+                      {r.external_id} ↗
+                    </a>
+                  ) : (
+                    <code className="text-muted-foreground block truncate text-xs">
+                      {r.external_id}
+                    </code>
+                  )}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmRemove(r)}
+                  aria-label={`Remove ${r.source_label} link`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {adding && renderAddForm(source, setSource, extId, setExtId, onAdd, add.isPending, () => {
+          setAdding(false);
+          setExtId("");
+        })}
+      </>
+    ) : (
+      // Bare layout: ChipList-style grid matching the Credits / Cast
+      // & Setting tabs. Each row renders as
+      //   LABEL (uppercase muted)
+      //   [chip]   (clickable, opens external_url in a new tab)
+      // The trash-can affordance becomes a tiny ghost button beside
+      // the chip; the User-set marker becomes a small outline badge
+      // sitting alongside.
+      <>
+        {query.isLoading ? (
+          <div className="text-muted-foreground flex items-center gap-2 py-3">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </div>
+        ) : rows.length === 0 && !adding ? (
+          <p className="text-muted-foreground text-sm">
+            No identifiers linked yet.
+          </p>
+        ) : (
+          <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-3">
+            {rows.map((r) => (
+              <div key={r.source} className="space-y-2">
+                <h3 className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+                  {r.source_label}
+                </h3>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {r.external_url ? (
+                    <a
+                      href={r.external_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Open ${r.source_label} ${r.external_id}`}
+                    >
+                      <Badge
+                        variant="secondary"
+                        className="hover:bg-secondary/80 cursor-pointer font-normal"
+                      >
+                        {r.external_id}
+                      </Badge>
+                    </a>
+                  ) : (
+                    <Badge variant="secondary" className="cursor-default font-normal">
+                      {r.external_id}
+                    </Badge>
+                  )}
+                  {r.set_by === "user" && (
+                    <Badge variant="outline" className="font-normal">
+                      User-set
+                    </Badge>
+                  )}
                   <Button
                     variant="ghost"
-                    size="sm"
+                    size="icon"
+                    className="text-muted-foreground/60 hover:text-foreground h-6 w-6"
                     onClick={() => setConfirmRemove(r)}
                     aria-label={`Remove ${r.source_label} link`}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3 w-3" />
                   </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {adding && (
-            <form
-              onSubmit={onAdd}
-              className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-end"
-            >
-              <div className="grid flex-1 gap-1.5">
-                <Label htmlFor="eic-source" className="text-xs">
-                  Source
-                </Label>
-                <Select value={source} onValueChange={setSource}>
-                  <SelectTrigger id="eic-source">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SOURCES.map((s) => (
-                      <SelectItem key={s.value} value={s.value}>
-                        {s.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                </div>
               </div>
-              <div className="grid flex-[2] gap-1.5">
-                <Label htmlFor="eic-id" className="text-xs">
-                  ID
-                </Label>
-                <Input
-                  id="eic-id"
-                  value={extId}
-                  onChange={(e) => setExtId(e.target.value)}
-                  placeholder="e.g. 12345"
-                  autoFocus
-                />
-              </div>
-              <div className="flex gap-1">
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={add.isPending || !extId.trim()}
-                >
-                  Add
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setAdding(false);
-                    setExtId("");
-                  }}
-                  disabled={add.isPending}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          )}
-    </>
-  );
+            ))}
+          </div>
+        )}
+        {adding && renderAddForm(source, setSource, extId, setExtId, onAdd, add.isPending, () => {
+          setAdding(false);
+          setExtId("");
+        })}
+      </>
+    );
 
   return (
     <>
@@ -330,5 +349,71 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/**
+ * Inline "+ Add ID" form. Same shape in both card + bare layouts so the
+ * "Source / ID / Add / Cancel" UX is identical; only the outer chrome
+ * differs.
+ */
+function renderAddForm(
+  source: string,
+  setSource: (v: string) => void,
+  extId: string,
+  setExtId: (v: string) => void,
+  onAdd: (e: React.FormEvent) => void,
+  isPending: boolean,
+  onCancel: () => void,
+) {
+  return (
+    <form
+      onSubmit={onAdd}
+      className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-end"
+    >
+      <div className="grid flex-1 gap-1.5">
+        <Label htmlFor="eic-source" className="text-xs">
+          Source
+        </Label>
+        <Select value={source} onValueChange={setSource}>
+          <SelectTrigger id="eic-source">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SOURCES.map((s) => (
+              <SelectItem key={s.value} value={s.value}>
+                {s.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid flex-[2] gap-1.5">
+        <Label htmlFor="eic-id" className="text-xs">
+          ID
+        </Label>
+        <Input
+          id="eic-id"
+          value={extId}
+          onChange={(e) => setExtId(e.target.value)}
+          placeholder="e.g. 12345"
+          autoFocus
+        />
+      </div>
+      <div className="flex gap-1">
+        <Button type="submit" size="sm" disabled={isPending || !extId.trim()}>
+          Add
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={onCancel}
+          disabled={isPending}
+        >
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }

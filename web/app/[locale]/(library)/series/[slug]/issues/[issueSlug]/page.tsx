@@ -539,14 +539,6 @@ export default async function IssuePage({
 
           <TabsContent
             forceMount
-            value="covers"
-            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
-          >
-            <CoverGallery issueId={issue.id} chrome="bare" />
-          </TabsContent>
-
-          <TabsContent
-            forceMount
             value="external-ids"
             className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
@@ -568,6 +560,15 @@ export default async function IssuePage({
               issueSlug={issue.slug}
               initial={issue.notes ?? null}
             />
+          </TabsContent>
+          {/* Covers tab is intentionally OUTSIDE the forceMount stack:
+            * variant cover tiles are tall, and pinning them into the
+            * stack would force every other tab's panel to that height
+            * (the "lots of empty space at the bottom" effect). On-demand
+            * mount also matches Activity, which stays out of the stack
+            * for its own perf reason. */}
+          <TabsContent value="covers" className="col-start-1 row-start-1 pt-6">
+            <CoverGallery issueId={issue.id} chrome="bare" />
           </TabsContent>
           {hasActivity && (
             <TabsContent

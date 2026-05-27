@@ -91,8 +91,16 @@ export function CoverGallery({
   const variantCount = data.covers.filter((c) => c.kind !== "primary").length;
   if (chrome === "card" && variantCount === 0) return null;
 
+  // Denser grid in bare mode (the issue-page tab gives us full
+  // page-width, so we can fit 4-7 columns at common breakpoints).
+  // Card mode keeps the original sizing for the series-page panel +
+  // any legacy 2-col-grid caller.
+  const gridClass =
+    chrome === "bare"
+      ? "grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7"
+      : "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4";
   const grid = (
-    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+    <ul className={gridClass}>
       {data.covers.map((c) => (
         <CoverTile
           key={c.id}
@@ -125,50 +133,89 @@ function CoverTile({
   fallbackUrl: string;
 }) {
   const src = row.source_url ?? (row.kind === "primary" ? fallbackUrl : null);
+  // Click target for "open full-resolution in a new tab" — variants
+  // point at the provider CDN; primary uses the same fallback URL the
+  // thumbnail rendered with (the on-disk cover route is full-res
+  // already, so the click opens it directly). When no URL exists for
+  // either, the tile renders as a non-interactive placeholder.
+  const fullResUrl = row.source_url ?? (row.kind === "primary" ? fallbackUrl : null);
+  const label = row.variant_label ?? row.kind;
+
+  // Image element — drops the wrapping border / padding / bg-card the
+  // legacy tile used; the image itself is the tile. Square corners
+  // via `rounded` only (matches the theme's other card-like surfaces).
+  const img = src ? (
+    row.source_url ? (
+      // External CDN — Next/Image's default loader complains about
+      // unknown hosts; use a plain <img> for variants on provider
+      // CDNs.
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={src}
+        alt={label}
+        loading="lazy"
+        className="absolute inset-0 h-full w-full object-cover"
+      />
+    ) : (
+      <Image
+        src={src}
+        alt={label}
+        fill
+        className="object-cover"
+        sizes="(max-width: 640px) 33vw, (max-width: 1024px) 20vw, 14vw"
+        unoptimized
+      />
+    )
+  ) : (
+    <div className="h-full w-full" aria-hidden />
+  );
+
+  const caption = (
+    <div className="mt-1.5 min-w-0">
+      <div className="flex items-center justify-between gap-1 text-xs">
+        <span className="truncate capitalize">{label}</span>
+        {row.kind !== "primary" && row.ordinal > 0 && (
+          <span className="text-muted-foreground">#{row.ordinal}</span>
+        )}
+      </div>
+      {row.source_provider && (
+        <p className="text-muted-foreground truncate text-xs">
+          {labelForProvider(row.source_provider)}
+        </p>
+      )}
+    </div>
+  );
+
+  const frame = (
+    <div className="bg-muted relative aspect-2/3 overflow-hidden rounded">
+      {img}
+    </div>
+  );
+
   return (
-    <li className="bg-card flex flex-col gap-1.5 rounded-md border p-2">
-      <div className="relative aspect-[2/3] overflow-hidden rounded bg-muted">
-        {src ? (
-          row.source_url ? (
-            // External CDN — Next/Image's default loader complains
-            // about unknown hosts; use a plain <img> for variants
-            // hosted on provider CDNs.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={src}
-              alt={row.variant_label ?? row.kind}
-              loading="lazy"
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-          ) : (
-            <Image
-              src={src}
-              alt={row.variant_label ?? row.kind}
-              fill
-              className="object-cover"
-              sizes="(max-width: 768px) 50vw, 25vw"
-              unoptimized
-            />
-          )
-        ) : (
-          <div className="h-full w-full" aria-hidden />
-        )}
-      </div>
-      <div className="min-w-0">
-        <div className="flex items-center justify-between gap-1 text-xs">
-          <span className="truncate font-medium capitalize">
-            {row.variant_label ?? row.kind}
-          </span>
-          {row.kind !== "primary" && row.ordinal > 0 && (
-            <span className="text-muted-foreground">#{row.ordinal}</span>
-          )}
-        </div>
-        {row.source_provider && (
-          <p className="text-muted-foreground truncate text-xs">
-            {labelForProvider(row.source_provider)}
-          </p>
-        )}
-      </div>
+    <li>
+      {fullResUrl ? (
+        // Open the full-resolution image in a new tab. For variants
+        // this is the provider's CDN URL (which serves the original
+        // resolution); for the primary it's the local cover route.
+        <a
+          href={fullResUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="group block focus-visible:outline-ring focus-visible:outline-2 focus-visible:outline-offset-2 rounded"
+          title={`Open ${label} at full resolution`}
+        >
+          <div className="group-hover:ring-ring/40 rounded transition-shadow group-hover:ring-2">
+            {frame}
+          </div>
+          {caption}
+        </a>
+      ) : (
+        <>
+          {frame}
+          {caption}
+        </>
+      )}
     </li>
   );
 }
