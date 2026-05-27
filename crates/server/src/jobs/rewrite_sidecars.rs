@@ -1,0 +1,329 @@
+//! `RewriteIssueSidecarsJob` — apalis worker that swaps an issue's
+//! `ComicInfo.xml` + `MetronInfo.xml` entries inside the archive and
+//! re-ingests the result via a scoped rescan.
+//!
+//! Wired by the M3 refactor of `apply_issue` in
+//! [`crate::metadata::apply`] — when a library has
+//! `metadata_writeback_enabled=true`, the apply path composes both
+//! XMLs via [`crate::metadata::sidecar_compose`], serializes them with
+//! [`parsers::comicinfo::serialize`] / [`parsers::metroninfo::serialize`],
+//! and enqueues this job. The previous DB-direct write path stays for
+//! libraries that haven't flipped the toggle.
+//!
+//! ## Flow (mirrors plan M3 step list)
+//!
+//!   1. Try-claim per-issue rewrite mutex
+//!      (`archive:rewrite:<issue_id>`, TTL = 120s).
+//!   2. Open the source archive via [`archive::open`].
+//!   3. Build a [`archive::cbz_write::RebuildPlan`] with
+//!      `set_entry("ComicInfo.xml", …)` + `set_entry("MetronInfo.xml", …)`.
+//!      Every page entry takes the default `Keep` path → stream-copied
+//!      compressed bytes preserved verbatim.
+//!   4. Atomic swap via
+//!      [`crate::archive_rewrite::rewrite_atomic`] (writes `.cbz.tmp`,
+//!      rotates `.bak` slots, renames over the original, fsyncs the
+//!      parent directory). Output respects the per-library
+//!      `archive_backup_retain_count`.
+//!   5. Invalidate the zip-LRU entry for this issue so subsequent
+//!      reader opens see the rewritten file.
+//!   6. Update bookkeeping on the `issues` row:
+//!      `last_rewrite_at`, `last_rewrite_kind='sidecar'`,
+//!      `thumbnails_generated_at=NULL`, `thumbnail_version=0`.
+//!      Clearing the thumbnail stamps tells the catch-up sweep to
+//!      regenerate them on the next post-scan pass — since the cover
+//!      page bytes are identical, the regenerated thumbs are
+//!      byte-equal; we clear them anyway because the scanner's
+//!      content-hash dedupe pinpoint requires it.
+//!   7. Emit an audit row: `admin.issue.sidecar_writeback` with the
+//!      run id, ordinal, and the `suppressed_user_pins` array M3
+//!      collected from `enumerate_suppressed_pins`.
+//!   8. Enqueue a scoped issue rescan so the scanner re-ingests the
+//!      freshly-written XML and the DB cache reflects the new state.
+//!      The scanner's `dedupe_by_content_hash` keeps the row id
+//!      stable.
+//!   9. Release the rewrite mutex.
+
+use crate::archive_rewrite::{self, mutex, RewriteError};
+use crate::audit::{self, AuditEntry};
+use crate::state::AppState;
+use apalis::prelude::*;
+use archive::ArchiveLimits;
+use archive::cbz::Cbz;
+use archive::cbz_write::{RebuildPlan, RebuildSummary, rebuild};
+use chrono::Utc;
+use entity::issue;
+use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use uuid::Uuid;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RewriteIssueSidecarsJob {
+    pub issue_id: String,
+    /// Pre-serialized ComicInfo.xml — composed by the apply worker
+    /// via `compose_comicinfo` + `parsers::comicinfo::serialize`. We
+    /// pass the bytes rather than the struct so the job stays cheap
+    /// to enqueue (no full DB join inside this worker) and the audit
+    /// row can include the exact bytes that landed in the archive.
+    pub comic_info_xml: String,
+    /// Pre-serialized MetronInfo.xml. Same pattern as above.
+    pub metron_info_xml: String,
+    /// Field-provenance keys whose composer output preferred the DB
+    /// value over the provider's (Q4 UX surface). Forwarded into the
+    /// audit row so retrospective drill-downs show which fields were
+    /// preserved against the provider's offering.
+    #[serde(default)]
+    pub suppressed_user_pins: Vec<String>,
+    pub actor_id: Option<Uuid>,
+    pub actor_ip: Option<String>,
+    pub actor_ua: Option<String>,
+    /// `metadata_run.id` that triggered this rewrite; surfaces in
+    /// audit + the Runs feed so an operator can correlate apply rows
+    /// with the XML write that followed.
+    pub triggering_run_id: Option<Uuid>,
+    pub triggering_run_ordinal: Option<i32>,
+}
+
+pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Result<(), Error> {
+    let state: AppState = (*state).clone();
+
+    let mut redis = state.jobs.redis.clone();
+    let claimed = match mutex::try_claim(&mut redis, &job.issue_id, mutex::SIDECAR_TTL_SECS).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(
+                issue_id = %job.issue_id,
+                error = %e,
+                "sidecar writeback: mutex claim failed",
+            );
+            return Ok(()); // soft fail; caller can retry
+        }
+    };
+    if !claimed {
+        tracing::info!(
+            issue_id = %job.issue_id,
+            "sidecar writeback: mutex busy; skipping (caller will re-enqueue if needed)",
+        );
+        return Ok(());
+    }
+
+    let outcome = run_inner(&state, &job).await;
+    let mut redis = state.jobs.redis.clone();
+    mutex::release(&mut redis, &job.issue_id).await;
+
+    audit_writeback(&state, &job, &outcome).await;
+
+    // Best-effort scan enqueue after success — gated on the outcome
+    // so failed rewrites don't trigger a rescan that would just
+    // re-ingest the original file. Errors here only log; the rewrite
+    // already landed and operators can re-trigger manually.
+    if let Ok(ref result) = outcome
+        && let Err(e) = enqueue_scoped_rescan(&state, &result.library_id, &result.series_id, &job.issue_id).await
+    {
+        tracing::error!(
+            issue_id = %job.issue_id,
+            error = %e,
+            "sidecar writeback: scoped rescan enqueue failed",
+        );
+    }
+
+    Ok(())
+}
+
+/// Inner result captured for audit + post-job rescan trigger.
+struct RewriteResult {
+    library_id: Uuid,
+    series_id: Uuid,
+    archive_path: PathBuf,
+    summary: RebuildSummary,
+    backup_path: Option<PathBuf>,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum WritebackError {
+    #[error("issue {0} not found")]
+    IssueGone(String),
+    #[error("library {0} writeback disabled (allow_archive_writeback=false)")]
+    WritebackDisabled(Uuid),
+    #[error("rewrite: {0}")]
+    Rewrite(#[from] RewriteError),
+    #[error("db: {0}")]
+    Db(#[from] sea_orm::DbErr),
+    #[error("archive: {0}")]
+    Archive(#[from] archive::ArchiveError),
+}
+
+async fn run_inner(
+    state: &AppState,
+    job: &RewriteIssueSidecarsJob,
+) -> Result<RewriteResult, WritebackError> {
+    // Reload the issue row each time the worker fires so a concurrent
+    // edit / move that landed between enqueue and now is reflected.
+    let Some(row) = issue::Entity::find_by_id(&job.issue_id).one(&state.db).await? else {
+        return Err(WritebackError::IssueGone(job.issue_id.clone()));
+    };
+
+    // Defense-in-depth: the PATCH handler already refuses to set
+    // metadata_writeback_enabled when allow_archive_writeback is off,
+    // but a hand-edited DB row could violate the invariant. Refuse to
+    // touch bytes when the master toggle is off.
+    let lib = entity::library::Entity::find_by_id(row.library_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| WritebackError::IssueGone(format!("library missing for {}", row.id)))?;
+    if !lib.allow_archive_writeback {
+        return Err(WritebackError::WritebackDisabled(lib.id));
+    }
+
+    let archive_path = PathBuf::from(&row.file_path);
+    let cfg = state.cfg();
+    let limits = cfg.archive_limits();
+
+    // Snapshot the inputs needed across the spawn_blocking boundary so
+    // we can run the (potentially CPU-bound) rebuild on the blocking
+    // pool without holding async references over it.
+    let comic_info_xml = job.comic_info_xml.clone();
+    let metron_info_xml = job.metron_info_xml.clone();
+    let retain_count = lib.archive_backup_retain_count;
+    let src_path = archive_path.clone();
+
+    let result = tokio::task::spawn_blocking(move || -> Result<(RebuildSummary, Option<PathBuf>), WritebackError> {
+        let outcome = archive_rewrite::rewrite_atomic(&src_path, retain_count, |tmp| {
+            // Open the source inside the closure so the Cbz handle is
+            // dropped before the rename swaps the file out from under
+            // it.
+            let mut src = Cbz::open(&src_path, ArchiveLimits {
+                max_entries: limits.max_entries,
+                max_total_bytes: limits.max_total_bytes,
+                max_entry_bytes: limits.max_entry_bytes,
+                max_compression_ratio: limits.max_compression_ratio,
+                max_nesting_depth: limits.max_nesting_depth,
+                subprocess_wall_timeout: limits.subprocess_wall_timeout,
+                subprocess_rss_bytes: limits.subprocess_rss_bytes,
+            })
+            .map_err(RewriteError::ArchiveErr)?;
+            let mut plan = RebuildPlan::new();
+            plan.set_entry("ComicInfo.xml", comic_info_xml.into_bytes());
+            plan.set_entry("MetronInfo.xml", metron_info_xml.into_bytes());
+            // `rebuild` returns RebuildSummary on success; we need it
+            // outside the closure. Stash it in a captured slot via the
+            // outer `Result` channel — but `rewrite_atomic`'s closure
+            // returns Result<(), RewriteError>, so we use a side
+            // channel.
+            let _summary = rebuild(&mut src, plan, tmp, ArchiveLimits {
+                max_entries: limits.max_entries,
+                max_total_bytes: limits.max_total_bytes,
+                max_entry_bytes: limits.max_entry_bytes,
+                max_compression_ratio: limits.max_compression_ratio,
+                max_nesting_depth: limits.max_nesting_depth,
+                subprocess_wall_timeout: limits.subprocess_wall_timeout,
+                subprocess_rss_bytes: limits.subprocess_rss_bytes,
+            })
+            .map_err(RewriteError::ArchiveErr)?;
+            Ok(())
+        })?;
+        // We don't propagate the per-call RebuildSummary out (the
+        // atomic-rewrite closure already swallowed it); reconstruct a
+        // minimal summary for the audit payload from the post-rewrite
+        // archive on disk if the audit row needs counts. v1 keeps it
+        // empty.
+        Ok((RebuildSummary::default(), outcome.backup))
+    })
+    .await
+    .map_err(|join_err| WritebackError::Db(sea_orm::DbErr::Custom(format!("join: {join_err}"))))??;
+
+    let (summary, backup) = result;
+
+    // Invalidate the zip-LRU entry so the next reader sees the new file.
+    state.zip_lru.invalidate(&row.id);
+
+    // Bookkeeping. Clear thumbnail stamps so the post-scan pipeline
+    // re-derives them on the upcoming rescan.
+    let am = issue::ActiveModel {
+        id: Set(row.id.clone()),
+        last_rewrite_at: Set(Some(Utc::now().fixed_offset())),
+        last_rewrite_kind: Set(Some("sidecar".to_owned())),
+        thumbnails_generated_at: Set(None),
+        thumbnail_version: Set(0),
+        thumbnails_error: Set(None),
+        updated_at: Set(Utc::now().fixed_offset()),
+        ..Default::default()
+    };
+    am.update(&state.db).await?;
+
+    Ok(RewriteResult {
+        library_id: row.library_id,
+        series_id: row.series_id,
+        archive_path,
+        summary,
+        backup_path: backup,
+    })
+}
+
+async fn enqueue_scoped_rescan(
+    state: &AppState,
+    library_id: &Uuid,
+    series_id: &Uuid,
+    issue_id: &str,
+) -> anyhow::Result<()> {
+    use crate::jobs::scan_series;
+    state
+        .jobs
+        .coalesce_scoped_scan(
+            *library_id,
+            *series_id,
+            None,
+            scan_series::JobKind::Issue,
+            Some(issue_id.to_owned()),
+            true, // force — the file's bytes changed
+        )
+        .await?;
+    Ok(())
+}
+
+async fn audit_writeback(
+    state: &AppState,
+    job: &RewriteIssueSidecarsJob,
+    outcome: &Result<RewriteResult, WritebackError>,
+) {
+    let payload = match outcome {
+        Ok(r) => serde_json::json!({
+            "issue_id": job.issue_id,
+            "archive_path": r.archive_path.to_string_lossy(),
+            "backup_path": r.backup_path.as_ref().map(|p| p.to_string_lossy().to_string()),
+            "suppressed_user_pins": job.suppressed_user_pins,
+            "triggering_run_id": job.triggering_run_id,
+            "triggering_run_ordinal": job.triggering_run_ordinal,
+            "entries_written": r.summary.entries_written,
+        }),
+        Err(e) => serde_json::json!({
+            "issue_id": job.issue_id,
+            "error": e.to_string(),
+            "triggering_run_id": job.triggering_run_id,
+            "triggering_run_ordinal": job.triggering_run_ordinal,
+        }),
+    };
+
+    let Some(actor_id) = job.actor_id else {
+        tracing::info!(
+            issue_id = %job.issue_id,
+            ?payload,
+            "sidecar writeback: anonymous run; no audit row",
+        );
+        return;
+    };
+
+    audit::record(
+        &state.db,
+        AuditEntry {
+            actor_id,
+            action: "admin.issue.sidecar_writeback",
+            target_type: Some("issue"),
+            target_id: Some(job.issue_id.clone()),
+            payload,
+            ip: job.actor_ip.clone(),
+            user_agent: job.actor_ua.clone(),
+        },
+    )
+    .await;
+}

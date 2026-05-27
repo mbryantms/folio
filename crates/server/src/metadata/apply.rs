@@ -103,6 +103,19 @@ pub struct ApplyOutcome {
     pub junctions_touched: Vec<String>,
     pub cover_replaced: bool,
     pub cover_skipped_reason: Option<String>,
+    /// True when this apply queued a `RewriteIssueSidecarsJob` instead
+    /// of writing DB rows directly (`library.metadata_writeback_enabled
+    /// = true` path). The DB cache will be refreshed by the scoped
+    /// rescan the job enqueues; the UI dialog waits for the
+    /// `scan.finished` event before closing.
+    #[serde(default)]
+    pub enqueued_rewrite: bool,
+    /// Field keys whose composer output preferred the user-pinned DB
+    /// value over the provider's offer. Surfaced in the audit
+    /// payload + (M5) the dialog's "{n} of your edits will be
+    /// preserved" summary chip.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppressed_user_pins: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -332,6 +345,114 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
 
 // ───────── issue apply ─────────
 
+/// M3 of `metadata-sidecar-writeback-1.0`: XML-first apply path.
+///
+/// Instead of writing entity rows directly, we compose fresh
+/// `ComicInfo.xml` + `MetronInfo.xml` from the provider's data merged
+/// with the user's pinned DB values, serialize both, and enqueue a
+/// `RewriteIssueSidecarsJob` to swap them into the archive. The
+/// scanner's scoped rescan (triggered by that job at the end) is what
+/// refreshes the DB cache — so this function returns *before* the UI's
+/// underlying data has actually changed. The dialog's WebSocket bridge
+/// (M5) waits for the `scan.finished` event before closing.
+async fn apply_issue_via_sidecar(
+    state: &AppState,
+    args: &ApplyArgs,
+    row: &entity::issue::Model,
+    source: Source,
+    detail: GenericMetadata,
+) -> Result<ApplyOutcome, ApplyError> {
+    let Some(series_row) = entity::series::Entity::find_by_id(row.series_id)
+        .one(&state.db)
+        .await?
+    else {
+        return Err(ApplyError::SeriesGone);
+    };
+
+    // Gather context — composer wants external_ids + user_pins on both
+    // the issue and its parent series. M3.1 loaders all live in
+    // `sidecar_compose`.
+    let issue_external_ids =
+        crate::metadata::sidecar_compose::load_external_ids(&state.db, "issue", &row.id).await?;
+    let series_external_ids = crate::metadata::sidecar_compose::load_external_ids(
+        &state.db,
+        "series",
+        &series_row.id.to_string(),
+    )
+    .await?;
+    // `override_user_edits=true` collapses the pin set to empty so
+    // the composer behaves as provider-wins (matching legacy
+    // `_force` semantics).
+    let issue_user_pins = if args.override_user_edits {
+        std::collections::HashSet::new()
+    } else {
+        crate::metadata::sidecar_compose::load_user_pins(&state.db, "issue", &row.id).await?
+    };
+    let series_user_pins = if args.override_user_edits {
+        std::collections::HashSet::new()
+    } else {
+        crate::metadata::sidecar_compose::load_user_pins(
+            &state.db,
+            "series",
+            &series_row.id.to_string(),
+        )
+        .await?
+    };
+
+    let ctx = crate::metadata::sidecar_compose::ComposeContext {
+        provider: &detail,
+        issue: row,
+        series: &series_row,
+        issue_external_ids: &issue_external_ids,
+        series_external_ids: &series_external_ids,
+        issue_user_pins: &issue_user_pins,
+        series_user_pins: &series_user_pins,
+    };
+
+    let comic_info = crate::metadata::sidecar_compose::compose_comicinfo(&ctx);
+    let metron_info = crate::metadata::sidecar_compose::compose_metroninfo(&ctx);
+    let suppressed_user_pins =
+        crate::metadata::sidecar_compose::enumerate_suppressed_pins(&ctx);
+
+    let comic_info_xml = parsers::comicinfo::serialize(&comic_info);
+    let metron_info_xml = parsers::metroninfo::serialize(&metron_info);
+    let _ = source; // recorded by the rewrite job via the audit row's payload
+
+    use apalis::prelude::Storage;
+    let mut storage = state.jobs.rewrite_issue_sidecars_storage.clone();
+    storage
+        .push(crate::jobs::rewrite_sidecars::RewriteIssueSidecarsJob {
+            issue_id: row.id.clone(),
+            comic_info_xml,
+            metron_info_xml,
+            suppressed_user_pins: suppressed_user_pins.clone(),
+            actor_id: args.actor_id,
+            // Apply-job-level actor IP/UA aren't on `ApplyArgs` (they
+            // travel via the apalis job payload in
+            // `metadata_apply::ApplyIssueJob`). The rewrite-job audit
+            // row still captures actor_id; IP/UA stay on the parent
+            // `admin.issue.metadata_apply` row.
+            actor_ip: None,
+            actor_ua: None,
+            triggering_run_id: Some(args.run_id),
+            triggering_run_ordinal: Some(args.ordinal),
+        })
+        .await
+        .map_err(|e| {
+            ApplyError::InvalidScope(format!("rewrite_sidecars push failed: {e}"))
+        })?;
+
+    flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
+
+    let outcome = ApplyOutcome {
+        enqueued_rewrite: true,
+        suppressed_user_pins,
+        ..Default::default()
+    };
+    bump_run_counts(&state.db, args.run_id, &outcome).await?;
+    Ok(outcome)
+}
+
 pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutcome, ApplyError> {
     let candidate = load_candidate(&state.db, args.run_id, args.ordinal).await?;
     let run = load_run(&state.db, args.run_id).await?;
@@ -350,6 +471,20 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     let provider = build_provider(state, source)
         .ok_or_else(|| ApplyError::InvalidScope(format!("provider {source} not configured")))?;
     let detail = fetch_issue_detail(state, &*provider, &candidate.external_id).await?;
+
+    // M3 dispatch: when the library has flipped `metadata_writeback_enabled
+    // = true`, route through the XML-first path. The legacy DB-direct
+    // flow below stays for unmigrated libraries — zero behaviour change
+    // for them.
+    let lib = entity::library::Entity::find_by_id(row.library_id)
+        .one(&state.db)
+        .await?;
+    if let Some(lib) = lib
+        && lib.metadata_writeback_enabled
+        && lib.allow_archive_writeback
+    {
+        return apply_issue_via_sidecar(state, &args, &row, source, detail).await;
+    }
 
     let mut outcome = ApplyOutcome::default();
     let entity_id_str = row.id.clone();
@@ -1036,7 +1171,12 @@ async fn bump_run_counts(
     };
     let any_write = !outcome.applied_fields.is_empty()
         || outcome.cover_replaced
-        || !outcome.external_ids_added.is_empty();
+        || !outcome.external_ids_added.is_empty()
+        // M3: the XML-first path defers entity writes to the scoped
+        // rescan triggered by the rewrite job, but the user-facing
+        // contract is still "I applied this candidate" — count it as
+        // an apply.
+        || outcome.enqueued_rewrite;
     let mut am: metadata_run::ActiveModel = row.into();
     if any_write {
         am.items_applied = Set(active_i32(&am.items_applied) + 1);

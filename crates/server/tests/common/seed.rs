@@ -39,6 +39,8 @@ pub struct LibrarySeed<'a> {
     pub root: &'a Path,
     pub name: Option<String>,
     pub default_reading_direction: &'static str,
+    pub allow_archive_writeback: bool,
+    pub metadata_writeback_enabled: bool,
 }
 
 impl<'a> LibrarySeed<'a> {
@@ -47,11 +49,23 @@ impl<'a> LibrarySeed<'a> {
             root,
             name: None,
             default_reading_direction: "ltr",
+            allow_archive_writeback: false,
+            metadata_writeback_enabled: false,
         }
     }
 
     pub fn with_reading_direction(mut self, d: &'static str) -> Self {
         self.default_reading_direction = d;
+        self
+    }
+
+    /// Flip both archive-writeback toggles on. The
+    /// `metadata-sidecar-writeback-1.0` M3 apply path is only taken
+    /// when both flags are true; integration tests opt in via this
+    /// shortcut.
+    pub fn with_sidecar_writeback(mut self) -> Self {
+        self.allow_archive_writeback = true;
+        self.metadata_writeback_enabled = true;
         self
     }
 
@@ -81,8 +95,8 @@ impl<'a> LibrarySeed<'a> {
             thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
             thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
             generate_page_thumbs_on_scan: Set(false),
-            allow_archive_writeback: Set(false),
-            metadata_writeback_enabled: Set(false),
+            allow_archive_writeback: Set(self.allow_archive_writeback),
+            metadata_writeback_enabled: Set(self.metadata_writeback_enabled),
             archive_backup_retain_count: Set(1),
             archive_backup_retain_days: Set(30),
         }

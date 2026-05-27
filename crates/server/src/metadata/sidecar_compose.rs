@@ -44,9 +44,10 @@
 use crate::metadata::identifier::Source;
 use crate::metadata::provider::GenericMetadata;
 use chrono::Datelike;
-use entity::{issue, series};
+use entity::{external_id, field_provenance, issue, series};
 use parsers::comicinfo::{ComicInfo, PageInfo};
 use parsers::metroninfo::MetronInfo;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::{BTreeMap, HashSet};
 
 /// Read-only inputs assembled by the caller (usually the apply worker)
@@ -609,6 +610,97 @@ fn preserve_raw_from_issue(json: &serde_json::Value) -> BTreeMap<String, String>
             .collect();
     }
     BTreeMap::new()
+}
+
+// ───────── DB loaders ─────────
+//
+// These helpers assemble the inputs the composer needs from the live
+// database state — used by the M3 `RewriteIssueSidecarsJob` to build a
+// `ComposeContext` before serializing.
+
+/// Load every `external_id` row for `(entity_type, entity_id)` into a
+/// `source → id` map. Returns an empty map when no rows match.
+pub async fn load_external_ids(
+    db: &DatabaseConnection,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<BTreeMap<String, String>, sea_orm::DbErr> {
+    let rows = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq(entity_type))
+        .filter(external_id::Column::EntityId.eq(entity_id))
+        .all(db)
+        .await?;
+    Ok(rows.into_iter().map(|r| (r.source, r.external_id)).collect())
+}
+
+/// Load the set of field keys pinned by the user on `(entity_type,
+/// entity_id)` — i.e. rows with `set_by='user'`. Q4 lock: the composer
+/// reads these and prefers DB values over provider values for matching
+/// field keys.
+pub async fn load_user_pins(
+    db: &DatabaseConnection,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<HashSet<String>, sea_orm::DbErr> {
+    let rows = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq(entity_type))
+        .filter(field_provenance::Column::EntityId.eq(entity_id))
+        .filter(field_provenance::Column::SetBy.eq("user"))
+        .all(db)
+        .await?;
+    Ok(rows.into_iter().map(|r| r.field).collect())
+}
+
+/// List of field keys whose composer output WOULD differ from the
+/// provider's, because the user pinned the DB value. Drives M3's
+/// audit-payload `suppressed_user_pins` array so retrospective drill-
+/// downs surface exactly which fields were preserved against the
+/// provider's offering.
+pub fn enumerate_suppressed_pins(
+    ctx: &ComposeContext,
+) -> Vec<String> {
+    let mut out: Vec<&str> = Vec::new();
+    // Issue-level keys whose composer reads from DB when pinned.
+    for k in [
+        "title",
+        "number_raw",
+        "summary",
+        "description",
+        "notes",
+        "cover_date",
+        "page_count",
+        "language_code",
+        "format",
+        "age_rating",
+        "community_rating",
+        "scan_information",
+        "characters",
+        "teams",
+        "locations",
+        "tags",
+        "genres",
+        "story_arcs",
+        "credits",
+        "writer",
+        "penciller",
+        "inker",
+        "colorist",
+        "letterer",
+        "coverartist",
+        "editor",
+        "translator",
+    ] {
+        if ctx.issue_user_pins.contains(k) {
+            out.push(k);
+        }
+    }
+    // Series-level keys.
+    for k in ["title", "volume", "publisher", "imprint"] {
+        if ctx.series_user_pins.contains(k) {
+            out.push(k);
+        }
+    }
+    out.into_iter().map(str::to_owned).collect()
 }
 
 // ───────── tests ─────────

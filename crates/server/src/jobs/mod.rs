@@ -31,6 +31,7 @@ pub mod metadata_search;
 pub mod orphan_sweep;
 pub mod post_scan;
 pub mod prune_auth_sessions;
+pub mod rewrite_sidecars;
 pub mod scan;
 pub mod scan_series;
 pub mod scheduler;
@@ -50,6 +51,7 @@ pub struct JobRuntime {
     pub metadata_search_issue_storage: RedisStorage<metadata_search::SearchIssueJob>,
     pub metadata_apply_series_storage: RedisStorage<metadata_apply::ApplySeriesJob>,
     pub metadata_apply_issue_storage: RedisStorage<metadata_apply::ApplyIssueJob>,
+    pub rewrite_issue_sidecars_storage: RedisStorage<rewrite_sidecars::RewriteIssueSidecarsJob>,
     pub redis: ConnectionManager,
 }
 
@@ -72,6 +74,8 @@ impl JobRuntime {
             RedisStorage::<metadata_apply::ApplySeriesJob>::new(conn.clone());
         let metadata_apply_issue_storage =
             RedisStorage::<metadata_apply::ApplyIssueJob>::new(conn.clone());
+        let rewrite_issue_sidecars_storage =
+            RedisStorage::<rewrite_sidecars::RewriteIssueSidecarsJob>::new(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -83,6 +87,7 @@ impl JobRuntime {
             metadata_search_issue_storage,
             metadata_apply_series_storage,
             metadata_apply_issue_storage,
+            rewrite_issue_sidecars_storage,
             redis: conn,
         })
     }
@@ -299,6 +304,16 @@ impl JobRuntime {
             .backend(self.metadata_apply_issue_storage.clone())
             .build_fn(metadata_apply::handle_issue);
 
+        // Sidecar writeback workers — concurrency=2 because the work
+        // is mostly zip stream-copy + filesystem rename; per-issue
+        // serialization is enforced by the rewrite mutex inside the
+        // handler, so two workers won't race on the same archive.
+        let rewrite_issue_sidecars_worker = WorkerBuilder::new("rewrite_issue_sidecars")
+            .concurrency(2)
+            .data(state.clone())
+            .backend(self.rewrite_issue_sidecars_storage.clone())
+            .build_fn(rewrite_sidecars::handle);
+
         let shutdown_fut = {
             let token = shutdown.clone();
             async move {
@@ -316,6 +331,7 @@ impl JobRuntime {
             .register(metadata_issue_worker)
             .register(metadata_apply_series_worker)
             .register(metadata_apply_issue_worker)
+            .register(rewrite_issue_sidecars_worker)
             .run_with_signal(shutdown_fut)
             .await
     }
