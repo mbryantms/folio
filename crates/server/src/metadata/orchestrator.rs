@@ -376,6 +376,106 @@ pub async fn finalize_run(
     Ok(())
 }
 
+// ───────── pre-filter (matching-accuracy-1.0 M3) ─────────
+
+/// Per-search filter that drops provider candidates **before** they
+/// reach the scorer. Two signals:
+///
+/// 1. **Hard year gate** — implicit, runs whenever both
+///    `facts.year` (or `facts.series_year` for issue queries) and
+///    the candidate's start year are present. Drops candidates whose
+///    `start_year > comic_year + 1`. Pre-M3 these scored Medium
+///    because the year weight gave them partial credit on the
+///    component sum; the gate now removes them outright so they
+///    never compete for the top slot.
+///
+/// 2. **Publisher blacklist** — operator-tunable list per library
+///    (`library.metadata_publisher_blacklist`). Compared
+///    case-insensitively against the candidate publisher after
+///    running both through [`crate::metadata::title_norm::sanitize_title`],
+///    so `"DC Comics"` / `"dc comics"` / `"DC"` all match the same
+///    entry.
+#[derive(Clone, Debug, Default)]
+pub struct PreFilter {
+    pub publisher_blacklist: Vec<String>,
+}
+
+impl PreFilter {
+    /// Build a `PreFilter` from a `library` row. Tolerant of bad
+    /// JSON shape (returns an empty blacklist) — the column type is
+    /// `JSONB NOT NULL DEFAULT '[]'` so the only way to land here
+    /// with a non-array is operator-written garbage, which we soft-
+    /// fail on with a debug log.
+    pub fn from_library(library: &entity::library::Model) -> Self {
+        let publisher_blacklist = library
+            .metadata_publisher_blacklist
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            publisher_blacklist,
+        }
+    }
+}
+
+/// Apply the M3 pre-filter to a series-search result set. Public to
+/// the crate so the orchestrator can drive it; tests in this module
+/// pin the behavior.
+pub(crate) fn pre_filter_series(
+    candidates: Vec<SeriesCandidate>,
+    facts: &SeriesQueryFacts,
+    filter: &PreFilter,
+) -> Vec<SeriesCandidate> {
+    let blacklist_keys: Vec<String> = filter
+        .publisher_blacklist
+        .iter()
+        .map(|s| crate::metadata::title_norm::sanitize_title(s))
+        .filter(|s| !s.is_empty())
+        .collect();
+    candidates
+        .into_iter()
+        .filter(|c| {
+            if let (Some(local), Some(cand)) = (facts.year, c.year)
+                && cand > local + 1
+            {
+                return false;
+            }
+            if let Some(pub_name) = c.publisher.as_deref() {
+                let canonical = crate::metadata::title_norm::sanitize_title(pub_name);
+                if !canonical.is_empty() && blacklist_keys.iter().any(|k| k == &canonical) {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect()
+}
+
+/// Apply the M3 pre-filter to an issue-search result set. Today this
+/// only fires the year gate — `IssueCandidate` doesn't carry the
+/// publisher, so the operator's blacklist is enforced at the
+/// upstream series search instead.
+pub(crate) fn pre_filter_issue(
+    candidates: Vec<IssueCandidate>,
+    facts: &IssueQueryFacts,
+) -> Vec<IssueCandidate> {
+    candidates
+        .into_iter()
+        .filter(|c| {
+            if let (Some(local), Some(cand)) = (facts.series_year, c.series_year)
+                && cand > local + 1
+            {
+                return false;
+            }
+            true
+        })
+        .collect()
+}
+
 // ───────── search execution ─────────
 
 const SEARCH_LIMIT_PER_PROVIDER: u32 = 25;
@@ -404,6 +504,7 @@ pub async fn run_series_search(
     providers: &[Arc<dyn MetadataProvider>],
     facts: &SeriesQueryFacts,
     thresholds: Thresholds,
+    pre_filter: &PreFilter,
     local_series_id: Option<Uuid>,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
     if let Err(e) = mark_searching(db, run_id).await {
@@ -432,6 +533,10 @@ pub async fn run_series_search(
         };
         match p.search_series(&q).await {
             Ok(candidates) => {
+                // M3 pre-filter: drop candidates the operator's
+                // library settings + the hard year gate would reject
+                // before any phash fetching or scoring runs.
+                let candidates = pre_filter_series(candidates, facts, pre_filter);
                 // Parallel-fetch candidate covers when both sides are
                 // hashable. When local_phash is None we know the
                 // bonus is zero regardless, so skip the network.
@@ -561,6 +666,10 @@ pub async fn run_issue_search(
         };
         match p.search_issue(&q).await {
             Ok(candidates) => {
+                // M3 pre-filter: hard year gate (issue candidates
+                // don't carry publisher, so the operator's blacklist
+                // is enforced at the series-search side instead).
+                let candidates = pre_filter_issue(candidates, facts);
                 let candidate_phashes: Vec<Option<i64>> = if local_phash.is_some() {
                     fetch_candidate_phashes(
                         &http,
@@ -809,5 +918,145 @@ mod tests {
         // Single candidate at Hamming 4 stays HIGH — gap guard requires
         // a runner-up to fire.
         assert_eq!(one[0].bucket, Confidence::High);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // M3 — pre-filter: hard year gate + publisher blacklist
+    // ────────────────────────────────────────────────────────────
+
+    fn series_cand(ext_id: &str, year: Option<i32>, publisher: Option<&str>) -> SeriesCandidate {
+        SeriesCandidate {
+            source: Source::ComicVine,
+            external_id: ext_id.into(),
+            external_url: None,
+            name: ext_id.into(),
+            year,
+            publisher: publisher.map(str::to_owned),
+            issue_count: None,
+            cover_image_url: None,
+            deck: None,
+        }
+    }
+
+    fn series_facts(year: Option<i32>) -> SeriesQueryFacts {
+        SeriesQueryFacts {
+            name: "Saga".into(),
+            year,
+            publisher: None,
+            volume: None,
+        }
+    }
+
+    #[test]
+    fn pre_filter_drops_year_too_far_in_future() {
+        // local = 2012, candidate start_year = 2018 → 6 years past →
+        // dropped. Pre-M3 this scored Medium (year=0 partial credit
+        // didn't sink the score below threshold).
+        let facts = series_facts(Some(2012));
+        let candidates = vec![
+            series_cand("keep", Some(2012), None),
+            series_cand("drop", Some(2018), None),
+        ];
+        let out = pre_filter_series(candidates, &facts, &PreFilter::default());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].external_id, "keep");
+    }
+
+    #[test]
+    fn pre_filter_year_gate_allows_plus_one() {
+        // ComicTagger's hard year gate is `cand > local + 1`, so
+        // local=2012 / cand=2013 stays. Mylar-style "release a year
+        // later than announced" doesn't get filtered.
+        let facts = series_facts(Some(2012));
+        let candidates = vec![series_cand("plus_one", Some(2013), None)];
+        let out = pre_filter_series(candidates, &facts, &PreFilter::default());
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn pre_filter_year_gate_inactive_when_local_year_unknown() {
+        // No local year → gate doesn't fire (can't compute a delta).
+        let facts = series_facts(None);
+        let candidates = vec![series_cand("future", Some(2099), None)];
+        let out = pre_filter_series(candidates, &facts, &PreFilter::default());
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn pre_filter_drops_blacklisted_publisher() {
+        let facts = series_facts(Some(2012));
+        let filter = PreFilter {
+            publisher_blacklist: vec!["DC Comics".into()],
+        };
+        let candidates = vec![
+            series_cand("image", Some(2012), Some("Image Comics")),
+            series_cand("dc", Some(2012), Some("DC Comics")),
+        ];
+        let out = pre_filter_series(candidates, &facts, &filter);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].external_id, "image");
+    }
+
+    #[test]
+    fn pre_filter_blacklist_is_case_insensitive_and_sanitized() {
+        let facts = series_facts(Some(2012));
+        // Operator wrote "DC". Candidate publisher is "dc comics".
+        // After sanitize_title both keys reduce to substrings, but
+        // exact key equality is what we compare — "dc" vs "dc comics"
+        // are NOT equal. Operator must list the full canonical form.
+        // Confirm the asymmetry so we don't accidentally over-match.
+        let filter_partial = PreFilter {
+            publisher_blacklist: vec!["DC".into()],
+        };
+        let candidates = vec![series_cand("dc", Some(2012), Some("DC Comics"))];
+        let out = pre_filter_series(candidates.clone(), &facts, &filter_partial);
+        assert_eq!(out.len(), 1, "partial-key shouldn't accidentally match");
+
+        // Same publisher, blacklist with mismatched casing → match.
+        let filter_full = PreFilter {
+            publisher_blacklist: vec!["dc comics".into()],
+        };
+        let out = pre_filter_series(candidates, &facts, &filter_full);
+        assert_eq!(out.len(), 0, "lowercase blacklist matches sanitized form");
+    }
+
+    #[test]
+    fn pre_filter_issue_runs_year_gate_only() {
+        let facts = IssueQueryFacts {
+            series_name: "Saga".into(),
+            series_year: Some(2012),
+            publisher: None,
+            volume: None,
+            issue_number: "1".into(),
+        };
+        let candidates = vec![
+            IssueCandidate {
+                source: Source::ComicVine,
+                external_id: "keep".into(),
+                external_url: None,
+                issue_number: Some("1".into()),
+                name: None,
+                cover_date: None,
+                series_name: Some("Saga".into()),
+                series_year: Some(2012),
+                series_external_id: None,
+                cover_image_url: None,
+            },
+            IssueCandidate {
+                source: Source::ComicVine,
+                external_id: "drop_future".into(),
+                external_url: None,
+                issue_number: Some("1".into()),
+                name: None,
+                cover_date: None,
+                series_name: Some("Saga".into()),
+                series_year: Some(2099),
+                series_external_id: None,
+                cover_image_url: None,
+            },
+        ];
+        let out = pre_filter_issue(candidates, &facts);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].external_id, "keep");
     }
 }

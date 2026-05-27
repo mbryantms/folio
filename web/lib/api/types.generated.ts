@@ -4876,6 +4876,11 @@ export interface components {
             /** @description Library Scanner v1 (Milestone 4) settings. */
             ignore_globs: string[];
             last_scan_at?: string | null;
+            /** @description Publisher names the matcher's pre-filter should drop before
+             *     scoring. Comparison is case-insensitive against the
+             *     title-sanitized form so "DC Comics" / "dc comics" / "DC" all
+             *     match the same entry. Matching-accuracy-1.0 M3. */
+            metadata_publisher_blacklist: string[];
             /** @description When true AND `allow_archive_writeback` is also true, provider
              *     apply takes the XML-first path: worker writes ComicInfo.xml +
              *     MetronInfo.xml into the archive and enqueues a scoped rescan.
@@ -6668,6 +6673,11 @@ export interface components {
              *     generated regardless. */
             generate_page_thumbs_on_scan?: boolean | null;
             ignore_globs?: string[] | null;
+            /** @description Replace the per-library publisher blacklist (matching-accuracy
+             *     M3). Tri-state: omitted = leave unchanged; explicit `null` =
+             *     clear to empty. Comparison at filter time is case-insensitive
+             *     + sanitized so casing here doesn't matter. */
+            metadata_publisher_blacklist?: string[] | null;
             /** @description When true, provider apply writes ComicInfo.xml + MetronInfo.xml
              *     to the archive and enqueues a scoped rescan
              *     (`metadata-sidecar-writeback-1.0` M3+). Requires

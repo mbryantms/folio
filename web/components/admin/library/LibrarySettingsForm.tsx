@@ -55,6 +55,7 @@ const schema = z
     metadata_writeback_enabled: z.boolean().default(false),
     archive_backup_retain_count: z.number().int().min(1).max(5).default(1),
     archive_backup_retain_days: z.number().int().min(0).max(3650).default(30),
+    metadata_publisher_blacklist: z.array(z.string().min(1)).default([]),
   })
   .refine(
     (v) => !v.metadata_writeback_enabled || v.allow_archive_writeback,
@@ -84,6 +85,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       metadata_writeback_enabled: false,
       archive_backup_retain_count: 1,
       archive_backup_retain_days: 30,
+      metadata_publisher_blacklist: [],
     },
   });
 
@@ -99,6 +101,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         metadata_writeback_enabled: lib.data.metadata_writeback_enabled,
         archive_backup_retain_count: lib.data.archive_backup_retain_count,
         archive_backup_retain_days: lib.data.archive_backup_retain_days,
+        metadata_publisher_blacklist: lib.data.metadata_publisher_blacklist ?? [],
       });
     }
   }, [lib.data, form]);
@@ -118,6 +121,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       metadata_writeback_enabled: values.metadata_writeback_enabled,
       archive_backup_retain_count: values.archive_backup_retain_count,
       archive_backup_retain_days: values.archive_backup_retain_days,
+      metadata_publisher_blacklist: values.metadata_publisher_blacklist,
       scan_schedule_cron:
         values.scan_schedule_cron.trim() === ""
           ? null
@@ -369,6 +373,31 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                 )}
               />
             </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="space-y-5 p-6">
+            <FormField
+              control={form.control}
+              name="metadata_publisher_blacklist"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Metadata: publisher blacklist</FormLabel>
+                  <FormDescription>
+                    Provider candidates from these publishers are dropped
+                    before scoring. Useful when CV/Metron searches keep
+                    surfacing the wrong publisher&apos;s reprint as the
+                    top hit. Comparison is case-insensitive — &ldquo;DC
+                    Comics&rdquo; / &ldquo;dc comics&rdquo; match the
+                    same entry. Press Enter or comma to add.
+                  </FormDescription>
+                  <FormControl>
+                    <TagInput value={field.value} onChange={field.onChange} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </CardContent>
         </Card>
         <ThumbnailSettingsCard

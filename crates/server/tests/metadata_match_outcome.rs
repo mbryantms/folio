@@ -13,7 +13,7 @@ use server::metadata::comicvine::ComicVineClient;
 use server::metadata::identifier::Source;
 use server::metadata::match_outcome::{self, MatchOutcomeKind};
 use server::metadata::matcher::{SeriesQueryFacts, Thresholds};
-use server::metadata::orchestrator::{self, StartRunArgs, StoredQuery};
+use server::metadata::orchestrator::{self, PreFilter, StartRunArgs, StoredQuery};
 use server::metadata::provider::MetadataProvider;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -67,7 +67,10 @@ async fn orchestrator_stamps_match_outcome_on_completed_run() {
         .respond_with(
             ResponseTemplate::new(200).set_body_json(ok_envelope_cv(json!([
                 cv_volume(100, "Saga", "2012", "Image Comics"),
-                cv_volume(200, "Saga Adventures", "2015", "Other"),
+                // Stay within the M3 hard year gate (`cand <= local + 1`)
+                // so both candidates survive pre-filter — this test
+                // pins the "multi-candidate row stamping" path.
+                cv_volume(200, "Saga Adventures", "2013", "Other"),
             ]))),
         )
         .mount(&cv_mock)
@@ -92,6 +95,7 @@ async fn orchestrator_stamps_match_outcome_on_completed_run() {
         &providers,
         &facts,
         Thresholds::new(75.0, 70.0),
+        &PreFilter::default(),
         None,
     )
     .await

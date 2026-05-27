@@ -77,6 +77,7 @@ mod m20261229_000001_metadata_cache;
 mod m20261230_000001_metadata_run_candidates;
 mod m20261231_000001_archive_writeback_schema;
 mod m20270101_000001_match_outcomes;
+mod m20270102_000001_library_publisher_blacklist;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -162,6 +163,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261230_000001_metadata_run_candidates::Migration),
             Box::new(m20261231_000001_archive_writeback_schema::Migration),
             Box::new(m20270101_000001_match_outcomes::Migration),
+            Box::new(m20270102_000001_library_publisher_blacklist::Migration),
         ]
     }
 }

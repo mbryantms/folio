@@ -132,6 +132,7 @@ async fn seed_issue(app: &TestApp) -> String {
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        metadata_publisher_blacklist: Set(serde_json::json!([])),
     }
     .insert(&db)
     .await
@@ -617,6 +618,7 @@ async fn seed_series_with_issues(app: &TestApp, n_issues: usize) -> (Uuid, Vec<S
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        metadata_publisher_blacklist: Set(serde_json::json!([])),
     }
     .insert(&db)
     .await

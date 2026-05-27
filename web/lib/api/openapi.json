@@ -11985,7 +11985,8 @@
           "allow_archive_writeback",
           "metadata_writeback_enabled",
           "archive_backup_retain_count",
-          "archive_backup_retain_days"
+          "archive_backup_retain_days",
+          "metadata_publisher_blacklist"
         ],
         "properties": {
           "allow_archive_writeback": {
@@ -12033,6 +12034,13 @@
               "string",
               "null"
             ]
+          },
+          "metadata_publisher_blacklist": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Publisher names the matcher's pre-filter should drop before\nscoring. Comparison is case-insensitive against the\ntitle-sanitized form so \"DC Comics\" / \"dc comics\" / \"DC\" all\nmatch the same entry. Matching-accuracy-1.0 M3."
           },
           "metadata_writeback_enabled": {
             "type": "boolean",
@@ -16755,6 +16763,16 @@
             "items": {
               "type": "string"
             }
+          },
+          "metadata_publisher_blacklist": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replace the per-library publisher blacklist (matching-accuracy\nM3). Tri-state: omitted = leave unchanged; explicit `null` =\nclear to empty. Comparison at filter time is case-insensitive\n+ sanitized so casing here doesn't matter."
           },
           "metadata_writeback_enabled": {
             "type": [

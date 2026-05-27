@@ -20,6 +20,7 @@ use serde_json::json;
 use server::metadata::comicvine::ComicVineClient;
 use server::metadata::identifier::Source;
 use server::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts, Thresholds};
+use server::metadata::orchestrator::PreFilter;
 use server::metadata::metron::MetronClient;
 use server::metadata::orchestrator::{self, StartRunArgs, StoredQuery, status};
 use server::metadata::provider::MetadataProvider;
@@ -101,7 +102,11 @@ async fn run_series_search_fuses_two_providers_and_sorts_by_score() {
         .respond_with(
             ResponseTemplate::new(200).set_body_json(ok_envelope_cv(json!([
                 cv_volume(100, "Saga", "2012", "Image Comics"),
-                cv_volume(200, "Saga Adventures", "2015", "Other Pub"),
+                // M3 hard year gate drops cand > local+1. Keep the
+                // foil candidate within the gate so this test stays
+                // focused on the fuse-and-sort invariant (the gate
+                // itself is exercised in pre_filter_* unit tests).
+                cv_volume(200, "Saga Adventures", "2013", "Other Pub"),
             ]))),
         )
         .mount(&cv_mock)
@@ -144,6 +149,7 @@ async fn run_series_search_fuses_two_providers_and_sorts_by_score() {
         &providers,
         &facts,
         Thresholds::new(75.0, 70.0),
+        &PreFilter::default(),
         None,
     )
     .await
@@ -207,6 +213,7 @@ async fn run_series_search_yields_awaiting_quota_when_all_providers_exhausted() 
         &providers,
         &facts,
         Thresholds::new(75.0, 70.0),
+        &PreFilter::default(),
         None,
     )
     .await
@@ -251,6 +258,7 @@ async fn run_series_search_fails_when_provider_errors_and_no_candidates() {
         &providers,
         &facts,
         Thresholds::new(75.0, 70.0),
+        &PreFilter::default(),
         None,
     )
     .await
@@ -312,6 +320,7 @@ async fn run_series_search_partial_failure_still_finalizes() {
         &providers,
         &facts,
         Thresholds::new(75.0, 70.0),
+        &PreFilter::default(),
         None,
     )
     .await

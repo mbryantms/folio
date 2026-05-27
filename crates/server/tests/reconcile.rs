@@ -123,6 +123,7 @@ async fn create_library(app: &TestApp, root: &Path, soft_delete_days: i32) -> Uu
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        metadata_publisher_blacklist: Set(serde_json::json!([])),
     }
     .insert(&db)
     .await

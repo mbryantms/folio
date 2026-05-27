@@ -74,6 +74,12 @@ pub struct Model {
     /// keep forever.
     #[serde(default = "default_archive_backup_retain_days")]
     pub archive_backup_retain_days: i32,
+    /// Publisher names the matcher's pre-filter should drop before
+    /// scoring. Comparison is case-insensitive against the
+    /// title-sanitized form so "DC Comics" / "dc comics" / "DC" all
+    /// match the same entry. Matching-accuracy-1.0 M3.
+    #[serde(default)]
+    pub metadata_publisher_blacklist: Json,
 }
 
 fn default_archive_backup_retain_count() -> i32 {

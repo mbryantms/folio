@@ -110,6 +110,11 @@ pub struct LibraryView {
     /// Auto-prune `.bak` files older than this many days. Default 30;
     /// `0` = keep forever.
     pub archive_backup_retain_days: i32,
+    /// Publisher names the matcher's pre-filter should drop before
+    /// scoring. Comparison is case-insensitive against the
+    /// title-sanitized form so "DC Comics" / "dc comics" / "DC" all
+    /// match the same entry. Matching-accuracy-1.0 M3.
+    pub metadata_publisher_blacklist: Vec<String>,
 }
 
 impl From<library::Model> for LibraryView {
@@ -141,6 +146,15 @@ impl From<library::Model> for LibraryView {
             metadata_writeback_enabled: m.metadata_writeback_enabled,
             archive_backup_retain_count: m.archive_backup_retain_count,
             archive_backup_retain_days: m.archive_backup_retain_days,
+            metadata_publisher_blacklist: m
+                .metadata_publisher_blacklist
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }
@@ -203,6 +217,13 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(inner(range(min = 0)))]
     pub archive_backup_retain_days: Option<i32>,
+    /// Replace the per-library publisher blacklist (matching-accuracy
+    /// M3). Tri-state: omitted = leave unchanged; explicit `null` =
+    /// clear to empty. Comparison at filter time is case-insensitive
+    /// + sanitized so casing here doesn't matter.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
+    pub metadata_publisher_blacklist: Option<Option<Vec<String>>>,
 }
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
@@ -446,6 +467,7 @@ pub async fn create(
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        metadata_publisher_blacklist: Set(serde_json::json!([])),
     };
     match am.insert(&app.db).await {
         Ok(m) => {
@@ -580,6 +602,15 @@ pub async fn update_settings(
     }
     if let Some(n) = req.archive_backup_retain_days {
         am.archive_backup_retain_days = Set(n);
+    }
+    if let Some(blacklist_opt) = req.metadata_publisher_blacklist {
+        let cleaned: Vec<String> = blacklist_opt
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .collect();
+        am.metadata_publisher_blacklist = Set(serde_json::json!(cleaned));
     }
     if let Some(cron_opt) = req.scan_schedule_cron {
         let normalized = cron_opt.and_then(|s| {

@@ -116,7 +116,7 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
     let SearchSeriesJob {
         run_id,
         series_id,
-        library_id: _,
+        library_id,
         facts,
     } = job;
     tracing::info!(
@@ -134,12 +134,14 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
         return Ok(());
     }
     let thresholds = thresholds(&state);
+    let pre_filter = pre_filter_for_library(&state, library_id).await;
     match orchestrator::run_series_search(
         &state.db,
         run_id,
         &providers,
         &facts,
         thresholds,
+        &pre_filter,
         Some(series_id),
     )
     .await
@@ -182,7 +184,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
     let SearchIssueJob {
         run_id,
         issue_id,
-        library_id: _,
+        library_id: _library_id,
         facts,
         series_external_ids,
     } = job;
@@ -234,6 +236,35 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
 
 // ───────── helpers ─────────
 
+/// Build the per-search [`PreFilter`] from the library row when one
+/// is in scope. Cross-library bulk-refresh paths (no `library_id`)
+/// get the default empty filter — the operator's blacklist is a
+/// per-library policy.
+async fn pre_filter_for_library(
+    state: &AppState,
+    library_id: Option<Uuid>,
+) -> crate::metadata::orchestrator::PreFilter {
+    use sea_orm::EntityTrait;
+    let Some(id) = library_id else {
+        return crate::metadata::orchestrator::PreFilter::default();
+    };
+    match entity::library::Entity::find_by_id(id)
+        .one(&state.db)
+        .await
+    {
+        Ok(Some(lib)) => crate::metadata::orchestrator::PreFilter::from_library(&lib),
+        Ok(None) => crate::metadata::orchestrator::PreFilter::default(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                library_id = %id,
+                "metadata search: pre-filter library lookup failed; defaulting to empty",
+            );
+            crate::metadata::orchestrator::PreFilter::default()
+        }
+    }
+}
+
 /// Read the live HIGH + MEDIUM thresholds from the settings overlay.
 /// matching-accuracy-1.0 M1: pre-M1 the function returned a hardcoded
 /// 95 (which series text scoring can't reach) and the MEDIUM cutoff
@@ -264,6 +295,7 @@ pub async fn run_series_inline(
         &providers,
         &facts,
         thresholds(state),
+        &crate::metadata::orchestrator::PreFilter::default(),
         Some(series_id),
     )
     .await;
