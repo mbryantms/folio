@@ -121,18 +121,18 @@ If you're hitting quota constantly:
 
 ### Reviewing low-confidence matches
 
-`/admin/metadata` → **Review queue** tab. Shows every
-`metadata_run_candidate` row in the MEDIUM (70-94) or LOW (<70)
-buckets that hasn't been applied or dismissed.
+There is no dedicated review-queue surface. A non-manual run (weekly
+cron / bulk-refresh / scanner) only auto-applies an unambiguous
+`SingleGood` strong match (and only when the library has
+`metadata_auto_apply_strong_matches` on); MEDIUM (70-94) and LOW
+(<70) candidates are recorded as `metadata_run_candidate` rows but
+take no automatic action.
 
-For each row you can:
-- **Review** → opens the standard MetadataMatchDialog for the
-  entity, lets you pick + apply
-- **Dismiss** → marks the candidate as ignored; it stops showing up
-  in the queue
-
-Dismissed candidates stay in the DB (under `metadata_run_candidate.dismissed_at`)
-so you can audit who-dismissed-what later.
+To resolve an ambiguous match, open the entity's **Fetch metadata**
+dialog (series or issue page) — it lists the same candidates and lets
+you pick + apply one. The **Runs** tab (`/admin/metadata`) drills into
+the per-candidate detail for any past run if you want to see what a
+given sweep found.
 
 ### Perceptual hash backfill
 
@@ -150,9 +150,9 @@ Audit-logged as `admin.metadata.phash_backfill`.
 ### Watching what's happening
 
 - **`/admin/metadata` → Dashboard tab** — series total / matched /
-  unmatched + review-queue depth + applies-last-7-days. Per-provider
-  quota gauges show remaining-hour and remaining-day token counts
-  read straight from Redis.
+  unmatched + applies-last-7-days. Per-provider quota gauges show
+  remaining-hour and remaining-day token counts read straight from
+  Redis.
 
 - **`/admin/metadata` → Runs tab** — paginated `metadata_run` history.
   Each row drills into the per-candidate detail + the audit_log
@@ -226,12 +226,11 @@ candidate WILL appear in the dialog with a MEDIUM badge. Preview
 
 ### A series keeps getting wrong matches assigned
 
-Inspect the review queue for that series. If a low-confidence
-match keeps re-surfacing, dismiss it explicitly — the dismiss
-flag survives across runs. Alternatively, add the correct
-external_id by hand via the `<ExternalIdsCard>` on the series
-page; that pins the row as `set_by='user'` and prevents future
-auto-matches from overwriting.
+Add the correct external_id by hand via the `<ExternalIdsCard>` on
+the series page; that pins the row as `set_by='user'` and prevents
+future auto-matches from overwriting. If the series shouldn't be
+touched by the weekly cron at all, turn its auto-sync off on the
+series Details tab (it defaults off — it has to be opted in).
 
 ### Weekly cron is enabled but nothing is happening
 

@@ -100,10 +100,9 @@ export function adminNav(localePrefix: string): NavSection[] {
       label: "Content",
       items: [
         // metadata-providers-1.0 M6 — provider/quota dashboard +
-        // review queue + run history at `/admin/metadata`. The
-        // `metadata-unmatched` badge surfaces the dashboard's
-        // `series_unmatched` count so operators see backlog at a
-        // glance without opening the page.
+        // run history at `/admin/metadata`. The `metadata-unmatched`
+        // badge surfaces the dashboard's `series_unmatched` count so
+        // operators see backlog at a glance without opening the page.
         {
           href: p("/metadata"),
           label: "Metadata",

@@ -264,7 +264,6 @@ export default async function SeriesPage({
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="external">External IDs</TabsTrigger>
-          <TabsTrigger value="sync">Metadata sync</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
         <TabsContent value="credits" className="pt-6">
@@ -396,6 +395,12 @@ export default async function SeriesPage({
               // provider identifier (mirrors the issue page split).
             ]}
           />
+          <div className="mt-6 space-y-2">
+            <h3 className="text-foreground text-sm font-semibold">
+              Metadata sync
+            </h3>
+            <MetadataSyncStatusCard seriesSlug={series.slug} chrome="bare" />
+          </div>
         </TabsContent>
         <TabsContent value="external" className="pt-6">
           <ExternalIdsCard
@@ -403,9 +408,6 @@ export default async function SeriesPage({
             seriesSlug={series.slug}
             chrome="bare"
           />
-        </TabsContent>
-        <TabsContent value="sync" className="pt-6">
-          <MetadataSyncStatusCard seriesSlug={series.slug} chrome="bare" />
         </TabsContent>
         <TabsContent value="activity" className="pt-6">
           <SeriesActivityTab

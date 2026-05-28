@@ -5,12 +5,12 @@
  *
  * Surfaces:
  * - `last_metadata_sync_at` ("Last synced 3 days ago" or "Never")
- * - `linked_source_count` (number of `external_ids` rows)
  * - Pause / Resume toggle (writes to `series.metadata_sync_paused`;
- *   future bulk-refresh / weekly cron skips paused series)
+ *   the weekly refresh cron skips paused series)
  *
- * Mounted on the series page settings sidebar alongside the
- * `<ExternalIdsCard>`.
+ * Folded into the series-page **Details** tab (the standalone "Metadata
+ * sync" tab was removed). The linked-source count lived here too but was
+ * dropped — the External IDs tab already lists the actual sources.
  */
 
 import { Loader2, PauseCircle, PlayCircle } from "lucide-react";
@@ -46,7 +46,6 @@ export function MetadataSyncStatusCard({
 
   const paused = status.data?.paused ?? false;
   const lastSync = status.data?.last_metadata_sync_at ?? null;
-  const linked = status.data?.linked_source_count ?? 0;
   const pending = pause.isPending || resume.isPending;
 
   const onToggle = (next: boolean) => {
@@ -60,10 +59,6 @@ export function MetadataSyncStatusCard({
       <div className="flex items-center justify-between">
         <span className="text-muted-foreground">Last synced</span>
         <span>{formatLastSync(lastSync)}</span>
-      </div>
-      <div className="flex items-center justify-between">
-        <span className="text-muted-foreground">Linked sources</span>
-        <span>{linked}</span>
       </div>
       <div className="flex items-center justify-between pt-1">
         <span className="text-muted-foreground flex items-center gap-1.5">

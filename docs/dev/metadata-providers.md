@@ -20,7 +20,7 @@ XML (per-library opt-in flag, drift surfacing, flush button), see
 ┌────────────────────────────────────────────────────────────────┐
 │ HTTP surface                                                   │
 │   /series/{slug}/metadata/{search,candidates,apply,…}          │
-│   /admin/metadata/{dashboard,runs,review-queue,phash-backfill} │
+│   /admin/metadata/{dashboard,runs,auto-synced,phash-backfill}  │
 └──────────────────────┬─────────────────────────────────────────┘
                        ▼
 ┌────────────────────────────────────────────────────────────────┐
@@ -387,7 +387,8 @@ issues by phash similarity.
 - **Touching the matcher weights?** The `metadata.auto_apply_threshold`
   setting (default 95) is calibrated against the current weight
   table. Rebalancing weights without revisiting the threshold breaks
-  HIGH-bucket semantics across every existing review-queue row.
+  HIGH-bucket semantics across every existing `metadata_run_candidate`
+  row.
 
 - **Provider responses can carry NULL for any field.** The matcher
   treats most NULL cases as half-credit so a sparse but correct

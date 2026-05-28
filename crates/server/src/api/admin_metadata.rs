@@ -9,8 +9,8 @@
 //! - `POST /admin/metadata/providers/{id}/test` — runs `health_check`
 //!   against the provider; audit-logged as `admin.metadata.providers.test`.
 //!
-//! Both routes are gated by [`RequireAdmin`]. M5+ add the Dashboard,
-//! Review queue, and Runs tabs on top of the same module.
+//! Both routes are gated by [`RequireAdmin`]. M5+ add the Dashboard
+//! and Runs tabs on top of the same module.
 
 use axum::{
     Extension, Json,
@@ -18,10 +18,10 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{audit_log, metadata_run, metadata_run_candidate, series};
+use entity::{audit_log, library, metadata_run, metadata_run_candidate, series};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set, Statement,
+    ColumnTrait, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Statement,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -47,10 +47,9 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(match_quality))
         .routes(routes!(list_runs))
         .routes(routes!(get_run))
-        .routes(routes!(list_review_queue))
-        .routes(routes!(dismiss_candidate))
         .routes(routes!(run_phash_backfill))
         .routes(routes!(run_variant_cover_backfill))
+        .routes(routes!(list_auto_synced))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -350,9 +349,6 @@ pub struct DashboardResp {
     /// `series_total - series_matched` (precomputed so the UI can
     /// render directly).
     pub series_unmatched: i64,
-    /// `metadata_run_candidate` rows in the medium / low bucket with
-    /// no `applied_at` AND no `dismissed_at`.
-    pub review_queue_count: i64,
     /// Count of successful `metadata_apply` audit rows in the last
     /// 7 days.
     pub applies_last_7_days: i64,
@@ -381,14 +377,6 @@ pub async fn dashboard(State(app): State<AppState>, _admin: RequireAdmin) -> Res
 
     let series_matched = matched_series_count(&app).await;
     let series_unmatched = (series_total - series_matched).max(0);
-
-    let review_queue_count = metadata_run_candidate::Entity::find()
-        .filter(metadata_run_candidate::Column::AppliedAt.is_null())
-        .filter(metadata_run_candidate::Column::DismissedAt.is_null())
-        .filter(metadata_run_candidate::Column::Bucket.is_in(["medium", "low"]))
-        .count(&app.db)
-        .await
-        .unwrap_or(0) as i64;
 
     let seven_days_ago = chrono::Utc::now() - chrono::Duration::days(7);
     let applies_last_7_days = audit_log::Entity::find()
@@ -455,7 +443,6 @@ pub async fn dashboard(State(app): State<AppState>, _admin: RequireAdmin) -> Res
         series_total,
         series_matched,
         series_unmatched,
-        review_queue_count,
         applies_last_7_days,
         providers,
     })
@@ -773,188 +760,6 @@ pub async fn get_run(
     .into_response()
 }
 
-// ───────── GET /admin/metadata/review-queue ─────────
-
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-pub struct ReviewQueueQuery {
-    /// `medium` | `low` | both (default).
-    pub bucket: Option<String>,
-    pub limit: Option<u64>,
-    pub before: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ReviewItem {
-    pub run_id: Uuid,
-    pub ordinal: i32,
-    pub source: String,
-    pub external_id: String,
-    pub bucket: String,
-    pub score: f32,
-    pub candidate: serde_json::Value,
-    pub scope: String,
-    pub scope_entity_id: Option<String>,
-    pub run_started_at: String,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ReviewQueueResp {
-    pub items: Vec<ReviewItem>,
-    pub next_cursor: Option<String>,
-}
-
-#[utoipa::path(
-    operation_id = "admin_metadata_review_queue_list",    get,
-    path = "/admin/metadata/review-queue",
-    params(ReviewQueueQuery),
-    responses(
-        (status = 200, body = ReviewQueueResp),
-        (status = 403, description = "admin only"),
-    )
-)]
-#[handler]
-pub async fn list_review_queue(
-    State(app): State<AppState>,
-    _admin: RequireAdmin,
-    Query(q): Query<ReviewQueueQuery>,
-) -> Response {
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let bucket_filter: Vec<&'static str> = match q.bucket.as_deref() {
-        Some("medium") => vec!["medium"],
-        Some("low") => vec!["low"],
-        _ => vec!["medium", "low"],
-    };
-    #[derive(FromQueryResult)]
-    struct Row {
-        run_id: Uuid,
-        ordinal: i32,
-        source: String,
-        external_id: String,
-        bucket: String,
-        score: f32,
-        candidate: serde_json::Value,
-        scope: String,
-        scope_entity_id: Option<String>,
-        started_at: chrono::DateTime<chrono::FixedOffset>,
-    }
-    // Raw SQL — we need a JOIN that SeaORM models awkwardly.
-    let in_list = bucket_filter
-        .iter()
-        .map(|s| format!("'{s}'"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let before_clause = match q.before {
-        Some(t) => format!(
-            "AND r.started_at < '{}'::timestamptz",
-            t.fixed_offset().to_rfc3339()
-        ),
-        None => String::new(),
-    };
-    let sql = format!(
-        r#"
-        SELECT c.run_id, c.ordinal, c.source, c.external_id, c.bucket, c.score,
-               c.candidate, r.scope, r.scope_entity_id, r.started_at
-        FROM metadata_run_candidate c
-        JOIN metadata_run r ON r.id = c.run_id
-        WHERE c.applied_at IS NULL
-          AND c.dismissed_at IS NULL
-          AND c.bucket IN ({in_list})
-          {before_clause}
-        ORDER BY r.started_at DESC, c.score DESC
-        LIMIT {fetch}
-        "#,
-        fetch = limit + 1,
-    );
-    let stmt = Statement::from_string(sea_orm::DatabaseBackend::Postgres, sql);
-    let mut rows: Vec<Row> = match Row::find_by_statement(stmt).all(&app.db).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(error = %e, "admin_metadata.list_review_queue db error");
-            return error(StatusCode::BAD_GATEWAY, "internal", "internal");
-        }
-    };
-    let next_cursor = if rows.len() as u64 > limit {
-        let extra = rows.pop().unwrap();
-        Some(extra.started_at.to_rfc3339())
-    } else {
-        None
-    };
-    let items = rows
-        .into_iter()
-        .map(|r| ReviewItem {
-            run_id: r.run_id,
-            ordinal: r.ordinal,
-            source: r.source,
-            external_id: r.external_id,
-            bucket: r.bucket,
-            score: r.score,
-            candidate: r.candidate,
-            scope: r.scope,
-            scope_entity_id: r.scope_entity_id,
-            run_started_at: r.started_at.to_rfc3339(),
-        })
-        .collect();
-    Json(ReviewQueueResp { items, next_cursor }).into_response()
-}
-
-// ───────── POST /admin/metadata/review-queue/{run_id}/{ordinal}/dismiss ─────────
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct DismissResp {
-    pub dismissed: bool,
-}
-
-#[utoipa::path(
-    operation_id = "admin_metadata_review_queue_dismiss",    post,
-    path = "/admin/metadata/review-queue/{run_id}/{ordinal}/dismiss",
-    params(("run_id" = Uuid, Path), ("ordinal" = i32, Path)),
-    responses(
-        (status = 200, body = DismissResp),
-        (status = 403, description = "admin only"),
-        (status = 404, description = "candidate not found"),
-    )
-)]
-#[handler]
-pub async fn dismiss_candidate(
-    State(app): State<AppState>,
-    RequireAdmin(actor): RequireAdmin,
-    Extension(ctx): Extension<RequestContext>,
-    Path((run_id, ordinal)): Path<(Uuid, i32)>,
-) -> Response {
-    let Some(row) = metadata_run_candidate::Entity::find_by_id((run_id, ordinal))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-    else {
-        return error(
-            StatusCode::NOT_FOUND,
-            "metadata.candidate_not_found",
-            "no such candidate",
-        );
-    };
-    let mut am: metadata_run_candidate::ActiveModel = row.into();
-    am.dismissed_at = Set(Some(chrono::Utc::now().fixed_offset()));
-    if let Err(e) = am.update(&app.db).await {
-        tracing::error!(error = %e, "dismiss_candidate db error");
-        return error(StatusCode::BAD_GATEWAY, "internal", "internal");
-    }
-    audit::record(
-        &app.db,
-        AuditEntry {
-            actor_id: actor.id,
-            action: "admin.metadata.review_queue.dismiss",
-            target_type: Some("metadata_run_candidate"),
-            target_id: Some(format!("{run_id}/{ordinal}")),
-            payload: serde_json::json!({ "run_id": run_id, "ordinal": ordinal }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
-        },
-    )
-    .await;
-    Json(DismissResp { dismissed: true }).into_response()
-}
-
 // ───────── /admin/metadata/phash-backfill ─────────
 
 /// Optional `?limit=` for [`run_phash_backfill`]. The admin UI drives the
@@ -1060,4 +865,67 @@ pub async fn run_variant_cover_backfill(
     )
     .await;
     Json(outcome).into_response()
+}
+
+// ───────── GET /admin/metadata/auto-synced ─────────
+
+/// One auto-synced series row for the admin "Auto-synced" tab.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AutoSyncedSeriesRow {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+    pub library_name: String,
+    pub year: Option<i32>,
+    /// RFC3339 of the last provider sync, or `null` if never synced.
+    pub last_metadata_sync_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AutoSyncedResp {
+    pub series: Vec<AutoSyncedSeriesRow>,
+}
+
+/// Series with auto-sync enabled (`metadata_sync_paused = false`) — the
+/// opt-in set the weekly refresh cron will touch. Auto-sync is
+/// series-level, so issues inherit their series' setting. The list is
+/// operator-curated (opt-in), so it's intentionally bounded and returned
+/// in full, ordered by name.
+#[utoipa::path(
+    operation_id = "metadata_auto_synced",
+    get,
+    path = "/admin/metadata/auto-synced",
+    responses(
+        (status = 200, body = AutoSyncedResp),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn list_auto_synced(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
+    let rows = match series::Entity::find()
+        .filter(series::Column::MetadataSyncPaused.eq(false))
+        .filter(series::Column::RemovedAt.is_null())
+        .order_by_asc(series::Column::Name)
+        .find_also_related(library::Entity)
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "auto-synced series query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let series = rows
+        .into_iter()
+        .map(|(s, lib)| AutoSyncedSeriesRow {
+            id: s.id.to_string(),
+            slug: s.slug,
+            name: s.name,
+            library_name: lib.map(|l| l.name).unwrap_or_default(),
+            year: s.year,
+            last_metadata_sync_at: s.last_metadata_sync_at.map(|t| t.to_rfc3339()),
+        })
+        .collect();
+    Json(AutoSyncedResp { series }).into_response()
 }

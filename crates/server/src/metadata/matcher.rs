@@ -25,7 +25,7 @@
 use crate::metadata::provider::{IssueCandidate, SeriesCandidate};
 
 /// Confidence bucket — set by [`Score::bucket`] from the numeric score.
-/// Drives the orchestrator's auto-apply / review-queue / discard
+/// Drives the orchestrator's auto-apply / manual-review / discard
 /// routing.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

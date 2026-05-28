@@ -439,8 +439,7 @@ export const queryKeys = {
     before?: string;
   }) => ["admin", "metadata", "runs", filters] as const,
   adminMetadataRun: (id: string) => ["admin", "metadata", "runs", id] as const,
-  adminMetadataReviewQueue: (filters: { bucket?: string }) =>
-    ["admin", "metadata", "review-queue", filters] as const,
+  adminMetadataAutoSynced: ["admin", "metadata", "auto-synced"] as const,
   /** Runtime-editable settings (M1 of runtime-config-admin). Registry
    *  + resolved values; mutated via PATCH /admin/settings. */
   adminSettings: ["admin", "settings"] as const,
@@ -2177,9 +2176,9 @@ import type {
   DashboardResp,
   MatchQualityResp,
   ProvidersListResp,
-  ReviewQueueResp,
   RunDetailResp,
   RunsListResp,
+  AutoSyncedResp,
 } from "./types";
 
 export function useAdminMetadataDashboard() {
@@ -2198,6 +2197,14 @@ export function useAdminMetadataMatchQuality() {
       jsonFetch<MatchQualityResp>(`/admin/metadata/match-quality`),
     staleTime: 30_000,
     refetchInterval: 60_000,
+  });
+}
+
+export function useAdminMetadataAutoSynced() {
+  return useQuery({
+    queryKey: queryKeys.adminMetadataAutoSynced,
+    queryFn: () => jsonFetch<AutoSyncedResp>(`/admin/metadata/auto-synced`),
+    staleTime: 30_000,
   });
 }
 
@@ -2238,19 +2245,6 @@ export function useAdminMetadataRun(id: string) {
     queryFn: () =>
       jsonFetch<RunDetailResp>(`/admin/metadata/runs/${encodeURIComponent(id)}`),
     enabled: !!id,
-    staleTime: 15_000,
-  });
-}
-
-export function useAdminMetadataReviewQueue(filters: { bucket?: string }) {
-  return useQuery({
-    queryKey: queryKeys.adminMetadataReviewQueue(filters),
-    queryFn: () => {
-      const qs = filters.bucket
-        ? `?bucket=${encodeURIComponent(filters.bucket)}`
-        : "";
-      return jsonFetch<ReviewQueueResp>(`/admin/metadata/review-queue${qs}`);
-    },
     staleTime: 15_000,
   });
 }

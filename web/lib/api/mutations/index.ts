@@ -2566,25 +2566,3 @@ export function useTestMetadataProvider() {
     },
   );
 }
-
-export function useDismissMetadataCandidate() {
-  const qc = useQueryClient();
-  return useApiMutation<
-    { dismissed: boolean },
-    { runId: string; ordinal: number }
-  >(
-    (input) => ({
-      path: `/admin/metadata/review-queue/${encodeURIComponent(input.runId)}/${input.ordinal}/dismiss`,
-      method: "POST",
-    }),
-    {
-      successMessage: "Candidate dismissed",
-      onSuccess: () => {
-        qc.invalidateQueries({
-          queryKey: ["admin", "metadata", "review-queue"],
-        });
-        qc.invalidateQueries({ queryKey: ["admin", "metadata", "dashboard"] });
-      },
-    },
-  );
-}

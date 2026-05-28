@@ -152,7 +152,7 @@ export function PageEditor({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="flex max-h-[90vh] w-full flex-col gap-0 p-0 sm:max-w-3xl">
+        <DialogContent className="flex max-h-[90vh] w-full flex-col gap-0 p-0 sm:max-w-5xl">
           <DialogHeader className="border-border border-b px-6 py-4">
             <DialogTitle>Edit archive</DialogTitle>
             <DialogDescription>

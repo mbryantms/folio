@@ -292,6 +292,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/auto-synced": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Series with auto-sync enabled (`metadata_sync_paused = false`) — the
+         *     opt-in set the weekly refresh cron will touch. Auto-sync is
+         *     series-level, so issues inherit their series' setting. The list is
+         *     operator-curated (opt-in), so it's intentionally bounded and returned
+         *     in full, ordered by name. */
+        get: operations["metadata_auto_synced"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/dashboard": {
         parameters: {
             query?: never;
@@ -366,38 +387,6 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["admin_metadata_providers_test"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/metadata/review-queue": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["admin_metadata_review_queue_list"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/metadata/review-queue/{run_id}/{ordinal}/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["admin_metadata_review_queue_dismiss"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3644,6 +3633,20 @@ export interface components {
             local: components["schemas"]["LocalConfigView"];
             oidc: components["schemas"]["OidcConfigView"];
         };
+        AutoSyncedResp: {
+            series: components["schemas"]["AutoSyncedSeriesRow"][];
+        };
+        /** @description One auto-synced series row for the admin "Auto-synced" tab. */
+        AutoSyncedSeriesRow: {
+            id: string;
+            /** @description RFC3339 of the last provider sync, or `null` if never synced. */
+            last_metadata_sync_at?: string | null;
+            library_name: string;
+            name: string;
+            slug: string;
+            /** Format: int32 */
+            year?: number | null;
+        };
         /** @description Outcome of a phash backfill sweep — exposed via the admin
          *     endpoint so the operator can see how many rows landed in each
          *     category. */
@@ -4471,12 +4474,6 @@ export interface components {
             providers: components["schemas"]["ProviderView"][];
             /**
              * Format: int64
-             * @description `metadata_run_candidate` rows in the medium / low bucket with
-             *     no `applied_at` AND no `dismissed_at`.
-             */
-            review_queue_count: number;
-            /**
-             * Format: int64
              * @description Series with at least one row in `external_ids` from a
              *     configured provider source.
              */
@@ -4591,9 +4588,6 @@ export interface components {
         DirEntry: {
             name: string;
             path: string;
-        };
-        DismissResp: {
-            dismissed: boolean;
         };
         DowHourCell: {
             /** Format: int64 */
@@ -6187,25 +6181,6 @@ export interface components {
         RestoreResponse: {
             issue_id: string;
             status: string;
-        };
-        ReviewItem: {
-            bucket: string;
-            candidate: unknown;
-            external_id: string;
-            /** Format: int32 */
-            ordinal: number;
-            /** Format: uuid */
-            run_id: string;
-            run_started_at: string;
-            scope: string;
-            scope_entity_id?: string | null;
-            /** Format: float */
-            score: number;
-            source: string;
-        };
-        ReviewQueueResp: {
-            items: components["schemas"]["ReviewItem"][];
-            next_cursor?: string | null;
         };
         RevokeAllResp: {
             /**
@@ -8054,6 +8029,32 @@ export interface operations {
             };
         };
     };
+    metadata_auto_synced: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoSyncedResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     admin_metadata_dashboard: {
         parameters: {
             query?: never;
@@ -8210,73 +8211,6 @@ export interface operations {
             };
             /** @description provider responded with an error */
             502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    admin_metadata_review_queue_list: {
-        parameters: {
-            query?: {
-                /** @description `medium` | `low` | both (default). */
-                bucket?: string | null;
-                limit?: number | null;
-                before?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReviewQueueResp"];
-                };
-            };
-            /** @description admin only */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    admin_metadata_review_queue_dismiss: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-                ordinal: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DismissResp"];
-                };
-            };
-            /** @description admin only */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description candidate not found */
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };

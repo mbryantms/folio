@@ -129,6 +129,7 @@ pub struct SeriesSeed<'a> {
     pub preserve_canonical_order: bool,
     pub reading_direction: Option<String>,
     pub publisher: Option<String>,
+    pub metadata_sync_paused: bool,
 }
 
 impl<'a> SeriesSeed<'a> {
@@ -140,7 +141,14 @@ impl<'a> SeriesSeed<'a> {
             preserve_canonical_order: false,
             reading_direction: None,
             publisher: None,
+            metadata_sync_paused: false,
         }
+    }
+
+    /// Opt the series out of metadata auto-sync (`metadata_sync_paused`).
+    pub fn with_metadata_sync_paused(mut self, p: bool) -> Self {
+        self.metadata_sync_paused = p;
+        self
     }
 
     pub fn with_preserve_canonical_order(mut self, p: bool) -> Self {
@@ -188,7 +196,7 @@ impl<'a> SeriesSeed<'a> {
             publisher_id: Set(None),
             imprint_id: Set(None),
             last_metadata_sync_at: Set(None),
-            metadata_sync_paused: Set(false),
+            metadata_sync_paused: Set(self.metadata_sync_paused),
             created_at: Set(now),
             updated_at: Set(now),
             folder_path: Set(None),

@@ -110,10 +110,10 @@ list_providers   # GET /admin/metadata/providers — read-only provider status +
 dashboard           # GET /admin/metadata/dashboard — read-only counts + quota
 list_runs           # GET /admin/metadata/runs — paginated run history
 get_run             # GET /admin/metadata/runs/{id} — single run detail
-list_review_queue   # GET /admin/metadata/review-queue — pending medium/low matches
 
 # ── admin_metadata.rs (matching-accuracy-1.0 M0) ─────────────
 match_quality       # GET /admin/metadata/match-quality — read-only outcome distribution
+list_auto_synced    # GET /admin/metadata/auto-synced — read-only list of auto-sync-enabled series
 
 # ── archive_edit.rs (archive-rewrite-1.0 M2) ─────────────────
 edit                # POST /issues/{id}/archive/edit — enqueues ArchiveEditJob; the worker writes audit_log (admin.issue.archive_edit) on completion

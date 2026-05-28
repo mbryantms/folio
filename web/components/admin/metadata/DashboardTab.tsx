@@ -8,7 +8,7 @@
  * token-bucket state.
  */
 
-import { CheckCircle2, Fingerprint, Loader2, Search, XCircle } from "lucide-react";
+import { CheckCircle2, Fingerprint, Loader2, XCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -41,7 +41,7 @@ export function DashboardTab() {
       : 0;
   return (
     <div className="space-y-4">
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
           label="Series matched"
           value={`${d.series_matched.toLocaleString()} / ${d.series_total.toLocaleString()}`}
@@ -53,12 +53,6 @@ export function DashboardTab() {
           value={d.series_unmatched.toLocaleString()}
           accent={d.series_unmatched > 0 ? "needs search" : "none"}
           icon={<XCircle className="h-4 w-4" />}
-        />
-        <StatCard
-          label="Review queue"
-          value={d.review_queue_count.toLocaleString()}
-          accent="medium + low"
-          icon={<Search className="h-4 w-4" />}
         />
         <StatCard
           label="Applies (7d)"
@@ -327,7 +321,7 @@ function ProviderQuotaRow({ provider }: { provider: ProviderView }) {
   const enabled = provider.enabled;
   const quota = provider.quota;
   return (
-    <div className="flex items-center justify-between gap-3 border-b py-2 text-sm last:border-0">
+    <div className="border-border flex items-center justify-between gap-3 border-b py-2 text-sm last:border-0">
       <div>
         <div className="flex items-center gap-2">
           <span className="font-medium">{provider.label}</span>

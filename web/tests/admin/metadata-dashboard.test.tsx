@@ -12,7 +12,6 @@ let queryState: {
         series_total: number;
         series_matched: number;
         series_unmatched: number;
-        review_queue_count: number;
         applies_last_7_days: number;
         providers: Array<{
           id: string;
@@ -63,7 +62,6 @@ describe("<DashboardTab>", () => {
         series_total: 1,
         series_matched: 0,
         series_unmatched: 1,
-        review_queue_count: 0,
         applies_last_7_days: 0,
         providers: [],
       },
@@ -84,7 +82,6 @@ describe("<DashboardTab>", () => {
         series_total: 100,
         series_matched: 80,
         series_unmatched: 20,
-        review_queue_count: 5,
         applies_last_7_days: 12,
         providers: [],
       },
@@ -128,7 +125,6 @@ describe("<DashboardTab>", () => {
         series_total: 100,
         series_matched: 60,
         series_unmatched: 40,
-        review_queue_count: 12,
         applies_last_7_days: 8,
         providers: [
           {
@@ -156,7 +152,6 @@ describe("<DashboardTab>", () => {
     expect(html).toContain("60");
     expect(html).toContain("60%");
     expect(html).toContain("40");
-    expect(html).toContain("Review queue");
     expect(html).toContain("ComicVine");
     expect(html).toContain("Metron");
     expect(html).toContain("ENABLED");

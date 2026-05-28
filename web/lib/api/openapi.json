@@ -834,6 +834,27 @@
         }
       }
     },
+    "/api/admin/metadata/auto-synced": {
+      "get": {
+        "summary": "Series with auto-sync enabled (`metadata_sync_paused = false`) — the\nopt-in set the weekly refresh cron will touch. Auto-sync is\nseries-level, so issues inherit their series' setting. The list is\noperator-curated (opt-in), so it's intentionally bounded and returned\nin full, ordered by name.",
+        "operationId": "metadata_auto_synced",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoSyncedResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/dashboard": {
       "get": {
         "operationId": "admin_metadata_dashboard",
@@ -968,108 +989,6 @@
           },
           "502": {
             "description": "provider responded with an error"
-          }
-        }
-      }
-    },
-    "/api/admin/metadata/review-queue": {
-      "get": {
-        "operationId": "admin_metadata_review_queue_list",
-        "parameters": [
-          {
-            "name": "bucket",
-            "in": "query",
-            "description": "`medium` | `low` | both (default).",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "before",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "format": "date-time"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReviewQueueResp"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "admin only"
-          }
-        }
-      }
-    },
-    "/api/admin/metadata/review-queue/{run_id}/{ordinal}/dismiss": {
-      "post": {
-        "operationId": "admin_metadata_review_queue_dismiss",
-        "parameters": [
-          {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "ordinal",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DismissResp"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "admin only"
-          },
-          "404": {
-            "description": "candidate not found"
           }
         }
       }
@@ -8705,6 +8624,58 @@
           }
         }
       },
+      "AutoSyncedResp": {
+        "type": "object",
+        "required": [
+          "series"
+        ],
+        "properties": {
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutoSyncedSeriesRow"
+            }
+          }
+        }
+      },
+      "AutoSyncedSeriesRow": {
+        "type": "object",
+        "description": "One auto-synced series row for the admin \"Auto-synced\" tab.",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "library_name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "last_metadata_sync_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC3339 of the last provider sync, or `null` if never synced."
+          },
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "BackfillOutcome": {
         "type": "object",
         "description": "Outcome of a phash backfill sweep — exposed via the admin\nendpoint so the operator can see how many rows landed in each\ncategory.",
@@ -10961,7 +10932,6 @@
           "series_total",
           "series_matched",
           "series_unmatched",
-          "review_queue_count",
           "applies_last_7_days",
           "providers"
         ],
@@ -10977,11 +10947,6 @@
               "$ref": "#/components/schemas/ProviderView"
             },
             "description": "Per-provider quota snapshots — only populated when the\nprovider is configured + enabled."
-          },
-          "review_queue_count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "`metadata_run_candidate` rows in the medium / low bucket with\nno `applied_at` AND no `dismissed_at`."
           },
           "series_matched": {
             "type": "integer",
@@ -11249,17 +11214,6 @@
           },
           "path": {
             "type": "string"
-          }
-        }
-      },
-      "DismissResp": {
-        "type": "object",
-        "required": [
-          "dismissed"
-        ],
-        "properties": {
-          "dismissed": {
-            "type": "boolean"
           }
         }
       },
@@ -15630,76 +15584,6 @@
           },
           "status": {
             "type": "string"
-          }
-        }
-      },
-      "ReviewItem": {
-        "type": "object",
-        "required": [
-          "run_id",
-          "ordinal",
-          "source",
-          "external_id",
-          "bucket",
-          "score",
-          "candidate",
-          "scope",
-          "run_started_at"
-        ],
-        "properties": {
-          "bucket": {
-            "type": "string"
-          },
-          "candidate": {},
-          "external_id": {
-            "type": "string"
-          },
-          "ordinal": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "run_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "run_started_at": {
-            "type": "string"
-          },
-          "scope": {
-            "type": "string"
-          },
-          "scope_entity_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "score": {
-            "type": "number",
-            "format": "float"
-          },
-          "source": {
-            "type": "string"
-          }
-        }
-      },
-      "ReviewQueueResp": {
-        "type": "object",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReviewItem"
-            }
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         }
       },

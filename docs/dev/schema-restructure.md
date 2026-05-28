@@ -178,9 +178,10 @@ after closing + reopening doesn't re-burn provider budget. Per-entity
 Redis coalesce keys (`metadata:search:series:{id}`, `SET NX EX 60s`)
 collapse rapid re-clicks into the same in-flight run.
 
-`metadata_run_candidate.applied_at` flips when the user applies a
-candidate; `dismissed_at` flips on dismiss. The admin Review Queue
-reads candidates where both are NULL + bucket ∈ {medium, low}.
+`metadata_run_candidate.applied_at` flips when a candidate is
+applied. `dismissed_at` is a vestigial column (the admin review-queue
+surface that wrote it was removed); it stays NULL and is still carried
+in the Runs drill-down for completeness.
 
 ## issue_cover + series_cover
 
