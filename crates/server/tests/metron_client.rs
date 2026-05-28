@@ -204,11 +204,13 @@ async fn fetch_issue_carries_structured_credits_and_barcodes() {
     // Series back-reference + sort name + volume number preserved.
     assert_eq!(m.series_name.as_deref(), Some("Saga"));
     assert_eq!(m.volume, Some(1));
-    // 3 credits: writer + cover (exploded) + artist.
+    // 3 credits, with roles canonicalized at the provider boundary
+    // (`canonicalize_role`): Writer + Cover→CoverArtist (exploded from the
+    // first creator) + Artist→Penciller.
     assert_eq!(m.credits.len(), 3);
-    assert!(m.credits.iter().any(|c| c.role == "writer"));
-    assert!(m.credits.iter().any(|c| c.role == "cover"));
-    assert!(m.credits.iter().any(|c| c.role == "artist"));
+    assert!(m.credits.iter().any(|c| c.role == "Writer"));
+    assert!(m.credits.iter().any(|c| c.role == "CoverArtist"));
+    assert!(m.credits.iter().any(|c| c.role == "Penciller"));
     // Universes are Metron-only; pulled through.
     assert_eq!(m.universes.len(), 1);
     assert_eq!(m.universes[0].name, "Main Universe");
