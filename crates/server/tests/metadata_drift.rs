@@ -170,16 +170,9 @@ async fn drift_row_synthesized_when_pin_postdates_last_rewrite() {
         .expect("synth row should appear once a user pin exists");
     assert_eq!(synth["severity"], "info");
     assert_eq!(synth["id"], "synth:metadata_drift_from_xml");
+    assert_eq!(synth["payload"]["drifted_issue_count"].as_u64().unwrap(), 1,);
     assert_eq!(
-        synth["payload"]["drifted_issue_count"]
-            .as_u64()
-            .unwrap(),
-        1,
-    );
-    assert_eq!(
-        synth["payload"]["drifted_series_count"]
-            .as_u64()
-            .unwrap(),
+        synth["payload"]["drifted_series_count"].as_u64().unwrap(),
         1,
     );
     assert_eq!(

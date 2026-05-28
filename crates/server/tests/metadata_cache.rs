@@ -19,9 +19,15 @@ async fn cache_round_trips_payload() {
         source_provider: Some(Source::ComicVine),
         ..Default::default()
     };
-    cache::put(db, Source::ComicVine, CacheEntity::Series, "12345", &payload)
-        .await
-        .expect("put");
+    cache::put(
+        db,
+        Source::ComicVine,
+        CacheEntity::Series,
+        "12345",
+        &payload,
+    )
+    .await
+    .expect("put");
     let got = cache::get(
         db,
         Source::ComicVine,
@@ -44,9 +50,15 @@ async fn cache_misses_when_stale() {
         series_name: Some("Saga".into()),
         ..Default::default()
     };
-    cache::put(db, Source::ComicVine, CacheEntity::Series, "55555", &payload)
-        .await
-        .expect("put");
+    cache::put(
+        db,
+        Source::ComicVine,
+        CacheEntity::Series,
+        "55555",
+        &payload,
+    )
+    .await
+    .expect("put");
     // Negative TTL guarantees every row is stale.
     let got = cache::get(
         db,

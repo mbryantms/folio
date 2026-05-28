@@ -1132,8 +1132,16 @@ pub async fn composite_diff_series(
             "library access denied",
         );
     }
-    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id).await.ok().flatten() else {
-        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
     };
     if run.scope != orchestrator::scope::SERIES
         || run.scope_entity_id.as_deref() != Some(s.id.to_string().as_str())
@@ -1187,8 +1195,16 @@ pub async fn composite_diff_issue(
             "library access denied",
         );
     }
-    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id).await.ok().flatten() else {
-        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
     };
     if run.scope != orchestrator::scope::ISSUE
         || run.scope_entity_id.as_deref() != Some(i.id.as_str())
@@ -1464,9 +1480,7 @@ pub struct CompositeApplyResp {
     pub variants_written: u32,
 }
 
-fn cover_policy_to_writers(
-    p: ApplyCoverPolicy,
-) -> crate::metadata::writers::CoverOverwritePolicy {
+fn cover_policy_to_writers(p: ApplyCoverPolicy) -> crate::metadata::writers::CoverOverwritePolicy {
     use crate::metadata::writers::CoverOverwritePolicy as W;
     match p {
         ApplyCoverPolicy::Never => W::Never,
@@ -1562,7 +1576,11 @@ pub async fn composite_apply_series(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     if req.override_user_edits && user.role != "admin" {
         return error(
@@ -1571,8 +1589,16 @@ pub async fn composite_apply_series(
             "override_user_edits requires admin",
         );
     }
-    let Some(run) = orchestrator::fetch_run(&app.db, req.run_id).await.ok().flatten() else {
-        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
     };
     if run.scope != orchestrator::scope::SERIES
         || run.scope_entity_id.as_deref() != Some(s.id.to_string().as_str())
@@ -1583,8 +1609,11 @@ pub async fn composite_apply_series(
             "run does not belong to this series",
         );
     }
-    match crate::metadata::composite::apply_composite(&app, make_composite_args(&req, Some(user.id)))
-        .await
+    match crate::metadata::composite::apply_composite(
+        &app,
+        make_composite_args(&req, Some(user.id)),
+    )
+    .await
     {
         Ok(outcome) => {
             audit_composite(&app, &ctx, user.id, "series", s.id.to_string(), &req).await;
@@ -1624,7 +1653,11 @@ pub async fn composite_apply_issue(
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     if req.override_user_edits && user.role != "admin" {
         return error(
@@ -1633,8 +1666,16 @@ pub async fn composite_apply_issue(
             "override_user_edits requires admin",
         );
     }
-    let Some(run) = orchestrator::fetch_run(&app.db, req.run_id).await.ok().flatten() else {
-        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
     };
     if run.scope != orchestrator::scope::ISSUE
         || run.scope_entity_id.as_deref() != Some(i.id.as_str())
@@ -1645,8 +1686,11 @@ pub async fn composite_apply_issue(
             "run does not belong to this issue",
         );
     }
-    match crate::metadata::composite::apply_composite(&app, make_composite_args(&req, Some(user.id)))
-        .await
+    match crate::metadata::composite::apply_composite(
+        &app,
+        make_composite_args(&req, Some(user.id)),
+    )
+    .await
     {
         Ok(outcome) => {
             audit_composite(&app, &ctx, user.id, "issue", i.id.clone(), &req).await;

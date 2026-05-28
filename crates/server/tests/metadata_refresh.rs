@@ -52,7 +52,11 @@ async fn seed_issue_at(
 async fn mark_synced(app: &TestApp, series_id: uuid::Uuid, days_ago: i64) {
     let db = &app.state().db;
     let when = (Utc::now() - Duration::days(days_ago)).fixed_offset();
-    let row = series::Entity::find_by_id(series_id).one(db).await.unwrap().unwrap();
+    let row = series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
     let mut am: series::ActiveModel = row.into();
     am.last_metadata_sync_at = Set(Some(when));
     am.update(db).await.unwrap();
@@ -60,7 +64,11 @@ async fn mark_synced(app: &TestApp, series_id: uuid::Uuid, days_ago: i64) {
 
 async fn mark_paused(app: &TestApp, series_id: uuid::Uuid) {
     let db = &app.state().db;
-    let row = series::Entity::find_by_id(series_id).one(db).await.unwrap().unwrap();
+    let row = series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
     let mut am: series::ActiveModel = row.into();
     am.metadata_sync_paused = Set(true);
     am.update(db).await.unwrap();
@@ -88,8 +96,12 @@ async fn unmatched_scope_includes_only_series_with_no_external_ids() {
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();
     let lib = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let matched = SeriesSeed::new(lib, "Matched").insert(&app.state().db).await;
-    let unmatched = SeriesSeed::new(lib, "Unmatched").insert(&app.state().db).await;
+    let matched = SeriesSeed::new(lib, "Matched")
+        .insert(&app.state().db)
+        .await;
+    let unmatched = SeriesSeed::new(lib, "Unmatched")
+        .insert(&app.state().db)
+        .await;
     give_external_id(&app, matched, "comicvine", "1").await;
 
     let ids = eligible_series_for_scope(&app.state().db, lib, RefreshScope::Unmatched, 180, 14)
@@ -103,7 +115,9 @@ async fn unmatched_scope_excludes_paused() {
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();
     let lib = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let unmatched = SeriesSeed::new(lib, "Unmatched").insert(&app.state().db).await;
+    let unmatched = SeriesSeed::new(lib, "Unmatched")
+        .insert(&app.state().db)
+        .await;
     let paused = SeriesSeed::new(lib, "Paused").insert(&app.state().db).await;
     mark_paused(&app, paused).await;
     let ids = eligible_series_for_scope(&app.state().db, lib, RefreshScope::Unmatched, 180, 14)
@@ -117,7 +131,9 @@ async fn stale_scope_includes_never_synced_and_older_than_threshold() {
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();
     let lib = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let never_synced = SeriesSeed::new(lib, "Never synced").insert(&app.state().db).await;
+    let never_synced = SeriesSeed::new(lib, "Never synced")
+        .insert(&app.state().db)
+        .await;
     let fresh = SeriesSeed::new(lib, "Fresh").insert(&app.state().db).await;
     let stale = SeriesSeed::new(lib, "Stale").insert(&app.state().db).await;
     // Give all three an external id so the "unmatched" branch doesn't
@@ -170,7 +186,10 @@ async fn recent_scope_uses_latest_issue_created_at_window() {
         .await
         .unwrap();
     assert!(ids.contains(&recent), "issue inside window must match");
-    assert!(!ids.contains(&older), "issue older than window must not match");
+    assert!(
+        !ids.contains(&older),
+        "issue older than window must not match"
+    );
 }
 
 #[tokio::test]
@@ -178,7 +197,9 @@ async fn recent_scope_falls_back_to_series_created_at_when_no_issues() {
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();
     let lib = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let s = SeriesSeed::new(lib, "Fresh series").insert(&app.state().db).await;
+    let s = SeriesSeed::new(lib, "Fresh series")
+        .insert(&app.state().db)
+        .await;
     // No issues at all; the COALESCE falls back to series.created_at
     // which is `now`, so the series is included in the recent window.
     let ids = eligible_series_for_scope(&app.state().db, lib, RefreshScope::Recent, 180, 14)

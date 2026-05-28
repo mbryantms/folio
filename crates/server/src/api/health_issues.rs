@@ -540,10 +540,7 @@ pub async fn flush_metadata_drift(
 /// reads `field_provenance` to determine which junctions / external_ids
 /// were user-set vs provider-set so the new XML carries the right
 /// provenance markers.
-async fn enqueue_drift_flush_for_series(
-    app: &AppState,
-    series_ids: &[Uuid],
-) -> (u32, u32) {
+async fn enqueue_drift_flush_for_series(app: &AppState, series_ids: &[Uuid]) -> (u32, u32) {
     use apalis::prelude::Storage;
     use entity::{issue, series};
     use sea_orm::EntityTrait;
@@ -554,10 +551,7 @@ async fn enqueue_drift_flush_for_series(
 
     for series_uuid in series_ids {
         let series_id_str = series_uuid.to_string();
-        let series_row = match series::Entity::find_by_id(*series_uuid)
-            .one(&app.db)
-            .await
-        {
+        let series_row = match series::Entity::find_by_id(*series_uuid).one(&app.db).await {
             Ok(Some(r)) => r,
             Ok(None) => continue,
             Err(e) => {
@@ -620,9 +614,7 @@ async fn enqueue_drift_flush_for_series(
                 }
             };
             let issue_external_ids = match crate::metadata::sidecar_compose::load_external_ids(
-                &app.db,
-                "issue",
-                issue_id,
+                &app.db, "issue", issue_id,
             )
             .await
             {
@@ -632,19 +624,16 @@ async fn enqueue_drift_flush_for_series(
                     continue;
                 }
             };
-            let issue_user_pins = match crate::metadata::sidecar_compose::load_user_pins(
-                &app.db,
-                "issue",
-                issue_id,
-            )
-            .await
-            {
-                Ok(s) => s,
-                Err(_) => {
-                    skipped += 1;
-                    continue;
-                }
-            };
+            let issue_user_pins =
+                match crate::metadata::sidecar_compose::load_user_pins(&app.db, "issue", issue_id)
+                    .await
+                {
+                    Ok(s) => s,
+                    Err(_) => {
+                        skipped += 1;
+                        continue;
+                    }
+                };
 
             let cctx = crate::metadata::sidecar_compose::ComposeContext {
                 provider: &empty_provider,

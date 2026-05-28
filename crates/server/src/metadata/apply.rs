@@ -305,9 +305,10 @@ impl ProvResolver<'_> {
     pub fn resolve(&self, field_key: &str) -> ProvSource {
         match self {
             ProvResolver::Uniform(p) => p.clone(),
-            ProvResolver::PerField { map, fallback } => {
-                map.get(field_key).cloned().unwrap_or_else(|| fallback.clone())
-            }
+            ProvResolver::PerField { map, fallback } => map
+                .get(field_key)
+                .cloned()
+                .unwrap_or_else(|| fallback.clone()),
         }
     }
 

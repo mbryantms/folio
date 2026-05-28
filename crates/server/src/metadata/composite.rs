@@ -24,7 +24,6 @@ use crate::metadata::apply::{
     classify_field, fetch_field_provenance_map, fetch_issue_detail, fetch_series_detail,
     flip_candidate_applied, load_run, parse_source, write_issue_fields, write_series_fields,
 };
-use crate::metadata::writers::{CoverOverwritePolicy, SetBy};
 use crate::metadata::diff::{
     ExternalIdConflictRow, ExternalIdNewRow, classify_external_ids, fetch_field_provenance_full,
 };
@@ -33,6 +32,7 @@ use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::merge::{self, MergePolicyConfig, MergeScope, ProviderDetail};
 use crate::metadata::orchestrator;
 use crate::metadata::provider::{GenericMetadata, IssueCandidate, SeriesCandidate};
+use crate::metadata::writers::{CoverOverwritePolicy, SetBy};
 use crate::state::AppState;
 use entity::{issue, metadata_run_candidate, series};
 use sea_orm::EntityTrait;
@@ -108,9 +108,7 @@ struct PickedCandidate {
 /// Default candidate set: the lowest-ordinal (best-ranked) candidate per
 /// provider. Used when the caller doesn't specify an explicit set of
 /// ordinals (the initial compare-view open).
-fn default_best_per_provider(
-    candidates: &[metadata_run_candidate::Model],
-) -> Vec<i32> {
+fn default_best_per_provider(candidates: &[metadata_run_candidate::Model]) -> Vec<i32> {
     let mut seen: HashSet<Source> = HashSet::new();
     let mut out = Vec::new();
     // `candidates` arrives ordered by ordinal asc (fetch_candidates).
@@ -170,9 +168,7 @@ async fn assemble_details(
             continue;
         };
         let detail = match scope {
-            MergeScope::Series => {
-                fetch_series_detail(state, &*provider, &p.row.external_id).await
-            }
+            MergeScope::Series => fetch_series_detail(state, &*provider, &p.row.external_id).await,
             MergeScope::Issue => fetch_issue_detail(state, &*provider, &p.row.external_id).await,
         };
         match detail {
@@ -192,9 +188,11 @@ async fn assemble_details(
 
 fn column_for(scope: MergeScope, picked: &PickedCandidate) -> CompositeProviderColumn {
     let (cover, title) = match scope {
-        MergeScope::Series => serde_json::from_value::<SeriesCandidate>(picked.row.candidate.clone())
-            .map(|c| (c.cover_image_url, Some(c.name)))
-            .unwrap_or((None, None)),
+        MergeScope::Series => {
+            serde_json::from_value::<SeriesCandidate>(picked.row.candidate.clone())
+                .map(|c| (c.cover_image_url, Some(c.name)))
+                .unwrap_or((None, None))
+        }
         MergeScope::Issue => serde_json::from_value::<IssueCandidate>(picked.row.candidate.clone())
             .map(|c| {
                 let title = match (c.series_name.as_deref(), c.issue_number.as_deref()) {
@@ -234,7 +232,11 @@ fn count_string(n: usize) -> Option<String> {
 }
 
 fn series_current(row: &series::Model, field: MetadataField) -> Option<String> {
-    let norm = |s: Option<&str>| s.map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+    let norm = |s: Option<&str>| {
+        s.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
     match field {
         MetadataField::Title => norm(Some(row.name.as_str())),
         MetadataField::SortName => norm(row.sort_name.as_deref()),
@@ -255,7 +257,11 @@ async fn issue_current(
     row: &issue::Model,
     field: MetadataField,
 ) -> Option<String> {
-    let norm = |s: Option<&str>| s.map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+    let norm = |s: Option<&str>| {
+        s.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
     match field {
         MetadataField::Title => norm(row.title.as_deref()),
         MetadataField::Deck => norm(row.deck.as_deref()),
@@ -396,7 +402,8 @@ pub async fn compute_composite_diff(
         MergeScope::Issue => "issue",
     };
     let provenance = fetch_field_provenance_map(&state.db, entity_type, &entity_id_str).await?;
-    let provenance_full = fetch_field_provenance_full(&state.db, entity_type, &entity_id_str).await?;
+    let provenance_full =
+        fetch_field_provenance_full(&state.db, entity_type, &entity_id_str).await?;
 
     // Resolve the entity row for current values.
     let series_row = if scope == MergeScope::Series {
@@ -499,7 +506,10 @@ pub fn build_merged_detail(
     field_sources: &HashMap<String, i32>,
     scope: MergeScope,
     preference: &[Source],
-) -> (GenericMetadata, HashMap<String, crate::metadata::apply::ProvSource>) {
+) -> (
+    GenericMetadata,
+    HashMap<String, crate::metadata::apply::ProvSource>,
+) {
     use crate::metadata::apply::ProvSource;
     use crate::metadata::writers::SetBy;
 
@@ -674,9 +684,8 @@ pub async fn apply_composite(
     // Writeback dispatch: same flag check as the single-candidate path.
     let (outcome, is_writeback) = match scope {
         MergeScope::Series => {
-            let series_uuid = Uuid::parse_str(&entity_id_str).map_err(|e| {
-                ApplyError::InvalidScope(format!("scope_entity_id not uuid: {e}"))
-            })?;
+            let series_uuid = Uuid::parse_str(&entity_id_str)
+                .map_err(|e| ApplyError::InvalidScope(format!("scope_entity_id not uuid: {e}")))?;
             let series_row = series::Entity::find_by_id(series_uuid)
                 .one(&state.db)
                 .await?
@@ -686,8 +695,15 @@ pub async fn apply_composite(
                 apply_series_via_sidecar(state, &apply_args, &series_row, primary_source, merged)
                     .await?
             } else {
-                write_series_fields(state, &series_row, series_uuid, &merged, apply_args, &resolver)
-                    .await?
+                write_series_fields(
+                    state,
+                    &series_row,
+                    series_uuid,
+                    &merged,
+                    apply_args,
+                    &resolver,
+                )
+                .await?
             };
             (outcome, writeback)
         }

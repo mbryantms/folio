@@ -297,10 +297,7 @@ where
             db,
             "series",
             &row.id.to_string(),
-            &crate::metadata::Identifier::new(
-                crate::metadata::Source::ComicVine,
-                cv.to_string(),
-            ),
+            &crate::metadata::Identifier::new(crate::metadata::Source::ComicVine, cv.to_string()),
             crate::metadata::writers::SetBy::ComicInfo,
         )
         .await?;

@@ -15,11 +15,11 @@
 mod common;
 
 use common::TestApp;
+use serde_json::json;
 use server::metadata::cache;
 use server::metadata::comicvine::ComicVineClient;
 use server::metadata::identifier::Source;
 use server::metadata::provider::{IssueQuery, MetadataProvider, ProviderError, SeriesQuery};
-use serde_json::json;
 use std::time::Instant;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -128,10 +128,9 @@ async fn search_series_returns_normalized_candidates() {
     Mock::given(method("GET"))
         .and(path("/volumes"))
         .and(query_param("api_key", "test-key"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(ok_envelope(json!([cv_volume_fixture(12345, "Saga", "2012")]))),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!([
+            cv_volume_fixture(12345, "Saga", "2012")
+        ]))))
         .mount(&mock)
         .await;
 
@@ -216,15 +215,14 @@ async fn fetch_issue_explodes_multi_role_credits() {
 #[tokio::test]
 async fn status_code_100_maps_to_unauthorized() {
     let mock = MockServer::start().await;
-    Mock::given(method("GET")).respond_with(
-        ResponseTemplate::new(200).set_body_json(json!({
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "status_code": 100,
             "error": "Invalid API Key",
             "results": []
-        })),
-    )
-    .mount(&mock)
-    .await;
+        })))
+        .mount(&mock)
+        .await;
 
     let app = TestApp::spawn_with_comicvine("bad-key", true).await;
     let client = ComicVineClient::with_base_url(
@@ -248,15 +246,14 @@ async fn status_code_100_maps_to_unauthorized() {
 #[tokio::test]
 async fn status_code_101_maps_to_not_found() {
     let mock = MockServer::start().await;
-    Mock::given(method("GET")).respond_with(
-        ResponseTemplate::new(200).set_body_json(json!({
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "status_code": 101,
             "error": "Object Not Found",
             "results": []
-        })),
-    )
-    .mount(&mock)
-    .await;
+        })))
+        .mount(&mock)
+        .await;
 
     let app = TestApp::spawn_with_comicvine("test-key", true).await;
     let client = ComicVineClient::with_base_url(
@@ -272,15 +269,14 @@ async fn status_code_101_maps_to_not_found() {
 #[tokio::test]
 async fn status_code_107_maps_to_quota_exceeded() {
     let mock = MockServer::start().await;
-    Mock::given(method("GET")).respond_with(
-        ResponseTemplate::new(200).set_body_json(json!({
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "status_code": 107,
             "error": "Rate limit",
             "results": []
-        })),
-    )
-    .mount(&mock)
-    .await;
+        })))
+        .mount(&mock)
+        .await;
 
     let app = TestApp::spawn_with_comicvine("test-key", true).await;
     let client = ComicVineClient::with_base_url(
@@ -387,7 +383,8 @@ async fn search_issue_filters_by_volume_when_id_known() {
         .and(path("/issues"))
         .and(query_param("filter", "issue_number:1,volume:12345"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(ok_envelope(json!([cv_issue_fixture(67890, "1")]))),
+            ResponseTemplate::new(200)
+                .set_body_json(ok_envelope(json!([cv_issue_fixture(67890, "1")]))),
         )
         .expect(1)
         .mount(&mock)

@@ -190,41 +190,39 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                 // docs) and thumbnail encoding. Decoding once spares
                 // a second zip-read + decode per issue.
                 let mut cover_hashes: Option<crate::metadata::phash::ArchiveCoverHashes> = None;
-                let cover_result: Result<(), thumbnails::ThumbError> = if matches!(
-                    kind,
-                    ThumbsJobKind::Cover | ThumbsJobKind::CoverAndStrip
-                ) {
-                    match thumbnails::decode_page(&mut *archive, cover_page_index) {
-                        Ok(img) => {
-                            let (p, d, a) = crate::metadata::phash::all_hashes(&img);
-                            cover_hashes = Some(crate::metadata::phash::ArchiveCoverHashes {
-                                hashes: (p, d, a),
-                                width: img.width() as i32,
-                                height: img.height() as i32,
-                            });
-                            thumbnails::encode_cover_from_image(
-                                &data_dir,
-                                &issue_id,
-                                cover_page_index,
-                                &img,
-                                format,
-                                quality,
-                            )
-                            .map(|_| ())
+                let cover_result: Result<(), thumbnails::ThumbError> =
+                    if matches!(kind, ThumbsJobKind::Cover | ThumbsJobKind::CoverAndStrip) {
+                        match thumbnails::decode_page(&mut *archive, cover_page_index) {
+                            Ok(img) => {
+                                let (p, d, a) = crate::metadata::phash::all_hashes(&img);
+                                cover_hashes = Some(crate::metadata::phash::ArchiveCoverHashes {
+                                    hashes: (p, d, a),
+                                    width: img.width() as i32,
+                                    height: img.height() as i32,
+                                });
+                                thumbnails::encode_cover_from_image(
+                                    &data_dir,
+                                    &issue_id,
+                                    cover_page_index,
+                                    &img,
+                                    format,
+                                    quality,
+                                )
+                                .map(|_| ())
+                            }
+                            Err(e) => Err(e),
                         }
-                        Err(e) => Err(e),
-                    }
-                } else {
-                    Ok(())
-                };
+                    } else {
+                        Ok(())
+                    };
                 let outcome: Result<thumbnails::GenerateAllOutcome, thumbnails::ThumbError> =
                     match kind {
-                        ThumbsJobKind::Cover => cover_result.map(|_| {
-                            thumbnails::GenerateAllOutcome {
+                        ThumbsJobKind::Cover => {
+                            cover_result.map(|_| thumbnails::GenerateAllOutcome {
                                 total_pages: 1,
                                 failed: Vec::new(),
-                            }
-                        }),
+                            })
+                        }
                         ThumbsJobKind::Strip => thumbnails::generate_strips_with_quality(
                             &data_dir,
                             &mut *archive,
@@ -826,7 +824,6 @@ pub async fn enqueue_strips_for_library(app: &AppState, library_id: Uuid) -> usi
     }
     count
 }
-
 
 pub async fn handle_search(job: SearchJob, _state: Data<AppState>) -> Result<(), Error> {
     tracing::debug!(

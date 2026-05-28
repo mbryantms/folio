@@ -95,7 +95,11 @@ pub async fn list_issue_covers(
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !user_can_see_library(&app, &user, issue_row.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     let rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&id))
@@ -112,7 +116,11 @@ pub async fn list_issue_covers(
             // provider CDN URL for rows we haven't downloaded (legacy /
             // soft-fallback hotlinks).
             let image_url = if !r.local_path.is_empty() {
-                Some(format!("/issues/{}/covers/{}", urlencode(&r.issue_id), r.id))
+                Some(format!(
+                    "/issues/{}/covers/{}",
+                    urlencode(&r.issue_id),
+                    r.id
+                ))
             } else {
                 r.source_url.clone()
             };

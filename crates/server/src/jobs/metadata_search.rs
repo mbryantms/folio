@@ -260,10 +260,7 @@ async fn pre_filter_for_library(
     let Some(id) = library_id else {
         return crate::metadata::orchestrator::PreFilter::default();
     };
-    match entity::library::Entity::find_by_id(id)
-        .one(&state.db)
-        .await
-    {
+    match entity::library::Entity::find_by_id(id).one(&state.db).await {
         Ok(Some(lib)) => crate::metadata::orchestrator::PreFilter::from_library(&lib),
         Ok(None) => crate::metadata::orchestrator::PreFilter::default(),
         Err(e) => {
@@ -492,8 +489,7 @@ async fn maybe_auto_apply_series(
             series_id,
             mode: crate::metadata::apply::ApplyMode::FillMissing,
             apply_cover: true,
-            cover_overwrite_policy:
-                crate::jobs::metadata_apply::CoverPolicy::WhenMissing,
+            cover_overwrite_policy: crate::jobs::metadata_apply::CoverPolicy::WhenMissing,
             override_user_edits: false,
             actor_id: triggered_by,
             actor_ip: None,
@@ -554,8 +550,7 @@ async fn maybe_auto_apply_issue(
             issue_id: issue_id.to_owned(),
             mode: crate::metadata::apply::ApplyMode::FillMissing,
             apply_cover: true,
-            cover_overwrite_policy:
-                crate::jobs::metadata_apply::CoverPolicy::WhenMissing,
+            cover_overwrite_policy: crate::jobs::metadata_apply::CoverPolicy::WhenMissing,
             override_user_edits: false,
             actor_id: triggered_by,
             actor_ip: None,

@@ -621,10 +621,16 @@ mod tests {
         let xml = serialize(&parsed);
         // Each `<ID source="…">value</ID>` round-trips.
         assert!(xml.contains(r#"<ID source="metron">12345</ID>"#), "{xml}");
-        assert!(xml.contains(r#"<ID source="comicvine">67890</ID>"#), "{xml}");
+        assert!(
+            xml.contains(r#"<ID source="comicvine">67890</ID>"#),
+            "{xml}"
+        );
 
         let reparsed = parse(xml.as_bytes()).expect("reparse");
-        assert_eq!(reparsed.ids.get("metron").map(String::as_str), Some("12345"));
+        assert_eq!(
+            reparsed.ids.get("metron").map(String::as_str),
+            Some("12345")
+        );
         assert_eq!(
             reparsed.ids.get("comicvine").map(String::as_str),
             Some("67890"),
@@ -678,7 +684,10 @@ mod tests {
             ..MetronInfo::default()
         };
         let xml = serialize(&info);
-        assert!(xml.contains("<Title>Tom &amp; Jerry: &lt;ep1&gt;</Title>"), "{xml}");
+        assert!(
+            xml.contains("<Title>Tom &amp; Jerry: &lt;ep1&gt;</Title>"),
+            "{xml}"
+        );
     }
 
     #[test]
@@ -688,7 +697,10 @@ mod tests {
         // defend regardless — XML attribute escape must run).
         info.ids.insert("evil\"src".into(), "999".into());
         let xml = serialize(&info);
-        assert!(xml.contains(r#"<ID source="evil&quot;src">999</ID>"#), "{xml}");
+        assert!(
+            xml.contains(r#"<ID source="evil&quot;src">999</ID>"#),
+            "{xml}"
+        );
     }
 
     #[test]

@@ -139,9 +139,7 @@ async fn me_reuses_existing_csrf_cookie() {
                 .uri("/auth/me")
                 .header(
                     header::COOKIE,
-                    format!(
-                        "__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}"
-                    ),
+                    format!("__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}"),
                 )
                 .body(Body::empty())
                 .unwrap(),

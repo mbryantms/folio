@@ -289,7 +289,11 @@ pub async fn serve_issue_cover(
     if cover.local_path.is_empty() {
         // No on-disk artifact (metadata-only hotlink row) — the caller
         // should render `source_url` directly.
-        return error(StatusCode::NOT_FOUND, "not_found", "cover not stored locally");
+        return error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "cover not stored locally",
+        );
     }
     let Ok(Some(issue_row)) = issue::Entity::find_by_id(cover.issue_id.clone())
         .one(&app.db)

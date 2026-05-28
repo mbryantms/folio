@@ -393,9 +393,10 @@ async fn review_queue_lists_unresolved_medium_and_low() {
         .all(&app.state().db)
         .await
         .unwrap();
-    assert!(rows
-        .iter()
-        .any(|r| r.action == "admin.metadata.review_queue.dismiss"));
+    assert!(
+        rows.iter()
+            .any(|r| r.action == "admin.metadata.review_queue.dismiss")
+    );
 }
 
 #[tokio::test]
@@ -431,7 +432,9 @@ async fn test_provider_disabled_audit_does_not_fire() {
         .await
         .expect("audit_log query");
     assert!(
-        !rows.iter().any(|r| r.action == "admin.metadata.providers.test"),
+        !rows
+            .iter()
+            .any(|r| r.action == "admin.metadata.providers.test"),
         "audit row written even though provider was disabled (regression)"
     );
 }

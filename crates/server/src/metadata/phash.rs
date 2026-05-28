@@ -297,8 +297,8 @@ pub fn compute_archive_cover(
             .clone()
     };
     let bytes = a.read_entry_bytes(&entry_name)?;
-    let img = image::load_from_memory(&bytes)
-        .map_err(|e| ArchiveCoverError::Decode(e.to_string()))?;
+    let img =
+        image::load_from_memory(&bytes).map_err(|e| ArchiveCoverError::Decode(e.to_string()))?;
     let hashes = all_hashes(&img);
     Ok(ArchiveCoverHashes {
         hashes,

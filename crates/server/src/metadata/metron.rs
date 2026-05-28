@@ -510,7 +510,11 @@ fn series_list_to_candidate(s: &MSeriesList) -> Option<SeriesCandidate> {
             "series",
             &external_id,
         ),
-        name: s.series.as_deref().map(strip_display_year).unwrap_or_default(),
+        name: s
+            .series
+            .as_deref()
+            .map(strip_display_year)
+            .unwrap_or_default(),
         year: s.year_began,
         publisher: None,
         issue_count: s.issue_count,
@@ -865,14 +869,20 @@ mod tests {
     #[test]
     fn strip_display_year_drops_trailing_paren_year_only() {
         // Metron's list `series` display string carries the volume year.
-        assert_eq!(strip_display_year("Absolute Carnage (2019)"), "Absolute Carnage");
+        assert_eq!(
+            strip_display_year("Absolute Carnage (2019)"),
+            "Absolute Carnage"
+        );
         assert_eq!(strip_display_year("Saga (2012)"), "Saga");
         // A name that legitimately contains digits but no trailing paren
         // year is left intact.
         assert_eq!(strip_display_year("2000 AD"), "2000 AD");
         assert_eq!(strip_display_year("Spider-Man 2099"), "Spider-Man 2099");
         // Parenthetical that isn't a 4-digit year stays.
-        assert_eq!(strip_display_year("Daredevil (Vol. 2)"), "Daredevil (Vol. 2)");
+        assert_eq!(
+            strip_display_year("Daredevil (Vol. 2)"),
+            "Daredevil (Vol. 2)"
+        );
         // Bare title is a no-op.
         assert_eq!(strip_display_year("Absolute Carnage"), "Absolute Carnage");
     }

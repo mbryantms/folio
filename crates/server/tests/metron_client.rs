@@ -17,11 +17,11 @@
 mod common;
 
 use common::TestApp;
+use serde_json::json;
 use server::metadata::cache;
 use server::metadata::identifier::Source;
 use server::metadata::metron::MetronClient;
 use server::metadata::provider::{IssueQuery, MetadataProvider, ProviderError, SeriesQuery};
-use serde_json::json;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{basic_auth, method, path, query_param},
@@ -128,7 +128,9 @@ async fn search_series_uses_name_and_year_filters() {
         .and(query_param("name", "Saga"))
         .and(query_param("year_began", "2012"))
         .and(basic_auth("metron-user", "metron-pass"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([series_list_fixture()]))))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(paged(json!([series_list_fixture()]))),
+        )
         .expect(1)
         .mount(&mock)
         .await;
@@ -230,7 +232,8 @@ async fn http_401_maps_to_unauthorized() {
         .await;
 
     let app = TestApp::spawn_with_metron("bad", "creds", true).await;
-    let client = MetronClient::with_base_url("bad", "creds", mock.uri(), app.state().jobs.redis.clone());
+    let client =
+        MetronClient::with_base_url("bad", "creds", mock.uri(), app.state().jobs.redis.clone());
 
     let err = client
         .search_series(&SeriesQuery {

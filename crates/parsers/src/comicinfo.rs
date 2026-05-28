@@ -372,7 +372,11 @@ pub fn serialize(info: &ComicInfo) -> String {
         // float; emit with two decimals for stability across round-trips.
         write_text(&mut out, "CommunityRating", &format!("{r:.2}"));
     }
-    write_opt_str(&mut out, "MainCharacterOrTeam", &info.main_character_or_team);
+    write_opt_str(
+        &mut out,
+        "MainCharacterOrTeam",
+        &info.main_character_or_team,
+    );
     write_opt_str(&mut out, "Review", &info.review);
     write_opt_str(&mut out, "GTIN", &info.gtin);
     // External-database IDs (extension fields — ComicTagger / Metron-Tagger

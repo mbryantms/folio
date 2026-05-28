@@ -137,7 +137,11 @@ pub fn field_richness(detail: &GenericMetadata, field: MetadataField, scope: Mer
         MetadataField::Objects => detail.objects.len(),
         MetadataField::StoryArcs => detail.story_arcs.len(),
         MetadataField::Universes => detail.universes.len(),
-        MetadataField::Genres => detail.genres.iter().filter(|g| !g.trim().is_empty()).count(),
+        MetadataField::Genres => detail
+            .genres
+            .iter()
+            .filter(|g| !g.trim().is_empty())
+            .count(),
         MetadataField::Tags => detail.tags.iter().filter(|t| !t.trim().is_empty()).count(),
         MetadataField::Reprints => detail.reprints.len(),
         MetadataField::CoverVariants => variant_count(detail),
@@ -328,7 +332,10 @@ mod tests {
         let mut cv = detail();
         cv.title = Some("Saga".into());
         let metron = detail(); // no title
-        let details = vec![pd(Source::Metron, 20, metron), pd(Source::ComicVine, 10, cv)];
+        let details = vec![
+            pd(Source::Metron, 20, metron),
+            pd(Source::ComicVine, 10, cv),
+        ];
         let pref = policy(&[Source::Metron, Source::ComicVine]);
         // Metron preferred, but only ComicVine has a value → CV candidate (10).
         assert_eq!(
@@ -343,7 +350,10 @@ mod tests {
         cv.title = Some("Saga (CV)".into());
         let mut metron = detail();
         metron.title = Some("Saga (Metron)".into());
-        let details = vec![pd(Source::ComicVine, 10, cv), pd(Source::Metron, 20, metron)];
+        let details = vec![
+            pd(Source::ComicVine, 10, cv),
+            pd(Source::Metron, 20, metron),
+        ];
         let pref = policy(&[Source::Metron, Source::ComicVine]);
         assert_eq!(
             choose_field_candidate(MetadataField::Title, &details, &pref, MergeScope::Issue),
@@ -357,11 +367,19 @@ mod tests {
         cv.characters = vec![entity("Hazel")];
         let mut metron = detail();
         metron.characters = vec![entity("Hazel"), entity("Marko"), entity("Alana")];
-        let details = vec![pd(Source::ComicVine, 10, cv), pd(Source::Metron, 20, metron)];
+        let details = vec![
+            pd(Source::ComicVine, 10, cv),
+            pd(Source::Metron, 20, metron),
+        ];
         // Even with CV preferred, Metron's richer set wins.
         let pref = policy(&[Source::ComicVine, Source::Metron]);
         assert_eq!(
-            choose_field_candidate(MetadataField::Characters, &details, &pref, MergeScope::Issue),
+            choose_field_candidate(
+                MetadataField::Characters,
+                &details,
+                &pref,
+                MergeScope::Issue
+            ),
             Some(20)
         );
     }
@@ -382,7 +400,10 @@ mod tests {
             ordinal: None,
             identifiers: vec![],
         }];
-        let details = vec![pd(Source::ComicVine, 10, cv), pd(Source::Metron, 20, metron)];
+        let details = vec![
+            pd(Source::ComicVine, 10, cv),
+            pd(Source::Metron, 20, metron),
+        ];
         let pref = policy(&[Source::Metron, Source::ComicVine]);
         assert_eq!(
             choose_field_candidate(MetadataField::Credits, &details, &pref, MergeScope::Issue),
@@ -409,7 +430,12 @@ mod tests {
         // metron_b (ordinal 21) has the most → it wins, not the lower-
         // ordinal metron_a.
         assert_eq!(
-            choose_field_candidate(MetadataField::Characters, &details, &pref, MergeScope::Issue),
+            choose_field_candidate(
+                MetadataField::Characters,
+                &details,
+                &pref,
+                MergeScope::Issue
+            ),
             Some(21)
         );
     }
@@ -419,10 +445,18 @@ mod tests {
         let mut cv = detail();
         cv.cover_image_url = Some("https://cdn/cv.jpg".into());
         let metron = detail();
-        let details = vec![pd(Source::Metron, 20, metron), pd(Source::ComicVine, 10, cv)];
+        let details = vec![
+            pd(Source::Metron, 20, metron),
+            pd(Source::ComicVine, 10, cv),
+        ];
         let pref = policy(&[Source::Metron, Source::ComicVine]);
         assert_eq!(
-            choose_field_candidate(MetadataField::CoverPrimary, &details, &pref, MergeScope::Issue),
+            choose_field_candidate(
+                MetadataField::CoverPrimary,
+                &details,
+                &pref,
+                MergeScope::Issue
+            ),
             Some(10)
         );
     }
@@ -462,11 +496,13 @@ mod tests {
         let mut metron = detail();
         metron.title = Some("Saga".into());
         metron.characters = vec![entity("Hazel"), entity("Marko")];
-        let details = vec![pd(Source::ComicVine, 10, cv), pd(Source::Metron, 20, metron)];
+        let details = vec![
+            pd(Source::ComicVine, 10, cv),
+            pd(Source::Metron, 20, metron),
+        ];
         let pref = policy(&[Source::Metron, Source::ComicVine]);
         let merged = build_default_merge(&details, &pref, MergeScope::Issue);
-        let by_field =
-            |f: MetadataField| merged.iter().find(|c| c.field == f).unwrap().ordinal;
+        let by_field = |f: MetadataField| merged.iter().find(|c| c.field == f).unwrap().ordinal;
         // description only on CV(10); characters only on Metron(20);
         // title on both → Metron(20, preferred).
         assert_eq!(by_field(MetadataField::Description), Some(10));

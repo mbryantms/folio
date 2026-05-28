@@ -53,7 +53,9 @@ async fn upsert_archive_cover_hashes_inserts_then_updates_in_place() {
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();
     let lib = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib, "Test Series").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib, "Test Series")
+        .insert(&app.state().db)
+        .await;
     let issue_id = seed_issue(
         &app.state().db,
         lib,
@@ -109,7 +111,11 @@ async fn upsert_archive_cover_hashes_inserts_then_updates_in_place() {
         .all(&app.state().db)
         .await
         .unwrap();
-    assert_eq!(all_rows.len(), 1, "only one archive_extracted row should exist");
+    assert_eq!(
+        all_rows.len(),
+        1,
+        "only one archive_extracted row should exist"
+    );
     assert_ne!(
         all_rows[0].phash, row1.phash,
         "phash should have been overwritten by the second call"
@@ -121,7 +127,9 @@ async fn run_backfill_hashes_null_rows_from_archive_bytes() {
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();
     let lib = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib, "Backfill series").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib, "Backfill series")
+        .insert(&app.state().db)
+        .await;
     let cbz_path = dir.path().join("bf.cbz");
     let cbz_bytes = build_cbz_bytes(3);
     let issue_id = IssueSeed::new(lib, series_id, &cbz_path, &cbz_bytes, 1.0)
@@ -170,7 +178,10 @@ async fn run_backfill_hashes_null_rows_from_archive_bytes() {
     assert!(row.phash.is_some(), "phash should be populated");
     assert!(row.dhash.is_some());
     assert!(row.ahash.is_some());
-    assert!(row.width.is_some(), "width should be populated from decoded source");
+    assert!(
+        row.width.is_some(),
+        "width should be populated from decoded source"
+    );
     assert!(row.height.is_some());
 }
 
@@ -184,7 +195,9 @@ async fn series_representative_phash_returns_hashed_primary_cover() {
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();
     let lib = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib, "Repr series").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib, "Repr series")
+        .insert(&app.state().db)
+        .await;
     let issue_id = seed_issue(
         &app.state().db,
         lib,
@@ -211,11 +224,16 @@ async fn series_representative_phash_returns_hashed_primary_cover() {
     let repr = phash::series_representative_phash(&app.state().db, series_id)
         .await
         .expect("query must not error");
-    assert_eq!(repr, seeded, "representative phash = seeded primary cover phash");
+    assert_eq!(
+        repr, seeded,
+        "representative phash = seeded primary cover phash"
+    );
     assert!(repr.is_some());
 
     // A series with no hashed covers returns None (text-only fallback).
-    let empty_series = SeriesSeed::new(lib, "No covers").insert(&app.state().db).await;
+    let empty_series = SeriesSeed::new(lib, "No covers")
+        .insert(&app.state().db)
+        .await;
     let none = phash::series_representative_phash(&app.state().db, empty_series)
         .await
         .expect("query must not error");
@@ -227,7 +245,9 @@ async fn run_backfill_skips_rows_when_archive_unreadable() {
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();
     let lib = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib, "Missing-file series").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib, "Missing-file series")
+        .insert(&app.state().db)
+        .await;
     // Issue points at a path whose bytes aren't a valid archive.
     let issue_id = seed_issue(
         &app.state().db,

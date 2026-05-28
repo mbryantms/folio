@@ -166,7 +166,11 @@ fn stub_provider_payload() -> server::metadata::provider::GenericMetadata {
             disbanded_in_issue: None,
             position_in_arc: None,
         }],
-        identifiers: vec![Identifier::with_canonical_url(Source::ComicVine, "67890", "issue")],
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            "67890",
+            "issue",
+        )],
         source_provider: Some(Source::ComicVine),
         source_external_id: Some("67890".into()),
         ..Default::default()
@@ -181,7 +185,9 @@ async fn apply_issue_with_writeback_enabled_enqueues_rewrite() {
         .with_sidecar_writeback()
         .insert(&app.state().db)
         .await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let cbz = dir.path().join("saga-1.cbz");
     let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
         .insert(&app.state().db)
@@ -211,7 +217,10 @@ async fn apply_issue_with_writeback_enabled_enqueues_rewrite() {
     .expect("apply_issue");
 
     // M3 path signals: rewrite enqueued, legacy field arrays empty.
-    assert!(outcome.enqueued_rewrite, "writeback path must enqueue rewrite");
+    assert!(
+        outcome.enqueued_rewrite,
+        "writeback path must enqueue rewrite"
+    );
     assert!(
         outcome.applied_fields.is_empty(),
         "writeback path doesn't touch entity rows directly; applied_fields stays empty: {:?}",
@@ -243,7 +252,9 @@ async fn apply_issue_writeback_disabled_takes_legacy_path() {
     let dir = tempdir().unwrap();
     // Default LibrarySeed has both flags off.
     let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let cbz = dir.path().join("saga-1.cbz");
     let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
         .insert(&app.state().db)
@@ -292,7 +303,9 @@ async fn apply_issue_writeback_surfaces_suppressed_user_pins() {
         .with_sidecar_writeback()
         .insert(&app.state().db)
         .await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let cbz = dir.path().join("saga-1.cbz");
     let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
         .with_title("My Hand-Edited Title")
@@ -356,11 +369,19 @@ async fn apply_issue_with_writeback_writes_variant_covers_to_issue_cover_table()
         .with_sidecar_writeback()
         .insert(&app.state().db)
         .await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
-    let cbz_payload = build_cbz_bytes("saga-1");
-    let issue_id = IssueSeed::new(lib_id, series_id, &dir.path().join("saga-1.cbz"), &cbz_payload, 1.0)
+    let series_id = SeriesSeed::new(lib_id, "Saga")
         .insert(&app.state().db)
         .await;
+    let cbz_payload = build_cbz_bytes("saga-1");
+    let issue_id = IssueSeed::new(
+        lib_id,
+        series_id,
+        &dir.path().join("saga-1.cbz"),
+        &cbz_payload,
+        1.0,
+    )
+    .insert(&app.state().db)
+    .await;
 
     use server::metadata::cache;
     use server::metadata::identifier::Source;
@@ -386,7 +407,10 @@ async fn apply_issue_with_writeback_writes_variant_covers_to_issue_cover_table()
     // Provider returned 3 variants but one had no image_url — only
     // 2 land in the table, and outcome.variants_written reflects the
     // actual insert count (not the input length).
-    assert_eq!(outcome.variants_written, 2, "no-URL variant must be skipped");
+    assert_eq!(
+        outcome.variants_written, 2,
+        "no-URL variant must be skipped"
+    );
     use entity::issue_cover;
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
     let rows = issue_cover::Entity::find()
@@ -398,12 +422,18 @@ async fn apply_issue_with_writeback_writes_variant_covers_to_issue_cover_table()
         .await
         .unwrap();
     assert_eq!(rows.len(), 2, "the no-URL variant must be skipped");
-    assert_eq!(rows[0].variant_label.as_deref(), Some("Cory Walker variant"));
+    assert_eq!(
+        rows[0].variant_label.as_deref(),
+        Some("Cory Walker variant")
+    );
     assert_eq!(
         rows[0].source_url.as_deref(),
         Some("https://cdn.example.com/saga-1-walker.jpg"),
     );
-    assert_eq!(rows[0].ordinal, 1, "primary owns ordinal 0; variants start at 1");
+    assert_eq!(
+        rows[0].ordinal, 1,
+        "primary owns ordinal 0; variants start at 1"
+    );
     // The fixture's `cdn.example.com` URLs are unreachable, so the
     // downloader soft-falls-back to a metadata-only row that keeps the
     // hotlink. (The success path — bytes downloaded to `local_path` — is
@@ -412,7 +442,10 @@ async fn apply_issue_with_writeback_writes_variant_covers_to_issue_cover_table()
         rows[0].local_path.is_empty(),
         "unreachable fixture URL → metadata-only fallback",
     );
-    assert_eq!(rows[1].variant_label.as_deref(), Some("Dave McCaig variant"));
+    assert_eq!(
+        rows[1].variant_label.as_deref(),
+        Some("Dave McCaig variant")
+    );
     assert_eq!(rows[1].ordinal, 2);
     assert_eq!(rows[0].source_provider.as_deref(), Some("comicvine"));
 }
@@ -428,11 +461,19 @@ async fn apply_issue_variant_covers_idempotent_no_dupes() {
         .with_sidecar_writeback()
         .insert(&app.state().db)
         .await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
-    let cbz_payload = build_cbz_bytes("saga-1");
-    let issue_id = IssueSeed::new(lib_id, series_id, &dir.path().join("saga-1.cbz"), &cbz_payload, 1.0)
+    let series_id = SeriesSeed::new(lib_id, "Saga")
         .insert(&app.state().db)
         .await;
+    let cbz_payload = build_cbz_bytes("saga-1");
+    let issue_id = IssueSeed::new(
+        lib_id,
+        series_id,
+        &dir.path().join("saga-1.cbz"),
+        &cbz_payload,
+        1.0,
+    )
+    .insert(&app.state().db)
+    .await;
 
     use server::metadata::cache;
     use server::metadata::identifier::Source;
@@ -504,7 +545,9 @@ async fn apply_series_with_writeback_enabled_composes_per_issue_and_triggers_one
         .with_sidecar_writeback()
         .insert(&app.state().db)
         .await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let payloads: Vec<Vec<u8>> = (1..=3)
         .map(|n| build_cbz_bytes(&format!("saga-page-{n}")))
         .collect();
@@ -622,7 +665,9 @@ async fn apply_series_with_writeback_skips_removed_issues() {
         .with_sidecar_writeback()
         .insert(&app.state().db)
         .await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
 
     let ok_payload = build_cbz_bytes("saga-ok");
     let removed_payload = build_cbz_bytes("saga-removed");
@@ -705,7 +750,10 @@ async fn apply_series_with_writeback_skips_removed_issues() {
     .await
     .expect("apply_series");
 
-    assert_eq!(outcome.composed_sidecars, 1, "only the 'ok' issue is composed");
+    assert_eq!(
+        outcome.composed_sidecars, 1,
+        "only the 'ok' issue is composed"
+    );
     assert!(outcome.sidecar_skip_reasons.is_empty());
 }
 
@@ -716,7 +764,9 @@ async fn apply_series_writeback_disabled_takes_legacy_path() {
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let dir = tempdir().unwrap();
     let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
 
     use server::metadata::cache;
     use server::metadata::identifier::Source;
@@ -810,7 +860,9 @@ async fn apply_issue_override_user_edits_collapses_pins() {
         .with_sidecar_writeback()
         .insert(&app.state().db)
         .await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let cbz = dir.path().join("saga-1.cbz");
     let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
         .with_title("Pinned Title")
@@ -939,7 +991,9 @@ async fn apply_issue_downloads_and_stores_variant_covers_locally() {
         .with_sidecar_writeback()
         .insert(&app.state().db)
         .await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let cbz = build_cbz_bytes("saga-1");
     let issue_id = IssueSeed::new(lib_id, series_id, &dir.path().join("saga-1.cbz"), &cbz, 1.0)
         .insert(&app.state().db)
@@ -1072,10 +1126,10 @@ async fn variant_cover_backfill_downloads_hotlink_rows() {
 
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let dir = tempdir().unwrap();
-    let lib_id = LibrarySeed::new(dir.path())
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
         .insert(&app.state().db)
         .await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
     let cbz = build_cbz_bytes("saga-1");
     let issue_id = IssueSeed::new(lib_id, series_id, &dir.path().join("saga-1.cbz"), &cbz, 1.0)
         .insert(&app.state().db)

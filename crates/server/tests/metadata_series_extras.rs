@@ -110,7 +110,9 @@ async fn get(app: &TestApp, auth: &Authed, path: &str) -> axum::http::Response<B
 async fn seed_series(app: &TestApp) -> Uuid {
     let dir = tempdir().unwrap();
     let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await
+    SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await
 }
 
 // ───────── pause / resume ─────────
@@ -221,7 +223,12 @@ async fn external_ids_add_then_list_then_delete_round_trip() {
     assert_eq!(body["source"], "comicvine");
     assert_eq!(body["external_id"], "12345");
     assert_eq!(body["set_by"], "user");
-    assert!(body["external_url"].as_str().unwrap().contains("4050-12345"));
+    assert!(
+        body["external_url"]
+            .as_str()
+            .unwrap()
+            .contains("4050-12345")
+    );
 
     // List shows it.
     let resp = get(
@@ -310,7 +317,9 @@ async fn issue_covers_lists_active_rows_with_fallback_url() {
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let dir = tempdir().unwrap();
     let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let cbz = dir.path().join("issue.cbz");
     let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy", 1.0)
         .insert(&app.state().db)

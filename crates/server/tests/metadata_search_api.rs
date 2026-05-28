@@ -194,7 +194,10 @@ async fn search_series_returns_202_with_run_id_and_creates_run_row() {
         .unwrap()
         .expect("run row");
     assert_eq!(run.scope, "series");
-    assert_eq!(run.scope_entity_id.as_deref(), Some(series_id.to_string().as_str()));
+    assert_eq!(
+        run.scope_entity_id.as_deref(),
+        Some(series_id.to_string().as_str())
+    );
     assert_eq!(run.providers, vec!["comicvine"]);
     // Status starts at queued; the worker would flip it.
     assert!(run.status == "queued" || run.status == "searching" || run.status == "completed");
@@ -308,9 +311,7 @@ async fn candidates_series_404_when_run_id_belongs_to_different_series() {
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let dir = tempdir().unwrap();
     let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
-    let other_series_id = SeriesSeed::new(_lib, "Other")
-        .insert(&app.state().db)
-        .await;
+    let other_series_id = SeriesSeed::new(_lib, "Other").insert(&app.state().db).await;
     let db = &app.state().db;
     let now = Utc::now().fixed_offset();
     let other_run_id = Uuid::now_v7();
@@ -384,7 +385,10 @@ async fn search_issue_succeeds_with_seeded_issue() {
     let resp = post(
         &app,
         &admin,
-        &format!("/api/series/{series_id}/issues/{}/metadata/search", issue.slug),
+        &format!(
+            "/api/series/{series_id}/issues/{}/metadata/search",
+            issue.slug
+        ),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
@@ -523,7 +527,9 @@ async fn apply_series_404_when_run_belongs_to_different_series() {
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let dir = tempdir().unwrap();
     let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
-    let other_series_id = SeriesSeed::new(lib_id, "Other").insert(&app.state().db).await;
+    let other_series_id = SeriesSeed::new(lib_id, "Other")
+        .insert(&app.state().db)
+        .await;
     let (other_run_id, _ord) =
         seed_completed_series_run(&app, other_series_id, "comicvine", "12345").await;
     let resp = post_json(

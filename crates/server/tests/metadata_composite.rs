@@ -58,7 +58,11 @@ fn cv_detail() -> GenericMetadata {
         title: Some("Saga".into()),
         description: Some("A sweeping space opera.".into()),
         age_rating: Some("Teen".into()),
-        identifiers: vec![Identifier::with_canonical_url(Source::ComicVine, "cv1", "issue")],
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            "cv1",
+            "issue",
+        )],
         source_provider: Some(Source::ComicVine),
         source_external_id: Some("cv1".into()),
         ..Default::default()
@@ -146,12 +150,24 @@ async fn seed_two_provider_run(app: &TestApp, issue_id: &str) -> Uuid {
         .unwrap();
     }
 
-    cache::put(db, Source::ComicVine, CacheEntity::Issue, "cv1", &cv_detail())
-        .await
-        .unwrap();
-    cache::put(db, Source::Metron, CacheEntity::Issue, "m1", &metron_detail())
-        .await
-        .unwrap();
+    cache::put(
+        db,
+        Source::ComicVine,
+        CacheEntity::Issue,
+        "cv1",
+        &cv_detail(),
+    )
+    .await
+    .unwrap();
+    cache::put(
+        db,
+        Source::Metron,
+        CacheEntity::Issue,
+        "m1",
+        &metron_detail(),
+    )
+    .await
+    .unwrap();
     run_id
 }
 
@@ -159,7 +175,9 @@ async fn setup() -> (TestApp, String, Uuid) {
     let app = TestApp::spawn_with_providers("cv-key", "metron-user", "metron-pass").await;
     let dir = tempdir().unwrap();
     let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let cbz = build_cbz_bytes("saga-1");
     let issue_id = IssueSeed::new(lib_id, series_id, &dir.path().join("saga-1.cbz"), &cbz, 1.0)
         .insert(&app.state().db)
@@ -173,15 +191,10 @@ async fn composite_diff_surfaces_both_providers_and_policy_choice() {
     let (app, _issue_id, run_id) = setup().await;
     // Empty include → default best (lowest-ordinal) candidate per
     // provider: ComicVine (ordinal 0) + Metron (ordinal 1).
-    let resp = composite::compute_composite_diff(
-        &app.state(),
-        run_id,
-        ApplyMode::FillMissing,
-        false,
-        &[],
-    )
-    .await
-    .expect("composite diff");
+    let resp =
+        composite::compute_composite_diff(&app.state(), run_id, ApplyMode::FillMissing, false, &[])
+            .await
+            .expect("composite diff");
 
     assert_eq!(resp.providers.len(), 2, "both candidates shown as columns");
 
@@ -190,8 +203,16 @@ async fn composite_diff_surfaces_both_providers_and_policy_choice() {
     // description: only ComicVine has it → chosen ComicVine (ordinal 0).
     let desc = row("description");
     assert_eq!(desc.chosen_ordinal, Some(0));
-    assert!(desc.proposals.iter().any(|p| p.source == "comicvine" && p.value.is_some()));
-    assert!(desc.proposals.iter().any(|p| p.source == "metron" && p.value.is_none()));
+    assert!(
+        desc.proposals
+            .iter()
+            .any(|p| p.source == "comicvine" && p.value.is_some())
+    );
+    assert!(
+        desc.proposals
+            .iter()
+            .any(|p| p.source == "metron" && p.value.is_none())
+    );
 
     // characters: only Metron has them (richer) → chosen Metron (ordinal 1).
     assert_eq!(row("characters").chosen_ordinal, Some(1));
@@ -200,8 +221,11 @@ async fn composite_diff_surfaces_both_providers_and_policy_choice() {
     assert_eq!(row("title").chosen_ordinal, Some(1));
 
     // Both providers' external IDs are additive new rows (issue had none).
-    let new_sources: HashSet<&str> =
-        resp.external_ids_new.iter().map(|n| n.source.as_str()).collect();
+    let new_sources: HashSet<&str> = resp
+        .external_ids_new
+        .iter()
+        .map(|n| n.source.as_str())
+        .collect();
     assert!(new_sources.contains("comicvine"));
     assert!(new_sources.contains("metron"));
 }
@@ -255,7 +279,10 @@ async fn composite_apply_merges_fields_with_true_per_provider_provenance() {
     assert_eq!(row.sku.as_deref(), Some("75960620001")); // from Metron
     assert_eq!(row.title.as_deref(), Some("Saga")); // from Metron
     let chars = row.characters.as_deref().unwrap_or("");
-    assert!(chars.contains("Hazel") && chars.contains("Marko"), "characters from Metron: {chars}");
+    assert!(
+        chars.contains("Hazel") && chars.contains("Marko"),
+        "characters from Metron: {chars}"
+    );
 
     // Per-field provenance reflects the TRUE provider per field.
     let prov: HashMap<String, String> = field_provenance::Entity::find()
@@ -267,8 +294,14 @@ async fn composite_apply_merges_fields_with_true_per_provider_provenance() {
         .into_iter()
         .map(|p| (p.field, p.set_by))
         .collect();
-    assert_eq!(prov.get("description").map(String::as_str), Some("comicvine"));
-    assert_eq!(prov.get("age_rating").map(String::as_str), Some("comicvine"));
+    assert_eq!(
+        prov.get("description").map(String::as_str),
+        Some("comicvine")
+    );
+    assert_eq!(
+        prov.get("age_rating").map(String::as_str),
+        Some("comicvine")
+    );
     assert_eq!(prov.get("characters").map(String::as_str), Some("metron"));
 
     // Both providers' external IDs were written (additive union).
@@ -292,8 +325,7 @@ async fn composite_apply_excludes_dropped_provider() {
 
     // Only Metron (ordinal 1) included; pick characters from Metron.
     // ComicVine's description must NOT land.
-    let field_sources: HashMap<String, i32> =
-        [("characters".to_string(), 1)].into_iter().collect();
+    let field_sources: HashMap<String, i32> = [("characters".to_string(), 1)].into_iter().collect();
     composite::apply_composite(
         &app.state(),
         CompositeApplyArgs {

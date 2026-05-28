@@ -22,7 +22,9 @@ mod common;
 use chrono::Utc;
 use common::TestApp;
 use common::seed::{LibrarySeed, SeriesSeed};
-use entity::{external_id, field_provenance, issue, metadata_run, metadata_run_candidate, person, series};
+use entity::{
+    external_id, field_provenance, issue, metadata_run, metadata_run_candidate, person, series,
+};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde_json::json;
 use server::jobs::metadata_apply::apply_series_inline;
@@ -159,7 +161,9 @@ async fn apply_series_fills_empty_fields_and_writes_provenance() {
     let dir = tempdir().unwrap();
     let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
     // Seed an *empty* series (no description / deck / aliases set).
-    let series_id = SeriesSeed::new(lib_id, "Some Other Name").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Some Other Name")
+        .insert(&app.state().db)
+        .await;
     // Clear the publisher set by the seed so the apply has a slot to
     // fill.
     let row = series::Entity::find_by_id(series_id)
@@ -183,7 +187,11 @@ async fn apply_series_fills_empty_fields_and_writes_provenance() {
         publisher: Some("Image Comics".into()),
         deck: Some("Sci-fi epic.".into()),
         description: Some("Full description body.".into()),
-        identifiers: vec![Identifier::with_canonical_url(Source::ComicVine, "12345", "series")],
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            "12345",
+            "series",
+        )],
         source_provider: Some(Source::ComicVine),
         source_external_id: Some("12345".into()),
         ..Default::default()
@@ -457,13 +465,24 @@ async fn apply_series_no_writes_bumps_items_skipped_instead_of_applied() {
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let dir = tempdir().unwrap();
     let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     // Mark every potentially-touched field user-set so the apply
     // skips them all.
     let now = Utc::now().fixed_offset();
     for f in [
-        "title", "year_began", "publisher", "description", "sort_name", "deck", "imprint",
-        "volume", "year_end", "series_type", "aliases",
+        "title",
+        "year_began",
+        "publisher",
+        "description",
+        "sort_name",
+        "deck",
+        "imprint",
+        "volume",
+        "year_end",
+        "series_type",
+        "aliases",
     ] {
         field_provenance::ActiveModel {
             entity_type: Set("series".into()),
@@ -517,7 +536,9 @@ async fn apply_issue_writes_credits_through_writer_helpers() {
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let dir = tempdir().unwrap();
     let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let cbz = dir.path().join("test.cbz");
     let issue_id = common::seed::IssueSeed::new(lib_id, series_id, &cbz, b"dummy", 1.0)
         .insert(&app.state().db)
@@ -578,16 +599,28 @@ async fn apply_issue_writes_credits_through_writer_helpers() {
                 name: "Brian K. Vaughan".into(),
                 role: "writer".into(),
                 ordinal: None,
-                identifiers: vec![Identifier::with_canonical_url(Source::ComicVine, "7", "person")],
+                identifiers: vec![Identifier::with_canonical_url(
+                    Source::ComicVine,
+                    "7",
+                    "person",
+                )],
             },
             server::metadata::provider::CreditCandidate {
                 name: "Fiona Staples".into(),
                 role: "artist".into(),
                 ordinal: None,
-                identifiers: vec![Identifier::with_canonical_url(Source::ComicVine, "8", "person")],
+                identifiers: vec![Identifier::with_canonical_url(
+                    Source::ComicVine,
+                    "8",
+                    "person",
+                )],
             },
         ],
-        identifiers: vec![Identifier::with_canonical_url(Source::ComicVine, "67890", "issue")],
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            "67890",
+            "issue",
+        )],
         source_provider: Some(Source::ComicVine),
         source_external_id: Some("67890".into()),
         ..Default::default()
@@ -616,10 +649,7 @@ async fn apply_issue_writes_credits_through_writer_helpers() {
     assert!(outcome.junctions_touched.contains(&"credits".to_owned()));
 
     // Person rows landed.
-    let people = person::Entity::find()
-        .all(&app.state().db)
-        .await
-        .unwrap();
+    let people = person::Entity::find().all(&app.state().db).await.unwrap();
     let names: Vec<_> = people.iter().map(|p| p.name.as_str()).collect();
     assert!(names.contains(&"Brian K. Vaughan"));
     assert!(names.contains(&"Fiona Staples"));
@@ -649,7 +679,9 @@ async fn seed_series_with_filled_payload(app: &TestApp) -> (Uuid, Uuid, i32) {
 
     let dir = tempdir().unwrap();
     let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib_id, "Some Other Name").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Some Other Name")
+        .insert(&app.state().db)
+        .await;
     let row = series::Entity::find_by_id(series_id)
         .one(&app.state().db)
         .await
@@ -705,7 +737,11 @@ async fn compute_series_diff_classifies_per_field_decisions() {
 
     // Title is non-empty in DB ("Some Other Name") and the candidate's
     // "Saga" disagrees — FillMissing mode → SkippedFillMissingHasValue.
-    let title_row = diff.rows.iter().find(|r| r.field == "title").expect("title row");
+    let title_row = diff
+        .rows
+        .iter()
+        .find(|r| r.field == "title")
+        .expect("title row");
     assert_eq!(title_row.decision, "skipped_fill_missing_has_value");
     assert_eq!(title_row.current_value.as_deref(), Some("Some Other Name"));
     assert_eq!(title_row.proposed_value.as_deref(), Some("Saga"));
@@ -874,9 +910,11 @@ async fn apply_series_empty_selected_fields_writes_nothing_scalar() {
     // (they're a separate channel — the preview's per-source toggles
     // live in `override_external_id_sources` instead). Verify no
     // scalar landed but the CV external_id row did.
-    assert!(outcome.applied_fields.is_empty(),
+    assert!(
+        outcome.applied_fields.is_empty(),
         "no scalar field should write when selected_fields is empty, got: {:?}",
-        outcome.applied_fields);
+        outcome.applied_fields
+    );
     let cv_row = external_id::Entity::find()
         .filter(external_id::Column::EntityType.eq("series"))
         .filter(external_id::Column::EntityId.eq(series_id.to_string()))
@@ -884,7 +922,10 @@ async fn apply_series_empty_selected_fields_writes_nothing_scalar() {
         .one(&app.state().db)
         .await
         .unwrap();
-    assert!(cv_row.is_some(), "CV external_id row should be written regardless");
+    assert!(
+        cv_row.is_some(),
+        "CV external_id row should be written regardless"
+    );
 }
 
 // ───────── M5.1 — junction + variant rows in issue diff ─────────
@@ -897,7 +938,9 @@ async fn seed_issue_with_junction_candidate(
     dir: &std::path::Path,
 ) -> (String, Uuid, i32) {
     let lib_id = LibrarySeed::new(dir).insert(&app.state().db).await;
-    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
     let cbz = dir.join("saga-1.cbz");
     let issue_id = common::seed::IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
         .insert(&app.state().db)
@@ -968,7 +1011,11 @@ async fn seed_issue_with_junction_candidate(
                 image_url: Some("https://cdn.example.com/saga-1-mccaig.jpg".into()),
             },
         ],
-        identifiers: vec![Identifier::with_canonical_url(Source::ComicVine, "67890", "issue")],
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            "67890",
+            "issue",
+        )],
         source_provider: Some(Source::ComicVine),
         source_external_id: Some("67890".into()),
         ..Default::default()
@@ -1047,7 +1094,11 @@ async fn compute_issue_diff_surfaces_junctions_when_db_is_empty() {
 
     // Credits: DB empty (IssueSeed leaves credit columns NULL) +
     // provider has 2 → would_fill.
-    let credits = diff.rows.iter().find(|r| r.field == "credits").expect("credits row");
+    let credits = diff
+        .rows
+        .iter()
+        .find(|r| r.field == "credits")
+        .expect("credits row");
     assert_eq!(credits.decision, "would_fill");
     assert_eq!(credits.current_value.as_deref(), Some("none"));
     assert_eq!(credits.proposed_value.as_deref(), Some("2 items"));
@@ -1075,7 +1126,11 @@ async fn compute_issue_diff_surfaces_junctions_when_db_is_empty() {
     assert_eq!(genres.decision, "would_fill");
 
     // Variant covers: 2 from provider, 0 in DB → would_fill.
-    let variants = diff.rows.iter().find(|r| r.field == "cover.variants").unwrap();
+    let variants = diff
+        .rows
+        .iter()
+        .find(|r| r.field == "cover.variants")
+        .unwrap();
     assert_eq!(variants.decision, "would_fill");
     assert_eq!(variants.proposed_value.as_deref(), Some("2 items"));
 
@@ -1135,8 +1190,15 @@ async fn compute_issue_diff_variants_no_change_when_counts_match() {
     .await
     .expect("diff");
 
-    let variants = diff.rows.iter().find(|r| r.field == "cover.variants").unwrap();
-    assert_eq!(variants.decision, "no_change", "matching counts → no_change");
+    let variants = diff
+        .rows
+        .iter()
+        .find(|r| r.field == "cover.variants")
+        .unwrap();
+    assert_eq!(
+        variants.decision, "no_change",
+        "matching counts → no_change"
+    );
     assert_eq!(variants.current_value.as_deref(), Some("2 items"));
     assert_eq!(variants.proposed_value.as_deref(), Some("2 items"));
 }

@@ -94,7 +94,11 @@ pub async fn list_series(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     let rows = fetch_rows(&app, "series", &s.id.to_string()).await;
     Json(ExternalIdsListResp {
@@ -130,7 +134,11 @@ pub async fn add_series(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     upsert_user_identifier(&app, &user, &ctx, "series", &s.id.to_string(), &req).await
 }
@@ -158,7 +166,11 @@ pub async fn delete_series(
         Err(resp) => return resp,
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     delete_identifier(&app, &user, &ctx, "series", &s.id.to_string(), &source).await
 }
@@ -185,7 +197,11 @@ pub async fn list_issue(
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     let rows = fetch_rows(&app, "issue", &i.id).await;
     Json(ExternalIdsListResp {
@@ -220,7 +236,11 @@ pub async fn add_issue(
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     upsert_user_identifier(&app, &user, &ctx, "issue", &i.id, &req).await
 }
@@ -247,7 +267,11 @@ pub async fn delete_issue(
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
     }
     delete_identifier(&app, &user, &ctx, "issue", &i.id, &source).await
 }
@@ -286,7 +310,11 @@ async fn upsert_user_identifier(
     req: &AddExternalIdReq,
 ) -> Response {
     let Ok(source) = req.source.parse::<Source>() else {
-        return error(StatusCode::BAD_REQUEST, "metadata.invalid_source", "unknown source");
+        return error(
+            StatusCode::BAD_REQUEST,
+            "metadata.invalid_source",
+            "unknown source",
+        );
     };
     let id_value = req.external_id.trim();
     if id_value.is_empty() {
@@ -296,20 +324,24 @@ async fn upsert_user_identifier(
             "external_id required",
         );
     }
-    let url = req.external_url.clone().or_else(|| {
-        crate::metadata::identifier::canonical_url(source, entity_type, id_value)
-    });
+    let url = req
+        .external_url
+        .clone()
+        .or_else(|| crate::metadata::identifier::canonical_url(source, entity_type, id_value));
     let identifier = Identifier {
         source,
         id: id_value.to_owned(),
         url,
     };
     if let Err(e) =
-        writers::set_external_id(&app.db, entity_type, entity_id, &identifier, SetBy::User)
-            .await
+        writers::set_external_id(&app.db, entity_type, entity_id, &identifier, SetBy::User).await
     {
         tracing::warn!(error = %e, "external_id set failed");
-        return error(StatusCode::BAD_GATEWAY, "internal", "external_id write failed");
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "internal",
+            "external_id write failed",
+        );
     }
     audit::record(
         &app.db,
@@ -336,7 +368,11 @@ async fn upsert_user_identifier(
     // Read back so we return the row exactly as stored.
     let rows = fetch_rows(app, entity_type, entity_id).await;
     let Some(row) = rows.into_iter().find(|r| r.source == source.as_str()) else {
-        return error(StatusCode::BAD_GATEWAY, "internal", "external_id write succeeded but readback failed");
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "internal",
+            "external_id write succeeded but readback failed",
+        );
     };
     (StatusCode::CREATED, Json(row)).into_response()
 }
@@ -350,7 +386,11 @@ async fn delete_identifier(
     source_str: &str,
 ) -> Response {
     let Ok(source) = source_str.parse::<Source>() else {
-        return error(StatusCode::BAD_REQUEST, "metadata.invalid_source", "unknown source");
+        return error(
+            StatusCode::BAD_REQUEST,
+            "metadata.invalid_source",
+            "unknown source",
+        );
     };
     let existed = external_id::Entity::find()
         .filter(external_id::Column::EntityType.eq(entity_type))
@@ -362,7 +402,11 @@ async fn delete_identifier(
         .flatten()
         .is_some();
     if !existed {
-        return error(StatusCode::NOT_FOUND, "metadata.link_not_found", "no link to remove");
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.link_not_found",
+            "no link to remove",
+        );
     }
     if let Err(e) = writers::delete_external_id(&app.db, entity_type, entity_id, source).await {
         tracing::warn!(error = %e, "delete_external_id failed");
@@ -390,11 +434,7 @@ async fn delete_identifier(
     StatusCode::NO_CONTENT.into_response()
 }
 
-async fn user_can_see_library(
-    app: &AppState,
-    user: &CurrentUser,
-    lib_id: uuid::Uuid,
-) -> bool {
+async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool {
     if user.role == "admin" {
         return true;
     }
@@ -414,7 +454,9 @@ async fn find_series_issue(
     series_slug: &str,
     issue_slug: &str,
 ) -> Option<(series::Model, issue::Model)> {
-    let s = crate::api::series::find_by_slug(&app.db, series_slug).await.ok()?;
+    let s = crate::api::series::find_by_slug(&app.db, series_slug)
+        .await
+        .ok()?;
     let i = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(s.id))
         .filter(issue::Column::Slug.eq(issue_slug))
