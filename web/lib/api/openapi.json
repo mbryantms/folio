@@ -877,6 +877,21 @@
     "/api/admin/metadata/phash-backfill": {
       "post": {
         "operationId": "metadata_phash_backfill",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",

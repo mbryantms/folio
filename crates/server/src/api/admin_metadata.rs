@@ -957,10 +957,20 @@ pub async fn dismiss_candidate(
 
 // ───────── /admin/metadata/phash-backfill ─────────
 
+/// Optional `?limit=` for [`run_phash_backfill`]. The admin UI drives the
+/// drain in small batches so each request returns well before a reverse
+/// proxy timeout; omit for the legacy 500-per-call default.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct PhashBackfillQuery {
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
 #[utoipa::path(
     operation_id = "metadata_phash_backfill",
     post,
     path = "/admin/metadata/phash-backfill",
+    params(PhashBackfillQuery),
     responses(
         (status = 200, body = crate::metadata::phash::BackfillOutcome),
         (status = 403, description = "admin only"),
@@ -971,9 +981,14 @@ pub async fn run_phash_backfill(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
+    Query(q): Query<PhashBackfillQuery>,
 ) -> Response {
     let archive_limits = app.cfg().archive_limits();
-    let outcome = match crate::metadata::phash::run_backfill(&app.db, archive_limits).await {
+    let batch = q
+        .limit
+        .unwrap_or(crate::metadata::phash::BACKFILL_BATCH_CAP as u32)
+        .clamp(1, crate::metadata::phash::BACKFILL_BATCH_CAP as u32) as u64;
+    let outcome = match crate::metadata::phash::run_backfill(&app.db, archive_limits, batch).await {
         Ok(o) => o,
         Err(e) => {
             tracing::error!(error = %e, "phash backfill: query failed");

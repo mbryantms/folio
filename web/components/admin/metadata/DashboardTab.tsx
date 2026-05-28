@@ -8,10 +8,14 @@
  * token-bucket state.
  */
 
-import { CheckCircle2, Loader2, Search, XCircle } from "lucide-react";
+import { CheckCircle2, Fingerprint, Loader2, Search, XCircle } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { apiMutate } from "@/lib/api/mutations";
 import {
   useAdminMetadataDashboard,
   useAdminMetadataMatchQuality,
@@ -75,7 +79,104 @@ export function DashboardTab() {
       </Card>
 
       <MatchQualityCard />
+
+      <CoverHashBackfillCard />
     </div>
+  );
+}
+
+type BackfillOutcome = {
+  considered: number;
+  hashed: number;
+  skipped: number;
+  errored: number;
+};
+
+/**
+ * One-click cover perceptual-hash backfill. Existing libraries scanned
+ * before pHash matching have NULL cover hashes; this drains them so
+ * cover-similarity matching works on the back-catalog.
+ *
+ * Runs the server endpoint in **small batches in a loop** rather than one
+ * big call: decoding hundreds of covers in a single request can exceed a
+ * reverse proxy's timeout (Cloudflare 524). Each `limit=25` batch returns
+ * in seconds; the loop stops when a batch hashes nothing new. The hashing
+ * itself is idempotent + resumable, so re-clicking is always safe.
+ */
+function CoverHashBackfillCard() {
+  const [running, setRunning] = useState(false);
+  const [hashed, setHashed] = useState(0);
+  const [done, setDone] = useState(false);
+
+  const run = async () => {
+    setRunning(true);
+    setDone(false);
+    setHashed(0);
+    let total = 0;
+    let errored = 0;
+    try {
+      for (;;) {
+        const r = await apiMutate<BackfillOutcome>({
+          path: "/admin/metadata/phash-backfill?limit=25",
+          method: "POST",
+        });
+        if (!r) break;
+        total += r.hashed;
+        errored += r.errored;
+        setHashed(total);
+        // No forward progress this batch → drained (or only
+        // un-decodable covers remain). Stop.
+        if (r.hashed === 0) break;
+      }
+      setDone(true);
+      toast.success(
+        `Backfilled ${total.toLocaleString()} cover hash${total === 1 ? "" : "es"}` +
+          (errored > 0 ? ` · ${errored} could not be decoded` : ""),
+      );
+    } catch {
+      toast.error("Cover-hash backfill failed — see server logs");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">
+          Cover perceptual hashes
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-muted-foreground text-sm">
+          Compute perceptual hashes for covers scanned before pHash matching
+          existed, so cover-similarity matching works on your existing
+          libraries. Runs in small batches — keep this tab open until it
+          finishes. Safe to re-run; it only touches covers that still lack a
+          hash.
+        </p>
+        <div className="flex items-center gap-3">
+          <Button onClick={run} disabled={running}>
+            {running ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Backfilling… ({hashed.toLocaleString()})
+              </>
+            ) : (
+              <>
+                <Fingerprint className="mr-2 h-4 w-4" />
+                Backfill cover hashes
+              </>
+            )}
+          </Button>
+          {done && !running && (
+            <span className="text-muted-foreground text-sm">
+              Done — {hashed.toLocaleString()} hashed.
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

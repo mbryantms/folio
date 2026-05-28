@@ -8108,7 +8108,9 @@ export interface operations {
     };
     metadata_phash_backfill: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;

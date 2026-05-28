@@ -165,7 +165,9 @@ async fn run_backfill_hashes_null_rows_from_archive_bytes() {
     .unwrap();
 
     let limits = app.state().cfg().archive_limits();
-    let outcome = phash::run_backfill(&app.state().db, limits).await.unwrap();
+    let outcome = phash::run_backfill(&app.state().db, limits, phash::BACKFILL_BATCH_CAP as u64)
+        .await
+        .unwrap();
     assert!(outcome.considered >= 1);
     assert!(outcome.hashed >= 1);
     assert_eq!(outcome.errored, 0);
@@ -284,7 +286,9 @@ async fn run_backfill_skips_rows_when_archive_unreadable() {
     .unwrap();
 
     let limits = app.state().cfg().archive_limits();
-    let outcome = phash::run_backfill(&app.state().db, limits).await.unwrap();
+    let outcome = phash::run_backfill(&app.state().db, limits, phash::BACKFILL_BATCH_CAP as u64)
+        .await
+        .unwrap();
     // Skipped, not errored — soft-fail keeps the sweep moving when
     // one archive happens to be unreadable.
     assert!(outcome.skipped >= 1);

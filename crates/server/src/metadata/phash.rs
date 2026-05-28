@@ -515,11 +515,13 @@ pub struct BackfillOutcome {
 /// Bounded so a single admin click can't tie up the request handler.
 pub const BACKFILL_BATCH_CAP: usize = 500;
 
-/// Walk every archive-extracted `issue_cover` row with NULL phash,
-/// open the parent issue's archive, decode its cover page, and
-/// write the hashes back. Bounded by [`BACKFILL_BATCH_CAP`].
-/// Operators re-click to drain larger backlogs; the startup drain
-/// (see `app::serve`) loops until empty.
+/// Walk archive-extracted `issue_cover` rows with NULL phash, open the
+/// parent issue's archive, decode its cover page, and write the hashes
+/// back. Processes up to `batch` rows (clamped to `1..=BACKFILL_BATCH_CAP`)
+/// so callers can pick a batch small enough to return before a reverse
+/// proxy's request timeout (decoding 500 large covers can exceed
+/// Cloudflare's ~100s limit — the admin UI drives small batches in a
+/// loop). Operators re-call to drain larger backlogs.
 ///
 /// Only `source_provider = 'archive_extracted'` rows are touched.
 /// Provider covers (CV / Metron) are hashed inline at apply time;
@@ -528,12 +530,14 @@ pub const BACKFILL_BATCH_CAP: usize = 500;
 pub async fn run_backfill<C: ConnectionTrait>(
     db: &C,
     archive_limits: ArchiveLimits,
+    batch: u64,
 ) -> Result<BackfillOutcome, sea_orm::DbErr> {
+    let batch = batch.clamp(1, BACKFILL_BATCH_CAP as u64);
     let rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::Phash.is_null())
         .filter(issue_cover::Column::SourceProvider.eq("archive_extracted"))
         .find_also_related(issue::Entity)
-        .limit(BACKFILL_BATCH_CAP as u64)
+        .limit(batch)
         .all(db)
         .await?;
     let considered = rows.len();
