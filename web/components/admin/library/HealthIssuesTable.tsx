@@ -7,6 +7,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import { FilterPill } from "@/components/ui/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHealthIssues } from "@/lib/api/queries";
 import {
@@ -255,51 +256,36 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {(["open", "resolved", "dismissed", "all"] as Filter[]).map((f) => (
-          <button
+          <FilterPill
             key={f}
-            type="button"
+            active={filter === f}
             onClick={() => setFilter(f)}
-            className={cn(
-              "rounded-full border px-3 py-1 text-xs font-medium tracking-wider uppercase transition-colors",
-              filter === f
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:text-foreground",
-            )}
+            count={counts[f]}
+            className="capitalize"
           >
-            {f} ({counts[f]})
-          </button>
+            {f}
+          </FilterPill>
         ))}
         <span className="text-muted-foreground ml-2 text-xs">Severity:</span>
         {(["all", "info", "warn", "error"] as Severity[]).map((s) => (
-          <button
+          <FilterPill
             key={s}
-            type="button"
+            active={severity === s}
             onClick={() => setSeverity(s)}
-            className={cn(
-              "rounded-full border px-2.5 py-0.5 text-[11px] tracking-wider uppercase transition-colors",
-              severity === s
-                ? "border-foreground/40 text-foreground"
-                : "border-border text-muted-foreground hover:text-foreground",
-            )}
+            className="capitalize"
           >
             {s}
-          </button>
+          </FilterPill>
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-muted-foreground text-xs">Kind:</span>
-        <button
-          type="button"
+        <FilterPill
+          active={!activeFocusedKind && hiddenKinds.size === 0}
           onClick={showAllKinds}
-          className={cn(
-            "rounded-full border px-2.5 py-0.5 text-[11px] tracking-wider uppercase transition-colors",
-            !activeFocusedKind && hiddenKinds.size === 0
-              ? "border-foreground/40 text-foreground"
-              : "border-border text-muted-foreground hover:text-foreground",
-          )}
         >
           All kinds
-        </button>
+        </FilterPill>
         {kindCounts.map(({ kind, count }) => {
           const hidden = hiddenKinds.has(kind);
           const focused = activeFocusedKind === kind && !hidden;

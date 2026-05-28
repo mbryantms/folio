@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FilterPill } from "@/components/ui/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDurationMs } from "@/lib/activity";
 import { useAdminActivity } from "@/lib/api/queries";
@@ -82,17 +83,15 @@ export function ActivityFeedClient() {
         {ALL_KINDS.map(({ value, label, icon }) => {
           const on = active.has(value);
           return (
-            <Button
+            <FilterPill
               key={value}
-              type="button"
-              size="sm"
-              variant={on ? "default" : "outline"}
+              active={on}
               onClick={() => toggle(value)}
               aria-pressed={on}
             >
-              <span className="mr-1.5">{icon}</span>
+              <span className="mr-0.5">{icon}</span>
               {label}
-            </Button>
+            </FilterPill>
           );
         })}
       </div>

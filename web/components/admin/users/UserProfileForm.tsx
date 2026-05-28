@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FilterPill } from "@/components/ui/filter-pill";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -80,21 +81,18 @@ export function UserProfileForm({ user }: { user: AdminUserDetailView }) {
           <Label className="block pb-2">Role</Label>
           <div className="flex gap-2">
             {(["admin", "user"] as const).map((r) => (
-              <button
+              <FilterPill
                 key={r}
-                type="button"
+                active={role === r}
                 disabled={isSelf && r === "user"}
                 onClick={() => setRole(r)}
                 className={cn(
-                  "rounded-full border px-3 py-1 text-xs font-medium tracking-wider uppercase transition-colors",
-                  role === r
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground hover:text-foreground",
+                  "capitalize",
                   isSelf && r === "user" && "cursor-not-allowed opacity-50",
                 )}
               >
                 {r}
-              </button>
+              </FilterPill>
             ))}
             {isSelf ? (
               <span className="text-muted-foreground self-center text-[11px]">

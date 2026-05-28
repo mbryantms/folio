@@ -20,6 +20,7 @@ import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
 import { PageHeader } from "@/components/admin/PageHeader";
+import { FilterPill } from "@/components/ui/filter-pill";
 import { Input } from "@/components/ui/input";
 import { useMarkersInfinite, useMarkerTags } from "@/lib/api/queries";
 import {
@@ -195,21 +196,15 @@ export function MarkersList() {
           className="flex flex-wrap gap-1"
         >
           {FILTER_OPTIONS.map((opt) => (
-            <button
+            <FilterPill
               key={opt.value}
-              type="button"
               role="tab"
+              active={filter === opt.value}
               aria-selected={filter === opt.value}
               onClick={() => setFilter(opt.value)}
-              className={cn(
-                "focus-visible:ring-ring inline-flex items-center rounded-full border px-3 py-1 text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none",
-                filter === opt.value
-                  ? "border-foreground bg-foreground text-background"
-                  : "border-border/60 hover:bg-accent/40",
-              )}
             >
               {opt.label}
-            </button>
+            </FilterPill>
           ))}
         </div>
       </div>
@@ -220,33 +215,17 @@ export function MarkersList() {
             Tags
           </span>
           <div className="flex flex-wrap gap-1">
-            {availableTags.map((t) => {
-              const active = selectedTags.includes(t.tag);
-              return (
-                <button
-                  key={t.tag}
-                  type="button"
-                  onClick={() => toggleTag(t.tag)}
-                  aria-pressed={active}
-                  className={cn(
-                    "focus-visible:ring-ring inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-none",
-                    active
-                      ? "border-foreground bg-foreground text-background"
-                      : "border-border/60 hover:bg-accent/40",
-                  )}
-                >
-                  <span>{t.tag}</span>
-                  <span
-                    className={cn(
-                      "tabular-nums",
-                      active ? "text-background/70" : "text-muted-foreground",
-                    )}
-                  >
-                    {t.count}
-                  </span>
-                </button>
-              );
-            })}
+            {availableTags.map((t) => (
+              <FilterPill
+                key={t.tag}
+                active={selectedTags.includes(t.tag)}
+                aria-pressed={selectedTags.includes(t.tag)}
+                onClick={() => toggleTag(t.tag)}
+                count={t.count}
+              >
+                <span>{t.tag}</span>
+              </FilterPill>
+            ))}
           </div>
           {selectedTags.length > 1 ? (
             <div

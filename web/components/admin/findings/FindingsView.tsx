@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FilterPill } from "@/components/ui/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tabs,
@@ -30,7 +31,6 @@ import {
   useLibraryList,
 } from "@/lib/api/queries";
 import type { CrossLibHealthIssueView } from "@/lib/api/types";
-import { cn } from "@/lib/utils";
 
 type Tab = "health" | "scans";
 type Severity = "all" | "error" | "warning" | "info";
@@ -143,19 +143,13 @@ function SeverityChips({
     <div className="flex items-center gap-1.5">
       <span className="text-muted-foreground mr-1 text-xs uppercase">Severity</span>
       {options.map((o) => (
-        <button
+        <FilterPill
           key={o.v}
-          type="button"
+          active={value === o.v}
           onClick={() => onChange(o.v)}
-          className={cn(
-            "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
-            value === o.v
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border text-muted-foreground hover:text-foreground",
-          )}
         >
           {o.label}
-        </button>
+        </FilterPill>
       ))}
     </div>
   );
@@ -179,19 +173,13 @@ function StateChips({
     <div className="flex items-center gap-1.5">
       <span className="text-muted-foreground mr-1 text-xs uppercase">State</span>
       {options.map((o) => (
-        <button
+        <FilterPill
           key={o.v}
-          type="button"
+          active={value === o.v}
           onClick={() => onChange(o.v)}
-          className={cn(
-            "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
-            value === o.v
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border text-muted-foreground hover:text-foreground",
-          )}
         >
           {o.label}
-        </button>
+        </FilterPill>
       ))}
     </div>
   );

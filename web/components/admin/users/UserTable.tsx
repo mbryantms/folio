@@ -8,11 +8,11 @@ import { Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import { FilterPill } from "@/components/ui/filter-pill";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserList, type UserListFilters } from "@/lib/api/queries";
 import type { AdminUserView } from "@/lib/api/types";
-import { cn } from "@/lib/utils";
 
 type RoleFilter = "all" | "admin" | "user";
 type StateFilter = "all" | "active" | "disabled" | "pending_verification";
@@ -146,37 +146,27 @@ export function UserTable() {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-muted-foreground text-xs">Role:</span>
         {(["all", "admin", "user"] as RoleFilter[]).map((r) => (
-          <button
+          <FilterPill
             key={r}
-            type="button"
+            active={role === r}
             onClick={() => setRole(r)}
-            className={cn(
-              "rounded-full border px-3 py-1 text-xs font-medium tracking-wider uppercase transition-colors",
-              role === r
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:text-foreground",
-            )}
+            className="capitalize"
           >
             {r}
-          </button>
+          </FilterPill>
         ))}
         <span className="text-muted-foreground ml-2 text-xs">State:</span>
         {(
           ["all", "active", "disabled", "pending_verification"] as StateFilter[]
         ).map((s) => (
-          <button
+          <FilterPill
             key={s}
-            type="button"
+            active={state === s}
             onClick={() => setState(s)}
-            className={cn(
-              "rounded-full border px-2.5 py-0.5 text-[11px] tracking-wider uppercase transition-colors",
-              state === s
-                ? "border-foreground/40 text-foreground"
-                : "border-border text-muted-foreground hover:text-foreground",
-            )}
+            className="capitalize"
           >
             {s.replace("_", " ")}
-          </button>
+          </FilterPill>
         ))}
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">
