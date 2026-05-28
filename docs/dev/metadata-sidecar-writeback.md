@@ -107,10 +107,17 @@ takes pre-serialized XML strings and performs the atomic swap:
 3. **Plan**: `cbz_write::RebuildPlan` with `set_entry("ComicInfo.xml",
    …)` + `set_entry("MetronInfo.xml", …)`. Page entries default to
    `Keep` → bytes are stream-copied, never re-encoded.
-4. **Atomic swap**: `archive_rewrite::rewrite_atomic` writes `<path>.cbz.tmp`,
-   rotates `.bak` slots per the library's
-   `archive_backup_retain_count` setting, renames over the original,
-   `fsync`s the parent directory.
+4. **Validate + atomic swap**: `archive_rewrite::rewrite_atomic` writes
+   `<path>.cbz.tmp`, then the closure re-opens it and validates the
+   rebuild (every source entry preserved + both sidecars present +
+   archive re-opens) **before** any swap. On success it rotates `.bak`
+   slots per the library's `archive_backup_retain_count` setting and
+   renames over the original; `fsync`s the parent directory.
+   `archive_backup_retain_count = 0` keeps **no** `.bak` — the
+   validate-before-swap step is the safety net, so the original is never
+   replaced by a corrupt rewrite, and the library doesn't transiently
+   double in size from full-size backups. `1..=5` keep that many
+   rollback slots (pruned after `archive_backup_retain_days`).
 5. **Invalidate caches**: zip-LRU drops the entry; thumbnail stamps
    (`thumbnails_generated_at = NULL`, `thumbnail_version = 0`) clear
    so the catch-up sweep regenerates them on the next post-scan pass.
@@ -203,7 +210,7 @@ sweep of every archive in the library.
 | **Drift**: user edits don't reach XML   | M6 health row + `metadata-drift/flush` endpoint. Operator-visible Prometheus gauge.                                                                  |
 | **Partial fan-out failure**: some issues in a series fail to rewrite | Per-issue mutex + `ApplyOutcome.sidecar_skip_reasons`. The series-scope rescan still fires for the issues that succeeded.                              |
 | **Rescan latency**: UI shows stale data between apply and rescan | The MetadataMatchDialog subscribes to `/ws/scan-events` after apply and waits for `scan.completed` (30s timeout). On timeout it closes anyway — next scan picks it up.|
-| **Archive corruption from a botched rewrite** | Atomic temp → fsync → `.bak` rotation → rename → fsync-parent. Backups retained per `archive_backup_retain_count` (default 1, max 5).                  |
+| **Archive corruption from a botched rewrite** | Atomic temp → fsync → **validate-before-swap** (entries preserved + sidecars present + re-opens) → `.bak` rotation → rename → fsync-parent. Validation aborts the swap with the original intact, so `archive_backup_retain_count = 0` (no `.bak`, no size doubling) is safe; `1..=5` add rollback slots. |
 | **Mutex stuck after worker crash**      | TTL on the Redis key (120s). Worker also releases explicitly on every exit path.                                                                      |
 | **User pin clobbered by provider apply** | Composer reads `field_provenance.set_by='user'` rows and prefers DB values. Bypass requires the admin-only `override_user_edits` flag + `metadata_apply_force` audit. |
 | **XML round-trip data loss**            | Round-trip tests for both `comicinfo.rs` (17 tests) and `metroninfo.rs` (~12 tests). Quick-xml 0.40 `GeneralRef` event handling fixed in M8 (was silently dropping `&lt;` / `&gt;`).|

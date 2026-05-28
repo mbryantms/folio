@@ -13,6 +13,11 @@ pub struct Model {
     /// Normalized `GenericMetadata` JSON payload.
     pub payload: Json,
     pub fetched_at: DateTimeWithTimeZone,
+    /// Mapping-schema version the payload was serialized under. Compared
+    /// against `cache::CACHE_SCHEMA_VERSION`; a mismatch is a cache miss
+    /// so payloads written before a `GenericMetadata` mapping change are
+    /// re-fetched instead of serving stale defaults.
+    pub schema_version: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

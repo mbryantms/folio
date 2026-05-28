@@ -82,6 +82,7 @@ crates/server/openapi.json.tmp
 .claude/*.lock
 .claude/memory_*.md
 .claude/tmp/
+.claude/plans/
 
 # Playwright MCP scratch dumps (browser snapshots written by the MCP server).
 .playwright-mcp/

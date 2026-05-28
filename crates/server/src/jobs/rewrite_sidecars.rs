@@ -173,6 +173,48 @@ pub(crate) enum WritebackError {
     Archive(#[from] archive::ArchiveError),
 }
 
+/// Re-open the freshly-rebuilt archive at `tmp` and confirm it's a sound
+/// replacement before the atomic swap: it must re-open cleanly, every
+/// entry the source exposed must still be present, and both sidecars must
+/// have landed. Runs inside the `rewrite_atomic` closure, so any failure
+/// aborts the rewrite with the original file untouched. This is what
+/// makes `archive_backup_retain_count = 0` (no `.bak`) safe — a corrupt
+/// or lossy rewrite never replaces a good original.
+fn validate_rewrite(
+    tmp: &std::path::Path,
+    source_names: &[String],
+    limits: ArchiveLimits,
+) -> Result<(), RewriteError> {
+    let new = Cbz::open(tmp, limits).map_err(|e| {
+        RewriteError::ValidationFailed(format!("rewritten archive won't re-open: {e}"))
+    })?;
+    let new_names: std::collections::HashSet<&str> =
+        new.entries().iter().map(|e| e.name.as_str()).collect();
+    // Every entry the source exposed (images + any pre-existing sidecars)
+    // must survive the rebuild verbatim.
+    for name in source_names {
+        if !new_names.contains(name.as_str()) {
+            return Err(RewriteError::ValidationFailed(format!(
+                "rewritten archive dropped entry {name:?}"
+            )));
+        }
+    }
+    // Both sidecars must be present (covers the case where the source had
+    // neither and the rebuild was supposed to add them).
+    let has = |needle: &str| new_names.iter().any(|n| n.eq_ignore_ascii_case(needle));
+    if !has("ComicInfo.xml") {
+        return Err(RewriteError::ValidationFailed(
+            "ComicInfo.xml missing from rewritten archive".to_owned(),
+        ));
+    }
+    if !has("MetronInfo.xml") {
+        return Err(RewriteError::ValidationFailed(
+            "MetronInfo.xml missing from rewritten archive".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// Core write loop — opens the source archive, swaps in fresh ComicInfo
 /// and MetronInfo entries, atomic-renames over the original, invalidates
 /// the LRU, clears thumbnail stamps, and bumps `last_rewrite_*`.
@@ -223,20 +265,25 @@ pub(crate) async fn rewrite_one_issue(
     let src_path = archive_path.clone();
 
     let result = tokio::task::spawn_blocking(move || -> Result<(RebuildSummary, Option<PathBuf>), WritebackError> {
+        let arch_limits = ArchiveLimits {
+            max_entries: limits.max_entries,
+            max_total_bytes: limits.max_total_bytes,
+            max_entry_bytes: limits.max_entry_bytes,
+            max_compression_ratio: limits.max_compression_ratio,
+            max_nesting_depth: limits.max_nesting_depth,
+            subprocess_wall_timeout: limits.subprocess_wall_timeout,
+            subprocess_rss_bytes: limits.subprocess_rss_bytes,
+        };
         let outcome = archive_rewrite::rewrite_atomic(&src_path, retain_count, |tmp| {
             // Open the source inside the closure so the Cbz handle is
             // dropped before the rename swaps the file out from under
             // it.
-            let mut src = Cbz::open(&src_path, ArchiveLimits {
-                max_entries: limits.max_entries,
-                max_total_bytes: limits.max_total_bytes,
-                max_entry_bytes: limits.max_entry_bytes,
-                max_compression_ratio: limits.max_compression_ratio,
-                max_nesting_depth: limits.max_nesting_depth,
-                subprocess_wall_timeout: limits.subprocess_wall_timeout,
-                subprocess_rss_bytes: limits.subprocess_rss_bytes,
-            })
-            .map_err(RewriteError::ArchiveErr)?;
+            let mut src = Cbz::open(&src_path, arch_limits).map_err(RewriteError::ArchiveErr)?;
+            // Snapshot the source's visible entry names so the post-write
+            // validation can prove the rewrite preserved every one of
+            // them (only the two sidecars are intentionally rewritten).
+            let source_names: Vec<String> =
+                src.entries().iter().map(|e| e.name.clone()).collect();
             let mut plan = RebuildPlan::new();
             plan.set_entry("ComicInfo.xml", comic_info_xml.into_bytes());
             plan.set_entry("MetronInfo.xml", metron_info_xml.into_bytes());
@@ -245,16 +292,17 @@ pub(crate) async fn rewrite_one_issue(
             // outer `Result` channel — but `rewrite_atomic`'s closure
             // returns Result<(), RewriteError>, so we use a side
             // channel.
-            let _summary = rebuild(&mut src, plan, tmp, ArchiveLimits {
-                max_entries: limits.max_entries,
-                max_total_bytes: limits.max_total_bytes,
-                max_entry_bytes: limits.max_entry_bytes,
-                max_compression_ratio: limits.max_compression_ratio,
-                max_nesting_depth: limits.max_nesting_depth,
-                subprocess_wall_timeout: limits.subprocess_wall_timeout,
-                subprocess_rss_bytes: limits.subprocess_rss_bytes,
-            })
-            .map_err(RewriteError::ArchiveErr)?;
+            let _summary =
+                rebuild(&mut src, plan, tmp, arch_limits).map_err(RewriteError::ArchiveErr)?;
+            // Drop the source handle before validation re-opens files.
+            drop(src);
+            // Validate-before-swap: confirm the freshly-built archive is a
+            // sound replacement BEFORE rewrite_atomic renames it over the
+            // original. A failure here aborts the rewrite with the
+            // original untouched — the safety net that lets retain_count=0
+            // (no `.bak`) run without risking image-byte loss to a writer
+            // bug.
+            validate_rewrite(tmp, &source_names, arch_limits)?;
             Ok(())
         })?;
         // We don't propagate the per-call RebuildSummary out (the
@@ -361,4 +409,68 @@ async fn audit_writeback(
         },
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Write a minimal stored-entry CBZ with the given entry names.
+    fn write_cbz(path: &std::path::Path, names: &[&str]) {
+        let f = std::fs::File::create(path).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for n in names {
+            zw.start_file(*n, opts).unwrap();
+            zw.write_all(b"x").unwrap();
+        }
+        zw.finish().unwrap();
+    }
+
+    #[test]
+    fn validate_rewrite_accepts_preserved_entries_plus_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("new.cbz.tmp");
+        write_cbz(
+            &tmp,
+            &["page-001.png", "page-002.png", "ComicInfo.xml", "MetronInfo.xml"],
+        );
+        let source = vec!["page-001.png".to_owned(), "page-002.png".to_owned()];
+        assert!(validate_rewrite(&tmp, &source, ArchiveLimits::default()).is_ok());
+    }
+
+    #[test]
+    fn validate_rewrite_rejects_dropped_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("new.cbz.tmp");
+        // page-002.png went missing in the rebuild — must be caught so the
+        // swap is aborted and the original (only copy of those bytes when
+        // retain_count = 0) is preserved.
+        write_cbz(&tmp, &["page-001.png", "ComicInfo.xml", "MetronInfo.xml"]);
+        let source = vec!["page-001.png".to_owned(), "page-002.png".to_owned()];
+        let res = validate_rewrite(&tmp, &source, ArchiveLimits::default());
+        assert!(matches!(res, Err(RewriteError::ValidationFailed(_))), "{res:?}");
+    }
+
+    #[test]
+    fn validate_rewrite_rejects_missing_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("new.cbz.tmp");
+        // MetronInfo.xml absent from the rewrite.
+        write_cbz(&tmp, &["page-001.png", "ComicInfo.xml"]);
+        let source = vec!["page-001.png".to_owned()];
+        let res = validate_rewrite(&tmp, &source, ArchiveLimits::default());
+        assert!(matches!(res, Err(RewriteError::ValidationFailed(_))), "{res:?}");
+    }
+
+    #[test]
+    fn validate_rewrite_rejects_unopenable_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("new.cbz.tmp");
+        std::fs::write(&tmp, b"not a zip").unwrap();
+        let res = validate_rewrite(&tmp, &[], ArchiveLimits::default());
+        assert!(matches!(res, Err(RewriteError::ValidationFailed(_))), "{res:?}");
+    }
 }

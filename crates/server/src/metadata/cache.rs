@@ -18,6 +18,18 @@ use entity::metadata_cache;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Set};
 
+/// Version of the provider → [`GenericMetadata`] normalization. Stamped
+/// onto every cached payload by [`put`]; [`get`] treats a row whose
+/// `schema_version` differs as a miss so the next fetch re-pulls live.
+///
+/// **Bump this whenever a provider mapping starts populating a
+/// `GenericMetadata` field it previously left at its default** — serde
+/// fills additive fields with defaults on deserialize, so the
+/// deserialize-failure guard in [`get`] does *not* catch this class of
+/// drift. Bumped to 1 for ComicVine variant covers + first-appearance
+/// flags (`associated_images` / `first_appearance_*`).
+pub const CACHE_SCHEMA_VERSION: i32 = 1;
+
 /// Logical entity types that get cached separately. Keys map 1:1 to
 /// the `entity` column on `metadata_cache` and the settings-registry
 /// TTL keys.
@@ -86,6 +98,13 @@ pub async fn get<C: ConnectionTrait>(
         return Ok(None);
     };
 
+    // A payload written under an older mapping schema is stale even
+    // inside its TTL — additive fields would deserialize to their
+    // defaults and silently mask data the current mapping populates.
+    if row.schema_version != CACHE_SCHEMA_VERSION {
+        return Ok(None);
+    }
+
     let fetched: DateTime<Utc> = row.fetched_at.with_timezone(&Utc);
     if Utc::now() - fetched > ttl {
         return Ok(None);
@@ -124,6 +143,7 @@ pub async fn put<C: ConnectionTrait>(
         external_id: Set(external_id.to_string()),
         payload: Set(json),
         fetched_at: Set(Utc::now().into()),
+        schema_version: Set(CACHE_SCHEMA_VERSION),
     };
     metadata_cache::Entity::insert(am)
         .on_conflict(
@@ -135,6 +155,7 @@ pub async fn put<C: ConnectionTrait>(
             .update_columns([
                 metadata_cache::Column::Payload,
                 metadata_cache::Column::FetchedAt,
+                metadata_cache::Column::SchemaVersion,
             ])
             .to_owned(),
         )

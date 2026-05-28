@@ -681,7 +681,7 @@ fn push_scalar_int(
     );
 }
 
-async fn fetch_field_provenance_full(
+pub(crate) async fn fetch_field_provenance_full(
     db: &DatabaseConnection,
     entity_type: &str,
     entity_id: &str,
@@ -698,7 +698,7 @@ async fn fetch_field_provenance_full(
 /// A conflict is a row where the candidate's id disagrees with a
 /// user-set row for the same source. "News" are sources the entity
 /// doesn't have a row for yet — the apply will just add them.
-async fn classify_external_ids(
+pub(crate) async fn classify_external_ids(
     db: &DatabaseConnection,
     entity_type: &str,
     entity_id: &str,

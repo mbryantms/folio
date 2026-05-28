@@ -62,6 +62,16 @@ vi.mock("@/lib/api/mutations", () => ({
     mutateAsync: async () => ({ cleared: true }),
     isPending: false,
   }),
+  useApplyCompositeMetadataForSeries: () => ({
+    mutate: () => undefined,
+    isPending: false,
+    isSuccess: false,
+  }),
+  useApplyCompositeMetadataForIssue: () => ({
+    mutate: () => undefined,
+    isPending: false,
+    isSuccess: false,
+  }),
 }));
 
 vi.mock("@tanstack/react-query", async (importOriginal) => {
@@ -86,6 +96,8 @@ vi.mock("@/lib/api/queries", () => ({
   // PreviewPane coverage lives in its own test file.
   useMetadataProposedDiffSeries: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
   useMetadataProposedDiffIssue: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
+  useMetadataCompositeDiffSeries: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
+  useMetadataCompositeDiffIssue: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
   // M5.2 — dialog queries the library to learn whether writeback is on
   // (drives the wait-for-rescan flow). Default-off in tests since the
   // immediate-close path is what the existing assertions cover.

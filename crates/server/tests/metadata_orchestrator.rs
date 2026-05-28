@@ -379,6 +379,7 @@ async fn run_issue_search_buckets_high_when_number_and_name_match() {
         publisher: None,
         volume: Some(1),
         issue_number: "1".into(),
+        issue_year: Some(2012),
     };
     let run_id = orchestrator::start_run(
         &app.state().db,

@@ -14,9 +14,12 @@
  * will appear in once M4.x adds variant persistence — no UI changes
  * needed when that lands.
  *
- * Image source priority per cover:
- *   1. `source_url` if present (provider CDN — variants typically
- *      have this and not an on-disk artifact yet)
+ * Both the thumbnail and the "open full resolution" link use the same
+ * source per cover:
+ *   1. `image_url` from the response — the local byte endpoint
+ *      (`/issues/{id}/covers/{cover_id}`) once the cover is downloaded
+ *      (the full-res original), else the provider CDN hotlink
+ *      (`source_url`) for not-yet-localized rows
  *   2. else `fallback_primary_url` from the response (page-thumb)
  *
  * Silent when an issue has zero rows AND no fallback is meaningful —
@@ -25,7 +28,6 @@
  */
 
 import { Loader2 } from "lucide-react";
-import Image from "next/image";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useIssueCovers } from "@/lib/api/queries";
@@ -132,40 +134,27 @@ function CoverTile({
   row: IssueCoverRow;
   fallbackUrl: string;
 }) {
-  const src = row.source_url ?? (row.kind === "primary" ? fallbackUrl : null);
-  // Click target for "open full-resolution in a new tab" — variants
-  // point at the provider CDN; primary uses the same fallback URL the
-  // thumbnail rendered with (the on-disk cover route is full-res
-  // already, so the click opens it directly). When no URL exists for
-  // either, the tile renders as a non-interactive placeholder.
-  const fullResUrl = row.source_url ?? (row.kind === "primary" ? fallbackUrl : null);
+  // Both the thumbnail and the "open full resolution" link use the same
+  // `image_url` — the locally-stored cover, which is the full-res
+  // original we downloaded (the CDN `source_url` is only the fallback
+  // baked into `image_url` for not-yet-localized rows). Primary covers
+  // with no stored artifact fall back to the page-thumb route.
+  const src = row.image_url ?? (row.kind === "primary" ? fallbackUrl : null);
+  const fullResUrl = src;
   const label = row.variant_label ?? row.kind;
 
   // Image element — drops the wrapping border / padding / bg-card the
-  // legacy tile used; the image itself is the tile. Square corners
-  // via `rounded` only (matches the theme's other card-like surfaces).
+  // legacy tile used; the image itself is the tile. `src` may be a local
+  // same-origin cover route or an external CDN hotlink (soft-fallback
+  // rows); a plain <img> serves both without Next/Image host config.
   const img = src ? (
-    row.source_url ? (
-      // External CDN — Next/Image's default loader complains about
-      // unknown hosts; use a plain <img> for variants on provider
-      // CDNs.
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={src}
-        alt={label}
-        loading="lazy"
-        className="absolute inset-0 h-full w-full object-cover"
-      />
-    ) : (
-      <Image
-        src={src}
-        alt={label}
-        fill
-        className="object-cover"
-        sizes="(max-width: 640px) 33vw, (max-width: 1024px) 20vw, 14vw"
-        unoptimized
-      />
-    )
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={label}
+      loading="lazy"
+      className="absolute inset-0 h-full w-full object-cover"
+    />
   ) : (
     <div className="h-full w-full" aria-hidden />
   );
@@ -195,9 +184,8 @@ function CoverTile({
   return (
     <li>
       {fullResUrl ? (
-        // Open the full-resolution image in a new tab. For variants
-        // this is the provider's CDN URL (which serves the original
-        // resolution); for the primary it's the local cover route.
+        // Open the full-resolution image in a new tab — the locally
+        // stored original, served from this instance.
         <a
           href={fullResUrl}
           target="_blank"

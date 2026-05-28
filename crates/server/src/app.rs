@@ -326,11 +326,13 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         email,
     );
 
-    // Thumbnail catchup (M6): always run at boot — finds rows with
-    // `thumbnails_generated_at IS NULL` (new since last boot) or
-    // `thumbnail_version < CURRENT` (constant bumped). Cheap query, gated
-    // by the partial index `issues_thumbs_pending_idx`.
-    let _ = crate::jobs::post_scan::enqueue_pending_all_libraries(&state).await;
+    // Thumbnail/phash catchup is intentionally NOT auto-run at boot.
+    // Queued work is user-directed only: a scan (`enqueue_post_scan_*`)
+    // or an explicit admin action (the thumbnails "Generate missing"
+    // button, `/admin/metadata/phash-backfill`,
+    // `/admin/metadata/variant-cover-backfill`). Auto-enqueueing every
+    // phash-missing issue at boot flooded the queue (~9k jobs) on a
+    // large library; the operator now decides when that work runs.
 
     // Archive-rewrite startup sweep (M0 of metadata-sidecar-writeback-1.0):
     // walk every `library.root_path` and remove orphan `.tmp` siblings
@@ -378,6 +380,13 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         }
         Err(e) => tracing::error!(error = %e, "scheduler failed to start"),
     }
+
+    // pHash + variant-cover backfills are NOT auto-run at boot (see the
+    // catchup note above). The matcher falls back to text-only for
+    // not-yet-hashed covers until the operator runs
+    // `/admin/metadata/phash-backfill` (or a scan recomputes them);
+    // hotlinked variants localize on re-apply or via
+    // `/admin/metadata/variant-cover-backfill`.
 
     let app = router(state);
 

@@ -278,6 +278,58 @@ pub(crate) fn classify_field(
 
 // ───────── series apply ─────────
 
+/// The provenance a single field's write should be stamped with: the
+/// `set_by` source and that source's external id (for the
+/// `field_provenance.source_external_id` column).
+#[derive(Clone)]
+pub struct ProvSource {
+    pub set_by: SetBy,
+    pub source_ext: Option<String>,
+}
+
+/// Resolves the provenance to stamp per field. The single-candidate
+/// apply path uses [`ProvResolver::Uniform`] (every field stamped with
+/// the one candidate's source → behaviour identical to the pre-refactor
+/// code). The composite (multi-provider) apply path uses
+/// [`ProvResolver::PerField`] so each merged field records the true
+/// provider that supplied its value.
+pub enum ProvResolver<'a> {
+    Uniform(ProvSource),
+    PerField {
+        map: &'a std::collections::HashMap<String, ProvSource>,
+        fallback: ProvSource,
+    },
+}
+
+impl ProvResolver<'_> {
+    pub fn resolve(&self, field_key: &str) -> ProvSource {
+        match self {
+            ProvResolver::Uniform(p) => p.clone(),
+            ProvResolver::PerField { map, fallback } => {
+                map.get(field_key).cloned().unwrap_or_else(|| fallback.clone())
+            }
+        }
+    }
+
+    fn set_by(&self, field_key: &str) -> SetBy {
+        self.resolve(field_key).set_by
+    }
+
+    fn source_ext(&self, field_key: &str) -> Option<String> {
+        self.resolve(field_key).source_ext
+    }
+
+    /// Provenance for writes that aren't keyed by a single field — the
+    /// external-id batch (additive across sources). Uniform → the one
+    /// source; PerField → the fallback (top-preference) source.
+    fn primary(&self) -> ProvSource {
+        match self {
+            ProvResolver::Uniform(p) => p.clone(),
+            ProvResolver::PerField { fallback, .. } => fallback.clone(),
+        }
+    }
+}
+
 pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutcome, ApplyError> {
     let candidate = load_candidate(&state.db, args.run_id, args.ordinal).await?;
     let run = load_run(&state.db, args.run_id).await?;
@@ -316,9 +368,34 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
         return apply_series_via_sidecar(state, &args, &row, source, detail).await;
     }
 
+    let resolver = ProvResolver::Uniform(ProvSource {
+        set_by: SetBy::Provider(source),
+        source_ext: detail.source_external_id.clone(),
+    });
+    let run_id = args.run_id;
+    let ordinal = args.ordinal;
+    let outcome = write_series_fields(state, &row, series_uuid, &detail, args, &resolver).await?;
+    flip_candidate_applied(&state.db, run_id, ordinal).await?;
+    bump_run_counts(&state.db, run_id, &outcome).await?;
+    Ok(outcome)
+}
+
+/// Write every series scalar + external-ids + per-field provenance from
+/// `detail`, resolving each field's provenance through `resolver`.
+/// Shared by single-candidate apply (`ProvResolver::Uniform` → identical
+/// to the pre-refactor behaviour) and composite apply
+/// (`ProvResolver::PerField`). Does NOT flip run candidates or bump run
+/// counts — the caller owns run lifecycle.
+pub(crate) async fn write_series_fields(
+    state: &AppState,
+    row: &series::Model,
+    series_uuid: Uuid,
+    detail: &GenericMetadata,
+    args: ApplyArgs,
+    resolver: &ProvResolver<'_>,
+) -> Result<ApplyOutcome, ApplyError> {
     let mut outcome = ApplyOutcome::default();
     let entity_id_str = series_uuid.to_string();
-    let set_by = SetBy::Provider(source);
     let provenance = fetch_field_provenance_map(&state.db, "series", &entity_id_str).await?;
 
     apply_external_ids(
@@ -326,7 +403,7 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
         "series",
         &entity_id_str,
         &detail.identifiers,
-        set_by,
+        resolver.primary().set_by,
         &mut outcome,
     )
     .await?;
@@ -334,7 +411,6 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
     // Track which fields we're going to write so we can emit a single
     // UPDATE rather than 10+ round trips.
     let mut new = SeriesUpdates::default();
-    let source_ext = detail.source_external_id.clone();
 
     if let Some(v) = detail
         .series_name
@@ -457,16 +533,12 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
         "series",
         &entity_id_str,
         &outcome.applied_fields,
-        set_by,
-        source_ext.clone(),
+        resolver,
     )
     .await?;
 
     // Bump sync timestamp.
     bump_series_sync(&state.db, series_uuid).await?;
-
-    flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
-    bump_run_counts(&state.db, args.run_id, &outcome).await?;
     Ok(outcome)
 }
 
@@ -488,7 +560,7 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
 /// Failure mode: per-issue errors (no provider id, write failure)
 /// accumulate in `ApplyOutcome.sidecar_skip_reasons`. The rescan
 /// still fires for the issues that succeeded.
-async fn apply_series_via_sidecar(
+pub(crate) async fn apply_series_via_sidecar(
     state: &AppState,
     args: &ApplyArgs,
     series_row: &series::Model,
@@ -505,7 +577,7 @@ async fn apply_series_via_sidecar(
         .all(&state.db)
         .await?;
 
-    let series_external_ids = crate::metadata::sidecar_compose::load_external_ids(
+    let series_external_ids_db = crate::metadata::sidecar_compose::load_external_ids(
         &state.db,
         "series",
         &series_row.id.to_string(),
@@ -521,6 +593,14 @@ async fn apply_series_via_sidecar(
         )
         .await?
     };
+    // Overlay the provider's freshly-fetched series identifiers (same
+    // rationale as the issue path) so series-scope IDs reach the
+    // composed XML on every fanned-out issue.
+    let series_external_ids = crate::metadata::sidecar_compose::merge_provider_identifiers(
+        &series_external_ids_db,
+        &series_detail.identifiers,
+        &series_user_pins,
+    );
 
     let mut composed_sidecars: u32 = 0;
     let mut skip_reasons: Vec<String> = Vec::new();
@@ -635,7 +715,7 @@ async fn apply_series_via_sidecar(
 /// refreshes the DB cache — so this function returns *before* the UI's
 /// underlying data has actually changed. The dialog's WebSocket bridge
 /// (M5) waits for the `scan.finished` event before closing.
-async fn apply_issue_via_sidecar(
+pub(crate) async fn apply_issue_via_sidecar(
     state: &AppState,
     args: &ApplyArgs,
     row: &entity::issue::Model,
@@ -652,7 +732,7 @@ async fn apply_issue_via_sidecar(
     // Gather context — composer wants external_ids + user_pins on both
     // the issue and its parent series. M3.1 loaders all live in
     // `sidecar_compose`.
-    let issue_external_ids =
+    let issue_external_ids_db =
         crate::metadata::sidecar_compose::load_external_ids(&state.db, "issue", &row.id).await?;
     let series_external_ids = crate::metadata::sidecar_compose::load_external_ids(
         &state.db,
@@ -668,6 +748,15 @@ async fn apply_issue_via_sidecar(
     } else {
         crate::metadata::sidecar_compose::load_user_pins(&state.db, "issue", &row.id).await?
     };
+    // Overlay the provider's freshly-fetched issue identifiers so they
+    // reach the composed XML and round-trip back via the scanner ingest.
+    // The DB-direct apply path does this through `apply_external_ids`;
+    // the sidecar path had no equivalent, silently dropping new IDs.
+    let issue_external_ids = crate::metadata::sidecar_compose::merge_provider_identifiers(
+        &issue_external_ids_db,
+        &detail.identifiers,
+        &issue_user_pins,
+    );
     let series_user_pins = if args.override_user_edits {
         std::collections::HashSet::new()
     } else {
@@ -741,6 +830,7 @@ async fn apply_issue_via_sidecar(
     if variants_selected && !detail.variants.is_empty() {
         match crate::metadata::writers::set_issue_variants(
             &state.db,
+            &state.cfg().data_path,
             &row.id,
             &detail.variants,
             crate::metadata::writers::SetBy::Provider(source),
@@ -804,9 +894,38 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         return apply_issue_via_sidecar(state, &args, &row, source, detail).await;
     }
 
+    let resolver = ProvResolver::Uniform(ProvSource {
+        set_by: SetBy::Provider(source),
+        source_ext: detail.source_external_id.clone(),
+    });
+    let run_id = args.run_id;
+    let ordinal = args.ordinal;
+    let outcome =
+        write_issue_fields(state, &row, &detail, args, &resolver, &*provider, source).await?;
+    flip_candidate_applied(&state.db, run_id, ordinal).await?;
+    bump_run_counts(&state.db, run_id, &outcome).await?;
+    Ok(outcome)
+}
+
+/// Write every issue scalar + junction + cover + external-ids + per-field
+/// provenance from `detail`, resolving each field's provenance via
+/// `resolver`. Shared by single-candidate apply (`ProvResolver::Uniform`
+/// → identical to the pre-refactor behaviour) and composite apply
+/// (`ProvResolver::PerField`). `cover_provider` / `cover_source` identify
+/// the provider whose cover URL sits in `detail.cover_image_url`. Does
+/// NOT flip run candidates or bump run counts.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn write_issue_fields(
+    state: &AppState,
+    row: &issue::Model,
+    detail: &GenericMetadata,
+    args: ApplyArgs,
+    resolver: &ProvResolver<'_>,
+    cover_provider: &dyn crate::metadata::provider::MetadataProvider,
+    cover_source: Source,
+) -> Result<ApplyOutcome, ApplyError> {
     let mut outcome = ApplyOutcome::default();
     let entity_id_str = row.id.clone();
-    let set_by = SetBy::Provider(source);
     let provenance = fetch_field_provenance_map(&state.db, "issue", &entity_id_str).await?;
 
     apply_external_ids(
@@ -814,13 +933,12 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         "issue",
         &entity_id_str,
         &detail.identifiers,
-        set_by,
+        resolver.primary().set_by,
         &mut outcome,
     )
     .await?;
 
     let mut new = IssueUpdates::default();
-    let source_ext = detail.source_external_id.clone();
 
     decide_str(
         &row.title,
@@ -951,8 +1069,7 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         "issue",
         &entity_id_str,
         &outcome.applied_fields,
-        set_by,
-        source_ext.clone(),
+        resolver,
     )
     .await?;
 
@@ -960,12 +1077,14 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     let rebuild_batch = CsvRebuildBatch::new();
     if !detail.credits.is_empty()
         && should_apply(
-            issue_row_has_credits(&row),
+            issue_row_has_credits(row),
             &provenance,
             MetadataField::Credits,
             &args,
         )
     {
+        let set_by = resolver.set_by(&MetadataField::Credits.key());
+        let source_ext = resolver.source_ext(&MetadataField::Credits.key());
         let mut credits = Vec::with_capacity(detail.credits.len());
         for (i, c) in detail.credits.iter().enumerate() {
             let person_id =
@@ -997,6 +1116,8 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
             &args,
         )
     {
+        let set_by = resolver.set_by(&MetadataField::Characters.key());
+        let source_ext = resolver.source_ext(&MetadataField::Characters.key());
         let mut specs: Vec<writers::CharacterSpec> = Vec::with_capacity(detail.characters.len());
         for c in &detail.characters {
             let id = writers::upsert_character(&state.db, &c.name, &c.identifiers, set_by).await?;
@@ -1025,6 +1146,8 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
             &args,
         )
     {
+        let set_by = resolver.set_by(&MetadataField::Teams.key());
+        let source_ext = resolver.source_ext(&MetadataField::Teams.key());
         let mut specs: Vec<writers::TeamSpec> = Vec::with_capacity(detail.teams.len());
         for t in &detail.teams {
             let id = writers::upsert_team(&state.db, &t.name, &t.identifiers, set_by).await?;
@@ -1059,6 +1182,8 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
             &args,
         )
     {
+        let set_by = resolver.set_by(&MetadataField::Locations.key());
+        let source_ext = resolver.source_ext(&MetadataField::Locations.key());
         let mut specs: Vec<writers::LocationSpec> = Vec::with_capacity(detail.locations.len());
         for l in &detail.locations {
             let id = writers::upsert_location(&state.db, &l.name, &l.identifiers, set_by).await?;
@@ -1089,6 +1214,8 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
             &args,
         )
     {
+        let set_by = resolver.set_by(&MetadataField::StoryArcs.key());
+        let source_ext = resolver.source_ext(&MetadataField::StoryArcs.key());
         let mut specs: Vec<writers::ArcSpec> = Vec::with_capacity(detail.story_arcs.len());
         for a in &detail.story_arcs {
             let id = writers::upsert_story_arc(&state.db, &a.name, &a.identifiers, set_by).await?;
@@ -1118,12 +1245,12 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     if args.apply_cover
         && let Some(url) = detail.cover_image_url.as_deref()
     {
-        match provider.fetch_cover(url).await {
+        match cover_provider.fetch_cover(url).await {
             Ok(bytes) => {
                 let primary_ident = detail
                     .identifiers
                     .iter()
-                    .find(|i| i.source == source)
+                    .find(|i| i.source == cover_source)
                     .cloned();
                 let cover_write = CoverWrite {
                     issue_id: &entity_id_str,
@@ -1179,7 +1306,14 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         .map(|s| s.contains(&MetadataField::CoverVariants.key()))
         .unwrap_or(true);
     if variants_selected && !detail.variants.is_empty() {
-        match writers::set_issue_variants(&state.db, &entity_id_str, &detail.variants, set_by).await
+        match writers::set_issue_variants(
+            &state.db,
+            &state.cfg().data_path,
+            &entity_id_str,
+            &detail.variants,
+            resolver.set_by(&MetadataField::CoverVariants.key()),
+        )
+        .await
         {
             Ok(n) => outcome.variants_written = n as u32,
             Err(e) => tracing::warn!(
@@ -1190,8 +1324,6 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         }
     }
 
-    flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
-    bump_run_counts(&state.db, args.run_id, &outcome).await?;
     Ok(outcome)
 }
 
@@ -1630,7 +1762,7 @@ fn issue_row_has_credits(row: &issue::Model) -> bool {
         || any(&row.translator)
 }
 
-async fn flip_candidate_applied(
+pub(crate) async fn flip_candidate_applied(
     db: &DatabaseConnection,
     run_id: Uuid,
     ordinal: i32,
@@ -1647,7 +1779,7 @@ async fn flip_candidate_applied(
     Ok(())
 }
 
-async fn bump_run_counts(
+pub(crate) async fn bump_run_counts(
     db: &DatabaseConnection,
     run_id: Uuid,
     outcome: &ApplyOutcome,
@@ -1694,8 +1826,7 @@ async fn write_provenance_for_applied(
     entity_type: &str,
     entity_id: &str,
     applied: &[String],
-    set_by: SetBy,
-    source_ext: Option<String>,
+    resolver: &ProvResolver<'_>,
 ) -> Result<(), sea_orm::DbErr> {
     use std::str::FromStr;
     for f in applied {
@@ -1710,13 +1841,14 @@ async fn write_provenance_for_applied(
         if matches!(field, MetadataField::ExternalId(_)) {
             continue;
         }
+        let prov = resolver.resolve(f);
         writers::write_field_provenance(
             db,
             entity_type,
             entity_id,
             field,
-            set_by,
-            source_ext.clone(),
+            prov.set_by,
+            prov.source_ext,
         )
         .await?;
     }

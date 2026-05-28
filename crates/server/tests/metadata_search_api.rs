@@ -630,3 +630,73 @@ async fn search_issue_400_when_issue_has_no_number_raw() {
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "metadata.no_issue_number");
 }
+
+// ───────── composite (multi-provider) endpoints ─────────
+
+#[tokio::test]
+async fn composite_diff_series_403_when_non_admin_lacks_access() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let run = Uuid::now_v7();
+    let resp = get(
+        &app,
+        &user,
+        &format!("/api/series/{series_id}/metadata/composite-diff?run_id={run}"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn composite_diff_series_404_when_run_unknown() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let run = Uuid::now_v7();
+    let resp = get(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/composite-diff?run_id={run}"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn composite_apply_series_403_when_non_admin_lacks_access() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let body = json!({ "run_id": Uuid::now_v7(), "field_sources": [], "included": [] });
+    let resp = post_json(
+        &app,
+        &user,
+        &format!("/api/series/{series_id}/metadata/composite-apply"),
+        body,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn composite_apply_series_404_when_run_unknown() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let body = json!({ "run_id": Uuid::now_v7(), "field_sources": [], "included": [] });
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/composite-apply"),
+        body,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

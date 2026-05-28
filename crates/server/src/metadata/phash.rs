@@ -38,7 +38,8 @@
 //!
 //! metadata-providers-1.0 M9.
 
-use entity::issue_cover;
+use archive::ArchiveLimits;
+use entity::{issue, issue_cover};
 use image::DynamicImage;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Set,
@@ -186,11 +187,29 @@ pub async fn upsert_archive_cover_hashes<C: ConnectionTrait>(
     local_path: &str,
     img: &DynamicImage,
 ) -> Result<uuid::Uuid, sea_orm::DbErr> {
-    let (p, d, a) = all_hashes(img);
+    let hashes = all_hashes(img);
     let width = img.width() as i32;
     let height = img.height() as i32;
+    upsert_archive_cover_hashes_from_parts(db, issue_id, local_path, hashes, width, height).await
+}
 
-    // Look for an existing archive-extracted primary cover row.
+/// Same as [`upsert_archive_cover_hashes`] but takes pre-computed
+/// hash + dimension values. Used by the post-scan hash path that
+/// decodes the source archive page once and shares the result
+/// between the thumbnail encoder and the hash writer, and by the
+/// backfill sweep that decodes archive bytes directly.
+///
+/// `hashes` is `(phash, dhash, ahash)` in the same order
+/// [`all_hashes`] returns.
+pub async fn upsert_archive_cover_hashes_from_parts<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    local_path: &str,
+    hashes: (i64, i64, i64),
+    width: i32,
+    height: i32,
+) -> Result<uuid::Uuid, sea_orm::DbErr> {
+    let (p, d, a) = hashes;
     let existing = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
         .filter(issue_cover::Column::Kind.eq("primary"))
@@ -242,35 +261,114 @@ pub async fn upsert_archive_cover_hashes<C: ConnectionTrait>(
     Ok(id)
 }
 
-/// Backfill helper — reads the cover bytes from disk + computes
-/// hashes + writes back to `issue_cover.{phash,dhash,ahash}` in
-/// place. Used by the admin-triggered backfill endpoint for rows
-/// that pre-date M9.
+/// Open an archive, decode its cover page, and compute all three
+/// perceptual hashes — synchronous because it does blocking I/O and
+/// CPU-bound image decode. Always call from `spawn_blocking`.
+///
+/// Hashing the source archive page (rather than the on-disk WebP
+/// thumbnail) keeps us on the same reference distribution
+/// ComicTagger uses, which is what the cover-Hamming ladder
+/// constants in `matcher.rs` are calibrated against. Going through
+/// the thumbnail introduces extra encode losses on our side that the
+/// provider's hosted cover doesn't have, biasing Hamming distances
+/// upward by a couple of bits — enough to push genuine matches out
+/// of the High bucket.
+///
+/// Falls back to page 0 when `cover_page_index` is past the end of
+/// the archive (defensive — the scanner stamps the column from
+/// ComicInfo so a stale value is plausible after a retag).
+pub fn compute_archive_cover(
+    archive_path: &std::path::Path,
+    cover_page_index: usize,
+    limits: ArchiveLimits,
+) -> Result<ArchiveCoverHashes, ArchiveCoverError> {
+    let mut a = archive::open(archive_path, limits)?;
+    let entry_name = {
+        let pages = a.pages();
+        if pages.is_empty() {
+            return Err(ArchiveCoverError::NoPages);
+        }
+        pages
+            .get(cover_page_index)
+            .copied()
+            .or_else(|| pages.first().copied())
+            .expect("non-empty pages")
+            .name
+            .clone()
+    };
+    let bytes = a.read_entry_bytes(&entry_name)?;
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| ArchiveCoverError::Decode(e.to_string()))?;
+    let hashes = all_hashes(&img);
+    Ok(ArchiveCoverHashes {
+        hashes,
+        width: img.width() as i32,
+        height: img.height() as i32,
+    })
+}
+
+/// Output of [`compute_archive_cover`]. Carries the hash triple plus
+/// source dimensions so the caller can write `issue_cover.width` /
+/// `height` without a second decode.
+#[derive(Debug, Clone, Copy)]
+pub struct ArchiveCoverHashes {
+    pub hashes: (i64, i64, i64),
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ArchiveCoverError {
+    #[error("archive open/read: {0}")]
+    Archive(#[from] archive::ArchiveError),
+    #[error("image decode: {0}")]
+    Decode(String),
+    #[error("archive has no pages")]
+    NoPages,
+}
+
+/// Backfill helper — opens the parent issue's archive, decodes its
+/// cover page, computes hashes, writes back to
+/// `issue_cover.{phash,dhash,ahash,width,height}` in place. Used by
+/// both the admin-triggered backfill endpoint and the startup drain
+/// for rows that pre-date the inline-hash path.
+///
+/// Returns `Ok(true)` when the row was hashed, `Ok(false)` when the
+/// archive was missing or undecodable (soft-skip — the row stays
+/// NULL and a future run will retry), `Err(_)` only on DB-write
+/// failures.
 pub async fn backfill_row<C: ConnectionTrait>(
     db: &C,
-    row: &issue_cover::Model,
-    data_path: &std::path::Path,
+    cover_row: &issue_cover::Model,
+    issue_file_path: &std::path::Path,
+    cover_page_index: usize,
+    archive_limits: ArchiveLimits,
 ) -> Result<bool, std::io::Error> {
-    let on_disk = data_path.join(&row.local_path);
-    let bytes = match std::fs::read(&on_disk) {
-        Ok(b) => b,
+    let path = issue_file_path.to_path_buf();
+    let hashed = tokio::task::spawn_blocking(move || {
+        compute_archive_cover(&path, cover_page_index, archive_limits)
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("phash backfill join: {e}")))?;
+    let parts = match hashed {
+        Ok(p) => p,
         Err(e) => {
-            tracing::debug!(cover_id = %row.id, path = %on_disk.display(), error = %e, "phash backfill: read failed");
+            tracing::debug!(
+                cover_id = %cover_row.id,
+                path = %issue_file_path.display(),
+                error = %e,
+                "phash backfill: archive read/decode failed (soft-skip)"
+            );
             return Ok(false);
         }
     };
-    let img = match image::load_from_memory(&bytes) {
-        Ok(i) => i,
-        Err(e) => {
-            tracing::debug!(cover_id = %row.id, error = %e, "phash backfill: decode failed");
-            return Ok(false);
-        }
-    };
-    let (p, d, a) = all_hashes(&img);
-    let mut am: issue_cover::ActiveModel = row.clone().into();
+    let mut am: issue_cover::ActiveModel = cover_row.clone().into();
+    let (p, d, a) = parts.hashes;
     am.phash = Set(Some(p));
     am.dhash = Set(Some(d));
     am.ahash = Set(Some(a));
+    am.width = Set(Some(parts.width));
+    am.height = Set(Some(parts.height));
     if let Err(e) = am.update(db).await {
         return Err(std::io::Error::other(format!("phash backfill update: {e}")));
     }
@@ -304,7 +402,7 @@ pub async fn series_representative_phash<C: ConnectionTrait>(
         // the earliest issue (created_at ASC) so series with a long
         // run still pick a stable representative.
         r"SELECT ic.phash
-          FROM issue i
+          FROM issues i
           JOIN issue_cover ic
             ON ic.issue_id = i.id
            AND ic.kind = 'primary'
@@ -417,15 +515,24 @@ pub struct BackfillOutcome {
 /// Bounded so a single admin click can't tie up the request handler.
 pub const BACKFILL_BATCH_CAP: usize = 500;
 
-/// Walk every `issue_cover` row with NULL phash, decode the on-disk
-/// bytes, write the hashes back. Bounded by [`BACKFILL_BATCH_CAP`].
-/// Operators re-click to drain larger backlogs.
+/// Walk every archive-extracted `issue_cover` row with NULL phash,
+/// open the parent issue's archive, decode its cover page, and
+/// write the hashes back. Bounded by [`BACKFILL_BATCH_CAP`].
+/// Operators re-click to drain larger backlogs; the startup drain
+/// (see `app::serve`) loops until empty.
+///
+/// Only `source_provider = 'archive_extracted'` rows are touched.
+/// Provider covers (CV / Metron) are hashed inline at apply time;
+/// a NULL phash on a provider row means decode failed during the
+/// apply itself, which the backfill can't recover from.
 pub async fn run_backfill<C: ConnectionTrait>(
     db: &C,
-    data_path: &std::path::Path,
+    archive_limits: ArchiveLimits,
 ) -> Result<BackfillOutcome, sea_orm::DbErr> {
     let rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::Phash.is_null())
+        .filter(issue_cover::Column::SourceProvider.eq("archive_extracted"))
+        .find_also_related(issue::Entity)
         .limit(BACKFILL_BATCH_CAP as u64)
         .all(db)
         .await?;
@@ -433,12 +540,21 @@ pub async fn run_backfill<C: ConnectionTrait>(
     let mut hashed = 0usize;
     let mut skipped = 0usize;
     let mut errored = 0usize;
-    for row in rows {
-        match backfill_row(db, &row, data_path).await {
+    for (cover, issue) in rows {
+        let Some(issue) = issue else {
+            // Orphan cover row — parent issue gone. Soft-skip; an
+            // operator can clean these up via the orphan sweep.
+            tracing::debug!(cover_id = %cover.id, "phash backfill: orphan cover row, parent issue missing");
+            skipped += 1;
+            continue;
+        };
+        let cover_idx = usize::try_from(issue.cover_page_index.max(0)).unwrap_or(0);
+        let path = std::path::Path::new(&issue.file_path);
+        match backfill_row(db, &cover, path, cover_idx, archive_limits).await {
             Ok(true) => hashed += 1,
             Ok(false) => skipped += 1,
             Err(e) => {
-                tracing::warn!(cover_id = %row.id, error = %e, "phash backfill: db update failed");
+                tracing::warn!(cover_id = %cover.id, error = %e, "phash backfill: db update failed");
                 errored += 1;
             }
         }

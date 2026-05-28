@@ -436,6 +436,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/variant-cover-backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_variant_cover_backfill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ocr/models": {
         parameters: {
             query?: never;
@@ -3054,6 +3070,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/issues/{issue_slug}/metadata/composite-apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_composite_apply_issue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/issues/{issue_slug}/metadata/composite-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_composite_diff_issue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/issues/{issue_slug}/metadata/proposed-diff": {
         parameters: {
             query?: never;
@@ -3110,6 +3158,38 @@ export interface paths {
             cookie?: never;
         };
         get: operations["metadata_candidates_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/composite-apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_composite_apply_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/composite-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_composite_diff_series"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3947,6 +4027,91 @@ export interface components {
              */
             started: number;
         };
+        CompositeApplyRequest: {
+            apply_cover?: boolean;
+            cover_overwrite_policy?: components["schemas"]["ApplyCoverPolicy"];
+            /** @description Per-field candidate picks. A field absent here is not applied. */
+            field_sources: components["schemas"]["CompositeFieldSource"][];
+            /** @description The candidate `ordinal`s that contribute. Their `applied_at` is
+             *     flipped. */
+            included: number[];
+            mode?: components["schemas"]["ApplyMode"];
+            override_external_id_sources?: string[];
+            override_user_edits?: boolean;
+            /** Format: uuid */
+            run_id: string;
+        };
+        CompositeApplyResp: {
+            applied_fields: string[];
+            /** Format: uuid */
+            run_id: string;
+            status: string;
+            /** Format: int32 */
+            variants_written: number;
+        };
+        CompositeDiffResp: {
+            changes_count: number;
+            external_id_conflicts: components["schemas"]["ExternalIdConflictRow"][];
+            external_ids_new: components["schemas"]["ExternalIdNewRow"][];
+            providers: components["schemas"]["CompositeProviderColumn"][];
+            rows: components["schemas"]["CompositeFieldRow"][];
+            /** Format: uuid */
+            run_id: string;
+            scope: string;
+        };
+        /** @description One field row across all included candidates. */
+        CompositeFieldRow: {
+            /**
+             * Format: int32
+             * @description Merge-policy default candidate `ordinal` for this field (`null`
+             *     when no included candidate has a value). The UI seeds its
+             *     per-field selection here.
+             */
+            chosen_ordinal?: number | null;
+            current_set_at?: string | null;
+            current_set_by?: string | null;
+            current_value?: string | null;
+            /** @description `DiffDecision` for (current vs the chosen value) — reuses
+             *     `apply::classify_field` so the badge matches the single-candidate
+             *     pane exactly. */
+            decision: string;
+            field: string;
+            label: string;
+            proposals: components["schemas"]["CompositeProposal"][];
+        };
+        CompositeFieldSource: {
+            /** @description `MetadataField::key()`. */
+            field: string;
+            /**
+             * Format: int32
+             * @description Candidate `ordinal` (unique within the run) whose value wins this
+             *     field.
+             */
+            ordinal: number;
+        };
+        /** @description One candidate's proposed value for a field. Keyed by `ordinal`
+         *     (unique within a run) so multiple candidates from the same provider
+         *     are distinct columns. */
+        CompositeProposal: {
+            /** Format: int32 */
+            ordinal: number;
+            source: string;
+            value?: string | null;
+        };
+        /** @description One provider column in the compare view's header. */
+        CompositeProviderColumn: {
+            bucket: string;
+            /** @description Cover URL for the "verify this is the same issue" thumbnail. */
+            cover_image_url?: string | null;
+            external_id: string;
+            /** Format: int32 */
+            ordinal: number;
+            /** Format: float */
+            score: number;
+            source: string;
+            /** @description Series name / "name #number" for the column subtitle. */
+            title?: string | null;
+        };
         /** @description One condition row in a filter DSL. `group_id` always 0 in v1; reserved
          *     for nested-group support without a wire-format break. */
         Condition: {
@@ -4631,6 +4796,11 @@ export interface components {
             height?: number | null;
             /** Format: uuid */
             id: string;
+            /** @description URL the frontend should render `<img src>` from. Points at the
+             *     local byte endpoint (`/issues/{id}/covers/{cover_id}`) when the
+             *     cover was downloaded to disk, else falls back to `source_url`
+             *     (provider CDN hotlink). `None` only when neither exists. */
+            image_url?: string | null;
             is_active: boolean;
             issue_id: string;
             /** @description `"primary" | "variant" | "back" | "incentive"`. */
@@ -4639,8 +4809,9 @@ export interface components {
             ordinal: number;
             source_external_id?: string | null;
             source_provider?: string | null;
-            /** @description CDN URL the provider returned. Frontend renders directly when
-             *     present. */
+            /** @description CDN URL the provider returned. Kept for attribution + the
+             *     "open original" link; not the primary render source once the
+             *     image is stored locally. */
             source_url?: string | null;
             /** Format: uuid */
             variant_artist_person_id?: string | null;
@@ -6966,6 +7137,17 @@ export interface components {
         UserRole: "admin" | "user";
         /** @enum {string} */
         UserState: "pending_verification" | "active" | "disabled";
+        /** @description Outcome of a variant-cover backfill sweep — surfaced via the admin
+         *     endpoint so the operator sees how rows fared. */
+        VariantCoverBackfillOutcome: {
+            /** @description Rows visited (variant rows with an empty `local_path` and a
+             *     non-null `source_url`). */
+            considered: number;
+            /** @description Rows skipped because the download / decode failed (stay hotlinks). */
+            skipped: number;
+            /** @description Rows whose image downloaded + stored successfully. */
+            stored: number;
+        };
         /**
          * @description `single` | `double` | `webtoon`.
          * @enum {string}
@@ -7990,6 +8172,32 @@ export interface operations {
             };
             /** @description run not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_variant_cover_backfill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariantCoverBackfillOutcome"];
+                };
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13258,6 +13466,94 @@ export interface operations {
             };
         };
     };
+    metadata_composite_apply_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompositeApplyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompositeApplyResp"];
+                };
+            };
+            /** @description library access denied / override requires admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue / run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_composite_diff_issue: {
+        parameters: {
+            query: {
+                run_id: string;
+                mode?: components["schemas"]["ApplyMode"];
+                override_user_edits?: boolean;
+                include?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompositeDiffResp"];
+                };
+            };
+            /** @description invalid run scope */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue / run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_proposed_diff_issue: {
         parameters: {
             query: {
@@ -13447,6 +13743,92 @@ export interface operations {
                 content?: never;
             };
             /** @description series not found / no run */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_composite_apply_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompositeApplyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompositeApplyResp"];
+                };
+            };
+            /** @description library access denied / override requires admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_composite_diff_series: {
+        parameters: {
+            query: {
+                run_id: string;
+                mode?: components["schemas"]["ApplyMode"];
+                override_user_edits?: boolean;
+                include?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompositeDiffResp"];
+                };
+            };
+            /** @description invalid run scope */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / run not found */
             404: {
                 headers: {
                     [name: string]: unknown;

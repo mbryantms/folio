@@ -249,6 +249,13 @@ pub struct Config {
     /// (primary cover only). Matching-accuracy-1.0 M5.
     #[serde(default = "default_metadata_alternate_cover_fetch_cap")]
     pub metadata_alternate_cover_fetch_cap: u32,
+
+    /// Comma-separated provider order — the deterministic tiebreaker for
+    /// the composite (multi-provider) merge when two providers offer a
+    /// value for the same field. Empty = fall back to the
+    /// `build_providers` order. Parsed via [`Config::merge_provider_preference`].
+    #[serde(default)]
+    pub metadata_merge_provider_preference: String,
 }
 
 fn default_weekly_refresh_cron() -> String {
@@ -490,6 +497,24 @@ impl Config {
     /// consult this; default-off keeps Folio identity preserved.
     pub fn is_komga_compat(&self) -> bool {
         self.opds_panels_mode.eq_ignore_ascii_case("komga")
+    }
+
+    /// Parse `metadata_merge_provider_preference` into the ordered
+    /// source list used as the composite-merge tiebreaker. Unparseable
+    /// / unset → the default `[Metron, ComicVine]` order (mirrors
+    /// `orchestrator::build_providers`). Unknown tokens are skipped.
+    pub fn merge_provider_preference(&self) -> Vec<crate::metadata::identifier::Source> {
+        use crate::metadata::identifier::Source;
+        let parsed: Vec<Source> = self
+            .metadata_merge_provider_preference
+            .split(',')
+            .filter_map(|t| t.trim().parse::<Source>().ok())
+            .collect();
+        if parsed.is_empty() {
+            vec![Source::Metron, Source::ComicVine]
+        } else {
+            parsed
+        }
     }
 
     /// Build the `archive::ArchiveLimits` the archive crate consumes,
@@ -1053,6 +1078,10 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(n) => cfg.metadata_alternate_cover_fetch_cap = n.min(32) as u32,
             None => bad_type(&row.key, "uint", &row.value),
         },
+        "metadata.merge.provider_preference" => match row.value.as_str() {
+            Some(s) => cfg.metadata_merge_provider_preference = s.trim().to_owned(),
+            None => bad_type(&row.key, "string", &row.value),
+        },
 
         other => {
             tracing::debug!(key = %other, "app_setting row ignored (no overlay binding yet)");
@@ -1189,6 +1218,7 @@ mod tests {
             metadata_auto_apply_threshold: default_metadata_auto_apply_threshold(),
             metadata_match_medium_threshold: default_metadata_match_medium_threshold(),
             metadata_alternate_cover_fetch_cap: default_metadata_alternate_cover_fetch_cap(),
+            metadata_merge_provider_preference: String::new(),
         }
     }
 }

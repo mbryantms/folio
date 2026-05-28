@@ -41,7 +41,7 @@
 //! Existing `<Notes>` content is preserved (concatenated with a blank
 //! line). Pure ComicInfo-derived applies (no CV/Metron) skip the line.
 
-use crate::metadata::identifier::Source;
+use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::provider::GenericMetadata;
 use chrono::Datelike;
 use entity::{external_id, field_provenance, issue, series};
@@ -85,6 +85,46 @@ impl ComposeContext<'_> {
     fn is_series_pinned(&self, key: &str) -> bool {
         self.series_user_pins.contains(key)
     }
+}
+
+/// Overlay the provider's freshly-fetched identifiers onto the existing
+/// DB external-id map so a writeback apply emits them into the composed
+/// XML. Without this, the sidecar apply path silently drops new external
+/// IDs: the composers read IDs only from the (pre-apply) DB map, so a
+/// Metron/CV pull that introduces `metron` / `gcd` / `isbn` / `upc` rows
+/// never reaches the MetronInfo `<IDs>` block and never round-trips back
+/// via the scanner's ingest. The legacy DB-direct path handles this via
+/// `apply::apply_external_ids`; this is its writeback-path equivalent.
+///
+/// Mirrors that path's precedence: provider values win for any source
+/// the user hasn't pinned (`external_id.<source>`). Keyed by
+/// [`Source::as_str`]. The **first** provider identifier per source wins
+/// — ComicVine issue detail emits the issue id *before* the volume
+/// (series) id under the same `comicvine` source, so first-wins keeps
+/// the issue-scoped id and drops the series-scoped collision when
+/// composing an issue's IDs.
+pub fn merge_provider_identifiers(
+    existing: &BTreeMap<String, String>,
+    provider_ids: &[Identifier],
+    user_pins: &HashSet<String>,
+) -> BTreeMap<String, String> {
+    let mut merged = existing.clone();
+    let mut seen: HashSet<&str> = HashSet::new();
+    for id in provider_ids {
+        let key = id.source.as_str();
+        if !seen.insert(key) {
+            continue;
+        }
+        let trimmed = id.id.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if user_pins.contains(&format!("external_id.{key}")) {
+            continue;
+        }
+        merged.insert(key.to_owned(), trimmed.to_owned());
+    }
+    merged
 }
 
 // ───────── public composers ─────────
@@ -1510,11 +1550,65 @@ mod tests {
         );
     }
 
-    // Silence the unused-import warning on Identifier — held for future
-    // tests that build provider identifier vectors.
-    #[allow(dead_code)]
-    fn _identifier_unused() -> Vec<Identifier> {
-        Vec::new()
+    #[test]
+    fn merge_adds_new_provider_ids_and_refreshes_existing() {
+        let mut existing = empty_ids();
+        existing.insert("comicvine".into(), "321297".into());
+        let provider = vec![
+            Identifier::with_canonical_url(Source::Metron, "7997", "issue"),
+            Identifier::with_canonical_url(Source::ComicVine, "321297", "issue"),
+            Identifier::new(Source::Gcd, "111"),
+            Identifier::new(Source::Isbn, "9781607066019"),
+            Identifier::new(Source::Upc, "70985300621"),
+        ];
+        let merged = merge_provider_identifiers(&existing, &provider, &empty_pins());
+        assert_eq!(merged.get("metron").map(String::as_str), Some("7997"));
+        assert_eq!(merged.get("comicvine").map(String::as_str), Some("321297"));
+        assert_eq!(merged.get("gcd").map(String::as_str), Some("111"));
+        assert_eq!(
+            merged.get("isbn").map(String::as_str),
+            Some("9781607066019")
+        );
+        assert_eq!(merged.get("upc").map(String::as_str), Some("70985300621"));
+    }
+
+    #[test]
+    fn merge_first_provider_id_per_source_wins_cv_issue_over_series() {
+        // ComicVine issue detail emits the issue id before the volume
+        // (series) id under the same `comicvine` source. First-wins keeps
+        // the issue-scoped id out of the issue's external-id map.
+        let provider = vec![
+            Identifier::with_canonical_url(Source::ComicVine, "321297", "issue"),
+            Identifier::with_canonical_url(Source::ComicVine, "18166", "series"),
+        ];
+        let merged = merge_provider_identifiers(&empty_ids(), &provider, &empty_pins());
+        assert_eq!(merged.get("comicvine").map(String::as_str), Some("321297"));
+    }
+
+    #[test]
+    fn merge_respects_user_pin_on_external_id() {
+        let mut existing = empty_ids();
+        existing.insert("comicvine".into(), "user-set".into());
+        let mut pins = empty_pins();
+        pins.insert("external_id.comicvine".into());
+        let provider = vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            "999",
+            "issue",
+        )];
+        let merged = merge_provider_identifiers(&existing, &provider, &pins);
+        // Pinned source keeps the user value; provider does not override.
+        assert_eq!(
+            merged.get("comicvine").map(String::as_str),
+            Some("user-set")
+        );
+    }
+
+    #[test]
+    fn merge_skips_blank_ids() {
+        let provider = vec![Identifier::new(Source::Metron, "   ")];
+        let merged = merge_provider_identifiers(&empty_ids(), &provider, &empty_pins());
+        assert!(merged.is_empty());
     }
 
     #[test]

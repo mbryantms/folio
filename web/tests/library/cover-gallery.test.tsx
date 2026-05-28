@@ -2,7 +2,8 @@
  * <CoverGallery> smoke — metadata-providers-1.0 M5.2.
  *
  * Verifies the gallery's "hide when nothing variant" rule + that a
- * variant row renders the source_url as an <img>.
+ * variant row renders `image_url` (the local byte endpoint) as the
+ * <img> src while linking the original CDN `source_url` for full-res.
  */
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -24,11 +25,6 @@ vi.mock("@/lib/api/queries", () => ({
   useIssueCovers: () => queryState,
 }));
 
-vi.mock("next/image", () => ({
-  default: ({ src, alt }: { src: string; alt: string }) =>
-    createElement("img", { src, alt }),
-}));
-
 import { CoverGallery } from "@/components/library/CoverGallery";
 
 const primary: IssueCoverRow = {
@@ -39,6 +35,7 @@ const primary: IssueCoverRow = {
   source_provider: "comicvine",
   source_external_id: "67890",
   source_url: "https://cdn/super.jpg",
+  image_url: "/issues/abc/covers/00000000-0000-0000-0000-000000000001",
   variant_label: null,
   variant_artist_person_id: null,
   width: null,
@@ -53,6 +50,8 @@ const variant: IssueCoverRow = {
   kind: "variant",
   ordinal: 1,
   source_url: "https://cdn/variant-b.jpg",
+  // Downloaded locally → rendered from the byte endpoint, not the CDN.
+  image_url: "/issues/abc/covers/00000000-0000-0000-0000-000000000002",
   variant_label: "Cover B (Adam Hughes)",
 };
 
@@ -97,7 +96,15 @@ describe("<CoverGallery>", () => {
     );
     expect(html).toContain("Covers");
     expect(html).toContain("Cover B (Adam Hughes)");
-    expect(html).toContain('src="https://cdn/variant-b.jpg"');
+    // Both the thumbnail and the full-res link use the local byte
+    // endpoint, not the provider CDN.
+    expect(html).toContain(
+      'src="/issues/abc/covers/00000000-0000-0000-0000-000000000002"',
+    );
+    expect(html).toContain(
+      'href="/issues/abc/covers/00000000-0000-0000-0000-000000000002"',
+    );
+    expect(html).not.toContain("https://cdn/variant-b.jpg");
     expect(html).toContain("ComicVine");
   });
 

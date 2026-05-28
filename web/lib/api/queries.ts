@@ -378,6 +378,46 @@ export const queryKeys = {
       mode,
       override,
     ] as const,
+  /** Composite (multi-provider) compare view. Keyed by run + mode +
+   *  override + the included candidate-ordinal set so any change
+   *  refetches. */
+  metadataCompositeDiffSeries: (
+    slug: string,
+    runId: string,
+    mode: string,
+    override: boolean,
+    include: number[],
+  ) =>
+    [
+      "series",
+      slug,
+      "metadata",
+      "composite-diff",
+      runId,
+      mode,
+      override,
+      include.join(","),
+    ] as const,
+  metadataCompositeDiffIssue: (
+    slug: string,
+    issueSlug: string,
+    runId: string,
+    mode: string,
+    override: boolean,
+    include: number[],
+  ) =>
+    [
+      "series",
+      slug,
+      "issues",
+      issueSlug,
+      "metadata",
+      "composite-diff",
+      runId,
+      mode,
+      override,
+      include.join(","),
+    ] as const,
   /** Sync-status card (last_metadata_sync_at + paused). */
   metadataSyncStatusSeries: (slug: string) =>
     ["series", slug, "metadata", "status"] as const,
@@ -1884,6 +1924,7 @@ export function useUserProgress() {
 
 import type {
   CandidatesResp,
+  CompositeDiffResp,
   DiffResp,
   ExternalIdsListResp,
   IssueCoversResp,
@@ -2011,6 +2052,73 @@ export function useMetadataProposedDiffIssue(
       );
     },
     enabled: !!seriesSlug && !!issueSlug && !!runId && ordinal != null && ordinal >= 0,
+    staleTime: 10_000,
+  });
+}
+
+function compositeDiffQs(
+  runId: string,
+  mode: string,
+  overrideUserEdits: boolean,
+  include: number[],
+): string {
+  const qs = new URLSearchParams({
+    run_id: runId,
+    mode,
+    override_user_edits: String(overrideUserEdits),
+  });
+  // serde_urlencoded (axum Query) can't decode repeated keys into a Vec,
+  // so the ordinals go as one comma-separated value.
+  if (include.length) qs.set("include", include.join(","));
+  return qs.toString();
+}
+
+export function useMetadataCompositeDiffSeries(
+  seriesSlug: string,
+  runId: string | null,
+  mode: "fill_missing" | "replace_all",
+  overrideUserEdits: boolean,
+  include: number[],
+) {
+  return useQuery({
+    queryKey: queryKeys.metadataCompositeDiffSeries(
+      seriesSlug,
+      runId ?? "",
+      mode,
+      overrideUserEdits,
+      include,
+    ),
+    queryFn: () =>
+      jsonFetch<CompositeDiffResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/metadata/composite-diff?${compositeDiffQs(runId!, mode, overrideUserEdits, include)}`,
+      ),
+    enabled: !!seriesSlug && !!runId,
+    staleTime: 10_000,
+  });
+}
+
+export function useMetadataCompositeDiffIssue(
+  seriesSlug: string,
+  issueSlug: string,
+  runId: string | null,
+  mode: "fill_missing" | "replace_all",
+  overrideUserEdits: boolean,
+  include: number[],
+) {
+  return useQuery({
+    queryKey: queryKeys.metadataCompositeDiffIssue(
+      seriesSlug,
+      issueSlug,
+      runId ?? "",
+      mode,
+      overrideUserEdits,
+      include,
+    ),
+    queryFn: () =>
+      jsonFetch<CompositeDiffResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/composite-diff?${compositeDiffQs(runId!, mode, overrideUserEdits, include)}`,
+      ),
+    enabled: !!seriesSlug && !!issueSlug && !!runId,
     staleTime: 10_000,
   });
 }

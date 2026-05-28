@@ -24,6 +24,7 @@ use crate::library::thumbnails::{self, THUMBNAIL_VERSION, ThumbFormat, Thumbnail
 use crate::state::AppState;
 use apalis::prelude::*;
 use entity::{issue, library};
+use sea_orm::sea_query::Expr;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QuerySelect, Set,
 };
@@ -181,50 +182,69 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 let mut archive = archive::open(std::path::Path::new(&file_path), archive_limits)?;
-                match kind {
-                    ThumbsJobKind::Cover => {
-                        thumbnails::generate_with_quality(
-                            &data_dir,
-                            &mut *archive,
-                            &issue_id,
-                            thumbnails::Variant::Cover,
-                            cover_page_index,
-                            format,
-                            quality,
-                        )?;
-                        Ok(thumbnails::GenerateAllOutcome {
-                            total_pages: 1,
-                            failed: Vec::new(),
-                        })
+                // For cover jobs: decode the cover page once and use
+                // the same `DynamicImage` for both perceptual hashing
+                // (matcher.rs constants are calibrated against
+                // archive-source hashes, not re-encoded WebP
+                // thumbnails — see metadata::phash::compute_archive_cover
+                // docs) and thumbnail encoding. Decoding once spares
+                // a second zip-read + decode per issue.
+                let mut cover_hashes: Option<crate::metadata::phash::ArchiveCoverHashes> = None;
+                let cover_result: Result<(), thumbnails::ThumbError> = if matches!(
+                    kind,
+                    ThumbsJobKind::Cover | ThumbsJobKind::CoverAndStrip
+                ) {
+                    match thumbnails::decode_page(&mut *archive, cover_page_index) {
+                        Ok(img) => {
+                            let (p, d, a) = crate::metadata::phash::all_hashes(&img);
+                            cover_hashes = Some(crate::metadata::phash::ArchiveCoverHashes {
+                                hashes: (p, d, a),
+                                width: img.width() as i32,
+                                height: img.height() as i32,
+                            });
+                            thumbnails::encode_cover_from_image(
+                                &data_dir,
+                                &issue_id,
+                                cover_page_index,
+                                &img,
+                                format,
+                                quality,
+                            )
+                            .map(|_| ())
+                        }
+                        Err(e) => Err(e),
                     }
-                    ThumbsJobKind::Strip => thumbnails::generate_strips_with_quality(
-                        &data_dir,
-                        &mut *archive,
-                        &issue_id,
-                        format,
-                        quality,
-                    ),
-                    ThumbsJobKind::CoverAndStrip => {
-                        thumbnails::generate_with_quality(
-                            &data_dir,
-                            &mut *archive,
-                            &issue_id,
-                            thumbnails::Variant::Cover,
-                            cover_page_index,
-                            format,
-                            quality,
-                        )?;
-                        let mut strips = thumbnails::generate_strips_with_quality(
+                } else {
+                    Ok(())
+                };
+                let outcome: Result<thumbnails::GenerateAllOutcome, thumbnails::ThumbError> =
+                    match kind {
+                        ThumbsJobKind::Cover => cover_result.map(|_| {
+                            thumbnails::GenerateAllOutcome {
+                                total_pages: 1,
+                                failed: Vec::new(),
+                            }
+                        }),
+                        ThumbsJobKind::Strip => thumbnails::generate_strips_with_quality(
                             &data_dir,
                             &mut *archive,
                             &issue_id,
                             format,
                             quality,
-                        )?;
-                        strips.total_pages = strips.total_pages.saturating_add(1);
-                        Ok(strips)
-                    }
-                }
+                        ),
+                        ThumbsJobKind::CoverAndStrip => cover_result.and_then(|_| {
+                            let mut strips = thumbnails::generate_strips_with_quality(
+                                &data_dir,
+                                &mut *archive,
+                                &issue_id,
+                                format,
+                                quality,
+                            )?;
+                            strips.total_pages = strips.total_pages.saturating_add(1);
+                            Ok(strips)
+                        }),
+                    };
+                outcome.map(|o| (o, cover_hashes))
             })
             .await
         }
@@ -237,7 +257,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     };
 
     match outcome {
-        Ok(Ok(o)) => {
+        Ok(Ok((o, cover_hashes))) => {
             if !o.failed.is_empty() {
                 let preview = o
                     .failed
@@ -258,18 +278,20 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                 ThumbsJobKind::Cover | ThumbsJobKind::CoverAndStrip
             ) {
                 stamp_done(&app, &row).await;
-                // metadata-providers-1.0 M9: compute perceptual
-                // hashes on the freshly-written cover thumbnail and
-                // upsert an `issue_cover` row of source='archive_extracted'.
-                // Failure here is non-fatal — the cover still
-                // displays, the matching-engine just doesn't get a
-                // phash boost for this issue until the backfill job
-                // catches it.
-                if let Err(e) = persist_cover_phash(&app, &row).await {
+                // Persist the perceptual hashes computed against the
+                // *source* archive page (not the WebP thumbnail) so
+                // the matcher's ComicTagger-derived Hamming ladder
+                // sees the same kind of bytes ComicVine / Metron host.
+                // Failure here is non-fatal — the cover still displays,
+                // the matching engine just falls back to text-only for
+                // this issue until the backfill job catches it.
+                if let Some(h) = cover_hashes
+                    && let Err(e) = persist_cover_phash_from_parts(&app, &row, h).await
+                {
                     tracing::debug!(
                         issue_id = %row.id,
                         error = %e,
-                        "thumbs job: cover phash extraction failed (non-fatal)"
+                        "thumbs job: cover phash persist failed (non-fatal)"
                     );
                 }
             }
@@ -421,9 +443,36 @@ async fn stamp_error(app: &AppState, row: &issue::Model, msg: String) {
     }
 }
 
+/// `WHERE` clause for "this issue needs the post-scan cover worker
+/// to run." Three disjoint triggers:
+///   1. Thumbnail never generated (`thumbnails_generated_at IS NULL`)
+///   2. Thumbnail stale (`thumbnail_version < CURRENT`)
+///   3. Thumbnail current, but the archive-extracted phash row is
+///      missing or NULL — the matcher's cover discriminant can't
+///      fire without it, so a scan should top up the hash even when
+///      the visible thumb is fine. `handle_thumbs` then decodes the
+///      archive cover page once, hashes it, and the no-op encoder
+///      short-circuits because the existing thumb is still current.
+fn needs_cover_work_filter() -> Condition {
+    Condition::any()
+        .add(issue::Column::ThumbnailsGeneratedAt.is_null())
+        .add(issue::Column::ThumbnailVersion.lt(THUMBNAIL_VERSION))
+        .add(Expr::cust(
+            r#"NOT EXISTS (
+                SELECT 1 FROM issue_cover ic
+                WHERE ic.issue_id = issues.id
+                  AND ic.kind = 'primary'
+                  AND ic.ordinal = 0
+                  AND ic.source_provider = 'archive_extracted'
+                  AND ic.phash IS NOT NULL
+            )"#,
+        ))
+}
+
 /// Bulk-enqueue a cover job for every issue in `library_id` whose cover
 /// thumbnail is missing (`thumbnails_generated_at IS NULL`) or stale
-/// (`thumbnail_version < THUMBNAIL_VERSION`). Returns the number of jobs
+/// (`thumbnail_version < THUMBNAIL_VERSION`) or whose archive-extracted
+/// perceptual hash hasn't been computed yet. Returns the number of jobs
 /// pushed after process-local dedupe. Best-effort — if the apalis push fails
 /// for any issue, the error is logged and the loop continues.
 ///
@@ -454,11 +503,7 @@ pub async fn enqueue_pending_for_library(app: &AppState, library_id: Uuid) -> us
     let pending: Vec<String> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::State.eq("active"))
-        .filter(
-            Condition::any()
-                .add(issue::Column::ThumbnailsGeneratedAt.is_null())
-                .add(issue::Column::ThumbnailVersion.lt(THUMBNAIL_VERSION)),
-        )
+        .filter(needs_cover_work_filter())
         .select_only()
         .column(issue::Column::Id)
         .into_tuple::<String>()
@@ -494,11 +539,7 @@ pub async fn enqueue_pending_for_series(
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::SeriesId.eq(series_id))
         .filter(issue::Column::State.eq("active"))
-        .filter(
-            Condition::any()
-                .add(issue::Column::ThumbnailsGeneratedAt.is_null())
-                .add(issue::Column::ThumbnailVersion.lt(THUMBNAIL_VERSION)),
-        )
+        .filter(needs_cover_work_filter())
         .select_only()
         .column(issue::Column::Id)
         .into_tuple::<String>()
@@ -565,20 +606,17 @@ async fn active_issue_rows_for_thumbs(
         }
     };
 
+    // Never attempted OR version bumped OR phash missing. Thumb-decode
+    // failures are NOT auto-retried — `stamp_error` stamps
+    // `generated_at`, so a permanently-failing decode (e.g. corrupt
+    // cover image) doesn't loop the post-scan queue forever. Manual
+    // retry: admin "Force recreate" clears both columns. Global retry:
+    // bump THUMBNAIL_VERSION. The phash-missing branch is independent
+    // — it stays satisfied once the hash lands.
     let mut query = issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::State.eq("active"))
-        .filter(
-            // Never attempted OR version bumped. Failures are NOT
-            // auto-retried — `stamp_error` now stamps `generated_at`,
-            // so a permanently-failing decode (e.g. corrupt cover
-            // image) doesn't loop the post-scan queue forever.
-            // Manual retry: admin "Force recreate" clears both
-            // columns. Global retry: bump THUMBNAIL_VERSION.
-            Condition::any()
-                .add(issue::Column::ThumbnailsGeneratedAt.is_null())
-                .add(issue::Column::ThumbnailVersion.lt(THUMBNAIL_VERSION)),
-        );
+        .filter(needs_cover_work_filter());
     if let Some(series_id) = series_id {
         query = query.filter(issue::Column::SeriesId.eq(series_id));
     }
@@ -598,19 +636,18 @@ async fn enqueue_post_scan_rows(
 ) -> usize {
     let mut count = 0usize;
     for row in rows {
-        // Mirror the query above: never attempted or version bumped. A
-        // stamped `thumbnails_error` no longer requalifies for
-        // auto-retry — see the comment in `active_issue_rows_for_thumbs`.
-        let cover_pending =
-            row.thumbnails_generated_at.is_none() || row.thumbnail_version < THUMBNAIL_VERSION;
-        if !cover_pending {
-            continue;
-        }
-        // When the library has `generate_page_thumbs_on_scan = true`, fan
-        // out to a CoverAndStrip job so the worker generates both in a
-        // single archive open. When false, keep the historical
+        // Trust the upstream query (`active_issue_rows_for_thumbs`)
+        // for the cover-or-hash gate — it knows about the phash
+        // condition that's not visible from the issue row alone.
+        // When the library has `generate_page_thumbs_on_scan = true`,
+        // fan out to a CoverAndStrip job so the worker generates both
+        // in a single archive open. When false, keep the historical
         // cover-only behavior; admins still have the manual "Generate
-        // missing pages" button to fill page thumbs in later.
+        // missing pages" button to fill page thumbs in later. Hash-only
+        // catchup runs (thumb already current) still pay this strip
+        // cost when the library opted in — the strip encoder no-ops
+        // when its target file exists, so it's a few extra disk stats
+        // per page.
         let job = if include_strips {
             ThumbsJob::cover_and_strip(row.id)
         } else {
@@ -661,11 +698,7 @@ where
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::Id.is_in(ids))
         .filter(issue::Column::State.eq("active"))
-        .filter(
-            Condition::any()
-                .add(issue::Column::ThumbnailsGeneratedAt.is_null())
-                .add(issue::Column::ThumbnailVersion.lt(THUMBNAIL_VERSION)),
-        )
+        .filter(needs_cover_work_filter())
         .select_only()
         .column(issue::Column::Id)
         .into_tuple::<String>()
@@ -794,35 +827,6 @@ pub async fn enqueue_strips_for_library(app: &AppState, library_id: Uuid) -> usi
     count
 }
 
-/// Catchup sweep: enqueue thumb jobs for every library that has
-/// thumbnails enabled. Used at server startup and from a daily cron so
-/// previously-failed generation attempts and older-version covers eventually
-/// complete without admin action. Libraries with `thumbnails_enabled = false`
-/// are skipped at the query site.
-pub async fn enqueue_pending_all_libraries(app: &AppState) -> usize {
-    let libs: Vec<Uuid> = match library::Entity::find()
-        .filter(library::Column::ThumbnailsEnabled.eq(true))
-        .select_only()
-        .column(library::Column::Id)
-        .into_tuple::<Uuid>()
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "thumbs catchup: list libraries failed");
-            return 0;
-        }
-    };
-    let mut total = 0usize;
-    for lib_id in libs {
-        total += enqueue_pending_for_library(app, lib_id).await;
-    }
-    if total > 0 {
-        tracing::info!(total, "thumbs catchup sweep: pushed jobs");
-    }
-    total
-}
 
 pub async fn handle_search(job: SearchJob, _state: Data<AppState>) -> Result<(), Error> {
     tracing::debug!(
@@ -848,23 +852,35 @@ pub async fn handle_dictionary(job: DictionaryJob, _state: Data<AppState>) -> Re
 /// logs at debug level rather than retrying).
 ///
 /// metadata-providers-1.0 M9.
-async fn persist_cover_phash(app: &AppState, row: &issue::Model) -> anyhow::Result<()> {
+/// Persist a hash triple computed elsewhere (the thumb worker's
+/// shared decode of the cover archive page) into the issue's
+/// `issue_cover` row. `local_path` is set to the on-disk thumbnail
+/// path so the cover-serving fallback still has somewhere to point
+/// even though the hashes themselves come from the archive bytes.
+async fn persist_cover_phash_from_parts(
+    app: &AppState,
+    row: &issue::Model,
+    parts: crate::metadata::phash::ArchiveCoverHashes,
+) -> anyhow::Result<()> {
     let data_dir = app.cfg().data_path.clone();
-    let issue_id = row.id.clone();
-    let Some(cover_path) = thumbnails::find_existing_cover(&data_dir, &issue_id) else {
-        return Ok(()); // No cover on disk — nothing to hash.
+    let local_path = match thumbnails::find_existing_cover(&data_dir, &row.id) {
+        Some(p) => p
+            .strip_prefix(&data_dir)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| p.to_string_lossy().into_owned()),
+        // Hash row is the matcher's side-channel — write it even when
+        // the thumbnail hasn't landed on disk yet. The display path
+        // falls back to a fresh inline-generated thumb either way.
+        None => String::new(),
     };
-    let rel = cover_path
-        .strip_prefix(&data_dir)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| cover_path.to_string_lossy().into_owned());
-    let cover_path_for_spawn = cover_path.clone();
-    let img = tokio::task::spawn_blocking(move || {
-        let bytes = std::fs::read(&cover_path_for_spawn)?;
-        image::load_from_memory(&bytes)
-            .map_err(|e| std::io::Error::other(format!("decode: {e}")))
-    })
-    .await??;
-    crate::metadata::phash::upsert_archive_cover_hashes(&app.db, &issue_id, &rel, &img).await?;
+    crate::metadata::phash::upsert_archive_cover_hashes_from_parts(
+        &app.db,
+        &row.id,
+        &local_path,
+        parts.hashes,
+        parts.width,
+        parts.height,
+    )
+    .await?;
     Ok(())
 }

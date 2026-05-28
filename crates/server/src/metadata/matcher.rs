@@ -234,6 +234,14 @@ pub struct IssueQueryFacts {
     pub publisher: Option<String>,
     pub volume: Option<i32>,
     pub issue_number: String,
+    /// Cover date year of the local issue (i.e. `issue.year`).
+    /// Distinct from `series_year`, which is the series *start*
+    /// year. Used as the `cover_year` filter on providers that
+    /// support it (Metron) — providers without that filter ignore
+    /// it. `#[serde(default)]` so older stored queries deserialize
+    /// without it.
+    #[serde(default)]
+    pub issue_year: Option<i32>,
 }
 
 // ───────── public API ─────────
@@ -647,6 +655,7 @@ mod tests {
             publisher: None,
             volume: None,
             issue_number: "1".into(),
+            issue_year: None,
         };
         let c = issue_candidate("Saga", Some(2012), "1");
         let s = score_issue(&q, &c);
@@ -664,6 +673,7 @@ mod tests {
             publisher: None,
             volume: None,
             issue_number: "1".into(),
+            issue_year: None,
         };
         let c = issue_candidate("Saga", Some(2012), "5");
         let s = score_issue(&q, &c);

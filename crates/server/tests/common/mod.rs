@@ -184,6 +184,25 @@ impl TestApp {
         .await
     }
 
+    /// Spawn with BOTH ComicVine + Metron configured — needed by the
+    /// composite (multi-provider) merge tests so `build_provider`
+    /// returns a client for each source.
+    pub async fn spawn_with_providers(
+        comicvine_api_key: impl Into<String>,
+        metron_username: impl Into<String>,
+        metron_password: impl Into<String>,
+    ) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            comicvine_api_key: Some(comicvine_api_key.into()),
+            comicvine_enabled: true,
+            metron_username: Some(metron_username.into()),
+            metron_password: Some(metron_password.into()),
+            metron_enabled: true,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
     async fn spawn_inner(opts: SpawnOpts) -> Self {
         // Pin to 17-alpine; the testcontainers-modules default of 11-alpine
         // predates STORED generated columns (Postgres 12+) used by the search
@@ -313,6 +332,7 @@ impl TestApp {
             metadata_match_medium_threshold: 60,
             // matching-accuracy-1.0 M5 — variant fetch cap, default 3.
             metadata_alternate_cover_fetch_cap: 3,
+            metadata_merge_provider_preference: String::new(),
         };
 
         let jobs = JobRuntime::new(&redis_url, db.clone())

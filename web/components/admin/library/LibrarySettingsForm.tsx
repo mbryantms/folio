@@ -53,7 +53,7 @@ const schema = z
     generate_page_thumbs_on_scan: z.boolean().default(false),
     allow_archive_writeback: z.boolean().default(false),
     metadata_writeback_enabled: z.boolean().default(false),
-    archive_backup_retain_count: z.number().int().min(1).max(5).default(1),
+    archive_backup_retain_count: z.number().int().min(0).max(5).default(1),
     archive_backup_retain_days: z.number().int().min(0).max(3650).default(30),
     metadata_publisher_blacklist: z.array(z.string().min(1)).default([]),
     filename_ignore_leading_numbers: z.boolean().default(false),
@@ -342,7 +342,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                     <FormControl>
                       <Input
                         type="number"
-                        min={1}
+                        min={0}
                         max={5}
                         value={field.value}
                         onChange={(e) => {
@@ -353,8 +353,11 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                     </FormControl>
                     <FormDescription>
                       How many <span className="font-mono">.bak</span> versions
-                      to keep next to each rewritten archive. 1 = one undo
-                      slot; max 5.
+                      to keep next to each rewritten archive.{" "}
+                      <span className="font-medium">0 = no backup</span> — the
+                      rewrite is validated before replacing the original, so no{" "}
+                      <span className="font-mono">.bak</span> is kept (avoids
+                      doubling library size). 1 = one undo slot; max 5.
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

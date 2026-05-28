@@ -2212,6 +2212,7 @@ import type {
   ApplyCoverPolicy,
   ApplyMode,
   AddExternalIdReq,
+  CompositeApplyResp,
   ExternalIdRow,
   SearchStartedResp,
   SyncStatusResp,
@@ -2311,6 +2312,58 @@ export function useApplyMetadataForIssue(
     }),
     {
       successMessage: "Applying metadata",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "issues", issueSlug],
+        });
+      },
+    },
+  );
+}
+
+export type CompositeApplyInput = {
+  run_id: string;
+  /** Per-field candidate picks. A field omitted here is not applied. */
+  field_sources: { field: string; ordinal: number }[];
+  /** The candidate `ordinal`s that contribute. */
+  included: number[];
+  mode?: ApplyMode;
+  apply_cover?: boolean;
+  cover_overwrite_policy?: ApplyCoverPolicy;
+  override_user_edits?: boolean;
+  override_external_id_sources?: string[];
+};
+
+export function useApplyCompositeMetadataForSeries(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<CompositeApplyResp, CompositeApplyInput>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/composite-apply`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Applying merged metadata",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["series", seriesSlug] });
+      },
+    },
+  );
+}
+
+export function useApplyCompositeMetadataForIssue(
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  const qc = useQueryClient();
+  return useApiMutation<CompositeApplyResp, CompositeApplyInput>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/composite-apply`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Applying merged metadata",
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "issues", issueSlug],

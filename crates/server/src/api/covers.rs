@@ -43,9 +43,15 @@ pub struct IssueCoverRow {
     pub ordinal: i32,
     pub source_provider: Option<String>,
     pub source_external_id: Option<String>,
-    /// CDN URL the provider returned. Frontend renders directly when
-    /// present.
+    /// CDN URL the provider returned. Kept for attribution + the
+    /// "open original" link; not the primary render source once the
+    /// image is stored locally.
     pub source_url: Option<String>,
+    /// URL the frontend should render `<img src>` from. Points at the
+    /// local byte endpoint (`/issues/{id}/covers/{cover_id}`) when the
+    /// cover was downloaded to disk, else falls back to `source_url`
+    /// (provider CDN hotlink). `None` only when neither exists.
+    pub image_url: Option<String>,
     pub variant_label: Option<String>,
     pub variant_artist_person_id: Option<Uuid>,
     pub width: Option<i32>,
@@ -101,20 +107,31 @@ pub async fn list_issue_covers(
         .unwrap_or_default();
     let covers: Vec<IssueCoverRow> = rows
         .into_iter()
-        .map(|r| IssueCoverRow {
-            id: r.id,
-            issue_id: r.issue_id,
-            kind: r.kind,
-            ordinal: r.ordinal,
-            source_provider: r.source_provider,
-            source_external_id: r.source_external_id,
-            source_url: r.source_url,
-            variant_label: r.variant_label,
-            variant_artist_person_id: r.variant_artist_person_id,
-            width: r.width,
-            height: r.height,
-            fetched_at: r.fetched_at.to_rfc3339(),
-            is_active: r.is_active,
+        .map(|r| {
+            // Prefer the locally-stored artifact; fall back to the
+            // provider CDN URL for rows we haven't downloaded (legacy /
+            // soft-fallback hotlinks).
+            let image_url = if !r.local_path.is_empty() {
+                Some(format!("/issues/{}/covers/{}", urlencode(&r.issue_id), r.id))
+            } else {
+                r.source_url.clone()
+            };
+            IssueCoverRow {
+                id: r.id,
+                issue_id: r.issue_id,
+                kind: r.kind,
+                ordinal: r.ordinal,
+                source_provider: r.source_provider,
+                source_external_id: r.source_external_id,
+                source_url: r.source_url,
+                image_url,
+                variant_label: r.variant_label,
+                variant_artist_person_id: r.variant_artist_person_id,
+                width: r.width,
+                height: r.height,
+                fetched_at: r.fetched_at.to_rfc3339(),
+                is_active: r.is_active,
+            }
         })
         .collect();
     Json(IssueCoversResp {

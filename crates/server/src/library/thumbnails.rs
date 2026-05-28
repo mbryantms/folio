@@ -525,7 +525,13 @@ pub fn generate_with_quality(
 /// Pulled out so `generate_all` can decode page 0 once and reuse it for
 /// both cover and strip — the two variants only differ in resize/encode
 /// parameters, not in the source pixels.
-fn decode_page(
+///
+/// Public so the post-scan worker can share one decode between the
+/// thumbnail encoder and the cover-pHash writer: hashing the source
+/// archive bytes (not the re-encoded WebP thumbnail) is what keeps
+/// us on the same Hamming distribution ComicTagger's matcher
+/// constants are calibrated against.
+pub fn decode_page(
     archive: &mut dyn ComicArchive,
     page_index: usize,
 ) -> Result<DynamicImage, ThumbError> {
@@ -536,6 +542,26 @@ fn decode_page(
         .cloned()
         .ok_or(ThumbError::PageOutOfRange)?;
     decode_entry(archive, &entry)
+}
+
+/// Encode a cover thumbnail from a *pre-decoded* page image. Used by
+/// the post-scan worker after it has already decoded the cover page
+/// for hashing — avoids a second decode of the same archive bytes.
+/// Idempotent: no-op when the target file already exists in the
+/// requested format.
+pub fn encode_cover_from_image(
+    data_dir: &Path,
+    issue_id: &str,
+    page_index: usize,
+    img: &DynamicImage,
+    format: ThumbFormat,
+    quality: ThumbnailQuality,
+) -> Result<PathBuf, ThumbError> {
+    let out = variant_path(data_dir, issue_id, Variant::Cover, page_index, format);
+    if out.exists() {
+        return Ok(out);
+    }
+    encode_variant_to_disk(&out, img, Variant::Cover, format, quality)
 }
 
 fn decode_entry(

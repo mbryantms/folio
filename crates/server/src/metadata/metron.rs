@@ -478,6 +478,27 @@ fn credit_to_credit(c: &MCredit) -> Vec<CreditCandidate> {
         .collect()
 }
 
+/// Metron's `/api/series/` list endpoint returns its `series` field as
+/// a *display* string `"Name (YYYY)"` — the volume year is appended in
+/// parens and is also carried separately as `year_began`. ComicVine and
+/// our local series rows use the bare title, so the embedded year would
+/// (a) drag down title similarity in the matcher and (b) write
+/// `"Name (YYYY)"` as the title if applied. Strip a trailing
+/// parenthesized 4-digit year so the candidate name is the bare title;
+/// leave names like `"2000 AD"` (no parens) untouched.
+fn strip_display_year(name: &str) -> String {
+    let trimmed = name.trim_end();
+    if let Some(inner) = trimmed.strip_suffix(')')
+        && let Some(open) = inner.rfind('(')
+    {
+        let year = &inner[open + 1..];
+        if year.len() == 4 && year.bytes().all(|b| b.is_ascii_digit()) {
+            return inner[..open].trim_end().to_owned();
+        }
+    }
+    trimmed.to_owned()
+}
+
 fn series_list_to_candidate(s: &MSeriesList) -> Option<SeriesCandidate> {
     let id = s.id?;
     let external_id = id.to_string();
@@ -489,7 +510,7 @@ fn series_list_to_candidate(s: &MSeriesList) -> Option<SeriesCandidate> {
             "series",
             &external_id,
         ),
-        name: s.series.clone().unwrap_or_default(),
+        name: s.series.as_deref().map(strip_display_year).unwrap_or_default(),
         year: s.year_began,
         publisher: None,
         issue_count: s.issue_count,
@@ -840,6 +861,36 @@ impl MetadataProvider for MetronClient {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn strip_display_year_drops_trailing_paren_year_only() {
+        // Metron's list `series` display string carries the volume year.
+        assert_eq!(strip_display_year("Absolute Carnage (2019)"), "Absolute Carnage");
+        assert_eq!(strip_display_year("Saga (2012)"), "Saga");
+        // A name that legitimately contains digits but no trailing paren
+        // year is left intact.
+        assert_eq!(strip_display_year("2000 AD"), "2000 AD");
+        assert_eq!(strip_display_year("Spider-Man 2099"), "Spider-Man 2099");
+        // Parenthetical that isn't a 4-digit year stays.
+        assert_eq!(strip_display_year("Daredevil (Vol. 2)"), "Daredevil (Vol. 2)");
+        // Bare title is a no-op.
+        assert_eq!(strip_display_year("Absolute Carnage"), "Absolute Carnage");
+    }
+
+    #[test]
+    fn series_list_candidate_strips_display_year() {
+        let raw = json!({
+            "id": 2311,
+            "series": "Absolute Carnage (2019)",
+            "year_began": 2019,
+            "issue_count": 5,
+            "modified": "2024-01-15T12:34:56Z"
+        });
+        let list: MSeriesList = serde_json::from_value(raw).unwrap();
+        let cand = series_list_to_candidate(&list).unwrap();
+        assert_eq!(cand.name, "Absolute Carnage");
+        assert_eq!(cand.year, Some(2019));
+    }
 
     #[test]
     fn series_detail_promotes_cv_and_gcd_ids() {

@@ -675,7 +675,17 @@ pub async fn run_issue_search(
             series_name: Some(facts.series_name.clone()),
             series_year: facts.series_year,
             issue_number: facts.issue_number.clone(),
-            cover_year: facts.series_year,
+            // `cover_year` is the year on the issue's cover (e.g.
+            // 2026 for an issue cover-dated Jan 2026). Distinct from
+            // `series_year`, which is the series *start* year (e.g.
+            // 2025 for a series that started in 2025 and is now
+            // shipping 2026 issues). Metron filters its /api/issue/
+            // endpoint by cover_year — passing series_year here
+            // would drop every issue whose cover year doesn't match
+            // the series start year, which is most ongoing series
+            // after their first calendar year. CV ignores this
+            // parameter, so the fix is Metron-specific by design.
+            cover_year: facts.issue_year,
             limit: SEARCH_LIMIT_PER_PROVIDER,
         };
         match p.search_issue(&q).await {
@@ -1122,6 +1132,7 @@ mod tests {
             publisher: None,
             volume: None,
             issue_number: "1".into(),
+            issue_year: None,
         };
         let candidates = vec![
             IssueCandidate {

@@ -45,6 +45,10 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(search_series))
         .routes(routes!(candidates_series))
         .routes(routes!(proposed_diff_series))
+        .routes(routes!(composite_diff_series))
+        .routes(routes!(composite_diff_issue))
+        .routes(routes!(composite_apply_series))
+        .routes(routes!(composite_apply_issue))
         .routes(routes!(apply_series))
         .routes(routes!(pause_series))
         .routes(routes!(resume_series))
@@ -609,6 +613,7 @@ pub async fn search_issue(
         publisher: s.publisher.clone(),
         volume: s.volume,
         issue_number,
+        issue_year: i.year,
     };
 
     let providers = orchestrator::build_providers(&app.cfg(), app.jobs.redis.clone());
@@ -1067,6 +1072,147 @@ pub async fn proposed_diff_issue(
     }
 }
 
+// ───────── composite (multi-provider) diff ─────────
+
+/// Query for the composite compare view. `include` is a comma-separated
+/// list of candidate ordinals (`?include=0,2`); `serde_urlencoded`
+/// (axum's `Query`) can't decode repeated keys into a `Vec`, so this is
+/// a single string we split ourselves. Omitting it falls back to the
+/// best (lowest-ordinal) candidate per provider.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct CompositeDiffQuery {
+    pub run_id: Uuid,
+    #[serde(default = "default_fill_missing")]
+    pub mode: ApplyMode,
+    #[serde(default)]
+    pub override_user_edits: bool,
+    #[serde(default)]
+    pub include: Option<String>,
+}
+
+/// Parse the comma-separated `include` param into candidate ordinals,
+/// dropping any non-integer token.
+fn parse_include(raw: &Option<String>) -> Vec<i32> {
+    raw.as_deref()
+        .map(|s| {
+            s.split(',')
+                .filter_map(|t| t.trim().parse::<i32>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[utoipa::path(
+    operation_id = "metadata_composite_diff_series",
+    get,
+    path = "/series/{slug}/metadata/composite-diff",
+    params(("slug" = String, Path), CompositeDiffQuery),
+    responses(
+        (status = 200, body = crate::metadata::composite::CompositeDiffResp),
+        (status = 400, description = "invalid run scope"),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "series / run not found"),
+    )
+)]
+#[handler]
+pub async fn composite_diff_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path(slug): Path<String>,
+    Query(q): Query<CompositeDiffQuery>,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
+    }
+    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id).await.ok().flatten() else {
+        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    };
+    if run.scope != orchestrator::scope::SERIES
+        || run.scope_entity_id.as_deref() != Some(s.id.to_string().as_str())
+    {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "run does not belong to this series",
+        );
+    }
+    match crate::metadata::composite::compute_composite_diff(
+        &app,
+        q.run_id,
+        q.mode,
+        q.override_user_edits,
+        &parse_include(&q.include),
+    )
+    .await
+    {
+        Ok(resp) => Json(resp).into_response(),
+        Err(e) => map_diff_err(e),
+    }
+}
+
+#[utoipa::path(
+    operation_id = "metadata_composite_diff_issue",
+    get,
+    path = "/series/{slug}/issues/{issue_slug}/metadata/composite-diff",
+    params(("slug" = String, Path), ("issue_slug" = String, Path), CompositeDiffQuery),
+    responses(
+        (status = 200, body = crate::metadata::composite::CompositeDiffResp),
+        (status = 400, description = "invalid run scope"),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "issue / run not found"),
+    )
+)]
+#[handler]
+pub async fn composite_diff_issue(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path((slug, issue_slug)): Path<(String, String)>,
+    Query(q): Query<CompositeDiffQuery>,
+) -> Response {
+    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
+    }
+    let Some(run) = orchestrator::fetch_run(&app.db, q.run_id).await.ok().flatten() else {
+        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    };
+    if run.scope != orchestrator::scope::ISSUE
+        || run.scope_entity_id.as_deref() != Some(i.id.as_str())
+    {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "run does not belong to this issue",
+        );
+    }
+    match crate::metadata::composite::compute_composite_diff(
+        &app,
+        q.run_id,
+        q.mode,
+        q.override_user_edits,
+        &parse_include(&q.include),
+    )
+    .await
+    {
+        Ok(resp) => Json(resp).into_response(),
+        Err(e) => map_diff_err(e),
+    }
+}
+
 // ───────── /series/{slug}/issues/{issue_slug}/metadata/apply ─────────
 
 #[utoipa::path(
@@ -1278,6 +1424,243 @@ pub async fn refresh_library_metadata(
 }
 
 // ───────── helpers ─────────
+
+// ───────── composite (multi-provider) apply ─────────
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CompositeFieldSource {
+    /// `MetadataField::key()`.
+    pub field: String,
+    /// Candidate `ordinal` (unique within the run) whose value wins this
+    /// field.
+    pub ordinal: i32,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CompositeApplyRequest {
+    pub run_id: Uuid,
+    /// Per-field candidate picks. A field absent here is not applied.
+    pub field_sources: Vec<CompositeFieldSource>,
+    /// The candidate `ordinal`s that contribute. Their `applied_at` is
+    /// flipped.
+    pub included: Vec<i32>,
+    #[serde(default = "default_fill_missing")]
+    pub mode: ApplyMode,
+    #[serde(default = "default_true")]
+    pub apply_cover: bool,
+    #[serde(default = "default_when_missing")]
+    pub cover_overwrite_policy: ApplyCoverPolicy,
+    #[serde(default)]
+    pub override_user_edits: bool,
+    #[serde(default)]
+    pub override_external_id_sources: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CompositeApplyResp {
+    pub run_id: Uuid,
+    pub status: String,
+    pub applied_fields: Vec<String>,
+    pub variants_written: u32,
+}
+
+fn cover_policy_to_writers(
+    p: ApplyCoverPolicy,
+) -> crate::metadata::writers::CoverOverwritePolicy {
+    use crate::metadata::writers::CoverOverwritePolicy as W;
+    match p {
+        ApplyCoverPolicy::Never => W::Never,
+        ApplyCoverPolicy::WhenMissing => W::WhenMissing,
+        ApplyCoverPolicy::Always => W::Always,
+    }
+}
+
+/// Translate a [`CompositeApplyRequest`] into the engine's
+/// [`crate::metadata::composite::CompositeApplyArgs`]. Unknown source
+/// tokens are dropped (validated against the run elsewhere).
+fn make_composite_args(
+    req: &CompositeApplyRequest,
+    actor_id: Option<Uuid>,
+) -> crate::metadata::composite::CompositeApplyArgs {
+    let field_sources = req
+        .field_sources
+        .iter()
+        .map(|fs| (fs.field.clone(), fs.ordinal))
+        .collect();
+    crate::metadata::composite::CompositeApplyArgs {
+        run_id: req.run_id,
+        field_sources,
+        included: req.included.clone(),
+        mode: req.mode,
+        apply_cover: req.apply_cover,
+        cover_overwrite_policy: cover_policy_to_writers(req.cover_overwrite_policy),
+        override_user_edits: req.override_user_edits,
+        override_external_id_sources: req.override_external_id_sources.iter().cloned().collect(),
+        actor_id,
+    }
+}
+
+async fn audit_composite(
+    app: &AppState,
+    ctx: &RequestContext,
+    actor_id: Uuid,
+    scope: &'static str,
+    entity_id: String,
+    req: &CompositeApplyRequest,
+) {
+    let action = if scope == "series" {
+        "admin.series.metadata_composite_apply"
+    } else {
+        "admin.issue.metadata_composite_apply"
+    };
+    let per_field: Vec<serde_json::Value> = req
+        .field_sources
+        .iter()
+        .map(|fs| serde_json::json!({ "field": fs.field, "ordinal": fs.ordinal }))
+        .collect();
+    crate::audit::record(
+        &app.db,
+        crate::audit::AuditEntry {
+            actor_id,
+            action,
+            target_type: Some(scope),
+            target_id: Some(entity_id),
+            payload: serde_json::json!({
+                "run_id": req.run_id,
+                "per_field_sources": per_field,
+                "override_user_edits": req.override_user_edits,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+}
+
+#[utoipa::path(
+    operation_id = "metadata_composite_apply_series",
+    post,
+    path = "/series/{slug}/metadata/composite-apply",
+    params(("slug" = String, Path)),
+    request_body = CompositeApplyRequest,
+    responses(
+        (status = 200, body = CompositeApplyResp),
+        (status = 403, description = "library access denied / override requires admin"),
+        (status = 404, description = "series / run not found"),
+    )
+)]
+#[handler]
+pub async fn composite_apply_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Path(slug): Path<String>,
+    axum::Json(req): axum::Json<CompositeApplyRequest>,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+    }
+    if req.override_user_edits && user.role != "admin" {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "override_user_edits requires admin",
+        );
+    }
+    let Some(run) = orchestrator::fetch_run(&app.db, req.run_id).await.ok().flatten() else {
+        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    };
+    if run.scope != orchestrator::scope::SERIES
+        || run.scope_entity_id.as_deref() != Some(s.id.to_string().as_str())
+    {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "run does not belong to this series",
+        );
+    }
+    match crate::metadata::composite::apply_composite(&app, make_composite_args(&req, Some(user.id)))
+        .await
+    {
+        Ok(outcome) => {
+            audit_composite(&app, &ctx, user.id, "series", s.id.to_string(), &req).await;
+            Json(CompositeApplyResp {
+                run_id: req.run_id,
+                status: "applied".into(),
+                applied_fields: outcome.applied_fields,
+                variants_written: outcome.variants_written,
+            })
+            .into_response()
+        }
+        Err(e) => map_diff_err(e),
+    }
+}
+
+#[utoipa::path(
+    operation_id = "metadata_composite_apply_issue",
+    post,
+    path = "/series/{slug}/issues/{issue_slug}/metadata/composite-apply",
+    params(("slug" = String, Path), ("issue_slug" = String, Path)),
+    request_body = CompositeApplyRequest,
+    responses(
+        (status = 200, body = CompositeApplyResp),
+        (status = 403, description = "library access denied / override requires admin"),
+        (status = 404, description = "issue / run not found"),
+    )
+)]
+#[handler]
+pub async fn composite_apply_issue(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Path((slug, issue_slug)): Path<(String, String)>,
+    axum::Json(req): axum::Json<CompositeApplyRequest>,
+) -> Response {
+    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(StatusCode::FORBIDDEN, "auth.forbidden", "library access denied");
+    }
+    if req.override_user_edits && user.role != "admin" {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "override_user_edits requires admin",
+        );
+    }
+    let Some(run) = orchestrator::fetch_run(&app.db, req.run_id).await.ok().flatten() else {
+        return error(StatusCode::NOT_FOUND, "metadata.run_not_found", "no such run");
+    };
+    if run.scope != orchestrator::scope::ISSUE
+        || run.scope_entity_id.as_deref() != Some(i.id.as_str())
+    {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "run does not belong to this issue",
+        );
+    }
+    match crate::metadata::composite::apply_composite(&app, make_composite_args(&req, Some(user.id)))
+        .await
+    {
+        Ok(outcome) => {
+            audit_composite(&app, &ctx, user.id, "issue", i.id.clone(), &req).await;
+            Json(CompositeApplyResp {
+                run_id: req.run_id,
+                status: "applied".into(),
+                applied_fields: outcome.applied_fields,
+                variants_written: outcome.variants_written,
+            })
+            .into_response()
+        }
+        Err(e) => map_diff_err(e),
+    }
+}
 
 async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
     if user.role == "admin" {

@@ -39,7 +39,7 @@ use entity::{
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, DbErr,
-    EntityTrait, FromQueryResult, QueryFilter, Statement,
+    EntityTrait, FromQueryResult, QueryFilter, QuerySelect, Statement,
 };
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -1509,34 +1509,181 @@ pub async fn clear_user_pin<C: ConnectionTrait>(
 // Variant covers.
 // ─────────────────────────────────────────────────────────────────
 
-/// Upsert one [`issue_cover`] row per variant from a provider's
-/// `Vec<VariantCoverCandidate>`. Variants are stored *metadata-only*
-/// — `source_url` (CDN) and `variant_label` are persisted, but no
-/// bytes are downloaded. The UI's [`web/components/library/
-/// CoverGallery.tsx`] renders straight from `source_url`.
+/// Dedicated HTTP client for downloading provider cover images from
+/// their CDN. Separate from the providers' API clients (those carry
+/// auth + rate-limit state, which the public cover CDNs need neither
+/// of). Pooled + reused across applies via `LazyLock`.
+static COVER_HTTP: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+    reqwest::Client::builder()
+        .user_agent(concat!("Folio/", env!("CARGO_PKG_VERSION"), " (+cover-fetch)"))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .expect("reqwest client init")
+});
+
+/// Largest cover image we'll pull into memory. Covers are typically
+/// well under 1 MB; the cap guards against a misbehaving / hostile CDN.
+const MAX_COVER_BYTES: usize = 24 * 1024 * 1024;
+
+/// On-disk + hash result of a successful cover download.
+struct StoredCover {
+    cover_id: Uuid,
+    rel_path: String,
+    width: i32,
+    height: i32,
+    phash: i64,
+    dhash: i64,
+    ahash: i64,
+}
+
+/// Map a cover URL to a file extension, tolerating a trailing query
+/// string (`…/foo.jpg?cache=1`). Falls back to `None` for unknown
+/// shapes; callers default to `jpg`.
+fn cover_ext_from_url(url: &str) -> Option<&'static str> {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        Some("jpg")
+    } else if lower.ends_with(".png") {
+        Some("png")
+    } else if lower.ends_with(".webp") {
+        Some("webp")
+    } else if lower.ends_with(".gif") {
+        Some("gif")
+    } else {
+        None
+    }
+}
+
+/// Relative path (under `data_path`) a cover is stored at. Shared with
+/// [`apply_cover`]'s scheme so the serving endpoint + cleanup treat
+/// primary and variant covers identically.
+fn cover_rel_path(issue_id: &str, cover_id: Uuid, ext: &str) -> String {
+    format!("thumbs/issues/{issue_id}/covers/{cover_id}.{ext}")
+}
+
+/// GET the image at `url`, decode it, write it under the issue's cover
+/// dir, and compute perceptual hashes. Returns `None` on any network /
+/// decode / IO failure — the caller soft-falls-back to a metadata-only
+/// (hotlink) row that a later backfill can fill in. Decode + write are
+/// synchronous (covers are small and applies run off the request path,
+/// matching [`apply_cover`]).
+async fn download_cover_image(
+    data_path: &std::path::Path,
+    issue_id: &str,
+    url: &str,
+) -> Option<StoredCover> {
+    let resp = match COVER_HTTP.get(url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            tracing::debug!(url, status = %r.status(), "cover download: non-2xx");
+            return None;
+        }
+        Err(e) => {
+            tracing::debug!(url, error = %e, "cover download: transport error");
+            return None;
+        }
+    };
+    let bytes = resp.bytes().await.ok()?;
+    if bytes.is_empty() || bytes.len() > MAX_COVER_BYTES {
+        tracing::debug!(url, len = bytes.len(), "cover download: empty or oversize");
+        return None;
+    }
+    let img = match image::load_from_memory(&bytes) {
+        Ok(img) => img,
+        Err(e) => {
+            tracing::debug!(url, error = %e, "cover download: decode failed");
+            return None;
+        }
+    };
+    let width = img.width() as i32;
+    let height = img.height() as i32;
+    let (phash, dhash, ahash) = crate::metadata::phash::all_hashes(&img);
+    let cover_id = Uuid::now_v7();
+    let ext = cover_ext_from_url(url).unwrap_or("jpg");
+    let rel_path = cover_rel_path(issue_id, cover_id, ext);
+    let on_disk = data_path.join(&rel_path);
+    if let Some(parent) = on_disk.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::debug!(path = %parent.display(), error = %e, "cover download: mkdir failed");
+        return None;
+    }
+    if let Err(e) = std::fs::write(&on_disk, &bytes) {
+        tracing::debug!(path = %on_disk.display(), error = %e, "cover download: write failed");
+        return None;
+    }
+    Some(StoredCover {
+        cover_id,
+        rel_path,
+        width,
+        height,
+        phash,
+        dhash,
+        ahash,
+    })
+}
+
+/// Delete the on-disk files backing an issue's existing variant rows.
+/// Best-effort — a missing file is fine (already gone); other IO errors
+/// are logged but don't abort the caller. Only files referenced by a
+/// `local_path` are touched, never the whole cover dir (the primary
+/// cover lives there too).
+async fn wipe_variant_cover_files<C: ConnectionTrait>(
+    db: &C,
+    data_path: &std::path::Path,
+    issue_id: &str,
+) -> Result<(), sea_orm::DbErr> {
+    let prior = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .all(db)
+        .await?;
+    for row in &prior {
+        if row.local_path.is_empty() {
+            continue;
+        }
+        let path = data_path.join(&row.local_path);
+        if let Err(e) = std::fs::remove_file(&path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::debug!(path = %path.display(), error = %e, "variant cover cleanup: remove failed");
+        }
+    }
+    Ok(())
+}
+
+/// Persist one [`issue_cover`] row per variant from a provider's
+/// `Vec<VariantCoverCandidate>`, **downloading** each image to local
+/// storage (mirroring how [`apply_cover`] stores the primary) so the
+/// gallery serves bytes from this instance instead of hotlinking the
+/// provider CDN. A successful download lands `local_path`, the source
+/// dimensions, and perceptual hashes; a failed one soft-falls-back to a
+/// metadata-only row (`local_path` empty, `source_url` kept) so the
+/// variant still renders via hotlink and [`run_variant_cover_backfill`]
+/// can pull the bytes later. Variants with no `image_url` are skipped.
 ///
-/// Idempotency: every existing variant row for the issue is
-/// **deleted** before inserting the fresh set. Variants are
-/// presentational — no audit trail needed — and the table has a
-/// `UNIQUE (issue_id, kind, ordinal)` constraint that would block a
-/// re-apply if we merely deactivated. Primary cover rows are
-/// untouched (`apply_cover` handles that slot via `kind='primary'`).
+/// Idempotency: every existing variant row for the issue is **deleted**
+/// (and its on-disk file removed) before the fresh set is written.
+/// Variants are presentational — no audit trail needed — and the
+/// `UNIQUE (issue_id, kind, ordinal)` constraint would block a re-apply
+/// if we merely deactivated. Primary cover rows are untouched
+/// (`apply_cover` owns the `kind='primary'` slot).
 ///
-/// Ordinals start at 1 (the primary slot is ordinal 0 with kind
-/// `'primary'`). Insert order matches the provider's `Vec` order so
-/// the gallery's `ORDER BY kind, ordinal` displays variants in
-/// publisher-supplied sequence.
-///
-/// Returns the count of variant rows inserted.
+/// Ordinals are assigned contiguously from 1 (the primary slot is
+/// ordinal 0) in provider `Vec` order, so the gallery's
+/// `ORDER BY kind, ordinal` shows variants in publisher-supplied
+/// sequence. Returns the count of variant rows inserted.
 pub async fn set_issue_variants<C: ConnectionTrait>(
     db: &C,
+    data_path: &std::path::Path,
     issue_id: &str,
     variants: &[crate::metadata::provider::VariantCoverCandidate],
     set_by: SetBy,
 ) -> Result<usize, sea_orm::DbErr> {
-    // Delete every existing variant row so the upsert reflects only
-    // the provider's current variant set. Primary rows
-    // (`kind='primary'`) are not touched.
+    // Remove the prior set's files, then the rows. (Files first: once
+    // the rows are gone we've lost the `local_path` pointers.)
+    wipe_variant_cover_files(db, data_path, issue_id).await?;
     issue_cover::Entity::delete_many()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
         .filter(issue_cover::Column::Kind.eq("variant"))
@@ -1562,44 +1709,118 @@ pub async fn set_issue_variants<C: ConnectionTrait>(
         | SetBy::CrossReference => None,
     };
     let mut inserted = 0usize;
-    for (idx, v) in variants.iter().enumerate() {
-        // Skip variants with no image URL — they're useless to the
-        // gallery surface and pollute the table.
+    let mut ordinal = 1i32; // primary slot owns ordinal 0
+    for v in variants {
+        // Skip variants with no image URL — useless to the gallery and
+        // pollute the table.
         let Some(image_url) = v.image_url.as_deref().filter(|s| !s.trim().is_empty()) else {
             continue;
         };
-        let primary_ident = v.identifiers.first();
+        let source_external_id = v.identifiers.first().map(|i| i.id.clone());
+        let variant_label = v
+            .label
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned);
+
+        let stored = download_cover_image(data_path, issue_id, image_url).await;
+        let (id, local_path, width, height, phash, dhash, ahash) = match stored {
+            Some(s) => (
+                s.cover_id,
+                s.rel_path,
+                Some(s.width),
+                Some(s.height),
+                Some(s.phash),
+                Some(s.dhash),
+                Some(s.ahash),
+            ),
+            // Soft fallback: keep the hotlink so the variant still
+            // renders; the backfill job pulls the bytes on a later pass.
+            None => (Uuid::now_v7(), String::new(), None, None, None, None, None),
+        };
         let am = issue_cover::ActiveModel {
-            id: Set(Uuid::now_v7()),
+            id: Set(id),
             issue_id: Set(issue_id.to_owned()),
             kind: Set("variant".into()),
-            // 1-based; the primary slot owns ordinal 0.
-            ordinal: Set((idx + 1) as i32),
+            ordinal: Set(ordinal),
             source_provider: Set(provider_str.clone()),
-            source_external_id: Set(primary_ident.map(|i| i.id.clone())),
+            source_external_id: Set(source_external_id),
             source_url: Set(Some(image_url.to_owned())),
-            variant_label: Set(v
-                .label
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-                .map(str::to_owned)),
+            variant_label: Set(variant_label),
             variant_artist_person_id: Set(None),
-            // Metadata-only: no bytes downloaded. The gallery renders
-            // from `source_url`; a future backfill job could populate
-            // `local_path` if/when CDN takedowns become a real concern.
-            local_path: Set(String::new()),
-            width: Set(None),
-            height: Set(None),
-            phash: Set(None),
-            dhash: Set(None),
-            ahash: Set(None),
+            local_path: Set(local_path),
+            width: Set(width),
+            height: Set(height),
+            phash: Set(phash),
+            dhash: Set(dhash),
+            ahash: Set(ahash),
             fetched_at: Set(now),
             is_active: Set(true),
         };
         am.insert(db).await?;
         inserted += 1;
+        ordinal += 1;
     }
     Ok(inserted)
+}
+
+/// Outcome of a variant-cover backfill sweep — surfaced via the admin
+/// endpoint so the operator sees how rows fared.
+#[derive(Debug, Clone, Default, serde::Serialize, utoipa::ToSchema)]
+pub struct VariantCoverBackfillOutcome {
+    /// Rows visited (variant rows with an empty `local_path` and a
+    /// non-null `source_url`).
+    pub considered: usize,
+    /// Rows whose image downloaded + stored successfully.
+    pub stored: usize,
+    /// Rows skipped because the download / decode failed (stay hotlinks).
+    pub skipped: usize,
+}
+
+/// Bounded so a single admin click can't tie up the handler.
+pub const VARIANT_BACKFILL_BATCH_CAP: u64 = 500;
+
+/// Download + locally store any variant covers still kept as hotlinks
+/// (`local_path = ''` AND `source_url IS NOT NULL`). Used by the
+/// admin-triggered backfill and the startup drain to migrate variants
+/// applied before local storage shipped. Bounded by
+/// [`VARIANT_BACKFILL_BATCH_CAP`]; re-run to drain larger backlogs.
+pub async fn run_variant_cover_backfill<C: ConnectionTrait>(
+    db: &C,
+    data_path: &std::path::Path,
+) -> Result<VariantCoverBackfillOutcome, sea_orm::DbErr> {
+    let rows = issue_cover::Entity::find()
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::LocalPath.eq(""))
+        .filter(issue_cover::Column::SourceUrl.is_not_null())
+        .limit(VARIANT_BACKFILL_BATCH_CAP)
+        .all(db)
+        .await?;
+    let mut outcome = VariantCoverBackfillOutcome {
+        considered: rows.len(),
+        ..Default::default()
+    };
+    for row in rows {
+        let Some(url) = row.source_url.as_deref().filter(|s| !s.trim().is_empty()) else {
+            outcome.skipped += 1;
+            continue;
+        };
+        match download_cover_image(data_path, &row.issue_id, url).await {
+            Some(stored) => {
+                let mut am: issue_cover::ActiveModel = row.into();
+                am.local_path = Set(stored.rel_path);
+                am.width = Set(Some(stored.width));
+                am.height = Set(Some(stored.height));
+                am.phash = Set(Some(stored.phash));
+                am.dhash = Set(Some(stored.dhash));
+                am.ahash = Set(Some(stored.ahash));
+                am.update(db).await?;
+                outcome.stored += 1;
+            }
+            None => outcome.skipped += 1,
+        }
+    }
+    Ok(outcome)
 }
 
 // ─────────────────────────────────────────────────────────────────

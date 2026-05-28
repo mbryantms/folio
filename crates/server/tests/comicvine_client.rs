@@ -94,6 +94,13 @@ fn cv_issue_fixture(id: i64, number: &str) -> serde_json::Value {
         "story_arc_credits": [
             {"id": 200, "name": "The Will", "site_detail_url": null},
         ],
+        "associated_images": [
+            {"original_url": "https://cdn/variant-b.jpg", "id": 501, "caption": "Cover B", "image_tags": "Cover"},
+            {"original_url": "https://cdn/variant-c.jpg", "id": 502, "caption": null, "image_tags": "Cover"},
+        ],
+        "first_appearance_characters": [
+            {"id": 100, "name": "Hazel", "site_detail_url": null},
+        ],
         "volume": {
             "id": 12345,
             "name": "Saga",
@@ -176,11 +183,13 @@ async fn fetch_issue_explodes_multi_role_credits() {
     let metadata = client.fetch_issue("67890").await.expect("fetch_issue");
     assert_eq!(metadata.issue_number.as_deref(), Some("1"));
     assert_eq!(metadata.title.as_deref(), Some("First Issue"));
-    // "writer, cover" exploded into two rows; "artist" stays one.
+    // "writer, cover" exploded into two rows; "artist" stays one. Roles
+    // are canonicalized to ComicInfo names at the provider boundary:
+    // writer→Writer, cover→CoverArtist, artist→Penciller.
     assert_eq!(metadata.credits.len(), 3);
-    assert!(metadata.credits.iter().any(|c| c.role == "writer"));
-    assert!(metadata.credits.iter().any(|c| c.role == "cover"));
-    assert!(metadata.credits.iter().any(|c| c.role == "artist"));
+    assert!(metadata.credits.iter().any(|c| c.role == "Writer"));
+    assert!(metadata.credits.iter().any(|c| c.role == "CoverArtist"));
+    assert!(metadata.credits.iter().any(|c| c.role == "Penciller"));
     // Series back-reference preserved.
     assert_eq!(metadata.series_name.as_deref(), Some("Saga"));
     assert_eq!(metadata.year_began, Some(2012));
@@ -192,6 +201,16 @@ async fn fetch_issue_explodes_multi_role_credits() {
     assert_eq!(metadata.characters.len(), 1);
     assert_eq!(metadata.story_arcs.len(), 1);
     assert_eq!(metadata.characters[0].name, "Hazel");
+    // Hazel is flagged a first appearance via first_appearance_characters.
+    assert!(metadata.characters[0].is_first_appearance);
+    // Variant covers pulled from associated_images.
+    assert_eq!(metadata.variants.len(), 2);
+    assert_eq!(
+        metadata.variants[0].image_url.as_deref(),
+        Some("https://cdn/variant-b.jpg")
+    );
+    assert_eq!(metadata.variants[0].label.as_deref(), Some("Cover B"));
+    assert_eq!(metadata.variants[0].identifiers[0].id, "501");
 }
 
 #[tokio::test]

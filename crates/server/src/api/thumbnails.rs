@@ -25,7 +25,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use entity::{issue, library, library_user_access};
+use entity::{issue, issue_cover, library, library_user_access};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
 use std::time::Duration;
@@ -48,7 +48,9 @@ pub struct ThumbQuery {
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/issues/{id}/pages/{n}/thumb", get(thumb))
+    Router::new()
+        .route("/issues/{id}/pages/{n}/thumb", get(thumb))
+        .route("/issues/{id}/covers/{cover_id}", get(serve_issue_cover))
 }
 
 pub async fn thumb(
@@ -262,6 +264,95 @@ async fn serve_file(
     }
     let stream = ReaderStream::new(file);
     (StatusCode::OK, headers, Body::from_stream(stream)).into_response()
+}
+
+/// Stream a locally-stored `issue_cover` artifact (primary or variant)
+/// by its row id. Covers downloaded by the apply path live at
+/// `issue_cover.local_path`; this is the surface the gallery renders
+/// instead of hotlinking the provider CDN. 404 when the row has no
+/// local artifact (caller falls back to `source_url`) or the requesting
+/// user can't see the issue's library.
+pub async fn serve_issue_cover(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    headers: HeaderMap,
+    AxPath((id, cover_id)): AxPath<(String, uuid::Uuid)>,
+) -> Response {
+    let Ok(Some(cover)) = issue_cover::Entity::find_by_id(cover_id).one(&app.db).await else {
+        return error(StatusCode::NOT_FOUND, "not_found", "cover not found");
+    };
+    // The path's issue id must match the row — blocks cross-issue id
+    // swaps and keeps the URL self-describing.
+    if cover.issue_id != id {
+        return error(StatusCode::NOT_FOUND, "not_found", "cover not found");
+    }
+    if cover.local_path.is_empty() {
+        // No on-disk artifact (metadata-only hotlink row) — the caller
+        // should render `source_url` directly.
+        return error(StatusCode::NOT_FOUND, "not_found", "cover not stored locally");
+    }
+    let Ok(Some(issue_row)) = issue::Entity::find_by_id(cover.issue_id.clone())
+        .one(&app.db)
+        .await
+    else {
+        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    };
+    if !visible(&app, &user, issue_row.library_id).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "cover not found");
+    }
+    let path = app.cfg().data_path.join(&cover.local_path);
+    serve_cover_file(&path, &headers, cover_id).await
+}
+
+async fn serve_cover_file(
+    path: &std::path::Path,
+    req_headers: &HeaderMap,
+    cover_id: uuid::Uuid,
+) -> Response {
+    // Cover bytes are immutable per row id (a re-apply mints a new
+    // `cover_id`), so we can cache hard.
+    let etag = format!("\"cover-{cover_id}\"");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    headers.insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
+    );
+    if req_headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|candidate| candidate.trim() == etag))
+    {
+        return (StatusCode::NOT_MODIFIED, headers).into_response();
+    }
+    let file = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "cover unavailable"),
+    };
+    let len = file.metadata().await.map(|m| m.len()).ok();
+    let mime = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(cover_mime)
+        .unwrap_or("image/jpeg");
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    if let Some(l) = len {
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(l));
+    }
+    let stream = ReaderStream::new(file);
+    (StatusCode::OK, headers, Body::from_stream(stream)).into_response()
+}
+
+fn cover_mime(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => "image/jpeg",
+    }
 }
 
 async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool {

@@ -27,7 +27,9 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_reconcile_sweep(&scheduler, &state).await;
     register_scan_runs_prune(&scheduler, &state).await;
     register_thumbnail_orphan_sweep(&scheduler, &state).await;
-    register_thumbnail_catchup_sweep(&scheduler, &state).await;
+    // No thumbnail/phash catchup sweep: queued work is user-directed
+    // only (a scan, or an explicit admin "Generate missing" / backfill
+    // action). See the catchup note in `app::serve`.
     register_close_dangling_sessions(&scheduler, &state).await;
     register_cbl_refresh_sweep(&scheduler, &state).await;
     register_prune_auth_sessions(&scheduler, &state).await;
@@ -336,29 +338,6 @@ async fn register_scan_runs_prune(scheduler: &JobScheduler, state: &AppState) {
 ///     bump (filter / quality / format change).
 ///
 /// Runs at 02:00 UTC so it's clear of the scan / reconcile / orphan sweeps.
-async fn register_thumbnail_catchup_sweep(scheduler: &JobScheduler, state: &AppState) {
-    let state = state.clone();
-    let job_result = Job::new_async("0 0 2 * * *", move |_uuid, _l| {
-        let state = state.clone();
-        Box::pin(async move {
-            let n = crate::jobs::post_scan::enqueue_pending_all_libraries(&state).await;
-            if n > 0 {
-                tracing::info!(enqueued = n, "thumbnail catchup sweep");
-            }
-        })
-    });
-    match job_result {
-        Ok(job) => {
-            if let Err(e) = scheduler.add(job).await {
-                tracing::error!(error = %e, "scheduler: add thumbnail_catchup_sweep failed");
-            } else {
-                tracing::info!("thumbnail catchup sweep registered (daily at 02:00 UTC)");
-            }
-        }
-        Err(e) => tracing::error!(error = %e, "scheduler: build thumbnail_catchup_sweep failed"),
-    }
-}
-
 /// Daily orphan sweep for the thumbnail cache (M5). Runs at 04:30 UTC,
 /// 30 min after the auto-confirm sweep so confirmed-removed issues land
 /// before we scan for orphans. Cheap dirent walk + one query per run.

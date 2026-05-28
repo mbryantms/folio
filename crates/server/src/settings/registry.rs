@@ -297,6 +297,18 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Uint,
         is_secret: false,
     },
+    SettingDef {
+        // Comma-separated provider order used as the deterministic
+        // tiebreaker when multiple providers offer a value for the same
+        // field in a composite (multi-provider) merge. e.g.
+        // `"metron,comicvine"`. Empty / unset falls back to the
+        // `build_providers` order (Metron, then ComicVine). Only changes
+        // the DEFAULT per-field source; users still override per field
+        // in the compare view.
+        key: "metadata.merge.provider_preference",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

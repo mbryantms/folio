@@ -50,6 +50,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list_review_queue))
         .routes(routes!(dismiss_candidate))
         .routes(routes!(run_phash_backfill))
+        .routes(routes!(run_variant_cover_backfill))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -971,8 +972,8 @@ pub async fn run_phash_backfill(
     RequireAdmin(actor): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
 ) -> Response {
-    let data_path = app.cfg().data_path.clone();
-    let outcome = match crate::metadata::phash::run_backfill(&app.db, &data_path).await {
+    let archive_limits = app.cfg().archive_limits();
+    let outcome = match crate::metadata::phash::run_backfill(&app.db, archive_limits).await {
         Ok(o) => o,
         Err(e) => {
             tracing::error!(error = %e, "phash backfill: query failed");
@@ -991,6 +992,52 @@ pub async fn run_phash_backfill(
                 "hashed": outcome.hashed,
                 "skipped": outcome.skipped,
                 "errored": outcome.errored,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+    Json(outcome).into_response()
+}
+
+// ───────── /admin/metadata/variant-cover-backfill ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_variant_cover_backfill",
+    post,
+    path = "/admin/metadata/variant-cover-backfill",
+    responses(
+        (status = 200, body = crate::metadata::writers::VariantCoverBackfillOutcome),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn run_variant_cover_backfill(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+) -> Response {
+    let data_path = app.cfg().data_path.clone();
+    let outcome =
+        match crate::metadata::writers::run_variant_cover_backfill(&app.db, &data_path).await {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::error!(error = %e, "variant cover backfill: query failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: actor.id,
+            action: "admin.metadata.variant_cover_backfill",
+            target_type: None,
+            target_id: None,
+            payload: serde_json::json!({
+                "considered": outcome.considered,
+                "stored": outcome.stored,
+                "skipped": outcome.skipped,
             }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),

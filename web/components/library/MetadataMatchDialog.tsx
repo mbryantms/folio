@@ -22,6 +22,7 @@ import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -32,33 +33,42 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { apiMutate } from "@/lib/api/mutations";
 import {
+  useApplyCompositeMetadataForIssue,
+  useApplyCompositeMetadataForSeries,
   useApplyMetadataForIssue,
   useApplyMetadataForSeries,
   useClearIssueFieldPin,
 } from "@/lib/api/mutations";
 import {
+  jsonFetch,
   useLibrary,
   useMe,
   useMetadataCandidatesIssue,
   useMetadataCandidatesSeries,
+  useMetadataCompositeDiffIssue,
+  useMetadataCompositeDiffSeries,
   useMetadataProposedDiffIssue,
   useMetadataProposedDiffSeries,
 } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
 import type {
   ApplyMode,
+  CandidatesResp,
   CandidateView,
   MatchOutcomeView,
   SearchStartedResp,
 } from "@/lib/api/types";
 
+import {
+  MetadataCompareView,
+  defaultFieldSources,
+} from "@/components/library/MetadataCompareView";
 import {
   MetadataPreviewPane,
   defaultSelectedFields,
@@ -77,13 +87,23 @@ export function MetadataMatchDialog({
   onOpenChange: (next: boolean) => void;
   scope: MetadataMatchScope;
 }) {
+  // The compare view renders a wide per-candidate table; widen the
+  // dialog while it's active so columns aren't crushed. The inner form
+  // remounts on each open and reports its compare state on mount, so
+  // this resets to narrow on reopen without an extra effect.
+  const [wide, setWide] = React.useState(false);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-2xl">
+      <DialogContent
+        className={`flex max-h-[90vh] flex-col ${
+          wide ? "sm:max-w-5xl" : "sm:max-w-2xl"
+        }`}
+      >
         <MetadataMatchForm
           scope={scope}
           onClose={() => onOpenChange(false)}
           open={open}
+          onCompareModeChange={setWide}
         />
       </DialogContent>
     </Dialog>
@@ -98,12 +118,16 @@ export function MetadataMatchForm({
   scope,
   onClose,
   open,
+  onCompareModeChange,
 }: {
   scope: MetadataMatchScope;
   onClose: () => void;
   /** Used to gate the auto-kickoff effect so the search only fires
    *  once when the dialog opens. */
   open: boolean;
+  /** Lets the wrapping dialog widen itself while the compare table is
+   *  shown. */
+  onCompareModeChange?: (compare: boolean) => void;
 }) {
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
@@ -120,6 +144,14 @@ export function MetadataMatchForm({
     scope.kind === "issue" ? scope.issueSlug : "",
   );
   const apply = scope.kind === "series" ? seriesApply : issueApply;
+  const seriesComposite = useApplyCompositeMetadataForSeries(
+    scope.kind === "series" ? scope.seriesSlug : "",
+  );
+  const issueComposite = useApplyCompositeMetadataForIssue(
+    scope.kind === "issue" ? scope.seriesSlug : "",
+    scope.kind === "issue" ? scope.issueSlug : "",
+  );
+  const compositeApply = scope.kind === "series" ? seriesComposite : issueComposite;
   // M5.3 — issue-scope Revert-pin support. Series-scope diff lives on
   // the series row, not the issue row; surfacing series-scope pin
   // revert is a follow-up.
@@ -193,6 +225,78 @@ export function MetadataMatchForm({
     }
   }, [previewOrdinal, diffQuery.data]);
 
+  // True when the dialog adopted a prior completed run instead of
+  // firing a fresh provider search (quota saver).
+  const [reused, setReused] = React.useState(false);
+
+  // ── Composite (multi-provider) compare mode ──────────────────────
+  const [compareMode, setCompareMode] = React.useState(false);
+  React.useEffect(() => {
+    onCompareModeChange?.(compareMode);
+  }, [compareMode, onCompareModeChange]);
+  // Candidate ordinals the user picked to feed the comparison (columns).
+  const [selectedOrdinals, setSelectedOrdinals] = React.useState<Set<number>>(
+    new Set(),
+  );
+  // field key → chosen candidate ordinal (absent = keep mine).
+  const [fieldSources, setFieldSources] = React.useState<
+    Record<string, number>
+  >({});
+  const compareRunId = compareMode ? runId : null;
+  const includeList = React.useMemo(
+    () => Array.from(selectedOrdinals).sort((a, b) => a - b),
+    [selectedOrdinals],
+  );
+  const seriesCompositeDiff = useMetadataCompositeDiffSeries(
+    scope.kind === "series" ? scope.seriesSlug : "",
+    scope.kind === "series" ? compareRunId : null,
+    mode,
+    overrideUserEdits,
+    includeList,
+  );
+  const issueCompositeDiff = useMetadataCompositeDiffIssue(
+    scope.kind === "issue" ? scope.seriesSlug : "",
+    scope.kind === "issue" ? scope.issueSlug : "",
+    scope.kind === "issue" ? compareRunId : null,
+    mode,
+    overrideUserEdits,
+    includeList,
+  );
+  const compositeDiff =
+    scope.kind === "series" ? seriesCompositeDiff : issueCompositeDiff;
+  // Seed the per-field candidate picks from the server's merge-policy
+  // defaults whenever the composite diff resolves for a new
+  // (mode/override/include) combination. Tracked by a ref so user
+  // toggles aren't re-stomped on re-render.
+  const lastSeededComposite = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!compareMode || !compositeDiff.data) return;
+    const key = `${mode}:${overrideUserEdits}:${includeList.join(",")}`;
+    if (lastSeededComposite.current === key) return;
+    setFieldSources(defaultFieldSources(compositeDiff.data));
+    lastSeededComposite.current = key;
+  }, [compareMode, compositeDiff.data, mode, overrideUserEdits, includeList]);
+
+  // Seed the compare-column selection from the best (first-ranked)
+  // candidate per provider the first time a finalized candidate list
+  // arrives. Tracked by run id so a fresh search re-seeds.
+  const lastSeededSelection = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const list = candidates.data?.candidates;
+    if (!runId || !list || list.length === 0) return;
+    if (lastSeededSelection.current === runId) return;
+    const seen = new Set<string>();
+    const picks = new Set<number>();
+    list.forEach((c, i) => {
+      if (!seen.has(c.source)) {
+        seen.add(c.source);
+        picks.add(i);
+      }
+    });
+    setSelectedOrdinals(picks);
+    lastSeededSelection.current = runId;
+  }, [runId, candidates.data]);
+
   // Auto-kick the search via raw apiMutate — NOT useApiMutation.
   // Backstory: TanStack Query v5's useMutation observer ends up
   // disconnected from its state machine when fired from an effect
@@ -228,9 +332,18 @@ export function MetadataMatchForm({
     [scope],
   );
 
+  const candidatesProbePath = React.useMemo(
+    () =>
+      scope.kind === "series"
+        ? `/series/${encodeURIComponent(scope.seriesSlug)}/metadata/candidates`
+        : `/series/${encodeURIComponent(scope.seriesSlug)}/issues/${encodeURIComponent(scope.issueSlug)}/metadata/candidates`,
+    [scope],
+  );
+
   const runSearch = React.useCallback(() => {
     setSearchPending(true);
     setSearchError(null);
+    setReused(false);
     let cancelled = false;
     void (async () => {
       try {
@@ -259,6 +372,57 @@ export function MetadataMatchForm({
     };
   }, [searchPath, candidatesInvalidateKey, qc]);
 
+  // Quota saver: on open, probe the latest completed run for this scope
+  // (a cheap GET, no provider quota). If one exists with candidates,
+  // adopt it instead of firing a fresh fan-out. The explicit "Re-search"
+  // button always forces a fresh search via `runSearch`.
+  const kickOrReuse = React.useCallback(() => {
+    setSearchPending(true);
+    setSearchError(null);
+    setReused(false);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const latest = await jsonFetch<CandidatesResp>(candidatesProbePath).catch(
+          () => null,
+        );
+        if (cancelled) return;
+        if (
+          latest &&
+          latest.status === "completed" &&
+          (latest.candidates?.length ?? 0) > 0 &&
+          latest.run_id
+        ) {
+          setRunId(latest.run_id);
+          setReused(true);
+          setSearchPending(false);
+          return;
+        }
+        const result = await apiMutate<SearchStartedResp>({
+          path: searchPath,
+          method: "POST",
+        });
+        if (cancelled) return;
+        if (result?.run_id) {
+          setRunId(result.run_id);
+          qc.invalidateQueries({ queryKey: candidatesInvalidateKey });
+        } else {
+          setSearchError("Empty response from search endpoint.");
+        }
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : "Search failed.";
+        setSearchError(msg);
+        toast.error(msg);
+      } finally {
+        if (!cancelled) setSearchPending(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchPath, candidatesProbePath, candidatesInvalidateKey, qc]);
+
   const kickedRef = React.useRef(false);
   React.useEffect(() => {
     if (!open) {
@@ -267,9 +431,9 @@ export function MetadataMatchForm({
     }
     if (kickedRef.current) return;
     kickedRef.current = true;
-    runSearch();
-    // runSearch is stable per (searchPath, key) — those don't change
-    // mid-dialog.
+    kickOrReuse();
+    // kickOrReuse is stable per (searchPath, probePath, key) — those
+    // don't change mid-dialog.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -335,6 +499,51 @@ export function MetadataMatchForm({
     });
   };
 
+  const onChangeFieldSource = (field: string, ordinal: number | null) => {
+    setFieldSources((prev) => {
+      const next = { ...prev };
+      if (ordinal == null) delete next[field];
+      else next[field] = ordinal;
+      return next;
+    });
+  };
+  const onToggleCompareSelect = (ordinal: number) => {
+    setSelectedOrdinals((prev) => {
+      const next = new Set(prev);
+      if (next.has(ordinal)) next.delete(ordinal);
+      else next.add(ordinal);
+      return next;
+    });
+  };
+  const onRemoveColumn = (ordinal: number) => {
+    setSelectedOrdinals((prev) => {
+      const next = new Set(prev);
+      next.delete(ordinal);
+      return next;
+    });
+  };
+  const onConfirmCompositeApply = () => {
+    if (!runId || !compositeDiff.data) return;
+    const included = includeList;
+    const field_sources = Object.entries(fieldSources).map(
+      ([field, ordinal]) => ({ field, ordinal }),
+    );
+    compositeApply.mutate({
+      run_id: runId,
+      field_sources,
+      included,
+      mode,
+      apply_cover: applyCover,
+      override_user_edits: overrideUserEdits,
+      override_external_id_sources: [],
+    });
+  };
+
+  // Either apply path (single-candidate or composite) drives the same
+  // post-apply waiting / close machinery below.
+  const applyDidSucceed = apply.isSuccess || compositeApply.isSuccess;
+  const applyIsPending = apply.isPending || compositeApply.isPending;
+
   // M5.2 — When the target library has `metadata_writeback_enabled=true`,
   // an apply enqueues a downstream `RewriteIssueSidecarsJob` which then
   // triggers a scoped scanner rescan. The DB cache reflects the new
@@ -356,7 +565,7 @@ export function MetadataMatchForm({
   // not when the rewrite + rescan actually finished. We use it as the
   // trigger to enter the waiting state.
   React.useEffect(() => {
-    if (!apply.isSuccess) return;
+    if (!applyDidSucceed) return;
     if (!writebackEnabled) {
       onClose();
       return;
@@ -364,7 +573,7 @@ export function MetadataMatchForm({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- legitimate transition: apply success triggers wait-for-rescan.
     setApplyAt(Date.now());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apply.isSuccess, writebackEnabled]);
+  }, [applyDidSucceed, writebackEnabled]);
 
   // Subscribe to the library's scan events only when waiting. The
   // existing `useScanEvents` hook auto-reconnects + filters by
@@ -431,6 +640,12 @@ export function MetadataMatchForm({
   const restart = () => {
     setRunId(null);
     setPickedOrdinal(null);
+    setPreviewOrdinal(null);
+    setCompareMode(false);
+    setSelectedOrdinals(new Set());
+    setFieldSources({});
+    lastSeededComposite.current = null;
+    lastSeededSelection.current = null;
     kickedRef.current = false;
     runSearch();
   };
@@ -543,8 +758,26 @@ export function MetadataMatchForm({
           canOverride={isAdmin}
           onRevertPin={onRevertPin}
         />
+      ) : compareMode ? (
+        <MetadataCompareView
+          data={compositeDiff.data}
+          isLoading={compositeDiff.isLoading || compositeDiff.isFetching}
+          errorMessage={
+            compositeDiff.error
+              ? compositeDiff.error instanceof Error
+                ? compositeDiff.error.message
+                : "Failed to compare candidates."
+              : null
+          }
+          fieldSources={fieldSources}
+          onRemoveColumn={onRemoveColumn}
+          onChangeFieldSource={onChangeFieldSource}
+          onBack={() => setCompareMode(false)}
+          onApply={onConfirmCompositeApply}
+          isApplying={compositeApply.isPending}
+        />
       ) : (
-        <ScrollArea className="max-h-[50vh] pr-3 [&>div>div]:block!">
+        <div className="max-h-[50vh] overflow-y-auto pr-1">
           {searchError ? (
             <div className="text-destructive py-6 text-sm">
               {searchError}{" "}
@@ -573,6 +806,25 @@ export function MetadataMatchForm({
             </div>
           ) : (
             <>
+              {reused && isFinalized && (
+                <div className="text-muted-foreground pb-1 text-xs">
+                  Showing your last search — providers weren&apos;t re-queried.
+                  Use Re-search for fresh results.
+                </div>
+              )}
+              {(candidates.data?.candidates.length ?? 0) >= 2 && (
+                <div className="text-muted-foreground flex items-center justify-end gap-2 pb-1 text-xs">
+                  <span>{selectedOrdinals.size} selected to compare</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={selectedOrdinals.size < 2}
+                    onClick={() => setCompareMode(true)}
+                  >
+                    Compare ({selectedOrdinals.size})
+                  </Button>
+                </div>
+              )}
               {candidates.data?.match_outcome && (
                 <MatchOutcomeBanner
                   outcome={candidates.data.match_outcome}
@@ -591,6 +843,9 @@ export function MetadataMatchForm({
                     disabled={apply.isPending}
                     isApplying={apply.isPending && pickedOrdinal === i}
                     onApply={() => onEnterPreview(i)}
+                    selectable={(candidates.data?.candidates.length ?? 0) >= 2}
+                    selected={selectedOrdinals.has(i)}
+                    onToggleSelect={() => onToggleCompareSelect(i)}
                   />
                 ))}
                 {isFinalized && (candidates.data?.candidates.length ?? 0) === 0 && (
@@ -601,7 +856,7 @@ export function MetadataMatchForm({
               </ul>
             </>
           )}
-        </ScrollArea>
+        </div>
       )}
 
       <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
@@ -609,7 +864,7 @@ export function MetadataMatchForm({
           variant="ghost"
           size="sm"
           onClick={restart}
-          disabled={isPolling || apply.isPending}
+          disabled={isPolling || applyIsPending}
         >
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Re-search
         </Button>
@@ -772,17 +1027,31 @@ function CandidateRow({
   disabled,
   isApplying,
   onApply,
+  selectable,
+  selected,
+  onToggleSelect,
 }: {
   c: CandidateView;
   ordinal: number;
   disabled: boolean;
   isApplying: boolean;
   onApply: () => void;
+  selectable: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
 }) {
   const parsed = parseCandidatePayload(c.candidate);
   const _ = ordinal;
   return (
     <li className="bg-muted/40 hover:bg-muted/60 flex gap-3 rounded-md p-3 transition-colors">
+      {selectable && (
+        <Checkbox
+          checked={selected}
+          onCheckedChange={onToggleSelect}
+          aria-label="Include in comparison"
+          className="mt-1 flex-none"
+        />
+      )}
       {parsed.cover_image_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img

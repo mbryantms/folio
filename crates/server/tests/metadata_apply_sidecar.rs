@@ -404,7 +404,14 @@ async fn apply_issue_with_writeback_writes_variant_covers_to_issue_cover_table()
         Some("https://cdn.example.com/saga-1-walker.jpg"),
     );
     assert_eq!(rows[0].ordinal, 1, "primary owns ordinal 0; variants start at 1");
-    assert!(rows[0].local_path.is_empty(), "v1 stores metadata-only — no bytes downloaded");
+    // The fixture's `cdn.example.com` URLs are unreachable, so the
+    // downloader soft-falls-back to a metadata-only row that keeps the
+    // hotlink. (The success path — bytes downloaded to `local_path` — is
+    // covered by `apply_issue_downloads_and_stores_variant_covers_locally`.)
+    assert!(
+        rows[0].local_path.is_empty(),
+        "unreachable fixture URL → metadata-only fallback",
+    );
     assert_eq!(rows[1].variant_label.as_deref(), Some("Dave McCaig variant"));
     assert_eq!(rows[1].ordinal, 2);
     assert_eq!(rows[0].source_provider.as_deref(), Some("comicvine"));
@@ -851,5 +858,271 @@ async fn apply_issue_override_user_edits_collapses_pins() {
         outcome.suppressed_user_pins.is_empty(),
         "override_user_edits must zero the suppressed-pins set: {:?}",
         outcome.suppressed_user_pins,
+    );
+}
+
+/// Encode a small valid PNG in memory so the mock CDN serves a
+/// decodable image (the production `image` dep isn't visible to this
+/// integration-test crate, hence the `image` dev-dependency).
+fn tiny_png() -> Vec<u8> {
+    use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
+    let img = RgbImage::from_fn(8, 12, |x, y| Rgb([(x * 20) as u8, (y * 10) as u8, 40]));
+    let mut buf = Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(img)
+        .write_to(&mut buf, ImageFormat::Png)
+        .unwrap();
+    buf.into_inner()
+}
+
+/// Register the first user (→ admin) and return a `Cookie` header value
+/// carrying the session. Sufficient for GET requests (no CSRF needed).
+async fn register_admin_cookie(app: &TestApp) -> String {
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode, header};
+    use tower::ServiceExt;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"email":"cover-admin@example.com","password":"correctly-horse-battery"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    resp.headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(|c| c.split(';').next().unwrap_or("").to_owned())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+#[tokio::test]
+async fn apply_issue_downloads_and_stores_variant_covers_locally() {
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Method, Request, StatusCode, header};
+    use entity::issue_cover;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    use server::metadata::provider::VariantCoverCandidate;
+    use tower::ServiceExt;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // Mock CDN serving real PNG bytes for two variants.
+    let cdn = MockServer::start().await;
+    let png = tiny_png();
+    for name in ["walker.png", "mccaig.png"] {
+        Mock::given(method("GET"))
+            .and(path(format!("/{name}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(png.clone()),
+            )
+            .mount(&cdn)
+            .await;
+    }
+
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let cbz = build_cbz_bytes("saga-1");
+    let issue_id = IssueSeed::new(lib_id, series_id, &dir.path().join("saga-1.cbz"), &cbz, 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    let mut payload = stub_provider_payload();
+    payload.variants = vec![
+        VariantCoverCandidate {
+            label: Some("Walker".into()),
+            artist_name: None,
+            identifiers: vec![],
+            image_url: Some(format!("{}/walker.png", cdn.uri())),
+        },
+        VariantCoverCandidate {
+            label: Some("McCaig".into()),
+            artist_name: None,
+            identifiers: vec![],
+            image_url: Some(format!("{}/mccaig.png", cdn.uri())),
+        },
+    ];
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &payload,
+    )
+    .await
+    .unwrap();
+
+    let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
+    let outcome = apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_issue");
+    assert_eq!(outcome.variants_written, 2);
+
+    let rows = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(&issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .order_by_asc(issue_cover::Column::Ordinal)
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    let data_path = app.state().cfg().data_path.clone();
+    for row in &rows {
+        assert!(
+            !row.local_path.is_empty(),
+            "variant downloaded to local storage"
+        );
+        assert!(
+            row.width.is_some() && row.height.is_some(),
+            "source dimensions recorded"
+        );
+        assert!(row.phash.is_some(), "perceptual hash computed");
+        assert!(
+            data_path.join(&row.local_path).exists(),
+            "cover file written to disk: {}",
+            row.local_path,
+        );
+    }
+
+    // The byte endpoint serves the stored cover to an authorized user.
+    let cookie = register_admin_cookie(&app).await;
+    let cover_id = rows[0].id;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/issues/{issue_id}/covers/{cover_id}"))
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_TYPE).unwrap(),
+        "image/png"
+    );
+    let served = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        served.as_ref(),
+        png.as_slice(),
+        "served bytes match the downloaded image"
+    );
+
+    // Unknown cover id → 404.
+    let missing = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/issues/{issue_id}/covers/{}", Uuid::now_v7()))
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn variant_cover_backfill_downloads_hotlink_rows() {
+    use entity::issue_cover;
+    use sea_orm::{EntityTrait, Set};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let cdn = MockServer::start().await;
+    let png = tiny_png();
+    Mock::given(method("GET"))
+        .and(path("/v.png"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "image/png")
+                .set_body_bytes(png.clone()),
+        )
+        .mount(&cdn)
+        .await;
+
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(&app.state().db).await;
+    let cbz = build_cbz_bytes("saga-1");
+    let issue_id = IssueSeed::new(lib_id, series_id, &dir.path().join("saga-1.cbz"), &cbz, 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    // Seed a legacy hotlink-only variant row (no local_path).
+    let cover_id = Uuid::now_v7();
+    issue_cover::ActiveModel {
+        id: Set(cover_id),
+        issue_id: Set(issue_id.clone()),
+        kind: Set("variant".into()),
+        ordinal: Set(1),
+        source_provider: Set(Some("comicvine".into())),
+        source_external_id: Set(None),
+        source_url: Set(Some(format!("{}/v.png", cdn.uri()))),
+        variant_label: Set(Some("Hotlinked".into())),
+        variant_artist_person_id: Set(None),
+        local_path: Set(String::new()),
+        width: Set(None),
+        height: Set(None),
+        phash: Set(None),
+        dhash: Set(None),
+        ahash: Set(None),
+        fetched_at: Set(Utc::now().fixed_offset()),
+        is_active: Set(true),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    let data_path = app.state().cfg().data_path.clone();
+    let outcome =
+        server::metadata::writers::run_variant_cover_backfill(&app.state().db, &data_path)
+            .await
+            .unwrap();
+    assert_eq!(outcome.considered, 1);
+    assert_eq!(outcome.stored, 1);
+
+    let row = issue_cover::Entity::find_by_id(cover_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!row.local_path.is_empty(), "backfill populated local_path");
+    assert!(row.phash.is_some(), "backfill computed perceptual hash");
+    assert!(
+        data_path.join(&row.local_path).exists(),
+        "backfilled file on disk"
     );
 }

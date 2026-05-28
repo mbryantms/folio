@@ -18,12 +18,14 @@
 pub mod apply;
 pub mod cache;
 pub mod comicvine;
+pub mod composite;
 pub mod diff;
 pub mod drift;
 pub mod field;
 pub mod identifier;
 pub mod match_outcome;
 pub mod matcher;
+pub mod merge;
 pub mod metron;
 pub mod orchestrator;
 pub mod phash;

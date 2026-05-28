@@ -637,6 +637,12 @@ export type DiffResp = Schemas["DiffResp"];
 export type ScalarDiffRow = Schemas["ScalarDiffRow"];
 export type ExternalIdConflictRow = Schemas["ExternalIdConflictRow"];
 export type ExternalIdNewRow = Schemas["ExternalIdNewRow"];
+// Composite (multi-provider) merge
+export type CompositeDiffResp = Schemas["CompositeDiffResp"];
+export type CompositeFieldRow = Schemas["CompositeFieldRow"];
+export type CompositeProviderColumn = Schemas["CompositeProviderColumn"];
+export type CompositeProposal = Schemas["CompositeProposal"];
+export type CompositeApplyResp = Schemas["CompositeApplyResp"];
 // M6 admin surface
 export type DashboardResp = Schemas["DashboardResp"];
 export type MatchQualityResp = Schemas["MatchQualityResp"];

@@ -103,6 +103,7 @@ fn issue_facts(series_name: &str, series_year: Option<i32>, number: &str) -> Iss
         publisher: None,
         volume: None,
         issue_number: number.to_owned(),
+        issue_year: None,
     }
 }
 

@@ -1176,6 +1176,26 @@
         }
       }
     },
+    "/api/admin/metadata/variant-cover-backfill": {
+      "post": {
+        "operationId": "metadata_variant_cover_backfill",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariantCoverBackfillOutcome"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/ocr/models": {
       "get": {
         "operationId": "admin_ocr_list",
@@ -7062,6 +7082,137 @@
         }
       }
     },
+    "/api/series/{slug}/issues/{issue_slug}/metadata/composite-apply": {
+      "post": {
+        "operationId": "metadata_composite_apply_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompositeApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompositeApplyResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied / override requires admin"
+          },
+          "404": {
+            "description": "issue / run not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/issues/{issue_slug}/metadata/composite-diff": {
+      "get": {
+        "operationId": "metadata_composite_diff_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ApplyMode"
+            }
+          },
+          {
+            "name": "override_user_edits",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompositeDiffResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid run scope"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue / run not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/issues/{issue_slug}/metadata/proposed-diff": {
       "get": {
         "operationId": "metadata_proposed_diff_issue",
@@ -7281,6 +7432,121 @@
           },
           "404": {
             "description": "series not found / no run"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/composite-apply": {
+      "post": {
+        "operationId": "metadata_composite_apply_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompositeApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompositeApplyResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied / override requires admin"
+          },
+          "404": {
+            "description": "series / run not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/composite-diff": {
+      "get": {
+        "operationId": "metadata_composite_diff_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ApplyMode"
+            }
+          },
+          {
+            "name": "override_user_edits",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompositeDiffResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid run scope"
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series / run not found"
           }
         }
       }
@@ -9298,6 +9564,270 @@
           }
         }
       },
+      "CompositeApplyRequest": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "field_sources",
+          "included"
+        ],
+        "properties": {
+          "apply_cover": {
+            "type": "boolean"
+          },
+          "cover_overwrite_policy": {
+            "$ref": "#/components/schemas/ApplyCoverPolicy"
+          },
+          "field_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompositeFieldSource"
+            },
+            "description": "Per-field candidate picks. A field absent here is not applied."
+          },
+          "included": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "The candidate `ordinal`s that contribute. Their `applied_at` is\nflipped."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ApplyMode"
+          },
+          "override_external_id_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "override_user_edits": {
+            "type": "boolean"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CompositeApplyResp": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "status",
+          "applied_fields",
+          "variants_written"
+        ],
+        "properties": {
+          "applied_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "variants_written": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "CompositeDiffResp": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "scope",
+          "providers",
+          "rows",
+          "external_ids_new",
+          "external_id_conflicts",
+          "changes_count"
+        ],
+        "properties": {
+          "changes_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "external_id_conflicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdConflictRow"
+            }
+          },
+          "external_ids_new": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdNewRow"
+            }
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompositeProviderColumn"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompositeFieldRow"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      },
+      "CompositeFieldRow": {
+        "type": "object",
+        "description": "One field row across all included candidates.",
+        "required": [
+          "field",
+          "label",
+          "proposals",
+          "decision"
+        ],
+        "properties": {
+          "chosen_ordinal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Merge-policy default candidate `ordinal` for this field (`null`\nwhen no included candidate has a value). The UI seeds its\nper-field selection here."
+          },
+          "current_set_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current_set_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current_value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "type": "string",
+            "description": "`DiffDecision` for (current vs the chosen value) — reuses\n`apply::classify_field` so the badge matches the single-candidate\npane exactly."
+          },
+          "field": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompositeProposal"
+            }
+          }
+        }
+      },
+      "CompositeFieldSource": {
+        "type": "object",
+        "required": [
+          "field",
+          "ordinal"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "`MetadataField::key()`."
+          },
+          "ordinal": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Candidate `ordinal` (unique within the run) whose value wins this\nfield."
+          }
+        }
+      },
+      "CompositeProposal": {
+        "type": "object",
+        "description": "One candidate's proposed value for a field. Keyed by `ordinal`\n(unique within a run) so multiple candidates from the same provider\nare distinct columns.",
+        "required": [
+          "source",
+          "ordinal"
+        ],
+        "properties": {
+          "ordinal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "source": {
+            "type": "string"
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CompositeProviderColumn": {
+        "type": "object",
+        "description": "One provider column in the compare view's header.",
+        "required": [
+          "source",
+          "ordinal",
+          "external_id",
+          "bucket",
+          "score"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "cover_image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover URL for the \"verify this is the same issue\" thumbnail."
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          },
+          "source": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Series name / \"name #number\" for the column subtitle."
+          }
+        }
+      },
       "Condition": {
         "type": "object",
         "description": "One condition row in a filter DSL. `group_id` always 0 in v1; reserved\nfor nested-group support without a wire-format break.",
@@ -11304,6 +11834,13 @@
             "type": "string",
             "format": "uuid"
           },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "URL the frontend should render `<img src>` from. Points at the\nlocal byte endpoint (`/issues/{id}/covers/{cover_id}`) when the\ncover was downloaded to disk, else falls back to `source_url`\n(provider CDN hotlink). `None` only when neither exists."
+          },
           "is_active": {
             "type": "boolean"
           },
@@ -11335,7 +11872,7 @@
               "string",
               "null"
             ],
-            "description": "CDN URL the provider returned. Frontend renders directly when\npresent."
+            "description": "CDN URL the provider returned. Kept for attribution + the\n\"open original\" link; not the primary render source once the\nimage is stored locally."
           },
           "variant_artist_person_id": {
             "type": [
@@ -17392,6 +17929,32 @@
           "active",
           "disabled"
         ]
+      },
+      "VariantCoverBackfillOutcome": {
+        "type": "object",
+        "description": "Outcome of a variant-cover backfill sweep — surfaced via the admin\nendpoint so the operator sees how rows fared.",
+        "required": [
+          "considered",
+          "stored",
+          "skipped"
+        ],
+        "properties": {
+          "considered": {
+            "type": "integer",
+            "description": "Rows visited (variant rows with an empty `local_path` and a\nnon-null `source_url`).",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "description": "Rows skipped because the download / decode failed (stay hotlinks).",
+            "minimum": 0
+          },
+          "stored": {
+            "type": "integer",
+            "description": "Rows whose image downloaded + stored successfully.",
+            "minimum": 0
+          }
+        }
       },
       "ViewMode": {
         "type": "string",

@@ -220,10 +220,13 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub metadata_writeback_enabled: Option<bool>,
-    /// `.bak` retention slots, 1..=5. CHECK constraint enforced at DB
-    /// level; garde validates here to surface a friendly 422.
+    /// `.bak` retention slots, 0..=5. `0` = validated overwrite, no
+    /// `.bak` (the sidecar rewrite is validated before the atomic swap,
+    /// so the original is never replaced by a corrupt rewrite). CHECK
+    /// constraint enforced at DB level; garde validates here to surface a
+    /// friendly 422.
     #[serde(default)]
-    #[garde(inner(range(min = 1, max = 5)))]
+    #[garde(inner(range(min = 0, max = 5)))]
     pub archive_backup_retain_count: Option<i32>,
     /// Days a `.bak` file lives before the daily prune cron removes
     /// it; `0` = keep forever. Non-negative.

@@ -420,8 +420,37 @@ async fn generate_missing_reenqueues_outdated_versions() {
     let auth = register_admin(&app).await;
     let (lib_id, ids) = seed_library_with_issues(&app, &[(true, false), (true, false)]).await;
 
-    // Backdate one issue's thumbnail_version to simulate an encoder bump.
+    // Seed a populated archive-extracted issue_cover row for each
+    // issue so the post-scan catchup's phash-missing branch doesn't
+    // fire. Without this both rows would re-enqueue (both NULL phash),
+    // hiding the version-bump assertion below.
     let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    for issue_id in &ids {
+        entity::issue_cover::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            issue_id: Set(issue_id.clone()),
+            kind: Set("primary".into()),
+            ordinal: Set(0),
+            source_provider: Set(Some("archive_extracted".into())),
+            source_external_id: Set(None),
+            source_url: Set(None),
+            variant_label: Set(None),
+            variant_artist_person_id: Set(None),
+            local_path: Set(format!("thumbs/{issue_id}.webp")),
+            width: Set(Some(64)),
+            height: Set(Some(64)),
+            phash: Set(Some(1)),
+            dhash: Set(Some(1)),
+            ahash: Set(Some(1)),
+            fetched_at: Set(Utc::now().fixed_offset()),
+            is_active: Set(false),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+
+    // Backdate one issue's thumbnail_version to simulate an encoder bump.
     let row = IssueEntity::find_by_id(ids[0].clone())
         .one(&db)
         .await

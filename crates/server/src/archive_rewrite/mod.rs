@@ -65,6 +65,13 @@ pub enum RewriteError {
     InvalidRetainCount(i32),
     #[error("target path has no parent directory: {0}")]
     NoParent(PathBuf),
+    /// The freshly-written archive failed post-write validation (an
+    /// expected entry went missing, a sidecar is absent, or the archive
+    /// won't re-open). Returned from a `write_into` closure so
+    /// [`rewrite_atomic`] aborts BEFORE swapping — the original stays
+    /// intact even when `retain_count = 0`.
+    #[error("rewrite validation failed: {0}")]
+    ValidationFailed(String),
 }
 
 /// Atomically replace `target` with the result of `write_into(temp_path)`.
@@ -83,8 +90,16 @@ pub enum RewriteError {
 ///   6. fsync the parent dir.
 ///
 /// `retain_count` is capped at 5. Pass `1` for the common case (one
-/// rollback slot). Pass `0` to skip `.bak` entirely (the original file
-/// is overwritten in-place via rename, no rollback possible).
+/// rollback slot). Pass `0` to skip `.bak` entirely — the original file
+/// is overwritten in-place via the final rename.
+///
+/// **Validate inside `write_into`.** The closure writes the new bytes to
+/// the temp path and may then re-open + validate them, returning
+/// [`RewriteError::ValidationFailed`] on any problem. Because the swap
+/// only happens *after* `write_into` returns `Ok`, a validation failure
+/// leaves the original untouched — which is what makes `retain_count = 0`
+/// safe (a corrupt rewrite never replaces a good original, even with no
+/// `.bak` rollback slot).
 pub fn rewrite_atomic<F>(
     target: &Path,
     retain_count: i32,
@@ -321,6 +336,26 @@ mod tests {
         assert!(outcome.backup.is_none());
         let bak = target.with_extension("cbz.bak");
         assert!(!bak.exists());
+    }
+
+    #[test]
+    fn retain_zero_validation_failure_keeps_original() {
+        // With retain_count = 0 (no .bak) the original is the ONLY copy.
+        // A closure that writes the new bytes then rejects them (the
+        // validate-before-swap contract) must leave the original intact —
+        // proving retain=0 is safe against a corrupt rewrite.
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("issue.cbz");
+        fs::write(&target, b"original-bytes").unwrap();
+
+        let res = rewrite_atomic(&target, 0, |tmp| {
+            fs::write(tmp, b"corrupt-rewrite")?;
+            Err(RewriteError::ValidationFailed("synthetic".into()))
+        });
+        assert!(matches!(res, Err(RewriteError::ValidationFailed(_))));
+        // Original survives byte-for-byte; no .bak was ever made.
+        assert_eq!(fs::read(&target).unwrap(), b"original-bytes");
+        assert!(!target.with_extension("cbz.bak").exists());
     }
 
     #[test]

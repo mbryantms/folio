@@ -557,3 +557,155 @@ async fn worker_skips_non_active_issue() {
         .unwrap();
     assert!(row.thumbnails_generated_at.is_none());
 }
+
+#[tokio::test]
+async fn cover_worker_writes_archive_source_phash() {
+    // The cover worker should hash the archive's source page bytes
+    // (not the WebP thumbnail) and persist them to issue_cover so
+    // the matcher's cover-Hamming ladder has something to compare
+    // against. Pre-change the post-scan path read back the freshly-
+    // written WebP thumbnail to hash — that introduced encoder loss
+    // on our side that ComicVine's hosted cover doesn't have,
+    // biasing distances upward.
+    use entity::issue_cover;
+    use sea_orm::{ColumnTrait, QueryFilter};
+
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("issue.cbz");
+    build_cbz(&cbz, 3);
+    let id = seed_issue(&app, &cbz, 3).await;
+
+    let state = app.state();
+    handle_thumbs(
+        ThumbsJob::cover(id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+
+    let cover_row = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(&id))
+        .filter(issue_cover::Column::SourceProvider.eq("archive_extracted"))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("issue_cover archive_extracted row written by cover worker");
+    assert!(cover_row.phash.is_some(), "phash should be populated");
+    assert!(cover_row.dhash.is_some());
+    assert!(cover_row.ahash.is_some());
+    assert!(cover_row.width.is_some());
+    assert!(cover_row.height.is_some());
+}
+
+#[tokio::test]
+async fn cover_worker_tops_up_phash_when_thumb_is_current() {
+    // Scan-time hash top-up: when the thumbnail already exists and
+    // is current, but the issue_cover row's phash is NULL (the
+    // M0-migration backlog), rerunning the cover worker should
+    // decode the archive page, compute hashes, persist them, AND
+    // leave the existing thumbnail file untouched (no re-encode).
+    use entity::issue_cover;
+    use sea_orm::{ColumnTrait, QueryFilter};
+
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("issue.cbz");
+    build_cbz(&cbz, 3);
+    let id = seed_issue(&app, &cbz, 3).await;
+    let state = app.state();
+
+    // First run: thumb gets generated, phash gets computed.
+    handle_thumbs(
+        ThumbsJob::cover(id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+
+    // Wipe the phash columns to simulate the M0-migration shape: a
+    // row exists, the thumb is current, but the hash is NULL.
+    let row = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(&id))
+        .filter(issue_cover::Column::SourceProvider.eq("archive_extracted"))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let row_id = row.id;
+    let mut am: issue_cover::ActiveModel = row.into();
+    am.phash = Set(None);
+    am.dhash = Set(None);
+    am.ahash = Set(None);
+    am.update(&state.db).await.unwrap();
+
+    let cover = thumbnails::cover_path(&state.cfg().data_path, &id, thumbnails::ThumbFormat::Webp);
+    let mtime_before = std::fs::metadata(&cover).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // Second run: thumb is current, but hash is missing. Worker
+    // should decode the archive page, recompute hashes, write them
+    // back, and NOT re-encode the thumbnail.
+    handle_thumbs(
+        ThumbsJob::cover(id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+
+    let row = issue_cover::Entity::find_by_id(row_id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row.phash.is_some(), "scan-time top-up should populate phash");
+    assert!(row.dhash.is_some());
+    assert!(row.ahash.is_some());
+
+    let mtime_after = std::fs::metadata(&cover).unwrap().modified().unwrap();
+    assert_eq!(
+        mtime_before, mtime_after,
+        "thumb file mtime should be unchanged — encoder should short-circuit"
+    );
+}
+
+#[tokio::test]
+async fn enqueue_pending_picks_up_thumb_current_but_hash_missing() {
+    // Catchup query should pick up issues whose thumb is current
+    // but whose archive-extracted phash row is NULL — the M0-
+    // migration backlog. Before this change, the catchup gate was
+    // only `thumbnails_generated_at IS NULL OR version < CURRENT`,
+    // so those rows never re-enqueued and their phash stayed NULL
+    // until an admin clicked the backfill endpoint by hand.
+    use server::jobs::post_scan::enqueue_pending_for_library;
+
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("issue.cbz");
+    build_cbz(&cbz, 2);
+    let id = seed_issue(&app, &cbz, 2).await;
+    let state = app.state();
+
+    // Drive the worker once so the row gets a current thumb. No
+    // phash row exists yet for an issue this fresh until the
+    // worker runs — but we want to simulate the M0-migration
+    // shape: thumb current, NO archive_extracted issue_cover row
+    // at all. So we stamp `thumbnails_generated_at` + current
+    // version directly on the issue row, skipping the worker.
+    let row = IssueEntity::find_by_id(id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let library_id = row.library_id;
+    let mut am: IssueAM = row.into();
+    am.thumbnails_generated_at = Set(Some(Utc::now().fixed_offset()));
+    am.thumbnail_version = Set(thumbnails::THUMBNAIL_VERSION);
+    am.update(&state.db).await.unwrap();
+
+    let enqueued = enqueue_pending_for_library(&state, library_id).await;
+    assert!(
+        enqueued >= 1,
+        "issue with current thumb but missing phash should still enqueue"
+    );
+}

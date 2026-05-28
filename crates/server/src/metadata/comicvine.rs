@@ -34,6 +34,7 @@ use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::provider::{
     CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate, IssueQuery,
     MetadataProvider, ProviderError, ProviderResult, QuotaSnapshot, SeriesCandidate, SeriesQuery,
+    VariantCoverCandidate,
 };
 use crate::metadata::rate_limit::{self, BucketDef, Reservation};
 use async_trait::async_trait;
@@ -41,6 +42,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use redis::aio::ConnectionManager;
 use sea_orm::DatabaseConnection;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -56,7 +58,7 @@ const VELOCITY_FLOOR: Duration = Duration::from_millis(1100);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 const SERIES_FIELDS: &str = "id,name,start_year,publisher,deck,description,image,count_of_issues,site_detail_url,date_last_updated,aliases";
-const ISSUE_FIELDS: &str = "id,name,issue_number,cover_date,store_date,deck,description,image,person_credits,character_credits,team_credits,location_credits,concept_credits,object_credits,story_arc_credits,volume,site_detail_url,date_last_updated,aliases";
+const ISSUE_FIELDS: &str = "id,name,issue_number,cover_date,store_date,deck,description,image,associated_images,person_credits,character_credits,team_credits,location_credits,concept_credits,object_credits,story_arc_credits,first_appearance_characters,first_appearance_teams,first_appearance_locations,first_appearance_concepts,first_appearance_objects,first_appearance_storyarcs,characters_died_in,teams_disbanded_in,volume,site_detail_url,date_last_updated,aliases";
 
 /// Cloneable handle to the ComicVine client. The reqwest::Client +
 /// Redis connection are themselves clone-safe (Arc internally), so
@@ -293,6 +295,21 @@ struct CvImage {
     thumb_url: Option<String>,
 }
 
+/// One entry of the issue-detail `associated_images` array — CV's
+/// variant-cover surface. The single `image` field carries the primary
+/// cover's size renditions; variant/alternate covers live here, one
+/// object per image. `image_tags` is a comma-joined gallery label
+/// ("Cover", "Other Images", …); `caption` is free text we surface as
+/// the variant label.
+#[derive(Debug, Deserialize)]
+struct CvAltImage {
+    original_url: Option<String>,
+    id: Option<i64>,
+    caption: Option<String>,
+    #[allow(dead_code)] // retained for parity with the CV field_list; not yet used for filtering
+    image_tags: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct CvVolume {
     id: Option<i64>,
@@ -326,6 +343,10 @@ struct CvIssue {
     deck: Option<String>,
     description: Option<String>,
     image: Option<CvImage>,
+    /// Variant / alternate covers. Only present on the issue-detail
+    /// endpoint, never on /issues or /search list responses.
+    #[serde(default)]
+    associated_images: Option<Vec<CvAltImage>>,
     person_credits: Option<Vec<CvPersonCredit>>,
     character_credits: Option<Vec<CvNamedRef>>,
     team_credits: Option<Vec<CvNamedRef>>,
@@ -333,6 +354,28 @@ struct CvIssue {
     concept_credits: Option<Vec<CvNamedRef>>,
     object_credits: Option<Vec<CvNamedRef>>,
     story_arc_credits: Option<Vec<CvNamedRef>>,
+    // First-appearance / death / disband relationship lists. Each is a
+    // list of the entities for which *this issue* is the first
+    // appearance (or the death / disband issue). We cross-reference the
+    // ids against the matching `*_credits` list to stamp the per-row
+    // flags `is_first_appearance` / `died_in_issue` /
+    // `disbanded_in_issue` the apply path persists.
+    #[serde(default)]
+    first_appearance_characters: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    first_appearance_teams: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    first_appearance_locations: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    first_appearance_concepts: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    first_appearance_objects: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    first_appearance_storyarcs: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    characters_died_in: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    teams_disbanded_in: Option<Vec<CvNamedRef>>,
     volume: Option<CvVolume>,
     site_detail_url: Option<String>,
     date_last_updated: Option<String>,
@@ -505,6 +548,67 @@ fn cv_volume_to_metadata(v: CvVolume) -> GenericMetadata {
     }
 }
 
+/// Collect the CV ids from a relationship list (e.g.
+/// `first_appearance_characters`) into a set for O(1) membership tests
+/// while stamping per-entity flags.
+fn cv_id_set(list: &Option<Vec<CvNamedRef>>) -> HashSet<i64> {
+    list.iter().flatten().filter_map(|n| n.id).collect()
+}
+
+/// Map an issue's `associated_images` array to variant-cover
+/// candidates. Mirrors ComicTagger's CV talker, which treats every
+/// `associated_images` entry as an alternate cover: on an issue page
+/// these are overwhelmingly variant covers. The free-text `caption`
+/// becomes the variant label; the CV image `id` is recorded as the
+/// source identifier so a future re-pull can dedup. Entries without a
+/// usable URL are dropped by the writer.
+fn cv_alt_images_to_variants(images: &Option<Vec<CvAltImage>>) -> Vec<VariantCoverCandidate> {
+    images
+        .iter()
+        .flatten()
+        .filter_map(|img| {
+            let url = img
+                .original_url
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())?;
+            let identifiers = match img.id {
+                Some(id) => vec![Identifier::new(Source::ComicVine, id.to_string())],
+                None => Vec::new(),
+            };
+            Some(VariantCoverCandidate {
+                label: img
+                    .caption
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned),
+                artist_name: None,
+                identifiers,
+                image_url: Some(url.to_owned()),
+            })
+        })
+        .collect()
+}
+
+/// Map a `*_credits` list into entity candidates, stamping
+/// `is_first_appearance` for any whose CV id is in `first_ids`.
+fn cv_entities_with_first(
+    list: &Option<Vec<CvNamedRef>>,
+    entity_type: &str,
+    first_ids: &HashSet<i64>,
+) -> Vec<EntityCandidate> {
+    list.iter()
+        .flatten()
+        .filter_map(|n| {
+            let mut e = cv_named_to_entity(n, entity_type)?;
+            if let Some(id) = n.id {
+                e.is_first_appearance = first_ids.contains(&id);
+            }
+            Some(e)
+        })
+        .collect()
+}
+
 fn cv_named_to_entity(n: &CvNamedRef, entity_type: &str) -> Option<EntityCandidate> {
     let name = n.name.clone().filter(|s| !s.trim().is_empty())?;
     let identifiers = match n.id {
@@ -604,12 +708,51 @@ fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
             })
         })
         .collect();
-    let entities = |list: Option<&Vec<CvNamedRef>>, ty: &str| -> Vec<EntityCandidate> {
-        list.into_iter()
-            .flatten()
-            .filter_map(|n| cv_named_to_entity(n, ty))
-            .collect()
-    };
+    // First-appearance / death / disband cross-reference sets. CV
+    // exposes these as separate relationship lists; we stamp the
+    // matching credited entity so the apply path can persist
+    // `is_first_appearance` / `died_in_issue` / `disbanded_in_issue`.
+    let fa_characters = cv_id_set(&issue.first_appearance_characters);
+    let fa_teams = cv_id_set(&issue.first_appearance_teams);
+    let fa_locations = cv_id_set(&issue.first_appearance_locations);
+    let fa_concepts = cv_id_set(&issue.first_appearance_concepts);
+    let fa_objects = cv_id_set(&issue.first_appearance_objects);
+    let fa_storyarcs = cv_id_set(&issue.first_appearance_storyarcs);
+    let died_characters = cv_id_set(&issue.characters_died_in);
+    let disbanded_teams = cv_id_set(&issue.teams_disbanded_in);
+
+    let characters = issue
+        .character_credits
+        .iter()
+        .flatten()
+        .filter_map(|n| {
+            let mut e = cv_named_to_entity(n, "character")?;
+            if let Some(id) = n.id {
+                e.is_first_appearance = fa_characters.contains(&id);
+                e.died_in_issue = Some(died_characters.contains(&id));
+            }
+            Some(e)
+        })
+        .collect();
+    let teams = issue
+        .team_credits
+        .iter()
+        .flatten()
+        .filter_map(|n| {
+            let mut e = cv_named_to_entity(n, "team")?;
+            if let Some(id) = n.id {
+                e.is_first_appearance = fa_teams.contains(&id);
+                e.disbanded_in_issue = Some(disbanded_teams.contains(&id));
+            }
+            Some(e)
+        })
+        .collect();
+    let locations = cv_entities_with_first(&issue.location_credits, "location", &fa_locations);
+    let concepts = cv_entities_with_first(&issue.concept_credits, "concept", &fa_concepts);
+    let objects = cv_entities_with_first(&issue.object_credits, "object", &fa_objects);
+    let story_arcs = cv_entities_with_first(&issue.story_arc_credits, "story_arc", &fa_storyarcs);
+    let variants = cv_alt_images_to_variants(&issue.associated_images);
+
     GenericMetadata {
         title: issue.name,
         issue_number: issue.issue_number,
@@ -631,12 +774,13 @@ fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
             .and_then(|v| v.publisher.as_ref())
             .and_then(|p| p.name.clone()),
         credits,
-        characters: entities(issue.character_credits.as_ref(), "character"),
-        teams: entities(issue.team_credits.as_ref(), "team"),
-        locations: entities(issue.location_credits.as_ref(), "location"),
-        concepts: entities(issue.concept_credits.as_ref(), "concept"),
-        objects: entities(issue.object_credits.as_ref(), "object"),
-        story_arcs: entities(issue.story_arc_credits.as_ref(), "story_arc"),
+        characters,
+        teams,
+        locations,
+        concepts,
+        objects,
+        story_arcs,
+        variants,
         identifiers,
         source_provider: Some(Source::ComicVine),
         source_external_id: if external_id.is_empty() {
@@ -910,6 +1054,7 @@ mod tests {
             deck: None,
             description: None,
             image: None,
+            associated_images: None,
             person_credits: Some(vec![CvPersonCredit {
                 id: Some(7),
                 name: Some("Brian K. Vaughan".into()),
@@ -922,6 +1067,14 @@ mod tests {
             concept_credits: None,
             object_credits: None,
             story_arc_credits: None,
+            first_appearance_characters: None,
+            first_appearance_teams: None,
+            first_appearance_locations: None,
+            first_appearance_concepts: None,
+            first_appearance_objects: None,
+            first_appearance_storyarcs: None,
+            characters_died_in: None,
+            teams_disbanded_in: None,
             volume: None,
             site_detail_url: None,
             date_last_updated: None,
@@ -938,5 +1091,127 @@ mod tests {
         assert!(m.credits.iter().all(|c| c.name == "Brian K. Vaughan"));
         // Both credits carry the CV person id.
         assert!(m.credits.iter().all(|c| c.identifiers.len() == 1));
+    }
+
+    /// Minimal CvIssue with everything empty — keeps the
+    /// variant/first-appearance tests focused on the fields under test.
+    fn empty_issue(id: i64) -> CvIssue {
+        CvIssue {
+            id: Some(id),
+            name: None,
+            issue_number: Some("1".into()),
+            cover_date: None,
+            store_date: None,
+            deck: None,
+            description: None,
+            image: None,
+            associated_images: None,
+            person_credits: None,
+            character_credits: None,
+            team_credits: None,
+            location_credits: None,
+            concept_credits: None,
+            object_credits: None,
+            story_arc_credits: None,
+            first_appearance_characters: None,
+            first_appearance_teams: None,
+            first_appearance_locations: None,
+            first_appearance_concepts: None,
+            first_appearance_objects: None,
+            first_appearance_storyarcs: None,
+            characters_died_in: None,
+            teams_disbanded_in: None,
+            volume: None,
+            site_detail_url: None,
+            date_last_updated: None,
+            aliases: None,
+        }
+    }
+
+    fn named(id: i64, name: &str) -> CvNamedRef {
+        CvNamedRef {
+            id: Some(id),
+            name: Some(name.into()),
+            site_detail_url: None,
+        }
+    }
+
+    #[test]
+    fn maps_associated_images_to_variants() {
+        let mut issue = empty_issue(1);
+        issue.associated_images = Some(vec![
+            CvAltImage {
+                original_url: Some("https://cdn/variant-a.jpg".into()),
+                id: Some(501),
+                caption: Some("  Cover B by Artist  ".into()),
+                image_tags: Some("Cover".into()),
+            },
+            CvAltImage {
+                // No usable URL → dropped.
+                original_url: Some("   ".into()),
+                id: Some(502),
+                caption: None,
+                image_tags: None,
+            },
+            CvAltImage {
+                original_url: Some("https://cdn/variant-c.jpg".into()),
+                id: None,
+                caption: None,
+                image_tags: None,
+            },
+        ]);
+        let m = cv_issue_to_metadata(issue);
+        assert_eq!(m.variants.len(), 2, "blank-URL variant should be dropped");
+        let first = &m.variants[0];
+        assert_eq!(
+            first.image_url.as_deref(),
+            Some("https://cdn/variant-a.jpg")
+        );
+        assert_eq!(first.label.as_deref(), Some("Cover B by Artist"));
+        assert_eq!(first.identifiers.len(), 1);
+        assert_eq!(first.identifiers[0].source, Source::ComicVine);
+        assert_eq!(first.identifiers[0].id, "501");
+        // URL-only variant with no CV id keeps the URL but carries no id.
+        let second = &m.variants[1];
+        assert_eq!(
+            second.image_url.as_deref(),
+            Some("https://cdn/variant-c.jpg")
+        );
+        assert!(second.identifiers.is_empty());
+        assert!(second.label.is_none());
+    }
+
+    #[test]
+    fn stamps_first_appearance_and_death_flags() {
+        let mut issue = empty_issue(1);
+        issue.character_credits = Some(vec![named(100, "Hazel"), named(101, "The Stalk")]);
+        issue.team_credits = Some(vec![named(200, "The Heralds"), named(201, "Wreath")]);
+        issue.location_credits = Some(vec![named(300, "Cleave")]);
+        // Hazel is a first appearance; The Stalk dies here.
+        issue.first_appearance_characters = Some(vec![named(100, "Hazel")]);
+        issue.characters_died_in = Some(vec![named(101, "The Stalk")]);
+        // The Heralds first appear; Wreath disbands here.
+        issue.first_appearance_teams = Some(vec![named(200, "The Heralds")]);
+        issue.teams_disbanded_in = Some(vec![named(201, "Wreath")]);
+        issue.first_appearance_locations = Some(vec![named(300, "Cleave")]);
+
+        let m = cv_issue_to_metadata(issue);
+
+        let hazel = m.characters.iter().find(|c| c.name == "Hazel").unwrap();
+        assert!(hazel.is_first_appearance);
+        assert_eq!(hazel.died_in_issue, Some(false));
+        let stalk = m.characters.iter().find(|c| c.name == "The Stalk").unwrap();
+        assert!(!stalk.is_first_appearance);
+        assert_eq!(stalk.died_in_issue, Some(true));
+
+        let heralds = m.teams.iter().find(|t| t.name == "The Heralds").unwrap();
+        assert!(heralds.is_first_appearance);
+        assert_eq!(heralds.disbanded_in_issue, Some(false));
+        let wreath = m.teams.iter().find(|t| t.name == "Wreath").unwrap();
+        assert!(!wreath.is_first_appearance);
+        assert_eq!(wreath.disbanded_in_issue, Some(true));
+
+        let cleave = m.locations.iter().find(|l| l.name == "Cleave").unwrap();
+        assert!(cleave.is_first_appearance);
     }
 }
