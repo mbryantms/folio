@@ -118,7 +118,6 @@ async fn seed_run_with_candidate(
         score_breakdown: Set(json!({})),
         candidate: Set(payload),
         applied_at: Set(None),
-        dismissed_at: Set(None),
     }
     .insert(db)
     .await
@@ -583,7 +582,6 @@ async fn apply_issue_writes_credits_through_writer_helpers() {
         score_breakdown: Set(json!({})),
         candidate: Set(json!({"kind": "issue"})),
         applied_at: Set(None),
-        dismissed_at: Set(None),
     }
     .insert(&app.state().db)
     .await
@@ -1069,7 +1067,6 @@ async fn seed_issue_with_junction_candidate(
         score_breakdown: Set(json!({})),
         candidate: Set(json!({"kind": "issue"})),
         applied_at: Set(None),
-        dismissed_at: Set(None),
     }
     .insert(&app.state().db)
     .await

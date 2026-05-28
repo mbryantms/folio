@@ -103,7 +103,6 @@ async fn seed_issue_run(app: &TestApp, issue_id: &str, source: &str) -> (Uuid, i
         score_breakdown: Set(json!({})),
         candidate: Set(json!({"kind": "issue"})),
         applied_at: Set(None),
-        dismissed_at: Set(None),
     }
     .insert(db)
     .await
@@ -619,7 +618,6 @@ async fn apply_series_with_writeback_enabled_composes_per_issue_and_triggers_one
         score_breakdown: Set(json!({})),
         candidate: Set(json!({"kind": "series"})),
         applied_at: Set(None),
-        dismissed_at: Set(None),
     }
     .insert(&app.state().db)
     .await
@@ -736,7 +734,6 @@ async fn apply_series_with_writeback_skips_removed_issues() {
         score_breakdown: Set(json!({})),
         candidate: Set(json!({"kind": "series"})),
         applied_at: Set(None),
-        dismissed_at: Set(None),
     }
     .insert(&app.state().db)
     .await
@@ -825,7 +822,6 @@ async fn apply_series_writeback_disabled_takes_legacy_path() {
         score_breakdown: Set(json!({})),
         candidate: Set(json!({"kind": "series"})),
         applied_at: Set(None),
-        dismissed_at: Set(None),
     }
     .insert(&app.state().db)
     .await

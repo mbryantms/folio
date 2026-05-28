@@ -236,11 +236,6 @@ function RunDetailPanel({ id }: { id: string }) {
                     Applied
                   </Badge>
                 )}
-                {c.dismissed_at && !c.applied_at && (
-                  <Badge variant="outline" className="text-[10px]">
-                    Dismissed
-                  </Badge>
-                )}
               </li>
             ))}
           </ul>

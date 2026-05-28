@@ -283,7 +283,6 @@ async fn candidates_series_returns_completed_run_with_rows() {
         score_breakdown: Set(json!({"name": 45.0, "year": 20.0, "publisher": 15.0, "issue_number": 0.0, "volume": 0.0})),
         candidate: Set(json!({"kind": "series", "name": "Saga"})),
         applied_at: Set(None),
-        dismissed_at: Set(None),
     }
     .insert(db)
     .await
@@ -451,7 +450,6 @@ async fn seed_completed_series_run(
         score_breakdown: Set(json!({})),
         candidate: Set(json!({})),
         applied_at: Set(None),
-        dismissed_at: Set(None),
     }
     .insert(db)
     .await

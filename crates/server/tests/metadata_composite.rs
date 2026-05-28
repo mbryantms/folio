@@ -143,7 +143,6 @@ async fn seed_two_provider_run(app: &TestApp, issue_id: &str) -> Uuid {
             score_breakdown: Set(json!({})),
             candidate: Set(issue_candidate_json(source, ext)),
             applied_at: Set(None),
-            dismissed_at: Set(None),
         }
         .insert(db)
         .await

@@ -8981,12 +8981,6 @@
             "type": "string"
           },
           "candidate": {},
-          "dismissed_at": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "external_id": {
             "type": "string"
           },

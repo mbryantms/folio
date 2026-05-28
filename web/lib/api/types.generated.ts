@@ -3806,7 +3806,6 @@ export interface components {
             applied_at?: string | null;
             bucket: string;
             candidate: unknown;
-            dismissed_at?: string | null;
             external_id: string;
             /** Format: int32 */
             ordinal: number;

@@ -701,7 +701,6 @@ pub struct CandidateRow {
     pub score_breakdown: serde_json::Value,
     pub candidate: serde_json::Value,
     pub applied_at: Option<String>,
-    pub dismissed_at: Option<String>,
 }
 
 #[utoipa::path(
@@ -749,7 +748,6 @@ pub async fn get_run(
             score_breakdown: c.score_breakdown,
             candidate: c.candidate,
             applied_at: c.applied_at.map(|t| t.to_rfc3339()),
-            dismissed_at: c.dismissed_at.map(|t| t.to_rfc3339()),
         })
         .collect();
     Json(RunDetailResp {

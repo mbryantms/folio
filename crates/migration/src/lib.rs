@@ -85,6 +85,7 @@ mod m20270106_000001_metadata_cache_schema_version;
 mod m20270107_000001_archive_backup_retain_allow_zero;
 mod m20270108_000001_archive_edit_schema;
 mod m20270109_000001_series_auto_sync_opt_in;
+mod m20270110_000001_drop_candidate_dismissed_at;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -178,6 +179,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270107_000001_archive_backup_retain_allow_zero::Migration),
             Box::new(m20270108_000001_archive_edit_schema::Migration),
             Box::new(m20270109_000001_series_auto_sync_opt_in::Migration),
+            Box::new(m20270110_000001_drop_candidate_dismissed_at::Migration),
         ]
     }
 }

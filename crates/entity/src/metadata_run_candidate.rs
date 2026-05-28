@@ -2,9 +2,8 @@
 //!
 //! Lifecycle:
 //! - inserted by the orchestrator at search completion
-//! - read by the Candidates API + the Review Queue tab (M6)
-//! - mutated by M4 Apply jobs (`applied_at`) and explicit user dismiss
-//!   (`dismissed_at`)
+//! - read by the Candidates API + the Runs drill-down
+//! - mutated by M4 Apply jobs (`applied_at`)
 //!
 //! `score_breakdown` carries the per-component `Score` from
 //! `metadata::matcher::Score` (name / year / publisher / issue_number /
@@ -34,8 +33,6 @@ pub struct Model {
     pub candidate: Json,
     #[sea_orm(nullable)]
     pub applied_at: Option<DateTimeWithTimeZone>,
-    #[sea_orm(nullable)]
-    pub dismissed_at: Option<DateTimeWithTimeZone>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

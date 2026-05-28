@@ -354,7 +354,6 @@ pub async fn finalize_run(
             score_breakdown: Set(r.score_breakdown_json()),
             candidate: Set(payload_json),
             applied_at: Set(None),
-            dismissed_at: Set(None),
         };
         am.insert(&tx).await?;
     }
