@@ -130,6 +130,8 @@ async fn seed(
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        archive_writeback_jpeg_quality: Set(92),
+        cbr_convert_confirmed_at: Set(None),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -259,7 +261,7 @@ async fn seed(
             comicinfo_count: Set(None),
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),
-        cover_page_index: Set(0),
+            cover_page_index: Set(0),
         }
         .insert(&db)
         .await
@@ -1010,7 +1012,14 @@ async fn patch_writes_field_provenance_alongside_user_edited() {
         .collect();
 
     // Every mappable field landed with set_by='user'.
-    for field in ["title", "summary", "publisher", "age_rating", "genres", "tags"] {
+    for field in [
+        "title",
+        "summary",
+        "publisher",
+        "age_rating",
+        "genres",
+        "tags",
+    ] {
         assert_eq!(
             by_field.get(field).map(|s| s.as_str()),
             Some("user"),
@@ -1050,8 +1059,8 @@ async fn patch_overwrites_existing_provider_provenance_with_user() {
 
     // Pre-seed a provider-applied provenance row for title.
     use server::metadata::MetadataField;
-    use server::metadata::writers::{SetBy, write_field_provenance};
     use server::metadata::identifier::Source;
+    use server::metadata::writers::{SetBy, write_field_provenance};
     write_field_provenance(
         &app.state().db,
         "issue",
@@ -1153,8 +1162,7 @@ async fn delete_field_pin_clears_user_provenance_and_syncs_user_edited() {
         .await
         .unwrap()
         .unwrap();
-    let edited: Vec<String> =
-        serde_json::from_value(issue_row.user_edited).unwrap_or_default();
+    let edited: Vec<String> = serde_json::from_value(issue_row.user_edited).unwrap_or_default();
     assert!(
         !edited.iter().any(|f| f == "title"),
         "title should be dropped from user_edited; got {edited:?}",
@@ -1213,7 +1221,8 @@ async fn delete_field_pin_refuses_to_clear_provider_set_provenance() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        body["cleared"], serde_json::Value::Bool(false),
+        body["cleared"],
+        serde_json::Value::Bool(false),
         "provider-set rows are not user pins — must not delete",
     );
 

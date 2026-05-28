@@ -211,6 +211,121 @@ fn fsync_dir(_path: &Path) -> Result<(), RewriteError> {
     Ok(())
 }
 
+/// Atomically convert one archive into another at a *different* path —
+/// the CBR→CBZ edit path (`archive-rewrite-1.0` M6). Unlike
+/// [`rewrite_atomic`], the original (`original`, e.g. `foo.cbr`) and the
+/// destination (`dst`, e.g. `foo.cbz`) have different names:
+///
+///   1. Caller writes the new archive into `<dst>.tmp`.
+///   2. fsync the tmp file + parent dir.
+///   3. Rename `original` → `<original>.bak` (the `.cbr` is kept as the
+///      single rollback slot; an existing `.bak` is overwritten).
+///   4. Rename `<dst>.tmp` → `dst`.
+///   5. fsync the parent dir.
+///
+/// On failure before step 3 the original is untouched (worst case an
+/// orphan `<dst>.tmp`, reaped by [`startup_cleanup`]). Returns the `.bak`
+/// path of the preserved original.
+pub fn convert_atomic<F>(
+    original: &Path,
+    dst: &Path,
+    write_into: F,
+) -> Result<RewriteOutcome, RewriteError>
+where
+    F: FnOnce(&Path) -> Result<(), RewriteError>,
+{
+    let parent = dst
+        .parent()
+        .ok_or_else(|| RewriteError::NoParent(dst.to_path_buf()))?;
+    let tmp = temp_sibling(dst);
+    let _ = fs::remove_file(&tmp);
+
+    write_into(&tmp)?;
+    fsync_file(&tmp)?;
+    fsync_dir(parent)?;
+
+    let backup = backup_slot_path(original, 0);
+    if original.exists() {
+        // rename overwrites any prior .bak atomically.
+        fs::rename(original, &backup)?;
+    }
+    fs::rename(&tmp, dst)?;
+    fsync_dir(parent)?;
+
+    Ok(RewriteOutcome {
+        target: dst.to_path_buf(),
+        backup: Some(backup),
+    })
+}
+
+/// One backup-slot path for `target` — `<target>.bak` for slot 0,
+/// `<target>.bak.N` for N >= 1. Exposed so callers (the backups-listing
+/// endpoint, restore) can enumerate the retention slots without
+/// re-deriving the naming scheme.
+pub fn backup_slot(target: &Path, slot: i32) -> PathBuf {
+    backup_slot_path(target, slot)
+}
+
+/// Restore the most recent backup (`<target>.bak`) over `target` — the
+/// one-click undo of the last rewrite. The rename is atomic on the same
+/// filesystem, so a crash can't leave `target` half-written. Returns
+/// `Err(NotFound)` when no `.bak` exists. Higher slots (`.bak.1`, …) are
+/// left untouched (older history stays available).
+pub fn restore_latest_backup(target: &Path) -> Result<(), RewriteError> {
+    let bak = backup_slot_path(target, 0);
+    if !bak.exists() {
+        return Err(RewriteError::Io(io::Error::new(
+            ErrorKind::NotFound,
+            "no .bak to restore",
+        )));
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| RewriteError::NoParent(target.to_path_buf()))?;
+    fs::rename(&bak, target)?;
+    fsync_dir(parent)?;
+    Ok(())
+}
+
+/// Whether `dir` lives on a writable mount — the precondition for any
+/// archive rewrite (page edits or sidecar writeback). Probed with
+/// `statvfs(2)`: a read-only mount sets `ST_RDONLY` in `f_flag`. We fail
+/// closed — a path that can't be stat'd (missing root, permission error)
+/// reports `false` so the admin toggle / PATCH path refuses to enable
+/// writeback against a library we can't write to.
+///
+/// Side-effect-free (no probe file), so it's safe to call on every admin
+/// library list/detail render.
+#[cfg(unix)]
+#[allow(
+    unsafe_code,
+    reason = "statvfs(2) FFI: no safe std wrapper exists for the read-only mount flag"
+)]
+pub fn mount_writable(dir: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(cpath) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `cpath` is a valid NUL-terminated C string for the lifetime
+    // of the call; `stat` is zero-initialized and only read after a `0`
+    // (success) return from `statvfs`.
+    unsafe {
+        let mut stat: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(cpath.as_ptr(), &mut stat) != 0 {
+            return false;
+        }
+        (stat.f_flag & libc::ST_RDONLY) == 0
+    }
+}
+
+/// Non-Unix fallback: we don't ship a Windows rewrite path in v1, so
+/// optimistically report writable and let the rewrite itself surface any
+/// failure.
+#[cfg(not(unix))]
+pub fn mount_writable(_dir: &Path) -> bool {
+    true
+}
+
 /// Walk every library root and remove `.tmp` siblings older than `ttl`
 /// — leftovers from a crashed rewrite. Called once at server boot from
 /// [`crate::state::AppState::new`] (M0.5). Safe to call repeatedly; no-op
@@ -434,5 +549,61 @@ mod tests {
         );
         assert_eq!(removed, 1);
         assert!(!stale.exists());
+    }
+
+    #[test]
+    fn restore_latest_backup_reverts_target() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("issue.cbz");
+        fs::write(&target, b"v1").unwrap();
+        rewrite_atomic(&target, 1, |tmp| Ok(fs::write(tmp, b"v2")?)).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"v2");
+
+        restore_latest_backup(&target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"v1");
+        // The .bak was consumed by the restore.
+        assert!(!target.with_extension("cbz.bak").exists());
+    }
+
+    #[test]
+    fn restore_latest_backup_errors_without_bak() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("issue.cbz");
+        fs::write(&target, b"v1").unwrap();
+        let err = restore_latest_backup(&target).unwrap_err();
+        assert!(matches!(err, RewriteError::Io(_)));
+    }
+
+    #[test]
+    fn convert_atomic_moves_original_to_bak_and_writes_dst() {
+        let dir = TempDir::new().unwrap();
+        let original = dir.path().join("issue.cbr");
+        let dst = dir.path().join("issue.cbz");
+        fs::write(&original, b"rar-bytes").unwrap();
+
+        let outcome = convert_atomic(&original, &dst, |tmp| {
+            fs::write(tmp, b"zip-bytes")?;
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(!original.exists(), "original .cbr moved away");
+        assert_eq!(fs::read(&dst).unwrap(), b"zip-bytes");
+        let bak = outcome.backup.unwrap();
+        assert_eq!(fs::read(&bak).unwrap(), b"rar-bytes");
+        assert_eq!(bak, dir.path().join("issue.cbr.bak"));
+    }
+
+    #[test]
+    fn mount_writable_true_for_normal_dir() {
+        let dir = TempDir::new().unwrap();
+        assert!(mount_writable(dir.path()));
+    }
+
+    #[test]
+    fn mount_writable_false_for_missing_path() {
+        let dir = TempDir::new().unwrap();
+        let missing = dir.path().join("does/not/exist");
+        assert!(!mount_writable(&missing));
     }
 }

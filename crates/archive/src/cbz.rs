@@ -203,6 +203,44 @@ impl Cbz {
             }
         }
     }
+
+    /// Like [`Self::raw_copy_to`] but writes the entry under `new_name`
+    /// instead of its stored name — preserves the compressed payload
+    /// verbatim (no recompress) while letting the page-editor rewrite
+    /// reorder + rename pages contiguously. Used by
+    /// [`crate::cbz_write::rebuild_pages`].
+    pub(crate) fn raw_copy_to_rename<W>(
+        &mut self,
+        ordinal: usize,
+        dst: &mut zip::ZipWriter<W>,
+        new_name: &str,
+    ) -> Result<RawEntryInfo, ArchiveError>
+    where
+        W: std::io::Write + std::io::Seek,
+    {
+        match &mut self.archive {
+            OpenedZip::File(a) => {
+                let zf = a.by_index_raw(ordinal).map_err(map_zip_err)?;
+                let info = RawEntryInfo {
+                    name: new_name.to_string(),
+                    uncompressed_size: zf.size(),
+                };
+                dst.raw_copy_file_rename(zf, new_name)
+                    .map_err(map_zip_err)?;
+                Ok(info)
+            }
+            OpenedZip::Mem(a) => {
+                let zf = a.by_index_raw(ordinal).map_err(map_zip_err)?;
+                let info = RawEntryInfo {
+                    name: new_name.to_string(),
+                    uncompressed_size: zf.size(),
+                };
+                dst.raw_copy_file_rename(zf, new_name)
+                    .map_err(map_zip_err)?;
+                Ok(info)
+            }
+        }
+    }
 }
 
 /// Returned by [`Cbz::raw_copy_to`] so the rebuilder can keep a running
@@ -218,7 +256,6 @@ pub(crate) struct RawEntryInfo {
 }
 
 impl Cbz {
-
     /// Build the index/entry tables. Shared between the happy-path (File)
     /// open and the recovery-path (in-memory cursor over rewritten bytes).
     fn finish(

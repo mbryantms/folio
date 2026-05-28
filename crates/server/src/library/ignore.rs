@@ -177,6 +177,8 @@ mod tests {
             metadata_writeback_enabled: false,
             archive_backup_retain_count: 1,
             archive_backup_retain_days: 30,
+            archive_writeback_jpeg_quality: 92,
+            cbr_convert_confirmed_at: None,
             metadata_publisher_blacklist: serde_json::json!([]),
             filename_ignore_leading_numbers: false,
             filename_assume_issue_one: false,

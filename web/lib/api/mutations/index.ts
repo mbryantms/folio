@@ -40,6 +40,10 @@ import type {
   CreateSavedViewReq,
   MarkerView,
   DeleteLibraryResp,
+  EditRequest,
+  EditResponse,
+  RestoreResponse,
+  UploadView,
   ImportSummary,
   IssueDetailView,
   LibraryAccessReq,
@@ -812,10 +816,7 @@ export function useUpdateIssue(seriesSlug: string, issueSlug: string) {
  * is refetched so the row re-classifies live to `WouldFill` /
  * `WouldReplace` and the user can Apply normally.
  */
-export function useClearIssueFieldPin(
-  seriesSlug: string,
-  issueSlug: string,
-) {
+export function useClearIssueFieldPin(seriesSlug: string, issueSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<{ cleared: boolean }, { field: string }>(
     ({ field }) => ({
@@ -844,6 +845,57 @@ export function useClearIssueFieldPin(
  * rescan rooted at the issue's series. The user-facing affordance is "Scan
  * issue" (consistent with "Scan library" / "Scan series").
  */
+/**
+ * Enqueue a page-byte edit (`archive-rewrite-1.0` M3). Body carries the
+ * `PageOp[]` lowered from the editor's working state. The server returns
+ * 202 + a `Queued` payload; the rewrite + rescan run in the background,
+ * so the call site closes the dialog and `router.refresh()`es to pick up
+ * the new state once the scan completes. Pass `dry_run: true` to validate
+ * without rewriting.
+ */
+export function useArchiveEditMutation(issueId: string) {
+  return useApiMutation<EditResponse, EditRequest>(
+    (body) => ({
+      path: `/issues/${encodeURIComponent(issueId)}/archive/edit`,
+      method: "POST",
+      body,
+    }),
+    { successMessage: "Archive edit queued" },
+  );
+}
+
+/** Restore an issue's archive from its most recent `.bak`. */
+export function useRestoreArchiveMutation(issueId: string) {
+  return useApiMutation<RestoreResponse, void>(
+    () => ({
+      path: `/issues/${encodeURIComponent(issueId)}/archive/restore`,
+      method: "POST",
+    }),
+    { successMessage: "Restore queued" },
+  );
+}
+
+/**
+ * Stage an image upload for a page Replace op. Multipart, so it bypasses
+ * the JSON-only `useApiMutation` and posts `FormData` through `apiFetch`
+ * directly. Returns the upload id the edit job dereferences from the
+ * staging dir.
+ */
+export async function stageImageUpload(file: File): Promise<UploadView> {
+  const form = new FormData();
+  form.append("file", file);
+  const csrf = getCsrfToken();
+  const res = await apiFetch("/uploads", {
+    method: "POST",
+    headers: csrf ? { "X-CSRF-Token": csrf } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    throw new Error(`upload failed (${res.status})`);
+  }
+  return (await res.json()) as UploadView;
+}
+
 export function useScanIssue(seriesSlug: string, issueSlug: string) {
   // Defaults to force=true on the server side, but make it explicit here so
   // a future server-default change doesn't silently regress this UX. The

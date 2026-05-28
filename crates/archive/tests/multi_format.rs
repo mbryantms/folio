@@ -1,8 +1,9 @@
 //! Library Scanner v1 — Milestone 12 multi-format archive smoke tests.
 //!
-//! Validates the dispatch + the CBT (tar) reader. CBR and CB7 are
-//! scaffolded; their readers return "not implemented" today and will be
-//! filled in by a follow-up plan.
+//! Validates the dispatch + the CBT (tar) reader. CBR is now a real
+//! read-only reader (archive-rewrite-1.0 M6); a valid `.cbr` fixture
+//! can't be created in-repo (no RAR writer exists), so we only smoke-test
+//! that a non-RAR `.cbr` fails gracefully. CB7 is still scaffolded.
 
 use archive::{ArchiveError, ArchiveLimits, open};
 use tempfile::tempdir;
@@ -48,7 +49,10 @@ fn cbt_round_trip() {
 }
 
 #[test]
-fn cbr_currently_returns_not_implemented() {
+fn cbr_rejects_non_rar_gracefully() {
+    // The CBR reader is implemented (unrar-backed), but a bogus payload
+    // must surface as a typed Malformed error rather than panicking — and
+    // it must NOT be the old "not yet implemented" stub message.
     let tmp = tempdir().unwrap();
     let p = tmp.path().join("test.cbr");
     std::fs::write(&p, b"not a real rar").unwrap();
@@ -60,7 +64,10 @@ fn cbr_currently_returns_not_implemented() {
         ArchiveError::Malformed(s) => s,
         other => panic!("expected Malformed, got {other:?}"),
     };
-    assert!(msg.contains("CBR support not yet implemented"));
+    assert!(
+        !msg.contains("not yet implemented"),
+        "stub message leaked: {msg}"
+    );
 }
 
 #[test]

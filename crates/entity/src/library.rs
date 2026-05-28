@@ -74,6 +74,18 @@ pub struct Model {
     /// keep forever.
     #[serde(default = "default_archive_backup_retain_days")]
     pub archive_backup_retain_days: i32,
+    /// Encoder quality (60..=100) used when the page editor re-encodes a
+    /// rotated / replaced JPEG page (`archive-rewrite-1.0`). Default 92.
+    /// PNG / WebP pages stay lossless and ignore this.
+    #[serde(default = "default_archive_writeback_jpeg_quality")]
+    pub archive_writeback_jpeg_quality: i32,
+    /// First-time CBR→CBZ conversion confirm gate. NULL until the
+    /// operator acknowledges the conversion once for this library; set
+    /// thereafter so subsequent CBR edits don't re-prompt
+    /// (`archive-rewrite-1.0` M6).
+    #[serde(default)]
+    #[sea_orm(nullable)]
+    pub cbr_convert_confirmed_at: Option<DateTimeWithTimeZone>,
     /// Publisher names the matcher's pre-filter should drop before
     /// scoring. Comparison is case-insensitive against the
     /// title-sanitized form so "DC Comics" / "dc comics" / "DC" all
@@ -108,6 +120,10 @@ fn default_archive_backup_retain_count() -> i32 {
 
 fn default_archive_backup_retain_days() -> i32 {
     30
+}
+
+fn default_archive_writeback_jpeg_quality() -> i32 {
+    92
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

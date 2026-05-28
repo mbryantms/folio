@@ -115,3 +115,8 @@ list_review_queue   # GET /admin/metadata/review-queue — pending medium/low ma
 # ── admin_metadata.rs (matching-accuracy-1.0 M0) ─────────────
 match_quality       # GET /admin/metadata/match-quality — read-only outcome distribution
 
+# ── archive_edit.rs (archive-rewrite-1.0 M2) ─────────────────
+edit                # POST /issues/{id}/archive/edit — enqueues ArchiveEditJob; the worker writes audit_log (admin.issue.archive_edit) on completion
+backups             # GET /issues/{id}/archive/backups — read-only listing of .bak files
+upload              # POST /uploads — transient image staging (data_dir/uploads/<uuid>), not a mutation on domain data
+

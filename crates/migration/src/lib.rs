@@ -83,6 +83,7 @@ mod m20270104_000001_issue_cover_page_index;
 mod m20270105_000001_library_auto_apply_strong_matches;
 mod m20270106_000001_metadata_cache_schema_version;
 mod m20270107_000001_archive_backup_retain_allow_zero;
+mod m20270108_000001_archive_edit_schema;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -174,6 +175,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270105_000001_library_auto_apply_strong_matches::Migration),
             Box::new(m20270106_000001_metadata_cache_schema_version::Migration),
             Box::new(m20270107_000001_archive_backup_retain_allow_zero::Migration),
+            Box::new(m20270108_000001_archive_edit_schema::Migration),
         ]
     }
 }

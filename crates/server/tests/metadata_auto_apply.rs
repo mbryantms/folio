@@ -26,10 +26,10 @@ use axum::{
 use common::TestApp;
 use sea_orm::EntityTrait;
 use serde_json::json;
+use server::metadata::identifier::Source;
 use server::metadata::match_outcome::MatchOutcomeKind;
 use server::metadata::matcher::{Confidence, Score};
 use server::metadata::orchestrator::{CandidatePayload, RankedCandidate};
-use server::metadata::identifier::Source;
 use server::metadata::provider::SeriesCandidate;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -145,6 +145,8 @@ async fn create_library(app: &TestApp) -> (Uuid, String) {
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        archive_writeback_jpeg_quality: Set(92),
+        cbr_convert_confirmed_at: Set(None),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -154,7 +156,11 @@ async fn create_library(app: &TestApp) -> (Uuid, String) {
     .await
     .unwrap();
     // Sanity check via the slug-aware finder used by the API surface.
-    let lib = LibraryEntity::find_by_id(id).one(&app.state().db).await.unwrap().unwrap();
+    let lib = LibraryEntity::find_by_id(id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(lib.slug, slug);
     (id, slug)
 }
@@ -167,8 +173,16 @@ fn single_good_classification_is_the_only_auto_apply_gate() {
     // auto-apply path. Mirrors the gating in `maybe_auto_apply_*`.
     let cases: &[(Vec<Confidence>, MatchOutcomeKind, bool)] = &[
         (vec![Confidence::High], MatchOutcomeKind::SingleGood, true),
-        (vec![Confidence::Medium], MatchOutcomeKind::SingleBadCover, false),
-        (vec![Confidence::Low], MatchOutcomeKind::SingleBadCover, false),
+        (
+            vec![Confidence::Medium],
+            MatchOutcomeKind::SingleBadCover,
+            false,
+        ),
+        (
+            vec![Confidence::Low],
+            MatchOutcomeKind::SingleBadCover,
+            false,
+        ),
         (
             vec![Confidence::High, Confidence::Medium],
             MatchOutcomeKind::MultiGood,
@@ -301,7 +315,9 @@ async fn library_get_surfaces_auto_apply_toggle_in_view() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let view: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(view["metadata_auto_apply_strong_matches"], json!(true));
 }

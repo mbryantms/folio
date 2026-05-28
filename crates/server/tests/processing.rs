@@ -94,6 +94,8 @@ async fn create_library_with_missing_report(
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        archive_writeback_jpeg_quality: Set(92),
+        cbr_convert_confirmed_at: Set(None),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -829,12 +831,18 @@ async fn metroninfo_writes_full_external_ids_set() {
     // The cross-source rows MetronInfo provided that ComicInfo never
     // mentions must carry `set_by='metroninfo'` so the precedence rule
     // (user > everyone-else) stays auditable.
-    assert_eq!(by_source.get("gcd").map(|t| t.1.as_str()), Some("metroninfo"));
+    assert_eq!(
+        by_source.get("gcd").map(|t| t.1.as_str()),
+        Some("metroninfo")
+    );
     assert_eq!(
         by_source.get("marvel").map(|t| t.1.as_str()),
         Some("metroninfo")
     );
-    assert_eq!(by_source.get("locg").map(|t| t.1.as_str()), Some("metroninfo"));
+    assert_eq!(
+        by_source.get("locg").map(|t| t.1.as_str()),
+        Some("metroninfo")
+    );
 }
 
 #[tokio::test]
@@ -854,13 +862,7 @@ async fn metroninfo_unknown_id_source_silently_skipped() {
             <ID source="metron">77777</ID>
             <ID source="future_provider">9999</ID>
         </MetronInfo>"#;
-    write_cbz_with_xml(
-        &folder.join("Tau 001.cbz"),
-        1,
-        2,
-        None,
-        Some(metron_info),
-    );
+    write_cbz_with_xml(&folder.join("Tau 001.cbz"), 1, 2, None, Some(metron_info));
 
     let lib_id = create_library(&app, tmp.path()).await;
     let state = app.state();
@@ -896,14 +898,9 @@ async fn series_folder_tags_create_external_ids_rows() {
 
     // Need a CBZ in the folder so the scanner walks past the
     // empty-folder skip — minimal ComicInfo is enough.
-    let comic_info = r#"<?xml version="1.0"?><ComicInfo><Series>Saga</Series><Number>1</Number></ComicInfo>"#;
-    write_cbz_with_xml(
-        &folder.join("Saga 001.cbz"),
-        1,
-        2,
-        Some(comic_info),
-        None,
-    );
+    let comic_info =
+        r#"<?xml version="1.0"?><ComicInfo><Series>Saga</Series><Number>1</Number></ComicInfo>"#;
+    write_cbz_with_xml(&folder.join("Saga 001.cbz"), 1, 2, Some(comic_info), None);
 
     let lib_id = create_library(&app, tmp.path()).await;
     let state = app.state();
@@ -926,11 +923,15 @@ async fn series_folder_tags_create_external_ids_rows() {
         .map(|r| (r.source, (r.external_id, r.set_by)))
         .collect();
     assert_eq!(
-        by_source.get("comicvine").map(|t| (t.0.as_str(), t.1.as_str())),
+        by_source
+            .get("comicvine")
+            .map(|t| (t.0.as_str(), t.1.as_str())),
         Some(("77777", "scanner_folder_tag"))
     );
     assert_eq!(
-        by_source.get("metron").map(|t| (t.0.as_str(), t.1.as_str())),
+        by_source
+            .get("metron")
+            .map(|t| (t.0.as_str(), t.1.as_str())),
         Some(("88888", "scanner_folder_tag"))
     );
     assert_eq!(
@@ -954,14 +955,9 @@ async fn series_folder_tag_does_not_overwrite_user_pinned() {
     let tmp = tempfile::tempdir().unwrap();
     let folder = tmp.path().join("Phi (2020) [cv-11111]");
     std::fs::create_dir_all(&folder).unwrap();
-    let comic_info = r#"<?xml version="1.0"?><ComicInfo><Series>Phi</Series><Number>1</Number></ComicInfo>"#;
-    write_cbz_with_xml(
-        &folder.join("Phi 001.cbz"),
-        1,
-        2,
-        Some(comic_info),
-        None,
-    );
+    let comic_info =
+        r#"<?xml version="1.0"?><ComicInfo><Series>Phi</Series><Number>1</Number></ComicInfo>"#;
+    write_cbz_with_xml(&folder.join("Phi 001.cbz"), 1, 2, Some(comic_info), None);
 
     let lib_id = create_library(&app, tmp.path()).await;
     let state = app.state();
@@ -998,6 +994,9 @@ async fn series_folder_tag_does_not_overwrite_user_pinned() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(row.external_id, "99999", "user value must win over folder-tag rescan");
+    assert_eq!(
+        row.external_id, "99999",
+        "user value must win over folder-tag rescan"
+    );
     assert_eq!(row.set_by, "user");
 }

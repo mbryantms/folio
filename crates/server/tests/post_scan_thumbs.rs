@@ -72,6 +72,8 @@ async fn seed_issue(app: &TestApp, file_path: &Path, pages: usize) -> String {
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        archive_writeback_jpeg_quality: Set(92),
+        cbr_convert_confirmed_at: Set(None),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -363,6 +365,8 @@ async fn worker_marks_error_on_unreadable_archive() {
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        archive_writeback_jpeg_quality: Set(92),
+        cbr_convert_confirmed_at: Set(None),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -658,7 +662,10 @@ async fn cover_worker_tops_up_phash_when_thumb_is_current() {
         .await
         .unwrap()
         .unwrap();
-    assert!(row.phash.is_some(), "scan-time top-up should populate phash");
+    assert!(
+        row.phash.is_some(),
+        "scan-time top-up should populate phash"
+    );
     assert!(row.dhash.is_some());
     assert!(row.ahash.is_some());
 

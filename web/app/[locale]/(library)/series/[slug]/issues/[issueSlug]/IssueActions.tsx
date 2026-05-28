@@ -25,9 +25,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { PageEditor } from "@/components/library/PageEditor";
 import {
   useClearIssueFieldPin,
   useForceRecreateIssuePageMap,
+  useRestoreArchiveMutation,
   useUpdateIssue,
   useUpdateSeries,
 } from "@/lib/api/mutations";
@@ -96,13 +98,17 @@ export function IssueActions({
    *  URLs in the settings menu. */
   cblSavedViewId?: string | null;
 }) {
+  const router = useRouter();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmForceRecreate, setConfirmForceRecreate] = useState(false);
+  const [archiveEditOpen, setArchiveEditOpen] = useState(false);
+  const [confirmRestore, setConfirmRestore] = useState(false);
   const forceRecreatePageMap = useForceRecreateIssuePageMap(
     issue.series_slug,
     issue.slug,
     issue.library_id,
   );
+  const restoreArchive = useRestoreArchiveMutation(issue.id);
 
   // Keyboard shortcuts (M5): `r`/`u`/`b`/`i`/`e`. Gated off while a
   // modal owns focus so a stray bare-key press inside the edit sheet
@@ -120,6 +126,8 @@ export function IssueActions({
         cblSavedViewId={cblSavedViewId}
         onEdit={() => setEditOpen(true)}
         onForceRecreatePageMap={() => setConfirmForceRecreate(true)}
+        onEditArchive={() => setArchiveEditOpen(true)}
+        onRestoreArchive={() => setConfirmRestore(true)}
       />
       <EditSheet
         issue={issue}
@@ -127,6 +135,43 @@ export function IssueActions({
         open={editOpen}
         onOpenChange={setEditOpen}
       />
+      <PageEditor
+        issue={issue}
+        open={archiveEditOpen}
+        onOpenChange={setArchiveEditOpen}
+      />
+      <AlertDialog open={confirmRestore} onOpenChange={setConfirmRestore}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore from backup?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The archive&apos;s most recent backup (<code>.bak</code>) is
+              restored over the current file, undoing the last edit. The issue
+              is re-scanned afterward.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoreArchive.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                restoreArchive.mutate(undefined, {
+                  onSuccess: () => {
+                    setConfirmRestore(false);
+                    router.refresh();
+                  },
+                });
+              }}
+              disabled={restoreArchive.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Restore
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog
         open={confirmForceRecreate}
         onOpenChange={setConfirmForceRecreate}
@@ -386,442 +431,517 @@ function EditForm({
 
   return (
     <PinControlContext.Provider value={pinControl}>
-    <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
-      <div className="flex-1 overflow-y-auto px-6 py-5">
-        <div className="space-y-8">
-          {pinnedFields.size > 0 && (
-            <div className="border-border bg-muted/50 text-muted-foreground rounded-md border px-3 py-2 text-xs">
-              <span className="text-foreground font-medium">Locally edited.</span>{" "}
-              {pinnedFields.size} field{pinnedFields.size === 1 ? " is" : "s are"}{" "}
-              protected from scanner / metadata-fetch overwrites. Click the
-              <PinOff className="mx-1 inline h-3 w-3 align-text-bottom" />
-              icon next to a field to release it so future updates can flow
-              through.
-            </div>
-          )}
-          <Section title="Identity" hint="Title and issue ordering.">
-            <Field label="Title" htmlFor="ed-title" pinField="title">
-              <Input
-                id="ed-title"
-                value={form.title}
-                onChange={(e) => set("title", e.target.value)}
-                placeholder="Issue title (e.g. The Beginning)"
-              />
-            </Field>
-            <Row>
-              <Field label="Issue number" htmlFor="ed-number" pinField="number_raw">
+      <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="space-y-8">
+            {pinnedFields.size > 0 && (
+              <div className="border-border bg-muted/50 text-muted-foreground rounded-md border px-3 py-2 text-xs">
+                <span className="text-foreground font-medium">
+                  Locally edited.
+                </span>{" "}
+                {pinnedFields.size} field
+                {pinnedFields.size === 1 ? " is" : "s are"} protected from
+                scanner / metadata-fetch overwrites. Click the
+                <PinOff className="mx-1 inline h-3 w-3 align-text-bottom" />
+                icon next to a field to release it so future updates can flow
+                through.
+              </div>
+            )}
+            <Section title="Identity" hint="Title and issue ordering.">
+              <Field label="Title" htmlFor="ed-title" pinField="title">
                 <Input
-                  id="ed-number"
-                  value={form.number}
-                  onChange={(e) => set("number", e.target.value)}
-                  placeholder="1, 1.5, Annual 2"
+                  id="ed-title"
+                  value={form.title}
+                  onChange={(e) => set("title", e.target.value)}
+                  placeholder="Issue title (e.g. The Beginning)"
                 />
               </Field>
-              <Field label="Sort number" htmlFor="ed-sort" pinField="sort_number">
-                <Input
-                  id="ed-sort"
-                  type="number"
-                  step="0.0001"
-                  value={form.sort_number}
-                  onChange={(e) => set("sort_number", e.target.value)}
-                  placeholder="Used for ordering within a series"
+              <Row>
+                <Field
+                  label="Issue number"
+                  htmlFor="ed-number"
+                  pinField="number_raw"
+                >
+                  <Input
+                    id="ed-number"
+                    value={form.number}
+                    onChange={(e) => set("number", e.target.value)}
+                    placeholder="1, 1.5, Annual 2"
+                  />
+                </Field>
+                <Field
+                  label="Sort number"
+                  htmlFor="ed-sort"
+                  pinField="sort_number"
+                >
+                  <Input
+                    id="ed-sort"
+                    type="number"
+                    step="0.0001"
+                    value={form.sort_number}
+                    onChange={(e) => set("sort_number", e.target.value)}
+                    placeholder="Used for ordering within a series"
+                  />
+                </Field>
+              </Row>
+              <Row>
+                <Field label="Volume" htmlFor="ed-volume" pinField="volume">
+                  <Input
+                    id="ed-volume"
+                    type="number"
+                    min={0}
+                    max={9999}
+                    value={form.volume}
+                    onChange={(e) => set("volume", e.target.value)}
+                    // Leaving this blank means "inherit from the parent
+                    // series" — the issue page renders `issue.volume ??
+                    // series.volume` so single-volume runs and most
+                    // multi-volume runs need no per-issue override.
+                    // Set this only when a specific issue's ComicInfo
+                    // legitimately claims a different volume than the
+                    // run it sits in.
+                    placeholder="Inherits from series"
+                  />
+                </Field>
+                <Field
+                  label="Alternate series"
+                  htmlFor="ed-alt-series"
+                  pinField="alternate_series"
+                >
+                  <Input
+                    id="ed-alt-series"
+                    value={form.alternate_series}
+                    onChange={(e) => set("alternate_series", e.target.value)}
+                    placeholder="Crossover or reprint name"
+                  />
+                </Field>
+              </Row>
+              <Field label="Summary" htmlFor="ed-summary" pinField="summary">
+                <Textarea
+                  id="ed-summary"
+                  rows={4}
+                  value={form.summary}
+                  onChange={(e) => set("summary", e.target.value)}
+                  placeholder="Short synopsis shown above the metadata."
                 />
               </Field>
-            </Row>
-            <Row>
-              <Field label="Volume" htmlFor="ed-volume" pinField="volume">
-                <Input
-                  id="ed-volume"
-                  type="number"
-                  min={0}
-                  max={9999}
-                  value={form.volume}
-                  onChange={(e) => set("volume", e.target.value)}
-                  // Leaving this blank means "inherit from the parent
-                  // series" — the issue page renders `issue.volume ??
-                  // series.volume` so single-volume runs and most
-                  // multi-volume runs need no per-issue override.
-                  // Set this only when a specific issue's ComicInfo
-                  // legitimately claims a different volume than the
-                  // run it sits in.
-                  placeholder="Inherits from series"
-                />
-              </Field>
-              <Field label="Alternate series" htmlFor="ed-alt-series" pinField="alternate_series">
-                <Input
-                  id="ed-alt-series"
-                  value={form.alternate_series}
-                  onChange={(e) => set("alternate_series", e.target.value)}
-                  placeholder="Crossover or reprint name"
-                />
-              </Field>
-            </Row>
-            <Field label="Summary" htmlFor="ed-summary" pinField="summary">
-              <Textarea
-                id="ed-summary"
-                rows={4}
-                value={form.summary}
-                onChange={(e) => set("summary", e.target.value)}
-                placeholder="Short synopsis shown above the metadata."
-              />
-            </Field>
-            <Field label="Notes" htmlFor="ed-notes" pinField="notes">
-              <Textarea
-                id="ed-notes"
-                rows={3}
-                value={form.notes}
-                onChange={(e) => set("notes", e.target.value)}
-                placeholder="Free-form notes from ComicInfo or your own."
-              />
-            </Field>
-          </Section>
-
-          <Section
-            title="Publication"
-            hint="Publisher and date the issue was released."
-          >
-            <Row>
-              <Field label="Publisher" htmlFor="ed-publisher" pinField="publisher">
-                <Input
-                  id="ed-publisher"
-                  value={form.publisher}
-                  onChange={(e) => set("publisher", e.target.value)}
-                />
-              </Field>
-              <Field label="Imprint" htmlFor="ed-imprint" pinField="imprint">
-                <Input
-                  id="ed-imprint"
-                  value={form.imprint}
-                  onChange={(e) => set("imprint", e.target.value)}
-                />
-              </Field>
-            </Row>
-            <Row3>
-              <Field label="Year" htmlFor="ed-year" pinField="year">
-                <Input
-                  id="ed-year"
-                  type="number"
-                  min={1800}
-                  max={2999}
-                  value={form.year}
-                  onChange={(e) => set("year", e.target.value)}
-                />
-              </Field>
-              <Field label="Month" htmlFor="ed-month" pinField="month">
-                <Input
-                  id="ed-month"
-                  type="number"
-                  min={1}
-                  max={12}
-                  value={form.month}
-                  onChange={(e) => set("month", e.target.value)}
-                />
-              </Field>
-              <Field label="Day" htmlFor="ed-day" pinField="day">
-                <Input
-                  id="ed-day"
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={form.day}
-                  onChange={(e) => set("day", e.target.value)}
-                />
-              </Field>
-            </Row3>
-          </Section>
-
-          <Section title="Credits" hint="Comma- or semicolon-separated names.">
-            <Row>
-              <Field label="Writer" htmlFor="ed-writer" pinField="writer">
-                <Input
-                  id="ed-writer"
-                  value={form.writer}
-                  onChange={(e) => set("writer", e.target.value)}
-                />
-              </Field>
-              <Field label="Penciller" htmlFor="ed-penciller" pinField="penciller">
-                <Input
-                  id="ed-penciller"
-                  value={form.penciller}
-                  onChange={(e) => set("penciller", e.target.value)}
-                />
-              </Field>
-            </Row>
-            <Row>
-              <Field label="Inker" htmlFor="ed-inker" pinField="inker">
-                <Input
-                  id="ed-inker"
-                  value={form.inker}
-                  onChange={(e) => set("inker", e.target.value)}
-                />
-              </Field>
-              <Field label="Colorist" htmlFor="ed-colorist" pinField="colorist">
-                <Input
-                  id="ed-colorist"
-                  value={form.colorist}
-                  onChange={(e) => set("colorist", e.target.value)}
-                />
-              </Field>
-            </Row>
-            <Row>
-              <Field label="Letterer" htmlFor="ed-letterer" pinField="letterer">
-                <Input
-                  id="ed-letterer"
-                  value={form.letterer}
-                  onChange={(e) => set("letterer", e.target.value)}
-                />
-              </Field>
-              <Field label="Cover artist" htmlFor="ed-cover-artist" pinField="cover_artist">
-                <Input
-                  id="ed-cover-artist"
-                  value={form.cover_artist}
-                  onChange={(e) => set("cover_artist", e.target.value)}
-                />
-              </Field>
-            </Row>
-            <Row>
-              <Field label="Editor" htmlFor="ed-editor" pinField="editor">
-                <Input
-                  id="ed-editor"
-                  value={form.editor}
-                  onChange={(e) => set("editor", e.target.value)}
-                />
-              </Field>
-              <Field label="Translator" htmlFor="ed-translator" pinField="translator">
-                <Input
-                  id="ed-translator"
-                  value={form.translator}
-                  onChange={(e) => set("translator", e.target.value)}
-                />
-              </Field>
-            </Row>
-          </Section>
-
-          <Section
-            title="Cast & setting"
-            hint="Story arc plus the people, teams, and places featured."
-          >
-            <Field label="Characters" htmlFor="ed-characters" pinField="characters">
-              <Input
-                id="ed-characters"
-                value={form.characters}
-                onChange={(e) => set("characters", e.target.value)}
-                placeholder="Spider-Man, Mary Jane, …"
-              />
-            </Field>
-            <Row>
-              <Field label="Teams" htmlFor="ed-teams" pinField="teams">
-                <Input
-                  id="ed-teams"
-                  value={form.teams}
-                  onChange={(e) => set("teams", e.target.value)}
-                />
-              </Field>
-              <Field label="Locations" htmlFor="ed-locations" pinField="locations">
-                <Input
-                  id="ed-locations"
-                  value={form.locations}
-                  onChange={(e) => set("locations", e.target.value)}
-                />
-              </Field>
-            </Row>
-            <Row>
-              <Field label="Story arc" htmlFor="ed-story-arc" pinField="story_arc">
-                <Input
-                  id="ed-story-arc"
-                  value={form.story_arc}
-                  onChange={(e) => set("story_arc", e.target.value)}
-                />
-              </Field>
-              <Field label="Story arc number" htmlFor="ed-story-arc-number" pinField="story_arc_number">
-                <Input
-                  id="ed-story-arc-number"
-                  value={form.story_arc_number}
-                  onChange={(e) => set("story_arc_number", e.target.value)}
-                  placeholder="1, 2, …"
-                />
-              </Field>
-            </Row>
-          </Section>
-
-          <Section
-            title="Classification"
-            hint="Genre, tags, language, format, and age rating."
-          >
-            <Row>
-              <Field label="Genre" htmlFor="ed-genre" pinField="genre">
-                <Input
-                  id="ed-genre"
-                  value={form.genre}
-                  onChange={(e) => set("genre", e.target.value)}
-                  placeholder="Action, Sci-Fi"
-                />
-              </Field>
-              <Field label="Tags" htmlFor="ed-tags" pinField="tags">
-                <Input
-                  id="ed-tags"
-                  value={form.tags}
-                  onChange={(e) => set("tags", e.target.value)}
-                  placeholder="space-marines, crossover, …"
-                />
-              </Field>
-            </Row>
-            <Row3>
-              <Field label="Language" htmlFor="ed-lang" pinField="language_code">
-                <Input
-                  id="ed-lang"
-                  value={form.language_code}
-                  onChange={(e) => set("language_code", e.target.value)}
-                  placeholder="en, fr, ja"
-                  maxLength={16}
-                />
-              </Field>
-              <Field label="Age rating" htmlFor="ed-age" pinField="age_rating">
-                <Input
-                  id="ed-age"
-                  value={form.age_rating}
-                  onChange={(e) => set("age_rating", e.target.value)}
-                  placeholder="Teen, Mature 17+"
-                />
-              </Field>
-              <Field label="Format" htmlFor="ed-format" pinField="format">
-                <Input
-                  id="ed-format"
-                  value={form.format}
-                  onChange={(e) => set("format", e.target.value)}
-                  placeholder="One-Shot, TPB, Annual"
-                />
-              </Field>
-            </Row3>
-            <Row>
-              <Field label="Black & white" htmlFor="ed-bw" pinField="black_and_white">
-                <NativeSelect
-                  id="ed-bw"
-                  value={form.black_and_white}
-                  onChange={(v) =>
-                    set("black_and_white", v as FormState["black_and_white"])
-                  }
-                  options={[
-                    { value: "", label: "—" },
-                    { value: "yes", label: "Yes" },
-                    { value: "no", label: "No" },
-                  ]}
-                />
-              </Field>
-              <Field label="Manga" htmlFor="ed-manga" pinField="manga">
-                <NativeSelect
-                  id="ed-manga"
-                  value={form.manga}
-                  onChange={(v) => set("manga", v as FormState["manga"])}
-                  options={[
-                    { value: "", label: "—" },
-                    { value: "No", label: "No" },
-                    { value: "Yes", label: "Yes (left-to-right)" },
-                    {
-                      value: "YesAndRightToLeft",
-                      label: "Yes (right-to-left)",
-                    },
-                  ]}
-                />
-              </Field>
-            </Row>
-          </Section>
-
-          {series && (
-            <Section
-              title="Series"
-              hint="Series-wide fields. These apply to every issue in this series."
-            >
-              <Field label="Publication status" htmlFor="ed-series-status">
-                <NativeSelect
-                  id="ed-series-status"
-                  value={form.series_status}
-                  onChange={(v) => set("series_status", v)}
-                  options={SERIES_STATUS_OPTIONS}
+              <Field label="Notes" htmlFor="ed-notes" pinField="notes">
+                <Textarea
+                  id="ed-notes"
+                  rows={3}
+                  value={form.notes}
+                  onChange={(e) => set("notes", e.target.value)}
+                  placeholder="Free-form notes from ComicInfo or your own."
                 />
               </Field>
             </Section>
-          )}
 
-          <Section
-            title="External"
-            hint="Free-form web link plus any additional URLs. Typed identifiers (ComicVine, Metron, GCD, GTIN, ISBN, …) live in the External IDs tab so there's a single editor for them."
-          >
-            <Field label="Web URL" htmlFor="ed-web-url" pinField="web_url">
-              <Input
-                id="ed-web-url"
-                type="url"
-                value={form.web_url}
-                onChange={(e) => set("web_url", e.target.value)}
-                placeholder="https://…"
-              />
-            </Field>
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <Label>Additional links</Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={onAddLink}
+            <Section
+              title="Publication"
+              hint="Publisher and date the issue was released."
+            >
+              <Row>
+                <Field
+                  label="Publisher"
+                  htmlFor="ed-publisher"
+                  pinField="publisher"
                 >
-                  <Plus className="mr-1 h-4 w-4" />
-                  Add link
-                </Button>
-              </div>
-              {links.length === 0 ? (
-                <p className="text-muted-foreground text-xs">
-                  None. Click &ldquo;Add link&rdquo; to attach one.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {links.map((link, i) => (
-                    <li key={i} className="grid grid-cols-[1fr_2fr_auto] gap-2">
-                      <Input
-                        placeholder="Label (optional)"
-                        value={link.label}
-                        onChange={(e) =>
-                          onLinkChange(i, "label", e.target.value)
-                        }
-                      />
-                      <Input
-                        placeholder="https://…"
-                        value={link.url}
-                        onChange={(e) => onLinkChange(i, "url", e.target.value)}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => onRemoveLink(i)}
-                        aria-label="Remove link"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </Section>
-        </div>
-      </div>
+                  <Input
+                    id="ed-publisher"
+                    value={form.publisher}
+                    onChange={(e) => set("publisher", e.target.value)}
+                  />
+                </Field>
+                <Field label="Imprint" htmlFor="ed-imprint" pinField="imprint">
+                  <Input
+                    id="ed-imprint"
+                    value={form.imprint}
+                    onChange={(e) => set("imprint", e.target.value)}
+                  />
+                </Field>
+              </Row>
+              <Row3>
+                <Field label="Year" htmlFor="ed-year" pinField="year">
+                  <Input
+                    id="ed-year"
+                    type="number"
+                    min={1800}
+                    max={2999}
+                    value={form.year}
+                    onChange={(e) => set("year", e.target.value)}
+                  />
+                </Field>
+                <Field label="Month" htmlFor="ed-month" pinField="month">
+                  <Input
+                    id="ed-month"
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={form.month}
+                    onChange={(e) => set("month", e.target.value)}
+                  />
+                </Field>
+                <Field label="Day" htmlFor="ed-day" pinField="day">
+                  <Input
+                    id="ed-day"
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={form.day}
+                    onChange={(e) => set("day", e.target.value)}
+                  />
+                </Field>
+              </Row3>
+            </Section>
 
-      <div className="border-border flex items-center justify-end gap-2 border-t px-6 py-4">
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={onSaved}
-          disabled={isPending}
-        >
-          Cancel
-        </Button>
-        <Button type="submit" disabled={isPending}>
-          {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Save
-        </Button>
-      </div>
-    </form>
+            <Section
+              title="Credits"
+              hint="Comma- or semicolon-separated names."
+            >
+              <Row>
+                <Field label="Writer" htmlFor="ed-writer" pinField="writer">
+                  <Input
+                    id="ed-writer"
+                    value={form.writer}
+                    onChange={(e) => set("writer", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Penciller"
+                  htmlFor="ed-penciller"
+                  pinField="penciller"
+                >
+                  <Input
+                    id="ed-penciller"
+                    value={form.penciller}
+                    onChange={(e) => set("penciller", e.target.value)}
+                  />
+                </Field>
+              </Row>
+              <Row>
+                <Field label="Inker" htmlFor="ed-inker" pinField="inker">
+                  <Input
+                    id="ed-inker"
+                    value={form.inker}
+                    onChange={(e) => set("inker", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Colorist"
+                  htmlFor="ed-colorist"
+                  pinField="colorist"
+                >
+                  <Input
+                    id="ed-colorist"
+                    value={form.colorist}
+                    onChange={(e) => set("colorist", e.target.value)}
+                  />
+                </Field>
+              </Row>
+              <Row>
+                <Field
+                  label="Letterer"
+                  htmlFor="ed-letterer"
+                  pinField="letterer"
+                >
+                  <Input
+                    id="ed-letterer"
+                    value={form.letterer}
+                    onChange={(e) => set("letterer", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Cover artist"
+                  htmlFor="ed-cover-artist"
+                  pinField="cover_artist"
+                >
+                  <Input
+                    id="ed-cover-artist"
+                    value={form.cover_artist}
+                    onChange={(e) => set("cover_artist", e.target.value)}
+                  />
+                </Field>
+              </Row>
+              <Row>
+                <Field label="Editor" htmlFor="ed-editor" pinField="editor">
+                  <Input
+                    id="ed-editor"
+                    value={form.editor}
+                    onChange={(e) => set("editor", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Translator"
+                  htmlFor="ed-translator"
+                  pinField="translator"
+                >
+                  <Input
+                    id="ed-translator"
+                    value={form.translator}
+                    onChange={(e) => set("translator", e.target.value)}
+                  />
+                </Field>
+              </Row>
+            </Section>
+
+            <Section
+              title="Cast & setting"
+              hint="Story arc plus the people, teams, and places featured."
+            >
+              <Field
+                label="Characters"
+                htmlFor="ed-characters"
+                pinField="characters"
+              >
+                <Input
+                  id="ed-characters"
+                  value={form.characters}
+                  onChange={(e) => set("characters", e.target.value)}
+                  placeholder="Spider-Man, Mary Jane, …"
+                />
+              </Field>
+              <Row>
+                <Field label="Teams" htmlFor="ed-teams" pinField="teams">
+                  <Input
+                    id="ed-teams"
+                    value={form.teams}
+                    onChange={(e) => set("teams", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Locations"
+                  htmlFor="ed-locations"
+                  pinField="locations"
+                >
+                  <Input
+                    id="ed-locations"
+                    value={form.locations}
+                    onChange={(e) => set("locations", e.target.value)}
+                  />
+                </Field>
+              </Row>
+              <Row>
+                <Field
+                  label="Story arc"
+                  htmlFor="ed-story-arc"
+                  pinField="story_arc"
+                >
+                  <Input
+                    id="ed-story-arc"
+                    value={form.story_arc}
+                    onChange={(e) => set("story_arc", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Story arc number"
+                  htmlFor="ed-story-arc-number"
+                  pinField="story_arc_number"
+                >
+                  <Input
+                    id="ed-story-arc-number"
+                    value={form.story_arc_number}
+                    onChange={(e) => set("story_arc_number", e.target.value)}
+                    placeholder="1, 2, …"
+                  />
+                </Field>
+              </Row>
+            </Section>
+
+            <Section
+              title="Classification"
+              hint="Genre, tags, language, format, and age rating."
+            >
+              <Row>
+                <Field label="Genre" htmlFor="ed-genre" pinField="genre">
+                  <Input
+                    id="ed-genre"
+                    value={form.genre}
+                    onChange={(e) => set("genre", e.target.value)}
+                    placeholder="Action, Sci-Fi"
+                  />
+                </Field>
+                <Field label="Tags" htmlFor="ed-tags" pinField="tags">
+                  <Input
+                    id="ed-tags"
+                    value={form.tags}
+                    onChange={(e) => set("tags", e.target.value)}
+                    placeholder="space-marines, crossover, …"
+                  />
+                </Field>
+              </Row>
+              <Row3>
+                <Field
+                  label="Language"
+                  htmlFor="ed-lang"
+                  pinField="language_code"
+                >
+                  <Input
+                    id="ed-lang"
+                    value={form.language_code}
+                    onChange={(e) => set("language_code", e.target.value)}
+                    placeholder="en, fr, ja"
+                    maxLength={16}
+                  />
+                </Field>
+                <Field
+                  label="Age rating"
+                  htmlFor="ed-age"
+                  pinField="age_rating"
+                >
+                  <Input
+                    id="ed-age"
+                    value={form.age_rating}
+                    onChange={(e) => set("age_rating", e.target.value)}
+                    placeholder="Teen, Mature 17+"
+                  />
+                </Field>
+                <Field label="Format" htmlFor="ed-format" pinField="format">
+                  <Input
+                    id="ed-format"
+                    value={form.format}
+                    onChange={(e) => set("format", e.target.value)}
+                    placeholder="One-Shot, TPB, Annual"
+                  />
+                </Field>
+              </Row3>
+              <Row>
+                <Field
+                  label="Black & white"
+                  htmlFor="ed-bw"
+                  pinField="black_and_white"
+                >
+                  <NativeSelect
+                    id="ed-bw"
+                    value={form.black_and_white}
+                    onChange={(v) =>
+                      set("black_and_white", v as FormState["black_and_white"])
+                    }
+                    options={[
+                      { value: "", label: "—" },
+                      { value: "yes", label: "Yes" },
+                      { value: "no", label: "No" },
+                    ]}
+                  />
+                </Field>
+                <Field label="Manga" htmlFor="ed-manga" pinField="manga">
+                  <NativeSelect
+                    id="ed-manga"
+                    value={form.manga}
+                    onChange={(v) => set("manga", v as FormState["manga"])}
+                    options={[
+                      { value: "", label: "—" },
+                      { value: "No", label: "No" },
+                      { value: "Yes", label: "Yes (left-to-right)" },
+                      {
+                        value: "YesAndRightToLeft",
+                        label: "Yes (right-to-left)",
+                      },
+                    ]}
+                  />
+                </Field>
+              </Row>
+            </Section>
+
+            {series && (
+              <Section
+                title="Series"
+                hint="Series-wide fields. These apply to every issue in this series."
+              >
+                <Field label="Publication status" htmlFor="ed-series-status">
+                  <NativeSelect
+                    id="ed-series-status"
+                    value={form.series_status}
+                    onChange={(v) => set("series_status", v)}
+                    options={SERIES_STATUS_OPTIONS}
+                  />
+                </Field>
+              </Section>
+            )}
+
+            <Section
+              title="External"
+              hint="Free-form web link plus any additional URLs. Typed identifiers (ComicVine, Metron, GCD, GTIN, ISBN, …) live in the External IDs tab so there's a single editor for them."
+            >
+              <Field label="Web URL" htmlFor="ed-web-url" pinField="web_url">
+                <Input
+                  id="ed-web-url"
+                  type="url"
+                  value={form.web_url}
+                  onChange={(e) => set("web_url", e.target.value)}
+                  placeholder="https://…"
+                />
+              </Field>
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between">
+                  <Label>Additional links</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={onAddLink}
+                  >
+                    <Plus className="mr-1 h-4 w-4" />
+                    Add link
+                  </Button>
+                </div>
+                {links.length === 0 ? (
+                  <p className="text-muted-foreground text-xs">
+                    None. Click &ldquo;Add link&rdquo; to attach one.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {links.map((link, i) => (
+                      <li
+                        key={i}
+                        className="grid grid-cols-[1fr_2fr_auto] gap-2"
+                      >
+                        <Input
+                          placeholder="Label (optional)"
+                          value={link.label}
+                          onChange={(e) =>
+                            onLinkChange(i, "label", e.target.value)
+                          }
+                        />
+                        <Input
+                          placeholder="https://…"
+                          value={link.url}
+                          onChange={(e) =>
+                            onLinkChange(i, "url", e.target.value)
+                          }
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => onRemoveLink(i)}
+                          aria-label="Remove link"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Section>
+          </div>
+        </div>
+
+        <div className="border-border flex items-center justify-end gap-2 border-t px-6 py-4">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onSaved}
+            disabled={isPending}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" disabled={isPending}>
+            {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Save
+          </Button>
+        </div>
+      </form>
     </PinControlContext.Provider>
   );
 }

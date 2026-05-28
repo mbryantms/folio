@@ -11,6 +11,7 @@ use std::time::Duration;
 pub mod cb7;
 pub mod cbr;
 pub mod cbt;
+pub mod cbt_write;
 pub mod cbz;
 pub mod cbz_write;
 pub mod comic_archive;
@@ -22,13 +23,14 @@ pub use comic_archive::ComicArchive;
 /// Returns the boxed reader as `dyn ComicArchive` so the scanner doesn't
 /// branch on format.
 ///
-/// Library Scanner v1, Milestone 12. Supported today:
-///   - `.cbz` — full
-///   - `.cbt` — full
-///   - `.cbr`, `.cb7` — scaffolded; both currently return
-///     [`ArchiveError::Malformed`] with a "format not implemented" message
-///     so the scanner can emit `UnsupportedArchiveFormat` health issues
-///     without crashing the walk. Documented carry-over to a follow-up plan.
+/// Supported today:
+///   - `.cbz` — full (random-access reader + writer)
+///   - `.cbt` — full (tar reader + writer)
+///   - `.cbr` — read-only (unrar-backed; `archive-rewrite-1.0` M6). The
+///     page editor converts CBR → CBZ on edit since RAR can't be written.
+///   - `.cb7` — scaffolded; returns [`ArchiveError::Malformed`] with a
+///     "not implemented" message so the scanner emits an
+///     `UnsupportedArchiveFormat` health issue without crashing the walk.
 pub fn open(path: &Path, limits: ArchiveLimits) -> Result<Box<dyn ComicArchive>, ArchiveError> {
     let ext = path
         .extension()

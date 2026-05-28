@@ -767,6 +767,22 @@ pub struct IssueDetailView {
     /// Paired with [`Self::last_rewrite_at`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_rewrite_kind: Option<String>,
+    /// Whether the parent library has archive writeback enabled. Gates
+    /// the admin "Edit archive…" affordance in the UI
+    /// (`archive-rewrite-1.0` M3). Populated by the issue-detail handler;
+    /// defaults false (not stored on the issue row).
+    #[serde(default)]
+    pub allow_archive_writeback: bool,
+    /// 0-based index of the page used as the cover. Surfaced so the page
+    /// editor can highlight the current cover. `archive-rewrite-1.0`.
+    #[serde(default)]
+    pub cover_page_index: i32,
+    /// Whether the parent library has acknowledged the CBR→CBZ conversion
+    /// at least once (`library.cbr_convert_confirmed_at` is set). The page
+    /// editor uses this to decide whether to show the one-time conversion
+    /// explainer when editing a `.cbr`. `archive-rewrite-1.0` M6.
+    #[serde(default)]
+    pub library_cbr_convert_confirmed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -882,6 +898,9 @@ impl IssueDetailView {
             creator_slugs: std::collections::HashMap::new(),
             last_rewrite_at: m.last_rewrite_at.map(|t| t.to_rfc3339()),
             last_rewrite_kind: m.last_rewrite_kind,
+            allow_archive_writeback: false,
+            cover_page_index: m.cover_page_index,
+            library_cbr_convert_confirmed: false,
         }
     }
 }

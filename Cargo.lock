@@ -6037,6 +6037,7 @@ dependencies = [
  "sha2",
  "shared",
  "slug",
+ "tar",
  "tempfile",
  "tesseract-rs",
  "testcontainers",

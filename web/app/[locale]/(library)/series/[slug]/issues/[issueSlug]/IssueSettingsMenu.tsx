@@ -8,8 +8,10 @@ import {
   Download,
   EyeOff,
   Folder,
+  History,
   Image as ImageIcon,
   Images,
+  Layers,
   Loader2,
   Pencil,
   RefreshCw,
@@ -81,6 +83,8 @@ export function IssueSettingsMenu({
   cblSavedViewId,
   onEdit,
   onForceRecreatePageMap,
+  onEditArchive,
+  onRestoreArchive,
 }: {
   issue: IssueDetailView;
   readState: ReadState;
@@ -95,6 +99,12 @@ export function IssueSettingsMenu({
   /** Called when the user picks "Force recreate page thumbnails" — the
    *  parent owns the AlertDialog state for the same reason as `onEdit`. */
   onForceRecreatePageMap?: () => void;
+  /** Called when the user picks "Edit archive…" — opens the page editor.
+   *  Only rendered when the parent library has writeback enabled. */
+  onEditArchive?: () => void;
+  /** Called when the user picks "Restore from backup" — parent owns the
+   *  confirm dialog. */
+  onRestoreArchive?: () => void;
 }) {
   const me = useMe();
   const router = useRouter();
@@ -379,6 +389,23 @@ export function IssueSettingsMenu({
                     Edit issue
                   </DropdownMenuItem>
                 )}
+                {issue.allow_archive_writeback && onEditArchive && canRead && (
+                  <DropdownMenuItem onSelect={onEditArchive}>
+                    <Layers className="mr-2 h-4 w-4" />
+                    Edit archive…
+                  </DropdownMenuItem>
+                )}
+                {issue.allow_archive_writeback &&
+                  onRestoreArchive &&
+                  issue.last_rewrite_at && (
+                    <DropdownMenuItem
+                      onSelect={onRestoreArchive}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <History className="mr-2 h-4 w-4" />
+                      Restore from backup…
+                    </DropdownMenuItem>
+                  )}
               </DropdownMenuGroup>
             </>
           )}

@@ -134,12 +134,20 @@ pub async fn get_one(
         .ok()
         .flatten()
         .and_then(|s| s.reading_direction);
-    let library_default_dir = library::Entity::find_by_id(row.library_id)
+    let library_row = library::Entity::find_by_id(row.library_id)
         .one(&app.db)
         .await
         .ok()
-        .flatten()
-        .map(|lib| lib.default_reading_direction);
+        .flatten();
+    let library_default_dir = library_row
+        .as_ref()
+        .map(|lib| lib.default_reading_direction.clone());
+    let allow_archive_writeback = library_row
+        .as_ref()
+        .is_some_and(|lib| lib.allow_archive_writeback);
+    let library_cbr_convert_confirmed = library_row
+        .as_ref()
+        .is_some_and(|lib| lib.cbr_convert_confirmed_at.is_some());
     // Creator-slug map for this issue's credits. One JOIN against
     // `person` — the FK populated by the scanner's series rollup. The
     // UI uses this so credit chips link to /creators/<slug> directly
@@ -150,6 +158,8 @@ pub async fn get_one(
     view.user_rating = rating;
     view.series_reading_direction = series_dir;
     view.library_default_reading_direction = library_default_dir;
+    view.allow_archive_writeback = allow_archive_writeback;
+    view.library_cbr_convert_confirmed = library_cbr_convert_confirmed;
     view.creator_slugs = creator_slugs;
     crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &issue_id).await;
     Json(view).into_response()
@@ -741,20 +751,14 @@ pub async fn clear_field_pin(
     // scanner consults to skip user-pinned columns on rescan. Without
     // this the next scan would still treat the field as user-pinned
     // (the list and the field_provenance row are paired bookkeeping).
-    let cleared = match crate::metadata::writers::clear_user_pin(
-        &app.db,
-        "issue",
-        &row.id,
-        &field,
-    )
-    .await
-    {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::error!(issue_id = row.id, field, error = %e, "clear_field_pin failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
-    };
+    let cleared =
+        match crate::metadata::writers::clear_user_pin(&app.db, "issue", &row.id, &field).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!(issue_id = row.id, field, error = %e, "clear_field_pin failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
     // user_edited JSON list — best-effort sync.
     if cleared {
         let mut edited: Vec<String> =
@@ -785,7 +789,11 @@ pub async fn clear_field_pin(
     )
     .await;
 
-    (StatusCode::OK, Json(serde_json::json!({"cleared": cleared}))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"cleared": cleared})),
+    )
+        .into_response()
 }
 
 #[utoipa::path(
@@ -2269,8 +2277,8 @@ fn patch_field_key_to_metadata_field(key: &str) -> Option<crate::metadata::Metad
         // The user edits credit roles + character/team/location CSV
         // strings directly today; the composer reads the junction-
         // shaped MetadataField variants. Map each to its junction.
-        "writer" | "penciller" | "inker" | "colorist" | "letterer"
-        | "cover_artist" | "editor" | "translator" => Some(MetadataField::Credits),
+        "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor"
+        | "translator" => Some(MetadataField::Credits),
         "characters" => Some(MetadataField::Characters),
         "teams" => Some(MetadataField::Teams),
         "locations" => Some(MetadataField::Locations),

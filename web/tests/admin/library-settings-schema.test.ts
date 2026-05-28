@@ -11,6 +11,7 @@ const schema = z.object({
     .refine((v) => validateCron(v).ok, "Invalid cron expression"),
   report_missing_comicinfo: z.boolean(),
   soft_delete_days: z.number().int().min(0).max(365),
+  archive_writeback_jpeg_quality: z.number().int().min(60).max(100).default(92),
 });
 
 describe("library settings schema", () => {
@@ -52,6 +53,38 @@ describe("library settings schema", () => {
       soft_delete_days: 7,
     });
     expect(r.success).toBe(false);
+  });
+
+  it("accepts JPEG quality within 60-100", () => {
+    const r = schema.safeParse({
+      ignore_globs: [],
+      scan_schedule_cron: "",
+      report_missing_comicinfo: false,
+      soft_delete_days: 7,
+      archive_writeback_jpeg_quality: 60,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects JPEG quality out of range", () => {
+    expect(
+      schema.safeParse({
+        ignore_globs: [],
+        scan_schedule_cron: "",
+        report_missing_comicinfo: false,
+        soft_delete_days: 7,
+        archive_writeback_jpeg_quality: 59,
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ignore_globs: [],
+        scan_schedule_cron: "",
+        report_missing_comicinfo: false,
+        soft_delete_days: 7,
+        archive_writeback_jpeg_quality: 101,
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects soft_delete_days out of range", () => {

@@ -59,6 +59,14 @@ export type PeopleListView = Schemas["PeopleListView"];
 export type IssueDetailView = Schemas["IssueDetailView"];
 export type IssueLink = Schemas["IssueLink"];
 export type UpdateIssueReq = Schemas["UpdateIssueReq"];
+// archive-rewrite-1.0 — page editor surface.
+export type PageOp = Schemas["PageOp"];
+export type Rot = Schemas["Rot"];
+export type EditRequest = Schemas["EditRequest"];
+export type EditResponse = Schemas["EditResponse"];
+export type RestoreResponse = Schemas["RestoreResponse"];
+export type ArchiveBackupView = Schemas["BackupView"];
+export type UploadView = Schemas["UploadView"];
 export type NextInSeriesView = Schemas["NextInSeriesView"];
 export type SetRatingReq = Schemas["SetRatingReq"];
 export type RatingView = Schemas["RatingView"];

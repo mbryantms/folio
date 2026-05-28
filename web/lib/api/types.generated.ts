@@ -1350,6 +1350,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/issues/{id}/archive/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["archive_edit_backups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/issues/{id}/archive/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["archive_edit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/issues/{id}/archive/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["archive_edit_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/issues/{id}/covers": {
         parameters: {
             query?: never;
@@ -3326,6 +3374,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["uploads_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -3592,6 +3656,18 @@ export interface components {
             hashed: number;
             /** @description Rows skipped because the file was missing or undecodable. */
             skipped: number;
+        };
+        BackupView: {
+            /** @description RFC3339 modification time, or null if unavailable. */
+            modified_at?: string | null;
+            path: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /**
+             * Format: int32
+             * @description Retention slot: 0 = most recent (`.bak`), 1 = `.bak.1`, …
+             */
+            slot: number;
         };
         /** @description Body for `POST /me/collections/{id}/members/bulk-add`. Each
          *     member follows the same `(entry_kind, ref_id)` shape as the
@@ -4536,6 +4612,22 @@ export interface components {
             /** Format: int64 */
             sessions: number;
         };
+        EditRequest: {
+            /** @description When true, validate the ops and return the would-be page count
+             *     without touching the archive. */
+            dry_run?: boolean;
+            ops: components["schemas"]["PageOp"][];
+        };
+        EditResponse: {
+            page_count_after: number;
+            page_count_before: number;
+            /** @enum {string} */
+            status: "dry_run";
+        } | {
+            issue_id: string;
+            /** @enum {string} */
+            status: "queued";
+        };
         EmailStatusView: {
             /** @description `true` when the live sender is a real transport (Lettre or Mock),
              *     `false` when SMTP is unset and the Noop fallback is installed. */
@@ -4832,6 +4924,11 @@ export interface components {
              *     Each entry has a required `url` and optional `label`. */
             additional_links: components["schemas"]["IssueLink"][];
             age_rating?: string | null;
+            /** @description Whether the parent library has archive writeback enabled. Gates
+             *     the admin "Edit archive…" affordance in the UI
+             *     (`archive-rewrite-1.0` M3). Populated by the issue-detail handler;
+             *     defaults false (not stored on the issue row). */
+            allow_archive_writeback?: boolean;
             alternate_series?: string | null;
             black_and_white?: boolean | null;
             characters?: string | null;
@@ -4844,6 +4941,12 @@ export interface components {
              */
             comicvine_id?: number | null;
             cover_artist?: string | null;
+            /**
+             * Format: int32
+             * @description 0-based index of the page used as the cover. Surfaced so the page
+             *     editor can highlight the current cover. `archive-rewrite-1.0`.
+             */
+            cover_page_index?: number;
             created_at: string;
             /** @description Creator-name → slug map covering every credit name listed in
              *     the per-role CSV fields above (writer/penciller/inker/…). Built
@@ -4880,6 +4983,11 @@ export interface components {
              *     Paired with [`Self::last_rewrite_at`]. */
             last_rewrite_kind?: string | null;
             letterer?: string | null;
+            /** @description Whether the parent library has acknowledged the CBR→CBZ conversion
+             *     at least once (`library.cbr_convert_confirmed_at` is set). The page
+             *     editor uses this to decide whether to show the one-time conversion
+             *     explainer when editing a `.cbr`. `archive-rewrite-1.0` M6. */
+            library_cbr_convert_confirmed?: boolean;
             /** @description Parent library's `default_reading_direction` (`"ltr"` | `"rtl"`).
              *     The reader consults this as a fallback below ComicInfo
              *     `<Manga>` and the user's per-account preference but above the
@@ -5036,6 +5144,18 @@ export interface components {
              *     `0` = keep forever.
              */
             archive_backup_retain_days: number;
+            /**
+             * Format: int32
+             * @description Encoder quality (60..=100) the page editor uses when re-encoding a
+             *     rotated / replaced JPEG page. Default 92. PNG / WebP pages are
+             *     rewritten losslessly and ignore this. `archive-rewrite-1.0`.
+             */
+            archive_writeback_jpeg_quality: number;
+            /** @description RFC3339 timestamp of the operator's first acknowledgement of the
+             *     CBR→CBZ conversion for this library, or `null` if they haven't
+             *     acknowledged yet. The page editor uses this to decide whether to
+             *     show the conversion confirm dialog. `archive-rewrite-1.0` M6. */
+            cbr_convert_confirmed_at?: string | null;
             dedupe_by_content: boolean;
             default_language: string;
             default_reading_direction: string;
@@ -5071,6 +5191,11 @@ export interface components {
             name: string;
             report_missing_comicinfo: boolean;
             root_path: string;
+            /** @description Whether the library's `root_path` is on a writable mount. When
+             *     false the admin UI disables the archive-writeback toggle and the
+             *     PATCH handler refuses to enable it — rewrites can't land on a
+             *     read-only mount. Computed per-request via `statvfs`. */
+            root_path_writable: boolean;
             /** @description Cron expression governing the scheduled scan, or `null` if disabled. */
             scan_schedule_cron?: string | null;
             slug: string;
@@ -5573,6 +5698,31 @@ export interface components {
          * @enum {string}
          */
         PageAnimation: "off" | "slide" | "fade";
+        /** @description One page-level operation. Ordinals are 0-based positions in the page
+         *     list *as it stands when the op is applied* (ops are sequential). */
+        PageOp: {
+            /** @enum {string} */
+            kind: "remove";
+            /** Format: int32 */
+            ordinal: number;
+        } | {
+            /** @enum {string} */
+            kind: "reorder";
+            new_order: number[];
+        } | {
+            degrees: components["schemas"]["Rot"];
+            /** @enum {string} */
+            kind: "rotate";
+            /** Format: int32 */
+            ordinal: number;
+        } | {
+            /** Format: uuid */
+            image_id: string;
+            /** @enum {string} */
+            kind: "replace";
+            /** Format: int32 */
+            ordinal: number;
+        };
         PageView: {
             created_at: string;
             /** @description Optional free-form description rendered under the title. `None`
@@ -6034,6 +6184,10 @@ export interface components {
             key: string;
             value: unknown;
         };
+        RestoreResponse: {
+            issue_id: string;
+            status: string;
+        };
         ReviewItem: {
             bucket: string;
             candidate: unknown;
@@ -6061,6 +6215,11 @@ export interface components {
              */
             revoked: number;
         };
+        /**
+         * @description 90-degree rotation steps. Clockwise.
+         * @enum {string}
+         */
+        Rot: "r90" | "r180" | "r270";
         RunDetailResp: {
             candidates: components["schemas"]["CandidateRow"][];
             query?: unknown;
@@ -6854,8 +7013,11 @@ export interface components {
             allow_archive_writeback?: boolean | null;
             /**
              * Format: int32
-             * @description `.bak` retention slots, 1..=5. CHECK constraint enforced at DB
-             *     level; garde validates here to surface a friendly 422.
+             * @description `.bak` retention slots, 0..=5. `0` = validated overwrite, no
+             *     `.bak` (the sidecar rewrite is validated before the atomic swap,
+             *     so the original is never replaced by a corrupt rewrite). CHECK
+             *     constraint enforced at DB level; garde validates here to surface a
+             *     friendly 422.
              */
             archive_backup_retain_count?: number | null;
             /**
@@ -6864,6 +7026,13 @@ export interface components {
              *     it; `0` = keep forever. Non-negative.
              */
             archive_backup_retain_days?: number | null;
+            /**
+             * Format: int32
+             * @description Encoder quality (60..=100) for JPEG pages the editor re-encodes
+             *     (`archive-rewrite-1.0`). CHECK constraint enforces the same range
+             *     at the DB level; garde surfaces a friendly 422 here.
+             */
+            archive_writeback_jpeg_quality?: number | null;
             file_watch_enabled?: boolean | null;
             /** @description Toggle filename inference's assume-issue-one fallback
              *     (matching-accuracy M7). */
@@ -6978,6 +7147,10 @@ export interface components {
             display_name?: string | null;
             role?: null | components["schemas"]["UserRole"];
             state?: null | components["schemas"]["UserState"];
+        };
+        UploadView: {
+            content_type: string;
+            id: string;
         };
         /** @description Body for `POST /me/progress/bulk` — bulk read/unread for an
          *     arbitrary list of issue ids. Used by the multi-select toolbar
@@ -9840,6 +10013,146 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueSearchView"];
                 };
+            };
+        };
+    };
+    archive_edit_backups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupView"][];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    archive_edit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditRequest"];
+            };
+        };
+        responses: {
+            /** @description dry-run result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditResponse"];
+                };
+            };
+            /** @description edit enqueued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditResponse"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description writeback disabled / unsupported format / invalid ops */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    archive_edit_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreResponse"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found / no backup */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description another rewrite is in progress */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description writeback disabled / unsupported format */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -14135,6 +14448,51 @@ export interface operations {
             };
             /** @description series not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    uploads_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description multipart/form-data with a `file` image field */
+        requestBody: {
+            content: {
+                "multipart/form-data": string;
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description file too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing/invalid image */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

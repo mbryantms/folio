@@ -2941,6 +2941,137 @@
         }
       }
     },
+    "/api/issues/{id}/archive/backups": {
+      "get": {
+        "operationId": "archive_edit_backups",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BackupView"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
+    "/api/issues/{id}/archive/edit": {
+      "post": {
+        "operationId": "archive_edit",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "dry-run result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "edit enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          },
+          "422": {
+            "description": "writeback disabled / unsupported format / invalid ops"
+          }
+        }
+      }
+    },
+    "/api/issues/{id}/archive/restore": {
+      "post": {
+        "operationId": "archive_edit_restore",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found / no backup"
+          },
+          "409": {
+            "description": "another rewrite is in progress"
+          },
+          "422": {
+            "description": "writeback disabled / unsupported format"
+          }
+        }
+      }
+    },
     "/api/issues/{id}/covers": {
       "get": {
         "operationId": "issue_covers_list",
@@ -7867,6 +7998,43 @@
         }
       }
     },
+    "/api/uploads": {
+      "post": {
+        "operationId": "uploads_create",
+        "requestBody": {
+          "description": "multipart/form-data with a `file` image field",
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "413": {
+            "description": "file too large"
+          },
+          "422": {
+            "description": "missing/invalid image"
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "operationId": "health_healthz",
@@ -8551,6 +8719,36 @@
             "type": "integer",
             "description": "Rows skipped because the file was missing or undecodable.",
             "minimum": 0
+          }
+        }
+      },
+      "BackupView": {
+        "type": "object",
+        "required": [
+          "slot",
+          "path",
+          "size_bytes"
+        ],
+        "properties": {
+          "modified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC3339 modification time, or null if unavailable."
+          },
+          "path": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "slot": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Retention slot: 0 = most recent (`.bak`), 1 = `.bak.1`, …"
           }
         }
       },
@@ -11079,6 +11277,72 @@
           }
         }
       },
+      "EditRequest": {
+        "type": "object",
+        "required": [
+          "ops"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "description": "When true, validate the ops and return the would-be page count\nwithout touching the archive."
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageOp"
+            }
+          }
+        }
+      },
+      "EditResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "`dry_run=true` — validation succeeded; here's what would happen.",
+            "required": [
+              "page_count_before",
+              "page_count_after",
+              "status"
+            ],
+            "properties": {
+              "page_count_after": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "page_count_before": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "dry_run"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Edit job enqueued; the UI waits for the scan-completed WebSocket.",
+            "required": [
+              "issue_id",
+              "status"
+            ],
+            "properties": {
+              "issue_id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "queued"
+                ]
+              }
+            }
+          }
+        ]
+      },
       "EmailStatusView": {
         "type": "object",
         "required": [
@@ -11951,6 +12215,10 @@
               "null"
             ]
           },
+          "allow_archive_writeback": {
+            "type": "boolean",
+            "description": "Whether the parent library has archive writeback enabled. Gates\nthe admin \"Edit archive…\" affordance in the UI\n(`archive-rewrite-1.0` M3). Populated by the issue-detail handler;\ndefaults false (not stored on the issue row)."
+          },
           "alternate_series": {
             "type": [
               "string",
@@ -11989,6 +12257,11 @@
               "string",
               "null"
             ]
+          },
+          "cover_page_index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based index of the page used as the cover. Surfaced so the page\neditor can highlight the current cover. `archive-rewrite-1.0`."
           },
           "created_at": {
             "type": "string"
@@ -12082,6 +12355,10 @@
               "string",
               "null"
             ]
+          },
+          "library_cbr_convert_confirmed": {
+            "type": "boolean",
+            "description": "Whether the parent library has acknowledged the CBR→CBZ conversion\nat least once (`library.cbr_convert_confirmed_at` is set). The page\neditor uses this to decide whether to show the one-time conversion\nexplainer when editing a `.cbr`. `archive-rewrite-1.0` M6."
           },
           "library_default_reading_direction": {
             "type": [
@@ -12534,6 +12811,8 @@
           "metadata_writeback_enabled",
           "archive_backup_retain_count",
           "archive_backup_retain_days",
+          "archive_writeback_jpeg_quality",
+          "root_path_writable",
           "metadata_publisher_blacklist",
           "filename_ignore_leading_numbers",
           "filename_assume_issue_one",
@@ -12553,6 +12832,18 @@
             "type": "integer",
             "format": "int32",
             "description": "Auto-prune `.bak` files older than this many days. Default 30;\n`0` = keep forever."
+          },
+          "archive_writeback_jpeg_quality": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Encoder quality (60..=100) the page editor uses when re-encoding a\nrotated / replaced JPEG page. Default 92. PNG / WebP pages are\nrewritten losslessly and ignore this. `archive-rewrite-1.0`."
+          },
+          "cbr_convert_confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC3339 timestamp of the operator's first acknowledgement of the\nCBR→CBZ conversion for this library, or `null` if they haven't\nacknowledged yet. The page editor uses this to decide whether to\nshow the conversion confirm dialog. `archive-rewrite-1.0` M6."
           },
           "dedupe_by_content": {
             "type": "boolean"
@@ -12617,6 +12908,10 @@
           },
           "root_path": {
             "type": "string"
+          },
+          "root_path_writable": {
+            "type": "boolean",
+            "description": "Whether the library's `root_path` is on a writable mount. When\nfalse the admin UI disables the archive-writeback toggle and the\nPATCH handler refuses to enable it — rewrites can't land on a\nread-only mount. Computed per-request via `statvfs`."
           },
           "scan_schedule_cron": {
             "type": [
@@ -13881,6 +14176,107 @@
           "slide",
           "fade"
         ]
+      },
+      "PageOp": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Drop the page at `ordinal`.",
+            "required": [
+              "ordinal",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "remove"
+                ]
+              },
+              "ordinal": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Replace the whole page list order with `new_order` — a permutation\nof `0..current_len`.",
+            "required": [
+              "new_order",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "reorder"
+                ]
+              },
+              "new_order": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Rotate the page at `ordinal` by `degrees` (clockwise).",
+            "required": [
+              "ordinal",
+              "degrees",
+              "kind"
+            ],
+            "properties": {
+              "degrees": {
+                "$ref": "#/components/schemas/Rot"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "rotate"
+                ]
+              },
+              "ordinal": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Replace the page at `ordinal` with a previously-staged upload.",
+            "required": [
+              "ordinal",
+              "image_id",
+              "kind"
+            ],
+            "properties": {
+              "image_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "replace"
+                ]
+              },
+              "ordinal": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "One page-level operation. Ordinals are 0-based positions in the page\nlist *as it stands when the op is applied* (ops are sequential)."
       },
       "PageView": {
         "type": "object",
@@ -15207,6 +15603,21 @@
           "value": {}
         }
       },
+      "RestoreResponse": {
+        "type": "object",
+        "required": [
+          "issue_id",
+          "status"
+        ],
+        "properties": {
+          "issue_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "ReviewItem": {
         "type": "object",
         "required": [
@@ -15290,6 +15701,15 @@
             "minimum": 0
           }
         }
+      },
+      "Rot": {
+        "type": "string",
+        "description": "90-degree rotation steps. Clockwise.",
+        "enum": [
+          "r90",
+          "r180",
+          "r270"
+        ]
       },
       "RunDetailResp": {
         "type": "object",
@@ -17319,7 +17739,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "`.bak` retention slots, 1..=5. CHECK constraint enforced at DB\nlevel; garde validates here to surface a friendly 422."
+            "description": "`.bak` retention slots, 0..=5. `0` = validated overwrite, no\n`.bak` (the sidecar rewrite is validated before the atomic swap,\nso the original is never replaced by a corrupt rewrite). CHECK\nconstraint enforced at DB level; garde validates here to surface a\nfriendly 422."
           },
           "archive_backup_retain_days": {
             "type": [
@@ -17328,6 +17748,14 @@
             ],
             "format": "int32",
             "description": "Days a `.bak` file lives before the daily prune cron removes\nit; `0` = keep forever. Non-negative."
+          },
+          "archive_writeback_jpeg_quality": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Encoder quality (60..=100) for JPEG pages the editor re-encodes\n(`archive-rewrite-1.0`). CHECK constraint enforces the same range\nat the DB level; garde surfaces a friendly 422 here."
           },
           "file_watch_enabled": {
             "type": [
@@ -17671,6 +18099,21 @@
                 "$ref": "#/components/schemas/UserState"
               }
             ]
+          }
+        }
+      },
+      "UploadView": {
+        "type": "object",
+        "required": [
+          "id",
+          "content_type"
+        ],
+        "properties": {
+          "content_type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
           }
         }
       },

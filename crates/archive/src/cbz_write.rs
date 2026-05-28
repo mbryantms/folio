@@ -82,13 +82,8 @@ impl RebuildPlan {
     /// default). For pre-compressed payloads (JPEG / PNG bytes) prefer
     /// [`Self::set_entry_stored`].
     pub fn set_entry(&mut self, name: impl Into<String>, bytes: Vec<u8>) {
-        self.overrides.insert(
-            name.into(),
-            EntryOp::Replace {
-                bytes,
-                level: 6,
-            },
-        );
+        self.overrides
+            .insert(name.into(), EntryOp::Replace { bytes, level: 6 });
     }
 
     /// Convenience: replace an entry with `bytes` written uncompressed
@@ -96,13 +91,8 @@ impl RebuildPlan {
     /// payloads so we don't waste cycles deflating data that won't
     /// shrink.
     pub fn set_entry_stored(&mut self, name: impl Into<String>, bytes: Vec<u8>) {
-        self.overrides.insert(
-            name.into(),
-            EntryOp::Replace {
-                bytes,
-                level: 0,
-            },
-        );
+        self.overrides
+            .insert(name.into(), EntryOp::Replace { bytes, level: 0 });
     }
 
     pub fn remove_entry(&mut self, name: impl Into<String>) {
@@ -174,9 +164,7 @@ pub fn rebuild(
             }
             Some(EntryOp::Replace { bytes, level }) => {
                 let opts = build_options(bytes.len(), *level);
-                writer
-                    .start_file(&raw_name, opts)
-                    .map_err(map_zip_err)?;
+                writer.start_file(&raw_name, opts).map_err(map_zip_err)?;
                 writer.write_all(bytes).map_err(ArchiveError::from)?;
                 summary.replaced_count += 1;
                 summary.entries_written += 1;
@@ -255,6 +243,171 @@ pub fn rebuild(
                 "rebuild output exceeded max_total_bytes",
             ));
         }
+    }
+
+    writer.finish().map_err(map_zip_err)?;
+    Ok(summary)
+}
+
+/// One page in the desired output order for a page-editor rewrite
+/// ([`rebuild_pages`]). The writer names pages `p0001.<ext>`,
+/// `p0002.<ext>`, … in list order so the reader's natural sort reproduces
+/// exactly this sequence.
+#[derive(Debug, Clone)]
+pub struct OutputPage {
+    /// Lowercase extension (no dot) for the output entry — `"jpg"` /
+    /// `"png"` / `"webp"`. For [`PageBytes::Keep`] this MUST be the
+    /// source page's real format (the bytes are copied verbatim, so the
+    /// name has to match). For [`PageBytes::Encoded`] it's the encoder's
+    /// output format.
+    pub ext: String,
+    pub bytes: PageBytes,
+}
+
+/// Where a [`OutputPage`]'s bytes come from.
+#[derive(Debug, Clone)]
+pub enum PageBytes {
+    /// Stream-copy the source entry at this raw zip index, preserving the
+    /// compressed payload byte-for-byte (no recompress). The index is the
+    /// `ArchiveEntry::index` from the source reader.
+    Keep { src_index: usize },
+    /// Freshly-encoded page bytes (a rotated or replaced page). `level` is
+    /// the deflate level (0 = stored — use it for already-compressed JPEG
+    /// payloads; PNG/WebP are also pre-compressed so 0 is right there too).
+    Encoded { bytes: Vec<u8>, level: i64 },
+}
+
+/// Rebuild an archive from an explicit ordered page list — the page
+/// editor's write path (`archive-rewrite-1.0` M2).
+///
+/// Pages are emitted in list order under contiguous names
+/// (`p0001.<ext>`, …) so the reader's natural sort reproduces the
+/// requested order; this is how *reorder* works without recompressing
+/// kept pages. `extras` are non-page entries to preserve verbatim — the
+/// caller reads any `ComicInfo.xml` / `MetronInfo.xml` from the source
+/// before the rewrite and passes them here, since the page rebuild only
+/// writes the pages it's given. Output respects `limits`
+/// (`max_total_bytes`, `max_entries`) and fails before `finish` when
+/// exceeded.
+pub fn rebuild_pages(
+    src: &mut Cbz,
+    pages: Vec<OutputPage>,
+    extras: Vec<(String, Vec<u8>, i64)>,
+    dst_path: &Path,
+    limits: ArchiveLimits,
+) -> Result<RebuildSummary, ArchiveError> {
+    let dst_file = File::create(dst_path)?;
+    let mut writer = ZipWriter::new(dst_file);
+    let mut summary = RebuildSummary::default();
+
+    for (i, page) in pages.iter().enumerate() {
+        let name = format!("p{:04}.{}", i + 1, page.ext);
+        match &page.bytes {
+            PageBytes::Keep { src_index } => {
+                let info = src.raw_copy_to_rename(*src_index, &mut writer, &name)?;
+                summary.kept_count += 1;
+                summary.entries_written += 1;
+                summary.uncompressed_bytes = summary
+                    .uncompressed_bytes
+                    .saturating_add(info.uncompressed_size);
+            }
+            PageBytes::Encoded { bytes, level } => {
+                let opts = build_options(bytes.len(), *level);
+                writer.start_file(&name, opts).map_err(map_zip_err)?;
+                writer.write_all(bytes).map_err(ArchiveError::from)?;
+                summary.replaced_count += 1;
+                summary.entries_written += 1;
+                summary.uncompressed_bytes = summary
+                    .uncompressed_bytes
+                    .saturating_add(bytes.len() as u64);
+            }
+        }
+        if summary.uncompressed_bytes > limits.max_total_bytes {
+            return Err(ArchiveError::CapExceeded(
+                "rebuild output exceeded max_total_bytes",
+            ));
+        }
+        if summary.entries_written > limits.max_entries {
+            return Err(ArchiveError::CapExceeded(
+                "rebuild output exceeded max_entries",
+            ));
+        }
+    }
+
+    for (name, bytes, level) in &extras {
+        let opts = build_options(bytes.len(), *level);
+        writer.start_file(name, opts).map_err(map_zip_err)?;
+        writer.write_all(bytes).map_err(ArchiveError::from)?;
+        summary.added_count += 1;
+        summary.entries_written += 1;
+        summary.uncompressed_bytes = summary
+            .uncompressed_bytes
+            .saturating_add(bytes.len() as u64);
+        if summary.uncompressed_bytes > limits.max_total_bytes {
+            return Err(ArchiveError::CapExceeded(
+                "rebuild output exceeded max_total_bytes",
+            ));
+        }
+    }
+
+    writer.finish().map_err(map_zip_err)?;
+    Ok(summary)
+}
+
+/// Write a fresh CBZ from fully-materialized page payloads — the CBR→CBZ
+/// conversion path (`archive-rewrite-1.0` M6), where every page is RAR-
+/// decompressed bytes that can't stream-copy into a zip and so are stored
+/// (level 0). Pages emit as `p0001.<ext>`, …; `extras` (preserved
+/// sidecars) append verbatim. No source archive — unlike
+/// [`rebuild_pages`], there are no `Keep` entries.
+pub fn write_pages(
+    pages: Vec<(String, Vec<u8>, i64)>,
+    extras: Vec<(String, Vec<u8>, i64)>,
+    dst_path: &Path,
+    limits: ArchiveLimits,
+) -> Result<RebuildSummary, ArchiveError> {
+    let dst_file = File::create(dst_path)?;
+    let mut writer = ZipWriter::new(dst_file);
+    let mut summary = RebuildSummary::default();
+
+    let emit = |writer: &mut ZipWriter<File>,
+                summary: &mut RebuildSummary,
+                name: &str,
+                bytes: &[u8],
+                level: i64,
+                is_page: bool|
+     -> Result<(), ArchiveError> {
+        let opts = build_options(bytes.len(), level);
+        writer.start_file(name, opts).map_err(map_zip_err)?;
+        writer.write_all(bytes).map_err(ArchiveError::from)?;
+        if is_page {
+            summary.replaced_count += 1;
+        } else {
+            summary.added_count += 1;
+        }
+        summary.entries_written += 1;
+        summary.uncompressed_bytes = summary
+            .uncompressed_bytes
+            .saturating_add(bytes.len() as u64);
+        if summary.uncompressed_bytes > limits.max_total_bytes {
+            return Err(ArchiveError::CapExceeded(
+                "rebuild output exceeded max_total_bytes",
+            ));
+        }
+        if summary.entries_written > limits.max_entries {
+            return Err(ArchiveError::CapExceeded(
+                "rebuild output exceeded max_entries",
+            ));
+        }
+        Ok(())
+    };
+
+    for (i, (ext, bytes, level)) in pages.iter().enumerate() {
+        let name = format!("p{:04}.{}", i + 1, ext);
+        emit(&mut writer, &mut summary, &name, bytes, *level, true)?;
+    }
+    for (name, bytes, level) in &extras {
+        emit(&mut writer, &mut summary, name, bytes, *level, false)?;
     }
 
     writer.finish().map_err(map_zip_err)?;
@@ -375,7 +528,10 @@ mod tests {
         let summary = rebuild(&mut src, plan, &dst_path, ArchiveLimits::default()).unwrap();
         drop(src);
 
-        assert_eq!(summary.replaced_count, 0, "ComicInfo.xml is reader-skipped on rewrite; it must arrive via the override-becomes-addition path");
+        assert_eq!(
+            summary.replaced_count, 0,
+            "ComicInfo.xml is reader-skipped on rewrite; it must arrive via the override-becomes-addition path"
+        );
         // The reader filters `.xml` entries from the page index, so the
         // override on `ComicInfo.xml` becomes an addition after the
         // existing entry is dropped.
@@ -388,11 +544,12 @@ mod tests {
         assert_eq!(out.get("p2.jpg"), Some(&pages[1]));
         assert_eq!(out.get("p3.jpg"), Some(&pages[2]));
         // New ComicInfo landed.
-        assert!(out
-            .get("ComicInfo.xml")
-            .expect("ComicInfo.xml")
-            .windows(7)
-            .any(|w| w == b"Updated"));
+        assert!(
+            out.get("ComicInfo.xml")
+                .expect("ComicInfo.xml")
+                .windows(7)
+                .any(|w| w == b"Updated")
+        );
 
         // Compressed-byte equality on each page: the `Keep` path used
         // `raw_copy_file`, so the deflate stream is identical.
@@ -497,6 +654,147 @@ mod tests {
             );
         }
         let _ = pages; // silence unused-var warning when assertions don't reference
+    }
+
+    /// Map the source fixture's page entries (natural-sort order) to their
+    /// raw zip indices so the page-rebuild tests can address pages by the
+    /// `ArchiveEntry::index` the reader exposes.
+    fn page_indices(src: &Cbz) -> Vec<usize> {
+        src.pages().iter().map(|e| e.index).collect()
+    }
+
+    #[test]
+    fn rebuild_pages_reorders_and_renames_keeping_bytes() {
+        let (src_file, pages, _info) = build_fixture();
+        let src_path = src_file.path().to_path_buf();
+        let mut src = Cbz::open(&src_path, ArchiveLimits::default()).unwrap();
+        let idx = page_indices(&src);
+        assert_eq!(idx.len(), 3);
+
+        // New order: page2, page0, page1.
+        let plan = vec![
+            OutputPage {
+                ext: "jpg".into(),
+                bytes: PageBytes::Keep { src_index: idx[2] },
+            },
+            OutputPage {
+                ext: "jpg".into(),
+                bytes: PageBytes::Keep { src_index: idx[0] },
+            },
+            OutputPage {
+                ext: "jpg".into(),
+                bytes: PageBytes::Keep { src_index: idx[1] },
+            },
+        ];
+        let dst = NamedTempFile::new().unwrap();
+        let summary = rebuild_pages(
+            &mut src,
+            plan,
+            Vec::new(),
+            dst.path(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
+        drop(src);
+        assert_eq!(summary.kept_count, 3);
+
+        let out = extract(dst.path());
+        // Contiguous names in the new order.
+        assert_eq!(out.get("p0001.jpg"), Some(&pages[2]));
+        assert_eq!(out.get("p0002.jpg"), Some(&pages[0]));
+        assert_eq!(out.get("p0003.jpg"), Some(&pages[1]));
+        // The reopened archive sees exactly three pages in the new order.
+        let reopened = Cbz::open(dst.path(), ArchiveLimits::default()).unwrap();
+        let names: Vec<String> = reopened.pages().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, vec!["p0001.jpg", "p0002.jpg", "p0003.jpg"]);
+    }
+
+    #[test]
+    fn rebuild_pages_drops_omitted_pages() {
+        let (src_file, pages, _info) = build_fixture();
+        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let idx = page_indices(&src);
+
+        // Keep only page0 and page2 (drop page1).
+        let plan = vec![
+            OutputPage {
+                ext: "jpg".into(),
+                bytes: PageBytes::Keep { src_index: idx[0] },
+            },
+            OutputPage {
+                ext: "jpg".into(),
+                bytes: PageBytes::Keep { src_index: idx[2] },
+            },
+        ];
+        let dst = NamedTempFile::new().unwrap();
+        rebuild_pages(
+            &mut src,
+            plan,
+            Vec::new(),
+            dst.path(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
+
+        let out = extract(dst.path());
+        assert_eq!(out.len(), 2);
+        assert_eq!(out.get("p0001.jpg"), Some(&pages[0]));
+        assert_eq!(out.get("p0002.jpg"), Some(&pages[2]));
+    }
+
+    #[test]
+    fn rebuild_pages_writes_encoded_and_preserves_extras() {
+        let (src_file, pages, _info) = build_fixture();
+        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let idx = page_indices(&src);
+
+        let new_bytes = b"FRESH_ENCODED_PAGE".to_vec();
+        let plan = vec![
+            OutputPage {
+                ext: "jpg".into(),
+                bytes: PageBytes::Keep { src_index: idx[0] },
+            },
+            OutputPage {
+                ext: "png".into(),
+                bytes: PageBytes::Encoded {
+                    bytes: new_bytes.clone(),
+                    level: 0,
+                },
+            },
+        ];
+        let extras = vec![("ComicInfo.xml".to_string(), b"<ComicInfo/>".to_vec(), 6)];
+        let dst = NamedTempFile::new().unwrap();
+        let summary =
+            rebuild_pages(&mut src, plan, extras, dst.path(), ArchiveLimits::default()).unwrap();
+        assert_eq!(summary.kept_count, 1);
+        assert_eq!(summary.replaced_count, 1);
+        assert_eq!(summary.added_count, 1);
+
+        let out = extract(dst.path());
+        assert_eq!(out.get("p0001.jpg"), Some(&pages[0]));
+        assert_eq!(out.get("p0002.png"), Some(&new_bytes));
+        assert_eq!(out.get("ComicInfo.xml"), Some(&b"<ComicInfo/>".to_vec()));
+    }
+
+    #[test]
+    fn rebuild_pages_cap_exceeded_fails() {
+        let (src_file, _pages, _info) = build_fixture();
+        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+
+        let plan = vec![OutputPage {
+            ext: "jpg".into(),
+            bytes: PageBytes::Encoded {
+                bytes: vec![0u8; 4096],
+                level: 0,
+            },
+        }];
+        let limits = ArchiveLimits {
+            max_total_bytes: 1024,
+            ..ArchiveLimits::default()
+        };
+        let dst = NamedTempFile::new().unwrap();
+        let err = rebuild_pages(&mut src, plan, Vec::new(), dst.path(), limits).unwrap_err();
+        assert!(matches!(err, ArchiveError::CapExceeded(_)));
     }
 
     // Silence the unused-import warning on Seek + SeekFrom; reserved for

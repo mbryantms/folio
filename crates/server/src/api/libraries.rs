@@ -110,6 +110,20 @@ pub struct LibraryView {
     /// Auto-prune `.bak` files older than this many days. Default 30;
     /// `0` = keep forever.
     pub archive_backup_retain_days: i32,
+    /// Encoder quality (60..=100) the page editor uses when re-encoding a
+    /// rotated / replaced JPEG page. Default 92. PNG / WebP pages are
+    /// rewritten losslessly and ignore this. `archive-rewrite-1.0`.
+    pub archive_writeback_jpeg_quality: i32,
+    /// RFC3339 timestamp of the operator's first acknowledgement of the
+    /// CBR→CBZ conversion for this library, or `null` if they haven't
+    /// acknowledged yet. The page editor uses this to decide whether to
+    /// show the conversion confirm dialog. `archive-rewrite-1.0` M6.
+    pub cbr_convert_confirmed_at: Option<String>,
+    /// Whether the library's `root_path` is on a writable mount. When
+    /// false the admin UI disables the archive-writeback toggle and the
+    /// PATCH handler refuses to enable it — rewrites can't land on a
+    /// read-only mount. Computed per-request via `statvfs`.
+    pub root_path_writable: bool,
     /// Publisher names the matcher's pre-filter should drop before
     /// scoring. Comparison is case-insensitive against the
     /// title-sanitized form so "DC Comics" / "dc comics" / "DC" all
@@ -129,6 +143,8 @@ pub struct LibraryView {
 
 impl From<library::Model> for LibraryView {
     fn from(m: library::Model) -> Self {
+        let root_path_writable =
+            crate::archive_rewrite::mount_writable(std::path::Path::new(&m.root_path));
         Self {
             id: m.id.to_string(),
             name: m.name,
@@ -156,6 +172,9 @@ impl From<library::Model> for LibraryView {
             metadata_writeback_enabled: m.metadata_writeback_enabled,
             archive_backup_retain_count: m.archive_backup_retain_count,
             archive_backup_retain_days: m.archive_backup_retain_days,
+            archive_writeback_jpeg_quality: m.archive_writeback_jpeg_quality,
+            cbr_convert_confirmed_at: m.cbr_convert_confirmed_at.map(|t| t.to_rfc3339()),
+            root_path_writable,
             metadata_publisher_blacklist: m
                 .metadata_publisher_blacklist
                 .as_array()
@@ -233,6 +252,12 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(inner(range(min = 0)))]
     pub archive_backup_retain_days: Option<i32>,
+    /// Encoder quality (60..=100) for JPEG pages the editor re-encodes
+    /// (`archive-rewrite-1.0`). CHECK constraint enforces the same range
+    /// at the DB level; garde surfaces a friendly 422 here.
+    #[serde(default)]
+    #[garde(inner(range(min = 60, max = 100)))]
+    pub archive_writeback_jpeg_quality: Option<i32>,
     /// Replace the per-library publisher blacklist (matching-accuracy
     /// M3). Tri-state: omitted = leave unchanged; explicit `null` =
     /// clear to empty. Comparison at filter time is case-insensitive
@@ -498,6 +523,8 @@ pub async fn create(
         metadata_writeback_enabled: Set(false),
         archive_backup_retain_count: Set(1),
         archive_backup_retain_days: Set(30),
+        archive_writeback_jpeg_quality: Set(92),
+        cbr_convert_confirmed_at: Set(None),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -587,6 +614,7 @@ pub async fn update_settings(
     };
 
     let schedule_touched = req.scan_schedule_cron.is_some();
+    let am_root_path = row.root_path.clone();
     let mut am: library::ActiveModel = row.into();
     if let Some(s) = new_slug.clone() {
         am.slug = Set(s);
@@ -625,6 +653,20 @@ pub async fn update_settings(
             "metadata_writeback_enabled requires allow_archive_writeback=true",
         );
     }
+    // Refuse to enable archive writeback when the library root isn't on a
+    // writable mount — rewrites would fail at the atomic-swap step. We
+    // only gate the enabling action (an explicit `true`); a library
+    // already enabled when the mount later goes read-only isn't
+    // force-disabled here.
+    if req.allow_archive_writeback == Some(true)
+        && !crate::archive_rewrite::mount_writable(std::path::Path::new(&am_root_path))
+    {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation.archive_writeback_mount_readonly",
+            "library root is on a read-only mount; archive writeback cannot be enabled",
+        );
+    }
     if let Some(b) = req.allow_archive_writeback {
         am.allow_archive_writeback = Set(b);
     }
@@ -636,6 +678,9 @@ pub async fn update_settings(
     }
     if let Some(n) = req.archive_backup_retain_days {
         am.archive_backup_retain_days = Set(n);
+    }
+    if let Some(n) = req.archive_writeback_jpeg_quality {
+        am.archive_writeback_jpeg_quality = Set(n);
     }
     if let Some(blacklist_opt) = req.metadata_publisher_blacklist {
         let cleaned: Vec<String> = blacklist_opt

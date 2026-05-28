@@ -25,6 +25,7 @@ use redis::aio::ConnectionManager;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;
 
+pub mod archive_edit;
 pub mod close_dangling_sessions;
 pub mod metadata_apply;
 pub mod metadata_search;
@@ -52,6 +53,7 @@ pub struct JobRuntime {
     pub metadata_apply_series_storage: RedisStorage<metadata_apply::ApplySeriesJob>,
     pub metadata_apply_issue_storage: RedisStorage<metadata_apply::ApplyIssueJob>,
     pub rewrite_issue_sidecars_storage: RedisStorage<rewrite_sidecars::RewriteIssueSidecarsJob>,
+    pub archive_edit_storage: RedisStorage<archive_edit::ArchiveEditJob>,
     pub redis: ConnectionManager,
 }
 
@@ -76,6 +78,7 @@ impl JobRuntime {
             RedisStorage::<metadata_apply::ApplyIssueJob>::new(conn.clone());
         let rewrite_issue_sidecars_storage =
             RedisStorage::<rewrite_sidecars::RewriteIssueSidecarsJob>::new(conn.clone());
+        let archive_edit_storage = RedisStorage::<archive_edit::ArchiveEditJob>::new(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -88,6 +91,7 @@ impl JobRuntime {
             metadata_apply_series_storage,
             metadata_apply_issue_storage,
             rewrite_issue_sidecars_storage,
+            archive_edit_storage,
             redis: conn,
         })
     }
@@ -314,6 +318,16 @@ impl JobRuntime {
             .backend(self.rewrite_issue_sidecars_storage.clone())
             .build_fn(rewrite_sidecars::handle);
 
+        // Page-byte edits — concurrency=1. Re-encoding pages on a large
+        // archive can be CPU-heavy; serializing keeps host load bounded
+        // under a bulk fan-out (per-issue serialization is the mutex's
+        // job, but we also cap total in-flight edits here).
+        let archive_edit_worker = WorkerBuilder::new("archive_edit")
+            .concurrency(1)
+            .data(state.clone())
+            .backend(self.archive_edit_storage.clone())
+            .build_fn(archive_edit::handle);
+
         let shutdown_fut = {
             let token = shutdown.clone();
             async move {
@@ -332,6 +346,7 @@ impl JobRuntime {
             .register(metadata_apply_series_worker)
             .register(metadata_apply_issue_worker)
             .register(rewrite_issue_sidecars_worker)
+            .register(archive_edit_worker)
             .run_with_signal(shutdown_fut)
             .await
     }

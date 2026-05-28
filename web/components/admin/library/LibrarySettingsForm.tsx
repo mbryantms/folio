@@ -55,19 +55,22 @@ const schema = z
     metadata_writeback_enabled: z.boolean().default(false),
     archive_backup_retain_count: z.number().int().min(0).max(5).default(1),
     archive_backup_retain_days: z.number().int().min(0).max(3650).default(30),
+    archive_writeback_jpeg_quality: z
+      .number()
+      .int()
+      .min(60)
+      .max(100)
+      .default(92),
     metadata_publisher_blacklist: z.array(z.string().min(1)).default([]),
     filename_ignore_leading_numbers: z.boolean().default(false),
     filename_assume_issue_one: z.boolean().default(false),
     metadata_auto_apply_strong_matches: z.boolean().default(false),
   })
-  .refine(
-    (v) => !v.metadata_writeback_enabled || v.allow_archive_writeback,
-    {
-      message:
-        "Metadata writeback requires Archive writeback (master toggle) to be on first.",
-      path: ["metadata_writeback_enabled"],
-    },
-  );
+  .refine((v) => !v.metadata_writeback_enabled || v.allow_archive_writeback, {
+    message:
+      "Metadata writeback requires Archive writeback (master toggle) to be on first.",
+    path: ["metadata_writeback_enabled"],
+  });
 
 type FormValues = z.infer<typeof schema>;
 
@@ -88,6 +91,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       metadata_writeback_enabled: false,
       archive_backup_retain_count: 1,
       archive_backup_retain_days: 30,
+      archive_writeback_jpeg_quality: 92,
       metadata_publisher_blacklist: [],
       filename_ignore_leading_numbers: false,
       filename_assume_issue_one: false,
@@ -107,8 +111,11 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         metadata_writeback_enabled: lib.data.metadata_writeback_enabled,
         archive_backup_retain_count: lib.data.archive_backup_retain_count,
         archive_backup_retain_days: lib.data.archive_backup_retain_days,
-        metadata_publisher_blacklist: lib.data.metadata_publisher_blacklist ?? [],
-        filename_ignore_leading_numbers: lib.data.filename_ignore_leading_numbers,
+        archive_writeback_jpeg_quality: lib.data.archive_writeback_jpeg_quality,
+        metadata_publisher_blacklist:
+          lib.data.metadata_publisher_blacklist ?? [],
+        filename_ignore_leading_numbers:
+          lib.data.filename_ignore_leading_numbers,
         filename_assume_issue_one: lib.data.filename_assume_issue_one,
         metadata_auto_apply_strong_matches:
           lib.data.metadata_auto_apply_strong_matches,
@@ -121,6 +128,10 @@ export function LibrarySettingsForm({ id }: { id: string }) {
     return <p className="text-destructive text-sm">Failed to load library.</p>;
   }
 
+  // A read-only mount can't accept rewrites; the server rejects enabling
+  // the master toggle, so disable it in the UI with an explanation.
+  const mountReadOnly = lib.data.root_path_writable === false;
+
   const onSubmit = form.handleSubmit((values) => {
     update.mutate({
       ignore_globs: values.ignore_globs,
@@ -131,6 +142,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       metadata_writeback_enabled: values.metadata_writeback_enabled,
       archive_backup_retain_count: values.archive_backup_retain_count,
       archive_backup_retain_days: values.archive_backup_retain_days,
+      archive_writeback_jpeg_quality: values.archive_writeback_jpeg_quality,
       metadata_publisher_blacklist: values.metadata_publisher_blacklist,
       filename_ignore_leading_numbers: values.filename_ignore_leading_numbers,
       filename_assume_issue_one: values.filename_assume_issue_one,
@@ -271,16 +283,28 @@ export function LibrarySettingsForm({ id }: { id: string }) {
               <p className="text-muted-foreground mt-1 text-xs">
                 Gates every code path that modifies bytes inside this
                 library&rsquo;s archives — sidecar metadata refresh and
-                page-byte edits. Off by default; flip on when you&rsquo;re
-                ready to start rewriting files. A backup of the previous
-                version is kept next to each archive.
+                page-byte edits. Off by default; flip on when you&rsquo;re ready
+                to start rewriting files. A backup of the previous version is
+                kept next to each archive.
               </p>
             </div>
+            {mountReadOnly && (
+              <p className="border-border bg-muted text-muted-foreground rounded-md border px-3 py-2 text-xs">
+                This library&rsquo;s root path is on a{" "}
+                <span className="font-medium">read-only mount</span>. Archive
+                writeback can&rsquo;t be enabled until the mount is writable.
+              </p>
+            )}
             <FormField
               control={form.control}
               name="allow_archive_writeback"
               render={({ field }) => (
-                <FormItem className="flex items-start justify-between gap-6">
+                <FormItem
+                  className={cn(
+                    "flex items-start justify-between gap-6",
+                    mountReadOnly && !field.value && "opacity-60",
+                  )}
+                >
                   <div className="space-y-1">
                     <FormLabel>Allow archive writeback</FormLabel>
                     <FormDescription>
@@ -291,6 +315,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                   <FormControl>
                     <Switch
                       checked={field.value}
+                      disabled={mountReadOnly && !field.value}
                       onCheckedChange={field.onChange}
                     />
                   </FormControl>
@@ -312,12 +337,11 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                     <div className="space-y-1">
                       <FormLabel>Write metadata sidecars on apply</FormLabel>
                       <FormDescription>
-                        When a metadata refresh runs (ComicVine / Metron),
-                        write fresh <span className="font-mono">ComicInfo.xml</span>{" "}
+                        When a metadata refresh runs (ComicVine / Metron), write
+                        fresh <span className="font-mono">ComicInfo.xml</span>{" "}
                         and <span className="font-mono">MetronInfo.xml</span>{" "}
-                        into the archive instead of just updating the
-                        database. The library becomes self-describing —
-                        export anywhere.
+                        into the archive instead of just updating the database.
+                        The library becomes self-describing — export anywhere.
                       </FormDescription>
                     </div>
                     <FormControl>
@@ -382,14 +406,42 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                       />
                     </FormControl>
                     <FormDescription>
-                      Backups older than this are pruned by the nightly
-                      cleanup. 0 keeps backups forever.
+                      Backups older than this are pruned by the nightly cleanup.
+                      0 keeps backups forever.
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
+            <FormField
+              control={form.control}
+              name="archive_writeback_jpeg_quality"
+              render={({ field }) => (
+                <FormItem className="max-w-xs">
+                  <FormLabel>JPEG re-encode quality</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={60}
+                      max={100}
+                      value={field.value}
+                      onChange={(e) => {
+                        const n = Number(e.target.value);
+                        if (Number.isFinite(n)) field.onChange(n);
+                      }}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Quality (60&ndash;100) used when the page editor re-encodes
+                    a rotated or replaced JPEG page. Higher keeps more detail at
+                    a larger file size; 92 is a good default. PNG and WebP pages
+                    stay lossless.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </CardContent>
         </Card>
         <Card>
@@ -401,12 +453,12 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                 <FormItem>
                   <FormLabel>Metadata: publisher blacklist</FormLabel>
                   <FormDescription>
-                    Provider candidates from these publishers are dropped
-                    before scoring. Useful when CV/Metron searches keep
-                    surfacing the wrong publisher&apos;s reprint as the
-                    top hit. Comparison is case-insensitive — &ldquo;DC
-                    Comics&rdquo; / &ldquo;dc comics&rdquo; match the
-                    same entry. Press Enter or comma to add.
+                    Provider candidates from these publishers are dropped before
+                    scoring. Useful when CV/Metron searches keep surfacing the
+                    wrong publisher&apos;s reprint as the top hit. Comparison is
+                    case-insensitive — &ldquo;DC Comics&rdquo; / &ldquo;dc
+                    comics&rdquo; match the same entry. Press Enter or comma to
+                    add.
                   </FormDescription>
                   <FormControl>
                     <TagInput value={field.value} onChange={field.onChange} />
@@ -421,13 +473,11 @@ export function LibrarySettingsForm({ id }: { id: string }) {
               render={({ field }) => (
                 <FormItem className="flex items-start justify-between gap-6">
                   <div className="space-y-1">
-                    <FormLabel>
-                      Filename: ignore leading numbers
-                    </FormLabel>
+                    <FormLabel>Filename: ignore leading numbers</FormLabel>
                     <FormDescription>
-                      Drops any leading numeric token from the filename
-                      before inferring the series. Closes the common
-                      Mylar-style numbering case where{" "}
+                      Drops any leading numeric token from the filename before
+                      inferring the series. Closes the common Mylar-style
+                      numbering case where{" "}
                       <span className="font-mono">001 - Saga.cbz</span> would
                       otherwise parse as series &ldquo;001&rdquo;.
                     </FormDescription>
@@ -451,9 +501,9 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                       Filename: assume issue 1 when none detected
                     </FormLabel>
                     <FormDescription>
-                      When the filename has no detectable issue number,
-                      infer issue 1. Closes the one-shot / first-issue
-                      case where curation has stripped the{" "}
+                      When the filename has no detectable issue number, infer
+                      issue 1. Closes the one-shot / first-issue case where
+                      curation has stripped the{" "}
                       <span className="font-mono">#1</span>.
                     </FormDescription>
                   </div>
@@ -472,18 +522,14 @@ export function LibrarySettingsForm({ id }: { id: string }) {
               render={({ field }) => (
                 <FormItem className="flex items-start justify-between gap-6">
                   <div className="space-y-1">
-                    <FormLabel>
-                      Auto-apply strong matches
-                    </FormLabel>
+                    <FormLabel>Auto-apply strong matches</FormLabel>
                     <FormDescription>
-                      When checked, Folio applies metadata
-                      automatically when a non-manual search (weekly
-                      cron, bulk-fetch) finds exactly one candidate,
-                      its cover image matches yours within 8 bits of
-                      Hamming distance, and no other candidate is
-                      comparably close. User-edited fields are still
-                      preserved. All other matches stay in the review
-                      queue.
+                      When checked, Folio applies metadata automatically when a
+                      non-manual search (weekly cron, bulk-fetch) finds exactly
+                      one candidate, its cover image matches yours within 8 bits
+                      of Hamming distance, and no other candidate is comparably
+                      close. User-edited fields are still preserved. All other
+                      matches stay in the review queue.
                     </FormDescription>
                   </div>
                   <FormControl>
@@ -499,7 +545,10 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         </Card>
         <ThumbnailSettingsCard
           enabled={thumbnailSettings.data?.enabled ?? true}
-          format={(thumbnailSettings.data?.format as ThumbnailFormat | undefined) ?? "webp"}
+          format={
+            (thumbnailSettings.data?.format as ThumbnailFormat | undefined) ??
+            "webp"
+          }
           coverQuality={thumbnailSettings.data?.cover_quality ?? 80}
           pageQuality={thumbnailSettings.data?.page_quality ?? 50}
           loading={thumbnailSettings.isLoading}
@@ -532,12 +581,10 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                 generate_page_thumbs_on_scan:
                   lib.data.generate_page_thumbs_on_scan,
                 allow_archive_writeback: lib.data.allow_archive_writeback,
-                metadata_writeback_enabled:
-                  lib.data.metadata_writeback_enabled,
+                metadata_writeback_enabled: lib.data.metadata_writeback_enabled,
                 archive_backup_retain_count:
                   lib.data.archive_backup_retain_count,
-                archive_backup_retain_days:
-                  lib.data.archive_backup_retain_days,
+                archive_backup_retain_days: lib.data.archive_backup_retain_days,
               })
             }
           >
