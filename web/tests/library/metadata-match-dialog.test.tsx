@@ -84,6 +84,13 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
   };
 });
 
+// The form calls `useRouter().refresh()` to re-hydrate the page after a
+// metadata apply lands; stub it so the component renders without a Next
+// router context.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: () => undefined }),
+}));
+
 vi.mock("@/lib/api/queries", () => ({
   useMe: () => ({ data: { role: "admin", id: "u1", email: "a@b.c" } }),
   useMetadataCandidatesSeries: () => candidatesState,
@@ -94,10 +101,30 @@ vi.mock("@/lib/api/queries", () => ({
   // M5 preview pane — the candidate-list rendering tests don't drill
   // into the preview, so a no-op shell is sufficient. Component-level
   // PreviewPane coverage lives in its own test file.
-  useMetadataProposedDiffSeries: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
-  useMetadataProposedDiffIssue: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
-  useMetadataCompositeDiffSeries: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
-  useMetadataCompositeDiffIssue: () => ({ data: undefined, isLoading: false, isFetching: false, error: null }),
+  useMetadataProposedDiffSeries: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    error: null,
+  }),
+  useMetadataProposedDiffIssue: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    error: null,
+  }),
+  useMetadataCompositeDiffSeries: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    error: null,
+  }),
+  useMetadataCompositeDiffIssue: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    error: null,
+  }),
   // M5.2 — dialog queries the library to learn whether writeback is on
   // (drives the wait-for-rescan flow). Default-off in tests since the
   // immediate-close path is what the existing assertions cover.
@@ -156,13 +183,7 @@ vi.mock("@/components/ui/radio-group", () => ({
 }));
 
 vi.mock("@/components/ui/switch", () => ({
-  Switch: ({
-    id,
-    checked,
-  }: {
-    id?: string;
-    checked?: boolean;
-  }) =>
+  Switch: ({ id, checked }: { id?: string; checked?: boolean }) =>
     createElement("input", {
       type: "checkbox",
       id,
@@ -178,7 +199,11 @@ describe("<MetadataMatchForm>", () => {
     candidatesState = { data: undefined };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),
@@ -221,7 +246,11 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),
@@ -245,7 +274,11 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),
@@ -282,7 +315,11 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),
@@ -317,7 +354,11 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),
@@ -355,7 +396,11 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),
@@ -388,7 +433,11 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),
@@ -428,7 +477,11 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),
@@ -452,7 +505,11 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),
@@ -475,7 +532,11 @@ describe("<MetadataMatchForm>", () => {
     };
     const html = renderToStaticMarkup(
       createElement(MetadataMatchForm, {
-        scope: { kind: "series" as const, seriesSlug: "saga", libraryId: "lib-fixture" },
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
         onClose: () => undefined,
         open: true,
       }),

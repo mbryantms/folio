@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { apiMutate } from "@/lib/api/mutations";
@@ -151,7 +152,8 @@ export function MetadataMatchForm({
     scope.kind === "issue" ? scope.seriesSlug : "",
     scope.kind === "issue" ? scope.issueSlug : "",
   );
-  const compositeApply = scope.kind === "series" ? seriesComposite : issueComposite;
+  const compositeApply =
+    scope.kind === "series" ? seriesComposite : issueComposite;
   // M5.3 — issue-scope Revert-pin support. Series-scope diff lives on
   // the series row, not the issue row; surfacing series-scope pin
   // revert is a follow-up.
@@ -166,6 +168,18 @@ export function MetadataMatchForm({
         }
       : undefined;
   const qc = useQueryClient();
+  const router = useRouter();
+  // Re-hydrate the issue/series page after a metadata apply lands. The
+  // apply path is async (sidecar rewrite → scoped rescan → DB cache), so
+  // this runs once the rescan completes: `router.refresh()` re-runs the
+  // RSC (details / credits / external IDs / cover index come from the
+  // server `IssueDetailView`), and the query invalidations refetch the
+  // client-side tabs (the Covers gallery, issue health, etc.).
+  const rehydrate = React.useCallback(() => {
+    router.refresh();
+    qc.invalidateQueries({ queryKey: ["issues"] });
+    qc.invalidateQueries({ queryKey: ["series"] });
+  }, [router, qc]);
   const [runId, setRunId] = React.useState<string | null>(null);
   const [searchPending, setSearchPending] = React.useState(false);
   const [searchError, setSearchError] = React.useState<string | null>(null);
@@ -178,7 +192,8 @@ export function MetadataMatchForm({
     scope.kind === "issue" ? scope.issueSlug : "",
     scope.kind === "issue" ? runId : null,
   );
-  const candidates = scope.kind === "series" ? seriesCandidates : issueCandidates;
+  const candidates =
+    scope.kind === "series" ? seriesCandidates : issueCandidates;
   const [mode, setMode] = React.useState<ApplyMode>("fill_missing");
   const [applyCover, setApplyCover] = React.useState(true);
   const [overrideUserEdits, setOverrideUserEdits] = React.useState(false);
@@ -383,9 +398,9 @@ export function MetadataMatchForm({
     let cancelled = false;
     void (async () => {
       try {
-        const latest = await jsonFetch<CandidatesResp>(candidatesProbePath).catch(
-          () => null,
-        );
+        const latest = await jsonFetch<CandidatesResp>(
+          candidatesProbePath,
+        ).catch(() => null);
         if (cancelled) return;
         if (
           latest &&
@@ -593,10 +608,15 @@ export function MetadataMatchForm({
   // carry one anyway; `scan.started` does, but we don't need it).
   React.useEffect(() => {
     if (!waitingForRescan) return;
-    const completed = scanEvents.events.find((e) => e.type === "scan.completed");
+    const completed = scanEvents.events.find(
+      (e) => e.type === "scan.completed",
+    );
     if (completed) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- WS event arrival is the trigger; resetting `applyAt` to null also tears down the subscription on the next render.
       setApplyAt(null);
+      // The rescan re-ingested the freshly-written XML, so the DB cache is
+      // now current — pull it into the page before closing.
+      rehydrate();
       onClose();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -610,7 +630,14 @@ export function MetadataMatchForm({
     if (!waitingForRescan) return;
     const t = setTimeout(() => {
       setApplyAt(null);
-      toast.info("Refresh may take a moment — close and reopen the page to see the latest data.");
+      // Best-effort re-hydrate even though we never saw `scan.completed`
+      // (WS lag / missed broadcast). The rewrite already landed; if the
+      // rescan is still finishing the refetch may be a beat early, hence
+      // the softer toast.
+      rehydrate();
+      toast.info(
+        "Refreshing — reopen the page if the latest data isn't shown yet.",
+      );
       onClose();
     }, 30_000);
     return () => clearTimeout(t);
@@ -682,7 +709,8 @@ export function MetadataMatchForm({
           <Loader2 className="h-4 w-4 animate-spin" />
           {scope.kind === "series" && seriesProgress ? (
             <span>
-              Rescanning series ({seriesProgress.done} of {seriesProgress.total})
+              Rescanning series ({seriesProgress.done} of {seriesProgress.total}
+              )
             </span>
           ) : (
             <span>
@@ -848,11 +876,12 @@ export function MetadataMatchForm({
                     onToggleSelect={() => onToggleCompareSelect(i)}
                   />
                 ))}
-                {isFinalized && (candidates.data?.candidates.length ?? 0) === 0 && (
-                  <li className="text-muted-foreground py-8 text-center text-sm">
-                    No matches. Try editing the series name or year.
-                  </li>
-                )}
+                {isFinalized &&
+                  (candidates.data?.candidates.length ?? 0) === 0 && (
+                    <li className="text-muted-foreground py-8 text-center text-sm">
+                      No matches. Try editing the series name or year.
+                    </li>
+                  )}
               </ul>
             </>
           )}
@@ -907,14 +936,14 @@ function MatchOutcomeBanner({
     ? extractCandidateTitle(topCandidate)
     : "Top candidate";
   const altBadge = outcome.matched_via_alternate ? (
-    <span className="text-muted-foreground ml-2 text-[10px] uppercase tracking-wide">
+    <span className="text-muted-foreground ml-2 text-[10px] tracking-wide uppercase">
       via alternate cover
     </span>
   ) : null;
 
   if (outcome.kind === "single_good") {
     return (
-      <div className="bg-emerald-500/5 border-emerald-500/30 my-2 rounded-md border p-3">
+      <div className="my-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
             <p className="text-sm font-medium">
@@ -933,11 +962,7 @@ function MatchOutcomeBanner({
               to pick fields first.
             </p>
           </div>
-          <Button
-            size="sm"
-            onClick={onOneClickApply}
-            disabled={isApplying}
-          >
+          <Button size="sm" onClick={onOneClickApply} disabled={isApplying}>
             {isApplying ? (
               <>
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -957,8 +982,8 @@ function MatchOutcomeBanner({
       <div className="bg-muted/40 border-border my-2 rounded-md border p-3">
         <p className="text-sm font-medium">Multiple strong matches</p>
         <p className="text-muted-foreground text-xs">
-          Pick the right candidate from the list below — every option is
-          a plausible match.
+          Pick the right candidate from the list below — every option is a
+          plausible match.
         </p>
       </div>
     );
@@ -966,7 +991,7 @@ function MatchOutcomeBanner({
 
   if (outcome.kind === "single_bad_cover") {
     return (
-      <div className="bg-amber-500/5 border-amber-500/30 my-2 rounded-md border p-3">
+      <div className="my-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
         <p className="text-sm font-medium">
           One plausible match — cover doesn&rsquo;t match{altBadge}
         </p>
@@ -984,8 +1009,8 @@ function MatchOutcomeBanner({
     <div className="bg-muted/40 border-border my-2 rounded-md border p-3">
       <p className="text-sm font-medium">No strong match</p>
       <p className="text-muted-foreground text-xs">
-        Review the candidates below or re-search with different facts
-        (try editing the series name or year).
+        Review the candidates below or re-search with different facts (try
+        editing the series name or year).
       </p>
     </div>
   );
