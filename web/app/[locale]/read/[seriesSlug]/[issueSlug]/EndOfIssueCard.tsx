@@ -167,7 +167,10 @@ export function EndOfIssueCard({
       ) : isLoading && !data ? (
         <div className="px-4 pb-3">
           <div
-            className="aspect-[2/3] w-full animate-pulse rounded-md bg-neutral-800"
+            // Themed token, not hardcoded neutral-800: this card is
+            // `bg-background` (theme-aware), so a dark block would clash
+            // on light/amber themes. Matches the heading skeleton above.
+            className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md"
             aria-busy="true"
             aria-label="Loading next issue"
           />

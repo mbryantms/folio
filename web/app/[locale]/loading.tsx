@@ -1,30 +1,31 @@
-import { Chrome } from "@/components/Chrome";
+import { Loader2 } from "lucide-react";
 
 /**
- * App Router loading fallback for `[locale]/`. Renders the page shell
- * (sidebar + topbar via `<Chrome>`) with a skeleton-card grid so the
- * first paint after a route transition isn't a blank canvas.
- * Audit-remediation M7.1 (2026-05-24).
+ * Top-level `[locale]/` Suspense fallback. Deliberately **shell-agnostic**:
+ * at this level we don't yet know which area the user is entering
+ * (library / admin / settings render `MainShell` / `AdminShell`; the
+ * reader is full-screen and chrome-less), so committing to a shell here
+ * guarantees a layout shift when the real one arrives.
  *
- * Note: this is a server component — no `"use client"` needed; the
- * shell + skeletons are pure markup. Per-section loading.tsx files
- * under `(library)/(admin)/(settings)` can render tighter skeletons.
+ * Each route group supplies its own `loading.tsx` that renders a
+ * shape-matched skeleton *inside* the correct shell once its layout has
+ * resolved. This fallback only covers the brief window before that —
+ * a neutral, theme-aware full-screen spinner on `bg-background`.
+ *
+ * Server component — pure markup, no `"use client"`.
  */
 export default function LocaleLoading() {
   return (
-    <Chrome breadcrumbs={[{ label: "Loading…" }]}>
-      <div className="py-6">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-          {Array.from({ length: 12 }, (_, i) => (
-            <div
-              key={i}
-              className="aspect-[2/3] animate-pulse rounded-md bg-muted/40"
-              aria-hidden
-            />
-          ))}
-        </div>
-        <span className="sr-only">Loading…</span>
-      </div>
-    </Chrome>
+    <div
+      className="bg-background grid min-h-screen place-items-center"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2
+        aria-hidden
+        className="text-muted-foreground/60 size-8 animate-spin motion-reduce:hidden"
+      />
+      <span className="sr-only">Loading…</span>
+    </div>
   );
 }

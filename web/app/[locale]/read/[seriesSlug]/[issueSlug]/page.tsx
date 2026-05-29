@@ -88,20 +88,27 @@ export default async function ReadPage({
     notFound();
   }
 
-  // Best-effort progress prefetch — a 4xx just means "no record yet". Skip
-  // entirely when the user explicitly asked to start fresh or jumped to a
-  // specific page via `?page=`.
+  // Kick off the two independent, best-effort fetches concurrently. Both
+  // only need `issue` (already resolved above) — not each other — so
+  // running them in parallel instead of sequentially shaves a round-trip
+  // off time-to-reader, the exact window the loading skeleton is shown.
+  // Each fails soft to `null`: a progress 4xx just means "no record yet";
+  // an unauthed/transient `/auth/me` falls back to the built-in defaults.
+  // Progress is skipped entirely when the user asked to start fresh
+  // (`?from=start`) or deep-linked a page (`?page=`).
+  const progressPromise =
+    explicitPage === null && !startFresh
+      ? apiGet<ProgressDelta>(`/progress`).catch(() => null)
+      : null;
+  const mePromise = apiGet<MeView>("/auth/me").catch(() => null);
+  const [delta, me] = await Promise.all([progressPromise, mePromise]);
+
   let initialPage = 0;
   if (explicitPage !== null) {
     initialPage = explicitPage;
-  } else if (!startFresh) {
-    try {
-      const delta = await apiGet<ProgressDelta>(`/progress`);
-      const mine = delta.records.find((r) => r.issue_id === issue.id);
-      if (mine) initialPage = mine.page;
-    } catch {
-      /* no progress yet */
-    }
+  } else if (delta) {
+    const mine = delta.records.find((r) => r.issue_id === issue.id);
+    if (mine) initialPage = mine.page;
   }
 
   // page_count from ComicInfo isn't always trustworthy; if the reader walks
@@ -137,8 +144,7 @@ export default async function ReadPage({
   let readingMinActiveMs = 30_000;
   let readingMinPages = 3;
   let readingIdleMs = 180_000;
-  try {
-    const me = await apiGet<MeView>("/auth/me");
+  if (me) {
     if (
       me.default_reading_direction === "ltr" ||
       me.default_reading_direction === "rtl"
@@ -168,13 +174,12 @@ export default async function ReadPage({
       userDefaultPageAnimation = me.default_page_animation;
     }
     userDefaultCoverSolo = me.default_cover_solo !== false;
-    userKeybinds = (me.keybinds as Record<string, string> | null | undefined) ?? {};
+    userKeybinds =
+      (me.keybinds as Record<string, string> | null | undefined) ?? {};
     activityTrackingEnabled = me.activity_tracking_enabled !== false;
     readingMinActiveMs = me.reading_min_active_ms ?? 30_000;
     readingMinPages = me.reading_min_pages ?? 3;
     readingIdleMs = me.reading_idle_ms ?? 180_000;
-  } catch {
-    /* unauthenticated or transient — fall back to ltr */
   }
 
   return (

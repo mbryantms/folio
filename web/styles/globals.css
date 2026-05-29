@@ -41,6 +41,16 @@
   --ring: 38 92% 55%;
 
   --radius: 0.5rem;
+
+  /* Reader surface. Intentionally theme-independent — the comic reader
+   * stays dark in every theme (a light letterbox behind artwork reads
+   * as a bug, not a preference). Defined only here in `:root` so the
+   * light / amber blocks below inherit it; the reader root + its
+   * loading skeleton both consume `--reader-bg` so the fallback can
+   * never drift from the live background (the iPad white-flash fix).
+   * `--reader-chrome` matches the translucent top bar / page strip. */
+  --reader-bg: 0 0% 0%;
+  --reader-chrome: 0 0% 4%;
 }
 
 [data-theme="light"] {
@@ -205,6 +215,8 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
+  --color-reader-bg: hsl(var(--reader-bg));
+  --color-reader-chrome: hsl(var(--reader-chrome));
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);

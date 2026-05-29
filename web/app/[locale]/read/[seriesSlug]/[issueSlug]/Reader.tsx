@@ -681,7 +681,10 @@ export function Reader({
       // scroll AND native pinch-zoom, while leaving the horizontal
       // axis available for the JS swipe-to-turn handler above.
       style={{ touchAction: "pan-y pinch-zoom" }}
-      className="min-h-screen bg-black text-neutral-200"
+      // Reader surface token (see globals.css `--reader-bg`): the
+      // route-level loading skeleton consumes the same token so the
+      // fallback never flashes white before the reader paints.
+      className="bg-reader-bg min-h-screen text-neutral-200"
     >
       <ReaderChrome
         seriesId={seriesId}
@@ -1131,7 +1134,7 @@ function WebtoonView({
           type="button"
           aria-label="Toggle controls"
           onClick={onChromeZone}
-          className="pointer-events-auto fixed inset-0 z-10 touch-pan-y cursor-pointer bg-transparent"
+          className="pointer-events-auto fixed inset-0 z-10 cursor-pointer touch-pan-y bg-transparent"
         />
       ) : null}
     </main>
