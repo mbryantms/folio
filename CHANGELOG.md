@@ -15,6 +15,19 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-05-29
+
+### Changed
+
+- **More compact list headers on mobile.** The Bookmarks, All Libraries, and
+  CBL-list headers stacked many full-width control rows, pushing content far
+  down on phones. Now: search grows to fill one row with the density/view
+  toggle (Bookmarks) or trailing controls (Libraries) beside it; the Libraries
+  toolbar's secondary actions (Save as view, Clear filters) fold into a `⋯`
+  overflow; the Bookmarks reference blurb is hidden on small screens; and the
+  CBL search grows on mobile. (CBL's stats-pills/controls restructure is a
+  follow-up.)
+
 ## [0.7.6] - 2026-05-29
 
 ### Fixed
@@ -123,7 +136,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.6...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.7...HEAD
+[0.7.7]: https://github.com/mbryantms/folio/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/mbryantms/folio/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/mbryantms/folio/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/mbryantms/folio/compare/v0.7.3...v0.7.4
