@@ -273,6 +273,9 @@ async fn apply_issue_writeback_disabled_takes_legacy_path() {
 
     let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
 
+    // Subscribe before the apply so we catch the completion broadcast.
+    let mut events = app.state().events.subscribe();
+
     let outcome = apply_issue_inline(
         &app.state(),
         &issue_id,
@@ -291,6 +294,28 @@ async fn apply_issue_writeback_disabled_takes_legacy_path() {
         outcome.applied_fields.contains(&"credits".to_owned()),
         "legacy path wrote credits: {:?}",
         outcome.applied_fields,
+    );
+
+    // The DB-direct path must broadcast `metadata.applied` for this issue so
+    // an open match dialog re-hydrates without a page refresh (the writeback
+    // path uses the rescan's `scan.completed` instead).
+    use server::library::events::ScanEvent;
+    let mut saw_applied = false;
+    while let Ok(evt) = events.try_recv() {
+        if let ScanEvent::MetadataApplied {
+            library_id,
+            issue_id: evt_issue,
+            ..
+        } = evt
+        {
+            assert_eq!(library_id, lib_id);
+            assert_eq!(evt_issue.as_deref(), Some(issue_id.as_str()));
+            saw_applied = true;
+        }
+    }
+    assert!(
+        saw_applied,
+        "DB-direct apply must broadcast a MetadataApplied event",
     );
 }
 

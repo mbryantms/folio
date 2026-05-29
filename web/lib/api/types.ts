@@ -554,6 +554,15 @@ export type ScanEvent =
       kind?: "cover" | "page_map" | "cover_page_map";
       error: string;
     }
+  | {
+      // Emitted when a DB-direct (non-writeback) metadata apply lands, so an
+      // open match dialog can re-hydrate without a page refresh. The
+      // writeback path signals completion via `scan.completed` instead.
+      type: "metadata.applied";
+      library_id: string;
+      series_id: string;
+      issue_id?: string;
+    }
   | { type: "lagged"; skipped: number };
 
 export type ApiError = {

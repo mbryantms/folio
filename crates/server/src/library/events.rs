@@ -135,6 +135,19 @@ pub enum ScanEvent {
         kind: String,
         error: String,
     },
+    /// A metadata apply landed via the **DB-direct** (non-writeback) path,
+    /// so the issue/series rows — covers, fields, notes — are now current.
+    /// The writeback path signals completion via `scan.completed` after its
+    /// rescan; this is the equivalent for unmigrated libraries so the match
+    /// dialog can re-hydrate open tabs without a page refresh. `issue_id`
+    /// is `None` for a series-scope apply.
+    #[serde(rename = "metadata.applied")]
+    MetadataApplied {
+        library_id: Uuid,
+        series_id: Uuid,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        issue_id: Option<String>,
+    },
 }
 
 impl ScanEvent {
@@ -148,7 +161,8 @@ impl ScanEvent {
             | Self::Failed { library_id, .. }
             | Self::ThumbsStarted { library_id, .. }
             | Self::ThumbsCompleted { library_id, .. }
-            | Self::ThumbsFailed { library_id, .. } => *library_id,
+            | Self::ThumbsFailed { library_id, .. }
+            | Self::MetadataApplied { library_id, .. } => *library_id,
         }
     }
 }

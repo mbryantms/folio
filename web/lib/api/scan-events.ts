@@ -221,6 +221,12 @@ export function useScanEvents(opts?: {
               toast.error(`Thumbnail job failed: ${evt.error}`);
             }
             break;
+          case "metadata.applied":
+            // A DB-direct apply landed; nudge the issue/series-keyed
+            // caches so any open page (covers gallery, details) refetches.
+            qc.invalidateQueries({ queryKey: ["issues"], exact: false });
+            qc.invalidateQueries({ queryKey: ["series"], exact: false });
+            break;
           default:
             break;
         }

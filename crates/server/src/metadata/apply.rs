@@ -378,6 +378,15 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
     let outcome = write_series_fields(state, &row, series_uuid, &detail, args, &resolver).await?;
     flip_candidate_applied(&state.db, run_id, ordinal).await?;
     bump_run_counts(&state.db, run_id, &outcome).await?;
+    // DB-direct path: signal completion so an open match dialog re-hydrates
+    // without a refresh (writeback path uses the rescan's `scan.completed`).
+    state
+        .events
+        .emit(crate::library::events::ScanEvent::MetadataApplied {
+            library_id: row.library_id,
+            series_id: row.id,
+            issue_id: None,
+        });
     Ok(outcome)
 }
 
@@ -905,6 +914,17 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         write_issue_fields(state, &row, &detail, args, &resolver, &*provider, source).await?;
     flip_candidate_applied(&state.db, run_id, ordinal).await?;
     bump_run_counts(&state.db, run_id, &outcome).await?;
+    // DB-direct path: rows (covers, fields, notes) are current now. Signal
+    // completion so an open match dialog can re-hydrate without a page
+    // refresh. The writeback path returns above and signals via the
+    // rescan's `scan.completed` instead.
+    state
+        .events
+        .emit(crate::library::events::ScanEvent::MetadataApplied {
+            library_id: row.library_id,
+            series_id: row.series_id,
+            issue_id: Some(row.id.clone()),
+        });
     Ok(outcome)
 }
 

@@ -421,7 +421,7 @@ export function ThumbnailsAdmin({ libraryId }: { libraryId: string }) {
                     </span>
                     {"issue_id" in e ? (
                       <span className="text-muted-foreground/70 ml-auto truncate font-mono">
-                        {e.issue_id.slice(0, 8)}…
+                        {e.issue_id?.slice(0, 8)}…
                       </span>
                     ) : null}
                   </li>

@@ -48,7 +48,6 @@ import {
 } from "@/lib/api/mutations";
 import {
   jsonFetch,
-  useLibrary,
   useMe,
   useMetadataCandidatesIssue,
   useMetadataCandidatesSeries,
@@ -559,36 +558,22 @@ export function MetadataMatchForm({
   const applyDidSucceed = apply.isSuccess || compositeApply.isSuccess;
   const applyIsPending = apply.isPending || compositeApply.isPending;
 
-  // M5.2 — When the target library has `metadata_writeback_enabled=true`,
-  // an apply enqueues a downstream `RewriteIssueSidecarsJob` which then
-  // triggers a scoped scanner rescan. The DB cache reflects the new
-  // metadata only after that rescan finishes. Auto-close-on-apply would
-  // hand the user back to an issue page that still shows the old data
-  // for 1-3 seconds. Instead we transition into a `waiting_for_rescan`
-  // state, watch the scan WebSocket for a `scan.completed` event
-  // matching this library, and close then.
-  const libraryQ = useLibrary(scope.libraryId);
-  const writebackEnabled = Boolean(
-    libraryQ.data?.metadata_writeback_enabled &&
-      libraryQ.data?.allow_archive_writeback,
-  );
-  // Watershed timestamp set at apply-time. We ignore any `scan.completed`
-  // event whose payload `at` predates it (the user might have triggered
-  // a scan elsewhere; we want our scan, not the earlier one).
+  // The apply API returns 202 — the rows aren't current until the job
+  // runs. Rather than detect the library's writeback mode client-side (it
+  // determines *which* completion event fires, not *whether* to wait), we
+  // always enter a waiting state on apply success and close once we see a
+  // completion event for this library:
+  //   - writeback path → the scoped rescan's `scan.completed`
+  //   - DB-direct path → `metadata.applied` (emitted by the apply job)
+  // Either way we re-hydrate first, so an open Covers/Notes tab updates
+  // without a page refresh.
   const [applyAt, setApplyAt] = React.useState<number | null>(null);
-  // `apply.isSuccess` resolves when the apply-API POST returned 202,
-  // not when the rewrite + rescan actually finished. We use it as the
-  // trigger to enter the waiting state.
   React.useEffect(() => {
     if (!applyDidSucceed) return;
-    if (!writebackEnabled) {
-      onClose();
-      return;
-    }
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- legitimate transition: apply success triggers wait-for-rescan.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- legitimate transition: apply success triggers the wait-for-completion state.
     setApplyAt(Date.now());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyDidSucceed, writebackEnabled]);
+  }, [applyDidSucceed]);
 
   // Subscribe to the library's scan events only when waiting. The
   // existing `useScanEvents` hook auto-reconnects + filters by
@@ -608,8 +593,11 @@ export function MetadataMatchForm({
   // carry one anyway; `scan.started` does, but we don't need it).
   React.useEffect(() => {
     if (!waitingForRescan) return;
+    // Either completion event for this library closes the wait:
+    // `scan.completed` (writeback rescan) or `metadata.applied` (DB-direct
+    // apply job). Both are already library-filtered by `useScanEvents`.
     const completed = scanEvents.events.find(
-      (e) => e.type === "scan.completed",
+      (e) => e.type === "scan.completed" || e.type === "metadata.applied",
     );
     if (completed) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- WS event arrival is the trigger; resetting `applyAt` to null also tears down the subscription on the next render.

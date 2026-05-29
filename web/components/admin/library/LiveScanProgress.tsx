@@ -928,7 +928,7 @@ function ThumbnailWorkPanel({
                   </span>
                   {"issue_id" in event ? (
                     <span className="text-muted-foreground/70 ml-auto truncate font-mono">
-                      {event.issue_id.slice(0, 8)}...
+                      {event.issue_id?.slice(0, 8)}...
                     </span>
                   ) : null}
                 </li>
