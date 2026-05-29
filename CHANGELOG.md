@@ -15,6 +15,31 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-05-29
+
+### Added
+
+- **"Re-download missing variant covers" button** in the admin Metadata
+  dashboard. Triggers the variant-cover backfill (previously API-only) to
+  recover provider covers whose local file is missing, looping in batches
+  and reporting any that can't be refetched (stale provider URL).
+
+### Changed
+
+- **Error and 404 pages rebuilt** to be theme-aware and on-brand, replacing
+  the legacy top-bar shell. A shared `StatusScreen`/`StatusCard` now backs the
+  404, the per-area error boundaries, a new root-level not-found, and a new
+  `global-error` boundary that catches root-layout crashes.
+
+### Fixed
+
+- **Page title wrapped despite available space.** The page header now extends
+  on one line (ellipsizing only when genuinely out of room), matching the
+  reading-list header instead of breaking onto two lines.
+- **Renaming a page left a dead sidebar link.** The left nav is rendered in the
+  server layout, which soft navigation preserved — so its link kept pointing at
+  the old slug and 404'd. Renames now refresh the layout so the link updates.
+
 ## [0.7.2] - 2026-05-29
 
 ### Added
@@ -55,5 +80,6 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/mbryantms/folio/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/mbryantms/folio/compare/v0.7.1...v0.7.2
