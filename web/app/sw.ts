@@ -109,9 +109,28 @@ const API_PATH_PREFIXES = [
 
 self.addEventListener("fetch", (event: FetchEvent) => {
   const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) {
+    // Leave cross-origin requests (provider cover CDNs like
+    // static.metron.cloud / comicvine.gamespot.com) entirely to the
+    // browser's native loader. A bare `return` here is NOT enough:
+    // serwist's `defaultCache` registers its own fetch listener via
+    // `addEventListeners()` below, and its cross-origin rule would
+    // intercept + re-fetch these as opaque no-cors responses — which
+    // are incompatible with this document's `COEP: credentialless`,
+    // so Firefox blocks the image with NS_ERROR_INTERCEPTION_FAILED
+    // (candidate covers render blank). `stopImmediatePropagation`
+    // prevents serwist's listener from running, so no `respondWith`
+    // is called and the browser fetches natively — credentialless,
+    // no CORP required.
+    event.stopImmediatePropagation();
+    return;
+  }
   const path = url.pathname;
-  if (API_PATH_PREFIXES.some((p) => path === p.replace(/\/$/, "") || path.startsWith(p))) {
+  if (
+    API_PATH_PREFIXES.some(
+      (p) => path === p.replace(/\/$/, "") || path.startsWith(p),
+    )
+  ) {
     event.respondWith(fetch(event.request));
   }
 });
