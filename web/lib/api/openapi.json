@@ -14237,6 +14237,34 @@
                 "minimum": 0
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "Apply an image-adjustment chain (brightness/contrast, levels,\nsharpen, despeckle, crop) to the page at `ordinal`.",
+            "required": [
+              "ordinal",
+              "chain",
+              "kind"
+            ],
+            "properties": {
+              "chain": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TransformStep"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "transform"
+                ]
+              },
+              "ordinal": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
           }
         ],
         "description": "One page-level operation. Ordinals are 0-based positions in the page\nlist *as it stands when the op is applied* (ops are sequential)."
@@ -17257,6 +17285,143 @@
           }
         }
       },
+      "TransformStep": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Additive brightness + multiplicative contrast, each on a -100..=100\nscale (0 = no change). Hand-rolled so the JS preview can match it\nexactly.",
+            "required": [
+              "brightness",
+              "contrast",
+              "kind"
+            ],
+            "properties": {
+              "brightness": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "contrast": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "brightness_contrast"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Per-channel levels stretch: map the input range `[lo, hi]` onto the\nfull `[0, 255]`. No-op unless `lo < hi`.",
+            "required": [
+              "lo",
+              "hi",
+              "kind"
+            ],
+            "properties": {
+              "hi": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "levels_clip"
+                ]
+              },
+              "lo": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Unsharp-mask sharpen. `amount` is the gaussian sigma, clamped to\n`0.0..=5.0`; `<= 0` is a no-op.",
+            "required": [
+              "amount",
+              "kind"
+            ],
+            "properties": {
+              "amount": {
+                "type": "number",
+                "format": "float"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sharpen"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Median-filter denoise with a square window of the given pixel\nradius, clamped to `1..=4`.",
+            "required": [
+              "radius",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "despeckle"
+                ]
+              },
+              "radius": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Crop to the box `(x, y, w, h)` in source-pixel coordinates. Clamped\nto the image bounds; a zero-area result after clamping is a no-op.",
+            "required": [
+              "x",
+              "y",
+              "w",
+              "h",
+              "kind"
+            ],
+            "properties": {
+              "h": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "crop_box"
+                ]
+              },
+              "w": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "x": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "y": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "One image adjustment applied to a single page. Tagged the same way as\n[`crate::jobs::archive_edit::PageOp`] so the web client can emit a\ndiscriminated union."
+      },
       "UnpinReq": {
         "type": "object",
         "description": "Body for `POST /me/saved-views/{id}/unpin`. Omit to default to the\ncaller's system Home page (legacy shim).",
@@ -18277,7 +18442,7 @@
         "properties": {
           "considered": {
             "type": "integer",
-            "description": "Rows visited (variant rows with an empty `local_path` and a\nnon-null `source_url`).",
+            "description": "Rows that needed work (no usable on-disk artifact: `local_path`\nempty, or set but the file is missing). Rows whose bytes already\nexist on disk are skipped before counting.",
             "minimum": 0
           },
           "skipped": {

@@ -61,6 +61,7 @@ export type IssueLink = Schemas["IssueLink"];
 export type UpdateIssueReq = Schemas["UpdateIssueReq"];
 // archive-rewrite-1.0 — page editor surface.
 export type PageOp = Schemas["PageOp"];
+export type TransformStep = Schemas["TransformStep"];
 export type Rot = Schemas["Rot"];
 export type EditRequest = Schemas["EditRequest"];
 export type EditResponse = Schemas["EditResponse"];

@@ -23,6 +23,7 @@ import {
   ImageUp,
   Loader2,
   RotateCw,
+  SlidersHorizontal,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -49,6 +50,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { PageAdjustDialog } from "@/components/library/PageAdjustDialog";
 import { useArchiveEditMutation, stageImageUpload } from "@/lib/api/mutations";
 import {
   buildOps,
@@ -59,7 +61,7 @@ import {
   type PageSlot,
 } from "@/lib/archive-edit";
 import { cn } from "@/lib/utils";
-import type { IssueDetailView } from "@/lib/api/types";
+import type { IssueDetailView, TransformStep } from "@/lib/api/types";
 
 /**
  * Page-byte editor (`archive-rewrite-1.0` M3). A grid of the issue's
@@ -84,6 +86,7 @@ export function PageEditor({
   );
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [uploadingOrig, setUploadingOrig] = React.useState<number | null>(null);
+  const [adjustOrig, setAdjustOrig] = React.useState<number | null>(null);
 
   // Reset the working list each time the dialog opens.
   const [wasOpen, setWasOpen] = React.useState(false);
@@ -194,6 +197,7 @@ export function PageEditor({
                           mutateSlot(slot.orig, { removed: !slot.removed })
                         }
                         onReplace={(file) => onReplace(slot.orig, file)}
+                        onAdjust={() => setAdjustOrig(slot.orig)}
                       />
                     ))}
                   </ul>
@@ -269,6 +273,28 @@ export function PageEditor({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {adjustOrig !== null &&
+        (() => {
+          const slot = slots.find((s) => s.orig === adjustOrig);
+          if (!slot) return null;
+          const position = slots.findIndex((s) => s.orig === adjustOrig) + 1;
+          return (
+            <PageAdjustDialog
+              issueId={issue.id}
+              orig={adjustOrig}
+              position={position}
+              open
+              onOpenChange={(next) => {
+                if (!next) setAdjustOrig(null);
+              }}
+              initial={slot.transform}
+              onApply={(chain: TransformStep[] | null) =>
+                mutateSlot(adjustOrig, { transform: chain })
+              }
+            />
+          );
+        })()}
     </>
   );
 }
@@ -281,6 +307,7 @@ function PageCard({
   onRotate,
   onToggleRemove,
   onReplace,
+  onAdjust,
 }: {
   issueId: string;
   slot: PageSlot;
@@ -289,6 +316,7 @@ function PageCard({
   onRotate: () => void;
   onToggleRemove: () => void;
   onReplace: (file: File) => void;
+  onAdjust: () => void;
 }) {
   const {
     attributes,
@@ -328,6 +356,14 @@ function PageCard({
         {slot.replaceId && (
           <Badge className="absolute top-1 right-1 text-[10px]">Replaced</Badge>
         )}
+        {!slot.replaceId && slot.transform && slot.transform.length > 0 && (
+          <Badge
+            variant="secondary"
+            className="absolute top-1 right-1 text-[10px]"
+          >
+            Adjusted
+          </Badge>
+        )}
         {slot.removed && (
           <div className="bg-destructive/10 absolute inset-0 grid place-items-center">
             <Badge variant="destructive">Removed</Badge>
@@ -361,6 +397,21 @@ function PageCard({
             title="Rotate 90°"
           >
             <RotateCw className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "h-7 w-7",
+              slot.transform && slot.transform.length > 0 && "text-primary",
+            )}
+            onClick={onAdjust}
+            disabled={slot.removed}
+            aria-label={`Adjust page ${position}`}
+            title="Adjust image (brightness, levels, sharpen, crop)"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
           </Button>
           <Button
             type="button"

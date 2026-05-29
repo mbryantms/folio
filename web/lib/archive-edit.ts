@@ -9,7 +9,7 @@
  *
  * Kept framework-free so it's unit-testable without a DOM.
  */
-import type { PageOp, Rot } from "@/lib/api/types";
+import type { PageOp, Rot, TransformStep } from "@/lib/api/types";
 
 /** One page in the editor's working list. `orig` is the 0-based index of
  *  the page in the *original* archive (drives the thumbnail URL); the
@@ -21,6 +21,8 @@ export type PageSlot = {
   removed: boolean;
   /** Staged-upload id when the page is being replaced, else null. */
   replaceId: string | null;
+  /** Image-adjustment chain from the Adjust panel, or null when none. */
+  transform: TransformStep[] | null;
 };
 
 /** Initial slot list for an `n`-page archive: identity order, no edits. */
@@ -30,6 +32,7 @@ export function initialSlots(n: number): PageSlot[] {
     rotation: 0,
     removed: false,
     replaceId: null,
+    transform: null,
   }));
 }
 
@@ -101,8 +104,8 @@ export function buildOps(slots: PageSlot[]): PageOp[] {
     ops.push({ kind: "reorder", new_order: newOrder });
   }
 
-  // 3 + 4. Rotations and replacements address the final (post-reorder)
-  // positions, i.e. the display index of each survivor.
+  // 3, 4 + 5. Rotations, replacements, and transforms address the final
+  // (post-reorder) positions, i.e. the display index of each survivor.
   survivors.forEach((s, i) => {
     const rot = rotToEnum(s.rotation % 360);
     if (rot) ops.push({ kind: "rotate", ordinal: i, degrees: rot });
@@ -110,6 +113,11 @@ export function buildOps(slots: PageSlot[]): PageOp[] {
   survivors.forEach((s, i) => {
     if (s.replaceId) {
       ops.push({ kind: "replace", ordinal: i, image_id: s.replaceId });
+    }
+  });
+  survivors.forEach((s, i) => {
+    if (s.transform && s.transform.length > 0) {
+      ops.push({ kind: "transform", ordinal: i, chain: s.transform });
     }
   });
 
@@ -131,6 +139,25 @@ export function summarizeOps(ops: PageOp[]): string[] {
       }
       case "replace":
         return `Replace page ${op.ordinal + 1}`;
+      case "transform": {
+        const labels = op.chain.map((s) => {
+          switch (s.kind) {
+            case "brightness_contrast":
+              return "brightness/contrast";
+            case "levels_clip":
+              return "levels";
+            case "sharpen":
+              return "sharpen";
+            case "despeckle":
+              return "despeckle";
+            case "crop_box":
+              return "crop";
+            default:
+              return "adjust";
+          }
+        });
+        return `Adjust page ${op.ordinal + 1} — ${[...new Set(labels)].join(", ")}`;
+      }
     }
   });
 }

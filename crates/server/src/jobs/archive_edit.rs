@@ -26,6 +26,7 @@
 
 use crate::archive_rewrite::{self, RewriteError, mutex};
 use crate::audit::{self, AuditEntry};
+use crate::jobs::archive_transforms::{TransformStep, apply_chain};
 use crate::state::AppState;
 use apalis::prelude::*;
 use archive::cbr::Cbr;
@@ -99,6 +100,12 @@ pub enum PageOp {
     Rotate { ordinal: u32, degrees: Rot },
     /// Replace the page at `ordinal` with a previously-staged upload.
     Replace { ordinal: u32, image_id: Uuid },
+    /// Apply an image-adjustment chain (brightness/contrast, levels,
+    /// sharpen, despeckle, crop) to the page at `ordinal`.
+    Transform {
+        ordinal: u32,
+        chain: Vec<TransformStep>,
+    },
 }
 
 /// Validation failure for a `Vec<PageOp>` against a page count. Surfaced
@@ -147,7 +154,9 @@ pub fn simulate_ops(page_count: usize, ops: &[PageOp]) -> Result<usize, OpError>
                 }
                 slots = new_order.iter().map(|&i| slots[i as usize]).collect();
             }
-            PageOp::Rotate { ordinal, .. } | PageOp::Replace { ordinal, .. } => {
+            PageOp::Rotate { ordinal, .. }
+            | PageOp::Replace { ordinal, .. }
+            | PageOp::Transform { ordinal, .. } => {
                 let o = *ordinal as usize;
                 if o >= slots.len() {
                     return Err(OpError::OrdinalOutOfRange {
@@ -454,6 +463,7 @@ struct Work {
     name: String,
     rotation: u16,
     replacement: Option<Vec<u8>>,
+    transforms: Vec<TransformStep>,
 }
 
 /// Apply the validated sequential ops to the source page list, producing
@@ -472,6 +482,7 @@ fn apply_ops(
             name: name.clone(),
             rotation: 0,
             replacement: None,
+            transforms: Vec::new(),
         })
         .collect();
 
@@ -504,13 +515,18 @@ fn apply_ops(
                     std::fs::read(&path).map_err(|_| EditError::UploadMissing(*image_id))?;
                 work[*ordinal as usize].replacement = Some(bytes);
             }
+            PageOp::Transform { ordinal, chain } => {
+                work[*ordinal as usize]
+                    .transforms
+                    .extend(chain.iter().cloned());
+            }
         }
     }
     Ok(work)
 }
 
 /// Emit CBZ output pages — untouched pages stream-copy their compressed
-/// payload (`Keep`); rotated/replaced pages re-encode.
+/// payload (`Keep`); rotated / replaced / transformed pages re-encode.
 fn output_pages_cbz(
     work: Vec<Work>,
     src: &mut Cbz,
@@ -518,43 +534,36 @@ fn output_pages_cbz(
 ) -> Result<Vec<OutputPage>, EditError> {
     let mut out = Vec::with_capacity(work.len());
     for w in work {
-        match (w.replacement, w.rotation % 360) {
-            (None, 0) => out.push(OutputPage {
+        if !needs_encode(&w) {
+            out.push(OutputPage {
                 ext: ext_of(&w.name),
                 bytes: PageBytes::Keep {
                     src_index: w.src_index,
                 },
-            }),
-            (Some(bytes), rot) => {
-                let (encoded, ext) = transform_image(&bytes, rot, jpeg_quality)?;
-                out.push(OutputPage {
-                    ext,
-                    bytes: PageBytes::Encoded {
-                        bytes: encoded,
-                        level: 0,
-                    },
-                });
-            }
-            (None, rot) => {
-                let bytes = src.read_entry_bytes_by_name(&w.name)?;
-                let (encoded, ext) = transform_image(&bytes, rot, jpeg_quality)?;
-                out.push(OutputPage {
-                    ext,
-                    bytes: PageBytes::Encoded {
-                        bytes: encoded,
-                        level: 0,
-                    },
-                });
-            }
+            });
+            continue;
         }
+        let src_bytes = match w.replacement {
+            Some(bytes) => bytes,
+            None => src.read_entry_bytes_by_name(&w.name)?,
+        };
+        let (encoded, ext) =
+            transform_image(&src_bytes, w.rotation % 360, &w.transforms, jpeg_quality)?;
+        out.push(OutputPage {
+            ext,
+            bytes: PageBytes::Encoded {
+                bytes: encoded,
+                level: 0,
+            },
+        });
     }
     Ok(out)
 }
 
 /// Emit fully-materialized pages `(ext, bytes, level)` for the CBT/CBR
 /// writers (no stream-copy: tar is uncompressed and RAR can't copy into a
-/// zip). Untouched pages are read + stored (level 0); rotated/replaced
-/// pages re-encode.
+/// zip). Untouched pages are read + stored (level 0); rotated / replaced /
+/// transformed pages re-encode.
 fn materialize_pages(
     work: Vec<Work>,
     src: &mut dyn ComicArchive,
@@ -562,23 +571,26 @@ fn materialize_pages(
 ) -> Result<Vec<(String, Vec<u8>, i64)>, EditError> {
     let mut out = Vec::with_capacity(work.len());
     for w in work {
-        match (w.replacement, w.rotation % 360) {
-            (None, 0) => {
-                let bytes = src.read_entry_bytes(&w.name)?;
-                out.push((ext_of(&w.name), bytes, 0));
-            }
-            (Some(bytes), rot) => {
-                let (encoded, ext) = transform_image(&bytes, rot, jpeg_quality)?;
-                out.push((ext, encoded, 0));
-            }
-            (None, rot) => {
-                let bytes = src.read_entry_bytes(&w.name)?;
-                let (encoded, ext) = transform_image(&bytes, rot, jpeg_quality)?;
-                out.push((ext, encoded, 0));
-            }
+        if !needs_encode(&w) {
+            let bytes = src.read_entry_bytes(&w.name)?;
+            out.push((ext_of(&w.name), bytes, 0));
+            continue;
         }
+        let src_bytes = match w.replacement {
+            Some(bytes) => bytes,
+            None => src.read_entry_bytes(&w.name)?,
+        };
+        let (encoded, ext) =
+            transform_image(&src_bytes, w.rotation % 360, &w.transforms, jpeg_quality)?;
+        out.push((ext, encoded, 0));
     }
     Ok(out)
+}
+
+/// A page needs decode + re-encode when it was replaced, rotated, or has
+/// an image-transform chain. Untouched pages stream-copy / read verbatim.
+fn needs_encode(w: &Work) -> bool {
+    w.replacement.is_some() || !w.rotation.is_multiple_of(360) || !w.transforms.is_empty()
 }
 
 /// Read `ComicInfo.xml` / `MetronInfo.xml` from the source so a page edit
@@ -608,11 +620,17 @@ fn ext_of(name: &str) -> String {
         .unwrap_or_else(|| "jpg".to_owned())
 }
 
-/// Decode `bytes`, rotate `rot` degrees clockwise, re-encode. JPEG sources
-/// re-encode to JPEG at `quality`; everything else (PNG/WebP/…) re-encodes
-/// losslessly to PNG (the `image` crate has no WebP encoder). Returns the
-/// encoded bytes + the output extension.
-fn transform_image(bytes: &[u8], rot: u16, quality: u8) -> Result<(Vec<u8>, String), EditError> {
+/// Decode `bytes`, rotate `rot` degrees clockwise, apply the image
+/// transform `chain`, then re-encode. JPEG sources re-encode to JPEG at
+/// `quality`; everything else (PNG/WebP/…) re-encodes losslessly to PNG
+/// (the `image` crate has no WebP encoder). Returns the encoded bytes +
+/// the output extension.
+fn transform_image(
+    bytes: &[u8],
+    rot: u16,
+    chain: &[TransformStep],
+    quality: u8,
+) -> Result<(Vec<u8>, String), EditError> {
     use image::ImageEncoder;
     let fmt = image::guess_format(bytes).map_err(|e| EditError::Image(e.to_string()))?;
     let img = image::load_from_memory(bytes).map_err(|e| EditError::Image(e.to_string()))?;
@@ -622,6 +640,7 @@ fn transform_image(bytes: &[u8], rot: u16, quality: u8) -> Result<(Vec<u8>, Stri
         270 => img.rotate270(),
         _ => img,
     };
+    let rotated = apply_chain(rotated, chain);
 
     if fmt == image::ImageFormat::Jpeg {
         let rgb = rotated.to_rgb8();

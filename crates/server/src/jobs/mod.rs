@@ -26,6 +26,7 @@ use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;
 
 pub mod archive_edit;
+pub mod archive_transforms;
 pub mod close_dangling_sessions;
 pub mod metadata_apply;
 pub mod metadata_search;

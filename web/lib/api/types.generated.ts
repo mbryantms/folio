@@ -5715,6 +5715,12 @@ export interface components {
             kind: "replace";
             /** Format: int32 */
             ordinal: number;
+        } | {
+            chain: components["schemas"]["TransformStep"][];
+            /** @enum {string} */
+            kind: "transform";
+            /** Format: int32 */
+            ordinal: number;
         };
         PageView: {
             created_at: string;
@@ -6876,6 +6882,45 @@ export interface components {
             /** Format: int64 */
             sessions: number;
         };
+        /** @description One image adjustment applied to a single page. Tagged the same way as
+         *     [`crate::jobs::archive_edit::PageOp`] so the web client can emit a
+         *     discriminated union. */
+        TransformStep: {
+            /** Format: int32 */
+            brightness: number;
+            /** Format: int32 */
+            contrast: number;
+            /** @enum {string} */
+            kind: "brightness_contrast";
+        } | {
+            /** Format: int32 */
+            hi: number;
+            /** @enum {string} */
+            kind: "levels_clip";
+            /** Format: int32 */
+            lo: number;
+        } | {
+            /** Format: float */
+            amount: number;
+            /** @enum {string} */
+            kind: "sharpen";
+        } | {
+            /** @enum {string} */
+            kind: "despeckle";
+            /** Format: int32 */
+            radius: number;
+        } | {
+            /** Format: int32 */
+            h: number;
+            /** @enum {string} */
+            kind: "crop_box";
+            /** Format: int32 */
+            w: number;
+            /** Format: int32 */
+            x: number;
+            /** Format: int32 */
+            y: number;
+        };
         /** @description Body for `POST /me/saved-views/{id}/unpin`. Omit to default to the
          *     caller's system Home page (legacy shim). */
         UnpinReq: {
@@ -7287,8 +7332,9 @@ export interface components {
         /** @description Outcome of a variant-cover backfill sweep — surfaced via the admin
          *     endpoint so the operator sees how rows fared. */
         VariantCoverBackfillOutcome: {
-            /** @description Rows visited (variant rows with an empty `local_path` and a
-             *     non-null `source_url`). */
+            /** @description Rows that needed work (no usable on-disk artifact: `local_path`
+             *     empty, or set but the file is missing). Rows whose bytes already
+             *     exist on disk are skipped before counting. */
             considered: number;
             /** @description Rows skipped because the download / decode failed (stay hotlinks). */
             skipped: number;

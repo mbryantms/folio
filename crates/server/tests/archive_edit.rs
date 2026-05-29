@@ -17,6 +17,7 @@ use server::archive_rewrite::{self, mutex};
 use server::jobs::archive_edit::{
     ArchiveEditJob, PageOp, Rot, edit_one_issue, handle, simulate_ops,
 };
+use server::jobs::archive_transforms::TransformStep;
 use std::io::{Cursor, Write};
 use std::path::Path;
 use tempfile::tempdir;
@@ -230,6 +231,47 @@ async fn replace_swaps_page_content() {
     let bytes = page_bytes(&path, "p0001.png");
     let img = image::load_from_memory(&bytes).unwrap();
     assert_eq!((img.width(), img.height()), (8, 16));
+}
+
+#[tokio::test]
+async fn transform_crop_changes_dimensions() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    // 20 wide × 20 tall; crop to a 6×8 box.
+    let cbz = build_cbz(&[("p1.png", png_bytes(20, 20, [40, 80, 120]))]);
+    let (issue_id, path) = seed_issue_with_cbz(&app, cbz, dir.path()).await;
+    let state = app.state();
+
+    edit_one_issue(
+        &state,
+        &job(
+            &issue_id,
+            vec![PageOp::Transform {
+                ordinal: 0,
+                chain: vec![
+                    TransformStep::BrightnessContrast {
+                        brightness: 20,
+                        contrast: 10,
+                    },
+                    TransformStep::CropBox {
+                        x: 2,
+                        y: 2,
+                        w: 6,
+                        h: 8,
+                    },
+                ],
+            }],
+        ),
+    )
+    .await
+    .unwrap();
+
+    // Page count is unchanged; the page is re-encoded to the cropped dims.
+    let cbz = Cbz::open(&path, ArchiveLimits::default()).unwrap();
+    assert_eq!(cbz.pages().len(), 1);
+    let bytes = page_bytes(&path, "p0001.png");
+    let img = image::load_from_memory(&bytes).unwrap();
+    assert_eq!((img.width(), img.height()), (6, 8));
 }
 
 #[tokio::test]
