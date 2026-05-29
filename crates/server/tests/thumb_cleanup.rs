@@ -288,6 +288,49 @@ async fn list_issues_on_disk_finds_both_layouts() {
     assert!(found.contains(&id2));
 }
 
+/// Write a fake downloaded provider cover under the
+/// `thumbs/issues/{issue_id}/covers/` tree (mirrors
+/// `metadata::writers::cover_rel_path`).
+fn put_fake_variant_cover(data_dir: &Path, issue_id: &str) -> std::path::PathBuf {
+    let dir = data_dir
+        .join("thumbs")
+        .join("issues")
+        .join(issue_id)
+        .join("covers");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{}.jpg", Uuid::now_v7()));
+    std::fs::write(&path, b"fake-variant-cover").unwrap();
+    path
+}
+
+// Regression: the orphan sweep used to read the `thumbs/issues/`
+// container as a phantom issue id and `remove_dir_all` the whole
+// downloaded-cover tree on every run, leaving the DB `issue_cover` rows
+// pointing at missing files ("cover unavailable" 404s, gray gallery
+// boxes). An *active* issue's downloaded covers must survive a sweep.
+#[tokio::test]
+async fn orphan_sweep_preserves_variant_covers_for_active_issue() {
+    let app = TestApp::spawn().await;
+    let active_id = seed(&app, "active").await;
+    let removed_id = seed(&app, "removed").await;
+    let active_cover = put_fake_variant_cover(&app.state().cfg().data_path, &active_id);
+    let removed_cover = put_fake_variant_cover(&app.state().cfg().data_path, &removed_id);
+
+    server::jobs::orphan_sweep::run(&app.state()).await.unwrap();
+
+    assert!(
+        active_cover.exists(),
+        "active issue's downloaded cover must survive the sweep"
+    );
+    assert!(
+        !removed_cover.exists(),
+        "removed issue's downloaded cover should be reclaimed"
+    );
+    // The shared container itself must never be wiped wholesale.
+    let issues_root = app.state().cfg().data_path.join("thumbs").join("issues");
+    assert!(issues_root.exists(), "variant-cover container must remain");
+}
+
 // Suppress unused-import warning on IssueEntity for builds where the
 // downstream queries are inlined into the helper.
 #[allow(dead_code)]

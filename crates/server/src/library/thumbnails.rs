@@ -98,6 +98,14 @@ pub const DEFAULT_STRIP_QUALITY: u8 = 50;
 /// (and to [`ThumbFormat`]) when extending support.
 const KNOWN_EXTS: &[&str] = &["webp", "jpg", "png"];
 
+/// Reserved subdirectory under `thumbs/` that holds downloaded provider
+/// cover artifacts (`thumbs/issues/{issue_id}/covers/{cover_id}.{ext}`,
+/// see `metadata::writers::cover_rel_path`). It is NOT an issue-id-named
+/// artifact dir, so the per-issue enumerators below must skip it — the
+/// orphan sweep otherwise reads `issues` as a (non-existent) issue id and
+/// `remove_dir_all`s the whole downloaded-cover tree.
+const VARIANT_COVERS_ROOT: &str = "issues";
+
 /// Variant of thumbnail to generate / serve. New variants slot in without
 /// touching call sites — `path_for` and `generate` dispatch on this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -443,10 +451,55 @@ pub fn list_issues_on_disk(
                 out.insert(stem.to_owned());
             }
         } else if ft.is_dir() {
+            // `thumbs/issues/` is the downloaded-cover tree, not a
+            // per-issue artifact dir — skip it so the sweep never treats
+            // `issues` as an issue id and wipes every variant cover.
+            if s == VARIANT_COVERS_ROOT {
+                continue;
+            }
             out.insert(s.to_owned());
         }
     }
     Ok(out)
+}
+
+/// Enumerate issue ids that have on-disk downloaded provider covers
+/// (`thumbs/issues/{issue_id}/`). Companion to [`list_issues_on_disk`]
+/// for the orphan sweep's variant-cover pass.
+pub fn list_variant_cover_issues_on_disk(
+    data_dir: &Path,
+) -> Result<std::collections::HashSet<String>, std::io::Error> {
+    let root = thumbs_root(data_dir).join(VARIANT_COVERS_ROOT);
+    let mut out = std::collections::HashSet::new();
+    if !root.exists() {
+        return Ok(out);
+    }
+    for entry in fs::read_dir(&root)? {
+        let Ok(entry) = entry else { continue };
+        let Ok(ft) = entry.file_type() else { continue };
+        if !ft.is_dir() {
+            continue;
+        }
+        if let Some(s) = entry.file_name().to_str() {
+            out.insert(s.to_owned());
+        }
+    }
+    Ok(out)
+}
+
+/// Best-effort wipe of an issue's downloaded provider covers
+/// (`thumbs/issues/{issue_id}/`). Used by the orphan sweep to reclaim
+/// covers belonging to issues that are no longer active. Errors are
+/// logged, never returned.
+pub fn wipe_issue_variant_covers(data_dir: &Path, issue_id: &str) {
+    let dir = thumbs_root(data_dir)
+        .join(VARIANT_COVERS_ROOT)
+        .join(issue_id);
+    if dir.exists()
+        && let Err(e) = fs::remove_dir_all(&dir)
+    {
+        tracing::warn!(path = %dir.display(), error = %e, "wipe variant covers failed");
+    }
 }
 
 /// Generate the cover thumbnail. Idempotent — no-op if a file at the

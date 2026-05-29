@@ -19,30 +19,45 @@ use std::collections::HashSet;
 
 /// Run one sweep. Returns the count of wiped issue artifacts.
 pub async fn run(state: &AppState) -> anyhow::Result<usize> {
-    let on_disk: HashSet<String> = thumbnails::list_issues_on_disk(&state.cfg().data_path)?;
-    if on_disk.is_empty() {
+    let data_path = &state.cfg().data_path;
+    // Two parallel artifact trees keyed by issue id:
+    //   - generated page/cover thumbs at `thumbs/{id}` + `thumbs/{id}.ext`
+    //   - downloaded provider covers at `thumbs/issues/{id}/`
+    // Sweep both; the second was previously read as a single phantom
+    // `issues` issue and wiped wholesale on every run.
+    let thumb_ids: HashSet<String> = thumbnails::list_issues_on_disk(data_path)?;
+    let variant_ids: HashSet<String> = thumbnails::list_variant_cover_issues_on_disk(data_path)?;
+    if thumb_ids.is_empty() && variant_ids.is_empty() {
         return Ok(0);
     }
 
-    // Find issue ids that should keep their thumbs: active rows only.
+    // Find issue ids that should keep their artifacts: active rows only.
     // Anything else (removed, removal_confirmed, missing entirely) is
     // eligible for cleanup.
+    let candidates: Vec<String> = thumb_ids.union(&variant_ids).cloned().collect();
     let alive: Vec<String> = issue::Entity::find()
         .select_only()
         .column(issue::Column::Id)
         .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::Id.is_in(on_disk.iter().cloned().collect::<Vec<_>>()))
+        .filter(issue::Column::Id.is_in(candidates))
         .into_tuple::<String>()
         .all(&state.db)
         .await?;
     let alive_set: HashSet<String> = alive.into_iter().collect();
 
     let mut wiped = 0usize;
-    for id in &on_disk {
+    for id in &thumb_ids {
         if alive_set.contains(id) {
             continue;
         }
-        thumbnails::wipe_issue_thumbs(&state.cfg().data_path, id);
+        thumbnails::wipe_issue_thumbs(data_path, id);
+        wiped += 1;
+    }
+    for id in &variant_ids {
+        if alive_set.contains(id) {
+            continue;
+        }
+        thumbnails::wipe_issue_variant_covers(data_path, id);
         wiped += 1;
     }
     Ok(wiped)

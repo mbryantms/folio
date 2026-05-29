@@ -39,7 +39,7 @@ use entity::{
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, DbErr,
-    EntityTrait, FromQueryResult, QueryFilter, QuerySelect, Statement,
+    EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
 };
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -1772,8 +1772,9 @@ pub async fn set_issue_variants<C: ConnectionTrait>(
 /// endpoint so the operator sees how rows fared.
 #[derive(Debug, Clone, Default, serde::Serialize, utoipa::ToSchema)]
 pub struct VariantCoverBackfillOutcome {
-    /// Rows visited (variant rows with an empty `local_path` and a
-    /// non-null `source_url`).
+    /// Rows that needed work (no usable on-disk artifact: `local_path`
+    /// empty, or set but the file is missing). Rows whose bytes already
+    /// exist on disk are skipped before counting.
     pub considered: usize,
     /// Rows whose image downloaded + stored successfully.
     pub stored: usize,
@@ -1784,27 +1785,40 @@ pub struct VariantCoverBackfillOutcome {
 /// Bounded so a single admin click can't tie up the handler.
 pub const VARIANT_BACKFILL_BATCH_CAP: u64 = 500;
 
-/// Download + locally store any variant covers still kept as hotlinks
-/// (`local_path = ''` AND `source_url IS NOT NULL`). Used by the
-/// admin-triggered backfill and the startup drain to migrate variants
-/// applied before local storage shipped. Bounded by
-/// [`VARIANT_BACKFILL_BATCH_CAP`]; re-run to drain larger backlogs.
+/// Download + locally store variant covers that have a `source_url` but
+/// no usable on-disk artifact. Two cases qualify:
+///   - `local_path = ''` — never stored (hotlink rows applied before
+///     local storage shipped, or rows whose original download soft-failed).
+///   - `local_path != ''` but the file is **missing on disk** — the row
+///     points at bytes that are gone. This is the recovery path for
+///     covers reclaimed in error by the thumbnail orphan sweep.
+///
+/// Used by the admin-triggered backfill and the startup drain. Bounded by
+/// [`VARIANT_BACKFILL_BATCH_CAP`] rows scanned per call; rows whose file
+/// already exists cost only a `stat` and are skipped — re-run to drain
+/// larger backlogs. `null` / blank `source_url` rows are unrecoverable
+/// and counted as skipped.
 pub async fn run_variant_cover_backfill<C: ConnectionTrait>(
     db: &C,
     data_path: &std::path::Path,
 ) -> Result<VariantCoverBackfillOutcome, sea_orm::DbErr> {
+    // Order empty `local_path` (definitely-missing) rows first so a single
+    // capped pass prioritizes the never-stored backlog; the disk-existence
+    // check below catches the swept-away rows behind them.
     let rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::Kind.eq("variant"))
-        .filter(issue_cover::Column::LocalPath.eq(""))
         .filter(issue_cover::Column::SourceUrl.is_not_null())
+        .order_by_asc(issue_cover::Column::LocalPath)
         .limit(VARIANT_BACKFILL_BATCH_CAP)
         .all(db)
         .await?;
-    let mut outcome = VariantCoverBackfillOutcome {
-        considered: rows.len(),
-        ..Default::default()
-    };
+    let mut outcome = VariantCoverBackfillOutcome::default();
     for row in rows {
+        // Already have the bytes on disk — nothing to do.
+        if !row.local_path.is_empty() && data_path.join(&row.local_path).exists() {
+            continue;
+        }
+        outcome.considered += 1;
         let Some(url) = row.source_url.as_deref().filter(|s| !s.trim().is_empty()) else {
             outcome.skipped += 1;
             continue;
