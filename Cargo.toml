@@ -136,6 +136,9 @@ natord = "1.0.9"
 mime_guess = "2.0"
 infer = "0.16"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+# Image-processing kernels (median filter for the page-editor despeckle
+# transform). Pinned to the `image` 0.25 line.
+imageproc = { version = "0.25", default-features = false }
 # Lossy WebP encoder. The `image` crate's WebP codec is lossless-only at v0.25,
 # which produces files 5-10× larger than libwebp at q=80 — unacceptable for
 # the cover/strip thumbnail pipeline. `webp` bundles libwebp-sys so no system
@@ -219,8 +222,13 @@ quick-xml = { version = "0.40", features = ["serialize"] }
 slug = "0.1"
 ipnet = "2.10"
 
-# Test
-testcontainers = { version = "0.23" }
+# Test. `watchdog` registers a SIGINT/SIGTERM/SIGQUIT handler that stops +
+# removes spawned containers when a test run is interrupted (Ctrl-C, kill,
+# CI cancellation). Normal completion is already cleaned up by the crate's
+# Drop worker; the watchdog closes the interrupted-run leak that otherwise
+# orphans every in-flight Postgres/Redis container. (SIGKILL still can't be
+# caught — nothing in-process can.)
+testcontainers = { version = "0.23", features = ["watchdog"] }
 testcontainers-modules = { version = "0.11", features = ["postgres", "redis"] }
 # Held at 0.12 (blocked on oauth2 / openidconnect). reqwest 0.13
 # renamed the `rustls-tls` feature to `rustls`, but oauth2 5.0 still

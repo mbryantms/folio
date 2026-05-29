@@ -72,6 +72,7 @@ lettre = { workspace = true }
 walkdir = { workspace = true }
 infer = { workspace = true }
 image = { workspace = true }
+imageproc = { workspace = true }
 # Text-bubble detection on cropped reader regions. Gated behind a
 # `Mutex<ComicTextDetector>` singleton in `src/ocr/detector.rs`;
 # model auto-downloads from HF on first use (~50 MB). The `cuda`
