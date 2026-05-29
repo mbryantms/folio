@@ -8,7 +8,13 @@
  * token-bucket state.
  */
 
-import { CheckCircle2, Fingerprint, Loader2, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  Fingerprint,
+  ImageDown,
+  Loader2,
+  XCircle,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -75,6 +81,8 @@ export function DashboardTab() {
       <MatchQualityCard />
 
       <CoverHashBackfillCard />
+
+      <VariantCoverBackfillCard />
     </div>
   );
 }
@@ -174,6 +182,104 @@ function CoverHashBackfillCard() {
   );
 }
 
+type VariantBackfillOutcome = {
+  considered: number;
+  stored: number;
+  skipped: number;
+};
+
+/**
+ * Re-download provider variant covers whose on-disk file is missing
+ * (e.g. removed by an earlier thumbnail-orphan-sweep bug) or that were
+ * only ever kept as hotlinks. Each call scans a bounded batch and
+ * re-fetches from the stored `source_url`; this loops until a batch
+ * makes no forward progress. Idempotent + safe to re-run.
+ *
+ * Covers whose provider URL has since expired can't be recovered here —
+ * they surface as `skipped`; re-applying metadata for those issues
+ * fetches a fresh URL.
+ */
+function VariantCoverBackfillCard() {
+  const [running, setRunning] = useState(false);
+  const [stored, setStored] = useState(0);
+  const [done, setDone] = useState(false);
+
+  const run = async () => {
+    setRunning(true);
+    setDone(false);
+    setStored(0);
+    let total = 0;
+    let lastSkipped = 0;
+    try {
+      for (;;) {
+        const r = await apiMutate<VariantBackfillOutcome>({
+          path: "/admin/metadata/variant-cover-backfill",
+          method: "POST",
+        });
+        if (!r) break;
+        total += r.stored;
+        lastSkipped = r.skipped;
+        setStored(total);
+        // No cover re-downloaded this batch → drained, or only
+        // dead-URL rows remain (which would re-fail forever). Stop.
+        if (r.stored === 0) break;
+      }
+      setDone(true);
+      if (total === 0 && lastSkipped === 0) {
+        toast.success("All variant covers already present.");
+      } else {
+        toast.success(
+          `Re-downloaded ${total.toLocaleString()} variant cover${total === 1 ? "" : "s"}` +
+            (lastSkipped > 0
+              ? ` · ${lastSkipped} could not be fetched (stale provider URL — re-apply metadata to recover)`
+              : ""),
+        );
+      }
+    } catch {
+      toast.error("Variant-cover backfill failed — see server logs");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">Variant covers</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-muted-foreground text-sm">
+          Re-download provider variant covers whose image file is missing on
+          disk, or that are still kept as hotlinks. Runs in batches — keep this
+          tab open until it finishes. Safe to re-run; it only touches covers
+          that lack a local file. Covers whose provider URL has expired
+          can&apos;t be recovered here — re-apply metadata for those issues.
+        </p>
+        <div className="flex items-center gap-3">
+          <Button onClick={run} disabled={running}>
+            {running ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Backfilling… ({stored.toLocaleString()})
+              </>
+            ) : (
+              <>
+                <ImageDown className="mr-2 h-4 w-4" />
+                Re-download missing covers
+              </>
+            )}
+          </Button>
+          {done && !running && (
+            <span className="text-muted-foreground text-sm">
+              Done — {stored.toLocaleString()} re-downloaded.
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 /**
  * Match-quality distribution (matching-accuracy-1.0 M0).
  *
@@ -265,7 +371,7 @@ function MatchQualityWindowView({
 
   return (
     <div className="space-y-2">
-      <div className="text-muted-foreground flex items-center justify-between text-xs uppercase tracking-wide">
+      <div className="text-muted-foreground flex items-center justify-between text-xs tracking-wide uppercase">
         <span>{title}</span>
         <span>{total.toLocaleString()} total</span>
       </div>
@@ -304,7 +410,7 @@ function StatCard({
   return (
     <Card>
       <CardContent className="space-y-1 p-4">
-        <div className="text-muted-foreground flex items-center gap-1.5 text-xs uppercase tracking-wide">
+        <div className="text-muted-foreground flex items-center gap-1.5 text-xs tracking-wide uppercase">
           {icon}
           {label}
         </div>
@@ -351,9 +457,13 @@ function ProviderQuotaRow({ provider }: { provider: ProviderView }) {
                   : ""}
               </span>
             )}
-            {quota.seconds_until_reset != null && quota.seconds_until_reset > 0 && (
-              <span> · resets in {formatSeconds(quota.seconds_until_reset)}</span>
-            )}
+            {quota.seconds_until_reset != null &&
+              quota.seconds_until_reset > 0 && (
+                <span>
+                  {" "}
+                  · resets in {formatSeconds(quota.seconds_until_reset)}
+                </span>
+              )}
           </>
         ) : (
           <span>—</span>
