@@ -151,22 +151,47 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Build the release body: the curated CHANGELOG.md section for this tag
+      # (if present) on top, then the pull/verify snippet. GitHub's
+      # auto-generated commit list is appended below by
+      # `generate_release_notes: true`. Changelog extraction is best-effort —
+      # a miss just omits the curated section, it never fails the release.
+      - name: Assemble release body
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          OWNER='${{ github.repository_owner }}'
+          REPO='${{ github.repository }}'
+          REF="${GITHUB_REF_NAME}"
+          : > RELEASE_BODY.md
+          if [ -f CHANGELOG.md ]; then
+            awk -v ver="$VER" '
+              $0 ~ "^## \\[" ver "\\]" { inblock=1; next }
+              inblock && /^## \[/ { exit }
+              inblock { print }
+            ' CHANGELOG.md > SECTION.md || true
+            if [ -s SECTION.md ]; then
+              { echo "## What's changed"; echo; cat SECTION.md; echo; } >> RELEASE_BODY.md
+            fi
+          fi
+          {
+            echo "### Container images"
+            echo "linux/amd64, signed with cosign, SBOM attached:"
+            echo '```'
+            echo "ghcr.io/${OWNER}/folio:${REF}"
+            echo "ghcr.io/${OWNER}/folio-web:${REF}"
+            echo '```'
+            echo "Verify the signature:"
+            echo '```'
+            echo "cosign verify ghcr.io/${OWNER}/folio:${REF} \\"
+            echo "  --certificate-identity-regexp 'https://github.com/${REPO}/.github/workflows/release.yml' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> RELEASE_BODY.md
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           # Pin to the tag that triggered this run.
           tag_name: ${{ github.ref_name }}
-          # Surface the published image URIs in the release body for copy-paste.
-          body: |
-            Container images (linux/amd64, signed with cosign, SBOM attached):
-            ```
-            ghcr.io/${{ github.repository_owner }}/folio:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/folio-web:${{ github.ref_name }}
-            ```
-            Verify the signature:
-            ```
-            cosign verify ghcr.io/${{ github.repository_owner }}/folio:${{ github.ref_name }} \
-              --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.github/workflows/release.yml' \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com
-            ```
+          body_path: RELEASE_BODY.md

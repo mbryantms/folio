@@ -1,0 +1,59 @@
+# Changelog
+
+All notable changes to Folio are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
+uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0:
+minor = features, patch = fixes/polish).
+
+Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
+**the git tag is the version**. The running build reports it via
+`COMIC_BUILD_TAG` (set from the tag at image-build time). See
+[docs/dev/releasing.md](docs/dev/releasing.md) for the release ritual.
+
+Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
+this file starts at the first release that ships with a curated changelog.
+
+## [Unreleased]
+
+## [0.7.2] - 2026-05-29
+
+### Added
+
+- **Page-editor image adjustments.** The archive page editor can now apply
+  non-destructive image transforms per page — brightness/contrast, levels
+  clip, sharpen (unsharp mask), despeckle (median filter), and crop — with a
+  live canvas preview and a draggable crop box. Transforms are applied at
+  archive-rewrite time across CBZ/CBT/CBR, after rotation and before
+  re-encode; pages needing no encode still stream-copy verbatim. Frontend and
+  backend share an identical transform chain for preview/output parity.
+- **Loading-skeleton framework, rebuilt per surface.** Each area now renders a
+  shape-matched skeleton inside its real shell instead of one generic cover
+  grid in the legacy auth shell: home rails, series detail (hero + stats +
+  tabs + issue grid), bookmarks, collections, admin (header + tabs/table),
+  and settings (form cards). The top-level fallback is now shell-agnostic.
+
+### Fixed
+
+- **Reader loading flash on iPad.** The reader inherited the library's
+  light/cover-grid loading fallback, flashing white before the dark reader
+  painted. It now has its own dark, reader-shaped skeleton driven by a shared
+  `--reader-bg` token, so the background can't drift between skeleton and
+  reader. The reader's server-side prefetches (`/progress`, `/auth/me`) now
+  run concurrently, shortening time-to-reader.
+- **Variant covers wiped by the nightly orphan sweep.** Downloaded provider
+  covers live under `thumbs/issues/…`; the thumbnail orphan sweep read
+  `issues` as an issue id and `remove_dir_all`'d the whole tree every night,
+  leaving "cover unavailable" 404s and gray gallery boxes. The sweep now skips
+  the reserved tree and reclaims only covers of genuinely inactive issues; the
+  variant-cover backfill re-downloads rows whose file went missing.
+- **Page rename navigated to a 404.** Renaming a custom page reallocates its
+  slug, but the post-rename refresh re-rendered the stale `/pages/<old-slug>`
+  URL and hit `notFound()`. The rename now navigates to the new slug when on
+  the page's detail route. Long page titles also wrap instead of truncating.
+
+### Removed
+
+- Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
+
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/mbryantms/folio/compare/v0.7.1...v0.7.2

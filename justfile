@@ -601,3 +601,64 @@ docker-test:
 # delegate-pattern exemptions. Audit-remediation M10.2.
 audit-check:
     cargo run -p audit-check --release
+
+# ───── release ─────
+
+# CI-parity check suite — the gates enforced by .github/workflows/ci.yml.
+# Run this before cutting a release. Note: web Prettier is intentionally
+# NOT gated (CI doesn't enforce it and the tree carries pre-existing
+# drift) — use `just fmt-web` to tidy formatting.
+check:
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo test --workspace --all-features
+    cd web && pnpm lint
+    cd web && pnpm run typecheck
+    cd web && pnpm test
+    cd web && pnpm run build
+    just openapi-check
+    just audit-check
+
+# Cut a release. Validates, runs the full check suite, stamps the
+# changelog date, and creates the annotated tag — but does NOT push.
+# Pushing the tag is the irreversible, image-publishing step, so it
+# stays a deliberate manual action (the recipe prints the commands).
+# Usage: just release 0.7.2   (no leading 'v')
+# See docs/dev/releasing.md.
+release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION="{{version}}"
+    TAG="v${VERSION}"
+    if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+        echo "✗ version must look like 1.2.3 (got '$VERSION')" >&2; exit 1
+    fi
+    if [[ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]]; then
+        echo "✗ not on main — releases are tagged from main" >&2; exit 1
+    fi
+    if [[ -n "$(git status --porcelain)" ]]; then
+        echo "✗ working tree not clean — commit or stash first" >&2; exit 1
+    fi
+    if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+        echo "✗ tag $TAG already exists" >&2; exit 1
+    fi
+    git fetch --quiet origin main
+    if [[ -n "$(git rev-list HEAD..origin/main)" ]]; then
+        echo "✗ local main is behind origin/main — pull first" >&2; exit 1
+    fi
+    if ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+        echo "✗ CHANGELOG.md has no '## [$VERSION]' section — add it first" >&2; exit 1
+    fi
+    echo "==> running full check suite"
+    just check
+    TODAY="$(date +%Y-%m-%d)"
+    if grep -qE "^## \[$VERSION\] - (TBD|YYYY-MM-DD)? *$" CHANGELOG.md; then
+        echo "==> stamping changelog date $TODAY"
+        sed -i -E "s/^## \[$VERSION\].*/## [$VERSION] - $TODAY/" CHANGELOG.md
+        git commit -am "docs: changelog for $TAG"
+    fi
+    git tag -a "$TAG" -m "$TAG"
+    echo
+    echo "✓ Tagged $TAG (not pushed). To publish — triggers GHCR build + GitHub release:"
+    echo "    git push origin main"
+    echo "    git push origin $TAG"
