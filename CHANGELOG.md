@@ -15,6 +15,25 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-05-29
+
+### Fixed
+
+- **Metadata apply now refreshes open tabs without a page reload.** Applying
+  is async; the match dialog only re-hydrated on the writeback path (waiting
+  for the rescan's `scan.completed`). A DB-direct (non-writeback) apply had no
+  completion signal, so an already-open **Covers** or **Notes** tab stayed
+  stale until a manual refresh. The apply job now broadcasts a
+  `metadata.applied` event the dialog waits on, so both paths re-hydrate.
+- **Action-menu "Thumbnails" item no longer highlights differently** from its
+  siblings. The dropdown sub-trigger now flips text to `accent-foreground`
+  (and animates) on hover/focus/open like a regular menu item, instead of
+  showing the accent background with default-colour text.
+- **Dropdown menus now scroll instead of overflowing the screen.** A long
+  action menu opened mid-page on mobile ran items off-screen (up or down)
+  with no way to reach them. Menu (and submenu) content is now capped to the
+  available viewport height and scrolls.
+
 ## [0.7.5] - 2026-05-29
 
 ### Fixed
@@ -104,7 +123,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/mbryantms/folio/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/mbryantms/folio/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/mbryantms/folio/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/mbryantms/folio/compare/v0.7.2...v0.7.3
