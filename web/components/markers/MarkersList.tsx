@@ -159,35 +159,38 @@ export function MarkersList() {
       <PageHeader
         title="Bookmarks"
         description="Every page bookmark, note, favorite, and highlight you’ve saved across your library."
-        actions={
-          <>
-            <div className="relative w-full max-w-xs">
-              <SearchIcon
-                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2"
-                aria-hidden="true"
-              />
-              <Input
-                type="search"
-                value={rawSearch}
-                onChange={(e) => setRawSearch(e.target.value)}
-                placeholder="Filter saved markers"
-                aria-label="Filter saved markers"
-                className="pl-8"
-              />
-            </div>
-            <CardSizeOptions
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-              fieldId="bookmarks-card-size"
-              description="Tighten or loosen the bookmarks grid. Saved per browser."
-            />
-          </>
-        }
+        descriptionClassName="hidden sm:block"
       />
+
+      {/* Compact controls row: search grows to fill, density toggle trails.
+          One row on every width instead of stacking the toggle below the
+          search box on mobile. */}
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+          <SearchIcon
+            className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2"
+            aria-hidden="true"
+          />
+          <Input
+            type="search"
+            value={rawSearch}
+            onChange={(e) => setRawSearch(e.target.value)}
+            placeholder="Filter saved markers"
+            aria-label="Filter saved markers"
+            className="pl-8"
+          />
+        </div>
+        <CardSizeOptions
+          cardSize={cardSize}
+          onCardSize={setCardSize}
+          min={CARD_SIZE_MIN}
+          max={CARD_SIZE_MAX}
+          step={CARD_SIZE_STEP}
+          defaultSize={CARD_SIZE_DEFAULT}
+          fieldId="bookmarks-card-size"
+          description="Tighten or loosen the bookmarks grid. Saved per browser."
+        />
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <div

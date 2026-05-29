@@ -259,10 +259,7 @@ function CblViewDetailInner({
   };
   const runBulkMark = (finished: boolean) => {
     if (selectedIssueIds.length === 0) return;
-    if (
-      finished
-      && selectedIssueIds.length >= BULK_BACKFILL_PROMPT_THRESHOLD
-    ) {
+    if (finished && selectedIssueIds.length >= BULK_BACKFILL_PROMPT_THRESHOLD) {
       setMarkReadOpen(true);
       return;
     }
@@ -371,7 +368,7 @@ function CblViewDetailInner({
              *  toolbar reads as one cluster. Auto-walks pages while
              *  active (see effect above) so the filter sees the
              *  full list. */}
-            <div className="relative w-56">
+            <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
               <SearchIcon
                 aria-hidden="true"
                 className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
@@ -515,10 +512,7 @@ function CblViewDetailInner({
           <ul role="list" className="grid gap-3" style={gridStyle}>
             {items.map((item) =>
               item.kind === "entry" ? (
-                <li
-                  key={item.entry.id}
-                  id={`cbl-entry-${item.entry.position}`}
-                >
+                <li key={item.entry.id} id={`cbl-entry-${item.entry.position}`}>
                   <CblIssueCard
                     entry={item.entry}
                     issue={item.entry.issue ?? undefined}
