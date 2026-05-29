@@ -459,7 +459,7 @@ pub async fn get_one(
     user: CurrentUser,
     AxPath(slug): AxPath<String>,
 ) -> impl IntoResponse {
-    let row = match find_by_slug(&app.db, &slug).await {
+    let row = match find_by_slug_or_id(&app.db, &slug).await {
         Ok(r) => r,
         Err(resp) => return resp,
     };
@@ -467,6 +467,53 @@ pub async fn get_one(
         return error(StatusCode::NOT_FOUND, "not_found", "library not found");
     }
     Json(LibraryView::from(row)).into_response()
+}
+
+/// Resolve a library by its human-readable slug, falling back to its
+/// UUID id when the segment parses as one. Read-path callers sometimes
+/// only hold the issue/series `library_id` UUID, not the slug (e.g. the
+/// metadata-match dialog) — accept either rather than 404. Mutation
+/// routes keep [`find_by_slug`] since they're reached from slug-based
+/// URLs.
+pub(crate) async fn find_by_slug_or_id(
+    db: &sea_orm::DatabaseConnection,
+    slug_or_id: &str,
+) -> Result<library::Model, axum::response::Response> {
+    match library::Entity::find()
+        .filter(library::Column::Slug.eq(slug_or_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(row)) => return Ok(row),
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = %e, slug = slug_or_id, "library slug lookup failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    }
+    if let Ok(uuid) = Uuid::parse_str(slug_or_id) {
+        match library::Entity::find_by_id(uuid).one(db).await {
+            Ok(Some(row)) => return Ok(row),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::error!(error = %e, id = slug_or_id, "library id lookup failed");
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal",
+                ));
+            }
+        }
+    }
+    Err(error(
+        StatusCode::NOT_FOUND,
+        "not_found",
+        "library not found",
+    ))
 }
 
 #[utoipa::path(

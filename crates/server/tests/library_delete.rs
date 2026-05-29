@@ -347,6 +347,64 @@ async fn delete_library(
     (status, body_json(resp.into_body()).await)
 }
 
+async fn get_library(app: &TestApp, auth: &Authed, ident: &str) -> (StatusCode, serde_json::Value) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/api/libraries/{ident}"))
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", auth.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+/// Regression: `GET /libraries/{ident}` must resolve by UUID, not only by
+/// slug. The metadata-match dialog holds the issue's `library_id` UUID
+/// (not the slug) and `useLibrary(uuid)` 404'd, which silently forced
+/// `writebackEnabled=false` and broke the apply→wait-for-rescan flow.
+/// (The `seed` helper defaults slug==uuid, which masked this — so this
+/// test gives the library a distinct human slug first.)
+#[tokio::test]
+async fn get_one_resolves_by_uuid_and_human_slug() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let (lib_id, _) = seed(&app).await;
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let mut am: library::ActiveModel = LibraryEntity::find_by_id(lib_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.slug = Set("doomed-lib-human".to_owned());
+    am.update(&db).await.unwrap();
+
+    // By UUID — the dialog path; was 404 before the fix.
+    let (status, body) = get_library(&app, &auth, &lib_id.to_string()).await;
+    assert_eq!(status, StatusCode::OK, "GET by UUID should resolve");
+    assert_eq!(body["id"], lib_id.to_string());
+
+    // By human slug — still works.
+    let (status, body) = get_library(&app, &auth, "doomed-lib-human").await;
+    assert_eq!(status, StatusCode::OK, "GET by slug should resolve");
+    assert_eq!(body["id"], lib_id.to_string());
+
+    // Neither slug nor a valid UUID → still 404.
+    let (status, _) = get_library(&app, &auth, "no-such-library").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn delete_library_cascades_and_wipes_thumbs() {
     let app = TestApp::spawn().await;
