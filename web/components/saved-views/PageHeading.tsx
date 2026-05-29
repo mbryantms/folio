@@ -93,7 +93,7 @@ export function PageHeading({
           className="group hover:bg-secondary/50 -mx-1 flex max-w-full items-center gap-2 rounded-md px-1 py-0.5 text-left"
           title="Click to rename"
         >
-          <h1 className="truncate text-2xl font-semibold tracking-tight">
+          <h1 className="wrap-break-word text-2xl font-semibold tracking-tight">
             {pageName}
           </h1>
           <Pencil className="text-muted-foreground/0 group-hover:text-muted-foreground h-4 w-4 shrink-0 transition-colors" />

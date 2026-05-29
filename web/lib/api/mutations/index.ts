@@ -8,7 +8,7 @@
  * (CBL, markers, saved-views, pages, admin) are mechanical follow-ups.
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { apiFetch } from "../auth-refresh";
 import { queryKeys } from "../queries";
@@ -1953,6 +1953,7 @@ export function useCreatePage() {
 export function useUpdatePage(id: string) {
   const qc = useQueryClient();
   const router = useRouter();
+  const pathname = usePathname();
   return useApiMutation<PageView, UpdatePageReq>(
     (body) => ({ path: `/me/pages/${id}`, method: "PATCH", body }),
     {
@@ -1961,10 +1962,24 @@ export function useUpdatePage(id: string) {
         if (input.description !== undefined) return TOAST.PAGE_UPDATED;
         return TOAST.PAGE_UPDATED;
       },
-      onSuccess: () => {
+      onSuccess: (data) => {
         qc.invalidateQueries({ queryKey: queryKeys.mePages });
         qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
-        router.refresh();
+        // A rename reallocates the custom page's slug (see
+        // `api/pages.rs::update`). If we're sitting on that page's
+        // detail route, the current URL still carries the *old* slug —
+        // a plain `router.refresh()` would re-render `/pages/<old-slug>`
+        // and hit `notFound()`. Detect that case and navigate to the
+        // new slug instead; otherwise refresh in place.
+        const segs = pathname?.split("/") ?? [];
+        const idx = segs.indexOf("pages");
+        const currentSlug = idx >= 0 ? segs[idx + 1] : undefined;
+        if (currentSlug && data?.slug && currentSlug !== data.slug) {
+          segs[idx + 1] = data.slug;
+          router.replace(segs.join("/"));
+        } else {
+          router.refresh();
+        }
       },
     },
   );
