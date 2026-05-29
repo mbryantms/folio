@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { FilterPill } from "@/components/ui/filter-pill";
 import {
   useAdminMetadataRun,
   useAdminMetadataRuns,
@@ -30,14 +31,34 @@ export function RunsTab() {
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-muted-foreground">Scope:</span>
-          <FilterChip label="All" active={!scope} onClick={() => setScope("")} />
-          <FilterChip label="Series" active={scope === "series"} onClick={() => setScope("series")} />
-          <FilterChip label="Issue" active={scope === "issue"} onClick={() => setScope("issue")} />
+          <FilterPill active={!scope} onClick={() => setScope("")}>
+            All
+          </FilterPill>
+          <FilterPill active={scope === "series"} onClick={() => setScope("series")}>
+            Series
+          </FilterPill>
+          <FilterPill active={scope === "issue"} onClick={() => setScope("issue")}>
+            Issue
+          </FilterPill>
           <span className="text-muted-foreground ml-3">Status:</span>
-          <FilterChip label="All" active={!status} onClick={() => setStatus("")} />
-          <FilterChip label="Completed" active={status === "completed"} onClick={() => setStatus("completed")} />
-          <FilterChip label="Awaiting" active={status === "awaiting_quota"} onClick={() => setStatus("awaiting_quota")} />
-          <FilterChip label="Failed" active={status === "failed"} onClick={() => setStatus("failed")} />
+          <FilterPill active={!status} onClick={() => setStatus("")}>
+            All
+          </FilterPill>
+          <FilterPill
+            active={status === "completed"}
+            onClick={() => setStatus("completed")}
+          >
+            Completed
+          </FilterPill>
+          <FilterPill
+            active={status === "awaiting_quota"}
+            onClick={() => setStatus("awaiting_quota")}
+          >
+            Awaiting
+          </FilterPill>
+          <FilterPill active={status === "failed"} onClick={() => setStatus("failed")}>
+            Failed
+          </FilterPill>
         </div>
 
         {runs.isLoading ? (
@@ -135,29 +156,6 @@ function StatusBadge({ status }: { status: string }) {
     <Badge variant={variant as "default" | "secondary" | "outline" | "destructive"}>
       {status}
     </Badge>
-  );
-}
-
-function FilterChip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded border px-2 py-0.5 text-xs ${
-        active
-          ? "border-foreground bg-foreground text-background"
-          : "border-border bg-card hover:bg-muted"
-      }`}
-    >
-      {label}
-    </button>
   );
 }
 

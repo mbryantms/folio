@@ -344,8 +344,7 @@ async fn test_provider_disabled_audit_does_not_fire() {
 #[tokio::test]
 async fn auto_synced_lists_only_unpaused_active_series() {
     let app = TestApp::spawn().await;
-    let admin =
-        register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let dir = tempfile::tempdir().unwrap();
     let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
     let lib = LibrarySeed::new(dir.path()).insert(&db).await;
