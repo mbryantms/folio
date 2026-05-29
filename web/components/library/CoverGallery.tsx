@@ -28,10 +28,20 @@
  */
 
 import { Loader2 } from "lucide-react";
+import { useState } from "react";
 
+import {
+  CoverViewer,
+  type ViewerCover,
+} from "@/components/library/CoverViewer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useIssueCovers } from "@/lib/api/queries";
 import type { IssueCoverRow } from "@/lib/api/types";
+
+/** The full-resolution source for a cover row, or `null` when none exists. */
+function coverSrc(row: IssueCoverRow, fallbackUrl: string): string | null {
+  return row.image_url ?? (row.kind === "primary" ? fallbackUrl : null);
+}
 
 /**
  * `chrome` controls the outer wrapper:
@@ -53,6 +63,9 @@ export function CoverGallery({
 }) {
   const q = useIssueCovers(issueId);
   const data = q.data;
+  // Active lightbox cover (index into the `viewable` list below), or null when
+  // closed. Declared before the early returns so hook order stays stable.
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   if (q.isLoading) {
     const loading = (
@@ -101,46 +114,87 @@ export function CoverGallery({
     chrome === "bare"
       ? "grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7"
       : "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4";
+
+  // Build the ordered list of viewable covers (those with an image) once, plus
+  // a map from cover id → its position in that list, so a tile click can open
+  // the lightbox at the right slide. Covers without an image aren't clickable.
+  const viewable: ViewerCover[] = [];
+  const viewerIndexById = new Map<string, number>();
+  for (const c of data.covers) {
+    const src = coverSrc(c, data.fallback_primary_url);
+    if (!src) continue;
+    viewerIndexById.set(c.id, viewable.length);
+    viewable.push({
+      src,
+      label: c.variant_label ?? c.kind,
+      provider: c.source_provider ? labelForProvider(c.source_provider) : null,
+    });
+  }
+
   const grid = (
     <ul className={gridClass}>
-      {data.covers.map((c) => (
-        <CoverTile
-          key={c.id}
-          row={c}
-          fallbackUrl={data.fallback_primary_url}
-        />
-      ))}
+      {data.covers.map((c) => {
+        const vi = viewerIndexById.get(c.id);
+        return (
+          <CoverTile
+            key={c.id}
+            row={c}
+            fallbackUrl={data.fallback_primary_url}
+            onOpen={vi === undefined ? null : () => setViewerIndex(vi)}
+          />
+        );
+      })}
     </ul>
   );
 
-  if (chrome === "bare") return grid;
+  const viewer = (
+    <CoverViewer
+      covers={viewable}
+      index={viewerIndex}
+      onIndexChange={setViewerIndex}
+      onClose={() => setViewerIndex(null)}
+    />
+  );
+
+  if (chrome === "bare")
+    return (
+      <>
+        {grid}
+        {viewer}
+      </>
+    );
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium">
-          Covers ({data.covers.length})
-        </CardTitle>
-      </CardHeader>
-      <CardContent>{grid}</CardContent>
-    </Card>
+    <>
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">
+            Covers ({data.covers.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent>{grid}</CardContent>
+      </Card>
+      {viewer}
+    </>
   );
 }
 
 function CoverTile({
   row,
   fallbackUrl,
+  onOpen,
 }: {
   row: IssueCoverRow;
   fallbackUrl: string;
+  /** Opens the lightbox at this cover; `null` when the cover has no image. */
+  onOpen: (() => void) | null;
 }) {
-  // Both the thumbnail and the "open full resolution" link use the same
-  // `image_url` — the locally-stored cover, which is the full-res
-  // original we downloaded (the CDN `source_url` is only the fallback
-  // baked into `image_url` for not-yet-localized rows). Primary covers
-  // with no stored artifact fall back to the page-thumb route.
-  const src = row.image_url ?? (row.kind === "primary" ? fallbackUrl : null);
-  const fullResUrl = src;
+  // The thumbnail and the lightbox use the same `image_url` — the locally
+  // stored cover, which is the full-res original we downloaded (the CDN
+  // `source_url` is only the fallback baked into `image_url` for
+  // not-yet-localized rows). Primary covers with no stored artifact fall back
+  // to the page-thumb route.
+  const src = coverSrc(row, fallbackUrl);
   const label = row.variant_label ?? row.kind;
 
   // Image element — drops the wrapping border / padding / bg-card the
@@ -183,21 +237,21 @@ function CoverTile({
 
   return (
     <li>
-      {fullResUrl ? (
-        // Open the full-resolution image in a new tab — the locally
-        // stored original, served from this instance.
-        <a
-          href={fullResUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="group block focus-visible:outline-ring focus-visible:outline-2 focus-visible:outline-offset-2 rounded"
-          title={`Open ${label} at full resolution`}
+      {onOpen ? (
+        // Open the full-resolution image in the in-app lightbox. A new-tab
+        // link would strand PWA users on the chromeless image-bytes endpoint
+        // with no way back; the viewer keeps the full-res view inside the app.
+        <button
+          type="button"
+          onClick={onOpen}
+          className="group focus-visible:outline-ring block w-full rounded text-left focus-visible:outline-2 focus-visible:outline-offset-2"
+          title={`View ${label}`}
         >
           <div className="group-hover:ring-ring/40 rounded transition-shadow group-hover:ring-2">
             {frame}
           </div>
           {caption}
-        </a>
+        </button>
       ) : (
         <>
           {frame}

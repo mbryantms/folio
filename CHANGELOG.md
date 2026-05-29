@@ -15,6 +15,19 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-05-29
+
+### Changed
+
+- **Covers now open in an in-app lightbox instead of a new browser tab.** A
+  cover tile in the issue's Covers tab was a `target="_blank"` link to the
+  raw image bytes — fine in a browser, but an installed PWA has no new tab to
+  open, so it navigated the app itself onto the chromeless image endpoint with
+  no way back. Tiles now open a full-resolution viewer inside the app: page
+  between covers (arrows or ←/→), tap the backdrop or press Esc to close back
+  to the gallery. Controls are inset from the device safe areas so they clear
+  the iOS status bar and home indicator.
+
 ## [0.7.10] - 2026-05-29
 
 ### Fixed
@@ -188,7 +201,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.10...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.11...HEAD
+[0.7.11]: https://github.com/mbryantms/folio/compare/v0.7.10...v0.7.11
 [0.7.10]: https://github.com/mbryantms/folio/compare/v0.7.9...v0.7.10
 [0.7.9]: https://github.com/mbryantms/folio/compare/v0.7.8...v0.7.9
 [0.7.8]: https://github.com/mbryantms/folio/compare/v0.7.7...v0.7.8

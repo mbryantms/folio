@@ -3,7 +3,9 @@
  *
  * Verifies the gallery's "hide when nothing variant" rule + that a
  * variant row renders `image_url` (the local byte endpoint) as the
- * <img> src while linking the original CDN `source_url` for full-res.
+ * <img> src, and that the tile opens the in-app lightbox (a button)
+ * rather than a new-tab link — a new tab strands PWA users on the
+ * chromeless image-bytes endpoint with no way back.
  */
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -96,14 +98,15 @@ describe("<CoverGallery>", () => {
     );
     expect(html).toContain("Covers");
     expect(html).toContain("Cover B (Adam Hughes)");
-    // Both the thumbnail and the full-res link use the local byte
-    // endpoint, not the provider CDN.
+    // The thumbnail uses the local byte endpoint, not the provider CDN.
     expect(html).toContain(
       'src="/issues/abc/covers/00000000-0000-0000-0000-000000000002"',
     );
-    expect(html).toContain(
-      'href="/issues/abc/covers/00000000-0000-0000-0000-000000000002"',
-    );
+    // The tile is a button that opens the in-app lightbox — NOT a
+    // `target="_blank"` link to the raw image (the PWA back-trap).
+    expect(html).toContain("<button");
+    expect(html).not.toContain('target="_blank"');
+    expect(html).not.toContain('href="/issues/abc/covers/');
     expect(html).not.toContain("https://cdn/variant-b.jpg");
     expect(html).toContain("ComicVine");
   });
