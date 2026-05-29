@@ -24,6 +24,7 @@ export function PageImage({
   alt,
   fitClass,
   loading,
+  fetchPriority,
   onNaturalSize,
   imgRef: externalImgRef,
 }: {
@@ -31,6 +32,9 @@ export function PageImage({
   alt: string;
   fitClass: string;
   loading?: "eager" | "lazy";
+  /** Browser fetch priority. The visible page passes `"high"` so it never
+   *  queues behind the low-priority prefetch warms. */
+  fetchPriority?: "high" | "low" | "auto";
   onNaturalSize?: (width: number, height: number) => void;
   /** Optional ref the parent can use to align overlays (marker SVG)
    *  with the actually-rendered image bounds rather than the wider
@@ -73,6 +77,7 @@ export function PageImage({
         src={src}
         alt={alt}
         loading={loading}
+        fetchPriority={fetchPriority}
         decoding="async"
         onLoad={(e) => {
           setLoaded(true);

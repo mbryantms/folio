@@ -75,6 +75,26 @@ export function PageStrip({
     const raf = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(raf);
   }, []);
+
+  // Pre-warm strip thumbnails around the current page so the page map is
+  // already cached — and server-side generation already kicked off —
+  // before the strip slides up. Without this, the visible thumbs only
+  // start loading once the strip opens, showing the placeholder box
+  // briefly before filling. Bounded window around the current page;
+  // pages further out warm lazily as the user scrolls the strip.
+  const warmedThumbs = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const WINDOW = 12;
+    const lo = Math.max(0, currentPage - WINDOW);
+    const hi = Math.min(totalPages - 1, currentPage + WINDOW);
+    for (let i = lo; i <= hi; i += 1) {
+      if (warmedThumbs.current.has(i)) continue;
+      warmedThumbs.current.add(i);
+      const img = new Image();
+      img.fetchPriority = "low";
+      img.src = `/issues/${issueId}/pages/${i}/thumb?variant=strip`;
+    }
+  }, [issueId, currentPage, totalPages]);
   // Marker dots per page — one set of kinds per page index. Empty
   // when the user has no markers on this issue yet. Same TanStack
   // Query cache the reader overlay reads from, so the strip refreshes
@@ -263,7 +283,7 @@ export function PageStrip({
           onScroll={updateVisibleRange}
           // `pb-3` floor + `--safe-bottom` so thumbnails sit above the
           // home indicator. Horizontal insets clear landscape notches.
-          className="relative flex items-end gap-3 overflow-x-auto pl-[max(0.75rem,var(--safe-left))] pr-[max(0.75rem,var(--safe-right))] pt-28 pb-[calc(0.75rem+var(--safe-bottom))]"
+          className="relative flex items-end gap-3 overflow-x-auto pt-28 pr-[max(0.75rem,var(--safe-right))] pb-[calc(0.75rem+var(--safe-bottom))] pl-[max(0.75rem,var(--safe-left))]"
         >
           {indices.map((i, p) => {
             const isActive = activePages.includes(i);
@@ -314,7 +334,11 @@ export function PageStrip({
                     <img
                       src={`/issues/${issueId}/pages/${i}/thumb?variant=strip`}
                       alt=""
-                      loading="lazy"
+                      // Eager: `shouldLoad` already gates rendering to the
+                      // visible + overscan window, so we want these to fetch
+                      // immediately on open rather than wait for the browser's
+                      // lazy heuristic (which adds the blank-then-fill beat).
+                      loading="eager"
                       decoding="async"
                       width={isDouble ? 192 : 96}
                       className={`block h-36 ${isDouble ? "w-48" : "w-24"} object-cover`}

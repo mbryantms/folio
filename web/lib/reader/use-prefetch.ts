@@ -1,15 +1,31 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ViewMode } from "@/lib/reader/detect";
 import type { SpreadGroup } from "@/lib/reader/spreads";
 
-const PREFETCH_AHEAD = 2;
+// How far to warm around the current position. Forward-weighted (most
+// turns go forward) but we also warm behind so back-nav is instant.
+const AHEAD = 3;
+const BEHIND = 2;
+// Cap concurrent warm requests so a slow link isn't saturated and the
+// visible page (fetchPriority=high) never queues behind prefetches.
+const MAX_CONCURRENT = 4;
+// Cap retained decoded images so memory stays bounded on long issues.
+const MAX_RETAINED = 16;
 
 /**
- * Prefetch upcoming page bytes into the browser HTTP cache so the
- * reader's next page flip is instant. Double-page mode walks by
- * spread group (so we don't waste requests on the back of a pair
- * we just rendered); single-page walks by page index. Webtoon
- * renders the whole stack and skips prefetch.
+ * Warm upcoming/previous page bytes **and decode them** so the next/prev
+ * flip paints instantly.
+ *
+ * The naive `new Image().src = …` only warms the HTTP byte cache — the
+ * decoded frame is dropped, so the real `<img>` still re-decodes on the
+ * main thread at display time (visible as a brief blank + the entrance
+ * fade). Here we instead call `img.decode()` and **retain** the element,
+ * which keeps the browser's decoded copy alive; when the page's real
+ * `<img src=…>` mounts it finds a decoded frame and `complete` is true on
+ * the first frame, so `PageImage` skips its spinner/fade entirely.
+ *
+ * Double-page walks by spread group (don't waste a request on the back of
+ * a pair we just rendered); single + webtoon walk by page index.
  */
 export function useReaderPrefetch(opts: {
   issueId: string;
@@ -27,24 +43,74 @@ export function useReaderPrefetch(opts: {
     groups,
     viewMode,
   } = opts;
+
+  // Retained decoded images, keyed by URL (insertion-ordered for LRU-ish
+  // eviction). In-flight set dedupes concurrent warms of the same URL.
+  const retained = useRef<Map<string, HTMLImageElement>>(new Map());
+  const inflight = useRef<Set<string>>(new Set());
+  const queue = useRef<string[]>([]);
+  const active = useRef(0);
+
   useEffect(() => {
-    if (viewMode === "webtoon") return;
-    if (viewMode === "double" && groups.length > 0) {
-      for (let g = 1; g <= PREFETCH_AHEAD; g += 1) {
-        const grp = groups[currentGroupIdx + g];
-        if (!grp) break;
-        for (const p of grp) {
-          const img = new Image();
-          img.src = `/issues/${issueId}/pages/${p}`;
-        }
+    const url = (p: number) => `/issues/${issueId}/pages/${p}`;
+
+    const pump = () => {
+      while (active.current < MAX_CONCURRENT && queue.current.length > 0) {
+        const u = queue.current.shift()!;
+        if (retained.current.has(u) || inflight.current.has(u)) continue;
+        inflight.current.add(u);
+        active.current += 1;
+        const img = new Image();
+        // Hint the browser these are background loads behind the visible page.
+        img.fetchPriority = "low";
+        img.src = u;
+        // decode() resolves once loaded + decoded; retain on success so the
+        // decoded frame survives until the page scrolls out of the window.
+        img
+          .decode()
+          .then(() => {
+            retained.current.set(u, img);
+            // Evict oldest beyond the cap (Map preserves insertion order).
+            while (retained.current.size > MAX_RETAINED) {
+              const oldest = retained.current.keys().next().value;
+              if (oldest === undefined) break;
+              retained.current.delete(oldest);
+            }
+          })
+          .catch(() => {
+            /* decode can reject on a load error or an interrupted decode;
+               the page will simply load normally when displayed. */
+          })
+          .finally(() => {
+            inflight.current.delete(u);
+            active.current -= 1;
+            pump();
+          });
       }
-      return;
+    };
+
+    const want: number[] = [];
+    if (viewMode === "double" && groups.length > 0) {
+      for (let g = -BEHIND; g <= AHEAD; g += 1) {
+        if (g === 0) continue;
+        const grp = groups[currentGroupIdx + g];
+        if (grp) want.push(...grp);
+      }
+    } else {
+      // single + webtoon: window of page indices around the current one.
+      for (let i = -BEHIND; i <= AHEAD; i += 1) {
+        if (i === 0) continue;
+        const p = currentPage + i;
+        if (p >= 0 && p < totalPages) want.push(p);
+      }
     }
-    for (let i = 1; i <= PREFETCH_AHEAD; i += 1) {
-      const next = currentPage + i;
-      if (next >= totalPages) break;
-      const img = new Image();
-      img.src = `/issues/${issueId}/pages/${next}`;
-    }
+
+    // Order forward-first so the most-likely next page warms before the
+    // behind pages.
+    want.sort(
+      (a, b) => Math.sign(a - currentPage) - Math.sign(b - currentPage),
+    );
+    queue.current = want.map(url);
+    pump();
   }, [currentPage, currentGroupIdx, groups, issueId, totalPages, viewMode]);
 }

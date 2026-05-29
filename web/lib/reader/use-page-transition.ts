@@ -65,8 +65,8 @@ export type PageTransitionResult = {
  *  classes share a wrapper. */
 const TRANSITION_MS: Record<PageAnimationMode, number> = {
   off: 0,
-  slide: 280,
-  fade: 220,
+  slide: 210,
+  fade: 160,
 };
 
 export function usePageTransition({

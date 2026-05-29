@@ -383,19 +383,19 @@ body {
 }
 
 .page-slide-in-from-right {
-  animation: page-slide-in-from-right 280ms ease-out;
+  animation: page-slide-in-from-right 210ms ease-out;
 }
 .page-slide-in-from-left {
-  animation: page-slide-in-from-left 280ms ease-out;
+  animation: page-slide-in-from-left 210ms ease-out;
 }
 .page-slide-out-to-left {
   /* forwards keeps the outgoing page parked off-screen until the
    * hook's timer unmounts it; without it the page would snap back
    * to translateX(0) on animation end and flash visible. */
-  animation: page-slide-out-to-left 280ms ease-out forwards;
+  animation: page-slide-out-to-left 210ms ease-out forwards;
 }
 .page-slide-out-to-right {
-  animation: page-slide-out-to-right 280ms ease-out forwards;
+  animation: page-slide-out-to-right 210ms ease-out forwards;
 }
 
 /* v0.3.45 fade variant — minimal crossfade. Direction-independent.
@@ -419,10 +419,10 @@ body {
   }
 }
 .page-fade-out {
-  animation: page-fade-out 220ms ease-out forwards;
+  animation: page-fade-out 160ms ease-out forwards;
 }
 .page-fade-in {
-  animation: page-fade-in 220ms ease-out;
+  animation: page-fade-in 160ms ease-out;
 }
 
 /* A v0.3.45 curl variant was prototyped here as a CSS rotateY +

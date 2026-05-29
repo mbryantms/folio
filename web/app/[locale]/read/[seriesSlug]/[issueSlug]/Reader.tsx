@@ -876,6 +876,7 @@ function SinglePageView({
             src={`/issues/${issueId}/pages/${currentPage}`}
             alt={`Page ${currentPage + 1}`}
             fitClass={fitClass}
+            fetchPriority="high"
             onNaturalSize={onNaturalSize(currentPage)}
             imgRef={imgRef}
           />
@@ -1003,6 +1004,7 @@ function DoublePagePane({
         src={`/issues/${issueId}/pages/${page}`}
         alt={`Page ${page + 1}`}
         fitClass={fitClass}
+        fetchPriority="high"
         onNaturalSize={onNaturalSize}
         imgRef={imgRef}
       />
