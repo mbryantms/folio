@@ -15,6 +15,20 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-05-29
+
+### Fixed
+
+- **Covers no longer flash white and paint in top-to-bottom as a page loads.**
+  Library/series/issue pages render covers client-side, and the `Cover`
+  component had no placeholder or fade — each cover painted onto the page as
+  it loaded, cascading down the grid. Covers now sit on a stable dark tile
+  and fade in once decoded (cached covers paint instantly, no fade), matching
+  the reader's page-image behavior.
+- **Library grid loading skeleton** is now a neutral cover-card grid instead
+  of a rails shape, so it no longer mismatches the `?library=` grid view
+  while loading.
+
 ## [0.7.8] - 2026-05-29
 
 ### Changed
@@ -152,7 +166,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.8...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.9...HEAD
+[0.7.9]: https://github.com/mbryantms/folio/compare/v0.7.8...v0.7.9
 [0.7.8]: https://github.com/mbryantms/folio/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/mbryantms/folio/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/mbryantms/folio/compare/v0.7.5...v0.7.6
