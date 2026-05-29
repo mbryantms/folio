@@ -15,6 +15,28 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-05-29
+
+### Fixed
+
+- **Exiting the reader no longer hangs on a spinner.** The exit arrow does a
+  client-side navigation to the issue page; that request shares a path prefix
+  (`/series/…`) with the API hard-guard in the service worker, which re-fetched
+  it via `respondWith(fetch(request))` — forwarding the request's abort signal.
+  When the App Router superseded the in-flight RSC fetch (intermittently, under
+  the reader's decode load), the forwarded signal aborted the worker's fetch and
+  the router stranded on the route's loading state until a hard reload. The
+  worker now hands these requests to the browser's native loader (matching the
+  cross-origin branch), signal intact — no re-fetch, no stranded navigation.
+  Existing PWA clients pick up the fix once the new service worker activates
+  (close all tabs, or accept the update prompt).
+- **iOS PWA: the status bar no longer overlaps the comic art.** With the
+  translucent status bar the reader painted full-screen, so the clock / battery /
+  home indicator sat on top of the page. The reader now insets its image by the
+  device safe areas, so the status bar and home indicator land on the black
+  letterbox instead of the art. (iOS can't hide the status bar from a PWA; this
+  keeps it clear of the page. No-op off-iOS, where the insets are zero.)
+
 ## [0.7.9] - 2026-05-29
 
 ### Fixed
@@ -166,7 +188,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.9...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.10...HEAD
+[0.7.10]: https://github.com/mbryantms/folio/compare/v0.7.9...v0.7.10
 [0.7.9]: https://github.com/mbryantms/folio/compare/v0.7.8...v0.7.9
 [0.7.8]: https://github.com/mbryantms/folio/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/mbryantms/folio/compare/v0.7.6...v0.7.7

@@ -638,7 +638,12 @@ export function Reader({
     fitMode === "width"
       ? "w-full h-auto max-w-none"
       : fitMode === "height"
-        ? "h-screen w-auto max-w-none"
+        ? // Fit-height fills the *safe* viewport, not the raw 100vh — on an
+          // iOS PWA (status-bar-translucent + viewport-fit=cover) the top/bottom
+          // insets are non-zero, so the page sits in the safe band and the
+          // status bar / home indicator land on the black letterbox instead of
+          // the art. Off-iOS the insets are 0, so this is exactly 100dvh.
+          "h-[calc(100dvh_-_var(--safe-top)_-_var(--safe-bottom))] w-auto max-w-none"
         : "max-w-none w-auto h-auto";
   // Double-page panes need different wrapper sizing depending on fitMode.
   // In width mode each pane is forced to share the viewport row (flex-1
@@ -835,7 +840,7 @@ function SinglePageView({
   // capture pointer coords from) the empty band on each side.
   const imgRef = useRef<HTMLImageElement>(null);
   return (
-    <main className="relative grid min-h-screen place-items-center">
+    <main className="relative grid min-h-screen place-items-center pt-(--safe-top) pb-(--safe-bottom)">
       <div
         className="relative w-full overflow-hidden"
         data-testid="reader-page-wrapper"
@@ -944,7 +949,7 @@ function DoublePageView({
   // the retain-old-page version for the more nuanced single-image
   // case.
   return (
-    <main className="relative grid min-h-screen place-items-center">
+    <main className="relative grid min-h-screen place-items-center pt-(--safe-top) pb-(--safe-bottom)">
       <div className="relative w-full overflow-hidden">
         <div
           key={`enter-${visiblePages.join("-")}`}
@@ -1106,7 +1111,7 @@ function WebtoonView({
   return (
     <main
       ref={containerRef}
-      className="flex min-h-screen flex-col items-center"
+      className="flex min-h-screen flex-col items-center pt-(--safe-top) pb-(--safe-bottom)"
     >
       {Array.from({ length: totalPages }, (_, i) => (
         <WebtoonPage

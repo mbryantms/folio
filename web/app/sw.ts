@@ -79,10 +79,11 @@ const serwist = new Serwist({
 });
 
 // Hard guard: any same-origin request to a backend API surface
-// is never cached. The list mirrors the documented "DO NOT
-// cache" set above and runs before serwist's runtime cache
-// rules via a `fetch` listener that calls `event.respondWith`
-// directly with a network fetch.
+// (and the app-route HTML/RSC navigations that share these path
+// shapes, e.g. `/series/…`) is never cached and never touched by
+// the SW. The list mirrors the documented "DO NOT cache" set
+// above; the `fetch` listener below hands every match to the
+// browser's native loader.
 const API_PATH_PREFIXES = [
   "/admin/",
   "/auth/",
@@ -131,7 +132,21 @@ self.addEventListener("fetch", (event: FetchEvent) => {
       (p) => path === p.replace(/\/$/, "") || path.startsWith(p),
     )
   ) {
-    event.respondWith(fetch(event.request));
+    // Same as the cross-origin branch: hand the request to the browser's
+    // native loader, do NOT re-issue it via `respondWith(fetch(...))`.
+    //
+    // The old `event.respondWith(fetch(event.request))` re-fetched the
+    // request *carrying its original abort signal*. App-route paths like
+    // `/series/{slug}/issues/{slug}` are not just JSON API calls — they're
+    // also the destination of client-side RSC navigations (e.g. the reader
+    // exit button, `router.push(exitUrl)`). When the App Router aborts or
+    // supersedes an in-flight RSC fetch, the forwarded signal aborted our
+    // re-fetch too, `respondWith` rejected, and the router got stuck on the
+    // route's `loading.tsx` until a hard reload — the reader-exit hang.
+    // `stopImmediatePropagation` keeps serwist's caching listener from
+    // running (so the "never cache API paths" guarantee still holds) while
+    // letting the browser perform the request itself, signal intact.
+    event.stopImmediatePropagation();
   }
 });
 
