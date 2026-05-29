@@ -15,6 +15,17 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-05-29
+
+### Fixed
+
+- **`GET /libraries/{id}` 404'd when called with a UUID.** The endpoint
+  resolved only by slug, but the fetch-metadata dialog holds the issue's
+  `library_id` UUID — so the lookup missed, the library never loaded, and
+  `metadata_writeback_enabled` read as false. That silently broke the
+  apply→wait-for-rescan flow (the dialog closed onto a stale issue page).
+  The read endpoint now accepts a slug **or** a UUID.
+
 ## [0.7.4] - 2026-05-29
 
 ### Fixed
@@ -93,7 +104,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.5...HEAD
+[0.7.5]: https://github.com/mbryantms/folio/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/mbryantms/folio/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/mbryantms/folio/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/mbryantms/folio/compare/v0.7.1...v0.7.2
