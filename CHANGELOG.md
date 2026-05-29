@@ -15,6 +15,22 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-05-29
+
+### Changed
+
+- **Seamless reader page turning.** Page prefetch now decodes and retains the
+  upcoming/previous pages (`img.decode()` + retained element) instead of only
+  warming the byte cache, so the next/prev `<img>` mounts already-decoded and
+  the flip is instant — no re-decode, no entrance fade. Prefetch now covers
+  both directions (3 ahead / 2 behind), dedupes, caps concurrency, and works
+  in webtoon mode; the visible page loads at `fetchPriority="high"`.
+- **Smoother page map.** Strip thumbnails are pre-warmed around the current
+  page when the reader opens (filling the cache and kicking server-side
+  generation early) and load eagerly within the visible window, so the strip
+  no longer flashes blank placeholders as it slides up.
+- **Snappier page transitions.** Slide trimmed 280→210ms, fade 220→160ms.
+
 ## [0.7.7] - 2026-05-29
 
 ### Changed
@@ -136,7 +152,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.7...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.8...HEAD
+[0.7.8]: https://github.com/mbryantms/folio/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/mbryantms/folio/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/mbryantms/folio/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/mbryantms/folio/compare/v0.7.4...v0.7.5
