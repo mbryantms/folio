@@ -15,6 +15,19 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-05-29
+
+### Fixed
+
+- **Candidate cover images failed to load in the fetch-metadata view.** The
+  service worker's cross-origin guard was a no-op (serwist's `defaultCache`
+  registered a second fetch listener that still intercepted provider covers);
+  the resulting opaque cross-origin response is incompatible with the
+  document's `COEP: credentialless`, so the browser blocked the images
+  (`NS_ERROR_INTERCEPTION_FAILED`). The SW now hands cross-origin requests to
+  the browser's native loader. Existing clients pick up the fix on the next
+  service-worker update (hard refresh / close all tabs).
+
 ## [0.7.3] - 2026-05-29
 
 ### Added
@@ -80,6 +93,7 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/mbryantms/folio/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/mbryantms/folio/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/mbryantms/folio/compare/v0.7.1...v0.7.2
