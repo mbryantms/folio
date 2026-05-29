@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
-import { AlertCircle } from "lucide-react";
 
+import { StatusCard, StatusErrorIcon } from "@/components/StatusScreen";
 import { Button } from "@/components/ui/button";
 
 /**
  * Error boundary scoped to the (settings) route group:
- * /settings/{account,activity,views,api-tokens,...}. Audit-remediation
- * M7.1 (2026-05-24).
+ * /settings/{account,activity,views,api-tokens,...}. Renders inside
+ * `AdminShell`, so it uses the bare `StatusCard`.
  */
 export default function SettingsGroupError({
   error,
@@ -22,29 +22,19 @@ export default function SettingsGroupError({
   }, [error]);
 
   return (
-    <div className="mx-auto max-w-md py-16 text-center">
-      <div className="mx-auto flex size-10 items-center justify-center rounded-full border border-destructive/40 bg-destructive/10 text-destructive">
-        <AlertCircle className="size-5" aria-hidden />
-      </div>
-      <h2 className="mt-4 text-lg font-semibold">
-        Couldn’t load this settings tab.
-      </h2>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Try again, or pick a different tab from the settings sidebar.
-      </p>
-      {error.digest ? (
-        <p className="mt-3 font-mono text-[11px] text-muted-foreground/70">
-          ref: {error.digest}
-        </p>
-      ) : null}
-      <div className="mt-6 flex items-center justify-center gap-2">
-        <Button onClick={reset} size="sm">
-          Try again
-        </Button>
-        <Button asChild size="sm" variant="outline">
-          <a href="/settings">Settings home</a>
-        </Button>
-      </div>
-    </div>
+    <StatusCard
+      icon={<StatusErrorIcon />}
+      title="Couldn’t load this settings tab"
+      description="Try again, or pick a different tab from the settings sidebar."
+      digest={error.digest}
+      actions={
+        <>
+          <Button onClick={reset}>Try again</Button>
+          <Button asChild variant="outline">
+            <a href="/settings">Settings home</a>
+          </Button>
+        </>
+      }
+    />
   );
 }
