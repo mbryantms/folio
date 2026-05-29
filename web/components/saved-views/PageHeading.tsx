@@ -64,7 +64,11 @@ export function PageHeading({
   };
 
   return (
-    <div className="min-w-0">
+    // `flex-1` so the title block grows into the header's free space
+    // instead of shrink-wrapping. Without it the editable `<button>`
+    // (shrink-to-fit) collapsed to its longest word and the title
+    // wrapped even with room to spare. Mirrors the CBL `ViewHeader`.
+    <div className="min-w-0 flex-1">
       {isSystem ? (
         <h1 className="text-2xl font-semibold tracking-tight">{pageName}</h1>
       ) : editing ? (
@@ -90,10 +94,13 @@ export function PageHeading({
         <button
           type="button"
           onClick={() => setEditing(true)}
-          className="group hover:bg-secondary/50 -mx-1 flex max-w-full items-center gap-2 rounded-md px-1 py-0.5 text-left"
+          className="group hover:bg-secondary/50 -mx-1 flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-left"
           title="Click to rename"
         >
-          <h1 className="wrap-break-word text-2xl font-semibold tracking-tight">
+          <h1
+            className="min-w-0 truncate text-2xl font-semibold tracking-tight"
+            title={pageName}
+          >
             {pageName}
           </h1>
           <Pencil className="text-muted-foreground/0 group-hover:text-muted-foreground h-4 w-4 shrink-0 transition-colors" />

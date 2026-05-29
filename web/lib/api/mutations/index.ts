@@ -1964,22 +1964,24 @@ export function useUpdatePage(id: string) {
       },
       onSuccess: (data) => {
         qc.invalidateQueries({ queryKey: queryKeys.mePages });
-        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
         // A rename reallocates the custom page's slug (see
         // `api/pages.rs::update`). If we're sitting on that page's
-        // detail route, the current URL still carries the *old* slug —
-        // a plain `router.refresh()` would re-render `/pages/<old-slug>`
-        // and hit `notFound()`. Detect that case and navigate to the
-        // new slug instead; otherwise refresh in place.
+        // detail route, the current URL still carries the *old* slug,
+        // which now 404s — navigate to the new slug first.
         const segs = pathname?.split("/") ?? [];
         const idx = segs.indexOf("pages");
         const currentSlug = idx >= 0 ? segs[idx + 1] : undefined;
         if (currentSlug && data?.slug && currentSlug !== data.slug) {
           segs[idx + 1] = data.slug;
           router.replace(segs.join("/"));
-        } else {
-          router.refresh();
         }
+        // Always refresh: the left-nav sidebar is server-rendered in the
+        // `(library)` layout (not the `sidebarLayout` query), and soft
+        // navigation preserves that layout — so without a refresh its
+        // page link keeps pointing at the dead old slug and 404s on
+        // click, even after navigating away and back. `router.refresh()`
+        // re-runs the layout's `/me/sidebar-layout` fetch.
+        router.refresh();
       },
     },
   );
