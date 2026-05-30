@@ -4,6 +4,7 @@ import * as React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, EyeOff } from "lucide-react";
 
+import { BackupStorageCard } from "@/components/admin/library/BackupStorageCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
@@ -229,6 +230,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
 
   return (
     <div className="space-y-4">
+      <BackupStorageCard libraryId={libraryId} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground max-w-prose text-xs">
           Page-decode failures don&apos;t surface during normal scans (they only

@@ -318,13 +318,24 @@ const PAGE_ASPECT = 2 / 3; // page_width / page_height
 
 /** Compute the displayed tile aspect (width / height) for a marker.
  *  Region markers use the region's content aspect; page-level markers
- *  use the whole-page aspect. */
-function markerTileAspect(marker: MarkerView): number {
+ *  use the whole-page aspect.
+ *
+ *  When the region carries the page's natural pixel size (`page_w`/`page_h`,
+ *  stamped at capture time), we use the *real* page aspect instead of the 2:3
+ *  approximation — this both sizes the tile correctly AND un-distorts the
+ *  rendered crop (the renderer scales the page to fill the tile, so the tile
+ *  aspect drives the displayed page aspect). Markers saved before the stamp,
+ *  and page-level markers, fall back to `PAGE_ASPECT`. */
+export function markerTileAspect(marker: MarkerView): number {
   const region = marker.region;
   if (!region || region.w <= 0 || region.h <= 0) {
     return PAGE_ASPECT;
   }
-  return (region.w / region.h) * PAGE_ASPECT;
+  const pageAspect =
+    region.page_w && region.page_h && region.page_h > 0
+      ? region.page_w / region.page_h
+      : PAGE_ASPECT;
+  return (region.w / region.h) * pageAspect;
 }
 
 /** Justified / row-packed layout. Walks items left-to-right, packing

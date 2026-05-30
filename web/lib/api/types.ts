@@ -67,6 +67,10 @@ export type EditRequest = Schemas["EditRequest"];
 export type EditResponse = Schemas["EditResponse"];
 export type RestoreResponse = Schemas["RestoreResponse"];
 export type ArchiveBackupView = Schemas["BackupView"];
+export type BulkArchiveOp = Schemas["BulkArchiveOp"];
+export type BulkEditRequest = Schemas["BulkEditRequest"];
+export type BulkEditResponse = Schemas["BulkEditResponse"];
+export type BackupStorageView = Schemas["BackupStorageView"];
 export type UploadView = Schemas["UploadView"];
 export type NextInSeriesView = Schemas["NextInSeriesView"];
 export type SetRatingReq = Schemas["SetRatingReq"];
@@ -618,6 +622,14 @@ export type MarkerRegion = {
   w: number;
   h: number;
   shape: MarkerShape;
+  /**
+   * Natural pixel dimensions of the source page, stamped at capture time so
+   * the saved-markers grid can render the crop at its true aspect without
+   * decoding the page (and without a layout reflow). Absent on markers saved
+   * before this was added — those fall back to a 2:3 page-aspect assumption.
+   */
+  page_w?: number;
+  page_h?: number;
 };
 
 export type MarkerSelection = {

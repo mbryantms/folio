@@ -32,6 +32,8 @@ pub struct QueueDepthView {
     pub post_scan_thumbs: i64,
     pub post_scan_search: i64,
     pub post_scan_dictionary: i64,
+    /// Pending archive page-edit jobs (single + bulk; M7).
+    pub archive_edit: i64,
     /// Sum across all queues — convenient for the topbar pill.
     pub total: i64,
 }
@@ -172,22 +174,25 @@ async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDepthView> {
     let mut thumbs = app.jobs.post_scan_thumbs_storage.clone();
     let mut search = app.jobs.post_scan_search_storage.clone();
     let mut dictionary = app.jobs.post_scan_dictionary_storage.clone();
+    let mut archive_edit = app.jobs.archive_edit_storage.clone();
 
-    let (scan_n, scan_series_n, thumbs_n, search_n, dictionary_n) = tokio::try_join!(
+    let (scan_n, scan_series_n, thumbs_n, search_n, dictionary_n, archive_edit_n) = tokio::try_join!(
         scan.len(),
         scan_series.len(),
         thumbs.len(),
         search.len(),
         dictionary.len(),
+        archive_edit.len(),
     )?;
 
-    let total = scan_n + scan_series_n + thumbs_n + search_n + dictionary_n;
+    let total = scan_n + scan_series_n + thumbs_n + search_n + dictionary_n + archive_edit_n;
     Ok(QueueDepthView {
         scan: scan_n,
         scan_series: scan_series_n,
         post_scan_thumbs: thumbs_n,
         post_scan_search: search_n,
         post_scan_dictionary: dictionary_n,
+        archive_edit: archive_edit_n,
         total,
     })
 }

@@ -150,12 +150,27 @@ export function MarkerEditor({
         }
       : (pendingMarker.selection ?? null);
 
+    // Stamp the page's natural pixel size onto the region so the saved-markers
+    // grid renders the crop at its true aspect (no decode, no reflow). Only
+    // region-bearing markers (highlights) need it; page-level markers already
+    // crop with object-cover. Absent natural size (image still loading) → omit
+    // and fall back to the 2:3 assumption.
+    const natural = pageNaturalSize.current?.get(pendingMarker.page_index);
+    const regionWithDims =
+      pendingMarker.region && natural
+        ? {
+            ...pendingMarker.region,
+            page_w: natural.width,
+            page_h: natural.height,
+          }
+        : (pendingMarker.region ?? null);
+
     create.mutate(
       {
         issue_id: issueId,
         page_index: pendingMarker.page_index,
         kind: pendingMarker.kind,
-        region: pendingMarker.region ?? null,
+        region: regionWithDims,
         selection: mergedSelection,
         body: trimmedBody || null,
         is_favorite: isFavorite,

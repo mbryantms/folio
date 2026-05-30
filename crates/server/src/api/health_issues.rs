@@ -33,8 +33,101 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list))
         .routes(routes!(admin_list))
+        .routes(routes!(backup_storage))
         .routes(routes!(dismiss))
         .routes(routes!(flush_metadata_drift))
+}
+
+/// Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).
+/// Surfaced as a storage card on the library health page so operators can see
+/// how much disk the edit/restore safety backups consume.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BackupStorageView {
+    pub file_count: u64,
+    pub total_bytes: u64,
+    /// RFC 3339; `None` when there are no backup files.
+    pub oldest_modified_at: Option<String>,
+    pub newest_modified_at: Option<String>,
+}
+
+/// `<original>.bak` (slot 0) or `<original>.bak.<n>` (slots 1+) — the naming
+/// produced by [`crate::archive_rewrite`].
+fn is_backup_name(name: &str) -> bool {
+    if name.ends_with(".bak") {
+        return true;
+    }
+    if let Some(idx) = name.rfind(".bak.") {
+        let suffix = &name[idx + 5..];
+        return !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit());
+    }
+    false
+}
+
+fn scan_backup_files(root: &std::path::Path) -> BackupStorageView {
+    use std::time::SystemTime;
+    let mut file_count = 0u64;
+    let mut total_bytes = 0u64;
+    let mut oldest: Option<SystemTime> = None;
+    let mut newest: Option<SystemTime> = None;
+
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if !is_backup_name(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        file_count += 1;
+        total_bytes += meta.len();
+        if let Ok(modified) = meta.modified() {
+            oldest = Some(oldest.map_or(modified, |o| o.min(modified)));
+            newest = Some(newest.map_or(modified, |n| n.max(modified)));
+        }
+    }
+
+    let to_rfc3339 = |t: SystemTime| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339();
+    BackupStorageView {
+        file_count,
+        total_bytes,
+        oldest_modified_at: oldest.map(to_rfc3339),
+        newest_modified_at: newest.map(to_rfc3339),
+    }
+}
+
+#[utoipa::path(
+    operation_id = "library_backup_storage",    get,
+    path = "/libraries/{slug}/backup-storage",
+    params(("slug" = String, Path,)),
+    responses(
+        (status = 200, body = BackupStorageView),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "library not found"),
+    )
+)]
+#[handler]
+pub async fn backup_storage(
+    State(app): State<AppState>,
+    _admin: RequireAdmin,
+    AxPath(slug): AxPath<String>,
+) -> impl IntoResponse {
+    let lib = match crate::api::libraries::find_by_slug(&app.db, &slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    let root = std::path::PathBuf::from(&lib.root_path);
+    // Walk off-thread — large libraries have many files; this is an on-demand
+    // admin card, not a polled endpoint.
+    match tokio::task::spawn_blocking(move || scan_backup_files(&root)).await {
+        Ok(view) => Json(view).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "backup_storage: walk join failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        }
+    }
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

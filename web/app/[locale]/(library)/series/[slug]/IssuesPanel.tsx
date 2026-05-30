@@ -1,10 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Circle, FolderPlus, ListChecks, Pencil, Sparkles } from "lucide-react";
+import {
+  Check,
+  Circle,
+  FileCog,
+  FolderPlus,
+  ListChecks,
+  Pencil,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
+import { BulkArchiveEditDialog } from "@/components/library/BulkArchiveEditDialog";
 import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
@@ -29,7 +38,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { apiMutate } from "@/lib/api/mutations";
 import { useBulkMarkProgress } from "@/lib/api/mutations";
-import { useSeriesIssuesInfinite } from "@/lib/api/queries";
+import { useMe, useSeriesIssuesInfinite } from "@/lib/api/queries";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -123,7 +132,10 @@ export function IssuesPanel({
   const bulkMark = useBulkMarkProgress();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editMetadataOpen, setEditMetadataOpen] = useState(false);
+  const [archiveEditOpen, setArchiveEditOpen] = useState(false);
   const [markReadOpen, setMarkReadOpen] = useState(false);
+  const me = useMe();
+  const isAdmin = me.data?.role === "admin";
   const submitMarkRead = useCallback(
     (backfill: boolean) => {
       const ids = Array.from(selection.selected);
@@ -379,6 +391,18 @@ export function IssuesPanel({
             onClick: () => void runBulkMetadataFetch(),
             disabled: bulkFetchPending,
           },
+          // Admin-only: rewrites archive files. The server skips issues
+          // whose library has writeback off (reported in the result).
+          ...(isAdmin
+            ? [
+                {
+                  id: "edit-archives",
+                  label: "Edit archives…",
+                  icon: FileCog,
+                  onClick: () => setArchiveEditOpen(true),
+                },
+              ]
+            : []),
         ]}
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
@@ -397,6 +421,14 @@ export function IssuesPanel({
         open={editMetadataOpen}
         onOpenChange={(next) => {
           setEditMetadataOpen(next);
+          if (!next) selection.clear();
+        }}
+        issueIds={Array.from(selection.selected)}
+      />
+      <BulkArchiveEditDialog
+        open={archiveEditOpen}
+        onOpenChange={(next) => {
+          setArchiveEditOpen(next);
           if (!next) selection.clear();
         }}
         issueIds={Array.from(selection.selected)}

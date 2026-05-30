@@ -15,8 +15,9 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
@@ -25,7 +26,7 @@ use super::error;
 use crate::archive_rewrite::{self, mutex};
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
-use crate::jobs::archive_edit::{ArchiveEditJob, PageOp, simulate_ops};
+use crate::jobs::archive_edit::{ArchiveEditJob, BulkArchiveOp, PageOp, simulate_ops};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
@@ -33,10 +34,15 @@ use server_macros::handler;
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(edit))
+        .routes(routes!(bulk_edit))
         .routes(routes!(restore))
         .routes(routes!(backups))
         .routes(routes!(upload))
 }
+
+/// Upper bound on a single bulk request. A large but bounded fan-out keeps
+/// the queue (and the audit log) sane; the worker runs at concurrency 1.
+const MAX_BULK_ISSUES: usize = 500;
 
 /// Cap on a staged replacement image. Generous — a high-res page scan can
 /// be a few MiB; 32 MiB leaves headroom without inviting abuse.
@@ -201,6 +207,7 @@ pub async fn edit(
         .push(ArchiveEditJob {
             issue_id: row.id.clone(),
             ops: req.ops,
+            bulk_op: None,
             actor_id: Some(actor.id),
             actor_ip: ctx.ip_string(),
             actor_ua: ctx.user_agent.clone(),
@@ -218,6 +225,185 @@ pub async fn edit(
     (
         StatusCode::ACCEPTED,
         Json(EditResponse::Queued { issue_id: row.id }),
+    )
+        .into_response()
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BulkEditRequest {
+    /// Issue ids to apply the op to. Issues that don't exist, live in a
+    /// non-writeback library, or aren't an editable format are skipped (and
+    /// reported), not failed.
+    pub issue_ids: Vec<String>,
+    /// The single relative op applied to every eligible issue.
+    pub op: BulkArchiveOp,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkSkip {
+    pub issue_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkEditResponse {
+    /// Number of per-issue edit jobs enqueued.
+    pub queued: usize,
+    /// Issues that were skipped, with a reason each.
+    pub skipped: Vec<BulkSkip>,
+}
+
+#[utoipa::path(
+    operation_id = "archive_bulk_edit",    post,
+    path = "/archive/bulk-edit",
+    request_body = BulkEditRequest,
+    responses(
+        (status = 202, body = BulkEditResponse, description = "edit jobs enqueued"),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "empty selection or too many issues"),
+    )
+)]
+#[handler]
+pub async fn bulk_edit(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<BulkEditRequest>,
+) -> Response {
+    if req.issue_ids.is_empty() {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation.empty_selection",
+            "no issues selected",
+        );
+    }
+    if req.issue_ids.len() > MAX_BULK_ISSUES {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation.too_many_issues",
+            &format!("too many issues (max {MAX_BULK_ISSUES})"),
+        );
+    }
+
+    // Batch-load the issues + their libraries, then gate each by writeback +
+    // editable format. We deliberately do NOT open archives here — the page
+    // count is resolved per issue inside the worker (the bulk op is lowered
+    // there), so the request stays cheap regardless of selection size.
+    let issue_rows = match entity::issue::Entity::find()
+        .filter(entity::issue::Column::Id.is_in(req.issue_ids.clone()))
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "bulk archive edit: issue load failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let issue_map: HashMap<String, entity::issue::Model> =
+        issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
+
+    let lib_ids: Vec<Uuid> = issue_map
+        .values()
+        .map(|i| i.library_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let lib_map: HashMap<Uuid, entity::library::Model> = match entity::library::Entity::find()
+        .filter(entity::library::Column::Id.is_in(lib_ids))
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v.into_iter().map(|l| (l.id, l)).collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "bulk archive edit: library load failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    use apalis::prelude::Storage;
+    let mut storage = app.jobs.archive_edit_storage.clone();
+    let mut skipped: Vec<BulkSkip> = Vec::new();
+    let mut queued_ids: Vec<String> = Vec::new();
+
+    // Preserve the caller's order so the audit + response read predictably.
+    for id in &req.issue_ids {
+        let Some(row) = issue_map.get(id) else {
+            skipped.push(BulkSkip {
+                issue_id: id.clone(),
+                reason: "issue not found".to_owned(),
+            });
+            continue;
+        };
+        let Some(lib) = lib_map.get(&row.library_id) else {
+            skipped.push(BulkSkip {
+                issue_id: id.clone(),
+                reason: "library not found".to_owned(),
+            });
+            continue;
+        };
+        if !lib.allow_archive_writeback {
+            skipped.push(BulkSkip {
+                issue_id: id.clone(),
+                reason: "archive writeback disabled for this library".to_owned(),
+            });
+            continue;
+        }
+        if !is_editable_format(&row.file_path) {
+            skipped.push(BulkSkip {
+                issue_id: id.clone(),
+                reason: "unsupported archive format (CBZ/CBT/CBR only)".to_owned(),
+            });
+            continue;
+        }
+        if let Err(e) = storage
+            .push(ArchiveEditJob {
+                issue_id: row.id.clone(),
+                ops: Vec::new(),
+                bulk_op: Some(req.op),
+                actor_id: Some(actor.id),
+                actor_ip: ctx.ip_string(),
+                actor_ua: ctx.user_agent.clone(),
+            })
+            .await
+        {
+            tracing::error!(error = %e, issue_id = %row.id, "bulk archive edit: enqueue failed");
+            skipped.push(BulkSkip {
+                issue_id: id.clone(),
+                reason: "could not enqueue".to_owned(),
+            });
+            continue;
+        }
+        queued_ids.push(row.id.clone());
+    }
+
+    // One audit row for the bulk action (each enqueued job also emits its own
+    // `admin.issue.archive_edit` row when it runs — that's the drill-down).
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: actor.id,
+            action: "admin.issue.archive_edit.bulk",
+            target_type: Some("issue"),
+            target_id: None,
+            payload: serde_json::json!({
+                "op": req.op,
+                "queued": queued_ids.len(),
+                "queued_issue_ids": queued_ids,
+                "skipped": skipped.len(),
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+
+    (
+        StatusCode::ACCEPTED,
+        Json(BulkEditResponse {
+            queued: queued_ids.len(),
+            skipped,
+        }),
     )
         .into_response()
 }

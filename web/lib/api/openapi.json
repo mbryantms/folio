@@ -2143,6 +2143,39 @@
         }
       }
     },
+    "/api/archive/bulk-edit": {
+      "post": {
+        "operationId": "archive_bulk_edit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkEditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "edit jobs enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkEditResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "empty selection or too many issues"
+          }
+        }
+      }
+    },
     "/api/auth/config": {
       "get": {
         "operationId": "auth_config_get_public_config",
@@ -3267,6 +3300,39 @@
           },
           "400": {
             "description": "validation: invalid glob / soft_delete_days < 0"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      }
+    },
+    "/api/libraries/{slug}/backup-storage": {
+      "get": {
+        "operationId": "library_backup_storage",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupStorageView"
+                }
+              }
+            }
           },
           "403": {
             "description": "admin only"
@@ -8708,6 +8774,39 @@
           }
         }
       },
+      "BackupStorageView": {
+        "type": "object",
+        "description": "Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).\nSurfaced as a storage card on the library health page so operators can see\nhow much disk the edit/restore safety backups consume.",
+        "required": [
+          "file_count",
+          "total_bytes"
+        ],
+        "properties": {
+          "file_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "newest_modified_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "oldest_modified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339; `None` when there are no backup files."
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "BackupView": {
         "type": "object",
         "required": [
@@ -8786,6 +8885,132 @@
             "format": "int32",
             "description": "Members whose ref_id didn't resolve to a real series or issue.\nSilent skip; surfaced in the response counts so an\nadmin debugging \"Add did nothing\" can see the filter fired.",
             "minimum": 0
+          }
+        }
+      },
+      "BulkArchiveOp": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Rotate the cover (page 0) by `degrees`.",
+            "required": [
+              "degrees",
+              "kind"
+            ],
+            "properties": {
+              "degrees": {
+                "$ref": "#/components/schemas/Rot"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "rotate_cover"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Rotate every page by `degrees`.",
+            "required": [
+              "degrees",
+              "kind"
+            ],
+            "properties": {
+              "degrees": {
+                "$ref": "#/components/schemas/Rot"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "rotate_all"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Remove the first `count` pages (always leaves at least one page).",
+            "required": [
+              "count",
+              "kind"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "remove_first"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Remove the last `count` pages (always leaves at least one page).",
+            "required": [
+              "count",
+              "kind"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "remove_last"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A single relative operation applied uniformly across a bulk selection\n(M7). Unlike [`PageOp`], these don't carry absolute ordinals — they're\nlowered to concrete `PageOp`s per issue once that issue's page count is\nknown (different archives have different page counts), so one bulk choice\nlike \"remove the last 2 pages\" does the right thing on every selected\nissue."
+      },
+      "BulkEditRequest": {
+        "type": "object",
+        "required": [
+          "issue_ids",
+          "op"
+        ],
+        "properties": {
+          "issue_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Issue ids to apply the op to. Issues that don't exist, live in a\nnon-writeback library, or aren't an editable format are skipped (and\nreported), not failed."
+          },
+          "op": {
+            "$ref": "#/components/schemas/BulkArchiveOp",
+            "description": "The single relative op applied to every eligible issue."
+          }
+        }
+      },
+      "BulkEditResponse": {
+        "type": "object",
+        "required": [
+          "queued",
+          "skipped"
+        ],
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "description": "Number of per-issue edit jobs enqueued.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkSkip"
+            },
+            "description": "Issues that were skipped, with a reason each."
           }
         }
       },
@@ -8956,6 +9181,21 @@
             "format": "int32",
             "description": "Rows removed from the collection.",
             "minimum": 0
+          }
+        }
+      },
+      "BulkSkip": {
+        "type": "object",
+        "required": [
+          "issue_id",
+          "reason"
+        ],
+        "properties": {
+          "issue_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
           }
         }
       },
@@ -14761,9 +15001,15 @@
           "post_scan_thumbs",
           "post_scan_search",
           "post_scan_dictionary",
+          "archive_edit",
           "total"
         ],
         "properties": {
+          "archive_edit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending archive page-edit jobs (single + bulk; M7)."
+          },
           "post_scan_dictionary": {
             "type": "integer",
             "format": "int64"

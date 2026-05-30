@@ -47,6 +47,7 @@ import type {
   CblWindowPageView,
   CblWindowView,
   ContinueReadingView,
+  BackupStorageView,
   CrossLibHealthIssueView,
   CrossLibScanRunView,
   HealthIssueView,
@@ -236,6 +237,8 @@ export const queryKeys = {
   libraries: ["libraries"] as const,
   library: (id: string) => ["libraries", id] as const,
   health: (libraryId: string) => ["libraries", libraryId, "health"] as const,
+  backupStorage: (libraryId: string) =>
+    ["libraries", libraryId, "backup-storage"] as const,
   /** Cross-library findings — admin findings page + dashboard cards. */
   adminHealthIssues: (filters: {
     library_id?: string;
@@ -653,6 +656,18 @@ export function useHealthIssues(libraryId: string) {
     queryKey: queryKeys.health(libraryId),
     queryFn: () =>
       jsonFetch<HealthIssueView[]>(`/libraries/${libraryId}/health-issues`),
+    enabled: !!libraryId,
+  });
+}
+
+/** Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7). */
+export function useBackupStorage(libraryId: string) {
+  return useQuery({
+    queryKey: queryKeys.backupStorage(libraryId),
+    queryFn: () =>
+      jsonFetch<BackupStorageView>(
+        `/libraries/${libraryId}/backup-storage`,
+      ),
     enabled: !!libraryId,
   });
 }

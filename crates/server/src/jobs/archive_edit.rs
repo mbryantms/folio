@@ -108,6 +108,72 @@ pub enum PageOp {
     },
 }
 
+/// A single relative operation applied uniformly across a bulk selection
+/// (M7). Unlike [`PageOp`], these don't carry absolute ordinals — they're
+/// lowered to concrete `PageOp`s per issue once that issue's page count is
+/// known (different archives have different page counts), so one bulk choice
+/// like "remove the last 2 pages" does the right thing on every selected
+/// issue.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BulkArchiveOp {
+    /// Rotate the cover (page 0) by `degrees`.
+    RotateCover { degrees: Rot },
+    /// Rotate every page by `degrees`.
+    RotateAll { degrees: Rot },
+    /// Remove the first `count` pages (always leaves at least one page).
+    RemoveFirst { count: u32 },
+    /// Remove the last `count` pages (always leaves at least one page).
+    RemoveLast { count: u32 },
+}
+
+impl BulkArchiveOp {
+    /// Lower to concrete positional `PageOp`s for an issue with `page_count`
+    /// pages. Removal is clamped to always leave at least one page, so a
+    /// selection-wide "remove last N" can never empty an archive. Returns an
+    /// empty vec when the op is a no-op for this issue (treated as a skip).
+    pub fn lower(self, page_count: usize) -> Vec<PageOp> {
+        match self {
+            BulkArchiveOp::RotateCover { degrees } => {
+                if page_count == 0 {
+                    vec![]
+                } else {
+                    vec![PageOp::Rotate {
+                        ordinal: 0,
+                        degrees,
+                    }]
+                }
+            }
+            BulkArchiveOp::RotateAll { degrees } => (0..page_count as u32)
+                .map(|ordinal| PageOp::Rotate { ordinal, degrees })
+                .collect(),
+            BulkArchiveOp::RemoveFirst { count } => {
+                // Leave ≥1 page. Each Remove{0} shifts the list, so repeating
+                // it drops the leading pages in order.
+                let n = (count as usize).min(page_count.saturating_sub(1));
+                (0..n).map(|_| PageOp::Remove { ordinal: 0 }).collect()
+            }
+            BulkArchiveOp::RemoveLast { count } => {
+                // Leave ≥1 page. Remove trailing pages highest-ordinal-first
+                // so each ordinal stays valid as the list shrinks.
+                let n = (count as usize).min(page_count.saturating_sub(1));
+                ((page_count - n)..page_count)
+                    .rev()
+                    .map(|o| PageOp::Remove { ordinal: o as u32 })
+                    .collect()
+            }
+        }
+    }
+
+    /// Whether this op changes the page set/order (drives cover-index reset).
+    fn is_structural(self) -> bool {
+        matches!(
+            self,
+            BulkArchiveOp::RemoveFirst { .. } | BulkArchiveOp::RemoveLast { .. }
+        )
+    }
+}
+
 /// Validation failure for a `Vec<PageOp>` against a page count. Surfaced
 /// to the API as a 422 (the endpoint validates before enqueueing; the
 /// worker re-validates as defense in depth).
@@ -192,7 +258,14 @@ fn is_permutation(order: &[u32], len: usize) -> bool {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArchiveEditJob {
     pub issue_id: String,
+    /// Concrete per-issue ops (the single-issue page editor). Empty when
+    /// `bulk_op` drives the edit.
     pub ops: Vec<PageOp>,
+    /// Relative op applied across a bulk selection (M7), lowered to concrete
+    /// `PageOp`s once this issue's page count is known. Takes precedence over
+    /// `ops` when set.
+    #[serde(default)]
+    pub bulk_op: Option<BulkArchiveOp>,
     pub actor_id: Option<Uuid>,
     pub actor_ip: Option<String>,
     pub actor_ua: Option<String>,
@@ -297,7 +370,16 @@ pub async fn edit_one_issue(
     let uploads_dir = cfg.data_path.join("uploads");
     let retain_count = lib.archive_backup_retain_count;
     let jpeg_quality = lib.archive_writeback_jpeg_quality.clamp(1, 100) as u8;
-    let ops = job.ops.clone();
+    // Either concrete ops (single-issue editor) or a bulk op lowered per
+    // issue inside the blocking closure once the page count is known.
+    let concrete_ops = job.ops.clone();
+    let bulk_op = job.bulk_op;
+    let resolve_ops = move |page_count: usize| -> Vec<PageOp> {
+        match bulk_op {
+            Some(b) => b.lower(page_count),
+            None => concrete_ops.clone(),
+        }
+    };
     let src_path = archive_path.clone();
     // CBR converts to a sibling `.cbz`; CBZ/CBT rewrite in place.
     let dst_path = if format == EditFormat::Cbr {
@@ -319,6 +401,7 @@ pub async fn edit_one_issue(
                                 Cbz::open(&src_path, limits).map_err(RewriteError::ArchiveErr)?;
                             let page_meta = page_meta(&src);
                             before = page_meta.len();
+                            let ops = resolve_ops(before);
                             let work = apply_ops(&page_meta, &ops, &uploads_dir)
                                 .map_err(rewrite_from_edit)?;
                             // CBZ keeps the deflate streams of untouched pages.
@@ -340,6 +423,7 @@ pub async fn edit_one_issue(
                                 Cbt::open(&src_path, limits).map_err(RewriteError::ArchiveErr)?;
                             let page_meta = page_meta(&src);
                             before = page_meta.len();
+                            let ops = resolve_ops(before);
                             let work = apply_ops(&page_meta, &ops, &uploads_dir)
                                 .map_err(rewrite_from_edit)?;
                             let mats = materialize_pages(work, &mut src, jpeg_quality)
@@ -360,6 +444,7 @@ pub async fn edit_one_issue(
                                 Cbr::open(&src_path, limits).map_err(RewriteError::ArchiveErr)?;
                             let page_meta = page_meta(&src);
                             before = page_meta.len();
+                            let ops = resolve_ops(before);
                             let work = apply_ops(&page_meta, &ops, &uploads_dir)
                                 .map_err(rewrite_from_edit)?;
                             // RAR payloads can't stream-copy into a zip;
@@ -389,10 +474,13 @@ pub async fn edit_one_issue(
     // Bookkeeping: clear thumbnail stamps so the post-scan pipeline
     // regenerates them, stamp the edit, reset the cover index when the
     // page set/order changed, and repoint `file_path` on a CBR conversion.
-    let structural = job
-        .ops
-        .iter()
-        .any(|o| matches!(o, PageOp::Remove { .. } | PageOp::Reorder { .. }));
+    let structural = match job.bulk_op {
+        Some(b) => b.is_structural(),
+        None => job
+            .ops
+            .iter()
+            .any(|o| matches!(o, PageOp::Remove { .. } | PageOp::Reorder { .. })),
+    };
     let mut am = issue::ActiveModel {
         id: Set(row.id.clone()),
         last_rewrite_at: Set(Some(Utc::now().fixed_offset())),
@@ -697,11 +785,13 @@ async fn audit_edit(
             "page_count_before": r.page_count_before,
             "page_count_after": r.page_count_after,
             "ops": job.ops,
+            "bulk_op": job.bulk_op,
         }),
         Err(e) => serde_json::json!({
             "issue_id": job.issue_id,
             "error": e.to_string(),
             "ops": job.ops,
+            "bulk_op": job.bulk_op,
         }),
     };
 
@@ -772,5 +862,73 @@ mod tests {
         assert_eq!(ext_of("p001.JPG"), "jpg");
         assert_eq!(ext_of("foo/bar.png"), "png");
         assert_eq!(ext_of("noext"), "jpg");
+    }
+
+    // ── BulkArchiveOp lowering (M7) ──────────────────────────
+
+    #[test]
+    fn bulk_rotate_cover_lowers_to_single_first_page_rotate() {
+        let ops = BulkArchiveOp::RotateCover { degrees: Rot::R180 }.lower(10);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            ops[0],
+            PageOp::Rotate {
+                ordinal: 0,
+                degrees: Rot::R180
+            }
+        ));
+        // Empty archive → no-op.
+        assert!(
+            BulkArchiveOp::RotateCover { degrees: Rot::R90 }
+                .lower(0)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn bulk_rotate_all_lowers_to_one_rotate_per_page() {
+        let ops = BulkArchiveOp::RotateAll { degrees: Rot::R90 }.lower(3);
+        assert_eq!(ops.len(), 3);
+        for (i, op) in ops.iter().enumerate() {
+            assert!(
+                matches!(op, PageOp::Rotate { ordinal, degrees: Rot::R90 } if *ordinal as usize == i)
+            );
+        }
+    }
+
+    #[test]
+    fn bulk_remove_first_removes_leading_pages_and_leaves_at_least_one() {
+        let ops = BulkArchiveOp::RemoveFirst { count: 2 }.lower(5);
+        // Two Remove{0} — each shifts the list so the first two pages go.
+        assert_eq!(ops.len(), 2);
+        assert!(
+            ops.iter()
+                .all(|o| matches!(o, PageOp::Remove { ordinal: 0 }))
+        );
+        // simulate confirms 5 → 3.
+        assert_eq!(simulate_ops(5, &ops).unwrap(), 3);
+        // Over-count is clamped to leave one page.
+        let ops = BulkArchiveOp::RemoveFirst { count: 99 }.lower(4);
+        assert_eq!(ops.len(), 3);
+        assert_eq!(simulate_ops(4, &ops).unwrap(), 1);
+    }
+
+    #[test]
+    fn bulk_remove_last_removes_trailing_pages_highest_first() {
+        let ops = BulkArchiveOp::RemoveLast { count: 2 }.lower(5);
+        // Highest ordinal first so each stays valid as the list shrinks.
+        assert!(matches!(ops[0], PageOp::Remove { ordinal: 4 }));
+        assert!(matches!(ops[1], PageOp::Remove { ordinal: 3 }));
+        assert_eq!(simulate_ops(5, &ops).unwrap(), 3);
+        // Single-page archive + remove-last → no-op (never empties).
+        assert!(BulkArchiveOp::RemoveLast { count: 1 }.lower(1).is_empty());
+    }
+
+    #[test]
+    fn bulk_remove_is_structural_rotate_is_not() {
+        assert!(BulkArchiveOp::RemoveFirst { count: 1 }.is_structural());
+        assert!(BulkArchiveOp::RemoveLast { count: 1 }.is_structural());
+        assert!(!BulkArchiveOp::RotateCover { degrees: Rot::R90 }.is_structural());
+        assert!(!BulkArchiveOp::RotateAll { degrees: Rot::R90 }.is_structural());
     }
 }

@@ -42,6 +42,8 @@ import type {
   DeleteLibraryResp,
   EditRequest,
   EditResponse,
+  BulkEditRequest,
+  BulkEditResponse,
   RestoreResponse,
   UploadView,
   ImportSummary,
@@ -862,6 +864,22 @@ export function useArchiveEditMutation(issueId: string) {
     }),
     { successMessage: "Archive edit queued" },
   );
+}
+
+/**
+ * Bulk page-byte edit across a multi-selection (`archive-rewrite-1.0` M7).
+ * One relative op (rotate cover/all, remove first/last N) is fanned out to a
+ * per-issue `ArchiveEditJob`, lowered to concrete page ops per issue. The
+ * server skips ineligible issues (no writeback / unsupported format) and
+ * reports them in `skipped`, so the call site summarizes the outcome itself
+ * rather than relying on a generic success toast.
+ */
+export function useBulkArchiveEditMutation() {
+  return useApiMutation<BulkEditResponse, BulkEditRequest>((body) => ({
+    path: `/archive/bulk-edit`,
+    method: "POST",
+    body,
+  }));
 }
 
 /** Restore an issue's archive from its most recent `.bak`. */

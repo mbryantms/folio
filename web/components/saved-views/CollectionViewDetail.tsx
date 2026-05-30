@@ -22,6 +22,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   Check,
   Circle,
+  FileCog,
   FolderPlus,
   GripVertical,
   ListChecks,
@@ -30,6 +31,7 @@ import {
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
+import { BulkArchiveEditDialog } from "@/components/library/BulkArchiveEditDialog";
 import { IssueCard } from "@/components/library/IssueCard";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { SeriesCard } from "@/components/library/SeriesCard";
@@ -58,7 +60,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
-import { useCollectionEntriesInfinite } from "@/lib/api/queries";
+import { useCollectionEntriesInfinite, useMe } from "@/lib/api/queries";
 import {
   useBulkMarkProgress,
   useBulkRemoveFromCollection,
@@ -119,7 +121,9 @@ export function CollectionViewDetail({
   const bulkRemove = useBulkRemoveFromCollection(savedView.id);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [confirmRemove, setConfirmRemove] = React.useState(false);
+  const [archiveEditOpen, setArchiveEditOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
+  const isAdmin = useMe().data?.role === "admin";
   const [confirmDelete, setConfirmDelete] = React.useState(false);
 
   const [optimisticOrder, setOptimisticOrder] = React.useState<string[] | null>(
@@ -343,6 +347,16 @@ export function CollectionViewDetail({
             icon: FolderPlus,
             onClick: () => setPickerOpen(true),
           },
+          ...(isAdmin
+            ? [
+                {
+                  id: "edit-archives",
+                  label: "Edit archives…",
+                  icon: FileCog,
+                  onClick: () => setArchiveEditOpen(true),
+                },
+              ]
+            : []),
           {
             id: "remove",
             label: "Remove from this collection",
@@ -489,6 +503,14 @@ export function CollectionViewDetail({
           if (!next) selection.clear();
         }}
         targets={selectedTargets}
+      />
+      <BulkArchiveEditDialog
+        open={archiveEditOpen}
+        onOpenChange={(next) => {
+          setArchiveEditOpen(next);
+          if (!next) selection.clear();
+        }}
+        issueIds={selectedIssueIds}
       />
     </div>
   );

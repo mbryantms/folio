@@ -898,6 +898,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/archive/bulk-edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["archive_bulk_edit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/config": {
         parameters: {
             query?: never;
@@ -1472,6 +1488,22 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["libraries_update_settings"];
+        trace?: never;
+    };
+    "/api/libraries/{slug}/backup-storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["library_backup_storage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/libraries/{slug}/health-issues": {
@@ -3660,6 +3692,18 @@ export interface components {
             /** @description Rows skipped because the file was missing or undecodable. */
             skipped: number;
         };
+        /** @description Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).
+         *     Surfaced as a storage card on the library health page so operators can see
+         *     how much disk the edit/restore safety backups consume. */
+        BackupStorageView: {
+            /** Format: int64 */
+            file_count: number;
+            newest_modified_at?: string | null;
+            /** @description RFC 3339; `None` when there are no backup files. */
+            oldest_modified_at?: string | null;
+            /** Format: int64 */
+            total_bytes: number;
+        };
         BackupView: {
             /** @description RFC3339 modification time, or null if unavailable. */
             modified_at?: string | null;
@@ -3711,6 +3755,45 @@ export interface components {
              *     admin debugging "Add did nothing" can see the filter fired.
              */
             not_found: number;
+        };
+        /** @description A single relative operation applied uniformly across a bulk selection
+         *     (M7). Unlike [`PageOp`], these don't carry absolute ordinals — they're
+         *     lowered to concrete `PageOp`s per issue once that issue's page count is
+         *     known (different archives have different page counts), so one bulk choice
+         *     like "remove the last 2 pages" does the right thing on every selected
+         *     issue. */
+        BulkArchiveOp: {
+            degrees: components["schemas"]["Rot"];
+            /** @enum {string} */
+            kind: "rotate_cover";
+        } | {
+            degrees: components["schemas"]["Rot"];
+            /** @enum {string} */
+            kind: "rotate_all";
+        } | {
+            /** Format: int32 */
+            count: number;
+            /** @enum {string} */
+            kind: "remove_first";
+        } | {
+            /** Format: int32 */
+            count: number;
+            /** @enum {string} */
+            kind: "remove_last";
+        };
+        BulkEditRequest: {
+            /** @description Issue ids to apply the op to. Issues that don't exist, live in a
+             *     non-writeback library, or aren't an editable format are skipped (and
+             *     reported), not failed. */
+            issue_ids: string[];
+            /** @description The single relative op applied to every eligible issue. */
+            op: components["schemas"]["BulkArchiveOp"];
+        };
+        BulkEditResponse: {
+            /** @description Number of per-issue edit jobs enqueued. */
+            queued: number;
+            /** @description Issues that were skipped, with a reason each. */
+            skipped: components["schemas"]["BulkSkip"][];
         };
         /** @description Per-field patch surface for the bulk-edit dialog
          *     (`manga-and-bulk-metadata-1.0` M4). Every field is independently
@@ -3801,6 +3884,10 @@ export interface components {
              * @description Rows removed from the collection.
              */
             removed: number;
+        };
+        BulkSkip: {
+            issue_id: string;
+            reason: string;
         };
         CandidateRow: {
             applied_at?: string | null;
@@ -5913,6 +6000,11 @@ export interface components {
         /** @enum {string} */
         QueueClearTarget: "all" | "scans" | "thumbnails";
         QueueDepthView: {
+            /**
+             * Format: int64
+             * @description Pending archive page-edit jobs (single + bulk; M7).
+             */
+            archive_edit: number;
             /** Format: int64 */
             post_scan_dictionary: number;
             /** Format: int64 */
@@ -9356,6 +9448,44 @@ export interface operations {
             };
         };
     };
+    archive_bulk_edit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkEditRequest"];
+            };
+        };
+        responses: {
+            /** @description edit jobs enqueued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkEditResponse"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description empty selection or too many issues */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     auth_config_get_public_config: {
         parameters: {
             query?: never;
@@ -10384,6 +10514,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    library_backup_storage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupStorageView"];
+                };
             };
             /** @description admin only */
             403: {

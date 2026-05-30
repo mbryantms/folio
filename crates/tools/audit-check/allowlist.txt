@@ -82,6 +82,7 @@ test_smtp        # POST /admin/email/test — send a test email (no state mutati
 # ── health_issues.rs ────────────────────────────────────────
 list_issues      # GET /admin/health-issues — paginated health-issue feed
 get_issue        # GET /admin/health-issues/{id} — single row
+backup_storage   # GET /libraries/{slug}/backup-storage — read-only .bak rollup
 
 # ── libraries.rs ────────────────────────────────────────────
 list_health      # GET /libraries/{slug}/health — health-issue rollup

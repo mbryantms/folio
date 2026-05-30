@@ -15,7 +15,33 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
-## [0.7.11] - 2026-05-29
+## [0.7.12] - 2026-05-29
+
+### Added
+
+- **Bulk archive editing.** The multi-select toolbar on the series, collection,
+  and reading-list views gains an admin-only **Edit archives…** action that
+  applies one operation across the whole selection — rotate cover, rotate every
+  page, or remove the first/last N pages. Each op is *relative*, lowered per
+  issue once its page count is known (so "remove the last page" does the right
+  thing on every archive, and removal never empties a file). The server skips
+  issues whose library has writeback disabled or whose format isn't editable and
+  reports them back, so nothing is silently dropped.
+- **Admin Queue page** (`/admin/queue`): a live pending-job depth overview
+  across all queues (now including archive edits) plus an **Archive operations**
+  tab listing recent edits from the audit trail with per-row drill-down.
+- **Archive backups storage card** on the library health page — total size,
+  file count, and oldest/newest of the `.bak` safety backups the editor keeps,
+  so operators can gauge disk use.
+
+### Fixed
+
+- **Highlight thumbnails no longer squish on non-2:3 pages.** A saved highlight
+  on a double-page spread (or any page that isn't ~2:3) rendered horizontally
+  compressed in the markers grid, because the tile assumed every page is 2:3.
+  New markers now stamp the page's natural dimensions at capture time and the
+  grid renders them at their true aspect — with no layout reflow. (Markers saved
+  before this update keep the old approximation until re-created.)
 
 ### Changed
 
@@ -201,7 +227,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.11...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.12...HEAD
+[0.7.12]: https://github.com/mbryantms/folio/compare/v0.7.11...v0.7.12
 [0.7.11]: https://github.com/mbryantms/folio/compare/v0.7.10...v0.7.11
 [0.7.10]: https://github.com/mbryantms/folio/compare/v0.7.9...v0.7.10
 [0.7.9]: https://github.com/mbryantms/folio/compare/v0.7.8...v0.7.9

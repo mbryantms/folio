@@ -7,6 +7,7 @@ import {
   Circle,
   Download,
   EyeOff,
+  FileCog,
   ListChecks,
   Loader2,
   RefreshCw,
@@ -16,6 +17,7 @@ import {
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
 import { CblStatsPills } from "@/components/cbl/CblStatsPills";
+import { BulkArchiveEditDialog } from "@/components/library/BulkArchiveEditDialog";
 import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
@@ -44,6 +46,7 @@ import {
   useCblList,
   useCblListEntriesInfinite,
   useCblListWindow,
+  useMe,
 } from "@/lib/api/queries";
 import { useBulkMarkProgress, useRefreshCblList } from "@/lib/api/mutations";
 import { cn } from "@/lib/utils";
@@ -227,6 +230,8 @@ function CblViewDetailInner({
   // returns so the loading / error branches don't break the
   // rules-of-hooks invariant.
   const [markReadOpen, setMarkReadOpen] = React.useState(false);
+  const [archiveEditOpen, setArchiveEditOpen] = React.useState(false);
+  const isAdmin = useMe().data?.role === "admin";
 
   if (detail.isLoading) {
     return (
@@ -488,6 +493,18 @@ function CblViewDetailInner({
             onClick: () => runBulkMark(false),
           },
         ]}
+        overflow={
+          isAdmin
+            ? [
+                {
+                  id: "edit-archives",
+                  label: "Edit archives…",
+                  icon: FileCog,
+                  onClick: () => setArchiveEditOpen(true),
+                },
+              ]
+            : []
+        }
         onDone={() => selection.exit()}
         onClear={() => selection.clear()}
         onSelectAll={() => selection.selectAll()}
@@ -602,6 +619,14 @@ function CblViewDetailInner({
         count={selectedIssueIds.length}
         onConfirm={submitMarkRead}
         isPending={bulkMark.isPending}
+      />
+      <BulkArchiveEditDialog
+        open={archiveEditOpen}
+        onOpenChange={(next) => {
+          setArchiveEditOpen(next);
+          if (!next) selection.clear();
+        }}
+        issueIds={selectedIssueIds}
       />
     </div>
   );

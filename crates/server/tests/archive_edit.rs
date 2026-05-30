@@ -15,7 +15,7 @@ use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
 use sea_orm::EntityTrait;
 use server::archive_rewrite::{self, mutex};
 use server::jobs::archive_edit::{
-    ArchiveEditJob, PageOp, Rot, edit_one_issue, handle, simulate_ops,
+    ArchiveEditJob, BulkArchiveOp, PageOp, Rot, edit_one_issue, handle, simulate_ops,
 };
 use server::jobs::archive_transforms::TransformStep;
 use std::io::{Cursor, Write};
@@ -98,6 +98,18 @@ fn job(issue_id: &str, ops: Vec<PageOp>) -> ArchiveEditJob {
     ArchiveEditJob {
         issue_id: issue_id.to_owned(),
         ops,
+        bulk_op: None,
+        actor_id: None,
+        actor_ip: None,
+        actor_ua: None,
+    }
+}
+
+fn bulk_job(issue_id: &str, op: BulkArchiveOp) -> ArchiveEditJob {
+    ArchiveEditJob {
+        issue_id: issue_id.to_owned(),
+        ops: Vec::new(),
+        bulk_op: Some(op),
         actor_id: None,
         actor_ip: None,
         actor_ua: None,
@@ -167,6 +179,48 @@ async fn remove_and_reorder_rewrites_archive() {
     assert_eq!(row.last_rewrite_kind.as_deref(), Some("edit"));
     assert_eq!(row.cover_page_index, 0);
     assert_eq!(row.thumbnail_version, 0);
+}
+
+#[tokio::test]
+async fn bulk_remove_last_lowers_per_issue_and_rewrites() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let p1 = png_bytes(4, 4, [10, 0, 0]);
+    let p2 = png_bytes(4, 4, [0, 20, 0]);
+    let p3 = png_bytes(4, 4, [0, 0, 30]);
+    let p4 = png_bytes(4, 4, [40, 40, 0]);
+    let cbz = build_cbz(&[
+        ("p1.png", p1.clone()),
+        ("p2.png", p2.clone()),
+        ("p3.png", p3.clone()),
+        ("p4.png", p4.clone()),
+    ]);
+    let (issue_id, path) = seed_issue_with_cbz(&app, cbz, dir.path()).await;
+    let state = app.state();
+
+    // Bulk "remove last 2" is lowered against this issue's 4 pages → drops
+    // p3 + p4, leaving [p1, p2].
+    let res = edit_one_issue(
+        &state,
+        &bulk_job(&issue_id, BulkArchiveOp::RemoveLast { count: 2 }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.page_count_before, 4);
+    assert_eq!(res.page_count_after, 2);
+
+    let names = open_page_names(&path);
+    assert_eq!(names, vec!["p0001.png", "p0002.png"]);
+    assert_eq!(read_any_page(&path, "p0001.png"), p1);
+    assert_eq!(read_any_page(&path, "p0002.png"), p2);
+
+    // Removal is structural → cover index reset.
+    let row = entity::issue::Entity::find_by_id(&issue_id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.cover_page_index, 0);
 }
 
 #[tokio::test]
