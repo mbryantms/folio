@@ -1,6 +1,7 @@
 import { LibraryGridView } from "@/components/library/LibraryGridView";
 import { parseLibraryGridFilters } from "@/components/library/library-grid-filters";
 import { SeriesCard } from "@/components/library/SeriesCard";
+import { ScrollToTopOnMount } from "@/components/ScrollToTopOnMount";
 import { PageRails } from "@/components/saved-views/PageRails";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
@@ -87,13 +88,19 @@ export default async function HomePage({
     );
   }
   return (
-    <PageRails
-      pageId={system.id}
-      pageName={system.name}
-      pageDescription={system.description ?? null}
-      isSystem
-      showInSidebar={system.show_in_sidebar}
-    />
+    <>
+      {/* Home shares the `/` pathname with the grid + search, so the App
+          Router won't auto-reset scroll when arriving here from those
+          views — reset it on mount. */}
+      <ScrollToTopOnMount />
+      <PageRails
+        pageId={system.id}
+        pageName={system.name}
+        pageDescription={system.description ?? null}
+        isSystem
+        showInSidebar={system.show_in_sidebar}
+      />
+    </>
   );
 }
 
