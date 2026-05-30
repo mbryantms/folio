@@ -24,6 +24,12 @@ pub struct ScanStats {
     /// is still pending, but this counter at least makes the rejections
     /// visible instead of silently rolling back the chunk.
     pub files_duplicate: u64,
+    /// Files the scanner converted from `.cbr` to a sibling `.cbz` this run
+    /// (per-library `auto_convert_cbr_on_scan`). The original is preserved
+    /// as `.cbr.bak`; the converted `.cbz` is then ingested normally and
+    /// counts toward `files_added` as well.
+    #[serde(default)]
+    pub files_converted: u64,
     pub series_created: u64,
     pub series_skipped_unchanged: u64,
     pub series_removed: u64,
@@ -120,6 +126,7 @@ impl ScanStats {
         self.files_malformed += other.files_malformed;
         self.files_encrypted += other.files_encrypted;
         self.files_duplicate += other.files_duplicate;
+        self.files_converted += other.files_converted;
         self.series_created += other.series_created;
         self.series_skipped_unchanged += other.series_skipped_unchanged;
         self.series_removed += other.series_removed;

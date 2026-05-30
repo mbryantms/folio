@@ -183,6 +183,7 @@ mod tests {
             filename_ignore_leading_numbers: false,
             filename_assume_issue_one: false,
             metadata_auto_apply_strong_matches: false,
+            auto_convert_cbr_on_scan: false,
         }
     }
 

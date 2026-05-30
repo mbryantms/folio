@@ -41,6 +41,7 @@ pub struct LibrarySeed<'a> {
     pub default_reading_direction: &'static str,
     pub allow_archive_writeback: bool,
     pub metadata_writeback_enabled: bool,
+    pub auto_convert_cbr_on_scan: bool,
 }
 
 impl<'a> LibrarySeed<'a> {
@@ -51,6 +52,7 @@ impl<'a> LibrarySeed<'a> {
             default_reading_direction: "ltr",
             allow_archive_writeback: false,
             metadata_writeback_enabled: false,
+            auto_convert_cbr_on_scan: false,
         }
     }
 
@@ -66,6 +68,14 @@ impl<'a> LibrarySeed<'a> {
     pub fn with_sidecar_writeback(mut self) -> Self {
         self.allow_archive_writeback = true;
         self.metadata_writeback_enabled = true;
+        self
+    }
+
+    /// Enable scan-time CBR→CBZ conversion. Requires archive writeback, so
+    /// this also flips the master toggle on.
+    pub fn with_auto_convert_cbr_on_scan(mut self) -> Self {
+        self.allow_archive_writeback = true;
+        self.auto_convert_cbr_on_scan = true;
         self
     }
 
@@ -105,6 +115,7 @@ impl<'a> LibrarySeed<'a> {
             filename_ignore_leading_numbers: Set(false),
             filename_assume_issue_one: Set(false),
             metadata_auto_apply_strong_matches: Set(false),
+            auto_convert_cbr_on_scan: Set(self.auto_convert_cbr_on_scan),
         }
         .insert(db)
         .await

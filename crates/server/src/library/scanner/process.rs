@@ -361,6 +361,86 @@ async fn parse_archive_for_ingest(
     }))
 }
 
+/// Outcome of attempting a scan-time CBR→CBZ conversion.
+enum CbrIngestAction {
+    /// Converted to this `.cbz`; caller should ingest it.
+    Converted(std::path::PathBuf),
+    /// A `.cbz` twin already existed; skip the `.cbr` without a health issue.
+    SkipDuplicate,
+    /// Conversion couldn't run (malformed/encrypted/IO); caller falls back
+    /// to the `UnsupportedArchiveFormat` skip.
+    SkipUnsupported,
+}
+
+/// Whether this library wants `.cbr` files auto-converted to `.cbz` on scan.
+/// Requires the opt-in flag, the master writeback prerequisite, and a
+/// writable mount (rewrites would fail mid-swap on a read-only mount).
+fn cbr_conversion_eligible(lib: &library::Model) -> bool {
+    lib.auto_convert_cbr_on_scan
+        && lib.allow_archive_writeback
+        && crate::archive_rewrite::mount_writable(Path::new(&lib.root_path))
+}
+
+/// Convert a `.cbr` to a sibling `.cbz` under the archive-work semaphore (on
+/// a blocking task — RAR decompression is CPU/IO heavy). Conversion failures
+/// are soft: they map to a skip rather than aborting the scan chunk. Only
+/// infrastructure failures (semaphore closed, join panic) propagate.
+async fn convert_cbr_for_ingest(state: &AppState, path: &Path) -> anyhow::Result<CbrIngestAction> {
+    let limits = state.cfg().archive_limits();
+    let src = path.to_path_buf();
+    let _permit = state
+        .archive_work_semaphore
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| anyhow::anyhow!("archive work semaphore closed: {e}"))?;
+    let result =
+        tokio::task::spawn_blocking(move || super::cbr_convert::convert_cbr_to_cbz(&src, limits))
+            .await
+            .map_err(|e| anyhow::anyhow!("cbr convert task failed: {e}"))?;
+    match result {
+        Ok(dst) => {
+            tracing::info!(cbr = %path.display(), cbz = %dst.display(), "scanner: converted CBR→CBZ");
+            Ok(CbrIngestAction::Converted(dst))
+        }
+        Err(super::cbr_convert::CbrConvertError::DestinationExists(dst)) => {
+            tracing::info!(
+                cbr = %path.display(),
+                cbz = %dst.display(),
+                "scanner: .cbz twin already exists; skipping CBR conversion",
+            );
+            Ok(CbrIngestAction::SkipDuplicate)
+        }
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "scanner: CBR→CBZ conversion failed");
+            Ok(CbrIngestAction::SkipUnsupported)
+        }
+    }
+}
+
+/// Stamp `library.cbr_convert_confirmed_at` on first conversion so the page
+/// editor stops prompting for the format change. Uses a `WHERE … IS NULL`
+/// guard so it no-ops after the first conversion and is safe under the
+/// parallel scan workers. Best-effort: a failure here only affects the UI
+/// prompt, not the conversion itself.
+async fn stamp_cbr_confirmed(state: &AppState, lib: &library::Model) {
+    use sea_orm::sea_query::Expr;
+    if lib.cbr_convert_confirmed_at.is_some() {
+        return;
+    }
+    let now = Utc::now().fixed_offset();
+    let res = library::Entity::update_many()
+        .col_expr(library::Column::CbrConvertConfirmedAt, Expr::value(now))
+        .col_expr(library::Column::UpdatedAt, Expr::value(now))
+        .filter(library::Column::Id.eq(lib.id))
+        .filter(library::Column::CbrConvertConfirmedAt.is_null())
+        .exec(&state.db)
+        .await;
+    if let Err(e) = res {
+        tracing::warn!(library_id = %lib.id, error = %e, "scanner: cbr_convert_confirmed_at stamp failed");
+    }
+}
+
 /// Check whether the file's content fingerprint matches a row that
 /// the per-path lookup didn't find. Two cases:
 ///
@@ -458,21 +538,65 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         return Ok(());
     }
 
-    // Spec §10.1 UnsupportedArchiveFormat — recognized extension but no
-    // reader yet (currently CBR + CB7 — see crates/archive/src/cbr.rs and
-    // cb7.rs). Emit a health issue and skip without trying to hash a file
-    // we can't read.
+    // Spec §10.1 UnsupportedArchiveFormat — a recognized extension we can't
+    // ingest directly. `cb7` has no reader/writer at all. `cbr` has a
+    // read-only reader: when the library opts into `auto_convert_cbr_on_scan`
+    // (and writeback is enabled on a writable mount) we convert it to a
+    // sibling `.cbz` in place — keeping the original as `.cbr.bak` — and
+    // ingest the `.cbz` instead. Otherwise CBR is skipped with the same
+    // health issue.
     let ext_lower = path
         .extension()
         .and_then(|s| s.to_str())
         .map(str::to_ascii_lowercase);
-    if matches!(ext_lower.as_deref(), Some("cbr" | "cb7")) {
-        stats.files_skipped += 1;
-        health.emit(IssueKind::UnsupportedArchiveFormat {
-            path: path.to_path_buf(),
-            ext: ext_lower.unwrap_or_default(),
-        });
-        return Ok(());
+    match ext_lower.as_deref() {
+        Some("cbr") => {
+            if cbr_conversion_eligible(lib) {
+                match convert_cbr_for_ingest(state, path).await? {
+                    CbrIngestAction::Converted(dst) => {
+                        stats.files_converted += 1;
+                        // The original `.cbr` is now `.cbr.bak` (not a
+                        // recognized extension), so it won't re-enumerate and
+                        // conversion never re-fires. Stamp the library's
+                        // first-conversion ack so the page editor stops
+                        // prompting, then ingest the fresh `.cbz` normally —
+                        // it takes the usual hash/parse/insert path and
+                        // creates a new issue row.
+                        stamp_cbr_confirmed(state, lib).await;
+                        let (size, mtime) = file_fingerprint(&dst)?;
+                        return Box::pin(ingest_one_with_fingerprint(
+                            ctx, db, &dst, slug_set, size, mtime, outputs,
+                        ))
+                        .await;
+                    }
+                    // A `.cbz` twin already exists — leave it to the normal
+                    // path; skip the `.cbr` quietly (likely a duplicate).
+                    CbrIngestAction::SkipDuplicate => {
+                        stats.files_skipped += 1;
+                        return Ok(());
+                    }
+                    // Conversion failed (malformed RAR, encrypted, IO): fall
+                    // through to the same skip + health issue as when
+                    // conversion is disabled.
+                    CbrIngestAction::SkipUnsupported => {}
+                }
+            }
+            stats.files_skipped += 1;
+            health.emit(IssueKind::UnsupportedArchiveFormat {
+                path: path.to_path_buf(),
+                ext: "cbr".to_owned(),
+            });
+            return Ok(());
+        }
+        Some("cb7") => {
+            stats.files_skipped += 1;
+            health.emit(IssueKind::UnsupportedArchiveFormat {
+                path: path.to_path_buf(),
+                ext: "cb7".to_owned(),
+            });
+            return Ok(());
+        }
+        _ => {}
     }
 
     let Some(ParsedArchive {

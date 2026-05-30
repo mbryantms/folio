@@ -5247,6 +5247,10 @@ export interface components {
              *     rewritten losslessly and ignore this. `archive-rewrite-1.0`.
              */
             archive_writeback_jpeg_quality: number;
+            /** @description When true AND `allow_archive_writeback` is also true, the scanner
+             *     converts each `.cbr` it finds into a sibling `.cbz` in place (keeping
+             *     the original as `.cbr.bak`) and ingests the `.cbz`. Default false. */
+            auto_convert_cbr_on_scan: boolean;
             /** @description RFC3339 timestamp of the operator's first acknowledgement of the
              *     CBR→CBZ conversion for this library, or `null` if they haven't
              *     acknowledged yet. The page editor uses this to decide whether to
@@ -7167,6 +7171,11 @@ export interface components {
              *     at the DB level; garde surfaces a friendly 422 here.
              */
             archive_writeback_jpeg_quality?: number | null;
+            /** @description When true, the scanner converts each `.cbr` it finds into a sibling
+             *     `.cbz` in place (keeping the original as `.cbr.bak`) and ingests the
+             *     `.cbz`. Requires `allow_archive_writeback=true` — enabling it while
+             *     the master toggle resolves false returns 422. */
+            auto_convert_cbr_on_scan?: boolean | null;
             file_watch_enabled?: boolean | null;
             /** @description Toggle filename inference's assume-issue-one fallback
              *     (matching-accuracy M7). */

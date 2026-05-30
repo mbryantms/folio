@@ -119,6 +119,10 @@ pub struct LibraryView {
     /// acknowledged yet. The page editor uses this to decide whether to
     /// show the conversion confirm dialog. `archive-rewrite-1.0` M6.
     pub cbr_convert_confirmed_at: Option<String>,
+    /// When true AND `allow_archive_writeback` is also true, the scanner
+    /// converts each `.cbr` it finds into a sibling `.cbz` in place (keeping
+    /// the original as `.cbr.bak`) and ingests the `.cbz`. Default false.
+    pub auto_convert_cbr_on_scan: bool,
     /// Whether the library's `root_path` is on a writable mount. When
     /// false the admin UI disables the archive-writeback toggle and the
     /// PATCH handler refuses to enable it — rewrites can't land on a
@@ -174,6 +178,7 @@ impl From<library::Model> for LibraryView {
             archive_backup_retain_days: m.archive_backup_retain_days,
             archive_writeback_jpeg_quality: m.archive_writeback_jpeg_quality,
             cbr_convert_confirmed_at: m.cbr_convert_confirmed_at.map(|t| t.to_rfc3339()),
+            auto_convert_cbr_on_scan: m.auto_convert_cbr_on_scan,
             root_path_writable,
             metadata_publisher_blacklist: m
                 .metadata_publisher_blacklist
@@ -239,6 +244,13 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub metadata_writeback_enabled: Option<bool>,
+    /// When true, the scanner converts each `.cbr` it finds into a sibling
+    /// `.cbz` in place (keeping the original as `.cbr.bak`) and ingests the
+    /// `.cbz`. Requires `allow_archive_writeback=true` — enabling it while
+    /// the master toggle resolves false returns 422.
+    #[serde(default)]
+    #[garde(skip)]
+    pub auto_convert_cbr_on_scan: Option<bool>,
     /// `.bak` retention slots, 0..=5. `0` = validated overwrite, no
     /// `.bak` (the sidecar rewrite is validated before the atomic swap,
     /// so the original is never replaced by a corrupt rewrite). CHECK
@@ -572,6 +584,7 @@ pub async fn create(
         archive_backup_retain_days: Set(30),
         archive_writeback_jpeg_quality: Set(92),
         cbr_convert_confirmed_at: Set(None),
+        auto_convert_cbr_on_scan: Set(false),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -691,13 +704,24 @@ pub async fn update_settings(
     // check (so partial PATCHes don't bypass the rule).
     let prev_allow = matches!(am.allow_archive_writeback, ActiveValue::Unchanged(true));
     let prev_meta = matches!(am.metadata_writeback_enabled, ActiveValue::Unchanged(true));
+    let prev_auto_cbr = matches!(am.auto_convert_cbr_on_scan, ActiveValue::Unchanged(true));
     let new_allow = req.allow_archive_writeback.unwrap_or(prev_allow);
     let new_meta = req.metadata_writeback_enabled.unwrap_or(prev_meta);
+    let new_auto_cbr = req.auto_convert_cbr_on_scan.unwrap_or(prev_auto_cbr);
     if new_meta && !new_allow {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation.archive_writeback_dependency",
             "metadata_writeback_enabled requires allow_archive_writeback=true",
+        );
+    }
+    // `auto_convert_cbr_on_scan` shares the same hard prerequisite: the
+    // scanner rewrites bytes (CBR→CBZ), so the master toggle must be on.
+    if new_auto_cbr && !new_allow {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation.archive_writeback_dependency",
+            "auto_convert_cbr_on_scan requires allow_archive_writeback=true",
         );
     }
     // Refuse to enable archive writeback when the library root isn't on a
@@ -719,6 +743,9 @@ pub async fn update_settings(
     }
     if let Some(b) = req.metadata_writeback_enabled {
         am.metadata_writeback_enabled = Set(b);
+    }
+    if let Some(b) = req.auto_convert_cbr_on_scan {
+        am.auto_convert_cbr_on_scan = Set(b);
     }
     if let Some(n) = req.archive_backup_retain_count {
         am.archive_backup_retain_count = Set(n);

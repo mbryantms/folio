@@ -222,3 +222,39 @@ async fn enable_writeback_on_readonly_mount_rejected() {
         "validation.archive_writeback_mount_readonly"
     );
 }
+
+#[tokio::test]
+async fn enable_cbr_conversion_requires_writeback() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = seed_library_dir();
+    let slug = create_library(&app, &auth, tmp.path()).await;
+
+    // Master toggle off → enabling CBR conversion is a 422.
+    let (status, body) = patch_library(
+        &app,
+        &auth,
+        &slug,
+        serde_json::json!({ "auto_convert_cbr_on_scan": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body["error"]["code"],
+        "validation.archive_writeback_dependency"
+    );
+
+    // With the master toggle on (writable mount), it persists.
+    let (status, body) = patch_library(
+        &app,
+        &auth,
+        &slug,
+        serde_json::json!({
+            "allow_archive_writeback": true,
+            "auto_convert_cbr_on_scan": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["auto_convert_cbr_on_scan"], true);
+}

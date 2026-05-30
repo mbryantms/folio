@@ -13051,6 +13051,7 @@
           "archive_backup_retain_count",
           "archive_backup_retain_days",
           "archive_writeback_jpeg_quality",
+          "auto_convert_cbr_on_scan",
           "root_path_writable",
           "metadata_publisher_blacklist",
           "filename_ignore_leading_numbers",
@@ -13076,6 +13077,10 @@
             "type": "integer",
             "format": "int32",
             "description": "Encoder quality (60..=100) the page editor uses when re-encoding a\nrotated / replaced JPEG page. Default 92. PNG / WebP pages are\nrewritten losslessly and ignore this. `archive-rewrite-1.0`."
+          },
+          "auto_convert_cbr_on_scan": {
+            "type": "boolean",
+            "description": "When true AND `allow_archive_writeback` is also true, the scanner\nconverts each `.cbr` it finds into a sibling `.cbz` in place (keeping\nthe original as `.cbr.bak`) and ingests the `.cbz`. Default false."
           },
           "cbr_convert_confirmed_at": {
             "type": [
@@ -18109,6 +18114,13 @@
             ],
             "format": "int32",
             "description": "Encoder quality (60..=100) for JPEG pages the editor re-encodes\n(`archive-rewrite-1.0`). CHECK constraint enforces the same range\nat the DB level; garde surfaces a friendly 422 here."
+          },
+          "auto_convert_cbr_on_scan": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "When true, the scanner converts each `.cbr` it finds into a sibling\n`.cbz` in place (keeping the original as `.cbr.bak`) and ingests the\n`.cbz`. Requires `allow_archive_writeback=true` — enabling it while\nthe master toggle resolves false returns 422."
           },
           "file_watch_enabled": {
             "type": [

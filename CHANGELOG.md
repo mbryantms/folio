@@ -15,6 +15,24 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.16] - TBD
+
+### Added
+
+- **The scanner now ingests CBR comics.** Previously a `.cbr` was recognized
+  but skipped with an `UnsupportedArchiveFormat` health issue. A new per-library
+  setting, **Convert CBR to CBZ on scan** (under Archive writeback, requires the
+  master writeback toggle), makes the scanner convert each `.cbr` into a sibling
+  `.cbz` in place and ingest it. Real RAR archives are decompressed and repacked
+  (the original is kept as `.cbr.bak`); the conversion reuses the same audited,
+  atomic archive-rewrite machinery as the page editor.
+- The converter **sniffs the real container by magic bytes** rather than
+  trusting the extension — a large share of `.cbr` files in the wild are
+  actually ZIPs that were renamed. Those are moved into place byte-for-byte
+  (an instant rename, no decompression); only genuine RAR archives take the
+  decompress-and-repack path. A file that is neither is left skipped with the
+  health issue.
+
 ## [0.7.15] - 2026-05-30
 
 ### Fixed

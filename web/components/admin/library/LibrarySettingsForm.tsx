@@ -53,6 +53,7 @@ const schema = z
     generate_page_thumbs_on_scan: z.boolean().default(false),
     allow_archive_writeback: z.boolean().default(false),
     metadata_writeback_enabled: z.boolean().default(false),
+    auto_convert_cbr_on_scan: z.boolean().default(false),
     archive_backup_retain_count: z.number().int().min(0).max(5).default(1),
     archive_backup_retain_days: z.number().int().min(0).max(3650).default(30),
     archive_writeback_jpeg_quality: z
@@ -70,6 +71,11 @@ const schema = z
     message:
       "Metadata writeback requires Archive writeback (master toggle) to be on first.",
     path: ["metadata_writeback_enabled"],
+  })
+  .refine((v) => !v.auto_convert_cbr_on_scan || v.allow_archive_writeback, {
+    message:
+      "CBR conversion requires Archive writeback (master toggle) to be on first.",
+    path: ["auto_convert_cbr_on_scan"],
   });
 
 type FormValues = z.infer<typeof schema>;
@@ -89,6 +95,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       generate_page_thumbs_on_scan: false,
       allow_archive_writeback: false,
       metadata_writeback_enabled: false,
+      auto_convert_cbr_on_scan: false,
       archive_backup_retain_count: 1,
       archive_backup_retain_days: 30,
       archive_writeback_jpeg_quality: 92,
@@ -109,6 +116,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         generate_page_thumbs_on_scan: lib.data.generate_page_thumbs_on_scan,
         allow_archive_writeback: lib.data.allow_archive_writeback,
         metadata_writeback_enabled: lib.data.metadata_writeback_enabled,
+        auto_convert_cbr_on_scan: lib.data.auto_convert_cbr_on_scan,
         archive_backup_retain_count: lib.data.archive_backup_retain_count,
         archive_backup_retain_days: lib.data.archive_backup_retain_days,
         archive_writeback_jpeg_quality: lib.data.archive_writeback_jpeg_quality,
@@ -140,6 +148,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       generate_page_thumbs_on_scan: values.generate_page_thumbs_on_scan,
       allow_archive_writeback: values.allow_archive_writeback,
       metadata_writeback_enabled: values.metadata_writeback_enabled,
+      auto_convert_cbr_on_scan: values.auto_convert_cbr_on_scan,
       archive_backup_retain_count: values.archive_backup_retain_count,
       archive_backup_retain_days: values.archive_backup_retain_days,
       archive_writeback_jpeg_quality: values.archive_writeback_jpeg_quality,
@@ -342,6 +351,43 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                         and <span className="font-mono">MetronInfo.xml</span>{" "}
                         into the archive instead of just updating the database.
                         The library becomes self-describing — export anywhere.
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        disabled={masterOff}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
+            />
+            <FormField
+              control={form.control}
+              name="auto_convert_cbr_on_scan"
+              render={({ field }) => {
+                const masterOff = !form.watch("allow_archive_writeback");
+                return (
+                  <FormItem
+                    className={cn(
+                      "flex items-start justify-between gap-6",
+                      masterOff && "opacity-60",
+                    )}
+                  >
+                    <div className="space-y-1">
+                      <FormLabel>Convert CBR to CBZ on scan</FormLabel>
+                      <FormDescription>
+                        When the scanner finds a{" "}
+                        <span className="font-mono">.cbr</span> (RAR) comic,
+                        convert it to a{" "}
+                        <span className="font-mono">.cbz</span> in place so it
+                        becomes readable. The original is kept as{" "}
+                        <span className="font-mono">.cbr.bak</span>. Without
+                        this, CBR files are skipped with a library-health
+                        warning.
                       </FormDescription>
                     </div>
                     <FormControl>

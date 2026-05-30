@@ -125,6 +125,7 @@ async fn create_library(app: &TestApp, root: &Path, report_missing: bool) -> Uui
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
         metadata_auto_apply_strong_matches: Set(false),
+        auto_convert_cbr_on_scan: Set(false),
     }
     .insert(&db)
     .await

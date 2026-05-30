@@ -86,6 +86,14 @@ pub struct Model {
     #[serde(default)]
     #[sea_orm(nullable)]
     pub cbr_convert_confirmed_at: Option<DateTimeWithTimeZone>,
+    /// When true *and* `allow_archive_writeback` is also true, the scanner
+    /// converts each `.cbr` it finds into a sibling `.cbz` in place (keeping
+    /// the original as `.cbr.bak`) and then ingests the `.cbz` normally.
+    /// When false (default), CBRs are skipped with an
+    /// `UnsupportedArchiveFormat` health issue. Reuses the CBR→CBZ machinery
+    /// from the page editor (`archive-rewrite-1.0` M6).
+    #[serde(default)]
+    pub auto_convert_cbr_on_scan: bool,
     /// Publisher names the matcher's pre-filter should drop before
     /// scoring. Comparison is case-insensitive against the
     /// title-sanitized form so "DC Comics" / "dc comics" / "DC" all

@@ -13,6 +13,7 @@
 //! merging, and post-scan thumbnail/search workers (`crate::jobs::post_scan`)
 //! are all wired and exercised end-to-end.
 
+pub mod cbr_convert;
 pub mod enumerate;
 pub mod metadata_rollup;
 pub mod process;
