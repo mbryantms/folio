@@ -718,3 +718,65 @@ async fn enqueue_pending_picks_up_thumb_current_but_hash_missing() {
         "issue with current thumb but missing phash should still enqueue"
     );
 }
+
+/// Regression: `enqueue_strips_for_library` enqueues only issues whose
+/// page-strip thumbnails are *not* already complete on disk — not one job per
+/// active issue. A near-complete library used to flood the queue with ~one
+/// redundant strip job per issue (the worker skipped them, but the queue depth
+/// was meaningless and took ages to drain). Issues with an unknown page count
+/// still enqueue so the worker can reconcile from the archive.
+#[tokio::test]
+async fn strip_enqueue_skips_issues_with_complete_strips() {
+    use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
+    use server::jobs::post_scan::enqueue_strips_for_library;
+
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    let tmp = tempfile::tempdir().unwrap();
+
+    let lib = LibrarySeed::new(tmp.path()).insert(&state.db).await;
+    let series = SeriesSeed::new(lib, "Strips").insert(&state.db).await;
+
+    let mk = |n: u8| tmp.path().join(format!("issue-{n}.cbz"));
+    let payloads: Vec<Vec<u8>> = (0..4u8).map(|n| vec![n; 16]).collect();
+
+    // One issue with a full set of strips on disk (complete → skipped), two
+    // with none (missing → enqueued), and one with an unknown page count
+    // (enqueued so the worker reconciles).
+    let complete = IssueSeed::new(lib, series, &mk(0), payloads[0].as_slice(), 1.0)
+        .with_page_count(3)
+        .insert(&state.db)
+        .await;
+    let _missing_a = IssueSeed::new(lib, series, &mk(1), payloads[1].as_slice(), 2.0)
+        .with_page_count(3)
+        .insert(&state.db)
+        .await;
+    let _missing_b = IssueSeed::new(lib, series, &mk(2), payloads[2].as_slice(), 3.0)
+        .with_page_count(3)
+        .insert(&state.db)
+        .await;
+    let _unknown = IssueSeed::new(lib, series, &mk(3), payloads[3].as_slice(), 4.0)
+        .with_page_count_opt(None)
+        .insert(&state.db)
+        .await;
+
+    // Lay down a complete strip set for `complete` only.
+    let data_dir = state.cfg().data_path.clone();
+    let fmt = thumbnails::ThumbFormat::Webp;
+    for page in 0..3usize {
+        let p = thumbnails::strip_path(&data_dir, &complete, page, fmt);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"x").unwrap();
+    }
+    assert_eq!(
+        thumbnails::count_existing_strips(&data_dir, &complete).unwrap(),
+        3,
+        "complete issue has all strips on disk"
+    );
+
+    let enqueued = enqueue_strips_for_library(&state, lib).await;
+    assert_eq!(
+        enqueued, 3,
+        "two strip-less issues + the unknown-page-count issue enqueue; the complete one is skipped"
+    );
+}

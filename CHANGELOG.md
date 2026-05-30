@@ -15,6 +15,20 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.17] - TBD
+
+### Changed
+
+- **"Generate page thumbnails" now queues only the issues that actually need
+  them.** It previously enqueued one strip job per *active* issue regardless of
+  whether the page thumbnails already existed — so on a near-complete library it
+  flooded the queue with tens of thousands of redundant jobs (the worker skipped
+  each one after a disk check, but the queue depth was meaningless and took
+  hours to drain). The enqueue path now does that same disk check up front and
+  pushes jobs only for issues whose strips are missing or incomplete; issues
+  with an unknown page count still enqueue so the worker can reconcile from the
+  archive. The log line reports how many already-complete issues were skipped.
+
 ## [0.7.16] - 2026-05-30
 
 ### Added

@@ -719,11 +719,60 @@ where
     count
 }
 
-/// Enqueue one lazy page-map strip job for every active issue in a single
-/// series. Mirror of `enqueue_strips_for_library` scoped to one series so
-/// admins can rebuild a single book's reader page-map without touching the
-/// rest of the library. Strip jobs are file-level idempotent — existing
-/// page thumbnails are skipped and only missing pages are encoded.
+/// Given `(issue_id, page_count)` rows, return the ids whose page-strip
+/// thumbnails are not yet complete on disk — the set worth enqueueing.
+///
+/// An issue needs work when fewer strip files exist than it has pages, or
+/// when its page count is unknown (`0`/NULL): the strip worker reconciles the
+/// real count from the archive, so those are enqueued to be safe. A failed
+/// per-issue probe also falls through to "enqueue" rather than silently skip.
+///
+/// The probe is one cheap directory read per issue (the same
+/// [`thumbnails::count_existing_strips`] check
+/// `admin_thumbs::page_thumb_status_counts` uses for the status card) and runs
+/// on a blocking task. Filtering here — instead of enqueuing every active
+/// issue and letting the worker no-op the already-complete ones — keeps the
+/// queue depth meaningful and stops a near-complete library from flooding the
+/// queue with ~one redundant job per issue. On the (effectively impossible)
+/// probe-task panic we fall back to enqueuing everything, preserving the old
+/// behavior rather than silently dropping work.
+async fn issue_ids_missing_strips(app: &AppState, rows: Vec<(String, Option<i32>)>) -> Vec<String> {
+    let data_dir = app.cfg().data_path.clone();
+    let all_ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+    match tokio::task::spawn_blocking(move || {
+        rows.into_iter()
+            .filter(|(id, page_count)| {
+                let pages = page_count.unwrap_or(0).max(0);
+                if pages == 0 {
+                    // Unknown page count — let the worker reconcile from the
+                    // archive and generate whatever's missing.
+                    return true;
+                }
+                match thumbnails::count_existing_strips(&data_dir, id) {
+                    Ok(existing) => existing < pages as usize,
+                    Err(_) => true, // probe failed — enqueue rather than skip
+                }
+            })
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
+    })
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "strip thumbs enqueue: missing-strip probe failed; enqueuing all");
+            all_ids
+        }
+    }
+}
+
+/// Enqueue a lazy page-map strip job for each active issue in a single series
+/// whose strips aren't already complete on disk. Mirror of
+/// `enqueue_strips_for_library` scoped to one series so admins can rebuild a
+/// single book's reader page-map without touching the rest of the library.
+/// Strip jobs are also file-level idempotent in the worker, but we filter to
+/// missing-strip issues up front (see [`issue_ids_missing_strips`]) so the
+/// queue reflects real remaining work.
 pub async fn enqueue_strips_for_series(app: &AppState, library_id: Uuid, series_id: Uuid) -> usize {
     match library::Entity::find_by_id(library_id).one(&app.db).await {
         Ok(Some(lib)) if !lib.thumbnails_enabled => {
@@ -745,13 +794,14 @@ pub async fn enqueue_strips_for_series(app: &AppState, library_id: Uuid, series_
         }
     }
 
-    let issue_ids: Vec<String> = match issue::Entity::find()
+    let rows: Vec<(String, Option<i32>)> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::SeriesId.eq(series_id))
         .filter(issue::Column::State.eq("active"))
         .select_only()
         .column(issue::Column::Id)
-        .into_tuple::<String>()
+        .column(issue::Column::PageCount)
+        .into_tuple::<(String, Option<i32>)>()
         .all(&app.db)
         .await
     {
@@ -762,21 +812,27 @@ pub async fn enqueue_strips_for_series(app: &AppState, library_id: Uuid, series_
         }
     };
 
+    let total_active = rows.len();
+    let issue_ids = issue_ids_missing_strips(app, rows).await;
+    let skipped_complete = total_active.saturating_sub(issue_ids.len());
+
     let mut count = 0usize;
     for issue_id in issue_ids {
         if enqueue_thumb_job(app, ThumbsJob::strip(issue_id)).await {
             count += 1;
         }
     }
-    if count > 0 {
-        tracing::info!(library_id = %library_id, series_id = %series_id, count, "strip thumbs enqueue (series): pushed jobs");
+    if count > 0 || skipped_complete > 0 {
+        tracing::info!(library_id = %library_id, series_id = %series_id, count, skipped_complete, "strip thumbs enqueue (series): pushed jobs");
     }
     count
 }
 
-/// Enqueue one lazy page-map strip job for every active issue in a library.
-/// Strip jobs are idempotent at the file level: existing page thumbnails are
-/// skipped and only missing pages are decoded/encoded.
+/// Enqueue a lazy page-map strip job for each active issue in a library whose
+/// strips aren't already complete on disk (see [`issue_ids_missing_strips`]).
+/// The strip worker is also idempotent at the file level, but filtering up
+/// front means the queue reflects the real remaining work instead of one
+/// redundant job per already-complete issue.
 pub async fn enqueue_strips_for_library(app: &AppState, library_id: Uuid) -> usize {
     match library::Entity::find_by_id(library_id).one(&app.db).await {
         Ok(Some(lib)) if !lib.thumbnails_enabled => {
@@ -797,12 +853,13 @@ pub async fn enqueue_strips_for_library(app: &AppState, library_id: Uuid) -> usi
         }
     }
 
-    let issue_ids: Vec<String> = match issue::Entity::find()
+    let rows: Vec<(String, Option<i32>)> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::State.eq("active"))
         .select_only()
         .column(issue::Column::Id)
-        .into_tuple::<String>()
+        .column(issue::Column::PageCount)
+        .into_tuple::<(String, Option<i32>)>()
         .all(&app.db)
         .await
     {
@@ -813,14 +870,18 @@ pub async fn enqueue_strips_for_library(app: &AppState, library_id: Uuid) -> usi
         }
     };
 
+    let total_active = rows.len();
+    let issue_ids = issue_ids_missing_strips(app, rows).await;
+    let skipped_complete = total_active.saturating_sub(issue_ids.len());
+
     let mut count = 0usize;
     for issue_id in issue_ids {
         if enqueue_thumb_job(app, ThumbsJob::strip(issue_id)).await {
             count += 1;
         }
     }
-    if count > 0 {
-        tracing::info!(library_id = %library_id, count, "strip thumbs enqueue: pushed jobs");
+    if count > 0 || skipped_complete > 0 {
+        tracing::info!(library_id = %library_id, count, skipped_complete, "strip thumbs enqueue: pushed jobs");
     }
     count
 }
