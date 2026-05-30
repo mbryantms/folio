@@ -15,6 +15,16 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-05-29
+
+### Changed
+
+- **Reverted the compact single-row mobile list headers** (Bookmarks, All
+  Libraries, CBL list) introduced in v0.7.7. Those headers now stack their
+  control rows again as they did before, on mobile and desktop. This also
+  removes the `PageHeader` `descriptionClassName` prop and the Libraries
+  toolbar's `⋯` overflow that folded Save-as-view / Clear-filters.
+
 ## [0.7.12] - 2026-05-29
 
 ### Added
@@ -227,7 +237,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.12...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.13...HEAD
+[0.7.13]: https://github.com/mbryantms/folio/compare/v0.7.12...v0.7.13
 [0.7.12]: https://github.com/mbryantms/folio/compare/v0.7.11...v0.7.12
 [0.7.11]: https://github.com/mbryantms/folio/compare/v0.7.10...v0.7.11
 [0.7.10]: https://github.com/mbryantms/folio/compare/v0.7.9...v0.7.10

@@ -5,16 +5,11 @@ export function PageHeader({
   description,
   actions,
   className,
-  descriptionClassName,
 }: {
   title: string;
   description?: string;
   actions?: React.ReactNode;
   className?: string;
-  /** Extra classes for the description `<p>`. Opt-in; pages with a
-   *  compact mobile header pass `hidden sm:block` to drop the reference
-   *  blurb on small screens and keep the header short. */
-  descriptionClassName?: string;
 }) {
   return (
     <header
@@ -28,14 +23,7 @@ export function PageHeader({
           {title}
         </h1>
         {description ? (
-          <p
-            className={cn(
-              "text-muted-foreground mt-1 text-sm",
-              descriptionClassName,
-            )}
-          >
-            {description}
-          </p>
+          <p className="text-muted-foreground mt-1 text-sm">{description}</p>
         ) : null}
       </div>
       {actions ? (

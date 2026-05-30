@@ -1,18 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { BookmarkPlus, Filter, MoreHorizontal, X } from "lucide-react";
+import { BookmarkPlus, Filter, X } from "lucide-react";
 
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import type { LibraryGridMode } from "@/components/library/library-grid-filters";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -126,9 +120,7 @@ export function LibraryGridToolbar({
         placeholder={mode === "series" ? "Search series…" : "Search issues…"}
         value={q}
         onChange={(e) => onQ(e.target.value)}
-        // Grow to fill the row (caps via the flex container) instead of a
-        // fixed width, so the toolbar collapses to fewer rows on mobile.
-        className="h-9 min-w-0 flex-1 basis-48"
+        className="h-9 w-72"
       />
       {mode === "series" ? (
         <Select
@@ -194,54 +186,41 @@ export function LibraryGridToolbar({
         ) : null}
       </Button>
 
-      <CardSizeOptions
-        cardSize={cardSize}
-        onCardSize={onCardSize}
-        min={cardSizeMin}
-        max={cardSizeMax}
-        step={cardSizeStep}
-        defaultSize={cardSizeDefault}
-      />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={!canSaveView}
+        className="h-9"
+        onClick={onSaveView}
+        title="Persist these filters as a new saved view"
+      >
+        <BookmarkPlus className="mr-1 h-3.5 w-3.5" />
+        Save as view…
+      </Button>
 
-      {/* Secondary actions collapse into an overflow so the toolbar stays
-          short on mobile (they used to add up to two more wrapped rows). */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-9 w-9"
-            aria-label="More actions"
-            title="More actions"
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[10rem]">
-          <DropdownMenuItem
-            disabled={!canSaveView}
-            onSelect={(e) => {
-              e.preventDefault();
-              onSaveView();
-            }}
-          >
-            <BookmarkPlus className="mr-2 h-4 w-4" />
-            Save as view…
-          </DropdownMenuItem>
-          {facetCount > 0 ? (
-            <DropdownMenuItem
-              onSelect={(e) => {
-                e.preventDefault();
-                onClearFacets();
-              }}
-            >
-              <X className="mr-2 h-4 w-4" />
-              Clear filters
-            </DropdownMenuItem>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {facetCount > 0 ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onClearFacets}
+          className="text-muted-foreground h-9"
+        >
+          <X className="mr-1 h-3 w-3" /> Clear filters
+        </Button>
+      ) : null}
+
+      <div className="ml-auto">
+        <CardSizeOptions
+          cardSize={cardSize}
+          onCardSize={onCardSize}
+          min={cardSizeMin}
+          max={cardSizeMax}
+          step={cardSizeStep}
+          defaultSize={cardSizeDefault}
+        />
+      </div>
     </div>
   );
 }
