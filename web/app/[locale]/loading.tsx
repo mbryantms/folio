@@ -1,5 +1,7 @@
 import { Loader2 } from "lucide-react";
 
+import { LoadingWatchdog } from "@/components/LoadingWatchdog";
+
 /**
  * Top-level `[locale]/` Suspense fallback. Deliberately **shell-agnostic**:
  * at this level we don't yet know which area the user is entering
@@ -21,6 +23,7 @@ export default function LocaleLoading() {
       role="status"
       aria-live="polite"
     >
+      <LoadingWatchdog />
       <Loader2
         aria-hidden
         className="text-muted-foreground/60 size-8 animate-spin motion-reduce:hidden"

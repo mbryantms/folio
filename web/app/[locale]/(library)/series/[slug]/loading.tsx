@@ -1,3 +1,4 @@
+import { LoadingWatchdog } from "@/components/LoadingWatchdog";
 import { IssueCardSkeleton } from "@/components/library/IssueCard";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -10,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function SeriesDetailLoading() {
   return (
     <div className="space-y-10" aria-hidden>
+      <LoadingWatchdog />
       {/* Breadcrumb */}
       <Skeleton className="h-3 w-40" />
 

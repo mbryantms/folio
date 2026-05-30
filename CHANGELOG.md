@@ -15,6 +15,26 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.15] - 2026-05-30
+
+### Fixed
+
+- **Navigations no longer spin forever.** The server-side API fetches that RSC
+  pages depend on had no timeout, so a single hung or slow backend request
+  stalled the whole render — leaving client navigations (notably exiting the
+  reader and applying an archive edit, both of which land on the issue page)
+  stuck on a loader until a force-quit. Server fetches now time out at 10s and
+  fail into the route's error boundary, and a client-side watchdog hard-reloads
+  a route whose loading state outlives ~15s — covering proxy/stream stalls the
+  fetch timeout can't catch. This is the deeper layer beneath the v0.7.10
+  service-worker fix.
+- **The archive editor no longer shows a phantom trailing page.** It built its
+  tiles from the database's `issue.page_count`, which can drift from the actual
+  archive (a stale scan, or a ComicInfo `<PageCount>`), producing a blank extra
+  page whose deletion errored with "ordinal out of range." The editor now reads
+  the archive's real page count live (new `GET /issues/{id}/archive/page-count`)
+  and builds from that, so it always matches the file.
+
 ## [0.7.14] - 2026-05-29
 
 ### Fixed
@@ -248,7 +268,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.14...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.15...HEAD
+[0.7.15]: https://github.com/mbryantms/folio/compare/v0.7.14...v0.7.15
 [0.7.14]: https://github.com/mbryantms/folio/compare/v0.7.13...v0.7.14
 [0.7.13]: https://github.com/mbryantms/folio/compare/v0.7.12...v0.7.13
 [0.7.12]: https://github.com/mbryantms/folio/compare/v0.7.11...v0.7.12

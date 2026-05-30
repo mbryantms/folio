@@ -1387,6 +1387,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/issues/{id}/archive/page-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["archive_page_count"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/issues/{id}/archive/restore": {
         parameters: {
             query?: never;
@@ -5778,6 +5794,13 @@ export interface components {
          * @enum {string}
          */
         PageAnimation: "off" | "slide" | "fade";
+        PageCountResponse: {
+            /** @description The archive's *actual* page count, read live from the file. Authoritative
+             *     over the DB's `issue.page_count`, which can drift (stale scan, or sourced
+             *     from a ComicInfo `<PageCount>`); the editor builds its tiles from this so
+             *     it never shows a phantom page that isn't in the archive. */
+            page_count: number;
+        };
         /** @description One page-level operation. Ordinals are 0-based positions in the page
          *     list *as it stands when the op is applied* (ops are sequential). */
         PageOp: {
@@ -10210,6 +10233,49 @@ export interface operations {
                 content?: never;
             };
             /** @description writeback disabled / unsupported format / invalid ops */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    archive_page_count: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description live archive page count */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageCountResponse"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description writeback disabled / unsupported format / unreadable */
             422: {
                 headers: {
                     [name: string]: unknown;

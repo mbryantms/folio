@@ -71,6 +71,7 @@ export type BulkArchiveOp = Schemas["BulkArchiveOp"];
 export type BulkEditRequest = Schemas["BulkEditRequest"];
 export type BulkEditResponse = Schemas["BulkEditResponse"];
 export type BackupStorageView = Schemas["BackupStorageView"];
+export type PageCountResponse = Schemas["PageCountResponse"];
 export type UploadView = Schemas["UploadView"];
 export type NextInSeriesView = Schemas["NextInSeriesView"];
 export type SetRatingReq = Schemas["SetRatingReq"];

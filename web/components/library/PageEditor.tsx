@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/dialog";
 import { PageAdjustDialog } from "@/components/library/PageAdjustDialog";
 import { useArchiveEditMutation, stageImageUpload } from "@/lib/api/mutations";
+import { useArchivePageCount } from "@/lib/api/queries";
 import {
   buildOps,
   hasChanges,
@@ -79,20 +80,35 @@ export function PageEditor({
   onOpenChange: (next: boolean) => void;
 }) {
   const router = useRouter();
-  const pageCount = issue.page_count ?? 0;
   const edit = useArchiveEditMutation(issue.id);
-  const [slots, setSlots] = React.useState<PageSlot[]>(() =>
-    initialSlots(pageCount),
-  );
+  // Build tiles from the archive's *real* page count (read live while the
+  // dialog is open), not the DB `issue.page_count` — that can drift (stale
+  // scan, or sourced from a ComicInfo `<PageCount>`) and would otherwise
+  // render a phantom trailing page the archive doesn't have (deleting which
+  // 422s as "ordinal out of range"). Fall back to the DB value if the live
+  // read fails so the editor still opens.
+  const countQuery = useArchivePageCount(issue.id, open);
+  const resolvedCount: number | null =
+    countQuery.data?.page_count ??
+    (countQuery.isError ? (issue.page_count ?? 0) : null);
+  const loadingCount = open && resolvedCount === null;
+  const displayCount = resolvedCount ?? 0;
+
+  const [slots, setSlots] = React.useState<PageSlot[]>([]);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [uploadingOrig, setUploadingOrig] = React.useState<number | null>(null);
   const [adjustOrig, setAdjustOrig] = React.useState<number | null>(null);
 
-  // Reset the working list each time the dialog opens.
-  const [wasOpen, setWasOpen] = React.useState(false);
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) setSlots(initialSlots(pageCount));
+  // Render-phase reconciliation (this codebase avoids set-state-in-effect):
+  // (re)build the working list once the dialog is open and the real count
+  // resolves, and clear it on close so a reopen re-fetches fresh.
+  const [builtFor, setBuiltFor] = React.useState<number | null>(null);
+  if (open && resolvedCount !== null && resolvedCount !== builtFor) {
+    setBuiltFor(resolvedCount);
+    setSlots(initialSlots(resolvedCount));
+  } else if (!open && builtFor !== null) {
+    setBuiltFor(null);
+    setSlots([]);
   }
 
   const sensors = useSensors(
@@ -166,7 +182,11 @@ export function PageEditor({
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto px-6 py-4">
-            {pageCount === 0 ? (
+            {loadingCount ? (
+              <div className="text-muted-foreground flex items-center gap-2 py-12 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading pages…
+              </div>
+            ) : displayCount === 0 ? (
               <p className="text-muted-foreground text-sm">
                 This issue has no pages to edit.
               </p>
@@ -208,7 +228,7 @@ export function PageEditor({
 
           <DialogFooter className="border-border flex items-center justify-between gap-2 border-t px-6 py-4 sm:justify-between">
             <span className="text-muted-foreground text-xs">
-              {survivors} of {pageCount} pages kept
+              {survivors} of {displayCount} pages kept
             </span>
             <div className="flex items-center gap-2">
               <Button
@@ -221,7 +241,7 @@ export function PageEditor({
               </Button>
               <Button
                 type="button"
-                disabled={!dirty || edit.isPending}
+                disabled={!dirty || edit.isPending || loadingCount}
                 onClick={() => setConfirmOpen(true)}
               >
                 Apply changes

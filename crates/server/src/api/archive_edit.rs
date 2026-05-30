@@ -35,9 +35,60 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(edit))
         .routes(routes!(bulk_edit))
+        .routes(routes!(page_count))
         .routes(routes!(restore))
         .routes(routes!(backups))
         .routes(routes!(upload))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PageCountResponse {
+    /// The archive's *actual* page count, read live from the file. Authoritative
+    /// over the DB's `issue.page_count`, which can drift (stale scan, or sourced
+    /// from a ComicInfo `<PageCount>`); the editor builds its tiles from this so
+    /// it never shows a phantom page that isn't in the archive.
+    pub page_count: usize,
+}
+
+#[utoipa::path(
+    operation_id = "archive_page_count",    get,
+    path = "/issues/{id}/archive/page-count",
+    params(("id" = String, Path,)),
+    responses(
+        (status = 200, body = PageCountResponse, description = "live archive page count"),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "issue not found"),
+        (status = 422, description = "writeback disabled / unsupported format / unreadable"),
+    )
+)]
+#[handler]
+pub async fn page_count(
+    State(app): State<AppState>,
+    _admin: RequireAdmin,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    let (row, _lib) = match preflight(&app, &id).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let file_path = row.file_path.clone();
+    let limits = app.cfg().archive_limits();
+    match tokio::task::spawn_blocking(move || {
+        archive::open(std::path::Path::new(&file_path), limits).map(|c| c.pages().len())
+    })
+    .await
+    {
+        Ok(Ok(n)) => (StatusCode::OK, Json(PageCountResponse { page_count: n })).into_response(),
+        Ok(Err(e)) => error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "archive.unreadable",
+            &e.to_string(),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "archive page-count: join failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        }
+    }
 }
 
 /// Upper bound on a single bulk request. A large but bounded fan-out keeps

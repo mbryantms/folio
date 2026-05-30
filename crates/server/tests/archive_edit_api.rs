@@ -242,6 +242,40 @@ async fn bulk_edit_rejects_empty_selection() {
 }
 
 #[tokio::test]
+async fn page_count_returns_real_archive_count() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    // The archive truly has 2 pages; the endpoint reads the file, so it
+    // returns 2 regardless of whatever `issue.page_count` the DB carries —
+    // which is the whole point (the editor must not trust a drifted count).
+    let issue_id = seed(&app, dir.path(), true, "pc.cbz", cbz_two_pages()).await;
+
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/api/issues/{issue_id}/archive/page-count"))
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        auth.session, auth.csrf
+                    ),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["page_count"], 2);
+}
+
+#[tokio::test]
 async fn dry_run_returns_page_counts() {
     let app = TestApp::spawn().await;
     let auth = register_admin(&app).await;

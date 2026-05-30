@@ -52,6 +52,7 @@ import type {
   CrossLibScanRunView,
   HealthIssueView,
   NextUpView,
+  PageCountResponse,
   OnDeckView,
   PageListView,
   PreviewReq,
@@ -239,6 +240,8 @@ export const queryKeys = {
   health: (libraryId: string) => ["libraries", libraryId, "health"] as const,
   backupStorage: (libraryId: string) =>
     ["libraries", libraryId, "backup-storage"] as const,
+  archivePageCount: (issueId: string) =>
+    ["issues", issueId, "archive", "page-count"] as const,
   /** Cross-library findings — admin findings page + dashboard cards. */
   adminHealthIssues: (filters: {
     library_id?: string;
@@ -657,6 +660,24 @@ export function useHealthIssues(libraryId: string) {
     queryFn: () =>
       jsonFetch<HealthIssueView[]>(`/libraries/${libraryId}/health-issues`),
     enabled: !!libraryId,
+  });
+}
+
+/**
+ * Live archive page count for an issue — the *actual* count read from the
+ * file, authoritative over the DB's `issue.page_count` (which can drift). The
+ * page editor uses this to build its tiles so it never shows a phantom page.
+ * `enabled` gates it to when the editor is open.
+ */
+export function useArchivePageCount(issueId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.archivePageCount(issueId),
+    enabled: enabled && !!issueId,
+    queryFn: () =>
+      jsonFetch<PageCountResponse>(
+        `/issues/${encodeURIComponent(issueId)}/archive/page-count`,
+      ),
+    staleTime: 0,
   });
 }
 

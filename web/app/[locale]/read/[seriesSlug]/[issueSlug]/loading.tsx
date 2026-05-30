@@ -1,5 +1,7 @@
 import { Loader2 } from "lucide-react";
 
+import { LoadingWatchdog } from "@/components/LoadingWatchdog";
+
 /**
  * Reader-route Suspense fallback. The reader's server component fans out
  * to several API calls (issue detail → progress → prefs) before it can
@@ -22,6 +24,7 @@ export default function ReaderLoading() {
       role="status"
       aria-live="polite"
     >
+      <LoadingWatchdog />
       {/* Faux chrome bar — same height/padding contract as ReaderChrome
           so the real bar slides in over the same footprint. */}
       <div className="bg-reader-chrome/85 fixed inset-x-0 top-0 z-30 flex items-center gap-3 border-b border-neutral-800/80 px-[max(0.75rem,var(--safe-left))] pt-[max(0.5rem,var(--safe-top))] pb-2 backdrop-blur">

@@ -3000,6 +3000,42 @@
         }
       }
     },
+    "/api/issues/{id}/archive/page-count": {
+      "get": {
+        "operationId": "archive_page_count",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "live archive page count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageCountResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          },
+          "422": {
+            "description": "writeback disabled / unsupported format / unreadable"
+          }
+        }
+      }
+    },
     "/api/issues/{id}/archive/restore": {
       "post": {
         "operationId": "archive_edit_restore",
@@ -14379,6 +14415,19 @@
           "slide",
           "fade"
         ]
+      },
+      "PageCountResponse": {
+        "type": "object",
+        "required": [
+          "page_count"
+        ],
+        "properties": {
+          "page_count": {
+            "type": "integer",
+            "description": "The archive's *actual* page count, read live from the file. Authoritative\nover the DB's `issue.page_count`, which can drift (stale scan, or sourced\nfrom a ComicInfo `<PageCount>`); the editor builds its tiles from this so\nit never shows a phantom page that isn't in the archive.",
+            "minimum": 0
+          }
+        }
       },
       "PageOp": {
         "oneOf": [
