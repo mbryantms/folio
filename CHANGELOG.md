@@ -15,7 +15,7 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
-## [0.7.17] - TBD
+## [0.7.17] - 2026-05-30
 
 ### Changed
 
