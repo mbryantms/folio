@@ -15,6 +15,19 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.18] - TBD
+
+### Fixed
+
+- **The UI no longer locks up after saving an archive edit.** Removing a page
+  (or any page-editor save) closed the confirm dialog and the editor in the same
+  tick as the background `router.refresh()`. Radix sets `pointer-events: none` on
+  `<body>` while a dialog is open and restores it on close; closing two nested
+  dialogs while a soft RSC refresh ran raced that restore, and since the refresh
+  doesn't remount the app shell (whose mount effect clears the lock), the whole
+  page stayed unclickable until a hard refresh. The save now defers the refresh
+  past the dialog close and clears any residual body lock itself.
+
 ## [0.7.17] - 2026-05-30
 
 ### Changed

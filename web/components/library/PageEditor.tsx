@@ -160,9 +160,22 @@ export function PageEditor({
         onSuccess: () => {
           setConfirmOpen(false);
           onOpenChange(false);
-          // The rewrite + rescan run in the background; refresh once the
-          // request is accepted so the page re-fetches when the scan lands.
-          router.refresh();
+          // Radix sets `pointer-events: none` on <body> while a dialog is
+          // open and only restores it once the last one closes. Closing the
+          // confirm AlertDialog and the editor Dialog together, in the same
+          // tick as the RSC `router.refresh()` below, races that restore —
+          // and because a soft refresh doesn't remount MainShell (whose mount
+          // effect clears the lock), the body can stay unclickable until a
+          // hard reload. Defer the refresh past the close and clear any
+          // residual lock ourselves. Mirrors the workaround in MainShell.
+          setTimeout(() => {
+            if (typeof document !== "undefined") {
+              document.body.style.pointerEvents = "";
+            }
+            // The rewrite + rescan run in the background; refresh so the page
+            // re-fetches when the scan lands.
+            router.refresh();
+          }, 0);
         },
       },
     );
