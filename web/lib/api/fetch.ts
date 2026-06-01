@@ -2,9 +2,9 @@
  * Server-side fetch helper used by RSC pages. Forwards the user's cookies to
  * the Rust API so per-user filtering (library ACLs) applies.
  *
- * Client-side code uses `lib/api/client.ts` (or `apiFetch` in
- * `auth-refresh.ts`) instead. All three helpers route through the
- * Rust binary's `/api/` namespace so they don't collide with HTML
+ * Client-side code uses `apiFetch` (in `auth-refresh.ts`) and the
+ * mutation hooks in `lib/api/mutations/` instead. Both route through
+ * the Rust binary's `/api/` namespace so they don't collide with HTML
  * page paths — callers pass the bare backend path here and the
  * helper prepends `/api`.
  */
