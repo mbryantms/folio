@@ -10,6 +10,7 @@ import {
   SeriesCard,
   SeriesCardSkeleton,
 } from "@/components/library/SeriesCard";
+import { CoverPriorityProvider } from "@/components/library/cover-priority";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { RailIconPicker } from "@/components/library/RailIconPicker";
 import {
@@ -54,9 +55,13 @@ const RAIL_PREVIEW_LIMIT = 30;
 export function SavedViewRail({
   view,
   cardSize,
+  priority = false,
 }: {
   view: SavedViewView;
   cardSize: number;
+  /** First/above-the-fold rail: eager-load + high-priority its covers so
+   *  the LCP image isn't deferred. Off for every other rail. */
+  priority?: boolean;
 }) {
   // System rails (Continue reading / On deck) hide themselves entirely when
   // there's nothing to show — no point rendering an empty header on a
@@ -79,12 +84,14 @@ export function SavedViewRail({
       style={{ gap: "var(--density-rail-inner-gap)" }}
     >
       <RailHeader view={view} />
-      <HorizontalScrollRail
-        viewAllHref={railContent.hasMore ? viewDetailHref(view) : undefined}
-        itemWidthPx={cardSize}
-      >
-        {railContent.body}
-      </HorizontalScrollRail>
+      <CoverPriorityProvider value={priority}>
+        <HorizontalScrollRail
+          viewAllHref={railContent.hasMore ? viewDetailHref(view) : undefined}
+          itemWidthPx={cardSize}
+        >
+          {railContent.body}
+        </HorizontalScrollRail>
+      </CoverPriorityProvider>
     </section>
   );
 }

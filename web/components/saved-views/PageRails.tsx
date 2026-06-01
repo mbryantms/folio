@@ -104,8 +104,15 @@ export function PageRails({
           className="flex flex-col"
           style={{ gap: "var(--density-rail-gap)" }}
         >
-          {items.map((view) => (
-            <LazyRail key={view.id} view={view} cardSize={cardSize} />
+          {items.map((view, idx) => (
+            <LazyRail
+              key={view.id}
+              view={view}
+              cardSize={cardSize}
+              // Prioritize the first (above-the-fold) rail's covers — the
+              // LCP element lives there; the rest stay lazy.
+              priority={idx === 0}
+            />
           ))}
         </div>
       )}

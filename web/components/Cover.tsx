@@ -2,6 +2,8 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 
+import { useCoverPriority } from "@/components/library/cover-priority";
+
 /**
  * Single-cover component used by the library grid, rails, series page,
  * issue page.
@@ -31,7 +33,11 @@ export function Cover({
   fallback?: string | null;
   className?: string;
 }) {
-  const [loaded, setLoaded] = useState(false);
+  // Above-the-fold rails flag their subtree (see `CoverPriorityProvider`).
+  // A prioritized cover eager-loads at high fetch priority and skips the
+  // fade — it's the LCP candidate, so paint it as soon as it decodes.
+  const priority = useCoverPriority();
+  const [loaded, setLoaded] = useState(priority);
   const ref = useRef<HTMLImageElement>(null);
 
   useLayoutEffect(() => {
@@ -50,7 +56,8 @@ export function Cover({
           ref={ref}
           src={src}
           alt={alt}
-          loading="lazy"
+          loading={priority ? "eager" : "lazy"}
+          fetchPriority={priority ? "high" : undefined}
           decoding="async"
           onLoad={() => setLoaded(true)}
           onError={() => setLoaded(true)}

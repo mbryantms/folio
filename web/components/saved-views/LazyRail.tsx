@@ -29,12 +29,19 @@ import type { SavedViewView } from "@/lib/api/types";
 export function LazyRail({
   view,
   cardSize,
+  priority = false,
 }: {
   view: SavedViewView;
   cardSize: number;
+  /** First/above-the-fold rail: mount immediately (skip the
+   *  intersection-observer wait) and eager-load its covers, so the LCP
+   *  cover paints fast instead of being deferred. */
+  priority?: boolean;
 }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
-  const [mounted, setMounted] = React.useState(false);
+  // The priority rail is in view at load — mount now rather than waiting
+  // for the observer to fire.
+  const [mounted, setMounted] = React.useState(priority);
 
   React.useEffect(() => {
     if (mounted) return;
@@ -72,7 +79,7 @@ export function LazyRail({
   }, [mounted]);
 
   if (mounted) {
-    return <SavedViewRail view={view} cardSize={cardSize} />;
+    return <SavedViewRail view={view} cardSize={cardSize} priority={priority} />;
   }
 
   // Height estimate: one card-height row + ~120px for the title row
