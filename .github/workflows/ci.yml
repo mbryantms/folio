@@ -87,8 +87,14 @@ jobs:
       # files stay in `web/tests/e2e/` so contributors can still run
       # them locally via `pnpm --filter web run test:e2e`. Restore
       # this step once the harness lands.
+      # Blocking as of the 2026-06 dependency audit: docs-site
+      # transitive highs were remediated via root `pnpm.overrides`, so
+      # the tree is high-clean. A new high-severity advisory now fails
+      # CI. Accepted moderates (e.g. the sockjs→uuid dev-server-only
+      # advisory) are documented in SECURITY-EXCEPTIONS.md and sit
+      # below this `--audit-level=high` gate.
       - name: pnpm audit
-        run: pnpm audit --audit-level=high || true
+        run: pnpm audit --audit-level=high
 
   docs-build:
     name: Docs site — build

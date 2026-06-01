@@ -30,3 +30,20 @@ jobs:
           version: 10.33.2
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level=high
+
+  # Cross-ecosystem advisory sweep over both lockfiles (Cargo.lock +
+  # pnpm-lock.yaml) using the OSV database. Defense-in-depth alongside
+  # cargo-audit/cargo-deny (RustSec) and pnpm audit (GitHub advisories);
+  # OSV aggregates additional sources and catches transitive npm/cargo
+  # advisories the ecosystem-native tools may not yet carry.
+  osv-scan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google/osv-scanner-action@v2.0.2
+        with:
+          scan-args: |-
+            --lockfile=Cargo.lock
+            --lockfile=pnpm-lock.yaml

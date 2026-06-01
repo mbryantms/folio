@@ -1,0 +1,79 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard", ":semanticCommits"],
+  "timezone": "UTC",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 8,
+  "rangeStrategy": "bump",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    {
+      "description": "Auto-merge non-0.x patch/minor once CI (lint/typecheck/test/build + audits) is green.",
+      "matchManagers": ["npm", "cargo"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "matchCurrentVersion": "!/^0\\./",
+      "automerge": true,
+      "automergeType": "branch"
+    },
+    {
+      "description": "0.x deps: any bump can break; never auto-merge.",
+      "matchCurrentVersion": "/^0\\./",
+      "automerge": false,
+      "addLabels": ["zerover-review"]
+    },
+    {
+      "description": "Group Radix UI primitives into one PR.",
+      "groupName": "radix-ui",
+      "matchPackageNames": ["@radix-ui/**"]
+    },
+    {
+      "description": "Group TanStack libraries.",
+      "groupName": "tanstack",
+      "matchPackageNames": ["@tanstack/**"]
+    },
+    {
+      "description": "Group Docusaurus + its plugins (docs-site only).",
+      "groupName": "docusaurus",
+      "matchPackageNames": ["@docusaurus/**", "docusaurus-**"]
+    },
+    {
+      "description": "Majors always require human review + migration.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "addLabels": ["major-review"]
+    },
+    {
+      "description": "Gated majors blocked by project constraints (see plan): eslint 10 needs react-plugin flat-config support; @types/node tracks the Node 22 runtime.",
+      "matchPackageNames": ["eslint", "@types/node"],
+      "automerge": false,
+      "addLabels": ["gated-major"]
+    },
+    {
+      "description": "Known breaking-within-minor packages (2026-06 audit found code-migration needs in minor/0.x bumps). Force manual review even for minor.",
+      "matchPackageNames": [
+        "react-hook-form",
+        "@hookform/resolvers",
+        "openapi-fetch",
+        "openapi-typescript",
+        "@tanstack/react-query"
+      ],
+      "automerge": false,
+      "addLabels": ["needs-migration-review"]
+    },
+    {
+      "description": "Rust HTTP-client trio must move together (oauth2/openidconnect pin reqwest 0.12).",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["reqwest", "oauth2", "openidconnect"],
+      "automerge": false,
+      "groupName": "rust-http-client",
+      "addLabels": ["coordinated-bump"]
+    }
+  ]
+}
