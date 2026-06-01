@@ -1515,11 +1515,7 @@ pub async fn clear_user_pin<C: ConnectionTrait>(
 /// of). Pooled + reused across applies via `LazyLock`.
 static COVER_HTTP: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     reqwest::Client::builder()
-        .user_agent(concat!(
-            "Folio/",
-            env!("CARGO_PKG_VERSION"),
-            " (+cover-fetch)"
-        ))
+        .user_agent(crate::build_info::USER_AGENT_COVER)
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .expect("reqwest client init")

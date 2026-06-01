@@ -320,7 +320,7 @@ Default admin (first registered user becomes admin):
 
   See [`docs/dev/metadata-sidecar-writeback.md`](docs/dev/metadata-sidecar-writeback.md)
   for the architecture, migration recipe, and risk matrix. The M7
-  rollout gauge is `comic_metadata_writeback_libraries_remaining` —
+  rollout gauge is `folio_metadata_writeback_libraries_remaining` —
   once it stays at zero, the follow-up cleanup PR drops the legacy
   DB-direct apply branch.
 

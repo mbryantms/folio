@@ -129,7 +129,7 @@ pub async fn record_failure(mut redis: redis::aio::ConnectionManager, ip: IpAddr
             ttl_secs = secs,
             "failed_auth: IP locked out after {} failures", count
         );
-        metrics::counter!("comic_auth_lockout_total").increment(1);
+        metrics::counter!("folio_auth_lockout_total").increment(1);
     }
 }
 
@@ -192,7 +192,7 @@ pub async fn record_failure_for_email_value(mut redis: redis::aio::ConnectionMan
             "failed_auth(email): account locked out after {} failures",
             count
         );
-        metrics::counter!("comic_auth_lockout_email_total").increment(1);
+        metrics::counter!("folio_auth_lockout_email_total").increment(1);
     }
 }
 

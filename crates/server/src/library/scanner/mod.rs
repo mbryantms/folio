@@ -588,43 +588,43 @@ async fn finalize_run(
     let lib_label = library_id.to_string();
     let result_label = if result.is_ok() { "complete" } else { "failed" };
     metrics::histogram!(
-        "comic_scan_duration_seconds",
+        "folio_scan_duration_seconds",
         "library_id" => lib_label.clone(),
         "result" => result_label,
     )
     .record(stats.elapsed_ms as f64 / 1000.0);
     metrics::counter!(
-        "comic_scan_files_total",
+        "folio_scan_files_total",
         "library_id" => lib_label.clone(),
         "action" => "added",
     )
     .increment(stats.files_added);
     metrics::counter!(
-        "comic_scan_files_total",
+        "folio_scan_files_total",
         "library_id" => lib_label.clone(),
         "action" => "updated",
     )
     .increment(stats.files_updated);
     metrics::counter!(
-        "comic_scan_files_total",
+        "folio_scan_files_total",
         "library_id" => lib_label.clone(),
         "action" => "skipped",
     )
     .increment(stats.files_skipped + stats.files_unchanged);
     metrics::counter!(
-        "comic_scan_files_total",
+        "folio_scan_files_total",
         "library_id" => lib_label.clone(),
         "action" => "removed",
     )
     .increment(stats.issues_removed);
     metrics::counter!(
-        "comic_scan_files_total",
+        "folio_scan_files_total",
         "library_id" => lib_label.clone(),
         "action" => "malformed",
     )
     .increment(stats.files_malformed);
     metrics::counter!(
-        "comic_scan_files_total",
+        "folio_scan_files_total",
         "library_id" => lib_label,
         "action" => "duplicate",
     )

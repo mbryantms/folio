@@ -47,7 +47,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
 
-const USER_AGENT: &str = concat!("Folio/", env!("CARGO_PKG_VERSION"), " (+metadata-fetcher)");
+const USER_AGENT: &str = crate::build_info::USER_AGENT_METADATA;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 

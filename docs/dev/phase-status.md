@@ -70,7 +70,7 @@ Deferred to a follow-up session (Phase 1b stretch / bridge to Phase 2):
 
 Shipped:
 - **Page byte streaming** — `GET /issues/{id}/pages/{n}` with `Range`/`If-Range`/206/416/`Accept-Ranges` semantics, ETag, 16-byte magic-number sniff with allowlist (jpeg/png/webp/avif/gif/jxl), SVG rejection, `Cache-Control: private, max-age=3600` (§17.5). **6 integration tests** covering 200/206/416/415/If-Range round-trip plus **11 unit tests** for the parser and sniffer
-- **ZIP central-directory LRU** — `COMIC_ZIP_LRU_CAPACITY` (default 64); thumbnails + page bytes acquire from cache; eviction drops the `Cbz` (Drop closes FD); Prometheus metrics `comic_zip_lru_open_fds` (gauge), `_hits_total`, `_misses_total`, `_evictions_total` exposed at `/metrics`
+- **ZIP central-directory LRU** — `COMIC_ZIP_LRU_CAPACITY` (default 64); thumbnails + page bytes acquire from cache; eviction drops the `Cbz` (Drop closes FD); Prometheus metrics `folio_zip_lru_open_fds` (gauge), `_hits_total`, `_misses_total`, `_evictions_total` exposed at `/metrics`
 - **`/metrics` Prometheus endpoint** — `metrics-exporter-prometheus` recorder installed at startup; `PrometheusHandle` lives in `AppState`
 - **`Cbz::read_entry_range`** — bounded `[start, len)` reads against any entry, decompress-from-start for both STORED and DEFLATED (with `debug` log on DEFLATED Range hits per spec §B7); 2 new archive tests
 - **Reader UI** — `/read/[id]` RSC shell + client island. Single-page mode, LTR, keyboard (←/→/Space/Esc/m/f), tap zones (left third = prev, right third = next, middle = toggle chrome), fit modes (width/height/original), N+1/N+2 image-element prefetch, `aria-live="polite"` page-N-of-M announcements (§7.4)
@@ -176,8 +176,8 @@ Shipped:
 - **Post-scan job pipeline** — apalis queues for `post_scan_thumbs`,
   `post_scan_search`, `post_scan_dictionary` registered + enqueued at scan
   end. Handlers are stubs today; the wiring is the deliverable
-- **Observability** — `comic_scan_duration_seconds` (histogram),
-  `comic_scan_files_total` (counter), `comic_scan_health_issues_open` (gauge)
+- **Observability** — `folio_scan_duration_seconds` (histogram),
+  `folio_scan_files_total` (counter), `folio_scan_health_issues_open` (gauge)
 
 Tests: ~75 tests passing — new `scan_dispatch` (2), `scanner_smoke` (4),
 `ignore_globs` (4), `health_issues` (3), `identity` (3), `reconcile` (4),

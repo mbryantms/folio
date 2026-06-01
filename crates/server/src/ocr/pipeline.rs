@@ -111,11 +111,11 @@ const DETECTOR_NMS: f32 = 0.5;
 /// warm.
 ///
 /// Records two Prometheus histograms (units: seconds, matching
-/// `comic_reader_next_up_latency_seconds` and friends):
+/// `folio_reader_next_up_latency_seconds` and friends):
 ///
-/// - `comic_ocr_pipeline_seconds` — wall-clock for the whole call,
+/// - `folio_ocr_pipeline_seconds` — wall-clock for the whole call,
 ///   tagged `lang="western"|"manga"`. Spans detector + recognize.
-/// - `comic_ocr_recognize_seconds` — recognize-only time. Tagged
+/// - `folio_ocr_recognize_seconds` — recognize-only time. Tagged
 ///   the same way.
 ///
 /// Use the gap between them to spot detector-bound vs recognizer-
@@ -164,7 +164,7 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
         cache::put_detect(&redis_for_put, &key, &bboxes).await;
     }
 
-    metrics::histogram!("comic_ocr_pipeline_seconds", "lang" => lang_label)
+    metrics::histogram!("folio_ocr_pipeline_seconds", "lang" => lang_label)
         .record(start.elapsed().as_secs_f64());
     Ok(output)
 }
@@ -239,7 +239,7 @@ fn run_blocking(
 
     let recognize_start = std::time::Instant::now();
     let recognition = recognizer.recognize(&final_img)?;
-    metrics::histogram!("comic_ocr_recognize_seconds", "lang" => lang_label)
+    metrics::histogram!("folio_ocr_recognize_seconds", "lang" => lang_label)
         .record(recognize_start.elapsed().as_secs_f64());
 
     Ok((

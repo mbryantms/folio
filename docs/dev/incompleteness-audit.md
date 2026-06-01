@@ -133,10 +133,10 @@
 **Status:** Listed as deferred in the reader-end-of-issue plan. M2 shipped `nextIssue` (`Shift+N`); `prevIssue` (`Shift+P`) wasn't bundled because it needs either a "previous-up" server endpoint or client-side derivation from a series query cache.
 **Action when revisited:** Symmetric `prev-up` endpoint OR client-side lookup from existing data; register `prevIssue` action with `Shift+P` default.
 
-### D-8. `comic_reader_next_up_latency_seconds` histogram — CLOSED 2026-05-15 (cleanup M3)
+### D-8. `folio_reader_next_up_latency_seconds` histogram — CLOSED 2026-05-15 (cleanup M3)
 
 **File:** [crates/server/src/api/next_up.rs](../../crates/server/src/api/next_up.rs)
-**Status:** The reader-end-of-issue M5 plan called for both a counter (shipped: `comic_reader_next_up_resolved_total{source}`) and a latency histogram (not shipped). The histogram was punted as "defer until perf becomes a real concern".
+**Status:** The reader-end-of-issue M5 plan called for both a counter (shipped: `folio_reader_next_up_resolved_total{source}`) and a latency histogram (not shipped). The histogram was punted as "defer until perf becomes a real concern".
 **Action when revisited:** Wrap the handler body with a `metrics::histogram!` timer; expose buckets sized for the series-walk worst case (large libraries).
 
 ### D-9. OTLP exporter wiring — RESOLVED 2026-05-15: considered, not chosen

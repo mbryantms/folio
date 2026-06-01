@@ -66,7 +66,7 @@ if lib.metadata_writeback_enabled && lib.allow_archive_writeback {
 ```
 
 Once every library has been migrated and the
-`comic_metadata_writeback_libraries_remaining` gauge stays at zero
+`folio_metadata_writeback_libraries_remaining` gauge stays at zero
 (M7), the follow-up cleanup PR drops the legacy branch entirely.
 
 ## The composer
@@ -196,7 +196,7 @@ To migrate a single library from DB-direct to XML-first apply:
    `MetadataDriftFromXml` row — if it appears unexpectedly, click
    **Flush pins to archives**.
 6. Once you're confident, repeat on the rest of the libraries. The
-   `comic_metadata_writeback_libraries_remaining` gauge will tick down.
+   `folio_metadata_writeback_libraries_remaining` gauge will tick down.
 
 There's no automatic backfill — pre-existing files keep their original
 XML until the next apply touches them. That's intentional: writeback is
@@ -237,7 +237,7 @@ When reviewing PRs that touch the metadata apply path:
 
 The cleanup PR after M7 will physically remove the legacy DB-direct
 branch from `apply_issue` / `apply_series` once the
-`comic_metadata_writeback_libraries_remaining` gauge stays at zero.
+`folio_metadata_writeback_libraries_remaining` gauge stays at zero.
 
 ## File map
 

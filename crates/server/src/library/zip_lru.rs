@@ -14,10 +14,10 @@ use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-const HITS: &str = "comic_zip_lru_hits_total";
-const MISSES: &str = "comic_zip_lru_misses_total";
-const EVICTIONS: &str = "comic_zip_lru_evictions_total";
-const OPEN_FDS: &str = "comic_zip_lru_open_fds";
+const HITS: &str = "folio_zip_lru_hits_total";
+const MISSES: &str = "folio_zip_lru_misses_total";
+const EVICTIONS: &str = "folio_zip_lru_evictions_total";
+const OPEN_FDS: &str = "folio_zip_lru_open_fds";
 
 pub struct ZipLru {
     inner: Mutex<LruCache<String, Arc<Mutex<Cbz>>>>,

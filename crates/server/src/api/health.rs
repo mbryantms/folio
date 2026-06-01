@@ -41,7 +41,7 @@ pub async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
     let uptime = (chrono::Utc::now() - state.started_at).num_seconds();
     Json(Health {
         status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
+        version: crate::build_info::VERSION,
         uptime_seconds: uptime,
         build_sha: BUILD_SHA,
         build_epoch: BUILD_EPOCH.parse().unwrap_or(0),
@@ -88,7 +88,7 @@ pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
             StatusCode::OK,
             Json(Health {
                 status: "ready",
-                version: env!("CARGO_PKG_VERSION"),
+                version: crate::build_info::VERSION,
                 uptime_seconds: uptime,
                 build_sha: BUILD_SHA,
                 build_epoch: BUILD_EPOCH.parse().unwrap_or(0),

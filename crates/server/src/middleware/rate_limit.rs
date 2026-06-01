@@ -12,7 +12,7 @@
 //!
 //! On denial we return a JSON envelope matching the project's error contract
 //! and set `Retry-After` (seconds). Denials emit
-//! `comic_rate_limit_denied_total{bucket="…"}`.
+//! `folio_rate_limit_denied_total{bucket="…"}`.
 
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
@@ -49,7 +49,7 @@ impl KeyExtractor for ClientIpKey {
 
 /// A single rate-limit bucket. Built once per process via [`Bucket::build`].
 pub struct Bucket {
-    /// Telemetry name for the denial counter (`comic_rate_limit_denied_total{bucket=…}`).
+    /// Telemetry name for the denial counter (`folio_rate_limit_denied_total{bucket=…}`).
     pub name: &'static str,
     /// Replenishment interval — one token per `period`.
     pub period: Duration,
@@ -164,7 +164,7 @@ pub const OCR: Bucket = Bucket {
 fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<Body> {
     match err {
         GovernorError::TooManyRequests { wait_time, headers } => {
-            metrics::counter!("comic_rate_limit_denied_total", "bucket" => bucket).increment(1);
+            metrics::counter!("folio_rate_limit_denied_total", "bucket" => bucket).increment(1);
             tracing::info!(bucket, wait_time, "rate limit denied");
             // tower_governor floors `wait_time` to integer seconds, which
             // can be 0 when the bucket trips mid-second. Floor to 1 so the
@@ -194,7 +194,7 @@ fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<B
             )
         }
         GovernorError::Other { msg, code, headers } => {
-            metrics::counter!("comic_rate_limit_denied_total", "bucket" => bucket).increment(1);
+            metrics::counter!("folio_rate_limit_denied_total", "bucket" => bucket).increment(1);
             envelope_response(
                 code,
                 "rate_limited",

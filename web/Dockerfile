@@ -44,7 +44,7 @@ WORKDIR /app
 
 LABEL org.opencontainers.image.title="Folio Web" \
       org.opencontainers.image.description="Self-hostable comic reader (Next.js frontend)" \
-      org.opencontainers.image.source="https://github.com/mtbry/folio" \
+      org.opencontainers.image.source="https://github.com/mbryantms/folio" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
 # Next.js standalone layout:

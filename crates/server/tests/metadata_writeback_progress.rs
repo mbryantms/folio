@@ -1,7 +1,7 @@
 //! M7 of `metadata-sidecar-writeback-1.0`: writeback-rollout progress
 //! metric.
 //!
-//! The Prometheus gauge `comic_metadata_writeback_libraries_remaining`
+//! The Prometheus gauge `folio_metadata_writeback_libraries_remaining`
 //! exposes how many libraries still have writeback disabled — operators
 //! watch it tick toward zero before approving the follow-up cleanup PR
 //! that drops the legacy DB-direct apply branch.

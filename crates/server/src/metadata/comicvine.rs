@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 /// User-agent reported to CV — TOS asks for a unique identifier.
-const USER_AGENT: &str = concat!("Folio/", env!("CARGO_PKG_VERSION"), " (+metadata-fetcher)");
+const USER_AGENT: &str = crate::build_info::USER_AGENT_METADATA;
 
 /// Floor between successful API calls. ComicVine's documented rate
 /// is "≤ 1 req/sec sustained"; we conservatively wait 1s + a small

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 const INDEX_TTL: Duration = Duration::hours(1);
-const USER_AGENT: &str = concat!("Folio/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = crate::build_info::USER_AGENT;
 const MAX_BLOB_BYTES: usize = 4 * 1024 * 1024;
 
 /// Cached parse of a repo's tree, filtered to `*.cbl` entries.

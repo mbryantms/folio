@@ -162,10 +162,10 @@ per `(content_hash, …)` but a finite TTL caps Redis size.
 
 **Metrics**:
 
-- `comic_ocr_cache_hits_total` / `comic_ocr_cache_misses_total`
+- `folio_ocr_cache_hits_total` / `folio_ocr_cache_misses_total`
   — counter (result cache).
-- `comic_ocr_detect_cache_hits_total` /
-  `comic_ocr_detect_cache_misses_total` — counter (detector cache).
+- `folio_ocr_detect_cache_hits_total` /
+  `folio_ocr_detect_cache_misses_total` — counter (detector cache).
 
 ## OpenMP threads (`OMP_NUM_THREADS`)
 
@@ -197,17 +197,17 @@ Per-IP token bucket via `tower_governor`. Bucket: `OCR` =
 [`crates/server/src/middleware/rate_limit.rs`](../../crates/server/src/middleware/rate_limit.rs).
 Reader users won't notice — the bucket caps a runaway script, not
 manual bubble exploration. Denied requests increment
-`comic_rate_limit_denied_total{bucket="ocr"}`.
+`folio_rate_limit_denied_total{bucket="ocr"}`.
 
 ## Telemetry
 
 | Metric | Type | Labels | Purpose |
 |---|---|---|---|
-| `comic_ocr_cache_hits_total` | counter | — | Cache effectiveness |
-| `comic_ocr_cache_misses_total` | counter | — | Pair with hits for hit-rate |
-| `comic_ocr_pipeline_seconds` | histogram | `lang` | Wall time, detector + recognize (recorded only on success path) |
-| `comic_ocr_recognize_seconds` | histogram | `lang` | Recognize-only — diff with `pipeline_seconds` exposes detector cost |
-| `comic_rate_limit_denied_total{bucket="ocr"}` | counter | `bucket` | OCR bucket denials |
+| `folio_ocr_cache_hits_total` | counter | — | Cache effectiveness |
+| `folio_ocr_cache_misses_total` | counter | — | Pair with hits for hit-rate |
+| `folio_ocr_pipeline_seconds` | histogram | `lang` | Wall time, detector + recognize (recorded only on success path) |
+| `folio_ocr_recognize_seconds` | histogram | `lang` | Recognize-only — diff with `pipeline_seconds` exposes detector cost |
+| `folio_rate_limit_denied_total{bucket="ocr"}` | counter | `bucket` | OCR bucket denials |
 
 All visible at `/metrics`. Operator dashboards reading these should
 key on `lang` to spot manga-OCR-bound vs western-OCR-bound boxes.

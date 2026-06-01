@@ -217,10 +217,10 @@ Two Prometheus metrics exposed at `/metrics`:
 
 | Metric | Type | Labels | What it measures |
 |---|---|---|---|
-| `comic_reader_next_up_resolved_total` | counter | `source` ∈ {`cbl`, `series`, `none`} | One increment per resolution; lets you see the CBL/series/caught-up mix per user activity. |
-| `comic_reader_next_up_latency_seconds` | histogram | none | End-to-end handler latency on every return path (Drop-on-exit timer in [`next_up.rs`](../../crates/server/src/api/next_up.rs)). Default Prometheus buckets cover 5 ms → 10 s — the series-walk worst case (large libraries) lives at the upper end. |
-| `comic_reader_prev_up_resolved_total` | counter | `source` ∈ {`cbl`, `series`, `none`} | Sibling of the next-up counter; lets you compare nav direction usage. |
-| `comic_reader_prev_up_latency_seconds` | histogram | none | Same shape as the next-up histogram; same `LatencyTimer` instrumentation pattern. |
+| `folio_reader_next_up_resolved_total` | counter | `source` ∈ {`cbl`, `series`, `none`} | One increment per resolution; lets you see the CBL/series/caught-up mix per user activity. |
+| `folio_reader_next_up_latency_seconds` | histogram | none | End-to-end handler latency on every return path (Drop-on-exit timer in [`next_up.rs`](../../crates/server/src/api/next_up.rs)). Default Prometheus buckets cover 5 ms → 10 s — the series-walk worst case (large libraries) lives at the upper end. |
+| `folio_reader_prev_up_resolved_total` | counter | `source` ∈ {`cbl`, `series`, `none`} | Sibling of the next-up counter; lets you compare nav direction usage. |
+| `folio_reader_prev_up_latency_seconds` | histogram | none | Same shape as the next-up histogram; same `LatencyTimer` instrumentation pattern. |
 
 ## See also
 

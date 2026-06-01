@@ -315,7 +315,7 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
     let feed_title = if app.cfg().is_komga_compat() {
         "Komga OPDS catalog"
     } else {
-        "Comic Reader"
+        "Folio"
     };
     let komga_author = komga_compat_author(&app);
 

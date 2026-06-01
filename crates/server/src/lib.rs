@@ -9,6 +9,7 @@ pub mod api;
 pub mod archive_rewrite;
 pub mod audit;
 pub mod auth;
+pub mod build_info;
 pub mod cbl;
 pub mod email;
 pub mod jobs;

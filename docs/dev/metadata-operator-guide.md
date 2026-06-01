@@ -354,7 +354,7 @@ clears it on the next page refresh.
 
 ### Rollout progress metric
 
-Prometheus gauge `comic_metadata_writeback_libraries_remaining`
+Prometheus gauge `folio_metadata_writeback_libraries_remaining`
 counts libraries still in legacy DB-direct mode. Refreshed at server
 boot and weekly at 04:00 UTC Monday. Once the gauge stays at zero
 across all your libraries, the follow-up code-quality cleanup PR can

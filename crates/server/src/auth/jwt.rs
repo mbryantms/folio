@@ -41,7 +41,15 @@ pub struct JwtKeys {
     audience: String,
 }
 
-const AUDIENCE: &str = "comic-reader";
+/// Audience (`aud`) claim minted into new access tokens.
+const AUDIENCE: &str = "folio";
+/// Legacy audience still accepted during verification so access tokens
+/// issued before the 2026-06 `comic-reader` → `folio` rename keep
+/// validating for the rest of their (≤24h) TTL — i.e. no forced
+/// re-login on upgrade. Refresh tokens don't carry `aud`, so refresh
+/// keeps working and mints new `folio`-audience access tokens. Safe to
+/// drop one access-TTL after this ships.
+const LEGACY_AUDIENCE: &str = "comic-reader";
 
 impl JwtKeys {
     pub fn from_secret(signing: &SigningKey, public_url: &str) -> anyhow::Result<Self> {
@@ -97,7 +105,7 @@ impl JwtKeys {
 
     pub fn verify_access(&self, token: &str) -> anyhow::Result<AccessClaims> {
         let mut v = Validation::new(Algorithm::EdDSA);
-        v.set_audience(&[&self.audience]);
+        v.set_audience(&[self.audience.as_str(), LEGACY_AUDIENCE]);
         v.set_issuer(&[&self.issuer]);
         v.leeway = 60;
         Ok(decode::<AccessClaims>(token, &self.dec, &v)?.claims)

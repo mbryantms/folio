@@ -512,7 +512,7 @@ impl HealthCollector {
                 .await
                 .unwrap_or(0);
             metrics::gauge!(
-                "comic_scan_health_issues_open",
+                "folio_scan_health_issues_open",
                 "library_id" => self.library_id.to_string(),
                 "severity" => sev,
             )

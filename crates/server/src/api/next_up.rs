@@ -146,7 +146,7 @@ pub async fn next_up(
     // without restructuring the early-return chains below. Default
     // Prometheus buckets cover the range we care about
     // (5ms → 10s); the series-walk worst case lives in the upper end.
-    let _latency = LatencyTimer::new("comic_reader_next_up_latency_seconds");
+    let _latency = LatencyTimer::new("folio_reader_next_up_latency_seconds");
 
     let acl = access::for_user(&app, &user).await;
 
@@ -248,10 +248,10 @@ pub async fn next_up(
     }
 }
 
-/// Bumps the `comic_reader_next_up_resolved_total{source=…}` counter.
+/// Bumps the `folio_reader_next_up_resolved_total{source=…}` counter.
 /// Sampled label cardinality is bounded to {cbl, series, none}.
 fn record_resolved(source: &'static str) {
-    metrics::counter!("comic_reader_next_up_resolved_total", "source" => source).increment(1);
+    metrics::counter!("folio_reader_next_up_resolved_total", "source" => source).increment(1);
 }
 
 /// Records a named histogram on drop. Owned by handler entries as
@@ -856,7 +856,7 @@ pub async fn prev_up(
     AxPath(issue_id): AxPath<String>,
     Query(q): Query<NextUpQuery>,
 ) -> Response {
-    let _latency = LatencyTimer::new("comic_reader_prev_up_latency_seconds");
+    let _latency = LatencyTimer::new("folio_reader_prev_up_latency_seconds");
 
     let acl = access::for_user(&app, &user).await;
 
@@ -941,7 +941,7 @@ pub async fn prev_up(
 }
 
 fn record_resolved_prev(source: &'static str) {
-    metrics::counter!("comic_reader_prev_up_resolved_total", "source" => source).increment(1);
+    metrics::counter!("folio_reader_prev_up_resolved_total", "source" => source).increment(1);
 }
 
 /// CBL branch of the prev-up resolver. Same outcome enum as the

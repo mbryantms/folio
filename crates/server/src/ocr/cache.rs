@@ -22,8 +22,8 @@
 //! broken." That matches the failed-auth lockout module's
 //! fail-open posture.
 //!
-//! Hits/misses emit `comic_ocr_cache_hits_total` and
-//! `comic_ocr_cache_misses_total` counters for operator dashboards.
+//! Hits/misses emit `folio_ocr_cache_hits_total` and
+//! `folio_ocr_cache_misses_total` counters for operator dashboards.
 
 use std::time::Duration;
 
@@ -78,7 +78,7 @@ pub async fn get(redis: &ConnectionManager, key: &str) -> Option<OcrResponse> {
     match conn.get::<_, Option<String>>(key).await {
         Ok(Some(raw)) => match serde_json::from_str::<OcrResponse>(&raw) {
             Ok(resp) => {
-                metrics::counter!("comic_ocr_cache_hits_total").increment(1);
+                metrics::counter!("folio_ocr_cache_hits_total").increment(1);
                 Some(resp)
             }
             Err(e) => {
@@ -89,7 +89,7 @@ pub async fn get(redis: &ConnectionManager, key: &str) -> Option<OcrResponse> {
             }
         },
         Ok(None) => {
-            metrics::counter!("comic_ocr_cache_misses_total").increment(1);
+            metrics::counter!("folio_ocr_cache_misses_total").increment(1);
             None
         }
         Err(e) => {
@@ -150,7 +150,7 @@ pub async fn get_detect(redis: &ConnectionManager, key: &str) -> Option<Vec<Cach
     match conn.get::<_, Option<String>>(key).await {
         Ok(Some(raw)) => match serde_json::from_str::<Vec<CachedBbox>>(&raw) {
             Ok(bboxes) => {
-                metrics::counter!("comic_ocr_detect_cache_hits_total").increment(1);
+                metrics::counter!("folio_ocr_detect_cache_hits_total").increment(1);
                 Some(bboxes)
             }
             Err(e) => {
@@ -159,7 +159,7 @@ pub async fn get_detect(redis: &ConnectionManager, key: &str) -> Option<Vec<Cach
             }
         },
         Ok(None) => {
-            metrics::counter!("comic_ocr_detect_cache_misses_total").increment(1);
+            metrics::counter!("folio_ocr_detect_cache_misses_total").increment(1);
             None
         }
         Err(e) => {

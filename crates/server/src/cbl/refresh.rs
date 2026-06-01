@@ -82,7 +82,7 @@ async fn fetch_url_and_apply(
     }
 
     let client = reqwest::Client::builder()
-        .user_agent(concat!("Folio/", env!("CARGO_PKG_VERSION")))
+        .user_agent(crate::build_info::USER_AGENT)
         .timeout(std::time::Duration::from_secs(30))
         .redirect(crate::util::ssrf::outbound_redirect_policy(2))
         .build()

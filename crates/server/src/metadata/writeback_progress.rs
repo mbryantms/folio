@@ -2,7 +2,7 @@
 //!
 //! Counts libraries the operator hasn't yet flipped to writeback mode.
 //! Surfaced as the Prometheus gauge
-//! `comic_metadata_writeback_libraries_remaining`, refreshed by the
+//! `folio_metadata_writeback_libraries_remaining`, refreshed by the
 //! [`crate::jobs::scheduler::refresh_writeback_remaining_gauge`] hook
 //! at boot + weekly. Once the gauge stays at zero in production the
 //! legacy DB-direct apply branch in

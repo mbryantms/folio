@@ -42,7 +42,7 @@ For HTML pages served by Next.js, a per-request **nonce** is injected by Next.js
 
 ## Reporting
 
-CSP violation reports POST to `/csp-report`. Modern browsers send `application/reports+json` envelopes; legacy send `application/csp-report`. The handler accepts both, increments the `comic_csp_violations_total` counter, and logs at `warn` with the full report body.
+CSP violation reports POST to `/csp-report`. Modern browsers send `application/reports+json` envelopes; legacy send `application/csp-report`. The handler accepts both, increments the `folio_csp_violations_total` counter, and logs at `warn` with the full report body.
 
 Rate-limited (§17.7): 100/min/IP. A misbehaving extension can otherwise flood the endpoint.
 

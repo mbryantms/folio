@@ -529,7 +529,7 @@ The library service holds a small LRU of `(issue_id → (File handle, parsed cen
 
 - **Default capacity:** 64 entries (≈ 64 open FDs + a few KB each). Tune via `COMIC_ZIP_LRU_CAPACITY`.
 - Eviction policy: LRU; eviction **must close the FD** (`Drop` impl on the holder).
-- Prometheus metrics: `comic_zip_lru_open_fds` (gauge), `comic_zip_lru_evictions_total` (counter), `comic_zip_lru_hits_total` / `_misses_total`.
+- Prometheus metrics: `folio_zip_lru_open_fds` (gauge), `folio_zip_lru_evictions_total` (counter), `folio_zip_lru_hits_total` / `_misses_total`.
 - The reader's prefetch pattern (N+2 / N-1) means the LRU should comfortably fit the working set of 50 concurrent readers each on one issue.
 - For deflated entries (rare; CBZ is usually stored), Range requests on the page byte endpoint require decompression-from-start. Server handles correctly but logs at `debug` so that misconfigured archives are visible.
 
@@ -1225,7 +1225,7 @@ comic-reader/
 - Bundle-size regressions caught by `@next/bundle-analyzer` size-limit check; reader route fails CI if it exceeds the §18.1 budget.
 
 ### 16.5 Load tests by phase
-- **End of Phase 2 (soak):** k6 script — 10 concurrent readers turn pages for 1 hour against `compose.prod.yml`. Assertions: no FD leak (`/metrics` `comic_zip_lru_open_fds` ≤ capacity), RSS does not grow > 10 % from start, no 5xx responses.
+- **End of Phase 2 (soak):** k6 script — 10 concurrent readers turn pages for 1 hour against `compose.prod.yml`. Assertions: no FD leak (`/metrics` `folio_zip_lru_open_fds` ≤ capacity), RSS does not grow > 10 % from start, no 5xx responses.
 - **End of Phase 4 (sync stress):** 100 simulated clients connect/disconnect with offline edits via a Rust harness exercising the Automerge sync protocol. Assertions: convergence (all replicas equal after final sync), per-doc size stays under 16 MiB, no panics.
 - **Phase 6 (full):** the four scenarios in §18.3 plus a 1k-issue scan benchmark.
 

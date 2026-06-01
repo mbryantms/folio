@@ -151,8 +151,8 @@ async fn compat_off_omits_komga_author_from_root_feed() {
         "default-off OPDS root must not advertise as Komga: {body}"
     );
     assert!(
-        body.contains("<title>Comic Reader</title>"),
-        "default-off root title remains Folio's `Comic Reader`: {body}"
+        body.contains("<title>Folio</title>"),
+        "default-off root feed title is Folio's own `Folio`: {body}"
     );
 }
 
@@ -254,7 +254,7 @@ async fn compat_komga_can_be_toggled_back_off() {
         "after toggling off, the Komga author element is gone: {off_body}"
     );
     assert!(
-        off_body.contains("<title>Comic Reader</title>"),
+        off_body.contains("<title>Folio</title>"),
         "after toggling off, the Folio title is restored: {off_body}"
     );
 }

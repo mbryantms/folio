@@ -37,10 +37,10 @@ Without `COMIC_TRUSTED_PROXIES` set, every request appears to come from the reve
 
 ## Metrics
 
-- `comic_rate_limit_denied_total{bucket="…"}`
+- `folio_rate_limit_denied_total{bucket="…"}`
 - `comic_rate_limit_remaining{bucket="…"}` (gauge, sampled per request)
 
-Alert when `comic_rate_limit_denied_total` for any auth bucket exceeds 100/hour — likely brute force in progress.
+Alert when `folio_rate_limit_denied_total` for any auth bucket exceeds 100/hour — likely brute force in progress.
 
 ## Tuning
 

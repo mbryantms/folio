@@ -6,7 +6,7 @@
 //!   `api`  → HTTP handlers (one module per resource).
 //!   `auth` → OIDC + local + JWT + CSRF + WS ticket.
 
-use server::{app, config, observability};
+use server::{app, build_info, config, observability};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -81,11 +81,11 @@ async fn main() -> anyhow::Result<()> {
     let handles = observability::init(&cfg)?;
 
     tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
+        version = build_info::VERSION,
         bind = %cfg.bind_addr,
         public_url = %cfg.public_url,
         auth_mode = %cfg.auth_mode,
-        "comic-reader starting"
+        "Folio starting"
     );
 
     app::serve(cfg, handles).await

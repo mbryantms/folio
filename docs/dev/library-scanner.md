@@ -667,11 +667,11 @@ waiting for the scheduled refresh window.
 
 | Metric | Labels | Type |
 |---|---|---|
-| `comic_scan_duration_seconds` | `library_id`, `result` | histogram |
-| `comic_scan_files_total` | `library_id`, `action` (added/updated/skipped/removed/malformed) | counter |
-| `comic_scan_health_issues_open` | `library_id`, `severity` | gauge ([health.rs:425–441](../../crates/server/src/library/health.rs#L425-L441)) |
+| `folio_scan_duration_seconds` | `library_id`, `result` | histogram |
+| `folio_scan_files_total` | `library_id`, `action` (added/updated/skipped/removed/malformed) | counter |
+| `folio_scan_health_issues_open` | `library_id`, `severity` | gauge ([health.rs:425–441](../../crates/server/src/library/health.rs#L425-L441)) |
 
-Existing `comic_zip_lru_*` metrics from Phase 2 still apply.
+Existing `folio_zip_lru_*` metrics from Phase 2 still apply.
 
 ### Recovering rows stuck before the 2026-05-16 retag fix
 
