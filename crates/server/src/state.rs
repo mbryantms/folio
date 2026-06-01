@@ -36,6 +36,9 @@ pub struct Inner {
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub zip_lru: ZipLru,
     pub prometheus: PrometheusHandle,
+    /// Process/runtime gauge sampler (`folio_process_*`). The `/metrics`
+    /// handler calls `.collect()` per scrape before rendering.
+    pub process_metrics: metrics_process::Collector,
     /// In-process structured-log ring buffer (M6d). Source for
     /// `GET /admin/logs`. Always populated regardless of OTLP routing.
     pub log_buffer: LogRingBuffer,
@@ -109,6 +112,7 @@ impl AppState {
         db: DatabaseConnection,
         secrets: Secrets,
         prometheus: PrometheusHandle,
+        process_metrics: metrics_process::Collector,
         log_buffer: LogRingBuffer,
         log_reload: LogReloadHandle,
         jobs: JobRuntime,
@@ -142,6 +146,7 @@ impl AppState {
             started_at: chrono::Utc::now(),
             zip_lru,
             prometheus,
+            process_metrics,
             log_buffer,
             log_reload,
             jobs,

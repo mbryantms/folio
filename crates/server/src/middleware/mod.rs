@@ -1,3 +1,4 @@
+pub mod http_metrics;
 pub mod nonce;
 pub mod rate_limit;
 pub mod request_context;

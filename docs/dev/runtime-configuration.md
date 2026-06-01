@@ -25,6 +25,7 @@ Plan: [`~/.claude/plans/runtime-config-admin-1.0.md`](../../../.claude/plans/run
 | `COMIC_AUTO_MIGRATE` | Decides whether to run migrations before serving. |
 | `COMIC_LOAD_DOTENV` | Boot-time flag that gates `.env` file loading; meaningless after boot completes. |
 | `COMIC_GITHUB_TOKEN` | Read by the CBL-catalog refresher on each fetch; not a moveable policy setting (per-deploy credential, not user-visible config). |
+| `COMIC_METRICS_TOKEN` | Optional bearer token gating `GET /metrics`; a deploy-time scrape credential baked into the Prometheus scrape config, not user-visible policy. Unset → `/metrics` open. See [metrics.md](metrics.md). |
 
 Compose-only keys (`REPO_OWNER`, `TAG`, `POSTGRES_PASSWORD`,
 `COMIC_LIBRARY_HOST_PATH`, `COMIC_APP_BIND`, `COMIC_WEB_BIND`) stay in

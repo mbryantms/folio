@@ -10,10 +10,11 @@
 use axum::{
     Json, Router,
     extract::State,
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
+use constant_time_eq::constant_time_eq;
 
 use crate::state::AppState;
 
@@ -27,7 +28,30 @@ async fn openapi_json() -> impl IntoResponse {
     Json(crate::app::openapi_spec())
 }
 
-async fn metrics(State(state): State<AppState>) -> Response {
+async fn metrics(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    // Optional bearer gate. When `COMIC_METRICS_TOKEN` is set, require a
+    // matching `Authorization: Bearer <token>` (machine auth — a Prometheus
+    // scraper can't hold an admin session). Unset → open (today's default).
+    // Constant-time compare to avoid leaking the token via timing.
+    if let Some(expected) = state.cfg().metrics_token.as_deref()
+        && !expected.is_empty()
+    {
+        let provided = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "));
+        let ok = provided.is_some_and(|p| constant_time_eq(p.as_bytes(), expected.as_bytes()));
+        if !ok {
+            let mut resp = (StatusCode::UNAUTHORIZED, "metrics: unauthorized\n").into_response();
+            resp.headers_mut()
+                .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+            return resp;
+        }
+    }
+
+    // Sample process/runtime gauges (`folio_process_*`) fresh at scrape time.
+    state.process_metrics.collect();
+
     let body = state.prometheus.render();
     let mut resp = (StatusCode::OK, body).into_response();
     resp.headers_mut().insert(

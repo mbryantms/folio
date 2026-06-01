@@ -36,6 +36,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_metadata_weekly_refresh(&scheduler, &state).await;
     register_writeback_migration_progress(&scheduler, &state).await;
     register_metadata_match_outcome_prune(&scheduler, &state).await;
+    register_job_queue_depth(&scheduler, &state).await;
     Ok(scheduler)
 }
 
@@ -586,7 +587,7 @@ async fn register_writeback_migration_progress(scheduler: &JobScheduler, state: 
 pub async fn refresh_writeback_remaining_gauge(state: &AppState) {
     match crate::metadata::writeback_progress::count_libraries_without_writeback(&state.db).await {
         Ok(n) => {
-            metrics::gauge!("comic_metadata_writeback_libraries_remaining").set(n as f64);
+            metrics::gauge!("folio_metadata_writeback_libraries_remaining").set(n as f64);
             tracing::info!(
                 libraries_remaining = n,
                 "writeback migration progress refreshed",
@@ -596,6 +597,51 @@ pub async fn refresh_writeback_remaining_gauge(state: &AppState) {
             error = %e,
             "writeback migration progress: count query failed",
         ),
+    }
+}
+
+/// Publish per-queue job-backlog gauges (`folio_jobs_queue_depth{queue=…}`)
+/// from the same Redis `LLEN` counts the `/admin/queue` page reads. Runs on a
+/// short cadence (every 30s, see [`register_job_queue_depth`]) so the gauges
+/// track backlog without coupling each `/metrics` scrape to Redis round-trips.
+pub async fn refresh_job_queue_depth_gauges(state: &AppState) {
+    match crate::api::admin_queue::queue_depth_counts(state).await {
+        Ok(q) => {
+            let set = |queue: &'static str, n: i64| {
+                metrics::gauge!("folio_jobs_queue_depth", "queue" => queue).set(n as f64);
+            };
+            set("scan", q.scan);
+            set("scan_series", q.scan_series);
+            set("post_scan_thumbs", q.post_scan_thumbs);
+            set("post_scan_search", q.post_scan_search);
+            set("post_scan_dictionary", q.post_scan_dictionary);
+            set("archive_edit", q.archive_edit);
+        }
+        Err(e) => tracing::warn!(error = %e, "job-queue depth gauge refresh failed"),
+    }
+}
+
+/// Register the job-queue-depth gauge refresh: once at boot (so the gauges
+/// exist before the first tick) + every 30s.
+async fn register_job_queue_depth(scheduler: &JobScheduler, state: &AppState) {
+    refresh_job_queue_depth_gauges(state).await;
+
+    let state = state.clone();
+    let job_result = Job::new_async("*/30 * * * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            refresh_job_queue_depth_gauges(&state).await;
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add job_queue_depth failed");
+            } else {
+                tracing::info!("job_queue_depth gauges registered (every 30s)");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build job_queue_depth failed"),
     }
 }
 

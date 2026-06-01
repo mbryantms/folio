@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Comic Reader API",
+    "title": "Folio API",
     "description": "Self-hostable comic reader. See comic-reader-spec.md.",
     "license": {
       "name": "AGPL-3.0-or-later",

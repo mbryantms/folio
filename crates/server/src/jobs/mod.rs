@@ -30,6 +30,7 @@ pub mod archive_transforms;
 pub mod close_dangling_sessions;
 pub mod metadata_apply;
 pub mod metadata_search;
+pub mod metrics_layer;
 pub mod orphan_sweep;
 pub mod post_scan;
 pub mod prune_auth_sessions;
@@ -250,30 +251,35 @@ impl JobRuntime {
         let scan_worker = WorkerBuilder::new("scan")
             .concurrency(scan_concurrency)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("scan"))
             .backend(self.scan_storage.clone())
             .build_fn(scan::handle);
 
         let scan_series_worker = WorkerBuilder::new("scan_series")
             .concurrency(scan_concurrency)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("scan_series"))
             .backend(self.scan_series_storage.clone())
             .build_fn(scan_series::handle);
 
         let thumbs_worker = WorkerBuilder::new("post_scan_thumbs")
             .concurrency(post_concurrency)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("post_scan_thumbs"))
             .backend(self.post_scan_thumbs_storage.clone())
             .build_fn(post_scan::handle_thumbs);
 
         let search_worker = WorkerBuilder::new("post_scan_search")
             .concurrency(post_concurrency)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("post_scan_search"))
             .backend(self.post_scan_search_storage.clone())
             .build_fn(post_scan::handle_search);
 
         let dictionary_worker = WorkerBuilder::new("post_scan_dictionary")
             .concurrency(post_concurrency)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("post_scan_dictionary"))
             .backend(self.post_scan_dictionary_storage.clone())
             .build_fn(post_scan::handle_dictionary);
 
@@ -284,12 +290,16 @@ impl JobRuntime {
         let metadata_series_worker = WorkerBuilder::new("metadata_search_series")
             .concurrency(1)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new(
+                "metadata_search_series",
+            ))
             .backend(self.metadata_search_series_storage.clone())
             .build_fn(metadata_search::handle_series);
 
         let metadata_issue_worker = WorkerBuilder::new("metadata_search_issue")
             .concurrency(1)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("metadata_search_issue"))
             .backend(self.metadata_search_issue_storage.clone())
             .build_fn(metadata_search::handle_issue);
 
@@ -300,12 +310,14 @@ impl JobRuntime {
         let metadata_apply_series_worker = WorkerBuilder::new("metadata_apply_series")
             .concurrency(1)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("metadata_apply_series"))
             .backend(self.metadata_apply_series_storage.clone())
             .build_fn(metadata_apply::handle_series);
 
         let metadata_apply_issue_worker = WorkerBuilder::new("metadata_apply_issue")
             .concurrency(1)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("metadata_apply_issue"))
             .backend(self.metadata_apply_issue_storage.clone())
             .build_fn(metadata_apply::handle_issue);
 
@@ -316,6 +328,9 @@ impl JobRuntime {
         let rewrite_issue_sidecars_worker = WorkerBuilder::new("rewrite_issue_sidecars")
             .concurrency(2)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new(
+                "rewrite_issue_sidecars",
+            ))
             .backend(self.rewrite_issue_sidecars_storage.clone())
             .build_fn(rewrite_sidecars::handle);
 
@@ -326,6 +341,7 @@ impl JobRuntime {
         let archive_edit_worker = WorkerBuilder::new("archive_edit")
             .concurrency(1)
             .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("archive_edit"))
             .backend(self.archive_edit_storage.clone())
             .build_fn(archive_edit::handle);
 

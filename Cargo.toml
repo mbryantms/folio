@@ -15,7 +15,7 @@ members = [
 edition = "2024"
 rust-version = "1.91"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/example/comic-reader"
+repository = "https://github.com/mbryantms/folio"
 # Internal-only crates — `publish = false` so cargo-deny's wildcard-path
 # exemption (`allow-wildcard-paths`) applies. Without this, deny flags
 # every `{ path = "../foo" }` workspace dependency as a wildcard violation
@@ -201,6 +201,7 @@ opentelemetry-stdout = "0.32"
 # Metrics
 metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
+metrics-process = "2.4"  # process/runtime gauges (CPU/RSS/FDs) for /metrics
 
 # Errors
 thiserror = "2"

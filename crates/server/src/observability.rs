@@ -4,14 +4,16 @@
 //! - In-process ring buffer (M6d) — the same events also push into a bounded
 //!   FIFO that backs `GET /admin/logs`. Capped at [`LOG_RING_CAPACITY`]; the
 //!   oldest entry is evicted on every push past the cap.
-//! - OpenTelemetry default-on (stdout exporter); OTLP when `COMIC_OTLP_ENDPOINT` set.
+//! - OpenTelemetry: stdout exporter only. OTLP export was considered and
+//!   dropped for v1 (see incompleteness-audit §D-9); `COMIC_OTLP_ENDPOINT`
+//!   is still recognized but inert (logs a one-time "not wired" hint).
 //! - Trace IDs threaded through requests via `tower-http`'s request-id layer (added in `app`).
 //! - Prometheus recorder installed process-wide; `/metrics` reads from the
 //!   returned [`PrometheusHandle`].
 
 use crate::config::Config;
 use chrono::{DateTime, Utc};
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use serde::Serialize;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as _;
@@ -354,6 +356,9 @@ pub type LogReloadHandle = reload::Handle<EnvFilter, Registry>;
 /// Bootstrap result — both handles are needed by `app::serve`.
 pub struct ObservabilityHandles {
     pub prometheus: PrometheusHandle,
+    /// Process/runtime gauge sampler (`folio_process_*`). `collect()` is
+    /// called per scrape by the `/metrics` handler so values are fresh.
+    pub process: metrics_process::Collector,
     pub log_buffer: LogRingBuffer,
     pub log_reload: LogReloadHandle,
 }
@@ -547,11 +552,30 @@ pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
         );
     }
 
+    // `service="folio"` tags every series (multi-target dashboards). Sane
+    // latency buckets for every `*_seconds` histogram (HTTP, job, OCR) —
+    // the exporter's defaults are coarse for sub-second web latencies.
     let prometheus = PrometheusBuilder::new()
+        .add_global_label("service", "folio")
+        .set_buckets_for_metric(
+            Matcher::Suffix("_seconds".to_string()),
+            &[
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ],
+        )
+        .map_err(|e| anyhow::anyhow!("metrics histogram buckets: {e}"))?
         .install_recorder()
         .map_err(|e| anyhow::anyhow!("install prometheus recorder: {e}"))?;
+
+    // Process/runtime gauges under `folio_process_*` (CPU, RSS, FDs,
+    // threads). `describe()` registers them against the recorder now; the
+    // `/metrics` handler calls `collect()` on each scrape.
+    let process = metrics_process::Collector::new("folio_");
+    process.describe();
+
     Ok(ObservabilityHandles {
         prometheus,
+        process,
         log_buffer,
         log_reload,
     })

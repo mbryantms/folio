@@ -168,7 +168,7 @@ pub async fn clear_queue(
     .into_response()
 }
 
-async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDepthView> {
+pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDepthView> {
     let mut scan = app.jobs.scan_storage.clone();
     let mut scan_series = app.jobs.scan_series_storage.clone();
     let mut thumbs = app.jobs.post_scan_thumbs_storage.clone();

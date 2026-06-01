@@ -187,6 +187,12 @@ pub struct Config {
     #[serde(default)]
     pub smtp_from: Option<String>,
 
+    /// Optional bearer token gating `GET /metrics` (env `COMIC_METRICS_TOKEN`).
+    /// Infra/deploy-time scrape credential like `database_url` — env-only, not
+    /// a DB-backed setting. Unset → `/metrics` stays open (today's behavior).
+    #[serde(default)]
+    pub metrics_token: Option<String>,
+
     // Metadata providers (metadata-providers-1.0 M1)
     /// ComicVine API key. Per-site key, account-bound. Always loaded
     /// from `app_setting` (`metadata.comicvine.api_key`) — the env var
@@ -349,6 +355,7 @@ impl std::fmt::Debug for Config {
             .field("smtp_password", &redact_opt(&self.smtp_password))
             .field("smtp_tls", &self.smtp_tls)
             .field("smtp_from", &self.smtp_from)
+            .field("metrics_token", &redact_opt(&self.metrics_token))
             .field("comicvine_api_key", &redact_opt(&self.comicvine_api_key))
             .field("comicvine_enabled", &self.comicvine_enabled)
             .field("metron_username", &redact_opt(&self.metron_username))
@@ -1105,6 +1112,7 @@ mod tests {
             oidc_client_secret: Some("leak-this-oidc-secret".into()),
             smtp_username: Some("leak-this-smtp-user".into()),
             smtp_password: Some("leak-this-smtp-pass".into()),
+            metrics_token: Some("leak-this-metrics-token".into()),
             ..test_config_skeleton()
         };
         let rendered = format!("{cfg:?}");
@@ -1114,6 +1122,7 @@ mod tests {
             "leak-this-oidc-secret",
             "leak-this-smtp-user",
             "leak-this-smtp-pass",
+            "leak-this-metrics-token",
         ] {
             assert!(
                 !rendered.contains(sentinel),
@@ -1205,6 +1214,7 @@ mod tests {
             smtp_password: None,
             smtp_tls: "starttls".into(),
             smtp_from: None,
+            metrics_token: None,
             opds_panels_mode: "off".into(),
             comicvine_api_key: None,
             comicvine_enabled: false,

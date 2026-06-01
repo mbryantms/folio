@@ -123,6 +123,7 @@ opentelemetry-otlp = { workspace = true }
 opentelemetry-stdout = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
+metrics-process = { workspace = true }
 
 # OpenAPI
 utoipa = { workspace = true }

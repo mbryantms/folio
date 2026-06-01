@@ -27,7 +27,7 @@ use utoipa_axum::router::OpenApiRouter;
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "Comic Reader API",
+        title = "Folio API",
         version = env!("CARGO_PKG_VERSION"),
         description = "Self-hostable comic reader. See comic-reader-spec.md."
     ),
@@ -321,6 +321,7 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         db,
         secrets,
         handles.prometheus,
+        handles.process,
         handles.log_buffer,
         handles.log_reload,
         jobs,
@@ -481,6 +482,12 @@ pub fn router(state: AppState) -> Router {
                 )
             }),
         )
+        // Outermost: HTTP RED metrics. Sees the client-observed status (after
+        // every other layer has run on the response) and reads `MatchedPath`
+        // for a bounded `route` label. Emits `folio_http_*`.
+        .layer(axum::middleware::from_fn(
+            crate::middleware::http_metrics::track,
+        ))
         .with_state(state)
 }
 

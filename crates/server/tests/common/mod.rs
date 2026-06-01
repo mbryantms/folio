@@ -98,6 +98,9 @@ pub struct SpawnOpts {
     pub metron_username: Option<String>,
     pub metron_password: Option<String>,
     pub metron_enabled: bool,
+    /// When `Some`, gates `GET /metrics` behind this bearer token
+    /// (`COMIC_METRICS_TOKEN`). `None` (default) leaves it open.
+    pub metrics_token: Option<String>,
 }
 
 impl TestApp {
@@ -154,6 +157,17 @@ impl TestApp {
             metron_username: None,
             metron_password: None,
             metron_enabled: false,
+            metrics_token: None,
+        })
+        .await
+    }
+
+    /// Spawn with `GET /metrics` gated behind the given bearer token
+    /// (metrics-observability M5). Used by `tests/metrics_endpoint.rs`.
+    pub async fn spawn_with_metrics_token(token: impl Into<String>) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            metrics_token: Some(token.into()),
+            ..SpawnOpts::default()
         })
         .await
     }
@@ -295,6 +309,7 @@ impl TestApp {
             } else {
                 None
             },
+            metrics_token: opts.metrics_token.clone(),
             // progress-writeback-2.0 M4: OPDS client compat mode.
             // Default off — TestApp::spawn() preserves Folio identity;
             // tests that need Komga compat flip it via PATCH
@@ -353,6 +368,7 @@ impl TestApp {
             db,
             secrets,
             prometheus_handle(),
+            metrics_process::Collector::new("folio_"),
             LogRingBuffer::default(),
             log_reload,
             jobs,
