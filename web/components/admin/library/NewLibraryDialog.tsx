@@ -55,7 +55,7 @@ type FormValues = z.infer<typeof schema>;
 export function NewLibraryDialog() {
   const [open, setOpen] = useState(false);
   const create = useCreateLibrary();
-  const form = useForm<FormValues>({
+  const form = useForm<z.input<typeof schema>, unknown, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: "",

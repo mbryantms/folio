@@ -85,7 +85,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
   const thumbnailSettings = useThumbnailsSettings(id);
   const update = useUpdateLibrary(id);
   const updateThumbnailSettings = useUpdateThumbnailsSettings(id);
-  const form = useForm<FormValues>({
+  const form = useForm<z.input<typeof schema>, unknown, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       ignore_globs: [],
@@ -180,7 +180,10 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                     add. Example: <span className="font-mono">**/.tmp/*</span>
                   </FormDescription>
                   <FormControl>
-                    <TagInput value={field.value} onChange={field.onChange} />
+                    <TagInput
+                      value={field.value ?? []}
+                      onChange={field.onChange}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -196,7 +199,10 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                     Cron expression. Leave empty to disable scheduled scans.
                   </FormDescription>
                   <FormControl>
-                    <CronInput value={field.value} onChange={field.onChange} />
+                    <CronInput
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -269,7 +275,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                       min={0}
                       max={365}
                       step={1}
-                      value={[field.value]}
+                      value={[field.value ?? 7]}
                       onValueChange={(v) => field.onChange(v[0])}
                     />
                   </FormControl>
@@ -507,7 +513,10 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                     add.
                   </FormDescription>
                   <FormControl>
-                    <TagInput value={field.value} onChange={field.onChange} />
+                    <TagInput
+                      value={field.value ?? []}
+                      onChange={field.onChange}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

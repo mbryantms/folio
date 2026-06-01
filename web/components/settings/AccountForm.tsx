@@ -140,7 +140,7 @@ function ProfileCard({
 }) {
   const update = useUpdateAccount();
   const csrf = useCsrfToken();
-  const form = useForm<ProfileValues>({
+  const form = useForm<z.input<typeof profileSchema>, unknown, ProfileValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: { display_name: me.display_name, email: me.email ?? "" },
   });

@@ -32,9 +32,15 @@ const FormFieldContext = React.createContext<FormFieldContextValue | null>(
 const FormField = <
   TFieldValues extends FieldValues = FieldValues,
   TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>,
+  // react-hook-form 7.55+ added a 3rd `TTransformedValues` generic to
+  // Controller/Control (the post-resolver output type). Thread it through
+  // so forms whose zod schema uses `.default()` — where the input type
+  // (optional) differs from the transformed output (required) — can pass
+  // their `Control<input, any, output>` without a type mismatch.
+  TTransformedValues = TFieldValues,
 >({
   ...props
-}: ControllerProps<TFieldValues, TName>) => {
+}: ControllerProps<TFieldValues, TName, TTransformedValues>) => {
   return (
     <FormFieldContext.Provider value={{ name: props.name }}>
       <Controller {...props} />
