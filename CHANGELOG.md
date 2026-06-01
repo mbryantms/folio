@@ -15,7 +15,45 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
-## [0.7.18] - TBD
+## [0.7.18] - 2026-06-01
+
+### Added
+
+- **Expanded Prometheus metrics at `/metrics`.** Added the service-level signals
+  that were missing: HTTP request rate/latency/errors (`folio_http_requests_total`,
+  `folio_http_request_duration_seconds`), process/runtime gauges
+  (`folio_process_*` — CPU, RSS, file descriptors, threads), per-job outcomes +
+  duration (`folio_jobs_processed_total`, `folio_job_duration_seconds`), and
+  job-queue backlog (`folio_jobs_queue_depth`). The endpoint is unauthenticated
+  by default; set the new **`COMIC_METRICS_TOKEN`** to require an
+  `Authorization: Bearer` header on scrapes. Full catalogue + scrape config in
+  [docs/dev/metrics.md](docs/dev/metrics.md).
+- **Automated dependency monitoring.** Renovate (`renovate.json`) opens grouped
+  update PRs and auto-merges safe patch/minor after CI; the weekly security
+  workflow gains an OSV-Scanner sweep over both lockfiles.
+
+### Changed
+
+- **Node runtime upgraded 22 → 24 (Active LTS).** The web build + runtime images
+  move to `node:24` / `distroless/nodejs24-debian12`; `@types/node` tracks 24.
+- **The server now reports its real version and name.** The startup log
+  (`Folio starting`), `/healthz`, `/readyz`, `/admin/server`, and every outbound
+  HTTP `User-Agent` now show the build tag (e.g. `v0.7.18`) instead of the
+  `0.0.0` / `comic-reader` placeholders.
+- **Frontend dependency refresh.** All npm advisories resolved; TanStack Query
+  5.100, react-hook-form 7.77 + resolvers 5.4, plus a sweep of safe Radix/UI
+  bumps.
+- **⚠️ Prometheus metric names renamed `comic_*` → `folio_*`** (every metric).
+  **Update any Grafana dashboards or alert rules** that reference the old names.
+- **JWT audience renamed `comic-reader` → `folio`.** Verification still accepts
+  the legacy audience during the transition window, so existing sessions are
+  **not** forced to re-authenticate on upgrade.
+
+### Removed
+
+- The dead, never-wired `openapi-fetch` client and the inert
+  `COMIC_OTLP_ENDPOINT` env var (OTLP export was considered and dropped for v1;
+  see incompleteness-audit §D-9).
 
 ### Fixed
 
@@ -27,6 +65,15 @@ this file starts at the first release that ships with a curated changelog.
   doesn't remount the app shell (whose mount effect clears the lock), the whole
   page stayed unclickable until a hard refresh. The save now defers the refresh
   past the dialog close and clears any residual body lock itself.
+
+### Security
+
+- Resolved all outstanding npm advisories: a build-time PostCSS XSS in the web
+  app, plus three High + several moderate transitive advisories in the docs-site
+  build tooling (lodash, serialize-javascript, js-yaml, yaml) via root
+  `pnpm.overrides`. One dev-server-only, non-exploitable advisory (sockjs → uuid)
+  is documented as an accepted exception in `SECURITY-EXCEPTIONS.md`. None of
+  these were reachable in the shipped server or web runtime.
 
 ## [0.7.17] - 2026-05-30
 
@@ -313,7 +360,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.15...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.18...HEAD
+[0.7.18]: https://github.com/mbryantms/folio/compare/v0.7.17...v0.7.18
 [0.7.15]: https://github.com/mbryantms/folio/compare/v0.7.14...v0.7.15
 [0.7.14]: https://github.com/mbryantms/folio/compare/v0.7.13...v0.7.14
 [0.7.13]: https://github.com/mbryantms/folio/compare/v0.7.12...v0.7.13
