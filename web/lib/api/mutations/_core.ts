@@ -129,7 +129,11 @@ export function useApiMutation<TData, TInput>(
   const mutateRef = React.useRef<((input: TInput) => void) | null>(null);
   const mutation = useMutation<TData | null, Error, TInput>({
     mutationFn: (input) => apiMutate<TData>(build(input)),
-    onSuccess: (data, input, ctx) => {
+    // react-query v5.79+ appends a 4th `context` arg to mutation
+    // lifecycle callbacks: (data, variables, onMutateResult, context).
+    // The 3rd arg (onMutate's return) keeps its position; forward all
+    // four so caller-supplied callbacks get the full signature.
+    onSuccess: (data, input, onMutateResult, context) => {
       if (successMessage) {
         const msg =
           typeof successMessage === "function"
@@ -137,9 +141,9 @@ export function useApiMutation<TData, TInput>(
             : successMessage;
         toast.success(msg, toastId ? { id: toastId } : undefined);
       }
-      onSuccess?.(data, input, ctx);
+      onSuccess?.(data, input, onMutateResult, context);
     },
-    onError: (err, input, ctx) => {
+    onError: (err, input, onMutateResult, context) => {
       // Attach Retry only for transient failures (5xx + network).
       // 4xx errors are user-facing validation/auth/permission issues
       // that retrying without changing input won't fix.
@@ -153,7 +157,7 @@ export function useApiMutation<TData, TInput>(
           },
         }),
       });
-      onError?.(err, input, ctx);
+      onError?.(err, input, onMutateResult, context);
     },
     ...rest,
   });

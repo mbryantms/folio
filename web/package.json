@@ -46,7 +46,7 @@
     "@scalar/api-reference-react": "^0.9.41",
     "@serwist/next": "9.5.11",
     "@serwist/window": "9.5.11",
-    "@tanstack/react-query": "5.62.10",
+    "@tanstack/react-query": "5.100.14",
     "@tanstack/react-table": "8.21.3",
     "@tanstack/react-virtual": "^3.13.26",
     "@use-gesture/react": "^10.3.1",
