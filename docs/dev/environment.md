@@ -7,7 +7,7 @@ Cheat sheet. For background, see [§13 of the spec](../../comic-reader-spec.md).
 | Tool          | Why                              | Pin / install                       |
 | ------------- | -------------------------------- | ----------------------------------- |
 | Rust          | server                           | `rust-toolchain.toml` (1.91)        |
-| Node          | web                              | `.nvmrc` (22+)                      |
+| Node          | web                              | `.nvmrc` (24+)                      |
 | pnpm          | web                              | `package.json#packageManager` (10)  |
 | just          | task runner                      | `cargo install just`                |
 | cargo-watch   | server hot-reload under `just dev` | `cargo install cargo-watch`       |

@@ -792,7 +792,7 @@ is also fine since none are on a hot path.
 | `vitest` | 2.1.8 | **4.1.6** | **Review** — two majors; test runner |
 | `@vitejs/plugin-react` | 4.3.4 | **6.0.2** | **Review** (pairs with vitest) |
 | `typescript` | 5.7.2 | **6.0.3** | **Review** — major; strict-mode tightenings possible |
-| `@types/node` | 22.10.5 | 25.9.0 | Yes — types only |
+| `@types/node` | 24.12.4 | 25.9.0 | Pinned to the Node 24 runtime major (do not bump to 25/26) |
 | `prettier` + `prettier-plugin-tailwindcss` | 3.4.2 / 0.6.9 | 3.8.3 / 0.8.0 | Yes |
 | `postcss` | 8.4.49 | 8.5.15 | Yes |
 | `@playwright/test`, `@axe-core/playwright` | 1.49.1 / 4.10.1 | 1.60.0 / 4.11.3 | **Yes** — eleven minors; playwright is opt-in but quietly drifts |

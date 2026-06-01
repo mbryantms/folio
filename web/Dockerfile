@@ -9,7 +9,7 @@
 # both as compose services fronted by an operator-owned reverse proxy.
 
 # ───── Stage 1: build the standalone bundle ─────
-FROM node:22-bookworm-slim AS builder
+FROM node:24-bookworm-slim AS builder
 WORKDIR /work
 
 # pnpm is fast + matches what the repo uses locally. Pinning the major to
@@ -36,10 +36,10 @@ ENV API_PROXY_URL=${API_PROXY_URL}
 RUN cd web && pnpm build
 
 # ───── Stage 2: distroless Node runtime ─────
-# `nodejs22-debian12:nonroot` ships a hardened Node with the same posture as
+# `nodejs24-debian12:nonroot` ships a hardened Node with the same posture as
 # the Rust image's `cc-debian12:nonroot`. No shell, no package manager, runs
 # as a non-root user.
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
 WORKDIR /app
 
 LABEL org.opencontainers.image.title="Folio Web" \

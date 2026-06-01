@@ -1010,7 +1010,7 @@ The goal: a developer (or a Claude Code instance) can clone the repo and have a 
 
 ### 13.1 Prerequisites
 - Rust stable (rustup). Pinned via `rust-toolchain.toml` so `cargo` picks the right version automatically.
-- Node 22 LTS or newer, pnpm 9 or 10. Pinned via `.nvmrc` and `package.json` `packageManager` field.
+- Node 24 LTS or newer, pnpm 9 or 10. Pinned via `.nvmrc` and `package.json` `packageManager` field.
 - Docker + Docker Compose (for Postgres + Redis in dev).
 - `just` (justfile task runner). Optional but recommended; falls back to documented raw commands.
 
