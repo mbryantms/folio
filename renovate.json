@@ -56,11 +56,10 @@
       "addLabels": ["gated-major"]
     },
     {
-      "description": "Known breaking-within-minor packages (2026-06 audit found code-migration needs in minor/0.x bumps). Force manual review even for minor.",
+      "description": "Known breaking-within-minor packages (2026-06 audit found code-migration needs in minor/0.x bumps). react-hook-form/resolvers and react-query were migrated in Stage 3 but stay flagged (future minors have shipped breaking type changes). openapi-typescript needs a matching scripts/build-types-shim.py update before bumping past 7.4.",
       "matchPackageNames": [
         "react-hook-form",
         "@hookform/resolvers",
-        "openapi-fetch",
         "openapi-typescript",
         "@tanstack/react-query"
       ],
