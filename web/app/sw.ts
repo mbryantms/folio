@@ -84,11 +84,29 @@ const serwist = new Serwist({
 // the SW. The list mirrors the documented "DO NOT cache" set
 // above; the `fetch` listener below hands every match to the
 // browser's native loader.
+//
+// Two kinds of entries live here:
+//   1. Backend API surfaces (per-user, per-permission JSON) — never
+//      cache, per the doc comment above.
+//   2. App-route HTML/RSC navigation *destinations* reached by
+//      client-side `<Link>` clicks / `router.push`. These MUST be
+//      handed to the native loader so serwist's `defaultCache` never
+//      re-issues their RSC fetch via `respondWith` — that forwards
+//      the App Router's abort signal and, when a navigation is
+//      superseded, rejects and strands the router on `loading.tsx`
+//      (the "reader-exit hang" documented in the `fetch` listener).
+//      Every entity/detail route that isn't part of the offline
+//      app-shell belongs here: `/creators/`, `/read/`, `/settings/`,
+//      `/bookmarks`, `/pages/`, alongside `/series/`, `/libraries/`,
+//      `/views/`, `/collections/`. The library root (`/`) is left out
+//      on purpose — it's the precached shell that launches offline.
 const API_PATH_PREFIXES = [
   "/admin/",
-  "/auth/",
   "/audit",
+  "/auth/",
+  "/bookmarks",
   "/collections/",
+  "/creators/",
   "/filter-options",
   "/folder-tree",
   "/health-issues",
@@ -98,12 +116,15 @@ const API_PATH_PREFIXES = [
   "/markers/",
   "/me/",
   "/opds/",
+  "/pages/",
   "/rails/",
+  "/read/",
   "/removed",
   "/scan-preview",
   "/scan-runs",
   "/search",
   "/series/",
+  "/settings/",
   "/views/",
   "/ws/",
 ];
