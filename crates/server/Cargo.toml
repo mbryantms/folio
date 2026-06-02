@@ -141,7 +141,7 @@ ipnet = { workspace = true }
 # "Pokémon" and "Pokemon" land on the same key. Already pulled in
 # transitively via `url`/`idna`; promoting it to direct keeps the call
 # site readable.
-unicode-normalization = "0.1"
+unicode-normalization = "0.1.25"
 
 # Used solely for posix_fadvise on Unix (perf hint to kernel readahead before
 # BLAKE3-hashing a CBZ). Already a transitive dep via tokio/sqlx; pulling it
