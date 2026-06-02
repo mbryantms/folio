@@ -86,7 +86,7 @@ serde_with = "3"
 
 # Validation — audit-remediation M9 (per decision #5). `derive` is the
 # attribute macro that powers `#[derive(garde::Validate)]`.
-garde = { version = "0.22", features = ["derive"] }
+garde = { version = "0.23", features = ["derive"] }
 
 # IDs & hashing
 uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
@@ -114,7 +114,7 @@ base64 = "0.22"
 # header/URL safe without the `+`/`/` characters from base64 that some
 # clients mangle on paste.
 data-encoding = "2.6"
-constant_time_eq = "0.3"
+constant_time_eq = "0.4"
 zeroize = { version = "1.8", features = ["derive"] }
 time = "0.3"
 
@@ -127,14 +127,14 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "s
 
 # Library scan / archive
 zip = { version = "8", default-features = false, features = ["deflate"] }
-lru = "0.12"
+lru = "0.18"
 walkdir = "2.5"
 tempfile = "3"
 notify = "7.0"
 notify-debouncer-full = "0.4"
 natord = "1.0.9"
 mime_guess = "2.0"
-infer = "0.16"
+infer = "0.19"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # Image-processing kernels (median filter for the page-editor despeckle
 # transform). Pinned to the `image` 0.25 line.
