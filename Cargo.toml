@@ -180,7 +180,7 @@ manga-ocr = "0.5.1"
 tesseract-rs = { version = "0.2", features = ["build-tesseract"] }
 
 # Background jobs (Redis-backed via apalis)
-apalis = { version = "0.6", features = ["limit", "tracing"] }
+apalis = { version = "0.7.4", features = ["limit", "tracing"] }
 apalis-redis = "0.6"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 tokio-cron-scheduler = "0.13"

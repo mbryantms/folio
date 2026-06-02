@@ -176,11 +176,11 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "apalis"
-version = "0.6.4"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "703ea57243268f2f84c09ad0c06fac49448b341b906a2f5ee01546600c329960"
+checksum = "504d52557a16b7b202941660f339c9182910d498cac40f93d15f6b31e6bef290"
 dependencies = [
- "apalis-core",
+ "apalis-core 0.7.4",
  "futures",
  "pin-project-lite",
  "serde",
@@ -207,12 +207,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "apalis-core"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3948d2051795c769e6a44a46549879af39d5e8e4fb113e0011cf99f7cd21b657"
+dependencies = [
+ "futures",
+ "pin-project-lite",
+ "serde",
+ "thiserror 2.0.18",
+ "tower",
+ "ulid",
+]
+
+[[package]]
 name = "apalis-redis"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d085ac6b5cf00445d45b2e1b2cfee7e1cdc3ddcb5a79db8066528a02fd85cfda"
 dependencies = [
- "apalis-core",
+ "apalis-core 0.6.4",
  "chrono",
  "futures",
  "log",
