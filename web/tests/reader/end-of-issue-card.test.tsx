@@ -61,11 +61,15 @@ describe("<EndOfIssueCard>", () => {
 
   it("renders the up-next body for source = series", () => {
     const data: NextUpView = { source: "series", target: issue() };
-    const html = render({ data });
+    const html = render({ data, exitUrl: "/series/x/issues/y" });
     expect(html).toMatch(/Next up/i);
     expect(html).toMatch(/Eight Is Enough/);
-    // Single primary CTA per the condensed design — labeled "Read".
+    // Primary CTA labeled "Read".
     expect(html).toMatch(/Read/);
+    // Secondary CTA: a link back to the current issue's detail page
+    // (the exitUrl), so the reader can leave without advancing.
+    expect(html).toMatch(/Back to this issue/);
+    expect(html).toMatch(/href="\/series\/x\/issues\/y"/);
     // Close affordance for "stay here" semantics.
     expect(html).toMatch(/aria-label="Close"/);
     // The up-next body does NOT render Exit reader / Browse buttons —

@@ -195,13 +195,24 @@ export function EndOfIssueCard({
 
       <div className="border-border flex flex-col gap-2 border-t p-4">
         {source !== "none" && target ? (
-          <Button
-            ref={primaryButtonRef}
-            onClick={onContinue}
-            className="w-full"
-          >
-            Read
-          </Button>
+          <>
+            <Button
+              ref={primaryButtonRef}
+              onClick={onContinue}
+              className="w-full"
+            >
+              Read
+            </Button>
+            {/* Secondary path back to the issue the reader is currently
+                on (its detail page) — same destination the chrome's exit
+                button uses. Lets the user leave to the current issue
+                without first committing to the next one. */}
+            <Button asChild variant="outline" className="w-full">
+              <Link href={exitUrl} onClick={onDismiss}>
+                Back to this issue
+              </Link>
+            </Button>
+          </>
         ) : (
           <>
             <Button asChild className="w-full">

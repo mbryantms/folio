@@ -222,11 +222,44 @@ export function Reader({
   const pageNaturalSize = useRef<
     Map<number, { width: number; height: number }>
   >(new Map());
+  // Top-of-page snap state for single/double mode (see the page-change
+  // effect below for the full rationale). Declared here so the natural-
+  // size handler can re-assert the top once a freshly-turned page
+  // decodes. `snapTopRef` stays armed from the page turn until the page
+  // loads or the reader scrolls on purpose; `programmaticScrollRef`
+  // marks our own `scrollTo` so it isn't mistaken for a user scroll.
+  const snapTopRef = useRef(false);
+  const programmaticScrollRef = useRef(false);
+  const scrollWindowToTop = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const reduced = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    programmaticScrollRef.current = true;
+    window.scrollTo({
+      top: 0,
+      left: 0,
+      behavior: reduced ? "auto" : "instant",
+    });
+    requestAnimationFrame(() => {
+      programmaticScrollRef.current = false;
+    });
+  }, []);
   const handleNaturalSize = useCallback(
     (page: number) => (width: number, height: number) => {
       pageNaturalSize.current.set(page, { width, height });
+      // The image just decoded and the wrapper jumped from ~0 to full
+      // height. If this is the page we just turned to and the reader
+      // hasn't scrolled away on purpose, snap the (possibly drifted)
+      // viewport back to the top so every fresh page starts at the top.
+      if (
+        snapTopRef.current &&
+        page === useReaderStore.getState().currentPage
+      ) {
+        scrollWindowToTop();
+      }
     },
-    [],
+    [scrollWindowToTop],
   );
 
   // Bookmark-toggle helper: looks up an existing page-level bookmark
@@ -609,17 +642,27 @@ export function Reader({
   // Reset scroll on page change in single/double mode so each new page
   // starts at the top. Webtoon manages its own scroll position via the
   // continuous-scroll layout.
+  //
+  // `snapTopRef` stays armed from the page turn until either (a) the new
+  // page's image finishes decoding — at which point `handleNaturalSize`
+  // re-asserts the top, because the wrapper only grows to full height on
+  // load and a slow decode could otherwise leave the viewport parked
+  // mid-page — or (b) the reader scrolls on purpose, which disarms it so
+  // we never yank a deliberately-scrolled reader back to the top.
   useEffect(() => {
     if (viewMode === "webtoon") return;
-    const reduced =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    window.scrollTo({
-      top: 0,
-      left: 0,
-      behavior: reduced ? "auto" : "instant",
-    });
-  }, [currentPage, viewMode]);
+    snapTopRef.current = true;
+    scrollWindowToTop();
+  }, [currentPage, viewMode, scrollWindowToTop]);
+  useEffect(() => {
+    if (viewMode === "webtoon") return;
+    const onScroll = () => {
+      if (programmaticScrollRef.current) return;
+      snapTopRef.current = false;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [viewMode]);
 
   // Tailwind v4 preflight applies `max-width: 100%; height: auto` to every
   // `<img>`, which makes a naive empty-class "original" identical to
@@ -685,7 +728,16 @@ export function Reader({
       // `touch-action: pan-y pinch-zoom` keeps native vertical
       // scroll AND native pinch-zoom, while leaving the horizontal
       // axis available for the JS swipe-to-turn handler above.
-      style={{ touchAction: "pan-y pinch-zoom" }}
+      //
+      // `overflow-anchor: none` opts the whole reader subtree out of
+      // the browser's scroll-anchoring heuristic. Page images carry no
+      // reserved height, so a freshly-turned page's wrapper grows from
+      // ~0 to full height as the bytes decode; with anchoring on, the
+      // browser would scroll *down* to "preserve" the content it had
+      // anchored around the (vertically-centered) collapsed placeholder,
+      // landing the viewport mid-page. Off, our explicit scroll-to-top
+      // stays put and new pages always start at the top.
+      style={{ touchAction: "pan-y pinch-zoom", overflowAnchor: "none" }}
       // Reader surface token (see globals.css `--reader-bg`): the
       // route-level loading skeleton consumes the same token so the
       // fallback never flashes white before the reader paints.
@@ -1049,6 +1101,13 @@ function WebtoonView({
   // diverges from this we treat it as an external jump and scroll the
   // matching page into view.
   const lastObservedPage = useRef<number>(-1);
+  // While a programmatic `scrollIntoView` jump animates, the observer
+  // sweeps through every page between origin and target and would
+  // otherwise drag `currentPage` along for the ride — flickering the
+  // progress write + chrome counter and, if the smooth scroll is
+  // interrupted, stranding the reader on an intermediate page. This
+  // timestamp suppresses observer-driven updates until the jump settles.
+  const suppressObserverUntil = useRef<number>(0);
 
   // IntersectionObserver tracks which page is most visible as the user
   // scrolls. The store's `currentPage` then drives ReadingProgress + the
@@ -1078,6 +1137,8 @@ function WebtoonView({
             bestIdx = idx;
           }
         }
+        // Ignore the interim pages a programmatic jump scrolls past.
+        if (performance.now() < suppressObserverUntil.current) return;
         if (bestIdx >= 0) {
           lastObservedPage.current = bestIdx;
           setPage(bestIdx);
@@ -1102,6 +1163,14 @@ function WebtoonView({
     const reduced =
       typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    // Claim the target as the observed page up front and mute the
+    // observer for the duration of the (smooth) scroll so the pages it
+    // sweeps past don't reset `currentPage` to an intermediate value.
+    // The window self-heals: once it lapses the observer re-syncs to
+    // whatever is actually on screen. Reduced-motion jumps are instant,
+    // so no muting is needed.
+    lastObservedPage.current = currentPage;
+    suppressObserverUntil.current = reduced ? 0 : performance.now() + 700;
     el.scrollIntoView({
       behavior: reduced ? "auto" : "smooth",
       block: "start",
