@@ -174,7 +174,7 @@ image = { workspace = true }
 # OIDC integration test harness (M6) — mock OP via wiremock, RSA keys for
 # id_token signing. Kept dev-only so production builds don't pull rsa.
 wiremock = "0.6"
-rsa = { version = "0.9", features = ["sha2", "pem"] }
+rsa = { version = "0.9.10", features = ["sha2", "pem"] }
 rand = { workspace = true }
 
 [lints]
