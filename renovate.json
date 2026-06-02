@@ -73,6 +73,40 @@
       "automerge": false,
       "groupName": "rust-http-client",
       "addLabels": ["coordinated-bump"]
+    },
+    {
+      "description": "sea-orm pins sqlx (sea-orm 1.1.x → sqlx 0.8.x). Never bump sqlx standalone — it won't co-resolve. Move as one PR; sqlx 0.9 waits for sea-orm 2.x.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["sea-orm", "sea-orm-migration", "sqlx"],
+      "automerge": false,
+      "groupName": "sea-orm + sqlx",
+      "addLabels": ["coordinated-bump"]
+    },
+    {
+      "description": "apalis pins the redis crate (apalis-redis 0.6.x → redis 0.27.x). The redis crate never bumps standalone — it moves with apalis/apalis-redis.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["apalis", "apalis-redis", "redis"],
+      "automerge": false,
+      "groupName": "apalis + redis",
+      "addLabels": ["coordinated-bump"]
+    },
+    {
+      "description": "RustCrypto digest/rand ecosystem moves in lockstep — digest 0.11 (sha2 0.11 / hmac 0.13) and rand 0.10 are breaking jumps that the AEAD/signature crates (argon2, rsa, ed25519-dalek, chacha20poly1305) pin transitively. Group so they never surface as conflicting standalone bumps; needs code migration.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": [
+        "sha2",
+        "hmac",
+        "digest",
+        "rand",
+        "rand_core",
+        "argon2",
+        "rsa",
+        "ed25519-dalek",
+        "chacha20poly1305"
+      ],
+      "automerge": false,
+      "groupName": "rust-crypto",
+      "addLabels": ["coordinated-bump", "needs-migration-review"]
     }
   ]
 }
