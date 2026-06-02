@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Menu } from "lucide-react";
 
 import { AddToHomeScreenBanner } from "@/components/AddToHomeScreenBanner";
@@ -52,17 +52,11 @@ export function MainShell({
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const sidebar = useSidebarState(defaultSidebar);
-  // Radix Dialog/Sheet sets `pointer-events: none` on <body> while
-  // open. When the mobile sheet closes simultaneously with a cross
-  // layout-group navigation (e.g. `/` → `/admin` → `/settings`), the
-  // previous shell can unmount before Radix's exit animation
-  // completes, leaving the body lock stuck. Clearing it on mount
-  // restores click handling on the freshly-routed page.
-  useEffect(() => {
-    if (typeof document !== "undefined") {
-      document.body.style.pointerEvents = "";
-    }
-  }, []);
+  // The stuck-Radix-body-lock reset (`pointer-events: none` left on
+  // <body> when a Dialog/Sheet close races a navigation) lives in
+  // `RouteChangeReset`, mounted by the (library) layout. It runs on every
+  // route change — a mount-only reset here never re-fired, because this
+  // shell persists across client navigations within the group.
   return (
     <div className="bg-background text-foreground min-h-screen">
       <SkipToContent />

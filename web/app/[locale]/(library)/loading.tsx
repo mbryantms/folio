@@ -1,3 +1,4 @@
+import { LoadingWatchdog } from "@/components/LoadingWatchdog";
 import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -15,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function LibraryLoading() {
   return (
     <div>
+      <LoadingWatchdog />
       {/* Page heading + toolbar row. */}
       <div
         className="flex flex-wrap items-center justify-between gap-4"
