@@ -42,7 +42,7 @@ sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # Used by the FormOrJson extractor (progressive-enhancement auth forms).
-serde_urlencoded = "0.7"
+serde_urlencoded = "0.7.1"
 
 # Request-body validation (audit-remediation M9).
 garde = { workspace = true }
