@@ -15,6 +15,41 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.19] - 2026-06-01
+
+### Added
+
+- **"Back to this issue" on the end-of-issue card.** The reader's up-next
+  card now offers a direct link back to the current issue's detail page
+  alongside the "Read" button, so you can leave to the issue you just
+  finished without first advancing to the next one.
+
+### Fixed
+
+- **The installed PWA can now open creator pages (and other detail
+  pages).** Tapping a writer/penciller credit links to `/creators/<slug>`,
+  but that route — along with `/read/`, `/settings/`, `/bookmarks`, and
+  `/pages/` — was missing from the service worker's native-loader bypass
+  list. In the installed app the client-side navigation fell through to the
+  worker's cache and hung; in a normal browser tab it worked. All
+  client-navigable detail routes are now handed straight to the browser
+  loader like `/series/` already was. (Takes effect once the updated
+  service worker activates — fully close and reopen the PWA after upgrade.)
+- **Full-width reader pages now start at the top after every page turn.**
+  Tapping or swiping to a page whose image hadn't been prefetched could
+  leave the viewport parked partway down the new page; scroll anchoring is
+  now disabled on the reader and the top position is re-asserted once the
+  page decodes.
+- **Webtoon page jumps no longer flicker through intermediate pages.** A
+  programmatic jump (page strip, keyboard, resume) is no longer dragged to a
+  page it scrolled past mid-animation.
+
+### Changed
+
+- **Above-the-fold rail covers load eagerly (LCP).** The first row of cover
+  images on the home rails is fetched with high priority instead of lazily,
+  improving the largest-contentful-paint on the landing surface.
+
 ## [0.7.18] - 2026-06-01
 
 ### Added
@@ -360,7 +395,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.18...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.19...HEAD
+[0.7.19]: https://github.com/mbryantms/folio/compare/v0.7.18...v0.7.19
 [0.7.18]: https://github.com/mbryantms/folio/compare/v0.7.17...v0.7.18
 [0.7.15]: https://github.com/mbryantms/folio/compare/v0.7.14...v0.7.15
 [0.7.14]: https://github.com/mbryantms/folio/compare/v0.7.13...v0.7.14
