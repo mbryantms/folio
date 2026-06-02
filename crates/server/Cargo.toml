@@ -167,7 +167,7 @@ serde_json = { workspace = true }
 zip = { workspace = true }
 # Builds CBT (tar) fixtures for the archive-edit multi-format tests.
 tar = { workspace = true }
-filetime = "0.2"
+filetime = "0.2.29"
 # Encodes tiny PNGs in the variant-cover download tests (the production
 # `image` dep isn't visible to the separate integration-test crate).
 image = { workspace = true }
