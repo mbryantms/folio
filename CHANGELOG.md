@@ -15,6 +15,20 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.22] - 2026-06-02
+
+### Changed
+
+- **Dependency refresh.** In-range lockfile updates across both stacks —
+  Rust (`cargo update`, 36 crates incl. hyper 1.10, serde_json 1.0.150,
+  opentelemetry_sdk 0.32.1) and web (`pnpm update`) — plus behind-by-minors
+  bumps for `garde` (0.23), `lru` (0.18), and `infer` (0.19). No runtime
+  behavior changes; all gates green.
+- **Renovate coordinated groups.** `renovate.json` now groups the
+  cross-pinned crate sets that previously surfaced as conflicting standalone
+  bumps: `sea-orm + sqlx`, `apalis + redis`, and the RustCrypto
+  digest/rand ecosystem (`sha2`/`hmac`/`rand`/`argon2`/`rsa`/…).
+
 ## [0.7.21] - 2026-06-02
 
 ### Fixed
