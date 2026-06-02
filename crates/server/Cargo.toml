@@ -147,7 +147,7 @@ unicode-normalization = "0.1"
 # BLAKE3-hashing a CBZ). Already a transitive dep via tokio/sqlx; pulling it
 # direct keeps the call site clean.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = "0.2.186"
 
 # Workspace crates
 entity = { path = "../entity" }
