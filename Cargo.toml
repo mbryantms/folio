@@ -94,7 +94,7 @@ blake3 = "1.5"
 argon2 = { version = "0.5", features = ["std"] }
 rand = "0.8"
 hmac = "0.12"
-sha2 = "0.10"
+sha2 = "0.11.0"
 # AEAD for app_setting secret rows (SMTP password, OIDC client secret).
 # 24-byte nonce avoids the birthday-bound concern when settings are written
 # infrequently with random nonces.
