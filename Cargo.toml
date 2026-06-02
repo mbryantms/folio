@@ -130,8 +130,6 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 lru = "0.18"
 walkdir = "2.5"
 tempfile = "3"
-notify = "7.0"
-notify-debouncer-full = "0.4"
 natord = "1.0.9"
 mime_guess = "2.0"
 infer = "0.19"
