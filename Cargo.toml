@@ -147,7 +147,7 @@ webp = "0.3"
 # generation, and fir is 3-5× faster than the `image` crate's scalar resize on
 # typical 3000×2000 comic pages. Pure-Rust, no native dep beyond what the
 # `webp` crate already pulls.
-fast_image_resize = "5"
+fast_image_resize = "6"
 # Per-page work-stealing pool for the strip pipeline. A 30-page issue used to
 # be a serial loop (decode → resize → encode, repeat); rayon fans the
 # CPU-bound stages out across cores once the serial archive read has filled
