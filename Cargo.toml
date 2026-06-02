@@ -93,7 +93,7 @@ uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
 blake3 = "1.5"
 argon2 = { version = "0.5", features = ["std"] }
 rand = "0.8"
-hmac = "0.12"
+hmac = "0.13.0"
 sha2 = "0.10"
 # AEAD for app_setting secret rows (SMTP password, OIDC client secret).
 # 24-byte nonce avoids the birthday-bound concern when settings are written
