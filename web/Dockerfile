@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.24
 # Folio web image — Next.js 16 standalone bundle on distroless Node.
 #
 # Multi-stage:

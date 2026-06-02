@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.24
 # Folio app image — Rust workspace (axum server + migration runner).
 #
 # Multi-stage:
