@@ -15,6 +15,23 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.21] - 2026-06-02
+
+### Fixed
+
+- **Dead clicks after a dialog or menu closes.** Radix overlays set
+  `pointer-events: none` on `<body>` while open; if the close raced a
+  navigation, the lock could stick and silently kill every click on the
+  page ("no actions taken"). The reset now runs on every route change
+  (forward and back) instead of only when the shell first mounts, so any
+  navigation un-sticks it.
+- **Stalled page transitions now recover on their own.** A new loading
+  watchdog mounts inside the library `loading.tsx`: if a route's content
+  stays pending past ~15s (a proxy/upstream or RSC-stream stall the App
+  Router can't otherwise escape), it hard-reloads the destination URL,
+  with a per-URL guard so it never loops. No more spinning on the loading
+  skeleton until a manual force-quit.
+
 ## [0.7.20] - 2026-06-01
 
 ### Fixed
@@ -417,7 +434,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.20...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.21...HEAD
+[0.7.21]: https://github.com/mbryantms/folio/compare/v0.7.20...v0.7.21
 [0.7.20]: https://github.com/mbryantms/folio/compare/v0.7.19...v0.7.20
 [0.7.19]: https://github.com/mbryantms/folio/compare/v0.7.18...v0.7.19
 [0.7.18]: https://github.com/mbryantms/folio/compare/v0.7.17...v0.7.18
