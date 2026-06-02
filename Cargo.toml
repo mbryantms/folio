@@ -199,7 +199,7 @@ opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
 opentelemetry-stdout = "0.32"
 
 # Metrics
-metrics = "0.24"
+metrics = "0.24.6"
 metrics-exporter-prometheus = "0.16"
 metrics-process = "2.4"  # process/runtime gauges (CPU/RSS/FDs) for /metrics
 
