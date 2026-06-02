@@ -68,7 +68,7 @@ axum-extra = { version = "0.10", features = ["cookie", "cookie-private", "cookie
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip", "compression-zstd", "cors", "set-header", "request-id", "timeout"] }
 hyper = { version = "1.5", features = ["full"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
 
 # OpenAPI
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
