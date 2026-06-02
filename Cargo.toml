@@ -187,7 +187,7 @@ tokio-cron-scheduler = "0.13"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.10"
+chrono-tz = "0.10.4"
 
 # Tracing / observability
 tracing = "0.1"
