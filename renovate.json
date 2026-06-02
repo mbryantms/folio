@@ -5,6 +5,7 @@
   "schedule": ["before 6am on monday"],
   "prConcurrentLimit": 8,
   "rangeStrategy": "update-lockfile",
+  "minimumReleaseAge": "24 hours",
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 6am on monday"]

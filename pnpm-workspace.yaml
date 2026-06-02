@@ -1,3 +1,18 @@
 packages:
   - "web"
   - "docs-site"
+
+# Supply-chain delay: never install a version published less than 24h ago
+# (1440 min). This is the pnpm 11 default, pinned explicitly and kept in sync
+# with Renovate's minimumReleaseAge (renovate.json) so the lockfile never holds
+# a too-new version that a frozen CI install would reject.
+minimumReleaseAge: 1440
+
+# Security CVE-mitigation pins. Migrated here from package.json `pnpm.overrides`
+# for pnpm 11, which no longer reads the `pnpm` field in package.json.
+overrides:
+  "lodash@<4.18.0": "4.18.1"
+  "js-yaml@>=4.0.0 <4.1.1": "4.2.0"
+  "serialize-javascript@<7.0.5": "7.0.5"
+  "yaml@>=1.0.0 <1.10.3": "1.10.3"
+  "postcss@<8.5.10": "8.5.15"
