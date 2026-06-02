@@ -59,7 +59,7 @@ missing_panics_doc = "allow"
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
-futures = "0.3"
+futures = "0.3.32"
 async-trait = "0.1"
 
 # HTTP / web
