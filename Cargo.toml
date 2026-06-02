@@ -230,7 +230,7 @@ ipnet = "2.10"
 # orphans every in-flight Postgres/Redis container. (SIGKILL still can't be
 # caught — nothing in-process can.)
 testcontainers = { version = "0.23", features = ["watchdog"] }
-testcontainers-modules = { version = "0.11", features = ["postgres", "redis"] }
+testcontainers-modules = { version = "0.15.0", features = ["postgres", "redis"] }
 # Held at 0.12 (blocked on oauth2 / openidconnect). reqwest 0.13
 # renamed the `rustls-tls` feature to `rustls`, but oauth2 5.0 still
 # forwards through `reqwest/rustls-tls` in its own feature graph and
