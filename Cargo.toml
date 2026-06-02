@@ -158,7 +158,7 @@ rayon = "1.10"
 globset = "0.4"
 unrar = "0.5"
 sevenz-rust = "0.6"
-tar = "0.4"
+tar = "0.4.46"
 
 # OCR / text detection (text-detection-1.0 plan, Phase 1).
 # License: GPL-3.0-only on the koharu crates — compatible with
