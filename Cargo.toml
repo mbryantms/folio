@@ -138,7 +138,7 @@ infer = "0.19"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # Image-processing kernels (median filter for the page-editor despeckle
 # transform). Pinned to the `image` 0.25 line.
-imageproc = { version = "0.25", default-features = false }
+imageproc = { version = "0.26", default-features = false }
 # Lossy WebP encoder. The `image` crate's WebP codec is lossless-only at v0.25,
 # which produces files 5-10× larger than libwebp at q=80 — unacceptable for
 # the cover/strip thumbnail pipeline. `webp` bundles libwebp-sys so no system
@@ -183,7 +183,7 @@ tesseract-rs = { version = "0.2", features = ["build-tesseract"] }
 apalis = { version = "0.6", features = ["limit", "tracing"] }
 apalis-redis = "0.6"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
-tokio-cron-scheduler = "0.13"
+tokio-cron-scheduler = "0.15"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
@@ -200,7 +200,7 @@ opentelemetry-stdout = "0.32"
 
 # Metrics
 metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
+metrics-exporter-prometheus = "0.18"
 metrics-process = "2.4"  # process/runtime gauges (CPU/RSS/FDs) for /metrics
 
 # Errors
@@ -229,8 +229,8 @@ ipnet = "2.10"
 # Drop worker; the watchdog closes the interrupted-run leak that otherwise
 # orphans every in-flight Postgres/Redis container. (SIGKILL still can't be
 # caught — nothing in-process can.)
-testcontainers = { version = "0.23", features = ["watchdog"] }
-testcontainers-modules = { version = "0.11", features = ["postgres", "redis"] }
+testcontainers = { version = "0.27", features = ["watchdog"] }
+testcontainers-modules = { version = "0.15", features = ["postgres", "redis"] }
 # Held at 0.12 (blocked on oauth2 / openidconnect). reqwest 0.13
 # renamed the `rustls-tls` feature to `rustls`, but oauth2 5.0 still
 # forwards through `reqwest/rustls-tls` in its own feature graph and

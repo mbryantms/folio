@@ -4,7 +4,7 @@
   "timezone": "UTC",
   "schedule": ["before 6am on monday"],
   "prConcurrentLimit": 8,
-  "rangeStrategy": "bump",
+  "rangeStrategy": "update-lockfile",
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 6am on monday"]
