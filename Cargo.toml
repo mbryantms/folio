@@ -116,7 +116,7 @@ base64 = "0.22"
 data-encoding = "2.6"
 constant_time_eq = "0.4"
 zeroize = { version = "1.8", features = ["derive"] }
-time = "0.3"
+time = "0.3.47"
 
 # Email
 # `rustls-tls` so we don't pull native-tls/OpenSSL into the build.
