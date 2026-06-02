@@ -143,7 +143,7 @@ imageproc = { version = "0.25", default-features = false }
 # which produces files 5-10× larger than libwebp at q=80 — unacceptable for
 # the cover/strip thumbnail pipeline. `webp` bundles libwebp-sys so no system
 # package is required (CI/Docker still works), at a ~20s first-build cost.
-webp = "0.3"
+webp = "0.3.1"
 # SIMD-accelerated resize (AVX2 / NEON). Drops in for `image::imageops::resize`
 # in the thumbnail pipeline — the Lanczos3 path is the dominant cost for cover
 # generation, and fir is 3-5× faster than the `image` crate's scalar resize on
