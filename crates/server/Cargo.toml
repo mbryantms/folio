@@ -96,8 +96,6 @@ apalis = { workspace = true }
 apalis-redis = { workspace = true }
 redis = { workspace = true }
 tokio-cron-scheduler = { workspace = true }
-notify = { workspace = true }
-notify-debouncer-full = { workspace = true }
 
 # Workspace crates (additional)
 parsers = { path = "../parsers" }

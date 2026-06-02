@@ -225,7 +225,7 @@ impl TestApp {
             .with_db_name("comic_reader_test")
             .with_user("comic")
             .with_password("comic")
-            .with_tag("17-alpine")
+            .with_tag("18-alpine")
             .start()
             .await
             .expect("postgres start");
@@ -242,7 +242,7 @@ impl TestApp {
 
         // Redis (apalis backend) — required since Library Scanner v1.
         let redis = Redis::default()
-            .with_tag("7-alpine")
+            .with_tag("8-alpine")
             .start()
             .await
             .expect("redis start");

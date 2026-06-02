@@ -3,7 +3,7 @@
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: comic
@@ -35,7 +35,7 @@ services:
   # on 6379 — the mapping is host:container.
   # `.env` sets COMIC_REDIS_URL=redis://localhost:6380 to match.
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
@@ -49,7 +49,7 @@ services:
   # Mock OIDC issuer so devs don't need Authentik locally.
   # Dex: tiny, single-binary, supports OIDC out of the box.
   dex:
-    image: ghcr.io/dexidp/dex:v2.41.1
+    image: ghcr.io/dexidp/dex:v2.45.1
     restart: unless-stopped
     command: ["dex", "serve", "/etc/dex/config.yaml"]
     ports:
