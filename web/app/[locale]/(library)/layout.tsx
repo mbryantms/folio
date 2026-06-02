@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { MainShell } from "@/components/library/MainShell";
+import { ScrollTopOnPush } from "@/components/library/ScrollTopOnPush";
 import { mainNav } from "@/components/library/main-nav";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { MeView, SidebarLayoutView } from "@/lib/api/types";
@@ -61,6 +62,7 @@ export default async function LibraryLayout({
       defaultSidebar={defaultSidebar}
       showMarkerCount={me.show_marker_count}
     >
+      <ScrollTopOnPush />
       {children}
     </MainShell>
   );
