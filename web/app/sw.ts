@@ -68,8 +68,23 @@ const serwist = new Serwist({
   // from `useServiceWorkerUpdate`). Without this gate, a deploy
   // mid-read would silently swap the bundle on the next nav.
   skipWaiting: false,
-  clientsClaim: true,
-  navigationPreload: true,
+  // `clientsClaim: false` — never seize a page that loaded *without*
+  // the SW. On WebKit (iOS Safari + installed PWA), claiming an
+  // already-open client mid-session left that page's first
+  // client-side RSC navigation hanging forever — the "fresh tab →
+  // first pill click stuck on the loading skeleton; a reload fixes
+  // it" report. A reloaded page loads already-controlled and is
+  // consistent; an uncontrolled page stays uncontrolled and runs its
+  // navigations straight against the network. Either is fine — the
+  // mid-session hand-off was the only broken state, so we remove it.
+  clientsClaim: false,
+  // `navigationPreload: false` — every navigation / RSC request is
+  // handed to the native loader in the `fetch` listener below, so
+  // serwist never consumes `event.preloadResponse`. An
+  // enabled-but-unconsumed navigation preload *itself* stalls
+  // navigations on WebKit, so it has to be off once navigations
+  // bypass serwist.
+  navigationPreload: false,
   // The default cache set covers Next.js's static assets, font
   // requests, and image responses with sensible strategies. The
   // explicit list of API-route exclusions is enforced by the
@@ -144,6 +159,23 @@ self.addEventListener("fetch", (event: FetchEvent) => {
     // prevents serwist's listener from running, so no `respondWith`
     // is called and the browser fetches natively — credentialless,
     // no CORP required.
+    event.stopImmediatePropagation();
+    return;
+  }
+  // Hand EVERY App Router navigation + RSC fetch/prefetch to the native
+  // loader, regardless of path. A full-page load is `mode: "navigate"`;
+  // a client-side `<Link>` click / `router.push` / viewport prefetch
+  // carries the `RSC` header. serwist must never `respondWith` these —
+  // it re-issues the request carrying the router's abort signal, and
+  // when a navigation is superseded the response rejects and strands
+  // the router (hung loading skeleton, then dead links). This is
+  // path-agnostic, so no future route can out-run the per-path
+  // allowlist below — that list now only matters for non-RSC
+  // same-origin API GETs that happen to share an app-route path shape.
+  if (
+    event.request.mode === "navigate" ||
+    event.request.headers.get("RSC") === "1"
+  ) {
     event.stopImmediatePropagation();
     return;
   }
