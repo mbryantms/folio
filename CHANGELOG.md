@@ -15,6 +15,33 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.23] - 2026-06-02
+
+### Changed
+
+- **Dependency catch-up (round 2).** Major/migration bumps across the stack:
+  postgres 17 → 18 and redis 7 → 8 (dev + test containers), apalis 0.6 → 0.7
+  (+ redis crate 0.27 → 0.32), fast_image_resize 5 → 6, and out-of-range rust
+  0.x crates (imageproc 0.26, testcontainers 0.27, metrics-exporter-prometheus
+  0.18, tokio-cron-scheduler 0.15). CI runner actions bumped to current majors
+  (checkout v6, setup-node v6, docker/* v7/v6/v4, cosign v4) and the
+  `docker/dockerfile` syntax + dev `dex` image tags refreshed.
+
+  **Operator note:** an existing dev `.dev-data/postgres` directory is
+  PG17-initialized and will not start under PG18 — run `just dev-services-reset`
+  (wipes the local dev DB) when adopting. Fresh installs and CI are unaffected.
+
+### Removed
+
+- Dropped the unused `notify` + `notify-debouncer-full` dependencies (declared
+  but referenced nowhere).
+
+### Internal
+
+- Renovate tuned: `rangeStrategy` → `update-lockfile` (stops cosmetic
+  manifest-floor churn), coordinated groups for cross-pinned crate sets, and
+  `yaml` pinned to 1.x (override-only security pin for the docs toolchain).
+
 ## [0.7.22] - 2026-06-02
 
 ### Changed
