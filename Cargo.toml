@@ -157,7 +157,7 @@ fast_image_resize = "5"
 rayon = "1.10"
 globset = "0.4"
 unrar = "0.5"
-sevenz-rust = "0.6"
+sevenz-rust = "0.6.1"
 tar = "0.4"
 
 # OCR / text detection (text-detection-1.0 plan, Phase 1).
