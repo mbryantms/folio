@@ -15,6 +15,28 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.7.20] - 2026-06-01
+
+### Fixed
+
+- **iOS Safari / installed-PWA navigation hang.** The first client-side
+  navigation after a fresh page load (e.g. tapping a creator pill) could
+  hang on the loading skeleton, after which every link went dead until a
+  reload. Root cause: the service worker's `clientsClaim` seized a page
+  that had loaded *without* the worker, and on WebKit the first RSC
+  navigation through that mid-session-claimed worker never resolved. The
+  worker no longer claims already-open pages, disables navigation preload,
+  and hands **all** navigation/RSC requests straight to the browser — so it
+  can never stall a route transition. (Supersedes the per-route allowlist
+  from v0.7.19. As before, fully close/reopen the PWA — or reload the tab —
+  once after upgrading to pick up the new worker.)
+- **Pills now land at the top of the destination page.** Tapping a credit
+  chip (→ creator page) or a cast/setting chip (→ filtered library grid)
+  from a scrolled-down page could open the new page scrolled down with its
+  header clipped off the top. Forward navigations within the library now
+  reliably scroll to the top; back/forward still restore the previous
+  scroll position.
+
 ## [0.7.19] - 2026-06-01
 
 ### Added
@@ -395,7 +417,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.19...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.20...HEAD
+[0.7.20]: https://github.com/mbryantms/folio/compare/v0.7.19...v0.7.20
 [0.7.19]: https://github.com/mbryantms/folio/compare/v0.7.18...v0.7.19
 [0.7.18]: https://github.com/mbryantms/folio/compare/v0.7.17...v0.7.18
 [0.7.15]: https://github.com/mbryantms/folio/compare/v0.7.14...v0.7.15
