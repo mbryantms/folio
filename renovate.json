@@ -75,6 +75,11 @@
       "addLabels": ["coordinated-bump"]
     },
     {
+      "description": "yaml is not a direct dep; it exists only as an override-only security pin forcing the legacy swagger2openapi/oas-* docs toolchain (which needs the yaml 1.x API) to a safe 1.x version. yaml v2 is a breaking rewrite that would break docusaurus-plugin-openapi-docs. Keep the pin on 1.x; still allow 1.x security patches.",
+      "matchPackageNames": ["yaml"],
+      "allowedVersions": "<2"
+    },
+    {
       "description": "sea-orm pins sqlx (sea-orm 1.1.x → sqlx 0.8.x). Never bump sqlx standalone — it won't co-resolve. Move as one PR; sqlx 0.9 waits for sea-orm 2.x.",
       "matchManagers": ["cargo"],
       "matchPackageNames": ["sea-orm", "sea-orm-migration", "sqlx"],
