@@ -156,7 +156,7 @@ fast_image_resize = "5"
 # the byte buffer.
 rayon = "1.10"
 globset = "0.4"
-unrar = "0.5"
+unrar = "0.5.8"
 sevenz-rust = "0.6"
 tar = "0.4"
 
