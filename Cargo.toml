@@ -86,7 +86,7 @@ serde_with = "3"
 
 # Validation — audit-remediation M9 (per decision #5). `derive` is the
 # attribute macro that powers `#[derive(garde::Validate)]`.
-garde = { version = "0.22", features = ["derive"] }
+garde = { version = "0.23.0", features = ["derive"] }
 
 # IDs & hashing
 uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
