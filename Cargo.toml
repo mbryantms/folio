@@ -155,7 +155,7 @@ fast_image_resize = "5"
 # CPU-bound stages out across cores once the serial archive read has filled
 # the byte buffer.
 rayon = "1.10"
-globset = "0.4"
+globset = "0.4.18"
 unrar = "0.5"
 sevenz-rust = "0.6"
 tar = "0.4"
