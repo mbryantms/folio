@@ -208,7 +208,7 @@ thiserror = "2"
 anyhow = "1"
 
 # Config
-figment = { version = "0.10", features = ["env", "toml"] }
+figment = { version = "0.10.19", features = ["env", "toml"] }
 dotenvy = "0.15"
 
 # Rate limiting
