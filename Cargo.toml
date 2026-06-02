@@ -109,7 +109,7 @@ jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 oauth2 = "5"
 openidconnect = "4"
 ed25519-dalek = { version = "2.1", features = ["rand_core", "pkcs8", "pem"] }
-base64 = "0.22"
+base64 = "0.22.1"
 # Base32 (no-padding) for OPDS app-password plaintexts — keeps tokens
 # header/URL safe without the `+`/`/` characters from base64 that some
 # clients mangle on paste.
