@@ -200,7 +200,7 @@ opentelemetry-stdout = "0.32"
 
 # Metrics
 metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
+metrics-exporter-prometheus = "0.18.3"
 metrics-process = "2.4"  # process/runtime gauges (CPU/RSS/FDs) for /metrics
 
 # Errors
