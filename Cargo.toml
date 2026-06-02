@@ -123,7 +123,7 @@ time = "0.3"
 # `smtp-transport` is the default SMTP/SMTPS client; `pool` lets us
 # reuse connections across the handful of recovery-flow emails. The
 # `builder` feature gives us `MessageBuilder` for type-safe construction.
-lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "rustls-tls", "tokio1", "tokio1-rustls-tls", "pool"] }
+lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "rustls-tls", "tokio1", "tokio1-rustls-tls", "pool"] }
 
 # Library scan / archive
 zip = { version = "8", default-features = false, features = ["deflate"] }
