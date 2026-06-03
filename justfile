@@ -47,7 +47,7 @@ dev-services-reset:
     # `rm -rf` often leaves the "fresh" DB behind. Remove dev state from a
     # disposable container running as root, and include app data so thumbnails,
     # generated secrets, and stale cookies are invalidated too.
-    docker run --rm -v "$PWD/.dev-data:/data" postgres:17-alpine sh -c 'rm -rf /data/postgres /data/redis /data/app'
+    docker run --rm -v "$PWD/.dev-data:/data" postgres:18-alpine sh -c 'rm -rf /data/postgres /data/redis /data/app'
     @[ -f .dev-data/dex-config.yaml ] || git checkout .dev-data/dex-config.yaml
 
 # Stop the app, wipe all persisted dev state, recreate services, and run
