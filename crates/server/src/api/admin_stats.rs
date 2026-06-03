@@ -676,7 +676,7 @@ async fn compute_users_list(app: &AppState) -> Result<Vec<AdminUserStatsRow>, se
         })
         .collect();
     // Most active first.
-    rows.sort_by(|a, b| b.active_ms_30d.cmp(&a.active_ms_30d));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.active_ms_30d));
     Ok(rows)
 }
 

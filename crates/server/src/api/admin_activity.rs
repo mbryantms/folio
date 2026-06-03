@@ -322,10 +322,8 @@ async fn resolve_activity_labels(
                         series_ids.insert(id);
                     }
                 }
-                "issue" => {
-                    if !tid.is_empty() {
-                        issue_ids.insert(tid.to_owned());
-                    }
+                "issue" if !tid.is_empty() => {
+                    issue_ids.insert(tid.to_owned());
                 }
                 _ => {}
             }
