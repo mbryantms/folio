@@ -69,7 +69,7 @@ services:
       start_period: 10s
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: comic
       POSTGRES_PASSWORD: smoke
@@ -82,7 +82,7 @@ services:
       retries: 15
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     tmpfs: ["/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
