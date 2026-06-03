@@ -229,7 +229,7 @@ pub async fn get_one(
                 .into_iter()
                 .filter_map(|id| series_by_id.get(&id.to_string()).cloned())
                 .collect();
-            series.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            series.sort_by_key(|a| a.name.to_lowercase());
             CreatorRoleRail {
                 role: role.clone(),
                 series,

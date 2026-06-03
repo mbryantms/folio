@@ -13,7 +13,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.96"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/mbryantms/folio"
 # Internal-only crates — `publish = false` so cargo-deny's wildcard-path
@@ -114,7 +114,7 @@ base64 = "0.22"
 # header/URL safe without the `+`/`/` characters from base64 that some
 # clients mangle on paste.
 data-encoding = "2.6"
-constant_time_eq = "0.4"
+constant_time_eq = "0.5"
 zeroize = { version = "1.8", features = ["derive"] }
 time = "0.3"
 

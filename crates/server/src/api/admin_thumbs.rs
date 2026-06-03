@@ -338,6 +338,8 @@ pub async fn update_settings(
         },
         _ => None,
     };
+    #[allow(clippy::result_large_err)]
+    // Err is an axum Response (large by nature); boxing would ripple through the handler
     let validate_quality =
         |value: Option<i32>, field: &str| -> Result<Option<i32>, axum::response::Response> {
             match value {

@@ -578,7 +578,7 @@ pub(crate) async fn compute_on_deck(
 
     // Merge by most-recent activity desc; caller caps to per-surface
     // limit (the rail truncates to 24, the next-up resolver takes 1).
-    items.sort_by(|a, b| b.0.cmp(&a.0));
+    items.sort_by_key(|item| std::cmp::Reverse(item.0));
     Ok(items.into_iter().map(|(_, c)| c).collect())
 }
 
