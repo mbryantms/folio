@@ -131,7 +131,7 @@ jobs:
           dependency-snapshot: false
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4
+        uses: sigstore/cosign-installer@v3
 
       - name: Sign image (keyless)
         env:
