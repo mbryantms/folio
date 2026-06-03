@@ -69,7 +69,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v6
         with:
-          version: 10.33.2
+          version: 11.5.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter web run lint
       - run: pnpm --filter web run typecheck
@@ -106,7 +106,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v6
         with:
-          version: 10.33.2
+          version: 11.5.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter docs-site run build
 
@@ -123,7 +123,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v6
         with:
-          version: 10.33.2
+          version: 11.5.1
       - uses: dtolnay/rust-toolchain@1.96.0
       - uses: Swatinem/rust-cache@v2
       - name: Generate spec from PR
