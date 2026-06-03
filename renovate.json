@@ -50,8 +50,14 @@
       "addLabels": ["major-review"]
     },
     {
-      "description": "Gated majors blocked by project constraints (see plan): eslint 10 needs react-plugin flat-config support; @types/node tracks the Node 22 runtime.",
-      "matchPackageNames": ["eslint", "@types/node"],
+      "description": "eslint 10 is blocked by eslint-plugin-react, pulled in transitively via eslint-config-next (which depends on eslint-plugin-react ^7.37.0). Its latest release, 7.37.5, peer-supports eslint up to ^9.7 only and calls the rule-context API context.getFilename(), which eslint 10 removed (now context.filename). Flat config is already in use (web/eslint.config.mjs) — that is NOT the blocker. Clears only when eslint-plugin-react ships an eslint-10-compatible release AND eslint-config-next adopts it.",
+      "matchPackageNames": ["eslint"],
+      "automerge": false,
+      "addLabels": ["gated-major"]
+    },
+    {
+      "description": "@types/node major must track the Node runtime major, currently 24 (engines.node >=24, .nvmrc, ci.yml node-version, web/Dockerfile node:24). Don't let @types/node run ahead of the runtime; bump both together when Node moves.",
+      "matchPackageNames": ["@types/node"],
       "automerge": false,
       "addLabels": ["gated-major"]
     },
