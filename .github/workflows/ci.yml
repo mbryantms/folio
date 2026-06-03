@@ -141,7 +141,12 @@ jobs:
       - name: Generated TS types match
         run: |
           pnpm install --frozen-lockfile
-          pnpm exec openapi-typescript web/lib/api/openapi.json -o /tmp/pr-types.generated.ts >/dev/null 2>&1
+          # openapi-typescript is a dependency of the `web` workspace package,
+          # not the repo root, so it must be exec'd in the web context — a bare
+          # `pnpm exec` from the root fails with ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL.
+          # (Don't swallow stderr: a silent crash here used to produce an empty
+          # output file and a misleading "types are stale" failure.)
+          pnpm --filter web exec openapi-typescript lib/api/openapi.json -o /tmp/pr-types.generated.ts
           diff -q /tmp/pr-types.generated.ts web/lib/api/types.generated.ts || \
             (echo "::error::web/lib/api/types.generated.ts is stale. Run 'just openapi'." && exit 1)
       - name: oasdiff vs main
