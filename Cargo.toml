@@ -64,7 +64,7 @@ async-trait = "0.1"
 
 # HTTP / web
 axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
-axum-extra = { version = "0.10", features = ["cookie", "cookie-private", "cookie-signed", "typed-header"] }
+axum-extra = { version = "0.12", features = ["cookie", "cookie-private", "cookie-signed", "typed-header"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip", "compression-zstd", "cors", "set-header", "request-id", "timeout"] }
 hyper = { version = "1.5", features = ["full"] }
