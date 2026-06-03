@@ -40,11 +40,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import type {
-  IssueSearchHit,
-  IssueSummaryView,
-  SeriesView,
-} from "@/lib/api/types";
+import type { IssueSummaryView, SeriesView } from "@/lib/api/types";
 import {
   useIssuesCrossListInfinite,
   useSeriesListInfinite,
@@ -259,7 +255,6 @@ export function SearchView({
           def={activeDef}
           query={debounced}
           enabled={enabled}
-          payloads={payloads}
           groups={groups}
           cardSize={cardSize}
           seriesFilters={
@@ -503,7 +498,6 @@ function CategoryGrid({
   def,
   query,
   enabled,
-  payloads,
   groups,
   cardSize,
   seriesFilters,
@@ -511,7 +505,6 @@ function CategoryGrid({
   def: SearchCategoryDef;
   query: string;
   enabled: boolean;
-  payloads: GlobalSearchPayloads;
   groups: { [K in SearchCategory]: SearchHit[] };
   cardSize: number;
   seriesFilters: Partial<SeriesListFilters>;
