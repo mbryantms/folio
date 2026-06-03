@@ -27,7 +27,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v6
         with:
-          version: 10.33.2
+          version: 11.5.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level=high
 

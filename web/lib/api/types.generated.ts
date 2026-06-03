@@ -299,11 +299,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Series with auto-sync enabled (`metadata_sync_paused = false`) — the
+        /**
+         * Series with auto-sync enabled (`metadata_sync_paused = false`) — the
          *     opt-in set the weekly refresh cron will touch. Auto-sync is
          *     series-level, so issues inherit their series' setting. The list is
          *     operator-curated (opt-in), so it's intentionally bounded and returned
-         *     in full, ordered by name. */
+         *     in full, ordered by name.
+         */
         get: operations["metadata_auto_synced"];
         put?: never;
         post?: never;
@@ -544,10 +546,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Most-recent scan_run row per library. One row per library, ordered
+        /**
+         * Most-recent scan_run row per library. One row per library, ordered
          *     oldest-scanned-first so the "What hasn't been touched in months"
          *     libraries float to the top — drives the dashboard's "Latest scan
-         *     per library" card. */
+         *     per library" card.
+         */
         get: operations["admin_scan_runs_latest_per_library"];
         put?: never;
         post?: never;
@@ -566,9 +570,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Destructive: wipe one issue's strip subtree, then enqueue a fresh
+        /**
+         * Destructive: wipe one issue's strip subtree, then enqueue a fresh
          *     `Strip` job. Cover file is preserved. Audit:
-         *     `admin.thumbnails.force_recreate.issue_page_map`. */
+         *     `admin.thumbnails.force_recreate.issue_page_map`.
+         */
         post: operations["admin_thumbs_force_recreate_issue_page_map"];
         delete?: never;
         options?: never;
@@ -585,9 +591,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Fill-only `Strip` enqueue for a single issue. Worker skips pages whose
+        /**
+         * Fill-only `Strip` enqueue for a single issue. Worker skips pages whose
          *     strip files already exist, so calling this when nothing's missing is a
-         *     no-op. Audit: `admin.thumbnails.generate_page_map.issue`. */
+         *     no-op. Audit: `admin.thumbnails.generate_page_map.issue`.
+         */
         post: operations["admin_thumbs_generate_issue_page_map"];
         delete?: never;
         options?: never;
@@ -604,9 +612,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Wipe one issue's cover thumbnail (every known extension), clear its
+        /**
+         * Wipe one issue's cover thumbnail (every known extension), clear its
          *     stamp columns, and enqueue a fresh `Cover` job. Strip subtree is
-         *     preserved. Audit: `admin.thumbnails.regenerate.issue_cover`. */
+         *     preserved. Audit: `admin.thumbnails.regenerate.issue_cover`.
+         */
         post: operations["admin_thumbs_regenerate_issue_cover"];
         delete?: never;
         options?: never;
@@ -623,10 +633,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Destructive: delete every strip subtree in the series, then enqueue a
+        /**
+         * Destructive: delete every strip subtree in the series, then enqueue a
          *     `Strip` job per active issue so each page is re-encoded from the
          *     archive. Cover files are preserved. Audit:
-         *     `admin.thumbnails.force_recreate.series_page_map`. */
+         *     `admin.thumbnails.force_recreate.series_page_map`.
+         */
         post: operations["admin_thumbs_force_recreate_series_page_map"];
         delete?: never;
         options?: never;
@@ -643,10 +655,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Fill-only enqueue: walk every active issue in the series and push a
+        /**
+         * Fill-only enqueue: walk every active issue in the series and push a
          *     `Strip` job. The worker skips pages whose strip files already exist, so
          *     repeated calls are cheap and idempotent. Audit:
-         *     `admin.thumbnails.generate_page_map.series`. */
+         *     `admin.thumbnails.generate_page_map.series`.
+         */
         post: operations["admin_thumbs_generate_series_page_map"];
         delete?: never;
         options?: never;
@@ -663,10 +677,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Wipe every cover file in a series and re-enqueue cover jobs for each
+        /**
+         * Wipe every cover file in a series and re-enqueue cover jobs for each
          *     active issue. Strip subtree is preserved; strips refill lazily through
          *     the inline-fallback path or by a separate `force-recreate-page-map`
-         *     call. Audit: `admin.thumbnails.regenerate.series_cover`. */
+         *     call. Audit: `admin.thumbnails.regenerate.series_cover`.
+         */
         post: operations["admin_thumbs_regenerate_series_cover"];
         delete?: never;
         options?: never;
@@ -1442,9 +1458,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Resolve the next issue the user should read after the given one. Picks
+        /**
+         * Resolve the next issue the user should read after the given one. Picks
          *     CBL > series; returns `source: "none"` when neither branch has a
-         *     viable target. */
+         *     viable target.
+         */
         get: operations["next_up_next_up"];
         put?: never;
         post?: never;
@@ -1461,10 +1479,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Resolve the previous issue the user should navigate to. Picks
+        /**
+         * Resolve the previous issue the user should navigate to. Picks
          *     CBL > series; returns `source: "none"` when neither branch has a
          *     viable target (e.g., user is on the first issue of the series and
-         *     no CBL context). */
+         *     no CBL context).
+         */
         get: operations["next_up_prev_up"];
         put?: never;
         post?: never;
@@ -1813,11 +1833,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Detail endpoint — returns list metadata + aggregate stats only.
+        /**
+         * Detail endpoint — returns list metadata + aggregate stats only.
          *     Entries used to be embedded here (capped at 500), which silently
          *     truncated long lists; they now live exclusively on the paginated
          *     `/entries` endpoint. The per-status counts the UI used to derive
-         *     from `entries` are on `list.stats`. */
+         *     from `entries` are on `list.stats`.
+         */
         get: operations["cbl_lists_detail"];
         put?: never;
         post?: never;
@@ -1834,10 +1856,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** `GET /me/cbl-lists/{id}/entries` — paginated walk over CBL entries
+        /**
+         * `GET /me/cbl-lists/{id}/entries` — paginated walk over CBL entries
          *     in position order, hydrated with `IssueSummaryView` for matched
          *     rows. Status filter is server-side, so the Resolution tab can
-         *     stream just `ambiguous,missing` without touching the matched majority. */
+         *     stream just `ambiguous,missing` without touching the matched majority.
+         */
         get: operations["cbl_lists_entries"];
         put?: never;
         post?: never;
@@ -1886,11 +1910,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** `GET /me/cbl-lists/{id}/export` — round-trip the original `<Books>`
+        /**
+         * `GET /me/cbl-lists/{id}/export` — round-trip the original `<Books>`
          *     XML back to the user as a `.cbl` download. The bytes are exactly
          *     what we imported (or last refreshed) — every CBL list keeps its
          *     `raw_xml` for re-match purposes, so this is just a Content-Disposition
-         *     dressing on top of the stored string. */
+         *     dressing on top of the stored string.
+         */
         get: operations["cbl_lists_export"];
         put?: never;
         post?: never;
@@ -2123,11 +2149,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Multi-select Tranche M4: drop many `(entry_kind, ref_id)` members
+        /**
+         * Multi-select Tranche M4: drop many `(entry_kind, ref_id)` members
          *     from a collection in one round-trip. Per-row delete; partial
          *     success preserved. Members not in the collection are silently
          *     counted as `not_present`. The underlying series / issues are NOT
-         *     touched — only the collection-membership row. */
+         *     touched — only the collection-membership row.
+         */
         post: operations["collections_bulk_remove_members"];
         delete?: never;
         options?: never;
@@ -2368,12 +2396,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** "What's next" suggestions for the home page. Returns a mix of
+        /**
+         * "What's next" suggestions for the home page. Returns a mix of
          *     `series_next` cards (next-unread issue in a series the user has read
          *     at least one finished issue of, with no in-progress issue blocking the
          *     queue) and `cbl_next` cards (lowest-position unfinished matched entry
          *     in a CBL the user has any progress in). Series with an active in-
-         *     progress issue are skipped — they already surface in Continue Reading. */
+         *     progress issue are skipped — they already surface in Continue Reading.
+         */
         get: operations["rails_on_deck"];
         put?: never;
         post?: never;
@@ -2460,9 +2490,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** `PATCH /me/preferences` — update the calling user's preferences.
+        /**
+         * `PATCH /me/preferences` — update the calling user's preferences.
          *     Phase 3 only ships `default_reading_direction`. CSRF-checked by middleware
-         *     (cookie auth, unsafe verb). */
+         *     (cookie auth, unsafe verb).
+         */
         patch: operations["local_update_preferences"];
         trace?: never;
     };
@@ -2950,10 +2982,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Returns the next N issues in the same series, ordered by `sort_number`
+        /**
+         * Returns the next N issues in the same series, ordered by `sort_number`
          *     ASC (NULLS LAST) with `id` as a stable tie-breaker. Removed / soft-deleted
          *     issues are filtered out so the list mirrors the series page. The current
-         *     issue is excluded from the result. */
+         *     issue is excluded from the result.
+         */
         get: operations["issues_next_in_series"];
         put?: never;
         post?: never;
@@ -3479,16 +3513,20 @@ export interface components {
          */
         AccentColor: "amber" | "blue" | "emerald" | "rose";
         AccountReq: {
-            /** @description Optional second password field. The web form ships two `<input>`s
+            /**
+             * @description Optional second password field. The web form ships two `<input>`s
              *     for confirmation; submitting them as `new_password` + `confirm_password`
              *     lets the no-JS fallback validate parity server-side. Ignored when
-             *     absent or equal. */
+             *     absent or equal.
+             */
             confirm_password?: string | null;
             /** @description Required when changing the password. Verified before any write. */
             current_password?: string | null;
             display_name?: string | null;
-            /** @description New email. Local users only — OIDC users cannot self-edit (the issuer
-             *     owns this field). */
+            /**
+             * @description New email. Local users only — OIDC users cannot self-edit (the issuer
+             *     owns this field).
+             */
             email?: string | null;
             /** @description New password. Must be ≥ 12 chars per the local-auth policy. */
             new_password?: string | null;
@@ -3510,27 +3548,37 @@ export interface components {
         AddEntryReq: {
             /** @description `'series'` or `'issue'`. */
             entry_kind: string;
-            /** @description Series UUID or issue id (TEXT). Validated against the
-             *     declared `entry_kind`. */
+            /**
+             * @description Series UUID or issue id (TEXT). Validated against the
+             *     declared `entry_kind`.
+             */
             ref_id: string;
         };
         AddExternalIdReq: {
             external_id: string;
-            /** @description Optional override; defaults to the canonical URL template for
-             *     `(source, entity_type)` when one exists. */
+            /**
+             * @description Optional override; defaults to the canonical URL template for
+             *     `(source, entity_type)` when one exists.
+             */
             external_url?: string | null;
-            /** @description `"comicvine" | "metron" | "gcd" | "marvel" | "locg" | "mal" |
+            /**
+             * @description `"comicvine" | "metron" | "gcd" | "marvel" | "locg" | "mal" |
              *     "anilist" | "mangaupdates" | "isbn" | "upc" | "asin" | "doi"`.
-             *     Aliases accepted (`"cv"` → ComicVine, etc.). */
+             *     Aliases accepted (`"cv"` → ComicVine, etc.).
+             */
             source: string;
         };
-        /** @description Audit-remediation M4 dropped `LogWidgetListView { widgets: Vec<_> }` in
+        /**
+         * @description Audit-remediation M4 dropped `LogWidgetListView { widgets: Vec<_> }` in
          *     favor of the workspace-uniform `shared::pagination::CursorPage<T>`
          *     envelope (`{ items, next_cursor, total? }`). Widget lists are bounded
-         *     per-user; `next_cursor` is always `None`. */
+         *     per-user; `next_cursor` is always `None`.
+         */
         AddWidgetReq: {
-            /** @description Optional starting config. Defaults to `{}`, which is always
-             *     a legal blob — the per-kind renderer fills in defaults. */
+            /**
+             * @description Optional starting config. Defaults to `{}`, which is always
+             *     a legal blob — the per-kind renderer fills in defaults.
+             */
             config?: unknown;
             kind: string;
         };
@@ -3602,10 +3650,12 @@ export interface components {
             ordinal: number;
             /** Format: uuid */
             run_id: string;
-            /** @description `queued` — the apply job is in flight; the candidate row's
+            /**
+             * @description `queued` — the apply job is in flight; the candidate row's
              *     `applied_at` flips once it completes. The Runs / Review-Queue
              *     surfaces (M6) reflect the new state via the same polling
-             *     endpoint. */
+             *     endpoint.
+             */
             status: string;
         };
         /** @enum {string} */
@@ -3615,26 +3665,34 @@ export interface components {
         ApplyRequest: {
             /** @description Pull + write the cover image. Defaults to true. */
             apply_cover?: boolean;
-            /** @description `never` / `when_missing` (default) / `always`. Only applies to
-             *     the primary cover; variants are always additive. */
+            /**
+             * @description `never` / `when_missing` (default) / `always`. Only applies to
+             *     the primary cover; variants are always additive.
+             */
             cover_overwrite_policy?: components["schemas"]["ApplyCoverPolicy"];
-            /** @description `fill_missing` (default) only writes fields that are currently
+            /**
+             * @description `fill_missing` (default) only writes fields that are currently
              *     empty; `replace_all` overwrites non-user fields. User-set
              *     fields stay sacred regardless unless `override_user_edits=true`
-             *     (admin-only). */
+             *     (admin-only).
+             */
             mode?: components["schemas"]["ApplyMode"];
             /**
              * Format: int32
              * @description 0-based rank from the orchestrator (lower = higher score).
              */
             ordinal: number;
-            /** @description M5 conflict-resolution: per-source list of external-ID rows
+            /**
+             * @description M5 conflict-resolution: per-source list of external-ID rows
              *     where the user has opted to "Use theirs". The candidate's
              *     value replaces the user-set row for these sources. Other
-             *     conflicts stay sacred. */
+             *     conflicts stay sacred.
+             */
             override_external_id_sources?: string[];
-            /** @description Bypass the user-precedence rule. Admin-only; non-admin callers
-             *     get 403 if they request it. */
+            /**
+             * @description Bypass the user-precedence rule. Admin-only; non-admin callers
+             *     get 403 if they request it.
+             */
             override_user_edits?: boolean;
             /**
              * Format: uuid
@@ -3644,19 +3702,23 @@ export interface components {
              *     provider.
              */
             run_id: string;
-            /** @description M5 preview-pane opt-in: when present, only the named fields
+            /**
+             * @description M5 preview-pane opt-in: when present, only the named fields
              *     (by `MetadataField::key()`) are applied; everything else is
              *     skipped. When absent, the legacy "apply every eligible field"
              *     behaviour applies (preserves backward compat for older
-             *     clients). */
+             *     clients).
+             */
             selected_fields?: string[] | null;
         };
         AuditEntryView: {
             action: string;
             actor_id: string;
-            /** @description Human-readable name for the actor (e.g. user display name + email).
+            /**
+             * @description Human-readable name for the actor (e.g. user display name + email).
              *     `None` when the actor cannot be resolved — typically because the user
-             *     row was deleted after the entry was written. */
+             *     row was deleted after the entry was written.
+             */
             actor_label?: string | null;
             actor_type: string;
             created_at: string;
@@ -3664,9 +3726,11 @@ export interface components {
             ip?: string | null;
             payload: unknown;
             target_id?: string | null;
-            /** @description Human-readable name for the target. Resolved server-side for
+            /**
+             * @description Human-readable name for the target. Resolved server-side for
              *     `target_type` values of `user` and `library`. `None` for unknown types
-             *     or unresolvable rows. */
+             *     or unresolvable rows.
+             */
             target_label?: string | null;
             target_type?: string | null;
             user_agent?: string | null;
@@ -3695,9 +3759,11 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
-        /** @description Outcome of a phash backfill sweep — exposed via the admin
+        /**
+         * @description Outcome of a phash backfill sweep — exposed via the admin
          *     endpoint so the operator can see how many rows landed in each
-         *     category. */
+         *     category.
+         */
         BackfillOutcome: {
             /** @description Rows visited (had `phash IS NULL` at the start of the sweep). */
             considered: number;
@@ -3708,9 +3774,11 @@ export interface components {
             /** @description Rows skipped because the file was missing or undecodable. */
             skipped: number;
         };
-        /** @description Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).
+        /**
+         * @description Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).
          *     Surfaced as a storage card on the library health page so operators can see
-         *     how much disk the edit/restore safety backups consume. */
+         *     how much disk the edit/restore safety backups consume.
+         */
         BackupStorageView: {
             /** Format: int64 */
             file_count: number;
@@ -3732,19 +3800,23 @@ export interface components {
              */
             slot: number;
         };
-        /** @description Body for `POST /me/collections/{id}/members/bulk-add`. Each
+        /**
+         * @description Body for `POST /me/collections/{id}/members/bulk-add`. Each
          *     member follows the same `(entry_kind, ref_id)` shape as the
          *     single-add endpoint. Multi-select toolbar (`<SelectionToolbar>`'s
          *     "Add to collection…" action) builds this from the user's
          *     `selectedIds` set.
          *
-         *     Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M3). */
+         *     Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M3).
+         */
         BulkAddMembersReq: {
             members: components["schemas"]["AddEntryReq"][];
         };
-        /** @description Response counts for the bulk-add endpoint. Lets the toast surface
+        /**
+         * @description Response counts for the bulk-add endpoint. Lets the toast surface
          *     "N added; M already in this collection; X skipped" without the
-         *     caller doing per-member round-trips. */
+         *     caller doing per-member round-trips.
+         */
         BulkAddMembersResp: {
             /**
              * Format: int32
@@ -3772,12 +3844,14 @@ export interface components {
              */
             not_found: number;
         };
-        /** @description A single relative operation applied uniformly across a bulk selection
+        /**
+         * @description A single relative operation applied uniformly across a bulk selection
          *     (M7). Unlike [`PageOp`], these don't carry absolute ordinals — they're
          *     lowered to concrete `PageOp`s per issue once that issue's page count is
          *     known (different archives have different page counts), so one bulk choice
          *     like "remove the last 2 pages" does the right thing on every selected
-         *     issue. */
+         *     issue.
+         */
         BulkArchiveOp: {
             degrees: components["schemas"]["Rot"];
             /** @enum {string} */
@@ -3798,9 +3872,11 @@ export interface components {
             kind: "remove_last";
         };
         BulkEditRequest: {
-            /** @description Issue ids to apply the op to. Issues that don't exist, live in a
+            /**
+             * @description Issue ids to apply the op to. Issues that don't exist, live in a
              *     non-writeback library, or aren't an editable format are skipped (and
-             *     reported), not failed. */
+             *     reported), not failed.
+             */
             issue_ids: string[];
             /** @description The single relative op applied to every eligible issue. */
             op: components["schemas"]["BulkArchiveOp"];
@@ -3811,7 +3887,8 @@ export interface components {
             /** @description Issues that were skipped, with a reason each. */
             skipped: components["schemas"]["BulkSkip"][];
         };
-        /** @description Per-field patch surface for the bulk-edit dialog
+        /**
+         * @description Per-field patch surface for the bulk-edit dialog
          *     (`manga-and-bulk-metadata-1.0` M4). Every field is independently
          *     optional. Sending `null` for a nullable field clears it; omitting
          *     leaves it untouched.
@@ -3821,19 +3898,24 @@ export interface components {
          *     these vary issue-to-issue in real series (guest artists, variant
          *     covers, mid-series translator changes) and bulk-editing them
          *     risks clobbering accurate per-issue credits. Continue using the
-         *     per-issue drawer for credits. */
+         *     per-issue drawer for credits.
+         */
         BulkMetadataPatch: {
             age_rating?: string | null;
             format?: string | null;
-            /** @description CSV. Replaces the field wholesale; for additive tag operations
+            /**
+             * @description CSV. Replaces the field wholesale; for additive tag operations
              *     the M5 dialog assembles the union client-side and sends it
-             *     here. */
+             *     here.
+             */
             genre?: string | null;
             imprint?: string | null;
             /** @description ISO-639-1 language code (`"ja"`, `"en"`, …). `null` clears. */
             language_code?: string | null;
-            /** @description ComicInfo Manga: `"No"` / `"Yes"` / `"YesAndRightToLeft"`.
-             *     `null` clears. */
+            /**
+             * @description ComicInfo Manga: `"No"` / `"Yes"` / `"YesAndRightToLeft"`.
+             *     `null` clears.
+             */
             manga?: string | null;
             publisher?: string | null;
             story_arc?: string | null;
@@ -3871,12 +3953,14 @@ export interface components {
         };
         /** @enum {string} */
         BulkMode: "skip_if_set" | "replace";
-        /** @description Body for `POST /me/collections/{id}/members/bulk-remove`. Identifies
+        /**
+         * @description Body for `POST /me/collections/{id}/members/bulk-remove`. Identifies
          *     each member by its `(entry_kind, ref_id)` pair — the same shape the
          *     bulk-add endpoint accepts — so the UI doesn't have to round-trip
          *     to look up the `collection_entries.id` PK for each row.
          *
-         *     Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M4). */
+         *     Plan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M4).
+         */
         BulkRemoveMembersReq: {
             members: components["schemas"]["AddEntryReq"][];
         };
@@ -3969,24 +4053,30 @@ export interface components {
             id: string;
             last_indexed_at?: string | null;
         };
-        /** @description Detail response — list metadata + aggregate counts only. Entries
+        /**
+         * @description Detail response — list metadata + aggregate counts only. Entries
          *     moved to the paginated `/me/cbl-lists/{id}/entries` endpoint as of
          *     2026-05-14; see [docs/dev plans](../../../../.claude/plans/list-pagination-completeness-1.0.md)
          *     for rationale (large lists silently truncated at 500). The fields
          *     on `CblListView.stats` carry the per-status counts that used to be
-         *     computed client-side from `entries`. */
+         *     computed client-side from `entries`.
+         */
         CblDetailView: components["schemas"]["CblListView"];
-        /** @description One entry + its hydrated `IssueSummaryView` (when `matched_issue_id`
+        /**
+         * @description One entry + its hydrated `IssueSummaryView` (when `matched_issue_id`
          *     resolves to an issue the caller can see). Returned by the paginated
          *     entries endpoint so the consumption grid + Reading Order tab don't
-         *     need a second `/issues` round-trip. */
+         *     need a second `/issues` round-trip.
+         */
         CblEntryHydratedView: components["schemas"]["CblEntryView"] & {
             issue?: null | components["schemas"]["IssueSummaryView"];
         };
         CblEntryListView: {
             items: components["schemas"]["CblEntryHydratedView"][];
-            /** @description Opaque cursor for the next page. `None` when this page is the
-             *     last one for the given filter set. */
+            /**
+             * @description Opaque cursor for the next page. `None` when this page is the
+             *     last one for the given filter set.
+             */
             next_cursor?: string | null;
             /**
              * Format: int64
@@ -4036,8 +4126,10 @@ export interface components {
             refresh_schedule?: string | null;
             source_kind: string;
             source_url?: string | null;
-            /** @description Counts derived from `cbl_entries` for this list. Populated on
-             *     list + detail responses. */
+            /**
+             * @description Counts derived from `cbl_entries` for this list. Populated on
+             *     list + detail responses.
+             */
             stats: components["schemas"]["CblStatsView"];
             updated_at: string;
         };
@@ -4078,9 +4170,11 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
-        /** @description One entry in the reading-window response. Mirrors `IssueSummaryView`
+        /**
+         * @description One entry in the reading-window response. Mirrors `IssueSummaryView`
          *     plus the per-user progress overlay so the rail can render finished /
-         *     in-progress / unread cards without a second round-trip. */
+         *     in-progress / unread cards without a second round-trip.
+         */
         CblWindowEntry: {
             finished: boolean;
             issue: components["schemas"]["IssueSummaryView"];
@@ -4101,10 +4195,12 @@ export interface components {
              */
             position: number;
         };
-        /** @description One page of a CBL reading window. `current_index` / `total_*`
+        /**
+         * @description One page of a CBL reading window. `current_index` / `total_*`
          *     fields are populated **only** on the initial page so subsequent
          *     before/after fetches stay cheap and don't re-emit anchor-shaped
-         *     data the client already has. */
+         *     data the client already has.
+         */
         CblWindowPageView: {
             /**
              * Format: int32
@@ -4113,11 +4209,15 @@ export interface components {
              *     finished.
              */
             current_index?: number | null;
-            /** @description True iff at least one matched entry exists with `position >
-             *     max_position`. Drives the rail's right-edge sentinel. */
+            /**
+             * @description True iff at least one matched entry exists with `position >
+             *     max_position`. Drives the rail's right-edge sentinel.
+             */
             has_more_after: boolean;
-            /** @description True iff at least one matched entry exists with `position <
-             *     min_position`. Drives the rail's left-edge sentinel. */
+            /**
+             * @description True iff at least one matched entry exists with `position <
+             *     min_position`. Drives the rail's left-edge sentinel.
+             */
             has_more_before: boolean;
             items: components["schemas"]["CblWindowEntry"][];
             /**
@@ -4213,8 +4313,10 @@ export interface components {
             cover_overwrite_policy?: components["schemas"]["ApplyCoverPolicy"];
             /** @description Per-field candidate picks. A field absent here is not applied. */
             field_sources: components["schemas"]["CompositeFieldSource"][];
-            /** @description The candidate `ordinal`s that contribute. Their `applied_at` is
-             *     flipped. */
+            /**
+             * @description The candidate `ordinal`s that contribute. Their `applied_at` is
+             *     flipped.
+             */
             included: number[];
             mode?: components["schemas"]["ApplyMode"];
             override_external_id_sources?: string[];
@@ -4252,9 +4354,11 @@ export interface components {
             current_set_at?: string | null;
             current_set_by?: string | null;
             current_value?: string | null;
-            /** @description `DiffDecision` for (current vs the chosen value) — reuses
+            /**
+             * @description `DiffDecision` for (current vs the chosen value) — reuses
              *     `apply::classify_field` so the badge matches the single-candidate
-             *     pane exactly. */
+             *     pane exactly.
+             */
             decision: string;
             field: string;
             label: string;
@@ -4270,9 +4374,11 @@ export interface components {
              */
             ordinal: number;
         };
-        /** @description One candidate's proposed value for a field. Keyed by `ordinal`
+        /**
+         * @description One candidate's proposed value for a field. Keyed by `ordinal`
          *     (unique within a run) so multiple candidates from the same provider
-         *     are distinct columns. */
+         *     are distinct columns.
+         */
         CompositeProposal: {
             /** Format: int32 */
             ordinal: number;
@@ -4293,16 +4399,20 @@ export interface components {
             /** @description Series name / "name #number" for the column subtitle. */
             title?: string | null;
         };
-        /** @description One condition row in a filter DSL. `group_id` always 0 in v1; reserved
-         *     for nested-group support without a wire-format break. */
+        /**
+         * @description One condition row in a filter DSL. `group_id` always 0 in v1; reserved
+         *     for nested-group support without a wire-format break.
+         */
         Condition: {
             field: components["schemas"]["Field"];
             /** Format: int32 */
             group_id?: number;
             op: components["schemas"]["Op"];
-            /** @description Shape varies by `(field, op)`. The compiler validates and rejects
+            /**
+             * @description Shape varies by `(field, op)`. The compiler validates and rejects
              *     mismatches with a clear error. See [`super::registry`] for the
-             *     matrix of allowed combinations. */
+             *     matrix of allowed combinations.
+             */
             value?: unknown;
         };
         ContentInsightsView: {
@@ -4319,13 +4429,17 @@ export interface components {
             items: components["schemas"]["ContinueReadingCard"][];
         };
         CreateAppPasswordReq: {
-            /** @description Free-form label so the user can tell their tokens apart.
-             *     1-80 characters; trimmed. */
+            /**
+             * @description Free-form label so the user can tell their tokens apart.
+             *     1-80 characters; trimmed.
+             */
             label: string;
-            /** @description Optional scope tag — `read` (default) or `read+progress`.
+            /**
+             * @description Optional scope tag — `read` (default) or `read+progress`.
              *     Tokens with `read` can browse, page-stream, and download; the
              *     progress-write surface (PUT `/opds/v1/issues/{id}/progress` and
-             *     the KOReader sync shim) requires `read+progress`. */
+             *     the KOReader sync shim) requires `read+progress`.
+             */
             scope?: string | null;
         };
         CreateCatalogSourceReq: {
@@ -4363,16 +4477,20 @@ export interface components {
         CreateLibraryReq: {
             default_language?: string;
             default_reading_direction?: string;
-            /** @description Set the per-library `generate_page_thumbs_on_scan` flag at
+            /**
+             * @description Set the per-library `generate_page_thumbs_on_scan` flag at
              *     creation time. When true, the post-scan pipeline (including the
              *     initial scan triggered by `scan_now`) enqueues page-strip
              *     thumbnails alongside the always-on cover thumbnails. Defaults
-             *     to false; user can flip it later from library settings. */
+             *     to false; user can flip it later from library settings.
+             */
             generate_page_thumbs_on_scan?: boolean;
             name: string;
             root_path: string;
-            /** @description Explicitly enqueue the initial scan after creating the row.
-             *     Defaults to false so library creation is side-effect-light. */
+            /**
+             * @description Explicitly enqueue the initial scan after creating the row.
+             *     Defaults to false so library creation is side-effect-light.
+             */
             scan_now?: boolean;
         };
         CreateMarkerReq: {
@@ -4385,9 +4503,11 @@ export interface components {
             kind: string;
             /** Format: int32 */
             page_index: number;
-            /** @description `{ x, y, w, h, shape }` — rect dims as 0–100 percent floats
+            /**
+             * @description `{ x, y, w, h, shape }` — rect dims as 0–100 percent floats
              *     normalized to the page's natural pixel dims. Omit for
-             *     whole-page markers. */
+             *     whole-page markers.
+             */
             region?: unknown;
             /** @description `{ text?, image_hash?, ocr_confidence? }`. */
             selection?: unknown;
@@ -4407,8 +4527,10 @@ export interface components {
             custom_year_start?: number | null;
             description?: string | null;
             filter?: null | components["schemas"]["FilterDsl"];
-            /** @description `'filter_series'` or `'cbl'`. Validated server-side; mismatched
-             *     kind/body shape returns 422. */
+            /**
+             * @description `'filter_series'` or `'cbl'`. Validated server-side; mismatched
+             *     kind/body shape returns 422.
+             */
             kind: string;
             name: string;
             /** Format: int32 */
@@ -4425,41 +4547,55 @@ export interface components {
             credit_count: number;
             id: string;
             name: string;
-            /** @description Series rails — one per role the creator held. Order matches
+            /**
+             * @description Series rails — one per role the creator held. Order matches
              *     `roles`; each rail is sorted by series name. Empty when the
-             *     creator only has credits in libraries the caller can't see. */
+             *     creator only has credits in libraries the caller can't see.
+             */
             rails: components["schemas"]["CreatorRoleRail"][];
-            /** @description Distinct roles the creator holds across visible credits, ordered
+            /**
+             * @description Distinct roles the creator holds across visible credits, ordered
              *     canonically (writer → penciller → inker → colorist → letterer →
-             *     cover_artist → editor → translator → anything else alphabetical). */
+             *     cover_artist → editor → translator → anything else alphabetical).
+             */
             roles: string[];
             slug: string;
         };
         CreatorRoleRail: {
-            /** @description Canonical role name as stored on the credit rows (e.g. `"writer"`,
-             *     `"penciller"`, `"cover_artist"`). */
+            /**
+             * @description Canonical role name as stored on the credit rows (e.g. `"writer"`,
+             *     `"penciller"`, `"cover_artist"`).
+             */
             role: string;
-            /** @description Series the creator touched in this role, hydrated with the same
-             *     fields the library grid renders so the page can show full cards. */
+            /**
+             * @description Series the creator touched in this role, hydrated with the same
+             *     fields the library grid renders so the page can show full cards.
+             */
             series: components["schemas"]["SeriesView"][];
         };
-        /** @description Cross-library health-issue row. Adds library context fields so the
-         *     admin findings table can render a Library column without N+1 lookups. */
+        /**
+         * @description Cross-library health-issue row. Adds library context fields so the
+         *     admin findings table can render a Library column without N+1 lookups.
+         */
         CrossLibHealthIssueView: components["schemas"]["HealthIssueView"] & {
             library_id: string;
             library_name: string;
             library_slug: string;
         };
-        /** @description Cross-library scan-run row. Adds library context fields so the
+        /**
+         * @description Cross-library scan-run row. Adds library context fields so the
          *     admin findings table can render a Library column without N+1
-         *     lookups. Same shape as the per-library [`ScanRunView`] otherwise. */
+         *     lookups. Same shape as the per-library [`ScanRunView`] otherwise.
+         */
         CrossLibScanRunView: components["schemas"]["ScanRunView"] & {
             library_id: string;
             library_name: string;
             library_slug: string;
         };
-        /** @description Cursor-paginated list response. `total` is populated only on the first
-         *     page of paginated lists where the count is cheap; bounded lists omit it. */
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
         CursorPage_AdminUserStatsRow: {
             items: {
                 /** Format: int64 */
@@ -4484,8 +4620,10 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
-        /** @description Cursor-paginated list response. `total` is populated only on the first
-         *     page of paginated lists where the count is cheap; bounded lists omit it. */
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
         CursorPage_CrossLibHealthIssueView: {
             items: (components["schemas"]["HealthIssueView"] & {
                 library_id: string;
@@ -4496,8 +4634,10 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
-        /** @description Cursor-paginated list response. `total` is populated only on the first
-         *     page of paginated lists where the count is cheap; bounded lists omit it. */
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
         CursorPage_CrossLibScanRunView: {
             items: (components["schemas"]["ScanRunView"] & {
                 library_id: string;
@@ -4508,8 +4648,10 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
-        /** @description Cursor-paginated list response. `total` is populated only on the first
-         *     page of paginated lists where the count is cheap; bounded lists omit it. */
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
         CursorPage_LogWidgetView: {
             items: {
                 config: unknown;
@@ -4524,13 +4666,17 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
-        /** @description Cursor-paginated list response. `total` is populated only on the first
-         *     page of paginated lists where the count is cheap; bounded lists omit it. */
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
         CursorPage_PageView: {
             items: {
                 created_at: string;
-                /** @description Optional free-form description rendered under the title. `None`
-                 *     (or absent) hides the descriptor row. */
+                /**
+                 * @description Optional free-form description rendered under the title. `None`
+                 *     (or absent) hides the descriptor row.
+                 */
                 description?: string | null;
                 id: string;
                 is_system: boolean;
@@ -4544,10 +4690,12 @@ export interface components {
                 pin_count: number;
                 /** Format: int32 */
                 position: number;
-                /** @description Whether this page appears in the sidebar nav. Computed from
+                /**
+                 * @description Whether this page appears in the sidebar nav. Computed from
                  *     `user_sidebar_entries` — missing override means visible (the
                  *     default). System pages always show via the builtin Home entry
-                 *     regardless of this flag. */
+                 *     regardless of this flag.
+                 */
                 show_in_sidebar: boolean;
                 slug: string;
                 updated_at: string;
@@ -4556,8 +4704,10 @@ export interface components {
             /** Format: int64 */
             total?: number | null;
         };
-        /** @description Cursor-paginated list response. `total` is populated only on the first
-         *     page of paginated lists where the count is cheap; bounded lists omit it. */
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
         CursorPage_String: {
             items: string[];
             next_cursor?: string | null;
@@ -4571,8 +4721,10 @@ export interface components {
              *     7 days.
              */
             applies_last_7_days: number;
-            /** @description Per-provider quota snapshots — only populated when the
-             *     provider is configured + enabled. */
+            /**
+             * @description Per-provider quota snapshots — only populated when the
+             *     provider is configured + enabled.
+             */
             providers: components["schemas"]["ProviderView"][];
             /**
              * Format: int64
@@ -4621,9 +4773,11 @@ export interface components {
             publisher?: string | null;
             series_id: string;
         };
-        /** @description Response for `POST /libraries/{slug}/validate-deeply`. Returns
+        /**
+         * @description Response for `POST /libraries/{slug}/validate-deeply`. Returns
          *     immediately with `202 Accepted`; the deep-validate runs in a
-         *     `tokio::spawn` task and emits per-page health-issues as it goes. */
+         *     `tokio::spawn` task and emits per-page health-issues as it goes.
+         */
         DeepValidateResp: {
             library_id: string;
             state: string;
@@ -4631,8 +4785,10 @@ export interface components {
         DeleteAllResp: {
             deleted: number;
         };
-        /** @description Response for `DELETE /libraries/{id}` — small summary for the audit log
-         *     and any UI that wants to confirm what got purged. */
+        /**
+         * @description Response for `DELETE /libraries/{id}` — small summary for the audit log
+         *     and any UI that wants to confirm what got purged.
+         */
         DeleteLibraryResp: {
             /**
              * Format: int64
@@ -4645,8 +4801,10 @@ export interface components {
              * @description Series rows removed (cascade).
              */
             deleted_series: number;
-            /** @description On-disk thumbnail directories swept. Best-effort — disk errors are
-             *     logged but don't block the SQL delete. */
+            /**
+             * @description On-disk thumbnail directories swept. Best-effort — disk errors are
+             *     logged but don't block the SQL delete.
+             */
             thumbs_swept: number;
         };
         /**
@@ -4662,28 +4820,40 @@ export interface components {
             sessions: number;
         };
         DiffResp: {
-            /** @description Count of rows whose decision would actually write a value
+            /**
+             * @description Count of rows whose decision would actually write a value
              *     (`would_fill` + `would_replace`). Lets the preview header
-             *     summarize "5 changes" without the client re-walking the rows. */
+             *     summarize "5 changes" without the client re-walking the rows.
+             */
             changes_count: number;
-            /** @description Only present when the candidate carries external_ids that
-             *     disagree with user-set rows on the same entity. */
+            /**
+             * @description Only present when the candidate carries external_ids that
+             *     disagree with user-set rows on the same entity.
+             */
             external_id_conflicts: components["schemas"]["ExternalIdConflictRow"][];
-            /** @description Provider IDs the candidate brought that the entity doesn't
-             *     have yet (no conflict — would just add). */
+            /**
+             * @description Provider IDs the candidate brought that the entity doesn't
+             *     have yet (no conflict — would just add).
+             */
             external_ids_new: components["schemas"]["ExternalIdNewRow"][];
             /** Format: int32 */
             ordinal: number;
-            /** @description Per-field rows, ordered by enum declaration (groups
-             *     scalars-then-junctions-then-covers). */
+            /**
+             * @description Per-field rows, ordered by enum declaration (groups
+             *     scalars-then-junctions-then-covers).
+             */
             rows: components["schemas"]["ScalarDiffRow"][];
             /** Format: uuid */
             run_id: string;
-            /** @description `"series" | "issue"` — echoes the run scope so the client
-             *     can render the right header copy. */
+            /**
+             * @description `"series" | "issue"` — echoes the run scope so the client
+             *     can render the right header copy.
+             */
             scope: string;
-            /** @description `"comicvine" | "metron"` — which provider supplied the
-             *     candidate. Drives the "Apply from <provider>" copy. */
+            /**
+             * @description `"comicvine" | "metron"` — which provider supplied the
+             *     candidate. Drives the "Apply from <provider>" copy.
+             */
             source: string;
             source_external_id: string;
         };
@@ -4709,8 +4879,10 @@ export interface components {
             sessions: number;
         };
         EditRequest: {
-            /** @description When true, validate the ops and return the would-be page count
-             *     without touching the archive. */
+            /**
+             * @description When true, validate the ops and return the would-be page count
+             *     without touching the archive.
+             */
             dry_run?: boolean;
             ops: components["schemas"]["PageOp"][];
         };
@@ -4725,8 +4897,10 @@ export interface components {
             status: "queued";
         };
         EmailStatusView: {
-            /** @description `true` when the live sender is a real transport (Lettre or Mock),
-             *     `false` when SMTP is unset and the Noop fallback is installed. */
+            /**
+             * @description `true` when the live sender is a real transport (Lettre or Mock),
+             *     `false` when SMTP is unset and the Noop fallback is installed.
+             */
             configured: boolean;
             /** Format: int64 */
             last_duration_ms?: number | null;
@@ -4754,8 +4928,10 @@ export interface components {
             wau: number;
         };
         EngagementView: {
-            /** @description Aggregate device breakdown across all (non-excluded) users over the
-             *     last 30 days. */
+            /**
+             * @description Aggregate device breakdown across all (non-excluded) users over the
+             *     last 30 days.
+             */
             devices_30d: components["schemas"]["DeviceBucket"][];
             /** @description Trailing-window DAU/WAU/MAU samples per day, last 90 days. */
             series: components["schemas"]["EngagementPoint"][];
@@ -4783,9 +4959,11 @@ export interface components {
             year?: number | null;
         };
         EventPayload: {
-            /** @description Best-effort first-read timestamp (earliest reading_session
+            /**
+             * @description Best-effort first-read timestamp (earliest reading_session
              *     `started_at` for this user+issue). `None` when no session
-             *     rows survived for the issue. */
+             *     rows survived for the issue.
+             */
             first_read_at?: string | null;
             /** @description Heuristic: `total_sessions > 1` is a reread. Refined in M6+. */
             is_reread: boolean;
@@ -4810,8 +4988,10 @@ export interface components {
              *     `started_at` is missing.
              */
             span_days?: number | null;
-            /** @description Earliest `finished_at` across the series's matched issues —
-             *     when the user first finished any issue in the series. */
+            /**
+             * @description Earliest `finished_at` across the series's matched issues —
+             *     when the user first finished any issue in the series.
+             */
             started_at?: string | null;
             /**
              * Format: int64
@@ -4836,8 +5016,10 @@ export interface components {
             started_at: string;
             view_mode?: string | null;
         } | {
-            /** @description First ~80 chars of the marker body. `None` when the marker
-             *     has no body (bookmarks / favorites typically don't). */
+            /**
+             * @description First ~80 chars of the marker body. `None` when the marker
+             *     has no body (bookmarks / favorites typically don't).
+             */
             body_preview?: string | null;
             /** @enum {string} */
             kind: "marker_created";
@@ -4857,19 +5039,25 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
-        /** @description External-ID conflict row — surfaces in the preview pane as an
-         *     amber row with a Keep mine / Use theirs control. */
+        /**
+         * @description External-ID conflict row — surfaces in the preview pane as an
+         *     amber row with a Keep mine / Use theirs control.
+         */
         ExternalIdConflictRow: {
             /** @description Current user-set external id. */
             current_external_id: string;
-            /** @description The candidate's proposed external id (always different from
-             *     `current_external_id`; same-value rows are filtered out). */
+            /**
+             * @description The candidate's proposed external id (always different from
+             *     `current_external_id`; same-value rows are filtered out).
+             */
             proposed_external_id: string;
             /** @description `"comicvine" | "metron" | …` from [`Source::as_str`]. */
             source: string;
         };
-        /** @description Provider external id the entity doesn't carry yet — apply will
-         *     just add the row, no conflict. */
+        /**
+         * @description Provider external id the entity doesn't carry yet — apply will
+         *     just add the row, no conflict.
+         */
         ExternalIdNewRow: {
             external_id: string;
             source: string;
@@ -4934,9 +5122,11 @@ export interface components {
              *     flag servers that are still running an old binary after a rebuild.
              */
             build_epoch: number;
-            /** @description Short git SHA captured at build time. Suffixed with `-dirty` when the
+            /**
+             * @description Short git SHA captured at build time. Suffixed with `-dirty` when the
              *     working tree had uncommitted changes during compilation. `unknown`
-             *     when not built inside a git checkout (e.g. tarball builds). */
+             *     when not built inside a git checkout (e.g. tarball builds).
+             */
             build_sha: string;
             status: string;
             /** Format: int64 */
@@ -4963,19 +5153,25 @@ export interface components {
             scan_id?: string | null;
             severity: string;
         };
-        /** @description Body for `POST /me/reading-log/hide` and `/unhide`. Identifies a
+        /**
+         * @description Body for `POST /me/reading-log/hide` and `/unhide`. Identifies a
          *     single event in the feed by its `kind` and the raw source id
          *     (without the `iss-fin:` / `ses:` / `mrk:` prefix the wire payload
          *     uses on `ReadingLogEventView.id` — clients strip that before
-         *     calling). */
+         *     calling).
+         */
         HideEventReq: {
-            /** @description One of `issue_finished | session_completed | marker_created`.
+            /**
+             * @description One of `issue_finished | session_completed | marker_created`.
              *     `series_finished` is rejected (derived event with no source
-             *     row to flag). */
+             *     row to flag).
+             */
             kind: string;
-            /** @description For `issue_finished`: the `issues.id` BLAKE3 hex.
+            /**
+             * @description For `issue_finished`: the `issues.id` BLAKE3 hex.
              *     For `session_completed`: the `reading_sessions.id` UUID.
-             *     For `marker_created`: the `markers.id` UUID. */
+             *     For `marker_created`: the `markers.id` UUID.
+             */
             source_id: string;
         };
         IssueCoverRow: {
@@ -4984,10 +5180,12 @@ export interface components {
             height?: number | null;
             /** Format: uuid */
             id: string;
-            /** @description URL the frontend should render `<img src>` from. Points at the
+            /**
+             * @description URL the frontend should render `<img src>` from. Points at the
              *     local byte endpoint (`/issues/{id}/covers/{cover_id}`) when the
              *     cover was downloaded to disk, else falls back to `source_url`
-             *     (provider CDN hotlink). `None` only when neither exists. */
+             *     (provider CDN hotlink). `None` only when neither exists.
+             */
             image_url?: string | null;
             is_active: boolean;
             issue_id: string;
@@ -4997,9 +5195,11 @@ export interface components {
             ordinal: number;
             source_external_id?: string | null;
             source_provider?: string | null;
-            /** @description CDN URL the provider returned. Kept for attribution + the
+            /**
+             * @description CDN URL the provider returned. Kept for attribution + the
              *     "open original" link; not the primary render source once the
-             *     image is stored locally. */
+             *     image is stored locally.
+             */
             source_url?: string | null;
             /** Format: uuid */
             variant_artist_person_id?: string | null;
@@ -5009,21 +5209,27 @@ export interface components {
         };
         IssueCoversResp: {
             covers: components["schemas"]["IssueCoverRow"][];
-            /** @description Fallback URL the frontend can render when no `issue_cover` row
+            /**
+             * @description Fallback URL the frontend can render when no `issue_cover` row
              *     exists (legacy issues whose primary cover is the page-thumb
-             *     pipeline). Always points at page 0's cover thumb. */
+             *     pipeline). Always points at page 0's cover thumb.
+             */
             fallback_primary_url: string;
             issue_id: string;
         };
         IssueDetailView: {
-            /** @description User-curated extra links beyond `web_url` (which mirrors ComicInfo).
-             *     Each entry has a required `url` and optional `label`. */
+            /**
+             * @description User-curated extra links beyond `web_url` (which mirrors ComicInfo).
+             *     Each entry has a required `url` and optional `label`.
+             */
             additional_links: components["schemas"]["IssueLink"][];
             age_rating?: string | null;
-            /** @description Whether the parent library has archive writeback enabled. Gates
+            /**
+             * @description Whether the parent library has archive writeback enabled. Gates
              *     the admin "Edit archive…" affordance in the UI
              *     (`archive-rewrite-1.0` M3). Populated by the issue-detail handler;
-             *     defaults false (not stored on the issue row). */
+             *     defaults false (not stored on the issue row).
+             */
             allow_archive_writeback?: boolean;
             alternate_series?: string | null;
             black_and_white?: boolean | null;
@@ -5044,11 +5250,13 @@ export interface components {
              */
             cover_page_index?: number;
             created_at: string;
-            /** @description Creator-name → slug map covering every credit name listed in
+            /**
+             * @description Creator-name → slug map covering every credit name listed in
              *     the per-role CSV fields above (writer/penciller/inker/…). Built
              *     from `issue_credits.person_id` joined to `person`; missing
              *     entries fall back to the legacy library-grid filter in the UI.
-             *     Empty until the get_one handler populates it. */
+             *     Empty until the get_one handler populates it.
+             */
             creator_slugs?: {
                 [key: string]: string;
             };
@@ -5069,26 +5277,34 @@ export interface components {
             imprint?: string | null;
             inker?: string | null;
             language_code?: string | null;
-            /** @description ISO-8601 timestamp of the last in-place rewrite of this issue's
+            /**
+             * @description ISO-8601 timestamp of the last in-place rewrite of this issue's
              *     archive bytes (from `metadata-sidecar-writeback-1.0` M3+ or
              *     `archive-rewrite-1.0` M2+). `None` when Folio has never
              *     rewritten the file. Surfaces in the UI as a "Metadata last
-             *     written {kind} on {date}" badge. */
+             *     written {kind} on {date}" badge.
+             */
             last_rewrite_at?: string | null;
-            /** @description `"sidecar"` (XML refresh) or `"edit"` (page bytes touched).
-             *     Paired with [`Self::last_rewrite_at`]. */
+            /**
+             * @description `"sidecar"` (XML refresh) or `"edit"` (page bytes touched).
+             *     Paired with [`Self::last_rewrite_at`].
+             */
             last_rewrite_kind?: string | null;
             letterer?: string | null;
-            /** @description Whether the parent library has acknowledged the CBR→CBZ conversion
+            /**
+             * @description Whether the parent library has acknowledged the CBR→CBZ conversion
              *     at least once (`library.cbr_convert_confirmed_at` is set). The page
              *     editor uses this to decide whether to show the one-time conversion
-             *     explainer when editing a `.cbr`. `archive-rewrite-1.0` M6. */
+             *     explainer when editing a `.cbr`. `archive-rewrite-1.0` M6.
+             */
             library_cbr_convert_confirmed?: boolean;
-            /** @description Parent library's `default_reading_direction` (`"ltr"` | `"rtl"`).
+            /**
+             * @description Parent library's `default_reading_direction` (`"ltr"` | `"rtl"`).
              *     The reader consults this as a fallback below ComicInfo
              *     `<Manga>` and the user's per-account preference but above the
              *     hard-coded LTR default. Plumbed by the issue-detail handler;
-             *     not stored on the issue row itself. */
+             *     not stored on the issue row itself.
+             */
             library_default_reading_direction?: string | null;
             library_id: string;
             locations?: string | null;
@@ -5101,20 +5317,24 @@ export interface components {
             number?: string | null;
             /** Format: int32 */
             page_count?: number | null;
-            /** @description Per-page metadata, deserialized from the issue's stored JSON. Empty when
+            /**
+             * @description Per-page metadata, deserialized from the issue's stored JSON. Empty when
              *     the parse failed or the source had no `<Pages>` block.
              *     `value_type` keeps the parsers crate framework-free; the actual schema
              *     fields (image, type, double_page, image_width, image_height, …) are
-             *     stable and documented in `crates/parsers/src/comicinfo.rs::PageInfo`. */
+             *     stable and documented in `crates/parsers/src/comicinfo.rs::PageInfo`.
+             */
             pages: unknown[];
             penciller?: string | null;
             publisher?: string | null;
             series_id: string;
-            /** @description Parent series' `reading_direction` override. Consulted by the
+            /**
+             * @description Parent series' `reading_direction` override. Consulted by the
              *     reader above the user and library defaults but below ComicInfo
              *     `<Manga>`. `None` = "Auto" (series has no override). Plumbed by
              *     the issue-detail handler; not stored on the issue row itself.
-             *     See `manga-and-bulk-metadata-1.0` M2. */
+             *     See `manga-and-bulk-metadata-1.0` M2.
+             */
             series_reading_direction?: string | null;
             /** @description Slug of the parent series — handy for nested URL construction. */
             series_slug: string;
@@ -5131,9 +5351,11 @@ export interface components {
             title?: string | null;
             translator?: string | null;
             updated_at: string;
-            /** @description Names of fields the user has overridden via `PATCH /issues/{id}`. The
+            /**
+             * @description Names of fields the user has overridden via `PATCH /issues/{id}`. The
              *     scanner skips these on a rescan. Surfaced so the UI can flag rows as
-             *     "edited" and offer a "revert to ComicInfo" affordance later. */
+             *     "edited" and offer a "revert to ComicInfo" affordance later.
+             */
             user_edited: string[];
             /**
              * Format: double
@@ -5162,16 +5384,20 @@ export interface components {
             total?: number | null;
         };
         IssueMarkersView: {
-            /** @description Every marker the calling user has on this issue, across all
-             *     pages. The reader overlay slices client-side by `page_index`. */
+            /**
+             * @description Every marker the calling user has on this issue, across all
+             *     pages. The reader overlay slices client-side by `page_index`.
+             */
             items: components["schemas"]["MarkerView"][];
         };
         IssueSearchHit: components["schemas"]["IssueSummaryView"] & {
             series_name: string;
-            /** @description Search-result excerpt with `<mark>…</mark>` tags around matched
+            /**
+             * @description Search-result excerpt with `<mark>…</mark>` tags around matched
              *     terms — same shape as `SeriesView.snippet`. Omitted when the
              *     issue's free-text fields (summary / story_arc / characters)
-             *     contain no highlightable fragment for the query. */
+             *     contain no highlightable fragment for the query.
+             */
             snippet?: string | null;
         };
         IssueSearchView: {
@@ -5185,19 +5411,23 @@ export interface components {
             /** Format: int32 */
             page_count?: number | null;
             series_id: string;
-            /** @description Parent series name, denormalized so card components can fall back
+            /**
+             * @description Parent series name, denormalized so card components can fall back
              *     to `"<series> #<number>"` when the issue has no title. Populated
              *     by endpoints that have the series row in scope (rails, CBL
              *     window, collections, search); `None` on endpoints where adding
-             *     the join would cost more than the user-visible benefit. */
+             *     the join would cost more than the user-visible benefit.
+             */
             series_name?: string | null;
             series_slug: string;
             slug: string;
             /** Format: double */
             sort_number?: number | null;
-            /** @description Spec §6.5 classification: `"Special"`, `"Annual"`, `"OneShot"`,
+            /**
+             * @description Spec §6.5 classification: `"Special"`, `"Annual"`, `"OneShot"`,
              *     `"TPB"`, or `None` for ordinary numbered issues. Drives the
-             *     reader's Specials & Extras section on the series detail page. */
+             *     reader's Specials & Extras section on the series detail page.
+             */
             special_type?: string | null;
             state: string;
             title?: string | null;
@@ -5219,14 +5449,18 @@ export interface components {
             role: string;
         };
         LibraryAccessReq: {
-            /** @description Final set of library ids the user should be granted access to. The
-             *     server replaces the user's `library_user_access` rows with this list. */
+            /**
+             * @description Final set of library ids the user should be granted access to. The
+             *     server replaces the user's `library_user_access` rows with this list.
+             */
             library_ids: string[];
         };
         LibraryView: {
-            /** @description Hard prerequisite for any code path that mutates archive bytes
+            /**
+             * @description Hard prerequisite for any code path that mutates archive bytes
              *     (sidecar writeback + page edits). Default false; admin flips on
-             *     when ready to start rewriting files for this library. */
+             *     when ready to start rewriting files for this library.
+             */
             allow_archive_writeback: boolean;
             /**
              * Format: int32
@@ -5247,54 +5481,72 @@ export interface components {
              *     rewritten losslessly and ignore this. `archive-rewrite-1.0`.
              */
             archive_writeback_jpeg_quality: number;
-            /** @description When true AND `allow_archive_writeback` is also true, the scanner
+            /**
+             * @description When true AND `allow_archive_writeback` is also true, the scanner
              *     converts each `.cbr` it finds into a sibling `.cbz` in place (keeping
-             *     the original as `.cbr.bak`) and ingests the `.cbz`. Default false. */
+             *     the original as `.cbr.bak`) and ingests the `.cbz`. Default false.
+             */
             auto_convert_cbr_on_scan: boolean;
-            /** @description RFC3339 timestamp of the operator's first acknowledgement of the
+            /**
+             * @description RFC3339 timestamp of the operator's first acknowledgement of the
              *     CBR→CBZ conversion for this library, or `null` if they haven't
              *     acknowledged yet. The page editor uses this to decide whether to
-             *     show the conversion confirm dialog. `archive-rewrite-1.0` M6. */
+             *     show the conversion confirm dialog. `archive-rewrite-1.0` M6.
+             */
             cbr_convert_confirmed_at?: string | null;
             dedupe_by_content: boolean;
             default_language: string;
             default_reading_direction: string;
             file_watch_enabled: boolean;
-            /** @description When true the scanner's filename inferer assumes issue `1`
-             *     when no issue number is detected. Matching-accuracy-1.0 M7. */
+            /**
+             * @description When true the scanner's filename inferer assumes issue `1`
+             *     when no issue number is detected. Matching-accuracy-1.0 M7.
+             */
             filename_assume_issue_one: boolean;
-            /** @description When true the scanner's filename inferer drops a leading
-             *     numeric token before parsing the series. Matching-accuracy-1.0 M7. */
+            /**
+             * @description When true the scanner's filename inferer drops a leading
+             *     numeric token before parsing the series. Matching-accuracy-1.0 M7.
+             */
             filename_ignore_leading_numbers: boolean;
-            /** @description When true, the post-scan pipeline auto-enqueues page-strip thumbnails
+            /**
+             * @description When true, the post-scan pipeline auto-enqueues page-strip thumbnails
              *     alongside the always-on cover thumbnails. See migration
-             *     `m20261211_000001_generate_page_thumbs_on_scan` for rationale. */
+             *     `m20261211_000001_generate_page_thumbs_on_scan` for rationale.
+             */
             generate_page_thumbs_on_scan: boolean;
             id: string;
             /** @description Library Scanner v1 (Milestone 4) settings. */
             ignore_globs: string[];
             last_scan_at?: string | null;
-            /** @description When true, non-manual searches that produce a strict
+            /**
+             * @description When true, non-manual searches that produce a strict
              *     SingleGood outcome auto-apply the top candidate. User-edit
-             *     precedence still fires. Matching-accuracy-1.0 M12. */
+             *     precedence still fires. Matching-accuracy-1.0 M12.
+             */
             metadata_auto_apply_strong_matches: boolean;
-            /** @description Publisher names the matcher's pre-filter should drop before
+            /**
+             * @description Publisher names the matcher's pre-filter should drop before
              *     scoring. Comparison is case-insensitive against the
              *     title-sanitized form so "DC Comics" / "dc comics" / "DC" all
-             *     match the same entry. Matching-accuracy-1.0 M3. */
+             *     match the same entry. Matching-accuracy-1.0 M3.
+             */
             metadata_publisher_blacklist: string[];
-            /** @description When true AND `allow_archive_writeback` is also true, provider
+            /**
+             * @description When true AND `allow_archive_writeback` is also true, provider
              *     apply takes the XML-first path: worker writes ComicInfo.xml +
              *     MetronInfo.xml into the archive and enqueues a scoped rescan.
-             *     Per-library so operators migrate gradually. */
+             *     Per-library so operators migrate gradually.
+             */
             metadata_writeback_enabled: boolean;
             name: string;
             report_missing_comicinfo: boolean;
             root_path: string;
-            /** @description Whether the library's `root_path` is on a writable mount. When
+            /**
+             * @description Whether the library's `root_path` is on a writable mount. When
              *     false the admin UI disables the archive-writeback toggle and the
              *     PATCH handler refuses to enable it — rewrites can't land on a
-             *     read-only mount. Computed per-request via `statvfs`. */
+             *     read-only mount. Computed per-request via `statvfs`.
+             */
             root_path_writable: boolean;
             /** @description Cron expression governing the scheduled scan, or `null` if disabled. */
             scan_schedule_cron?: string | null;
@@ -5304,21 +5556,29 @@ export interface components {
         };
         ListResp: {
             entries: components["schemas"]["DirEntry"][];
-            /** @description Canonical absolute path of the listed directory. The picker uses
-             *     this for the breadcrumb and as the value to drill back up from. */
+            /**
+             * @description Canonical absolute path of the listed directory. The picker uses
+             *     this for the breadcrumb and as the value to drill back up from.
+             */
             path: string;
-            /** @description Canonical absolute path of the configured library root. The
-             *     picker uses this to know when "up" should be disabled. */
+            /**
+             * @description Canonical absolute path of the configured library root. The
+             *     picker uses this to know when "up" should be disabled.
+             */
             root: string;
         };
         LocalConfigView: {
             /** @description Local mode is enabled (auth_mode = 'local' or 'both'). */
             enabled: boolean;
-            /** @description Self-serve registration is open. False locks the system to the
-             *     existing user set + the first-user admin bootstrap. */
+            /**
+             * @description Self-serve registration is open. False locks the system to the
+             *     existing user set + the first-user admin bootstrap.
+             */
             registration_open: boolean;
-            /** @description SMTP wired (host non-empty). Without it, email verification + reset
-             *     flows fall back to bypass-on-register. */
+            /**
+             * @description SMTP wired (host non-empty). Without it, email verification + reset
+             *     flows fall back to bypass-on-register.
+             */
             smtp_configured: boolean;
         };
         LogEntryView: {
@@ -5341,9 +5601,11 @@ export interface components {
         };
         LoginReq: {
             email: string;
-            /** @description Progressive-enhancement redirect target for the no-JS form path.
+            /**
+             * @description Progressive-enhancement redirect target for the no-JS form path.
              *     Validated through `is_safe_redirect_target` before any 303. Ignored
-             *     by the JSON path. */
+             *     by the JSON path.
+             */
             next?: string | null;
             password: string;
         };
@@ -5364,9 +5626,11 @@ export interface components {
         ManualMatchReq: {
             issue_id: string;
         };
-        /** @description Cheap `SELECT COUNT(*)` over the caller's markers. Drives the
+        /**
+         * @description Cheap `SELECT COUNT(*)` over the caller's markers. Drives the
          *     sidebar badge — TanStack caches it for 60s so the navigation
-         *     doesn't fan out a full /me/markers fetch. */
+         *     doesn't fan out a full /me/markers fetch.
+         */
         MarkerCountView: {
             /** Format: int64 */
             total: number;
@@ -5385,32 +5649,42 @@ export interface components {
             kind: string;
             /** Format: int32 */
             page_index: number;
-            /** @description `{ x, y, w, h, shape }` when the marker is region-scoped;
+            /**
+             * @description `{ x, y, w, h, shape }` when the marker is region-scoped;
              *     `None` for page-level markers. Used by the modal to render a
-             *     crop thumbnail. */
+             *     crop thumbnail.
+             */
             region?: unknown;
             series_id: string;
-            /** @description Hydrated series + issue context so a marker hit knows enough
+            /**
+             * @description Hydrated series + issue context so a marker hit knows enough
              *     to render a "Jump to page" link + a series label without a
-             *     second round-trip. */
+             *     second round-trip.
+             */
             series_name?: string | null;
             series_slug?: string | null;
-            /** @description `ts_headline()` excerpt over `body` and `selection->>'text'`
+            /**
+             * @description `ts_headline()` excerpt over `body` and `selection->>'text'`
              *     with `<mark>…</mark>` around matched terms. Same sanitiser as
-             *     the series + issue snippets on the client. */
+             *     the series + issue snippets on the client.
+             */
             snippet?: string | null;
         };
-        /** @description Global-search M2 — markers as a 4th category. The hit shape is
+        /**
+         * @description Global-search M2 — markers as a 4th category. The hit shape is
          *     trimmed of fields the modal / `/search` page don't need
          *     (color, tags, full timestamps) and carries the `<mark>`-wrapped
          *     snippet inline. ACL is per-caller (`/me/...`), so a hit lists
-         *     only markers the user owns. */
+         *     only markers the user owns.
+         */
         MarkerSearchView: {
             items: components["schemas"]["MarkerSearchHit"][];
         };
         MarkerTagsView: {
-            /** @description Distinct tag set across the caller's markers, with a usage
-             *     count each. Sorted by count desc, then alpha. */
+            /**
+             * @description Distinct tag set across the caller's markers, with a usage
+             *     count each. Sorted by count desc, then alpha.
+             */
             items: components["schemas"]["TagEntryView"][];
         };
         MarkerView: {
@@ -5419,29 +5693,39 @@ export interface components {
             color?: string | null;
             created_at: string;
             id: string;
-            /** @description Star flag. Any marker can be favorited; the /bookmarks
-             *     "Favorites" chip filters on this rather than on kind. */
+            /**
+             * @description Star flag. Any marker can be favorited; the /bookmarks
+             *     "Favorites" chip filters on this rather than on kind.
+             */
             is_favorite: boolean;
             issue_id: string;
             issue_number?: string | null;
             issue_slug?: string | null;
             issue_title?: string | null;
-            /** @description `'bookmark' | 'note' | 'highlight'`. Favorite is no longer a
-             *     kind — see `is_favorite`. */
+            /**
+             * @description `'bookmark' | 'note' | 'highlight'`. Favorite is no longer a
+             *     kind — see `is_favorite`.
+             */
             kind: string;
             /** Format: int32 */
             page_index: number;
-            /** @description `{ x, y, w, h, shape }` — see the migration doc for the precise
-             *     shape contract. `None` when the marker is page-level. */
+            /**
+             * @description `{ x, y, w, h, shape }` — see the migration doc for the precise
+             *     shape contract. `None` when the marker is page-level.
+             */
             region?: unknown;
-            /** @description `{ text?, image_hash?, ocr_confidence? }` — populated by the
-             *     reader's text / image-aware highlight modes. */
+            /**
+             * @description `{ text?, image_hash?, ocr_confidence? }` — populated by the
+             *     reader's text / image-aware highlight modes.
+             */
             selection?: unknown;
             series_id: string;
-            /** @description Hydrated for the global `/me/markers` feed so the index page can
+            /**
+             * @description Hydrated for the global `/me/markers` feed so the index page can
              *     render series + issue context without a second round-trip. Omitted
              *     from `POST`/`PATCH` responses and the per-issue lookup (those
-             *     callers already have the surrounding context). */
+             *     callers already have the surrounding context).
+             */
             series_name?: string | null;
             series_slug?: string | null;
             /** @description Per-user freeform tags. Empty when unset. */
@@ -5451,7 +5735,8 @@ export interface components {
         };
         /** @enum {string} */
         MatchMode: "all" | "any";
-        /** @description Discriminated view of the matcher's outcome classification.
+        /**
+         * @description Discriminated view of the matcher's outcome classification.
          *     Vocabulary mirrors [`crate::metadata::match_outcome::MatchOutcomeKind`]:
          *     `single_good`, `multi_good`, `single_bad_cover`, `multi_bad_cover`,
          *     `no_match`.
@@ -5459,7 +5744,8 @@ export interface components {
          *     `top_hamming` is the top candidate's cover-pHash Hamming distance
          *     when a phash pair was available, else `null`. `matched_via_alternate`
          *     tells the UI whether the top match came from a variant (drives the
-         *     "via alternate cover" badge). */
+         *     "via alternate cover" badge).
+         */
         MatchOutcomeView: {
             kind: string;
             matched_via_alternate: boolean;
@@ -5468,9 +5754,11 @@ export interface components {
         };
         MatchQualityResp: {
             last_28d: components["schemas"]["MatchQualityWindow"][];
-            /** @description Distribution of outcomes within the trailing 7 days. The
+            /**
+             * @description Distribution of outcomes within the trailing 7 days. The
              *     shape mirrors what the M8 dialog will use, so the dashboard
-             *     can speak the same vocabulary once cover-decides ships in M4. */
+             *     can speak the same vocabulary once cover-decides ships in M4.
+             */
             last_7d: components["schemas"]["MatchQualityWindow"][];
             /** Format: int64 */
             total_28d: number;
@@ -5491,8 +5779,10 @@ export interface components {
             /** @description M6a: per-user opt-out for reading-activity capture. */
             activity_tracking_enabled: boolean;
             csrf_token: string;
-            /** @description Default for the reader's "cover stands alone in double-page view"
-             *     toggle. Per-series localStorage overrides at runtime. */
+            /**
+             * @description Default for the reader's "cover stands alone in double-page view"
+             *     toggle. Per-series localStorage overrides at runtime.
+             */
             default_cover_solo: boolean;
             default_fit_mode?: null | components["schemas"]["FitMode"];
             default_page_animation?: null | components["schemas"]["PageAnimation"];
@@ -5503,16 +5793,22 @@ export interface components {
             density?: null | components["schemas"]["Density"];
             display_name: string;
             email?: string | null;
-            /** @description Stats v2: opt-out from server-wide aggregates. When true, admin
+            /**
+             * @description Stats v2: opt-out from server-wide aggregates. When true, admin
              *     dashboards exclude this user's sessions from totals/top-series. Does
-             *     not affect personal `/me/reading-stats`. */
+             *     not affect personal `/me/reading-stats`.
+             */
             exclude_from_aggregates: boolean;
             id: string;
-            /** @description M4: per-action keybind overrides for the reader. Empty object means
-             *     "use defaults". */
+            /**
+             * @description M4: per-action keybind overrides for the reader. Empty object means
+             *     "use defaults".
+             */
             keybinds?: unknown;
-            /** @description Human-URLs M3: BCP-47 language tag used for the `NEXT_LOCALE` cookie
-             *     and next-intl message bundle selection. */
+            /**
+             * @description Human-URLs M3: BCP-47 language tag used for the `NEXT_LOCALE` cookie
+             *     and next-intl message bundle selection.
+             */
             language: string;
             /**
              * Format: int32
@@ -5537,8 +5833,10 @@ export interface components {
              */
             reading_min_pages: number;
             role: string;
-            /** @description Markers M8: when true, /settings renders a count badge on the
-             *     Bookmarks sidebar row. Default false. */
+            /**
+             * @description Markers M8: when true, /settings renders a count badge on the
+             *     Bookmarks sidebar row. Default false.
+             */
             show_marker_count: boolean;
             theme?: null | components["schemas"]["Theme"];
             /** @description M6a: IANA timezone string for daily-bucket aggregations. */
@@ -5564,18 +5862,24 @@ export interface components {
         /** @enum {string} */
         NextUpSource: "cbl" | "series" | "none";
         NextUpView: {
-            /** @description Set when `source == "cbl"`. The id of the CBL list (NOT the
+            /**
+             * @description Set when `source == "cbl"`. The id of the CBL list (NOT the
              *     saved-view id the caller sent) — useful for downstream UI that
-             *     wants to deep-link into the CBL detail. */
+             *     wants to deep-link into the CBL detail.
+             */
             cbl_list_id?: string | null;
-            /** @description Set when `source == "cbl"`. The CBL list's human-readable name,
-             *     for the chrome pill's "in {list}" sub-label. */
+            /**
+             * @description Set when `source == "cbl"`. The CBL list's human-readable name,
+             *     for the chrome pill's "in {list}" sub-label.
+             */
             cbl_list_name?: string | null;
-            /** @description `true` when the caller passed `?cbl=<id>` but the current issue
+            /**
+             * @description `true` when the caller passed `?cbl=<id>` but the current issue
              *     wasn't in that CBL (entry deleted, stale share-link, etc.). The
              *     web layer uses this as a signal to strip the dead param from the
              *     URL via `router.replace` so a refresh / shared link no longer
-             *     carries the stale reference. */
+             *     carries the stale reference.
+             */
             cbl_param_was_stale?: boolean;
             /**
              * Format: int32
@@ -5599,8 +5903,10 @@ export interface components {
              *     `present = false`.
              */
             bytes_on_disk: number;
-            /** @description Absolute path the loader actually reads from. May not exist
-             *     yet — pair with `present`. */
+            /**
+             * @description Absolute path the loader actually reads from. May not exist
+             *     yet — pair with `present`.
+             */
             cache_dir: string;
             /**
              * Format: int64
@@ -5612,24 +5918,32 @@ export interface components {
             id: string;
             /** @description `"onnx"` (HF-cached models) or `"tessdata"` (Tesseract LSTM). */
             kind: string;
-            /** @description `true` if at least one model file is on disk under
+            /**
+             * @description `true` if at least one model file is on disk under
              *     `cache_dir`. For HF entries this is "the snapshot folder
-             *     holds files"; for tessdata, "`eng.traineddata` exists". */
+             *     holds files"; for tessdata, "`eng.traineddata` exists".
+             */
             present: boolean;
             /** @description One-line operator-facing description. */
             purpose: string;
-            /** @description Where the binary fetches this model from on first init.
-             *     `"huggingface.co/<repo>"` or `"tessdata_best (build script)"`. */
+            /**
+             * @description Where the binary fetches this model from on first init.
+             *     `"huggingface.co/<repo>"` or `"tessdata_best (build script)"`.
+             */
             source: string;
         };
         OcrModelsView: {
-            /** @description Resolved `HF_HOME` — useful for operators wanting to
-             *     pre-stage models on disk in air-gapped deploys. */
+            /**
+             * @description Resolved `HF_HOME` — useful for operators wanting to
+             *     pre-stage models on disk in air-gapped deploys.
+             */
             hf_home: string;
             /** @description Per-model state. */
             models: components["schemas"]["OcrModelView"][];
-            /** @description Resolved tessdata directory; see module doc for resolution
-             *     order. */
+            /**
+             * @description Resolved tessdata directory; see module doc for resolution
+             *     order.
+             */
             tessdata_dir: string;
             /**
              * Format: int64
@@ -5648,7 +5962,8 @@ export interface components {
             y: number;
         };
         OcrRequest: {
-            /** @description When `true`, run `comic-text-detector` over the page to snap
+            /**
+             * @description When `true`, run `comic-text-detector` over the page to snap
              *     the user's drag rect to the tightest enclosing speech-bubble
              *     polygon. When `false` (or omitted — that's the default as of
              *     v0.3.26), the recognizer runs on the user's rect verbatim.
@@ -5662,20 +5977,25 @@ export interface components {
              *     let them flip the default. The recognizer-only path
              *     (~200 ms total) matches what the old browser-side
              *     tesseract.js delivered, just better quality (real Tesseract
-             *     5 + tessdata_best, not the in-browser fast variant). */
+             *     5 + tessdata_best, not the in-browser fast variant).
+             */
             detect?: boolean | null;
-            /** @description `"western"` (default) or `"manga"`. Phase 2 will read
+            /**
+             * @description `"western"` (default) or `"manga"`. Phase 2 will read
              *     `series.text_language` as the default; for now the client
-             *     sends an explicit hint. */
+             *     sends an explicit hint.
+             */
             lang?: string | null;
             /**
              * Format: int32
              * @description 0-based page index, matching the reader's URL convention.
              */
             page: number;
-            /** @description User's drag rectangle in page-pixel coordinates. All four
+            /**
+             * @description User's drag rectangle in page-pixel coordinates. All four
              *     fields are unsigned pixels; w/h must be > 0 and the rect
-             *     must fit inside the decoded page bounds. */
+             *     must fit inside the decoded page bounds.
+             */
             region: components["schemas"]["OcrRegion"];
         };
         OcrResponse: {
@@ -5695,13 +6015,17 @@ export interface components {
             client_id?: string | null;
             configured: boolean;
             issuer?: string | null;
-            /** @description True when `COMIC_OIDC_TRUST_UNVERIFIED_EMAIL` is set. Surfaced because
-             *     it materially weakens email-claim trust. */
+            /**
+             * @description True when `COMIC_OIDC_TRUST_UNVERIFIED_EMAIL` is set. Surfaced because
+             *     it materially weakens email-claim trust.
+             */
             trust_unverified_email: boolean;
         };
         OidcDiscoverReq: {
-            /** @description The OIDC issuer URL the admin is about to save. Used as the base
-             *     for `${issuer}/.well-known/openid-configuration`. */
+            /**
+             * @description The OIDC issuer URL the admin is about to save. Used as the base
+             *     for `${issuer}/.well-known/openid-configuration`.
+             */
             issuer: string;
         };
         OidcDiscoverResp: {
@@ -5709,17 +6033,21 @@ export interface components {
             end_session_endpoint?: string | null;
             issuer: string;
             jwks_uri?: string | null;
-            /** @description Truncated to the most useful fields above. The full doc is large
+            /**
+             * @description Truncated to the most useful fields above. The full doc is large
              *     and not all of it is admin-interesting; if a future need arises
-             *     the raw JSON can be added under a separate field. */
+             *     the raw JSON can be added under a separate field.
+             */
             scopes_supported?: string[] | null;
             token_endpoint?: string | null;
             userinfo_endpoint?: string | null;
         };
-        /** @description Discriminated union for the On Deck rail. Each card represents one
+        /**
+         * @description Discriminated union for the On Deck rail. Each card represents one
          *     "what's next" suggestion — either the next-unread issue in a series the
          *     user has finished at least one issue of, or the next-unread entry in a
-         *     CBL list the user is working through. */
+         *     CBL list the user is working through.
+         */
         OnDeckCard: {
             issue: components["schemas"]["IssueSummaryView"];
             /** @enum {string} */
@@ -5729,7 +6057,8 @@ export interface components {
         } | {
             cbl_list_id: string;
             cbl_list_name: string;
-            /** @description Saved-view id (kind=`cbl`) wrapping this CBL list, when the
+            /**
+             * @description Saved-view id (kind=`cbl`) wrapping this CBL list, when the
              *     caller can see one. Web threads it onto the reader URL as
              *     `?cbl=<id>` so the next-up resolver keeps picking from the
              *     list across page turns. `None` when no saved view points at
@@ -5739,7 +6068,8 @@ export interface components {
              *     Tiebreak when multiple saved views match: user-owned wins
              *     over system-owned (NULL `user_id`); within a tier, lowest
              *     `id` wins. Stable + cheap; the picker UI can pick a
-             *     different one later if needed. */
+             *     different one later if needed.
+             */
             cbl_saved_view_id?: string | null;
             issue: components["schemas"]["IssueSummaryView"];
             /** @enum {string} */
@@ -5764,9 +6094,11 @@ export interface components {
              */
             active_readers_now: number;
             open_health: components["schemas"]["HealthBlock"];
-            /** @description Daily reads-volume buckets for the last 14 days (UTC). Each row
+            /**
+             * @description Daily reads-volume buckets for the last 14 days (UTC). Each row
              *     aggregates across all users — never per-user, so the dashboard never
-             *     leaks anyone's reading habits. */
+             *     leaks anyone's reading habits.
+             */
             reads_per_day: components["schemas"]["DayBucket"][];
             /**
              * Format: int64
@@ -5778,8 +6110,10 @@ export interface components {
              * @description Reading sessions started in the last 24h.
              */
             sessions_today: number;
-            /** @description System-wide most-read series in the last 30 days. Aggregated across
-             *     users; consumed by `/admin/stats`. Capped at 10 entries. */
+            /**
+             * @description System-wide most-read series in the last 30 days. Aggregated across
+             *     users; consumed by `/admin/stats`. Capped at 10 entries.
+             */
             top_series_all_users: components["schemas"]["TopSeriesEntry"][];
             totals: components["schemas"]["TotalsBlock"];
         };
@@ -5799,14 +6133,18 @@ export interface components {
          */
         PageAnimation: "off" | "slide" | "fade";
         PageCountResponse: {
-            /** @description The archive's *actual* page count, read live from the file. Authoritative
+            /**
+             * @description The archive's *actual* page count, read live from the file. Authoritative
              *     over the DB's `issue.page_count`, which can drift (stale scan, or sourced
              *     from a ComicInfo `<PageCount>`); the editor builds its tiles from this so
-             *     it never shows a phantom page that isn't in the archive. */
+             *     it never shows a phantom page that isn't in the archive.
+             */
             page_count: number;
         };
-        /** @description One page-level operation. Ordinals are 0-based positions in the page
-         *     list *as it stands when the op is applied* (ops are sequential). */
+        /**
+         * @description One page-level operation. Ordinals are 0-based positions in the page
+         *     list *as it stands when the op is applied* (ops are sequential).
+         */
         PageOp: {
             /** @enum {string} */
             kind: "remove";
@@ -5838,8 +6176,10 @@ export interface components {
         };
         PageView: {
             created_at: string;
-            /** @description Optional free-form description rendered under the title. `None`
-             *     (or absent) hides the descriptor row. */
+            /**
+             * @description Optional free-form description rendered under the title. `None`
+             *     (or absent) hides the descriptor row.
+             */
             description?: string | null;
             id: string;
             is_system: boolean;
@@ -5853,19 +6193,23 @@ export interface components {
             pin_count: number;
             /** Format: int32 */
             position: number;
-            /** @description Whether this page appears in the sidebar nav. Computed from
+            /**
+             * @description Whether this page appears in the sidebar nav. Computed from
              *     `user_sidebar_entries` — missing override means visible (the
              *     default). System pages always show via the builtin Home entry
-             *     regardless of this flag. */
+             *     regardless of this flag.
+             */
             show_in_sidebar: boolean;
             slug: string;
             updated_at: string;
         };
         PatchWidgetReq: {
-            /** @description Replacement config blob. Replaces the entire `config` column
+            /**
+             * @description Replacement config blob. Replaces the entire `config` column
              *     — clients merge with the previous value client-side. The
              *     PATCH name is preserved because the row's other fields stay
-             *     the same and config is what the form actually edits. */
+             *     the same and config is what the form actually edits.
+             */
             config: unknown;
         };
         PeopleListView: {
@@ -5876,34 +6220,42 @@ export interface components {
             credit_count: number;
             person: string;
             roles: string[];
-            /** @description Stable URL slug for `/creators/<slug>`. Populated from the
+            /**
+             * @description Stable URL slug for `/creators/<slug>`. Populated from the
              *     `person` table (M8 of the search-improvements plan). `None`
              *     when the name hasn't been backfilled yet — caller falls back
-             *     to the legacy `?library=all&credits=<name>` URL. */
+             *     to the legacy `?library=all&credits=<name>` URL.
+             */
             slug?: string | null;
         };
-        /** @description Body for `POST /me/saved-views/{id}/pin`.
+        /**
+         * @description Body for `POST /me/saved-views/{id}/pin`.
          *
          *     Multi-page rails M3: the same view can now be pinned to multiple
          *     pages in a single call. Omitting the body (or sending an empty
          *     `page_ids`) targets the caller's system Home page so existing
          *     web clients keep working until they migrate to the multi-page
-         *     picker (M5/M6). */
+         *     picker (M5/M6).
+         */
         PinReq: {
             page_ids?: string[];
         };
         PinView: {
-            /** @description Page this row belongs to. Mirrors the request's `page_id` (or the
-             *     resolved system page when the legacy no-body form was used). */
+            /**
+             * @description Page this row belongs to. Mirrors the request's `page_id` (or the
+             *     resolved system page when the legacy no-body form was used).
+             */
             page_id: string;
             pinned: boolean;
             /** Format: int32 */
             position?: number | null;
             view_id: string;
         };
-        /** @description `PATCH /me/preferences` request body. Every field is optional; when a key
+        /**
+         * @description `PATCH /me/preferences` request body. Every field is optional; when a key
          *     is absent the prior value is preserved. To clear a stored value, send
-         *     `null` (where the type allows). */
+         *     `null` (where the type allows).
+         */
         PreferencesReq: {
             accent_color?: null | components["schemas"]["AccentColor"];
             /** @description M6a: opt-out toggle. `false` disables the client tracker hook. */
@@ -5916,14 +6268,18 @@ export interface components {
             default_reading_direction?: null | components["schemas"]["ReadingDirection"];
             default_view_mode?: null | components["schemas"]["ViewMode"];
             density?: null | components["schemas"]["Density"];
-            /** @description Stats v2: privacy toggle. When true, admin server-wide aggregates
-             *     exclude this user's sessions. */
+            /**
+             * @description Stats v2: privacy toggle. When true, admin server-wide aggregates
+             *     exclude this user's sessions.
+             */
             exclude_from_aggregates?: boolean | null;
             /** @description Replace the entire keybinds object. Send `{}` to clear all overrides. */
             keybinds?: unknown;
-            /** @description Human-URLs M3: BCP-47 language tag. Validated against the supported
+            /**
+             * @description Human-URLs M3: BCP-47 language tag. Validated against the supported
              *     locale list — sending an unknown value 400s rather than silently
-             *     falling back. */
+             *     falling back.
+             */
             language?: string | null;
             /**
              * Format: int32
@@ -5947,12 +6303,16 @@ export interface components {
              * @description M6a: minimum distinct pages (1..=200).
              */
             reading_min_pages?: number | null;
-            /** @description Markers M8: per-user toggle for the Bookmarks sidebar count
-             *     badge. Default false. */
+            /**
+             * @description Markers M8: per-user toggle for the Bookmarks sidebar count
+             *     badge. Default false.
+             */
             show_marker_count?: boolean | null;
             theme?: null | components["schemas"]["Theme"];
-            /** @description M6a: IANA timezone string. Server validates it's parseable; an unknown
-             *     zone is rejected so the heatmap can't silently fall back to UTC. */
+            /**
+             * @description M6a: IANA timezone string. Server validates it's parseable; an unknown
+             *     zone is rejected so the heatmap can't silently fall back to UTC.
+             */
             timezone?: string | null;
         };
         PreviewReq: {
@@ -5977,11 +6337,15 @@ export interface components {
             updated_at: string;
         };
         ProviderView: {
-            /** @description `true` when the credential is set but the master toggle is off
-             *     — UI surfaces a "Enable to test" hint in that state. */
+            /**
+             * @description `true` when the credential is set but the master toggle is off
+             *     — UI surfaces a "Enable to test" hint in that state.
+             */
             configured: boolean;
-            /** @description `true` when an API key / credentials are set AND the master
-             *     `metadata.<provider>.enabled` toggle is on. */
+            /**
+             * @description `true` when an API key / credentials are set AND the master
+             *     `metadata.<provider>.enabled` toggle is on.
+             */
             enabled: boolean;
             /** @description Stable identifier — `"comicvine"` | `"metron"` (M2). */
             id: string;
@@ -5991,25 +6355,33 @@ export interface components {
         ProvidersListResp: {
             providers: components["schemas"]["ProviderView"][];
         };
-        /** @description Minimum surface for the unauthenticated `/sign-in` page. Mirrors a
+        /**
+         * @description Minimum surface for the unauthenticated `/sign-in` page. Mirrors a
          *     subset of [`AuthConfigView`] but returns only the booleans the UI
          *     needs to render the right CTAs — issuer/client_id are intentionally
-         *     withheld. */
+         *     withheld.
+         */
         PublicAuthConfigView: {
             /** @description `'oidc' | 'local' | 'both'` — drives the form/SSO toggle. */
             auth_mode: string;
-            /** @description True when the OIDC provider is wired AND `auth_mode` permits it.
-             *     When false, the sign-in page hides the SSO button. */
+            /**
+             * @description True when the OIDC provider is wired AND `auth_mode` permits it.
+             *     When false, the sign-in page hides the SSO button.
+             */
             oidc_enabled: boolean;
-            /** @description True when SMTP is configured (host non-empty). When false, the
+            /**
+             * @description True when SMTP is configured (host non-empty). When false, the
              *     `/auth/forgot-password` UI renders a "contact your administrator"
              *     banner instead of the email form — a forgot-password submission
              *     would otherwise silently fail when the operator hasn't filled in
              *     SMTP credentials. Anonymous-safe; just reflects whether
-             *     `smtp.host` is set. */
+             *     `smtp.host` is set.
+             */
             password_recovery_enabled: boolean;
-            /** @description True when local registration is open. False locks the system to
-             *     the existing user set + first-user admin bootstrap. */
+            /**
+             * @description True when local registration is open. False locks the system to
+             *     the existing user set + first-user admin bootstrap.
+             */
             registration_open: boolean;
         };
         QueueClearReq: {
@@ -6019,8 +6391,10 @@ export interface components {
             after: components["schemas"]["QueueDepthView"];
             before: components["schemas"]["QueueDepthView"];
             deleted_keys: number;
-            /** @description Redis queue clearing is immediate, but a job already executing in a
-             *     worker may finish and emit its normal completion events. */
+            /**
+             * @description Redis queue clearing is immediate, but a job already executing in a
+             *     worker may finish and emit its normal completion events.
+             */
             running_jobs_may_finish: boolean;
             target: components["schemas"]["QueueClearTarget"];
         };
@@ -6056,8 +6430,10 @@ export interface components {
             /** Format: int64 */
             seconds_until_reset?: number | null;
         };
-        /** @description Response shape — mirrors what the GET endpoints inline so callers don't
-         *     need to refetch to refresh local state. */
+        /**
+         * @description Response shape — mirrors what the GET endpoints inline so callers don't
+         *     need to refetch to refresh local state.
+         */
         RatingView: {
             /** Format: double */
             rating?: number | null;
@@ -6068,24 +6444,32 @@ export interface components {
          */
         ReadingDirection: "ltr" | "rtl";
         ReadingLogEventView: {
-            /** @description Synthetic stable id: `{kind-prefix}:{underlying-id}`. Same id
-             *     across pages — clients dedupe with it. */
+            /**
+             * @description Synthetic stable id: `{kind-prefix}:{underlying-id}`. Same id
+             *     across pages — clients dedupe with it.
+             */
             id: string;
-            /** @description `true` when this event was hidden via
+            /**
+             * @description `true` when this event was hidden via
              *     `POST /me/reading-log/hide` and is only being surfaced
              *     because the caller passed `?include_hidden=true`. UI uses it
              *     to render a faded card + an "Unhide" affordance. Default
              *     `false` is `skip_serializing_if`-elided so the wire payload
-             *     stays the same shape for clients that don't use the feature. */
+             *     stays the same shape for clients that don't use the feature.
+             */
             is_hidden?: boolean;
             issue?: null | components["schemas"]["EventIssue"];
-            /** @description One of `issue_finished` / `series_finished` / `session_completed`
-             *     / `marker_created`. */
+            /**
+             * @description One of `issue_finished` / `series_finished` / `session_completed`
+             *     / `marker_created`.
+             */
             kind: string;
             /** @description RFC3339 — the canonical sort key for the feed. */
             occurred_at: string;
-            /** @description Kind-specific metadata. Different schema per kind, see
-             *     `EventPayload` variants. */
+            /**
+             * @description Kind-specific metadata. Different schema per kind, see
+             *     `EventPayload` variants.
+             */
             payload: components["schemas"]["EventPayload"];
             series?: null | components["schemas"]["EventSeries"];
         };
@@ -6114,9 +6498,11 @@ export interface components {
             issue_id: string;
             /** @description Joined from `issues.number_raw`. */
             issue_number?: string | null;
-            /** @description Joined from `issues.title`. The list endpoint populates this; the
+            /**
+             * @description Joined from `issues.title`. The list endpoint populates this; the
              *     upsert response leaves it null since the client doesn't render
-             *     upsert results inline. */
+             *     upsert results inline.
+             */
             issue_title?: string | null;
             last_heartbeat_at: string;
             /** Format: int32 */
@@ -6130,34 +6516,46 @@ export interface components {
             view_mode?: string | null;
         };
         ReadingStatsView: {
-            /** @description Stats v2 — distinct issues the user has read past the last page (or
+            /**
+             * @description Stats v2 — distinct issues the user has read past the last page (or
              *     flagged finished in `progress_records`). Used with
-             *     `totals.distinct_issues` to compute completion rate. */
+             *     `totals.distinct_issues` to compute completion rate.
+             */
             completion: components["schemas"]["CompletionView"];
-            /** @description Stats v2 — sparse 7×24 day-of-week × hour grid (in user's timezone).
-             *     Only cells with sessions are emitted. */
+            /**
+             * @description Stats v2 — sparse 7×24 day-of-week × hour grid (in user's timezone).
+             *     Only cells with sessions are emitted.
+             */
             dow_hour?: components["schemas"]["DowHourCell"][];
             /** @description Stats v2 — first session's `started_at` within the scope. */
             first_read_at?: string | null;
             /** @description Stats v2 — last session's `started_at` within the scope. */
             last_read_at?: string | null;
-            /** @description Stats v2 — per-session pace samples: `(started_at, sec_per_page)`.
-             *     Sessions with `distinct_pages_read < 3` are excluded to drop noise. */
+            /**
+             * @description Stats v2 — per-session pace samples: `(started_at, sec_per_page)`.
+             *     Sessions with `distinct_pages_read < 3` are excluded to drop noise.
+             */
             pace_series?: components["schemas"]["PacePoint"][];
             per_day: components["schemas"]["DayBucket"][];
             range: string;
-            /** @description Stats v2 — top issues by read count (number of sessions). For
-             *     "most rereads" displays. */
+            /**
+             * @description Stats v2 — top issues by read count (number of sessions). For
+             *     "most rereads" displays.
+             */
             reread_top_issues?: components["schemas"]["RereadIssueEntry"][];
             /** @description Stats v2 — top series by total session count. */
             reread_top_series?: components["schemas"]["RereadSeriesEntry"][];
-            /** @description Stats v2 — 4 time-of-day buckets (morning/afternoon/evening/night)
-             *     derived from `dow_hour`. */
+            /**
+             * @description Stats v2 — 4 time-of-day buckets (morning/afternoon/evening/night)
+             *     derived from `dow_hour`.
+             */
             time_of_day?: components["schemas"]["TimeOfDayBuckets"];
             timezone: string;
-            /** @description Stats v2 — top creators across read series, partitioned per role
+            /**
+             * @description Stats v2 — top creators across read series, partitioned per role
              *     (writer/penciller/inker/colorist/letterer/cover_artist). Up to 10 per
-             *     role. Source: `series_credits`. */
+             *     role. Source: `series_credits`.
+             */
             top_creators?: components["schemas"]["TopCreatorEntry"][];
             /** @description M6b — most-read genres derived from issue `genre` CSVs. */
             top_genres?: components["schemas"]["TopNameEntry"][];
@@ -6165,8 +6563,10 @@ export interface components {
             top_imprints?: components["schemas"]["TopNameEntry"][];
             /** @description M6b — most-read publishers (series.publisher with issue.publisher fallback). */
             top_publishers?: components["schemas"]["TopNameEntry"][];
-            /** @description M6b — most-read series in the range. Capped at 10. Empty when the
-             *     query is already issue-scoped (a single series is implied). */
+            /**
+             * @description M6b — most-read series in the range. Capped at 10. Empty when the
+             *     query is already issue-scoped (a single series is implied).
+             */
             top_series?: components["schemas"]["TopSeriesEntry"][];
             /** @description M6b — most-read tags derived from issue `tags` CSVs. */
             top_tags?: components["schemas"]["TopNameEntry"][];
@@ -6207,9 +6607,11 @@ export interface components {
         RegisterReq: {
             display_name?: string | null;
             email: string;
-            /** @description Progressive-enhancement redirect target for the no-JS form path.
+            /**
+             * @description Progressive-enhancement redirect target for the no-JS form path.
              *     Validated through `is_safe_redirect_target` before any 303. Ignored
-             *     by the JSON path (the client routes via `useRouter().push`). */
+             *     by the JSON path (the client routes via `useRouter().push`).
+             */
             next?: string | null;
             password: string;
         };
@@ -6225,8 +6627,10 @@ export interface components {
             removal_confirmed_at?: string | null;
             removed_at: string;
             series_id: string;
-            /** @description URL slug of the parent series — paired with `slug` it forms the
-             *     `/series/{series_slug}/issues/{slug}/(restore|confirm-removal)` path. */
+            /**
+             * @description URL slug of the parent series — paired with `slug` it forms the
+             *     `/series/{series_slug}/issues/{slug}/(restore|confirm-removal)` path.
+             */
             series_slug: string;
             slug: string;
         };
@@ -6249,9 +6653,11 @@ export interface components {
             page_ids: string[];
         };
         ReorderReq: {
-            /** @description Full set of widget ids in the new order. Server rejects when
+            /**
+             * @description Full set of widget ids in the new order. Server rejects when
              *     the set doesn't match the user's owned ids exactly — partial
-             *     reorders would leave gaps in `position`. */
+             *     reorders would leave gaps in `position`.
+             */
             ids: string[];
         };
         RequestPasswordResetReq: {
@@ -6289,10 +6695,12 @@ export interface components {
             email: string;
         };
         ResetPasswordReq: {
-            /** @description Optional second password field. The web form ships two `<input>`s
+            /**
+             * @description Optional second password field. The web form ships two `<input>`s
              *     for confirmation; submitting them as `new_password` + `confirm_password`
              *     lets the no-JS fallback validate parity server-side. Ignored when
-             *     absent or equal. */
+             *     absent or equal.
+             */
             confirm_password?: string | null;
             new_password: string;
             token: string;
@@ -6351,8 +6759,10 @@ export interface components {
             trigger_kind: string;
         };
         RunsListResp: {
-            /** @description `started_at` of the last row — caller passes back as `before=`
-             *     for the next page. `None` when no more rows. */
+            /**
+             * @description `started_at` of the last row — caller passes back as `before=`
+             *     for the next page. `None` when no more rows.
+             */
             next_cursor?: string | null;
             runs: components["schemas"]["RunRow"][];
         };
@@ -6369,10 +6779,12 @@ export interface components {
             /** Format: int32 */
             custom_year_start?: number | null;
             description?: string | null;
-            /** @description Per-user icon override key. `None` falls back to a kind-based
+            /**
+             * @description Per-user icon override key. `None` falls back to a kind-based
              *     default resolved client-side. Free-form text — the client maps
              *     it against its rail-icon registry and silently falls back if the
-             *     key is unknown. */
+             *     key is unknown.
+             */
             icon?: string | null;
             id: string;
             /** @description True for system views (`user_id IS NULL`). */
@@ -6382,11 +6794,13 @@ export interface components {
             name: string;
             /** @description Whether the calling user has this view pinned to their home rail. */
             pinned: boolean;
-            /** @description Multi-page rails M6: every page (system + custom) this view is
+            /**
+             * @description Multi-page rails M6: every page (system + custom) this view is
              *     currently pinned to. Drives the multi-pin picker on the
              *     saved-view detail page. Empty when the caller has no pin rows
              *     for this view. Always populated regardless of the request's
-             *     `pinned_on` filter so the picker reflects ground truth. */
+             *     `pinned_on` filter so the picker reflects ground truth.
+             */
             pinned_on_pages?: string[];
             /**
              * Format: int32
@@ -6395,13 +6809,17 @@ export interface components {
             pinned_position?: number | null;
             /** Format: int32 */
             result_limit?: number | null;
-            /** @description Whether the calling user wants this view to appear in the
-             *     left-sidebar's "Saved views" section. */
+            /**
+             * @description Whether the calling user wants this view to appear in the
+             *     left-sidebar's "Saved views" section.
+             */
             show_in_sidebar: boolean;
             sort_field?: string | null;
             sort_order?: string | null;
-            /** @description Identifies the built-in rail when `kind = 'system'`
-             *     (`'continue_reading'`, `'on_deck'`). `None` for filter/CBL views. */
+            /**
+             * @description Identifies the built-in rail when `kind = 'system'`
+             *     (`'continue_reading'`, `'on_deck'`). `None` for filter/CBL views.
+             */
             system_key?: string | null;
             updated_at: string;
             /** @description `None` for system views (admin-curated, visible to every user). */
@@ -6411,30 +6829,42 @@ export interface components {
         ScalarDiffRow: {
             /** @description ISO-8601 timestamp of the last write to this field, or `null`. */
             current_set_at?: string | null;
-            /** @description `set_by` for the current row's provenance (`"user"` /
+            /**
+             * @description `set_by` for the current row's provenance (`"user"` /
              *     `"comicvine"` / `"metroninfo"` / …). `null` when the field has
-             *     no provenance row. */
+             *     no provenance row.
+             */
             current_set_by?: string | null;
-            /** @description String-formatted current value, or `null` if the DB cell is
+            /**
+             * @description String-formatted current value, or `null` if the DB cell is
              *     empty / NULL. Always a string so client rendering is uniform
-             *     across int/str/date/float fields. */
+             *     across int/str/date/float fields.
+             */
             current_value?: string | null;
-            /** @description One of the [`DiffDecision`] variants — drives default checked
-             *     state + per-row badge in the preview pane. */
+            /**
+             * @description One of the [`DiffDecision`] variants — drives default checked
+             *     state + per-row badge in the preview pane.
+             */
             decision: string;
-            /** @description `MetadataField::key()` — stable string identifier the apply
-             *     payload echoes back in `selected_fields`. */
+            /**
+             * @description `MetadataField::key()` — stable string identifier the apply
+             *     payload echoes back in `selected_fields`.
+             */
             field: string;
-            /** @description Human-readable label for the field, derived once on the
-             *     server so every client renders the same string. */
+            /**
+             * @description Human-readable label for the field, derived once on the
+             *     server so every client renders the same string.
+             */
             label: string;
             /** @description String-formatted proposed value from the provider candidate. */
             proposed_value?: string | null;
         };
-        /** @description One entry in the `scan-all` response — what happened for a given
+        /**
+         * @description One entry in the `scan-all` response — what happened for a given
          *     library. `was_already_running=true` means apalis's in-flight
          *     coalesce gate found an existing scan and the click was a no-op for
-         *     that library; `scan_id` is the existing scan's id in that case. */
+         *     that library; `scan_id` is the existing scan's id in that case.
+         */
         ScanAllItem: {
             library_id: string;
             name: string;
@@ -6442,16 +6872,20 @@ export interface components {
             slug: string;
             was_already_running: boolean;
         };
-        /** @description Body for `POST /admin/libraries/scan-all`. `force=true` enqueues
+        /**
+         * @description Body for `POST /admin/libraries/scan-all`. `force=true` enqueues
          *     every library in `ContentVerify` mode (re-hashes + re-parses every
          *     file, bypassing the mtime fast-path) — same semantics as the
-         *     per-library `?force=true` flag. */
+         *     per-library `?force=true` flag.
+         */
         ScanAllReq: {
             force?: boolean;
         };
-        /** @description Response for `POST /admin/libraries/scan-all`. Enumerates per-library
+        /**
+         * @description Response for `POST /admin/libraries/scan-all`. Enumerates per-library
          *     outcomes plus rollup counters so the UI can render a single toast
-         *     like "Enqueued 18 · 2 already running · 0 failed." */
+         *     like "Enqueued 18 · 2 already running · 0 failed."
+         */
         ScanAllResp: {
             already_running: number;
             enqueued: components["schemas"]["ScanAllItem"][];
@@ -6481,10 +6915,12 @@ export interface components {
             thumbnail_backlog: number;
             watcher_status: string;
         };
-        /** @description Response for `POST /libraries/{id}/scan` post-Milestone-2.
+        /**
+         * @description Response for `POST /libraries/{id}/scan` post-Milestone-2.
          *
          *     The scan now runs out-of-band; the response only carries the scan run id
-         *     and whether the trigger was coalesced into an existing in-flight scan. */
+         *     and whether the trigger was coalesced into an existing in-flight scan.
+         */
         ScanResp: {
             coalesced: boolean;
             coalesced_into?: string | null;
@@ -6504,26 +6940,32 @@ export interface components {
             id: string;
             /** @description Originating issue id for `issue` kinds. `null` otherwise. */
             issue_id?: string | null;
-            /** @description Joined issue label shaped as `{series} #{number}` (or `{series} —
+            /**
+             * @description Joined issue label shaped as `{series} #{number}` (or `{series} —
              *     {title}` when there's no number). `null` when the issue row was
-             *     since deleted, or when this scan isn't issue-kinded. */
+             *     since deleted, or when this scan isn't issue-kinded.
+             */
             issue_label?: string | null;
             /** @description `library` | `series` | `issue` — drives the History tab filter chips. */
             kind: string;
             /** @description Target series id for `series` / `issue` kinds. `null` on library scans. */
             series_id?: string | null;
-            /** @description Joined `series.name` so the table can render a target label without
+            /**
+             * @description Joined `series.name` so the table can render a target label without
              *     chasing one extra request per row. `null` when the series row was
-             *     since deleted (orphan scan_runs). */
+             *     since deleted (orphan scan_runs).
+             */
             series_name?: string | null;
             started_at: string;
             state: string;
             stats: unknown;
         };
         SearchStartedResp: {
-            /** @description `true` when an in-flight run for the same target was reused
+            /**
+             * @description `true` when an in-flight run for the same target was reused
              *     instead of enqueueing a fresh one — UI can swallow the "Started
-             *     fetching" toast in this case. */
+             *     fetching" toast in this case.
+             */
             coalesced: boolean;
             /** Format: uuid */
             run_id: string;
@@ -6540,8 +6982,10 @@ export interface components {
              */
             total?: number | null;
         };
-        /** @description Per-user, server-computed read progress for the whole series. Sidesteps
-         *     the client-side cap on the issues page (which fetches 100 at a time). */
+        /**
+         * @description Per-user, server-computed read progress for the whole series. Sidesteps
+         *     the client-side cap on the issues page (which fetches 100 at a time).
+         */
         SeriesProgressSummary: {
             /**
              * Format: int64
@@ -6567,17 +7011,21 @@ export interface components {
              */
             total: number;
         };
-        /** @description Response for `GET /series/{slug}/resume` — the issue (and page) the user
+        /**
+         * @description Response for `GET /series/{slug}/resume` — the issue (and page) the user
          *     should land on when they hit "Read" without picking a specific issue.
          *     Mirrors the client-side `pickNextIssue` algorithm in
          *     [`web/lib/reading-state.ts`]: prefer the most-recently-updated in-progress
          *     issue; else the first unfinished issue in sort order; else (everything
          *     read) restart from issue #1. `state` lets clients label the action
-         *     (Continue reading / Read / Read again). */
+         *     (Continue reading / Read / Read again).
+         */
         SeriesResumeView: {
             issue_id?: string | null;
-            /** @description `null` when the series has no readable issues (every issue is
-             *     soft-deleted / encrypted / state != 'active'). */
+            /**
+             * @description `null` when the series has no readable issues (every issue is
+             *     soft-deleted / encrypted / state != 'active').
+             */
             issue_slug?: string | null;
             /**
              * Format: int32
@@ -6585,9 +7033,11 @@ export interface components {
              */
             page: number;
             series_slug: string;
-            /** @description One of `'unread' | 'in_progress' | 'finished'`. `'finished'` means
+            /**
+             * @description One of `'unread' | 'in_progress' | 'finished'`. `'finished'` means
              *     the user already read every issue — `issue_slug` points at #1 so a
-             *     "Read again" CTA is honored. */
+             *     "Read again" CTA is honored.
+             */
             state: string;
         };
         SeriesView: {
@@ -6605,7 +7055,8 @@ export interface components {
             cover_url?: string | null;
             /** @description RFC3339 timestamps from the series row. */
             created_at: string;
-            /** @description Name → creator slug map covering every credit listed in the
+            /**
+             * @description Name → creator slug map covering every credit listed in the
              *     `writers / pencillers / inkers / colorists / letterers /
              *     cover_artists` arrays above (and the editor/translator roles
              *     when they're surfaced). Populated server-side from a single
@@ -6614,7 +7065,8 @@ export interface components {
              *     per chip without a per-pill name-resolution round-trip.
              *     Missing entries fall back to the legacy
              *     `/?library=all&credits=<name>` filter — typically only
-             *     happens for credits scanned between rollups. */
+             *     happens for credits scanned between rollups.
+             */
             creator_slugs?: {
                 [key: string]: string;
             };
@@ -6632,9 +7084,11 @@ export interface components {
             /** Format: int64 */
             issue_count?: number | null;
             language_code: string;
-            /** @description Most-recent `created_at` / `updated_at` across active, on-disk issues.
+            /**
+             * @description Most-recent `created_at` / `updated_at` across active, on-disk issues.
              *     Drives the "Recently Added/Updated" rails on the home page (sorted at
-             *     the series row level today; these fields are informational on detail). */
+             *     the series row level today; these fields are informational on detail).
+             */
             last_issue_added_at?: string | null;
             last_issue_updated_at?: string | null;
             /** Format: int32 */
@@ -6648,20 +7102,24 @@ export interface components {
             pencillers?: string[];
             progress_summary?: null | components["schemas"]["SeriesProgressSummary"];
             publisher?: string | null;
-            /** @description Per-series reading-direction override. `"ltr"` / `"rtl"` /
+            /**
+             * @description Per-series reading-direction override. `"ltr"` / `"rtl"` /
              *     `"ttb"` or `None` meaning "Auto — inherit from user pref /
              *     library default at read time". The reader consults this above
              *     the user and library defaults but below ComicInfo `<Manga>`.
              *     Editable via `PATCH /series/{slug}` and set automatically by
              *     the M3 scanner heuristic when ≥80% of a series's issues
-             *     declare manga. */
+             *     declare manga.
+             */
             reading_direction?: string | null;
             slug: string;
-            /** @description Search-result excerpt with `<mark>…</mark>` tags around matched
+            /**
+             * @description Search-result excerpt with `<mark>…</mark>` tags around matched
              *     terms. Populated only on search-mode list responses; `None`
              *     everywhere else. The frontend renders this as HTML with a small
              *     allowlist sanitiser so future field changes can't introduce
-             *     XSS surface area. */
+             *     XSS surface area.
+             */
             snippet?: string | null;
             status: string;
             summary?: string | null;
@@ -6683,10 +7141,12 @@ export interface components {
             user_rating?: number | null;
             /** Format: int32 */
             volume?: number | null;
-            /** @description Aggregated CSV-style ComicInfo fields, frequency-ordered (most frequent
+            /**
+             * @description Aggregated CSV-style ComicInfo fields, frequency-ordered (most frequent
              *     first). Empty on the list endpoint to keep payloads small; populated
              *     only by `GET /series/{id}`. The `From<Model>` impl initializes these
-             *     to empty. */
+             *     to empty.
+             */
             writers?: string[];
             /** Format: int32 */
             year?: number | null;
@@ -6699,34 +7159,43 @@ export interface components {
              *     resolve the system clock (shouldn't happen in practice).
              */
             build_epoch?: number | null;
-            /** @description 12-char short SHA for display. Read from `COMIC_BUILD_SHA`
+            /**
+             * @description 12-char short SHA for display. Read from `COMIC_BUILD_SHA`
              *     (env override or build.rs `git rev-parse HEAD`). Falls back
-             *     to `"unknown"`. */
+             *     to `"unknown"`.
+             */
             build_sha: string;
-            /** @description 40-char full SHA used to construct stable commit URLs. Falls
-             *     back to `"unknown"` when the build script couldn't reach git. */
+            /**
+             * @description 40-char full SHA used to construct stable commit URLs. Falls
+             *     back to `"unknown"` when the build script couldn't reach git.
+             */
             build_sha_full: string;
             postgres_ok: boolean;
             redis_ok: boolean;
-            /** @description Browse URL for the repo this binary was built from. Auto-detected
+            /**
+             * @description Browse URL for the repo this binary was built from. Auto-detected
              *     from `git config --get remote.origin.url` at build time and
              *     normalized to `https://host/owner/repo` (strips `.git`, converts
              *     SSH → HTTPS). CI passes `COMIC_BUILD_REPO_URL` directly so Docker
              *     builds without `.git` still get the link. `None` when no remote
-             *     was detected and no override was passed. */
+             *     was detected and no override was passed.
+             */
             repo_url?: string | null;
-            /** @description True once the cron scheduler has been wired (we always start it at
+            /**
+             * @description True once the cron scheduler has been wired (we always start it at
              *     boot; if it failed, that was logged but we still serve traffic). The
              *     proper "is the scheduler ticking" check would walk the JobScheduler;
              *     for now just report whether the AppState was built (i.e. the server
-             *     is up). */
+             *     is up).
+             */
             scheduler_running: boolean;
             /**
              * Format: int64
              * @description Seconds since `AppState` was constructed (process start).
              */
             uptime_secs: number;
-            /** @description Human-readable build version. `git describe --tags --always --dirty`
+            /**
+             * @description Human-readable build version. `git describe --tags --always --dirty`
              *     at build time, falling back to `"dev"` when the build script
              *     couldn't shell to git (e.g. inside Docker without `.git`). Common
              *     shapes:
@@ -6738,7 +7207,8 @@ export interface components {
              *
              *     UI links this to the GitHub release page when it starts with `v`
              *     and has no `-` suffix (i.e. a clean tag), and renders verbatim
-             *     otherwise. */
+             *     otherwise.
+             */
             version: string;
             /**
              * Format: int64
@@ -6761,12 +7231,16 @@ export interface components {
             last_used_at: string;
             user_agent?: string | null;
         };
-        /** @description Body for `POST /me/saved-views/{id}/icon` — pick (or clear) the icon
+        /**
+         * @description Body for `POST /me/saved-views/{id}/icon` — pick (or clear) the icon
          *     that represents this rail in the user's home + sidebar. `None` /
-         *     missing means "reset to the kind-based default." */
+         *     missing means "reset to the kind-based default."
+         */
         SetIconReq: {
-            /** @description Free-form key matched against the client's icon registry. Reset
-             *     to default by sending `null` or omitting the field. */
+            /**
+             * @description Free-form key matched against the client's icon registry. Reset
+             *     to default by sending `null` or omitting the field.
+             */
             icon?: string | null;
         };
         /** @description Body for both rating endpoints. `null` clears the rating. */
@@ -6775,12 +7249,16 @@ export interface components {
             rating?: number | null;
         };
         SettingsView: {
-            /** @description Catalog of every DB-overlayable setting recognized by this server
-             *     build. Empty in M1; populated milestone-by-milestone. */
+            /**
+             * @description Catalog of every DB-overlayable setting recognized by this server
+             *     build. Empty in M1; populated milestone-by-milestone.
+             */
             registry: components["schemas"]["RegistryEntry"][];
-            /** @description Current effective values resolved from the DB overlay. Secret
+            /**
+             * @description Current effective values resolved from the DB overlay. Secret
              *     rows are returned as the literal string `"<set>"` so this surface
-             *     never leaks credentials. Order matches `registry`. */
+             *     never leaks credentials. Order matches `registry`.
+             */
             values: components["schemas"]["ResolvedEntry"][];
         };
         SidebarEntryView: {
@@ -7001,9 +7479,11 @@ export interface components {
             /** Format: int64 */
             sessions: number;
         };
-        /** @description One image adjustment applied to a single page. Tagged the same way as
+        /**
+         * @description One image adjustment applied to a single page. Tagged the same way as
          *     [`crate::jobs::archive_edit::PageOp`] so the web client can emit a
-         *     discriminated union. */
+         *     discriminated union.
+         */
         TransformStep: {
             /** Format: int32 */
             brightness: number;
@@ -7040,8 +7520,10 @@ export interface components {
             /** Format: int32 */
             y: number;
         };
-        /** @description Body for `POST /me/saved-views/{id}/unpin`. Omit to default to the
-         *     caller's system Home page (legacy shim). */
+        /**
+         * @description Body for `POST /me/saved-views/{id}/unpin`. Omit to default to the
+         *     caller's system Home page (legacy shim).
+         */
         UnpinReq: {
             /** Format: uuid */
             page_id?: string | null;
@@ -7052,29 +7534,36 @@ export interface components {
             github_branch?: string | null;
         };
         UpdateCblListReq: {
-            /** @description `None` = field absent → leave unchanged.
+            /**
+             * @description `None` = field absent → leave unchanged.
              *     `Some(None)` = JSON `null` → clear the column.
-             *     `Some(Some(_))` = explicit value → overwrite. */
+             *     `Some(Some(_))` = explicit value → overwrite.
+             */
             description?: string | null;
             refresh_schedule?: string | null;
         };
         UpdateCollectionReq: {
-            /** @description Double-Option lets the client clear the description by sending
-             *     an explicit `null`; omitting the field leaves it unchanged. */
+            /**
+             * @description Double-Option lets the client clear the description by sending
+             *     an explicit `null`; omitting the field leaves it unchanged.
+             */
             description?: string | null;
             name?: string | null;
         };
         UpdateEntryReq: {
             kind: string;
-            /** @description Optional label override (required for `kind='header'`; ignored
-             *     for `kind='spacer'`; optional for other kinds). */
+            /**
+             * @description Optional label override (required for `kind='header'`; ignored
+             *     for `kind='spacer'`; optional for other kinds).
+             */
             label?: string | null;
             /** Format: int32 */
             position: number;
             ref_id: string;
             visible: boolean;
         };
-        /** @description Body for `PATCH /series/{series_slug}/issues/{issue_slug}`.
+        /**
+         * @description Body for `PATCH /series/{series_slug}/issues/{issue_slug}`.
          *
          *     Every field is optional. For nullable columns the body distinguishes:
          *       - field absent     → leave column untouched
@@ -7087,7 +7576,8 @@ export interface components {
          *     Mirrors the editable subset of ComicInfo.xml — fields the scanner reads
          *     from the file. The scanner consults `user_edited` on rescan and skips
          *     matching columns, so DB edits are sticky and the source file is never
-         *     rewritten. */
+         *     rewritten.
+         */
         UpdateIssueReq: {
             /** @description Replace-all. Each link must have a non-empty `url`. */
             additional_links?: components["schemas"]["IssueLink"][] | null;
@@ -7140,14 +7630,18 @@ export interface components {
         UpdateLayoutReq: {
             entries: components["schemas"]["UpdateEntryReq"][];
         };
-        /** @description Body for `PATCH /libraries/{id}` (Milestone 4). Every field is optional;
-         *     only the keys present in the body are updated. */
+        /**
+         * @description Body for `PATCH /libraries/{id}` (Milestone 4). Every field is optional;
+         *     only the keys present in the body are updated.
+         */
         UpdateLibraryReq: {
-            /** @description Master toggle gating any code path that mutates archive bytes
+            /**
+             * @description Master toggle gating any code path that mutates archive bytes
              *     in this library. Default false. Independent of
              *     `metadata_writeback_enabled` (the metadata-XML toggle), which
              *     has this as a hard prerequisite — flipping `allow_archive_writeback`
-             *     off while `metadata_writeback_enabled` is on returns 422. */
+             *     off while `metadata_writeback_enabled` is on returns 422.
+             */
             allow_archive_writeback?: boolean | null;
             /**
              * Format: int32
@@ -7171,43 +7665,61 @@ export interface components {
              *     at the DB level; garde surfaces a friendly 422 here.
              */
             archive_writeback_jpeg_quality?: number | null;
-            /** @description When true, the scanner converts each `.cbr` it finds into a sibling
+            /**
+             * @description When true, the scanner converts each `.cbr` it finds into a sibling
              *     `.cbz` in place (keeping the original as `.cbr.bak`) and ingests the
              *     `.cbz`. Requires `allow_archive_writeback=true` — enabling it while
-             *     the master toggle resolves false returns 422. */
+             *     the master toggle resolves false returns 422.
+             */
             auto_convert_cbr_on_scan?: boolean | null;
             file_watch_enabled?: boolean | null;
-            /** @description Toggle filename inference's assume-issue-one fallback
-             *     (matching-accuracy M7). */
+            /**
+             * @description Toggle filename inference's assume-issue-one fallback
+             *     (matching-accuracy M7).
+             */
             filename_assume_issue_one?: boolean | null;
-            /** @description Toggle filename inference's drop-leading-numbers pass
-             *     (matching-accuracy M7). */
+            /**
+             * @description Toggle filename inference's drop-leading-numbers pass
+             *     (matching-accuracy M7).
+             */
             filename_ignore_leading_numbers?: boolean | null;
-            /** @description Toggle the per-library opt-in for auto-generating page-strip
+            /**
+             * @description Toggle the per-library opt-in for auto-generating page-strip
              *     thumbnails on every post-scan pass. Cover thumbs are always
-             *     generated regardless. */
+             *     generated regardless.
+             */
             generate_page_thumbs_on_scan?: boolean | null;
             ignore_globs?: string[] | null;
-            /** @description Toggle the auto-apply path for SingleGood matches on
-             *     non-manual searches (matching-accuracy M12). */
+            /**
+             * @description Toggle the auto-apply path for SingleGood matches on
+             *     non-manual searches (matching-accuracy M12).
+             */
             metadata_auto_apply_strong_matches?: boolean | null;
-            /** @description Replace the per-library publisher blacklist (matching-accuracy
+            /**
+             * @description Replace the per-library publisher blacklist (matching-accuracy
              *     M3). Tri-state: omitted = leave unchanged; explicit `null` =
              *     clear to empty. Comparison at filter time is case-insensitive
-             *     + sanitized so casing here doesn't matter. */
+             *     + sanitized so casing here doesn't matter.
+             */
             metadata_publisher_blacklist?: string[] | null;
-            /** @description When true, provider apply writes ComicInfo.xml + MetronInfo.xml
+            /**
+             * @description When true, provider apply writes ComicInfo.xml + MetronInfo.xml
              *     to the archive and enqueues a scoped rescan
              *     (`metadata-sidecar-writeback-1.0` M3+). Requires
-             *     `allow_archive_writeback=true`. */
+             *     `allow_archive_writeback=true`.
+             */
             metadata_writeback_enabled?: boolean | null;
             report_missing_comicinfo?: boolean | null;
-            /** @description Cron expression. `null` clears it; an empty string is treated as null.
-             *     Tri-state: omitted = leave unchanged; explicit `null` = clear. */
+            /**
+             * @description Cron expression. `null` clears it; an empty string is treated as null.
+             *     Tri-state: omitted = leave unchanged; explicit `null` = clear.
+             */
             scan_schedule_cron?: string | null;
-            /** @description Admin override for the URL slug. The input is slugified
+            /**
+             * @description Admin override for the URL slug. The input is slugified
              *     (kebab-case, ASCII-folded) and rejected if it collides with another
-             *     library's slug. */
+             *     library's slug.
+             */
             slug?: string | null;
             /** Format: int32 */
             soft_delete_days?: number | null;
@@ -7224,12 +7736,14 @@ export interface components {
             tags?: string[] | null;
         };
         UpdatePageReq: {
-            /** @description Description string. Omitting (or sending null) leaves the
+            /**
+             * @description Description string. Omitting (or sending null) leaves the
              *     existing value alone; sending an empty (or whitespace-only)
              *     string clears it. Avoids the `Option<Option<T>>` trick — serde
              *     can't reliably distinguish absent from explicit null without a
              *     custom deserializer, so the "clear via empty string" convention
-             *     is the contract. */
+             *     is the contract.
+             */
             description?: string | null;
             name?: string | null;
         };
@@ -7247,11 +7761,13 @@ export interface components {
             sort_field?: null | components["schemas"]["SortField"];
             sort_order?: null | components["schemas"]["SortOrder"];
         };
-        /** @description Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override
+        /**
+         * @description Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override
          *     the scanner won't touch; `slug` is the admin-rename hook for the URL
          *     segment (validated unique across all series). `status` and the external
          *     IDs are surfaced in the issue drawer so curators can correct
-         *     continuing/ended state and database links without leaving the issue page. */
+         *     continuing/ended state and database links without leaving the issue page.
+         */
         UpdateSeriesReq: {
             /** Format: int64 */
             comicvine_id?: number | null;
@@ -7259,19 +7775,27 @@ export interface components {
             match_key?: string | null;
             /** Format: int64 */
             metron_id?: number | null;
-            /** @description Per-series reading-direction override. `"ltr"` / `"rtl"` /
+            /**
+             * @description Per-series reading-direction override. `"ltr"` / `"rtl"` /
              *     `"ttb"` (future-compat) or `null` for "Auto, inherit". Empty or
              *     whitespace-only strings are rejected — clients should send
-             *     `null` explicitly to clear. See `manga-and-bulk-metadata-1.0` M2. */
+             *     `null` explicitly to clear. See `manga-and-bulk-metadata-1.0` M2.
+             */
             reading_direction?: string | null;
-            /** @description Admin override for the URL slug. Slugified server-side; rejected on
-             *     collision. */
+            /**
+             * @description Admin override for the URL slug. Slugified server-side; rejected on
+             *     collision.
+             */
             slug?: string | null;
-            /** @description Publication status — one of `continuing`, `ended`, `cancelled`,
-             *     `hiatus`, `limited`. Scanner defaults to `continuing` on create. */
+            /**
+             * @description Publication status — one of `continuing`, `ended`, `cancelled`,
+             *     `hiatus`, `limited`. Scanner defaults to `continuing` on create.
+             */
             status?: string | null;
-            /** @description Series-level summary. `null` clears (the API will fall back to the
-             *     first issue's summary on read). */
+            /**
+             * @description Series-level summary. `null` clears (the API will fall back to the
+             *     first issue's summary on read).
+             */
             summary?: string | null;
         };
         UpdateSettingsReq: {
@@ -7295,7 +7819,8 @@ export interface components {
             content_type: string;
             id: string;
         };
-        /** @description Body for `POST /me/progress/bulk` — bulk read/unread for an
+        /**
+         * @description Body for `POST /me/progress/bulk` — bulk read/unread for an
          *     arbitrary list of issue ids. Used by the multi-select toolbar
          *     across the series / collection / view / CBL list pages. See
          *     `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M2).
@@ -7305,12 +7830,15 @@ export interface components {
          *     series X"; (2) ACL filtering walks each issue's library_id and
          *     drops anything the caller can't see. The response counts skipped
          *     rows separately so the toast can surface "N marked read, M
-         *     already read." */
+         *     already read."
+         */
         UpsertBulkReq: {
-            /** @description See [`UpsertSeriesReq::backfill`] — same semantics: when
+            /**
+             * @description See [`UpsertSeriesReq::backfill`] — same semantics: when
              *     `true` and `finished == true`, every row written carries
              *     `is_backfill = true` and is excluded from time-bound activity
-             *     surfaces. Defaults to `false` for back-compat. */
+             *     surfaces. Defaults to `false` for back-compat.
+             */
             backfill?: boolean;
             device?: string | null;
             finished: boolean;
@@ -7348,8 +7876,10 @@ export interface components {
             /** Format: int64 */
             active_ms: number;
             client_meta?: unknown;
-            /** @description Client-generated UUID v4 (or any 1-64 char unique tag) used as the
-             *     idempotency key across the heartbeat + final-flush sequence. */
+            /**
+             * @description Client-generated UUID v4 (or any 1-64 char unique tag) used as the
+             *     idempotency key across the heartbeat + final-flush sequence.
+             */
             client_session_id: string;
             device?: string | null;
             /** Format: int32 */
@@ -7368,7 +7898,8 @@ export interface components {
             /** @description `'single' | 'double' | 'webtoon'` or null. */
             view_mode?: string | null;
         };
-        /** @description Body for `POST /me/progress/series-bulk` — bulk read/unread
+        /**
+         * @description Body for `POST /me/progress/series-bulk` — bulk read/unread
          *     applied across every active issue of an arbitrary list of
          *     series. Sister endpoint to `upsert_bulk` (which takes
          *     issue_ids); used by the multi-select toolbar on filter views
@@ -7380,7 +7911,8 @@ export interface components {
          *     (M6 extension per user request 2026-05-17 — filter views
          *     originally weren't going to support mark-read since they're
          *     series-only, but operating per-series-then-per-issue is the
-         *     natural semantics). */
+         *     natural semantics).
+         */
         UpsertSeriesBulkReq: {
             /** @description See [`UpsertSeriesReq::backfill`]. */
             backfill?: boolean;
@@ -7410,23 +7942,29 @@ export interface components {
              */
             updated: number;
         };
-        /** @description Body for `POST /series/{id}/progress` — bulk read/unread for every active
+        /**
+         * @description Body for `POST /series/{id}/progress` — bulk read/unread for every active
          *     issue in the series. `finished=true` writes a "fully read" record for each
          *     (page = page_count - 1, percent = 1.0); `finished=false` resets to "unread"
          *     (page = 0, percent = 0.0). Soft-deleted issues are excluded — they're not
-         *     visible to the user and writing progress for them would clutter the table. */
+         *     visible to the user and writing progress for them would clutter the table.
+         */
         UpsertSeriesReq: {
-            /** @description "Updating my collection — don't count toward today's reading
+            /**
+             * @description "Updating my collection — don't count toward today's reading
              *     activity." When `true` and `finished == true`, every written
              *     row carries `is_backfill = true` and is filtered out of the
              *     reading log, heatmap, daily-pages stat, streak counter, and
              *     the Just Finished sort. `false` (default) preserves the
              *     pre-v0.5.7 behaviour of treating bulk-marks as active reading.
              *     Ignored when `finished == false` — unread writes always clear
-             *     the flag. */
+             *     the flag.
+             */
             backfill?: boolean;
-            /** @description Optional client tag; mirrors the per-issue endpoint so the same
-             *     device label rolls through for sync-aware UIs. */
+            /**
+             * @description Optional client tag; mirrors the per-issue endpoint so the same
+             *     device label rolls through for sync-aware UIs.
+             */
             device?: string | null;
             finished: boolean;
         };
@@ -7453,12 +7991,16 @@ export interface components {
         UserRole: "admin" | "user";
         /** @enum {string} */
         UserState: "pending_verification" | "active" | "disabled";
-        /** @description Outcome of a variant-cover backfill sweep — surfaced via the admin
-         *     endpoint so the operator sees how rows fared. */
+        /**
+         * @description Outcome of a variant-cover backfill sweep — surfaced via the admin
+         *     endpoint so the operator sees how rows fared.
+         */
         VariantCoverBackfillOutcome: {
-            /** @description Rows that needed work (no usable on-disk artifact: `local_path`
+            /**
+             * @description Rows that needed work (no usable on-disk artifact: `local_path`
              *     empty, or set but the file is missing). Rows whose bytes already
-             *     exist on disk are skipped before counting. */
+             *     exist on disk are skipped before counting.
+             */
             considered: number;
             /** @description Rows skipped because the download / decode failed (stay hotlinks). */
             skipped: number;
@@ -7489,8 +8031,10 @@ export interface operations {
             query?: {
                 limit?: number | null;
                 cursor?: string | null;
-                /** @description Comma-separated list of kinds to include. Defaults to all.
-                 *     Allowed: `audit`, `scan`, `health`, `reading`. */
+                /**
+                 * @description Comma-separated list of kinds to include. Defaults to all.
+                 *     Allowed: `audit`, `scan`, `health`, `reading`.
+                 */
                 kinds?: string | null;
             };
             header?: never;
@@ -7763,9 +8307,11 @@ export interface operations {
     admin_fs_list: {
         parameters: {
             query?: {
-                /** @description Path to list. Omit (or pass empty) to list the root. The server
+                /**
+                 * @description Path to list. Omit (or pass empty) to list the root. The server
                  *     will reject anything that doesn't canonicalise to a descendant of
-                 *     `COMIC_LIBRARY_PATH`. */
+                 *     `COMIC_LIBRARY_PATH`.
+                 */
                 path?: string | null;
             };
             header?: never;
@@ -8160,12 +8706,14 @@ export interface operations {
                 level?: string | null;
                 q?: string | null;
                 limit?: number | null;
-                /** @description Restrict to log entries whose `fields["library_id"]` matches
+                /**
+                 * @description Restrict to log entries whose `fields["library_id"]` matches
                  *     this UUID. Populated by the scanner's instrumented spans
                  *     (`scan_library`, `scan_series_folder`) — every event emitted
                  *     under those spans inherits the library_id via the
                  *     `RingLayer::on_event` parent-span walk. Omit / `all` for
-                 *     cross-library. */
+                 *     cross-library.
+                 */
                 library_id?: string | null;
             };
             header?: never;
@@ -8395,8 +8943,10 @@ export interface operations {
                 status?: string | null;
                 /** @description Hard cap of 100; default 25. */
                 limit?: number | null;
-                /** @description ISO-8601 timestamp; returns rows older than this for
-                 *     cursor-style pagination. */
+                /**
+                 * @description ISO-8601 timestamp; returns rows older than this for
+                 *     cursor-style pagination.
+                 */
                 before?: string | null;
             };
             header?: never;
@@ -10756,11 +11306,13 @@ export interface operations {
     metadata_refresh_library: {
         parameters: {
             query?: {
-                /** @description `unmatched` | `stale` | `all` | `recent` (default `stale`).
+                /**
+                 * @description `unmatched` | `stale` | `all` | `recent` (default `stale`).
                  *     `unmatched` is the cheapest scope and the right default for
                  *     "I just added a library, get me caught up". `stale` is what
                  *     the weekly cron uses. `all` is the operator escape hatch.
-                 *     `recent` mirrors the Mylar "last N days" window. */
+                 *     `recent` mirrors the Mylar "last N days" window.
+                 */
                 scope?: string;
             };
             header?: never;
@@ -13963,8 +14515,10 @@ export interface operations {
     metadata_candidates_issue: {
         parameters: {
             query?: {
-                /** @description Pin a specific run; defaults to the latest run for the
-                 *     scope/entity. */
+                /**
+                 * @description Pin a specific run; defaults to the latest run for the
+                 *     scope/entity.
+                 */
                 run_id?: string | null;
             };
             header?: never;
@@ -14249,8 +14803,10 @@ export interface operations {
     metadata_candidates_series: {
         parameters: {
             query?: {
-                /** @description Pin a specific run; defaults to the latest run for the
-                 *     scope/entity. */
+                /**
+                 * @description Pin a specific run; defaults to the latest run for the
+                 *     scope/entity.
+                 */
                 run_id?: string | null;
             };
             header?: never;

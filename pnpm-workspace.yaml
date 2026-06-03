@@ -1,3 +1,31 @@
 packages:
   - "web"
   - "docs-site"
+
+# pnpm 11 errors (ERR_PNPM_IGNORED_BUILDS) when a dependency's install
+# script is skipped without an explicit per-package decision, where
+# pnpm 10 only warned. These are optional native build scripts whose
+# packages ship prebuilt binaries; main ran with all of them skipped, so
+# deny each one here (false = don't run the script) to keep `pnpm install`
+# non-interactive in CI while preserving that behavior.
+allowBuilds:
+  "@parcel/watcher": false
+  "@swc/core": false
+  core-js: false
+  esbuild: false
+  postman-code-generators: false
+  sharp: false
+  unrs-resolver: false
+  vue-demi: false
+
+# pnpm 11 stopped reading the `pnpm` field in package.json (incl.
+# `pnpm.overrides`); settings now live here. These are security pins —
+# keep them in sync with the renovate.json package rules (notably the
+# `yaml <2` pin that holds the legacy swagger2openapi/oas-* docs
+# toolchain on the 1.x API).
+overrides:
+  "lodash@<4.18.0": "4.18.1"
+  "js-yaml@>=4.0.0 <4.1.1": "4.2.0"
+  "serialize-javascript@<7.0.5": "7.0.5"
+  "yaml@>=1.0.0 <1.10.3": "1.10.3"
+  "postcss@<8.5.10": "8.5.15"

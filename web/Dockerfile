@@ -14,7 +14,7 @@ WORKDIR /work
 
 # pnpm is fast + matches what the repo uses locally. Pinning the major to
 # match `package.json/packageManager` keeps reproducibility tight.
-RUN npm install -g pnpm@10
+RUN npm install -g pnpm@11
 
 # Bring in just enough to make pnpm install efficient — workspace manifest,
 # lockfile, and the web package contents. The root `Cargo.toml` etc. live

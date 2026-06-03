@@ -69,7 +69,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v6
         with:
-          version: 10.33.2
+          version: 11.5.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter web run lint
       - run: pnpm --filter web run typecheck
@@ -106,7 +106,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v6
         with:
-          version: 10.33.2
+          version: 11.5.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter docs-site run build
 
@@ -123,7 +123,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v6
         with:
-          version: 10.33.2
+          version: 11.5.1
       - uses: dtolnay/rust-toolchain@1.96.0
       - uses: Swatinem/rust-cache@v2
       - name: Generate spec from PR
@@ -141,7 +141,12 @@ jobs:
       - name: Generated TS types match
         run: |
           pnpm install --frozen-lockfile
-          pnpm exec openapi-typescript web/lib/api/openapi.json -o /tmp/pr-types.generated.ts >/dev/null 2>&1
+          # openapi-typescript is a dependency of the `web` workspace package,
+          # not the repo root, so it must be exec'd in the web context — a bare
+          # `pnpm exec` from the root fails with ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL.
+          # (Don't swallow stderr: a silent crash here used to produce an empty
+          # output file and a misleading "types are stale" failure.)
+          pnpm --filter web exec openapi-typescript lib/api/openapi.json -o /tmp/pr-types.generated.ts
           diff -q /tmp/pr-types.generated.ts web/lib/api/types.generated.ts || \
             (echo "::error::web/lib/api/types.generated.ts is stale. Run 'just openapi'." && exit 1)
       - name: oasdiff vs main
@@ -152,7 +157,9 @@ jobs:
           git checkout "origin/$BASE_REF" -- web/lib/api/openapi.json 2>/dev/null || \
             (echo "no baseline spec on $BASE_REF; skipping oasdiff" && exit 0)
           curl -fsSL https://raw.githubusercontent.com/Tufin/oasdiff/main/install.sh | sh
-          ./oasdiff breaking web/lib/api/openapi.json /tmp/pr-openapi.json || \
+          # The installer drops the binary in /usr/local/bin (on PATH); invoke
+          # it by name, not `./oasdiff` (the old install-to-cwd behavior).
+          oasdiff breaking web/lib/api/openapi.json /tmp/pr-openapi.json || \
             ([[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}" == "true" ]] && \
               echo "::warning::Breaking changes detected (acknowledged via label)" || \
               (echo "::error::Breaking API changes — add 'breaking-change' label and update CHANGELOG.md" && exit 1))
