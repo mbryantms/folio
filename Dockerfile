@@ -11,7 +11,7 @@
 # reverse proxy. See `docs/install/` for the wiring.
 
 # ───── Stage 1a: cargo-chef recipe ─────
-FROM rust:1.91-slim-bookworm AS planner
+FROM rust:1.96-slim-bookworm AS planner
 WORKDIR /work
 RUN cargo install cargo-chef --locked
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
@@ -19,7 +19,7 @@ COPY crates ./crates
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ───── Stage 1b: cargo-chef cook (cached deps) ─────
-FROM rust:1.91-slim-bookworm AS rust-builder
+FROM rust:1.96-slim-bookworm AS rust-builder
 WORKDIR /work
 # build-essential / g++ pulled in for cc-rs crates (zstd-sys, image, webp,
 # blake3, etc.) that compile C/C++. pkg-config + libssl-dev cover the
