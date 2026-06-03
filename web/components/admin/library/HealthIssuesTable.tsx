@@ -5,6 +5,16 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Eye, EyeOff } from "lucide-react";
 
 import { BackupStorageCard } from "@/components/admin/library/BackupStorageCard";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
@@ -78,6 +88,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
   const [hiddenKinds, setHiddenKinds] = React.useState<Set<string>>(
     () => new Set(),
   );
+  const [confirmDeepValidate, setConfirmDeepValidate] = React.useState(false);
 
   const baseFiltered = React.useMemo(() => {
     if (!data) return [];
@@ -242,15 +253,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => {
-            if (
-              window.confirm(
-                "Deep validate decodes every page in every issue. On a 20K-issue library this can take 1–2 hours of CPU. Continue?",
-              )
-            ) {
-              deepValidate.mutate();
-            }
-          }}
+          onClick={() => setConfirmDeepValidate(true)}
           disabled={deepValidate.isPending}
         >
           Validate page integrity
@@ -336,6 +339,33 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
         data={filtered}
         emptyMessage="No matching issues."
       />
+      <AlertDialog
+        open={confirmDeepValidate}
+        onOpenChange={setConfirmDeepValidate}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Validate every page?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deep validation decodes every page in every active issue in this
+              library. On very large libraries this can take one to two hours of
+              CPU. Findings appear here as the run progresses.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                deepValidate.mutate();
+                setConfirmDeepValidate(false);
+              }}
+              disabled={deepValidate.isPending}
+            >
+              Start validation
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

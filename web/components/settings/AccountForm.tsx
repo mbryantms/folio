@@ -79,16 +79,11 @@ export function AccountForm() {
   if (me.error || !me.data) {
     return <p className="text-destructive text-sm">Failed to load account.</p>;
   }
-  // The server distinguishes auth modes via `users.external_id` ("local:" vs
-  // "oidc:"). The client only sees a redacted MeView, so we infer from the
-  // server response when we hit /me/account: a 403 with code
-  // `auth.email_managed_by_issuer` means OIDC. We optimistically allow the
-  // edits and let the server decide; the toast on failure is clear.
   return (
     <div className="space-y-6">
       <ProfileCard me={me.data} />
       <SidebarPrefsCard me={me.data} />
-      <PasswordCard />
+      <PasswordCard me={me.data} />
       <SessionsCard />
     </div>
   );
@@ -140,6 +135,7 @@ function ProfileCard({
 }) {
   const update = useUpdateAccount();
   const csrf = useCsrfToken();
+  const emailEditable = me.email_editable !== false;
   const form = useForm<z.input<typeof profileSchema>, unknown, ProfileValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: { display_name: me.display_name, email: me.email ?? "" },
@@ -153,7 +149,7 @@ function ProfileCard({
     const body: { display_name?: string; email?: string } = {};
     if (values.display_name !== me.display_name)
       body.display_name = values.display_name;
-    if (values.email && values.email !== (me.email ?? ""))
+    if (emailEditable && values.email && values.email !== (me.email ?? ""))
       body.email = values.email;
     if (Object.keys(body).length === 0) return;
     update.mutate(body);
@@ -199,11 +195,17 @@ function ProfileCard({
               <FormItem>
                 <FormLabel>Email</FormLabel>
                 <FormControl>
-                  <Input {...field} type="email" autoComplete="email" />
+                  <Input
+                    {...field}
+                    type="email"
+                    autoComplete="email"
+                    disabled={!emailEditable}
+                  />
                 </FormControl>
                 <FormDescription>
-                  OIDC accounts can&apos;t change their email here — it&apos;s
-                  managed by your identity provider.
+                  {emailEditable
+                    ? "Used for account notifications and local sign-in."
+                    : "Email is managed by your identity provider."}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -223,7 +225,12 @@ function ProfileCard({
   );
 }
 
-function PasswordCard() {
+function PasswordCard({
+  me,
+}: {
+  me: NonNullable<ReturnType<typeof useMe>["data"]>;
+}) {
+  const passwordEditable = me.password_editable !== false;
   const update = useUpdateAccount();
   const csrf = useCsrfToken();
   const form = useForm<PasswordValues>({
@@ -234,6 +241,20 @@ function PasswordCard() {
       confirm_password: "",
     },
   });
+
+  if (!passwordEditable) {
+    return (
+      <SettingsSection
+        title="Change password"
+        description="Password changes are managed by your identity provider."
+      >
+        <p className="text-muted-foreground text-sm">
+          This account signs in through an external identity provider, so there
+          is no local password to change here.
+        </p>
+      </SettingsSection>
+    );
+  }
 
   const onSubmit = form.handleSubmit(async (values) => {
     update.mutate(

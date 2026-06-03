@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   Check,
   Circle,
@@ -37,7 +43,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { apiMutate } from "@/lib/api/mutations";
-import { useBulkMarkProgress } from "@/lib/api/mutations";
+import {
+  useBulkMarkProgress,
+  useBulkMarkSeriesMatchingProgress,
+} from "@/lib/api/mutations";
 import { useMe, useSeriesIssuesInfinite } from "@/lib/api/queries";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
@@ -130,30 +139,69 @@ export function IssuesPanel({
   // unread; M3 adds Add-to-collection; M4 will append Remove etc.
   const selection = useSelection(items);
   const bulkMark = useBulkMarkProgress();
+  const bulkMarkMatching = useBulkMarkSeriesMatchingProgress(seriesSlug);
+  const [allMatchingSelected, setAllMatchingSelected] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editMetadataOpen, setEditMetadataOpen] = useState(false);
   const [archiveEditOpen, setArchiveEditOpen] = useState(false);
   const [markReadOpen, setMarkReadOpen] = useState(false);
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
+  const matchingTotal =
+    query.data?.pages[0]?.total ?? issueCount ?? items.length;
+  const matchingQuery = debouncedQ || undefined;
+  const clearSelection = useCallback(() => {
+    setAllMatchingSelected(false);
+    selection.clear();
+  }, [selection]);
   const submitMarkRead = useCallback(
     (backfill: boolean) => {
+      if (allMatchingSelected) {
+        bulkMarkMatching.mutate(
+          { finished: true, backfill, q: matchingQuery },
+          {
+            onSuccess: () => {
+              clearSelection();
+              setMarkReadOpen(false);
+            },
+          },
+        );
+        return;
+      }
       const ids = Array.from(selection.selected);
       if (ids.length === 0) return;
       bulkMark.mutate(
         { issue_ids: ids, finished: true, backfill },
         {
           onSuccess: () => {
-            selection.clear();
+            clearSelection();
             setMarkReadOpen(false);
           },
         },
       );
     },
-    [bulkMark, selection],
+    [
+      allMatchingSelected,
+      bulkMark,
+      bulkMarkMatching,
+      clearSelection,
+      matchingQuery,
+      selection.selected,
+    ],
   );
   const runBulk = useCallback(
     (finished: boolean) => {
+      if (allMatchingSelected) {
+        if (finished && matchingTotal >= BULK_BACKFILL_PROMPT_THRESHOLD) {
+          setMarkReadOpen(true);
+          return;
+        }
+        bulkMarkMatching.mutate(
+          { finished, q: matchingQuery },
+          { onSuccess: clearSelection },
+        );
+        return;
+      }
       const ids = Array.from(selection.selected);
       if (ids.length === 0) return;
       // Mark-read at scale (>= threshold) is overwhelmingly catalog
@@ -166,14 +214,18 @@ export function IssuesPanel({
       }
       bulkMark.mutate(
         { issue_ids: ids, finished },
-        {
-          onSuccess: () => {
-            selection.clear();
-          },
-        },
+        { onSuccess: clearSelection },
       );
     },
-    [bulkMark, selection],
+    [
+      allMatchingSelected,
+      bulkMark,
+      bulkMarkMatching,
+      clearSelection,
+      matchingQuery,
+      matchingTotal,
+      selection.selected,
+    ],
   );
   const selectedTargets = Array.from(selection.selected).map((id) => ({
     entry_kind: "issue" as const,
@@ -184,9 +236,7 @@ export function IssuesPanel({
   const runBulkMetadataFetch = async () => {
     const ids = selection.selected;
     if (ids.size === 0) return;
-    const slugs = items
-      .filter((iss) => ids.has(iss.id))
-      .map((iss) => iss.slug);
+    const slugs = items.filter((iss) => ids.has(iss.id)).map((iss) => iss.slug);
     if (slugs.length === 0) return;
     setBulkFetchPending(true);
     const toastId = toast.loading(
@@ -206,18 +256,24 @@ export function IssuesPanel({
     const ok = results.filter((r) => r.status === "fulfilled").length;
     const failed = results.length - ok;
     if (failed === 0) {
-      toast.success(`Queued metadata search for ${ok} issue${ok === 1 ? "" : "s"}.`, {
-        id: toastId,
-      });
+      toast.success(
+        `Queued metadata search for ${ok} issue${ok === 1 ? "" : "s"}.`,
+        {
+          id: toastId,
+        },
+      );
     } else if (ok === 0) {
-      toast.error(`Failed to queue any metadata searches (${failed} error${failed === 1 ? "" : "s"}).`, {
-        id: toastId,
-      });
+      toast.error(
+        `Failed to queue any metadata searches (${failed} error${failed === 1 ? "" : "s"}).`,
+        {
+          id: toastId,
+        },
+      );
     } else {
       toast.message(`Queued ${ok}, ${failed} failed.`, { id: toastId });
     }
     setBulkFetchPending(false);
-    selection.clear();
+    clearSelection();
   };
 
   // Auto-fetch the next page when the sentinel scrolls into view.
@@ -250,9 +306,11 @@ export function IssuesPanel({
       if (shouldSkipHotkey(e)) return;
       if (e.key === "Escape") {
         e.preventDefault();
+        setAllMatchingSelected(false);
         selection.exit();
       } else if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
+        setAllMatchingSelected(false);
         selection.selectAll();
       }
     };
@@ -274,7 +332,7 @@ export function IssuesPanel({
   // localStorage rehydrate effect runs.
   const gridStyle = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
-  } as React.CSSProperties;
+  } as CSSProperties;
 
   return (
     <section className="mt-10">
@@ -355,7 +413,7 @@ export function IssuesPanel({
 
       <SelectionToolbar
         open={selection.selectMode}
-        count={selection.count}
+        count={allMatchingSelected ? matchingTotal : selection.count}
         total={items.length}
         primary={[
           {
@@ -377,43 +435,70 @@ export function IssuesPanel({
             label: "Add to collection…",
             icon: FolderPlus,
             onClick: () => setPickerOpen(true),
+            disabled: allMatchingSelected,
           },
-          {
-            id: "edit-metadata",
-            label: "Edit metadata…",
-            icon: Pencil,
-            onClick: () => setEditMetadataOpen(true),
-          },
-          {
-            id: "fetch-metadata",
-            label: "Fetch metadata",
-            icon: Sparkles,
-            onClick: () => void runBulkMetadataFetch(),
-            disabled: bulkFetchPending,
-          },
-          // Admin-only: rewrites archive files. The server skips issues
-          // whose library has writeback off (reported in the result).
-          ...(isAdmin
-            ? [
-                {
-                  id: "edit-archives",
-                  label: "Edit archives…",
-                  icon: FileCog,
-                  onClick: () => setArchiveEditOpen(true),
-                },
-              ]
-            : []),
         ]}
-        onDone={() => selection.exit()}
-        onClear={() => selection.clear()}
-        onSelectAll={() => selection.selectAll()}
-        isPending={bulkMark.isPending}
+        actionGroups={[
+          {
+            id: "editing",
+            label: "Editing",
+            icon: Pencil,
+            actions: [
+              {
+                id: "edit-metadata",
+                label: "Edit metadata…",
+                icon: Pencil,
+                onClick: () => setEditMetadataOpen(true),
+                disabled: allMatchingSelected,
+              },
+              {
+                id: "fetch-metadata",
+                label: "Fetch metadata",
+                icon: Sparkles,
+                onClick: () => void runBulkMetadataFetch(),
+                disabled: allMatchingSelected || bulkFetchPending,
+              },
+              // Admin-only: rewrites archive files. The server skips issues
+              // whose library has writeback off (reported in the result).
+              ...(isAdmin
+                ? [
+                    {
+                      id: "edit-archives",
+                      label: "Edit archives…",
+                      icon: FileCog,
+                      onClick: () => setArchiveEditOpen(true),
+                      disabled: allMatchingSelected,
+                    },
+                  ]
+                : []),
+            ],
+          },
+        ]}
+        onDone={() => {
+          setAllMatchingSelected(false);
+          selection.exit();
+        }}
+        onClear={clearSelection}
+        onSelectAll={() => {
+          setAllMatchingSelected(false);
+          selection.selectAll();
+        }}
+        onSelectAllMatching={
+          allMatchingSelected
+            ? undefined
+            : () => {
+                selection.clear();
+                setAllMatchingSelected(true);
+              }
+        }
+        matchingTotal={matchingTotal}
+        isPending={bulkMark.isPending || bulkMarkMatching.isPending}
       />
       <BulkAddToCollectionDialog
         open={pickerOpen}
         onOpenChange={(next) => {
           setPickerOpen(next);
-          if (!next) selection.clear();
+          if (!next) clearSelection();
         }}
         targets={selectedTargets}
       />
@@ -421,7 +506,7 @@ export function IssuesPanel({
         open={editMetadataOpen}
         onOpenChange={(next) => {
           setEditMetadataOpen(next);
-          if (!next) selection.clear();
+          if (!next) clearSelection();
         }}
         issueIds={Array.from(selection.selected)}
       />
@@ -429,16 +514,16 @@ export function IssuesPanel({
         open={archiveEditOpen}
         onOpenChange={(next) => {
           setArchiveEditOpen(next);
-          if (!next) selection.clear();
+          if (!next) clearSelection();
         }}
         issueIds={Array.from(selection.selected)}
       />
       <BulkMarkReadDialog
         open={markReadOpen}
         onOpenChange={setMarkReadOpen}
-        count={selection.selected.size}
+        count={allMatchingSelected ? matchingTotal : selection.selected.size}
         onConfirm={submitMarkRead}
-        isPending={bulkMark.isPending}
+        isPending={bulkMark.isPending || bulkMarkMatching.isPending}
       />
 
       {query.isError && (
@@ -469,8 +554,15 @@ export function IssuesPanel({
                   selection.selectMode
                     ? {
                         isActive: true,
-                        isSelected: selection.isSelected(iss.id),
-                        onToggle: (ev) => selection.toggle(iss.id, ev),
+                        isSelected:
+                          allMatchingSelected || selection.isSelected(iss.id),
+                        onToggle: (ev) => {
+                          if (allMatchingSelected) {
+                            setAllMatchingSelected(false);
+                            selection.clear();
+                          }
+                          selection.toggle(iss.id, ev);
+                        },
                       }
                     : undefined
                 }
@@ -503,7 +595,7 @@ export function IssuesPanel({
   );
 }
 
-function IssueGridSkeleton({ style }: { style: React.CSSProperties }) {
+function IssueGridSkeleton({ style }: { style: CSSProperties }) {
   return (
     <ul role="list" className="grid gap-4" style={style}>
       {Array.from({ length: 12 }).map((_, i) => (

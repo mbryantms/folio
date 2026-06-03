@@ -191,6 +191,7 @@ export function CollectionViewDetail({
         .map((t) => t.ref_id),
     [selectedTargets],
   );
+  const selectedSeriesCount = selectedTargets.length - selectedIssueIds.length;
 
   // Esc exits select mode; Cmd/Ctrl+A selects every loaded entry.
   // Both gated on `selectMode` so other handlers are free when the
@@ -223,12 +224,21 @@ export function CollectionViewDetail({
 
   const runBulkMark = (finished: boolean) => {
     if (selectedIssueIds.length === 0) {
-      toast.info("Mark read / unread applies to issues; series cards skipped");
+      toast.info("Mark issues read/unread only applies to issue cards.");
       return;
     }
     bulkMark.mutate(
       { issue_ids: selectedIssueIds, finished },
-      { onSuccess: () => selection.clear() },
+      {
+        onSuccess: () => {
+          if (selectedSeriesCount > 0) {
+            toast.info(
+              `Updated ${selectedIssueIds.length} issue${selectedIssueIds.length === 1 ? "" : "s"}; skipped ${selectedSeriesCount} series ${selectedSeriesCount === 1 ? "card" : "cards"}.`,
+            );
+          }
+          selection.clear();
+        },
+      },
     );
   };
   const runBulkRemove = () => {
@@ -329,15 +339,17 @@ export function CollectionViewDetail({
         primary={[
           {
             id: "mark-read",
-            label: "Mark read",
+            label: "Mark issues read",
             icon: Check,
             onClick: () => runBulkMark(true),
+            disabled: selectedIssueIds.length === 0,
           },
           {
             id: "mark-unread",
-            label: "Mark unread",
+            label: "Mark issues unread",
             icon: Circle,
             onClick: () => runBulkMark(false),
+            disabled: selectedIssueIds.length === 0,
           },
         ]}
         overflow={[

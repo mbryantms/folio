@@ -91,7 +91,7 @@ export function LibraryOverview({ id }: { id: string }) {
             value={String(scanPreview?.dirty_folders ?? 0)}
           />
           <StatusMetric
-            label="Queue"
+            label="Server queue"
             value={queue.data?.total ? `${queue.data.total} pending` : "idle"}
           />
           <StatusMetric

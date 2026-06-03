@@ -4074,6 +4074,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search imported CBL series, issue, year, or ids",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -7959,6 +7968,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UpsertSeriesResp"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/progress-matching": {
+      "post": {
+        "operationId": "progress_upsert_series_matching",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertSeriesMatchingReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpsertBulkResp"
                 }
               }
             }
@@ -13674,6 +13723,8 @@
         "type": "object",
         "required": [
           "id",
+          "email_editable",
+          "password_editable",
           "display_name",
           "role",
           "csrf_token",
@@ -13779,6 +13830,10 @@
               "null"
             ]
           },
+          "email_editable": {
+            "type": "boolean",
+            "description": "True when `/me/account` accepts email edits for this user."
+          },
           "exclude_from_aggregates": {
             "type": "boolean",
             "description": "Stats v2: opt-out from server-wide aggregates. When true, admin\ndashboards exclude this user's sessions from totals/top-series. Does\nnot affect personal `/me/reading-stats`."
@@ -13797,6 +13852,10 @@
             "type": "integer",
             "format": "int32",
             "description": "Per-user override of the home-page rail cap. Replaces the\nprevious hard-coded `MAX_PIN_COUNT = 12` constant. Range\n1..=50 enforced by DB CHECK + PATCH validation. Default 12."
+          },
+          "password_editable": {
+            "type": "boolean",
+            "description": "True when `/me/account` accepts local password changes for this user."
           },
           "reading_idle_ms": {
             "type": "integer",
@@ -18675,6 +18734,33 @@
             "format": "int32",
             "description": "Issue rows that received a new or updated progress record.",
             "minimum": 0
+          }
+        }
+      },
+      "UpsertSeriesMatchingReq": {
+        "type": "object",
+        "description": "Body for `POST /series/{slug}/progress-matching` — bulk read/unread for\nevery active issue in the series matching the current UI query. This is the\nserver-side companion to \"Select all matching\": the client sends the same\nsearch text it used for `/series/{slug}/issues?q=...`, and the server walks\nthe complete result set instead of requiring the browser to load every\ncursor page first.",
+        "required": [
+          "finished"
+        ],
+        "properties": {
+          "backfill": {
+            "type": "boolean"
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished": {
+            "type": "boolean"
+          },
+          "q": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

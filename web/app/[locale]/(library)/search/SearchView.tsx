@@ -1,8 +1,22 @@
 "use client";
 
-import { ArrowLeft, ChevronRight, Filter, Search, User, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Filter,
+  Loader2,
+  Search,
+  User,
+  X,
+} from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+  type ComponentType,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
@@ -26,10 +40,21 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import type { IssueSearchHit, SeriesView } from "@/lib/api/types";
+import type {
+  IssueSearchHit,
+  IssueSummaryView,
+  SeriesView,
+} from "@/lib/api/types";
+import {
+  useIssuesCrossListInfinite,
+  useSeriesListInfinite,
+  type SeriesListFilters,
+} from "@/lib/api/queries";
+import { renderSearchSnippet } from "@/lib/search/render-snippet";
 import {
   useGlobalSearch,
   type GlobalSearchPayloads,
+  type GlobalSearchTotals,
 } from "@/lib/search/use-search";
 import {
   SEARCH_CATEGORIES,
@@ -62,11 +87,11 @@ const CARD_SIZE_STORAGE_KEY = "folio.search.cardSize";
  *
  *   - **Default (`category === null`)**: one horizontal-scroll rail per
  *     category, capped at a sensible preview window. Each rail's
- *     trailing "View all" tile deep-links to the category-filtered
+ *     trailing "Top results" link deep-links to the category-filtered
  *     grid view.
  *   - **Category-filtered (`category === 'series' | 'issues' | 'people'`)**:
  *     a single full-width grid of just that category, with a "Back to
- *     all results" link. Mirrors the destination of the rail's View all
+ *     all results" link. Mirrors the destination of the rail's top-results
  *     tile.
  *
  * Card-size slider drives the cover-card width on Series + Issues rails
@@ -139,10 +164,13 @@ export function SearchView({
   // Omit `perCategory` so each backend serves its server-side max (the
   // old single `75` quietly clamped to 50 on the issues backend,
   // hiding rows from the rail). Modal usage still passes a small N.
-  const { enabled, isLoading, groups, payloads, total } = useGlobalSearch(
-    debounced,
-    filtersActive ? { seriesFilters: seriesSearchFiltersToHook(filters) } : {},
-  );
+  const { enabled, isLoading, groups, payloads, categoryTotals, total } =
+    useGlobalSearch(
+      debounced,
+      filtersActive
+        ? { seriesFilters: seriesSearchFiltersToHook(filters) }
+        : {},
+    );
 
   const activeDef = category
     ? SEARCH_CATEGORIES.find((c) => c.key === category)
@@ -195,7 +223,8 @@ export function SearchView({
         </div>
         {activeDef ? null : (
           <p className="text-muted-foreground text-sm">
-            Search across your library. Series, issues, and people are live.
+            Search across your library. Series, issues, bookmarks, and people
+            are live.
           </p>
         )}
         <div className="border-border bg-card flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm">
@@ -207,7 +236,7 @@ export function SearchView({
             type="search"
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            placeholder="Search series, issues, people…"
+            placeholder="Search series, issues, bookmarks, people…"
             aria-label="Search the library"
             autoFocus
             className="placeholder:text-muted-foreground w-full bg-transparent text-sm focus:outline-none"
@@ -221,6 +250,7 @@ export function SearchView({
           activeDef={activeDef ?? null}
           payloads={payloads}
           groups={groups}
+          categoryTotals={categoryTotals}
         />
       </header>
 
@@ -232,6 +262,9 @@ export function SearchView({
           payloads={payloads}
           groups={groups}
           cardSize={cardSize}
+          seriesFilters={
+            filtersActive ? seriesSearchFiltersToHook(filters) : {}
+          }
         />
       ) : (
         <div className="space-y-8">
@@ -241,6 +274,7 @@ export function SearchView({
               def={def}
               hits={groups[def.key]}
               payloads={payloads}
+              categoryTotals={categoryTotals}
               query={debounced}
               enabled={enabled}
               cardSize={cardSize}
@@ -273,6 +307,7 @@ function SummaryLine({
   activeDef,
   payloads,
   groups,
+  categoryTotals,
 }: {
   enabled: boolean;
   isLoading: boolean;
@@ -281,6 +316,7 @@ function SummaryLine({
   activeDef: SearchCategoryDef | null;
   payloads: GlobalSearchPayloads;
   groups: { [K in SearchCategory]: SearchHit[] };
+  categoryTotals: GlobalSearchTotals;
 }) {
   if (!enabled) {
     return (
@@ -293,7 +329,8 @@ function SummaryLine({
     return <p className="text-muted-foreground text-xs">Searching…</p>;
   }
   const count = activeDef
-    ? categoryCount(activeDef.key, payloads, groups)
+    ? categoryTotals[activeDef.key] ||
+      categoryCount(activeDef.key, payloads, groups)
     : total;
   const noun = activeDef
     ? count === 1
@@ -324,6 +361,7 @@ function CategoryRail({
   def,
   hits,
   payloads,
+  categoryTotals,
   query,
   enabled,
   cardSize,
@@ -331,17 +369,19 @@ function CategoryRail({
   def: SearchCategoryDef;
   hits: ReadonlyArray<SearchHit>;
   payloads: GlobalSearchPayloads;
+  categoryTotals: GlobalSearchTotals;
   query: string;
   enabled: boolean;
   cardSize: number;
 }) {
-  const count = categoryCountForRail(def.key, payloads, hits);
+  const count =
+    categoryTotals[def.key] || categoryCountForRail(def.key, payloads, hits);
   // Hide empty rails once we have results to compare against. Before
   // the query runs (enabled=false) we keep the placeholders so the
   // page doesn't visually collapse on every keystroke — the body's
   // own empty-state row reads "Awaiting query…" in that mode.
   if (enabled && count === 0) return null;
-  // Promote the "View all" tile out of the rail's trailing slot into
+  // Promote the top-results link out of the rail's trailing slot into
   // the section header when the rail couldn't fit every match — the
   // horizontal-arrow tile alone is easy to miss past the first 8
   // cards, especially on touch.
@@ -363,7 +403,7 @@ function CategoryRail({
             href={viewAllHref}
             className="text-muted-foreground hover:text-foreground ml-auto inline-flex items-center gap-1 text-xs font-medium"
           >
-            View all
+            Top results
             <ChevronRight className="size-3" aria-hidden="true" />
           </Link>
         ) : null}
@@ -420,7 +460,7 @@ function CategoryRailBody({
     return <NoMatches query={query} labelPlural={def.labelPlural} />;
   }
   const viewAllHref = `/search?q=${encodeURIComponent(query)}&category=${def.key}`;
-  const itemStyle: React.CSSProperties = { width: `${cardSize}px` };
+  const itemStyle: CSSProperties = { width: `${cardSize}px` };
   return (
     <HorizontalScrollRail viewAllHref={viewAllHref} itemWidthPx={cardSize}>
       {renderRailItems(def, payloads, hits, itemStyle)}
@@ -432,8 +472,8 @@ function renderRailItems(
   def: SearchCategoryDef,
   payloads: GlobalSearchPayloads,
   hits: ReadonlyArray<SearchHit>,
-  itemStyle: React.CSSProperties,
-): React.ReactNode {
+  itemStyle: CSSProperties,
+): ReactNode {
   if (def.key === "series") {
     return payloads.series.map((s) => (
       <div key={s.id} style={itemStyle} className="shrink-0">
@@ -450,7 +490,11 @@ function renderRailItems(
   }
   return hits.map((hit) => (
     <div key={hit.id} style={itemStyle} className="shrink-0">
-      <PersonCard hit={hit} />
+      {def.key === "markers" ? (
+        <MarkerSearchCard hit={hit} />
+      ) : (
+        <PersonCard hit={hit} />
+      )}
     </div>
   ));
 }
@@ -462,6 +506,7 @@ function CategoryGrid({
   payloads,
   groups,
   cardSize,
+  seriesFilters,
 }: {
   def: SearchCategoryDef;
   query: string;
@@ -469,6 +514,7 @@ function CategoryGrid({
   payloads: GlobalSearchPayloads;
   groups: { [K in SearchCategory]: SearchHit[] };
   cardSize: number;
+  seriesFilters: Partial<SeriesListFilters>;
 }) {
   if (!enabled) {
     return (
@@ -477,29 +523,33 @@ function CategoryGrid({
       </p>
     );
   }
-  const gridStyle: React.CSSProperties = {
+  const gridStyle: CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   };
   if (def.key === "series") {
-    if (payloads.series.length === 0) {
-      return <NoMatches query={query} labelPlural={def.labelPlural} />;
-    }
-    return <SeriesGrid series={payloads.series} gridStyle={gridStyle} />;
+    return (
+      <SeriesCategoryGrid
+        query={query}
+        enabled={enabled}
+        filters={seriesFilters}
+        gridStyle={gridStyle}
+      />
+    );
   }
   if (def.key === "issues") {
-    if (payloads.issues.length === 0) {
-      return <NoMatches query={query} labelPlural={def.labelPlural} />;
-    }
-    return <IssuesGrid issues={payloads.issues} gridStyle={gridStyle} />;
+    return (
+      <IssuesCategoryGrid
+        query={query}
+        enabled={enabled}
+        gridStyle={gridStyle}
+      />
+    );
   }
   if (def.key === "markers") {
     if (groups.markers.length === 0) {
       return <NoMatches query={query} labelPlural={def.labelPlural} />;
     }
-    // Markers reuse `PeopleGrid`'s rendering — same icon-fallback
-    // tile shape — until M4's facet layout introduces a richer
-    // marker card with the actual region crop.
-    return <PeopleGrid hits={groups.markers} gridStyle={gridStyle} />;
+    return <MarkerGrid hits={groups.markers} gridStyle={gridStyle} />;
   }
   if (groups.people.length === 0) {
     return <NoMatches query={query} labelPlural={def.labelPlural} />;
@@ -507,12 +557,158 @@ function CategoryGrid({
   return <PeopleGrid hits={groups.people} gridStyle={gridStyle} />;
 }
 
+function SeriesCategoryGrid({
+  query,
+  enabled,
+  filters,
+  gridStyle,
+}: {
+  query: string;
+  enabled: boolean;
+  filters: Partial<SeriesListFilters>;
+  gridStyle: CSSProperties;
+}) {
+  const results = useSeriesListInfinite(
+    enabled ? { q: query, limit: 60, ...filters } : {},
+    { enabled },
+  );
+  const series = results.data?.pages.flatMap((p) => p.items) ?? [];
+  const total = results.data?.pages[0]?.total ?? series.length;
+  if (results.isLoading) {
+    return <GridLoading label="series" />;
+  }
+  if (results.isError) {
+    return <GridError label="series" />;
+  }
+  if (series.length === 0) {
+    return <NoMatches query={query} labelPlural="series" />;
+  }
+  return (
+    <div className="space-y-4">
+      <p className="text-muted-foreground text-xs">
+        Showing {series.length} of {total} series
+      </p>
+      <SeriesGrid series={series} gridStyle={gridStyle} />
+      <LoadMoreButton
+        hasNextPage={!!results.hasNextPage}
+        isFetching={results.isFetchingNextPage}
+        onClick={() => void results.fetchNextPage()}
+      />
+    </div>
+  );
+}
+
+function IssuesCategoryGrid({
+  query,
+  enabled,
+  gridStyle,
+}: {
+  query: string;
+  enabled: boolean;
+  gridStyle: CSSProperties;
+}) {
+  const results = useIssuesCrossListInfinite(
+    enabled ? { q: query, limit: 60 } : {},
+    { enabled },
+  );
+  const issues = results.data?.pages.flatMap((p) => p.items) ?? [];
+  const total = results.data?.pages[0]?.total ?? issues.length;
+  if (results.isLoading) {
+    return <GridLoading label="issues" />;
+  }
+  if (results.isError) {
+    return <GridError label="issues" />;
+  }
+  if (issues.length === 0) {
+    return <NoMatches query={query} labelPlural="issues" />;
+  }
+  return (
+    <div className="space-y-4">
+      <p className="text-muted-foreground text-xs">
+        Showing {issues.length} of {total} issues
+      </p>
+      <IssuesGrid issues={issues} gridStyle={gridStyle} />
+      <LoadMoreButton
+        hasNextPage={!!results.hasNextPage}
+        isFetching={results.isFetchingNextPage}
+        onClick={() => void results.fetchNextPage()}
+      />
+    </div>
+  );
+}
+
+function GridLoading({ label }: { label: string }) {
+  return (
+    <p className="text-muted-foreground flex items-center gap-2 text-sm">
+      <Loader2 className="size-4 animate-spin" />
+      Loading {label}…
+    </p>
+  );
+}
+
+function GridError({ label }: { label: string }) {
+  return (
+    <p className="text-destructive text-sm">
+      Failed to load {label}. Try again.
+    </p>
+  );
+}
+
+function LoadMoreButton({
+  hasNextPage,
+  isFetching,
+  onClick,
+}: {
+  hasNextPage: boolean;
+  isFetching: boolean;
+  onClick: () => void;
+}) {
+  if (!hasNextPage) return null;
+  return (
+    <div className="flex justify-center">
+      <Button
+        type="button"
+        variant="outline"
+        onClick={onClick}
+        disabled={isFetching}
+      >
+        {isFetching ? (
+          <>
+            <Loader2 className="mr-1.5 size-4 animate-spin" />
+            Loading…
+          </>
+        ) : (
+          "Load more"
+        )}
+      </Button>
+    </div>
+  );
+}
+
+function MarkerGrid({
+  hits,
+  gridStyle,
+}: {
+  hits: ReadonlyArray<SearchHit>;
+  gridStyle: CSSProperties;
+}) {
+  return (
+    <ul role="list" className="grid gap-4" style={gridStyle}>
+      {hits.map((hit) => (
+        <li key={hit.id}>
+          <MarkerSearchCard hit={hit} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function SeriesGrid({
   series,
   gridStyle,
 }: {
   series: ReadonlyArray<SeriesView>;
-  gridStyle: React.CSSProperties;
+  gridStyle: CSSProperties;
 }) {
   return (
     <ul role="list" className="grid gap-4" style={gridStyle}>
@@ -529,8 +725,8 @@ function IssuesGrid({
   issues,
   gridStyle,
 }: {
-  issues: ReadonlyArray<IssueSearchHit>;
-  gridStyle: React.CSSProperties;
+  issues: ReadonlyArray<IssueSummaryView>;
+  gridStyle: CSSProperties;
 }) {
   return (
     <ul role="list" className="grid gap-4" style={gridStyle}>
@@ -548,7 +744,7 @@ function PeopleGrid({
   gridStyle,
 }: {
   hits: ReadonlyArray<SearchHit>;
-  gridStyle: React.CSSProperties;
+  gridStyle: CSSProperties;
 }) {
   return (
     <ul role="list" className="grid gap-4" style={gridStyle}>
@@ -611,6 +807,97 @@ function PersonCard({ hit }: { hit: SearchHit }) {
   );
 }
 
+function MarkerSearchCard({ hit }: { hit: SearchHit }) {
+  const Icon = hit.icon ?? User;
+  return (
+    <Link
+      href={hit.href}
+      className="group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none"
+    >
+      <MarkerSearchThumbnail hit={hit} icon={Icon} />
+      <div className="min-w-0 px-1">
+        <div className="truncate text-sm font-medium" title={hit.title}>
+          {hit.title}
+        </div>
+        {hit.subtitle ? (
+          <div
+            className="text-muted-foreground truncate text-xs"
+            title={hit.subtitle}
+          >
+            {hit.subtitle}
+          </div>
+        ) : (
+          <div className="text-muted-foreground text-xs">&nbsp;</div>
+        )}
+        {hit.snippet ? (
+          <p
+            className="text-muted-foreground [&_mark]:bg-primary/20 [&_mark]:text-foreground line-clamp-2 text-xs"
+            dangerouslySetInnerHTML={{
+              __html: renderSearchSnippet(hit.snippet),
+            }}
+          />
+        ) : null}
+      </div>
+    </Link>
+  );
+}
+
+function MarkerSearchThumbnail({
+  hit,
+  icon: Icon,
+}: {
+  hit: SearchHit;
+  icon: ComponentType<{ className?: string }>;
+}) {
+  if (!hit.thumbUrl) {
+    return (
+      <div
+        aria-hidden="true"
+        className="border-border bg-muted text-muted-foreground relative grid aspect-[2/3] w-full place-items-center overflow-hidden rounded-md border"
+      >
+        <Icon className="size-12 opacity-60" />
+      </div>
+    );
+  }
+
+  const region = hit.region;
+  if (!region) {
+    return (
+      <div className="border-border bg-muted relative aspect-[2/3] w-full overflow-hidden rounded-md border">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={hit.thumbUrl}
+          alt=""
+          loading="lazy"
+          className="absolute inset-0 h-full w-full object-cover transition group-hover:brightness-110"
+        />
+      </div>
+    );
+  }
+
+  const scaleW = Math.min(100, 100 / Math.max(region.w, 1));
+  const scaleH = Math.min(100, 100 / Math.max(region.h, 1));
+
+  return (
+    <div className="border-border bg-muted relative aspect-[2/3] w-full overflow-hidden rounded-md border">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={hit.thumbUrl}
+        alt=""
+        loading="lazy"
+        className="max-w-none transition group-hover:brightness-110"
+        style={{
+          position: "absolute",
+          width: `${scaleW * 100}%`,
+          height: `${scaleH * 100}%`,
+          left: `${-region.x * scaleW}%`,
+          top: `${-region.y * scaleH}%`,
+        }}
+      />
+    </div>
+  );
+}
+
 /** Inline `<Select>` that surfaces the available series-search sort
  *  orders. "Best match" is the relevance default (no `sort=` param on
  *  the URL). The visible label is short so the trigger fits next to
@@ -623,7 +910,10 @@ function SeriesSortDropdown({
   onChange: (next: SeriesSearchSort) => void;
 }) {
   return (
-    <Select value={value} onValueChange={(v) => onChange(v as SeriesSearchSort)}>
+    <Select
+      value={value}
+      onValueChange={(v) => onChange(v as SeriesSearchSort)}
+    >
       <SelectTrigger
         // Toolbar-row convention: h-9 to align with the CardSize +
         // Filters sibling controls. See `docs/dev/search.md`.
@@ -686,8 +976,8 @@ function SeriesFilterSheet({
         <SheetHeader className="space-y-1 px-0">
           <SheetTitle>Refine series results</SheetTitle>
           <SheetDescription>
-            Narrow the matches by year, status, publisher, or library.
-            Filters apply only on the series category grid.
+            Narrow the matches by year, status, publisher, or library. Filters
+            apply only on the series category grid.
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-5">
@@ -781,11 +1071,7 @@ function SeriesFilterSheet({
             <X className="mr-1 size-3" aria-hidden="true" />
             Clear filters
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => onOpenChange(false)}
-          >
+          <Button type="button" size="sm" onClick={() => onOpenChange(false)}>
             Done
           </Button>
         </div>

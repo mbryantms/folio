@@ -225,6 +225,7 @@ function csvOrUndef(values: string[]): string | undefined {
 function parseYear(raw: string): number | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  const n = Number.parseInt(trimmed, 10);
+  if (!/^\d{1,4}$/.test(trimmed)) return undefined;
+  const n = Number(trimmed);
   return Number.isFinite(n) ? n : undefined;
 }

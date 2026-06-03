@@ -23,11 +23,11 @@ import type {
   MarkerSearchHit,
   SeriesView,
 } from "@/lib/api/types";
-import { issueUrl, seriesUrl, readerUrl } from "@/lib/urls";
+import { issueUrl, pageBytesUrl, seriesUrl, readerUrl } from "@/lib/urls";
 
 import {
   EMPTY_SEARCH_GROUPS,
-  totalHits,
+  type SearchCategory,
   type SearchGroups,
   type SearchHit,
 } from "./types";
@@ -69,6 +69,8 @@ export interface GlobalSearchPayloads {
   issues: IssueSearchHit[];
 }
 
+export type GlobalSearchTotals = Record<SearchCategory, number>;
+
 interface GlobalSearchResult {
   /** True when the query is long enough to actually run a search. */
   enabled: boolean;
@@ -76,12 +78,20 @@ interface GlobalSearchResult {
   isLoading: boolean;
   groups: SearchGroups;
   payloads: GlobalSearchPayloads;
+  categoryTotals: GlobalSearchTotals;
   total: number;
 }
 
 const EMPTY_PAYLOADS: GlobalSearchPayloads = {
   series: [],
   issues: [],
+};
+
+const EMPTY_TOTALS: GlobalSearchTotals = {
+  series: 0,
+  issues: 0,
+  markers: 0,
+  people: 0,
 };
 
 /** Build the URL a person hit links to.
@@ -158,9 +168,14 @@ function markerToSearchHit(m: MarkerSearchHit): SearchHit {
   return {
     kind: "markers" as const,
     id: m.id,
-    title: m.issue_title || (m.issue_number ? `#${m.issue_number}` : seriesLabel),
+    title:
+      m.issue_title || (m.issue_number ? `#${m.issue_number}` : seriesLabel),
     subtitle,
     href,
+    thumbUrl: pageBytesUrl(m.issue_id, m.page_index),
+    issueId: m.issue_id,
+    pageIndex: m.page_index,
+    region: m.region ?? null,
     snippet: m.snippet ?? null,
     icon: MARKER_KIND_ICON[m.kind] ?? Bookmark,
   };
@@ -267,6 +282,23 @@ export function useGlobalSearch(
     return { series: seriesItems, issues: issueItems };
   }, [enabled, seriesItems, issueItems]);
 
+  const categoryTotals = useMemo<GlobalSearchTotals>(() => {
+    if (!enabled) return EMPTY_TOTALS;
+    return {
+      series: series.data?.total ?? seriesItems.length,
+      issues: issueItems.length,
+      markers: markers.data?.items.length ?? 0,
+      people: people.data?.items.length ?? 0,
+    };
+  }, [
+    enabled,
+    series.data?.total,
+    seriesItems.length,
+    issueItems.length,
+    markers.data?.items.length,
+    people.data?.items.length,
+  ]);
+
   // Future: aggregate `isFetching` across each backend so the spinner is
   // honest about what's still pending.
   const isLoading =
@@ -276,11 +308,14 @@ export function useGlobalSearch(
       markers.isFetching ||
       people.isFetching);
 
+  const total = Object.values(categoryTotals).reduce((sum, n) => sum + n, 0);
+
   return {
     enabled,
     isLoading,
     groups,
     payloads,
-    total: totalHits(groups),
+    categoryTotals,
+    total,
   };
 }

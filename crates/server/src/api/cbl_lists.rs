@@ -281,6 +281,8 @@ pub struct EntriesQuery {
     pub limit: Option<u64>,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub q: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -562,6 +564,25 @@ fn parse_status_filter(s: &str) -> Result<Vec<&str>, ()> {
     Ok(parts)
 }
 
+fn cbl_entry_search_pattern(text: &str) -> String {
+    format!("%{}%", text.replace('%', "\\%").replace('_', "\\_"))
+}
+
+fn apply_cbl_entry_search(
+    sel: sea_orm::Select<cbl_entry::Entity>,
+    text: &str,
+) -> sea_orm::Select<cbl_entry::Entity> {
+    let pattern = cbl_entry_search_pattern(text);
+    sel.filter(
+        sea_orm::Condition::any()
+            .add(cbl_entry::Column::SeriesName.like(pattern.as_str()))
+            .add(cbl_entry::Column::IssueNumber.like(pattern.as_str()))
+            .add(cbl_entry::Column::Volume.like(pattern.as_str()))
+            .add(cbl_entry::Column::Year.like(pattern.as_str()))
+            .add(cbl_entry::Column::MatchedIssueId.like(pattern.as_str())),
+    )
+}
+
 fn encode_entry_cursor(position: i32, id: &str) -> String {
     use base64::Engine;
     let s = format!("{position}:{id}");
@@ -592,6 +613,7 @@ fn parse_entry_cursor(s: &str) -> Result<(i32, Uuid), ()> {
         ("cursor" = Option<String>, Query,),
         ("limit" = Option<u64>, Query,),
         ("status" = Option<String>, Query, description = "Comma-separated subset of matched,ambiguous,missing,manual"),
+        ("q" = Option<String>, Query, description = "Search imported CBL series, issue, year, or ids"),
     ),
     responses(
         (status = 200, body = CblEntryListView),
@@ -619,6 +641,12 @@ pub async fn entries(
     // virtualized table rows and cover-grid alike. Anything bigger
     // and the hydration round-trip starts to dominate.
     let limit = q.limit.unwrap_or(100).clamp(1, 200);
+    let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
+    if let Some(text) = q_text
+        && text.len() > 200
+    {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", "q too long");
+    }
 
     let mut sel = cbl_entry::Entity::find()
         .filter(cbl_entry::Column::CblListId.eq(id))
@@ -640,6 +668,10 @@ pub async fn entries(
             cbl_entry::Column::MatchStatus
                 .is_in(parts.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
         );
+    }
+
+    if let Some(text) = q_text {
+        sel = apply_cbl_entry_search(sel, text);
     }
 
     if let Some(cursor) = q.cursor.as_deref() {
@@ -689,6 +721,9 @@ pub async fn entries(
                         .is_in(parts.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
                 );
             }
+        }
+        if let Some(text) = q_text {
+            count_sel = apply_cbl_entry_search(count_sel, text);
         }
         use sea_orm::PaginatorTrait;
         match count_sel.count(&app.db).await {

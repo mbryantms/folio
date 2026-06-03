@@ -16,7 +16,6 @@ import {
   isAccent,
   isDensity,
   isTheme,
-  resolvedDataTheme,
   writeAccentCookie,
   writeDensityCookie,
   writeThemeCookie,
@@ -65,7 +64,7 @@ export function ThemePicker() {
     const density = isDensity(me.data.density)
       ? me.data.density
       : "comfortable";
-    setTheme(resolvedDataTheme(theme));
+    setTheme(theme);
     writeThemeCookie(theme);
     writeAccentCookie(accent);
     writeDensityCookie(density);
@@ -90,7 +89,7 @@ export function ThemePicker() {
 
   function pickTheme(next: Theme) {
     writeThemeCookie(next);
-    setTheme(resolvedDataTheme(next));
+    setTheme(next);
     update.mutate({ theme: next });
   }
   function pickAccent(next: Accent) {
@@ -112,7 +111,7 @@ export function ThemePicker() {
     <div className="space-y-6">
       <SettingsSection
         title="Theme"
-        description="Dark is the canonical palette. Light is a clean white alternative; Amber is a sepia paper-warmth palette for warm-lit rooms. System currently follows Dark."
+        description="System follows your operating system. Dark is the canonical palette; Light is a clean white alternative; Amber is a sepia paper-warmth palette for warm-lit rooms."
       >
         <SegmentedControl
           value={theme}

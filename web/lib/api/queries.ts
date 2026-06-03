@@ -251,6 +251,14 @@ export const queryKeys = {
     include_dismissed?: boolean;
     limit?: number;
   }) => ["admin", "health-issues", filters] as const,
+  adminHealthIssuesInfinite: (filters: {
+    library_id?: string;
+    kind?: string;
+    severity?: string;
+    include_resolved?: boolean;
+    include_dismissed?: boolean;
+    limit?: number;
+  }) => ["admin", "health-issues-infinite", filters] as const,
   adminScanRuns: (filters: {
     library_id?: string;
     kind?: string;
@@ -258,6 +266,13 @@ export const queryKeys = {
     since?: string;
     limit?: number;
   }) => ["admin", "scan-runs", filters] as const,
+  adminScanRunsInfinite: (filters: {
+    library_id?: string;
+    kind?: string;
+    state?: string;
+    since?: string;
+    limit?: number;
+  }) => ["admin", "scan-runs-infinite", filters] as const,
   adminLatestScanPerLibrary: [
     "admin",
     "scan-runs",
@@ -363,7 +378,16 @@ export const queryKeys = {
     mode: string,
     override: boolean,
   ) =>
-    ["series", slug, "metadata", "diff", runId, ordinal, mode, override] as const,
+    [
+      "series",
+      slug,
+      "metadata",
+      "diff",
+      runId,
+      ordinal,
+      mode,
+      override,
+    ] as const,
   metadataDiffIssue: (
     slug: string,
     issueSlug: string,
@@ -553,6 +577,7 @@ export const queryKeys = {
 export type CblEntriesFilters = {
   status?: string;
   limit?: number;
+  q?: string;
 };
 
 export type SavedViewListFilters = {
@@ -686,9 +711,7 @@ export function useBackupStorage(libraryId: string) {
   return useQuery({
     queryKey: queryKeys.backupStorage(libraryId),
     queryFn: () =>
-      jsonFetch<BackupStorageView>(
-        `/libraries/${libraryId}/backup-storage`,
-      ),
+      jsonFetch<BackupStorageView>(`/libraries/${libraryId}/backup-storage`),
     enabled: !!libraryId,
   });
 }
@@ -769,6 +792,38 @@ export function useAdminHealthIssues(filters: {
   });
 }
 
+export function useAdminHealthIssuesInfinite(filters: {
+  library_id?: string;
+  kind?: string;
+  severity?: string;
+  include_resolved?: boolean;
+  include_dismissed?: boolean;
+  limit?: number;
+}) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.adminHealthIssuesInfinite(filters),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams();
+      if (filters.library_id) params.set("library_id", filters.library_id);
+      if (filters.kind) params.set("kind", filters.kind);
+      if (filters.severity) params.set("severity", filters.severity);
+      if (filters.include_resolved) params.set("include_resolved", "true");
+      if (filters.include_dismissed) {
+        params.set("include_dismissed", "true");
+      }
+      if (filters.limit != null) params.set("limit", String(filters.limit));
+      if (pageParam) params.set("cursor", pageParam);
+      const qs = params.toString();
+      return jsonFetch<{
+        items: CrossLibHealthIssueView[];
+        next_cursor: string | null;
+      }>(`/admin/health-issues${qs ? `?${qs}` : ""}`);
+    },
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+  });
+}
+
 /**
  * Cross-library scan-run history. Used by the dashboard's "Recent
  * scan failures" card (filter `state=failed&since=<7d-ago>`), the
@@ -798,6 +853,34 @@ export function useAdminScanRuns(filters: {
         items: CrossLibScanRunView[];
         next_cursor: string | null;
       }>(`/admin/scan-runs${qs ? `?${qs}` : ""}`),
+  });
+}
+
+export function useAdminScanRunsInfinite(filters: {
+  library_id?: string;
+  kind?: string;
+  state?: string;
+  since?: string;
+  limit?: number;
+}) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.adminScanRunsInfinite(filters),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams();
+      if (filters.library_id) params.set("library_id", filters.library_id);
+      if (filters.kind) params.set("kind", filters.kind);
+      if (filters.state) params.set("state", filters.state);
+      if (filters.since) params.set("since", filters.since);
+      if (filters.limit != null) params.set("limit", String(filters.limit));
+      if (pageParam) params.set("cursor", pageParam);
+      const qs = params.toString();
+      return jsonFetch<{
+        items: CrossLibScanRunView[];
+        next_cursor: string | null;
+      }>(`/admin/scan-runs${qs ? `?${qs}` : ""}`);
+    },
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
 }
 
@@ -1537,6 +1620,7 @@ export function useCblListEntriesInfinite(
   const params: Record<string, string | number> = {};
   if (filters.status) params.status = filters.status;
   if (filters.limit != null) params.limit = filters.limit;
+  if (filters.q) params.q = filters.q;
   return useInfiniteQuery({
     queryKey: queryKeys.cblListEntries(id, filters),
     enabled: !!id,
@@ -2086,7 +2170,8 @@ export function useMetadataProposedDiffIssue(
         `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/proposed-diff?${qs.toString()}`,
       );
     },
-    enabled: !!seriesSlug && !!issueSlug && !!runId && ordinal != null && ordinal >= 0,
+    enabled:
+      !!seriesSlug && !!issueSlug && !!runId && ordinal != null && ordinal >= 0,
     staleTime: 10_000,
   });
 }
@@ -2229,8 +2314,7 @@ export function useAdminMetadataDashboard() {
 export function useAdminMetadataMatchQuality() {
   return useQuery({
     queryKey: queryKeys.adminMetadataMatchQuality,
-    queryFn: () =>
-      jsonFetch<MatchQualityResp>(`/admin/metadata/match-quality`),
+    queryFn: () => jsonFetch<MatchQualityResp>(`/admin/metadata/match-quality`),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
@@ -2279,7 +2363,9 @@ export function useAdminMetadataRun(id: string) {
   return useQuery({
     queryKey: queryKeys.adminMetadataRun(id),
     queryFn: () =>
-      jsonFetch<RunDetailResp>(`/admin/metadata/runs/${encodeURIComponent(id)}`),
+      jsonFetch<RunDetailResp>(
+        `/admin/metadata/runs/${encodeURIComponent(id)}`,
+      ),
     enabled: !!id,
     staleTime: 15_000,
   });
