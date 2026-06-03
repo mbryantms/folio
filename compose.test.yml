@@ -82,7 +82,7 @@ services:
       retries: 15
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     tmpfs: ["/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
