@@ -667,15 +667,16 @@ async fn csrf_required_on_mutations() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn saved_views_results_returns_empty_stub_for_collections() {
+async fn saved_views_results_rejects_collection_views() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "lena@example.com").await;
     let cid = create_collection(&app, &auth, "Stub").await;
+    // Collection views don't expose results through /saved-views/{id}/results;
+    // callers are directed to /me/collections/{id}/entries instead.
     let url = format!("/api/me/saved-views/{cid}/results");
     let (status, body) = http(&app, Method::GET, &url, Some(&auth), None).await;
-    assert_eq!(status, StatusCode::OK, "body: {body:#?}");
-    assert!(body["items"].as_array().unwrap().is_empty());
-    assert_eq!(body["total"], 0);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "body: {body:#?}");
+    assert_eq!(body["error"]["code"], "unsupported_view_kind");
 }
 
 // ─────────────────────────────────────────────────────────────────
