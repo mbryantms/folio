@@ -157,7 +157,9 @@ jobs:
           git checkout "origin/$BASE_REF" -- web/lib/api/openapi.json 2>/dev/null || \
             (echo "no baseline spec on $BASE_REF; skipping oasdiff" && exit 0)
           curl -fsSL https://raw.githubusercontent.com/Tufin/oasdiff/main/install.sh | sh
-          ./oasdiff breaking web/lib/api/openapi.json /tmp/pr-openapi.json || \
+          # The installer drops the binary in /usr/local/bin (on PATH); invoke
+          # it by name, not `./oasdiff` (the old install-to-cwd behavior).
+          oasdiff breaking web/lib/api/openapi.json /tmp/pr-openapi.json || \
             ([[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}" == "true" ]] && \
               echo "::warning::Breaking changes detected (acknowledged via label)" || \
               (echo "::error::Breaking API changes — add 'breaking-change' label and update CHANGELOG.md" && exit 1))
