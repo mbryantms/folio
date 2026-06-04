@@ -15,6 +15,49 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-04
+
+### Added
+
+- **Phase 1 UX + architecture improvements** (#90). System theme option with
+  SSR-safe hydration; backend bulk-selection operations ("all matching") plus
+  an explicit "Select loaded" action; search category totals + cursor
+  pagination with page-region thumbnails on marker/bookmark result cards;
+  admin findings / health-issues / scan-runs tables moved to infinite-query
+  pagination; `/me/account` now surfaces `email_editable` / `password_editable`
+  so it only offers edits the active auth mode supports. See
+  `docs/dev/ux-architecture-improvement-plan.md`.
+
+### Changed
+
+- **Dependency catch-up (round 3 + round 4).** Rust toolchain 1.91.1 → 1.96.0
+  (+ constant_time_eq 0.5); postgres/redis completion, imageproc 0.27,
+  axum-extra 0.12; web in-range bumps (next / react / react-dom 16.2.7 /
+  19.2.7), openapi-typescript 7.4 → 7.13, blake3 1.8.5.
+- **pnpm 10.33.2 → 11.5.1.** Security `overrides` moved to `pnpm-workspace.yaml`
+  (pnpm 11 no longer reads the `pnpm` field in package.json); skipped native
+  build scripts recorded via `allowBuilds`. pnpm 11 also enforces a default
+  24h `minimumReleaseAge` supply-chain gate.
+- **Lock-file maintenance** (#82): `@playwright/test` 1.59.1 → 1.60.0 plus
+  transitive/dev-tooling refreshes (docs-site `@swc/core`,
+  `@algolia/client-search`, webpack, react 19.2.7 propagation).
+
+### Fixed
+
+- **CI OpenAPI-drift job** had failed on every branch since the workflow
+  regressed: it exec'd `openapi-typescript` from the repo root (where the dep
+  doesn't exist) under suppressed stderr, and the downstream `oasdiff` step
+  invoked `./oasdiff` instead of the on-PATH binary. Both fixed (#89).
+- Offline toast no longer claims changes will be queued; transient failures
+  keep an explicit retry path (#90).
+- Series "Read from beginning" routes via the slug-based reader URL helper
+  instead of the stale `/read/{issueId}` path (#90).
+
+### Internal
+
+- Branch-protection required checks updated to the Docker matrix job names so
+  PRs are mergeable without an admin override.
+
 ## [0.7.23] - 2026-06-02
 
 ### Changed
@@ -475,7 +518,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.7.21...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/mbryantms/folio/compare/v0.7.23...v0.8.0
 [0.7.21]: https://github.com/mbryantms/folio/compare/v0.7.20...v0.7.21
 [0.7.20]: https://github.com/mbryantms/folio/compare/v0.7.19...v0.7.20
 [0.7.19]: https://github.com/mbryantms/folio/compare/v0.7.18...v0.7.19
