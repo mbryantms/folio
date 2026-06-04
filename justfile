@@ -557,7 +557,9 @@ openapi-check:
     # Regenerate types into a tmp file and diff against the checked-in copy.
     # Forces re-running `just openapi` after any spec change so the generated
     # TS file doesn't go stale.
-    (cd web && pnpm exec openapi-typescript lib/api/openapi.json -o "$TYPES_OUT" >/dev/null 2>&1)
+    # Suppress the progress banner on stdout but NOT stderr — a silent
+    # crash here used to surface only as a misleading "types are stale".
+    (cd web && pnpm exec openapi-typescript lib/api/openapi.json -o "$TYPES_OUT" >/dev/null)
     if ! diff -q "$TYPES_OUT" web/lib/api/types.generated.ts >/dev/null; then
         echo "==> Generated TS types are stale. Run 'just openapi' and commit the diff." >&2
         diff -u web/lib/api/types.generated.ts "$TYPES_OUT" | head -50
