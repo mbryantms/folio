@@ -41,7 +41,7 @@
           {
             "name": "kinds",
             "in": "query",
-            "description": "Comma-separated list of kinds to include. Defaults to all.\nAllowed: `audit`, `scan`, `health`, `reading`.",
+            "description": "Comma-separated list of kinds to include. Defaults to all.\nAllowed: `audit`, `reading` (Server stream). `scan`/`health` were\nmoved to the Library stream (M13) and are silently ignored here.",
             "required": false,
             "schema": {
               "type": [
@@ -750,6 +750,97 @@
         }
       }
     },
+    "/api/admin/library-events": {
+      "get": {
+        "operationId": "admin_library_events_list",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "batch_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scan_run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_LibraryEventView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "invalid filter value"
+          }
+        }
+      }
+    },
     "/api/admin/logs": {
       "get": {
         "operationId": "admin_logs_list",
@@ -805,6 +896,18 @@
             "name": "library_id",
             "in": "query",
             "description": "Restrict to log entries whose `fields[\"library_id\"]` matches\nthis UUID. Populated by the scanner's instrumented spans\n(`scan_library`, `scan_series_folder`) — every event emitted\nunder those spans inherits the library_id via the\n`RingLayer::on_event` parent-span walk. Omit / `all` for\ncross-library.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "domain",
+            "in": "query",
+            "description": "Stream filter (observability-split M12): `server` (app runtime, the\nServer-log default) | `library` (scanner/worker events, also surfaced\nin Library activity) | `all`. Omit ⇒ all.",
             "required": false,
             "schema": {
               "type": [
@@ -1278,6 +1381,90 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/admin/scan-batches": {
+      "get": {
+        "operationId": "admin_scan_batches_list",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_ScanBatchView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "invalid filter value"
+          }
+        }
+      }
+    },
+    "/api/admin/scan-batches/{id}": {
+      "get": {
+        "operationId": "admin_scan_batches_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanBatchDetailView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "batch not found"
           }
         }
       }
@@ -8251,7 +8438,7 @@
         "properties": {
           "kind": {
             "type": "string",
-            "description": "`'audit' | 'scan' | 'health' | 'reading'`."
+            "description": "`'audit' | 'reading'`."
           },
           "payload": {
             "description": "Kind-specific structured fields (action, severity, library_id, ...)."
@@ -8919,6 +9106,100 @@
             "type": "integer",
             "format": "int32",
             "description": "Retention slot: 0 = most recent (`.bak`), 1 = `.bak.1`, …"
+          }
+        }
+      },
+      "BatchRunTally": {
+        "type": "object",
+        "description": "Per-state tally of a batch's member runs — drives the dashboard progress\nbar without the client refetching the run list.",
+        "required": [
+          "queued",
+          "running",
+          "complete",
+          "failed",
+          "cancelled"
+        ],
+        "properties": {
+          "cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "complete": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "BatchTotals": {
+        "type": "object",
+        "description": "Aggregated `ScanStats` counters summed across a batch's member runs — the\n\"what did this Scan all do overall\" roll-up.",
+        "required": [
+          "files_seen",
+          "files_added",
+          "files_updated",
+          "issues_removed",
+          "issues_restored",
+          "series_created",
+          "files_malformed",
+          "files_duplicate"
+        ],
+        "properties": {
+          "files_added": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "files_duplicate": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "files_malformed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "files_seen": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "files_updated": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "issues_removed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "issues_restored": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "series_created": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -11080,6 +11361,105 @@
           }
         }
       },
+      "CursorPage_LibraryEventView": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "library_id",
+                "category",
+                "action",
+                "severity",
+                "summary",
+                "created_at"
+              ],
+              "properties": {
+                "action": {
+                  "type": "string"
+                },
+                "batch_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "category": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "detail": {},
+                "entity_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "entity_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "entity_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "library_id": {
+                  "type": "string"
+                },
+                "library_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Joined `library.name` so the cross-library activity log renders without\nan N+1. `null` if the library row was since deleted."
+                },
+                "scan_run_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "severity": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "CursorPage_LogWidgetView": {
         "type": "object",
         "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
@@ -11196,6 +11576,84 @@
                 },
                 "updated_at": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_ScanBatchView": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "force",
+                "started_at",
+                "library_count",
+                "state",
+                "runs"
+              ],
+              "properties": {
+                "actor_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "ended_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "force": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "Trigger discriminator — today always `scan_all`."
+                },
+                "library_count": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Number of runs that adopted the batch (newly-enqueued libraries)."
+                },
+                "runs": {
+                  "$ref": "#/components/schemas/BatchRunTally",
+                  "description": "Live per-state breakdown of the member runs."
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "description": "`running` | `complete` | `partial_failed` | `failed`."
                 }
               }
             }
@@ -13080,6 +13538,79 @@
           }
         }
       },
+      "LibraryEventView": {
+        "type": "object",
+        "required": [
+          "id",
+          "library_id",
+          "category",
+          "action",
+          "severity",
+          "summary",
+          "created_at"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "batch_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "detail": {},
+          "entity_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entity_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entity_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "library_id": {
+            "type": "string"
+          },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Joined `library.name` so the cross-library activity log renders without\nan N+1. `null` if the library row was since deleted."
+          },
+          "scan_run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
       "LibraryView": {
         "type": "object",
         "required": [
@@ -13276,9 +13807,21 @@
           "level",
           "target",
           "message",
-          "fields"
+          "fields",
+          "domain"
         ],
         "properties": {
+          "domain": {
+            "type": "string",
+            "description": "`server` | `library` — which observability stream this entry belongs to."
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Convenience: `fields[\"error_code\"]` lifted out for the Server-log\nerror-code facet. `null` for non-error events."
+          },
           "fields": {},
           "id": {
             "type": "integer",
@@ -16369,12 +16912,17 @@
           "newly_enqueued",
           "already_running",
           "failed",
-          "force"
+          "force",
+          "batch_id"
         ],
         "properties": {
           "already_running": {
             "type": "integer",
             "minimum": 0
+          },
+          "batch_id": {
+            "type": "string",
+            "description": "The scan-all batch grouping these runs (observability-split M6). The\ndashboard links here for aggregate live progress + a post-run roll-up."
           },
           "enqueued": {
             "type": "array",
@@ -16397,6 +16945,92 @@
           "total": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "ScanBatchDetailView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ScanBatchView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "member_runs",
+              "totals",
+              "event_count"
+            ],
+            "properties": {
+              "event_count": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Number of durable `library_events` recorded under this batch. The web\ndetail links to the Library activity log filtered by `batch_id` to\ndrill into the itemized manifest.",
+                "minimum": 0
+              },
+              "member_runs": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CrossLibScanRunView"
+                },
+                "description": "Every member run, newest first, with library context."
+              },
+              "totals": {
+                "$ref": "#/components/schemas/BatchTotals",
+                "description": "Aggregated counters across the member runs."
+              }
+            }
+          }
+        ]
+      },
+      "ScanBatchView": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "force",
+          "started_at",
+          "library_count",
+          "state",
+          "runs"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "force": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "Trigger discriminator — today always `scan_all`."
+          },
+          "library_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of runs that adopted the batch (newly-enqueued libraries)."
+          },
+          "runs": {
+            "$ref": "#/components/schemas/BatchRunTally",
+            "description": "Live per-state breakdown of the member runs."
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`running` | `complete` | `partial_failed` | `failed`."
           }
         }
       },

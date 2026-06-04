@@ -19,6 +19,7 @@
 //! are intentionally NOT registered yet — they own tables that don't exist
 //! in the current schema.
 
+use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::library::events::ScanEvent;
 use crate::library::thumbnails::{self, THUMBNAIL_VERSION, ThumbFormat, ThumbnailQuality};
 use crate::state::AppState;
@@ -324,6 +325,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
             let msg = e.to_string();
             tracing::warn!(issue_id = %row.id, error = %e, "thumbs job: cover generation failed");
             stamp_error(&app, &row, msg.clone()).await;
+            record_thumb_failure(&app, &row, job.kind.as_str(), &msg).await;
             app.events.emit(ScanEvent::ThumbsFailed {
                 library_id: row.library_id,
                 issue_id: row.id.clone(),
@@ -337,6 +339,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
             let msg = format!("worker panic: {e}");
             tracing::error!(issue_id = %row.id, error = %e, "thumbs job: blocking task panicked");
             stamp_error(&app, &row, msg.clone()).await;
+            record_thumb_failure(&app, &row, job.kind.as_str(), &msg).await;
             app.events.emit(ScanEvent::ThumbsFailed {
                 library_id: row.library_id,
                 issue_id: row.id.clone(),
@@ -439,6 +442,46 @@ async fn stamp_error(app: &AppState, row: &issue::Model, msg: String) {
     if let Err(e) = am.update(&app.db).await {
         tracing::warn!(issue_id = %row.id, error = %e, "thumbs job: stamp_error update failed");
     }
+}
+
+/// Durable manifest row for a failed thumbnail job (observability-split M3b).
+/// Only **failures** are logged — a successful generation per issue would
+/// double the manifest with low-signal rows, and the user's transparency need
+/// here is "which thumbnails errored so I can rectify them." Thumbnail jobs run
+/// post-scan, outside any scan-run transaction, so `scan_run_id` is left unset.
+async fn record_thumb_failure(app: &AppState, row: &issue::Model, kind: &str, error: &str) {
+    // Resolve the series name so the operator can tell *which* series failed
+    // and where to look — the failure path is rare, so the extra read is fine.
+    let series_name = entity::series::Entity::find_by_id(row.series_id)
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.name);
+    // Surface the series in the one-line summary; the file path (the
+    // "where do I go to fix it" answer) goes in the detail.
+    let label = match &series_name {
+        Some(s) => format!("{s} #{}", row.slug),
+        None => row.slug.clone(),
+    };
+    event_log::record(
+        &app.db,
+        NewEvent::new(
+            row.library_id,
+            Category::Thumbnail,
+            Action::Errored,
+            Severity::Warning,
+            format!("Thumbnail generation failed for {label}"),
+        )
+        .entity("issue", row.id.clone(), Some(label))
+        .detail(serde_json::json!({
+            "kind": kind,
+            "error": error,
+            "series": series_name,
+            "path": row.file_path,
+        })),
+    )
+    .await;
 }
 
 /// `WHERE` clause for "this issue needs the post-scan cover worker

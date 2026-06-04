@@ -1,13 +1,16 @@
-//! `GET /admin/activity` — combined operational feed.
+//! `GET /admin/activity` — the **Server stream** feed (observability-split
+//! M13): who-did-what + how users use the app.
 //!
-//! M6d. Pulls from four sources and merges them in a single Postgres UNION
-//! ALL so the cursor logic is consistent:
+//! Two sources merged in a single Postgres UNION ALL so the cursor logic is
+//! consistent:
 //!
 //!   - audit  : `audit_log` (admin / security actions)
-//!   - scan   : `scan_runs` (library / series / issue scans)
-//!   - health : open `library_health_issues` (resolved + dismissed are skipped)
 //!   - reading: per-hour aggregate of `reading_sessions` — never per-user;
 //!     the dashboard owner is the admin, so we only report volume.
+//!
+//! Scan + health used to live here too; the observability split moved them to
+//! the **Library stream** (`/admin/findings` → "Library activity") so the two
+//! streams don't overlap.
 //!
 //! Cursor: opaque base64 of the last row's `(ts, kind, source_id)` triple.
 //! The server filters `(ts, kind, source_id) < cursor` lexicographically so
@@ -49,7 +52,8 @@ pub struct ActivityQuery {
     pub limit: Option<u64>,
     pub cursor: Option<String>,
     /// Comma-separated list of kinds to include. Defaults to all.
-    /// Allowed: `audit`, `scan`, `health`, `reading`.
+    /// Allowed: `audit`, `reading` (Server stream). `scan`/`health` were
+    /// moved to the Library stream (M13) and are silently ignored here.
     pub kinds: Option<String>,
 }
 
@@ -71,7 +75,7 @@ struct Row {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActivityEntryView {
-    /// `'audit' | 'scan' | 'health' | 'reading'`.
+    /// `'audit' | 'reading'`.
     pub kind: String,
     /// Stable identifier within the kind. For aggregates, the bucket time.
     pub source_id: String,
@@ -154,37 +158,8 @@ pub async fn list(
              FROM audit_log WHERE 1=1{cur}",
         ));
     }
-    if kinds.contains(&"scan") {
-        let cur = if has_cursor {
-            " AND (started_at, 'scan', id::text) < ($2, $3, $4)"
-        } else {
-            ""
-        };
-        selects.push(format!(
-            "SELECT 'scan'::text AS kind, id::text AS source_id, started_at AS ts, \
-                    state AS summary_a, kind AS summary_b, \
-                    jsonb_build_object('library_id', library_id::text, 'state', state, \
-                                       'kind', kind, 'series_id', series_id::text, \
-                                       'issue_id', issue_id, 'error', error) AS payload \
-             FROM scan_runs WHERE 1=1{cur}",
-        ));
-    }
-    if kinds.contains(&"health") {
-        let cur = if has_cursor {
-            " AND (last_seen_at, 'health', id::text) < ($2, $3, $4)"
-        } else {
-            ""
-        };
-        selects.push(format!(
-            "SELECT 'health'::text AS kind, id::text AS source_id, last_seen_at AS ts, \
-                    severity AS summary_a, kind AS summary_b, \
-                    jsonb_build_object('library_id', library_id::text, 'severity', severity, \
-                                       'kind', kind, 'fingerprint', fingerprint, \
-                                       'first_seen_at', first_seen_at, 'last_seen_at', last_seen_at) AS payload \
-             FROM library_health_issues \
-             WHERE resolved_at IS NULL AND dismissed_at IS NULL{cur}",
-        ));
-    }
+    // scan + health intentionally omitted (observability-split M13): those
+    // are the Library stream, surfaced in /admin/findings. See `parse_kinds`.
     if kinds.contains(&"reading") {
         // Hourly buckets — never per-user, never identifies anyone.
         // The cursor comparison goes in HAVING because it references the
@@ -502,7 +477,12 @@ fn decorate_payload(
 }
 
 fn parse_kinds(s: Option<&str>) -> std::collections::HashSet<&'static str> {
-    let allowed: &[&'static str] = &["audit", "scan", "health", "reading"];
+    // observability-split M13: the activity feed is the **Server** stream —
+    // audit (who-did-what) + user reading activity. Scan + health are
+    // Library-stream concerns and live in /admin/findings ("Library
+    // activity"); they're intentionally no longer accepted here so the two
+    // streams don't overlap.
+    let allowed: &[&'static str] = &["audit", "reading"];
     let Some(s) = s else {
         return allowed.iter().copied().collect();
     };
@@ -512,17 +492,9 @@ fn parse_kinds(s: Option<&str>) -> std::collections::HashSet<&'static str> {
         .collect()
 }
 
-fn format_summary(kind: &str, a: &str, b: &str, payload: &serde_json::Value) -> String {
+fn format_summary(kind: &str, _a: &str, b: &str, payload: &serde_json::Value) -> String {
     match kind {
         "audit" => b.to_owned(), // action
-        "scan" => match a {
-            "running" => format!("{b} scan running"),
-            "complete" => format!("{b} scan complete"),
-            "failed" => format!("{b} scan failed"),
-            "cancelled" => format!("{b} scan cancelled"),
-            other => format!("{b} scan {other}"),
-        },
-        "health" => format!("{a}: {b}"),
         "reading" => {
             let sessions = payload
                 .get("sessions")

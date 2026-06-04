@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Loader2, ScanLine } from "lucide-react";
 
 import {
@@ -33,6 +34,7 @@ import { useLibraryList } from "@/lib/api/queries";
  * confirm.
  */
 export function ScanAllButton() {
+  const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [force, setForce] = React.useState(false);
   const { data: libraries } = useLibraryList();
@@ -44,9 +46,14 @@ export function ScanAllButton() {
     mutate.mutate(
       { force },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
           setOpen(false);
           setForce(false);
+          // Drop the operator straight onto the live dashboard for the batch
+          // they just kicked off (observability-split M9).
+          if (data?.batch_id) {
+            router.push(`/admin/scan-dashboard?batch=${data.batch_id}`);
+          }
         },
       },
     );
@@ -93,7 +100,9 @@ export function ScanAllButton() {
           </div>
         </div>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={mutate.isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={mutate.isPending}>
+            Cancel
+          </AlertDialogCancel>
           <AlertDialogAction
             onClick={(e) => {
               e.preventDefault();

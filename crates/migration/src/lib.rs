@@ -87,6 +87,8 @@ mod m20270108_000001_archive_edit_schema;
 mod m20270109_000001_series_auto_sync_opt_in;
 mod m20270110_000001_drop_candidate_dismissed_at;
 mod m20270111_000001_library_auto_convert_cbr_on_scan;
+mod m20270112_000001_library_event_log;
+mod m20270113_000001_scan_batch;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -182,6 +184,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20270109_000001_series_auto_sync_opt_in::Migration),
             Box::new(m20270110_000001_drop_candidate_dismissed_at::Migration),
             Box::new(m20270111_000001_library_auto_convert_cbr_on_scan::Migration),
+            Box::new(m20270112_000001_library_event_log::Migration),
+            Box::new(m20270113_000001_scan_batch::Migration),
         ]
     }
 }

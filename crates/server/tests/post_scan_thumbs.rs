@@ -9,13 +9,14 @@ mod common;
 
 use chrono::Utc;
 use common::TestApp;
+use entity::library_event::{Column as EventCol, Entity as EventEntity};
 use entity::{
     issue::{ActiveModel as IssueAM, Entity as IssueEntity},
     library,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
 use image::{ImageBuffer, ImageFormat, Rgba};
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use server::jobs::post_scan::{ThumbsJob, handle_thumbs};
 use server::library::thumbnails;
 use std::io::{Cursor, Write};
@@ -526,6 +527,22 @@ async fn worker_marks_error_on_unreadable_archive() {
         server::library::thumbnails::THUMBNAIL_VERSION,
         "error path bumps version to current sentinel"
     );
+
+    // observability-split M3b: the failed cover job wrote a durable
+    // `thumbnail/errored` manifest row (only failures are logged).
+    let thumb_events = EventEntity::find()
+        .filter(EventCol::EntityId.eq(row.id.clone()))
+        .filter(EventCol::Category.eq("thumbnail"))
+        .filter(EventCol::Action.eq("errored"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        thumb_events.len(),
+        1,
+        "expected one thumbnail/errored manifest row, got {thumb_events:?}",
+    );
+    assert_eq!(thumb_events[0].severity, "warning");
 }
 
 #[tokio::test]

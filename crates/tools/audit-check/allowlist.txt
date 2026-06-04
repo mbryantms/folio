@@ -97,6 +97,13 @@ get_run         # GET /scan-runs/{id} — single scan run detail
 admin_list                  # GET /admin/scan-runs — cross-library read
 admin_latest_per_library    # GET /admin/scan-runs/latest-per-library — dashboard snapshot
 
+# ── scan_batches.rs (observability-split M7) ─────────────────
+scan_batches_list   # GET /admin/scan-batches — cross-batch read
+scan_batch_detail   # GET /admin/scan-batches/{id} — batch rollup read
+
+# ── library_events.rs (observability-split M10) ──────────────
+list_library_events   # GET /admin/library-events — durable manifest read
+
 # ── server_info.rs ──────────────────────────────────────────
 info            # GET /admin/server — build/version/SHA info
 releases        # GET /admin/server/releases — upstream-release availability check

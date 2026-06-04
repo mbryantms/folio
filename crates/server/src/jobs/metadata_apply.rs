@@ -17,11 +17,13 @@
 //! Runs feed (M6) can render per-item drill-downs without re-fetching.
 
 use crate::audit::{self, AuditEntry};
+use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::metadata::apply::{self, ApplyArgs, ApplyError, ApplyMode, ApplyOutcome};
 use crate::metadata::writers::CoverOverwritePolicy;
 use crate::state::AppState;
 use apalis::prelude::*;
 use redis::AsyncCommands;
+use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -291,6 +293,12 @@ pub(crate) async fn audit_apply(
     is_auto: bool,
     outcome: &Result<ApplyOutcome, ApplyError>,
 ) {
+    // Library stream (observability-split M3b): a durable, operational
+    // manifest row for the apply — independent of the audit trail below
+    // (which is the server-domain who-did-what record and is skipped for
+    // anonymous cron runs). Fires for every apply, actor or not.
+    record_apply_manifest(state, kind, &target_id, outcome).await;
+
     // matching-accuracy-1.0 M12: `metadata_auto_apply` is the distinct
     // action emitted by the cron / bulk-fetch auto-apply path. Manual
     // applies stay on `metadata_apply` / `metadata_apply_force` so
@@ -352,6 +360,92 @@ pub(crate) async fn audit_apply(
             ip: actor_ip.map(str::to_owned),
             user_agent: actor_ua.map(str::to_owned),
         },
+    )
+    .await;
+}
+
+/// Emit a `metadata` library-event for a series/issue apply. Resolves the
+/// `library_id` (+ a label) from the target row — apply jobs run outside any
+/// scan, so there's no `scan_run_id` to inherit. Best-effort: if the target
+/// row can't be resolved the event is skipped (the apply itself already
+/// happened).
+async fn record_apply_manifest(
+    state: &AppState,
+    kind: &str,
+    target_id: &str,
+    outcome: &Result<ApplyOutcome, ApplyError>,
+) {
+    // Resolve library_id, a label, and the "where to look" context
+    // (`path` + `series`) so the Library-activity row is actionable — same
+    // enrichment the thumbnail-failure events carry.
+    let (library_id, entity_type, label, path, series_name) = match kind {
+        "series" => {
+            let Ok(id) = target_id.parse::<Uuid>() else {
+                return;
+            };
+            match entity::series::Entity::find_by_id(id).one(&state.db).await {
+                Ok(Some(s)) => (
+                    s.library_id,
+                    "series",
+                    s.name.clone(),
+                    s.folder_path.clone(),
+                    Some(s.name),
+                ),
+                _ => return,
+            }
+        }
+        "issue" => match entity::issue::Entity::find_by_id(target_id.to_owned())
+            .one(&state.db)
+            .await
+        {
+            Ok(Some(i)) => {
+                let series_name = entity::series::Entity::find_by_id(i.series_id)
+                    .one(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|s| s.name);
+                (
+                    i.library_id,
+                    "issue",
+                    i.slug,
+                    Some(i.file_path),
+                    series_name,
+                )
+            }
+            _ => return,
+        },
+        _ => return,
+    };
+    let (action, severity, summary) = match outcome {
+        Ok(_) => (
+            Action::Applied,
+            Severity::Info,
+            format!("Metadata applied to {kind} {label}"),
+        ),
+        Err(_) => (
+            Action::Errored,
+            Severity::Warning,
+            format!("Metadata apply failed for {kind} {label}"),
+        ),
+    };
+    let mut detail = match outcome {
+        Ok(o) => serde_json::json!({ "outcome": o }),
+        Err(e) => serde_json::json!({ "error": e.to_string() }),
+    };
+    if let Some(obj) = detail.as_object_mut() {
+        if let Some(p) = path {
+            obj.insert("path".into(), serde_json::json!(p));
+        }
+        if let Some(s) = series_name {
+            obj.insert("series".into(), serde_json::json!(s));
+        }
+    }
+    event_log::record(
+        &state.db,
+        NewEvent::new(library_id, Category::Metadata, action, severity, summary)
+            .entity(entity_type, target_id.to_owned(), Some(label))
+            .detail(detail),
     )
     .await;
 }

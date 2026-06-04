@@ -65,7 +65,7 @@ pub struct ScanRunView {
 }
 
 impl ScanRunView {
-    fn from_model(
+    pub(crate) fn from_model(
         m: scan_run::Model,
         series_names: &HashMap<Uuid, String>,
         issue_labels: &HashMap<String, String>,
@@ -471,7 +471,7 @@ pub async fn admin_latest_per_library(
 /// Shared join resolution for cross-library scan-run handlers. Pulls
 /// series names, issue labels, and library names in three grouped
 /// queries so the response can render labels without N+1 fan-out.
-async fn resolve_joins(
+pub(crate) async fn resolve_joins(
     app: &AppState,
     rows: &[scan_run::Model],
 ) -> (
@@ -667,6 +667,7 @@ pub async fn cancel(
         library_id: lib.id,
         scan_id: scan_uuid,
         error: cancel_msg.clone(),
+        batch_id: updated.batch_id,
     });
 
     audit::record(

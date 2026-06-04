@@ -16,7 +16,7 @@ import "@scalar/api-reference-react/style.css";
  */
 export function ApiDocsViewer() {
   return (
-    <div className="bg-card rounded-md border">
+    <div className="border-border bg-card rounded-md border">
       <ApiReferenceReact
         configuration={{
           url: "/openapi.json",

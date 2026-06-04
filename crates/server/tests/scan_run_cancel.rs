@@ -166,6 +166,7 @@ async fn seed_library_and_scan_run(app: &TestApp, state: &str) -> (Uuid, String,
         kind: Set("library".into()),
         series_id: Set(None),
         issue_id: Set(None),
+        batch_id: Set(None),
     }
     .insert(&db)
     .await
@@ -340,6 +341,7 @@ async fn admin_latest_per_library_returns_one_row_per_library() {
         kind: Set("library".into()),
         series_id: Set(None),
         issue_id: Set(None),
+        batch_id: Set(None),
     }
     .insert(&db)
     .await

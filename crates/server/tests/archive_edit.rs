@@ -12,7 +12,8 @@ use archive::ArchiveLimits;
 use archive::cbz::Cbz;
 use common::TestApp;
 use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
-use sea_orm::EntityTrait;
+use entity::library_event::{Column as EventCol, Entity as EventEntity};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use server::archive_rewrite::{self, mutex};
 use server::jobs::archive_edit::{
     ArchiveEditJob, BulkArchiveOp, PageOp, Rot, edit_one_issue, handle, simulate_ops,
@@ -401,6 +402,31 @@ async fn handle_serializes_on_held_mutex() {
     .unwrap();
     let c = Cbz::open(&path, ArchiveLimits::default()).unwrap();
     assert_eq!(c.pages().len(), 1, "second handle rewrote the archive");
+
+    // observability-split M3b: the successful rewrite wrote a durable
+    // `archive/updated` manifest row (the mutex-blocked first attempt did
+    // not). One row total.
+    let archive_events = EventEntity::find()
+        .filter(EventCol::EntityId.eq(issue_id.clone()))
+        .filter(EventCol::Category.eq("archive"))
+        .filter(EventCol::Action.eq("updated"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        archive_events.len(),
+        1,
+        "expected one archive/updated manifest row, got {archive_events:?}",
+    );
+    let detail = archive_events[0].detail.as_ref().unwrap();
+    assert_eq!(
+        detail.get("page_count_before").and_then(|v| v.as_u64()),
+        Some(2)
+    );
+    assert_eq!(
+        detail.get("page_count_after").and_then(|v| v.as_u64()),
+        Some(1)
+    );
 }
 
 /// Light-weight property check: a handful of op sequences applied to a

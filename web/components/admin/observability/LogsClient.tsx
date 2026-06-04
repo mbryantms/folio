@@ -21,6 +21,13 @@ const LEVELS: ReadonlyArray<{ value: LogLevel | "all"; label: string }> = [
   { value: "debug", label: "Debug" },
 ];
 
+type Domain = "server" | "library" | "all";
+const DOMAINS: ReadonlyArray<{ value: Domain; label: string }> = [
+  { value: "server", label: "Server" },
+  { value: "library", label: "Library" },
+  { value: "all", label: "All" },
+];
+
 export function LogsClient() {
   // URL-driven library filter so cross-links from /admin/findings
   // scan-run rows (`/admin/logs?library_id=<uuid>`) land with the
@@ -37,6 +44,7 @@ export function LogsClient() {
   }, [libraries]);
 
   const [level, setLevel] = useState<LogLevel | "all">("info");
+  const [domain, setDomain] = useState<Domain>("server");
   const [q, setQ] = useState("");
   const [tail, setTail] = useState(true);
 
@@ -45,9 +53,10 @@ export function LogsClient() {
       level: level === "all" ? undefined : level,
       q: q.trim() || undefined,
       library_id: libraryId === "all" ? undefined : libraryId,
+      domain: domain === "all" ? undefined : domain,
       limit: 500,
     }),
-    [level, q, libraryId],
+    [level, q, libraryId, domain],
   );
 
   const logs = useAdminLogs(filters, { intervalMs: tail ? 2_000 : undefined });
@@ -64,6 +73,12 @@ export function LogsClient() {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3">
+          <SegmentedControl
+            value={domain}
+            onChange={setDomain}
+            options={DOMAINS}
+            ariaLabel="Log stream"
+          />
           <SegmentedControl
             value={level}
             onChange={setLevel}
@@ -163,12 +178,15 @@ function LogRow({
   // `serde_json::Value`); at runtime it's always a flat string-keyed object.
   const fields =
     (entry.fields as Record<string, unknown> | null | undefined) ?? {};
-  const libraryId = typeof fields.library_id === "string" ? fields.library_id : undefined;
+  const libraryId =
+    typeof fields.library_id === "string" ? fields.library_id : undefined;
   const libraryName = libraryId ? libraryNames.get(libraryId) : undefined;
-  // Library is surfaced as a dedicated chip beside the level, so
-  // drop it from the structured-fields strip below to avoid showing
-  // the UUID twice.
-  const fieldEntries = Object.entries(fields).filter(([k]) => k !== "library_id");
+  // `library_id` shows as a dedicated chip beside the level; `error_code`
+  // shows as a chip on the message line. Drop both from the field strip to
+  // avoid showing them twice.
+  const fieldEntries = Object.entries(fields).filter(
+    ([k]) => k !== "library_id" && k !== "error_code",
+  );
   return (
     <li className="grid grid-cols-[5rem_8rem_1fr] items-baseline gap-3 px-3 py-2 text-xs">
       <span className="text-muted-foreground font-mono">
@@ -183,7 +201,17 @@ function LogRow({
         ) : null}
       </div>
       <div className="min-w-0">
-        <p className="text-foreground/95 font-mono">{entry.message}</p>
+        <p className="text-foreground/95 font-mono">
+          {entry.error_code ? (
+            <Badge
+              variant="outline"
+              className="mr-1.5 border-red-500/40 align-middle font-mono text-[10px] text-red-400"
+            >
+              {entry.error_code}
+            </Badge>
+          ) : null}
+          {entry.message}
+        </p>
         <p className="text-muted-foreground mt-0.5 font-mono text-[10px]">
           {entry.target}
         </p>

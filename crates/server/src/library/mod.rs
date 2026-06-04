@@ -3,6 +3,7 @@
 
 pub mod access;
 pub mod deep_validate;
+pub mod event_log;
 pub mod events;
 pub mod hash;
 pub mod health;

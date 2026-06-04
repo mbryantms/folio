@@ -25,6 +25,7 @@ export type IconName =
   | "Mail"
   | "Palette"
   | "PanelLeft"
+  | "ScanLine"
   | "Search"
   | "Server"
   | "Shield"
@@ -74,23 +75,20 @@ export function adminNav(localePrefix: string): NavSection[] {
           icon: "Library",
         },
         {
+          href: p("/scan-dashboard"),
+          label: "Scan dashboard",
+          icon: "ScanLine",
+        },
+        {
           href: p("/findings"),
-          label: "Findings",
+          label: "Library activity",
           icon: "HeartPulse",
         },
       ],
     },
     {
       label: "People",
-      items: [
-        { href: p("/users"), label: "Users", icon: "Users" },
-        // Audit-log entries are surfaced via the unified Activity
-        // feed (filter chip = "Audit"). The dedicated /admin/audit
-        // route still resolves — it redirects to
-        // `/admin/activity?kinds=audit` — so bookmarks aren't broken,
-        // but the sidebar collapses to one entry per data source.
-        { href: p("/activity"), label: "Activity", icon: "Activity" },
-      ],
+      items: [{ href: p("/users"), label: "Users", icon: "Users" }],
     },
     {
       label: "Insights",
@@ -112,13 +110,19 @@ export function adminNav(localePrefix: string): NavSection[] {
       ],
     },
     {
+      // The Server stream (observability-split): how the app runs + how
+      // users use it. The Library stream (scans, health, changes) lives
+      // under Overview as "Library activity" + "Scan dashboard".
       label: "System",
       items: [
         { href: p("/server"), label: "Server info", icon: "Server" },
+        // Audit + user-activity feed. The dedicated /admin/audit route still
+        // resolves — it redirects to `/admin/activity?kinds=audit`.
+        { href: p("/activity"), label: "Server activity", icon: "Activity" },
+        { href: p("/logs"), label: "Server log", icon: "ListChecks" },
         { href: p("/auth"), label: "Auth config", icon: "Shield" },
         { href: p("/email"), label: "Email", icon: "Mail" },
         { href: p("/queue"), label: "Queue", icon: "Gauge" },
-        { href: p("/logs"), label: "Logs", icon: "ListChecks" },
         { href: p("/api-docs"), label: "API reference", icon: "FileText" },
       ],
     },

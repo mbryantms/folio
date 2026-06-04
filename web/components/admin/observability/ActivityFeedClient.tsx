@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, BookOpen, FileClock, Library } from "lucide-react";
+import { BookOpen, FileClock } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -13,7 +13,7 @@ import { useAdminActivity } from "@/lib/api/queries";
 import type { ActivityEntryView, ActivityKind } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
-const KIND_VALUES = ["audit", "scan", "health", "reading"] as const;
+const KIND_VALUES = ["audit", "reading"] as const;
 const isKind = (v: string): v is ActivityKind =>
   (KIND_VALUES as readonly string[]).includes(v);
 
@@ -26,12 +26,6 @@ const ALL_KINDS: ReadonlyArray<{
     value: "audit",
     label: "Audit",
     icon: <FileClock className="h-3.5 w-3.5" />,
-  },
-  { value: "scan", label: "Scans", icon: <Library className="h-3.5 w-3.5" /> },
-  {
-    value: "health",
-    label: "Health",
-    icon: <AlertTriangle className="h-3.5 w-3.5" />,
   },
   {
     value: "reading",
@@ -50,7 +44,10 @@ export function ActivityFeedClient() {
   const [active, setActive] = useState<Set<ActivityKind>>(() => {
     const raw = sp.get("kinds");
     if (!raw) return new Set(ALL_KINDS.map((k) => k.value));
-    const parsed = raw.split(",").map((s) => s.trim()).filter(isKind);
+    const parsed = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(isKind);
     if (parsed.length === 0) return new Set(ALL_KINDS.map((k) => k.value));
     return new Set(parsed);
   });
@@ -169,8 +166,6 @@ function KindBadge({ kind }: { kind: string }) {
 
 const KIND_TONE: Record<string, string> = {
   audit: "border-violet-500/40 text-violet-300",
-  scan: "border-sky-500/40 text-sky-400",
-  health: "border-amber-500/40 text-amber-300",
   reading: "border-emerald-500/40 text-emerald-400",
 };
 
@@ -192,27 +187,6 @@ function formatDetail(entry: ActivityEntryView): string | null {
         targetLabel ?? (targetId ? `${targetId.slice(0, 12)}…` : null);
       const tail = target && targetText ? ` · ${target} ${targetText}` : "";
       return `${actor}${tail}`;
-    }
-    case "scan": {
-      const p = entry.payload as Record<string, unknown>;
-      const libName = (p.library_name as string | undefined) ?? null;
-      const lib = p.library_id as string | undefined;
-      const seriesName = (p.series_name as string | undefined) ?? null;
-      const issueLabel = (p.issue_label as string | undefined) ?? null;
-      const err = p.error as string | null | undefined;
-      const subject =
-        issueLabel ??
-        seriesName ??
-        libName ??
-        (lib ? `library ${lib.slice(0, 8)}…` : null);
-      if (err) return subject ? `${subject} · ${err}` : err;
-      return subject;
-    }
-    case "health": {
-      const p = entry.payload as Record<string, unknown>;
-      const libName = (p.library_name as string | undefined) ?? null;
-      const lib = p.library_id as string | undefined;
-      return libName ?? (lib ? `library ${lib.slice(0, 8)}…` : null);
     }
     case "reading": {
       const p = entry.payload as Record<string, unknown>;

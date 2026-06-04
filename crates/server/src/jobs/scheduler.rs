@@ -26,6 +26,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_library_scans(&scheduler, &state).await;
     register_reconcile_sweep(&scheduler, &state).await;
     register_scan_runs_prune(&scheduler, &state).await;
+    register_library_events_prune(&scheduler, &state).await;
     register_thumbnail_orphan_sweep(&scheduler, &state).await;
     // No thumbnail/phash catchup sweep: queued work is user-directed
     // only (a scan, or an explicit admin "Generate missing" / backfill
@@ -328,6 +329,52 @@ async fn register_scan_runs_prune(scheduler: &JobScheduler, state: &AppState) {
             }
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build scan_runs_prune failed"),
+    }
+}
+
+/// Daily retention sweep for `library_events` (observability-split M4). The
+/// durable library-activity manifest grows ~one row per added/changed entity
+/// per scan, so it's bounded by both age (90 days) and a per-library row cap
+/// (50k backstop). Runs at 03:30 UTC, between the scan_runs prune (03:00) and
+/// the reconcile sweep (04:00).
+const LIBRARY_EVENTS_RETENTION_DAYS: i64 = 90;
+const LIBRARY_EVENTS_MAX_PER_LIBRARY: u64 = 50_000;
+
+async fn register_library_events_prune(scheduler: &JobScheduler, state: &AppState) {
+    let state = state.clone();
+    let job_result = Job::new_async("0 30 3 * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            match crate::library::event_log::prune(
+                &state.db,
+                LIBRARY_EVENTS_RETENTION_DAYS,
+                LIBRARY_EVENTS_MAX_PER_LIBRARY,
+            )
+            .await
+            {
+                Ok(n) => {
+                    metrics::counter!("folio_library_events_pruned_total").increment(n);
+                    if n > 0 {
+                        tracing::info!(deleted = n, "library_events prune");
+                    }
+                }
+                Err(e) => tracing::error!(error = %e, "library_events prune failed"),
+            }
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add library_events_prune failed");
+            } else {
+                tracing::info!(
+                    "library_events prune registered (daily at 03:30 UTC, keep {}d / {} per library)",
+                    LIBRARY_EVENTS_RETENTION_DAYS,
+                    LIBRARY_EVENTS_MAX_PER_LIBRARY,
+                );
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build library_events_prune failed"),
     }
 }
 

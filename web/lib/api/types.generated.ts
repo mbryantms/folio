@@ -276,6 +276,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/library-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_library_events_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/logs": {
         parameters: {
             query?: never;
@@ -521,6 +537,38 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["saved_views_admin_update"];
+        trace?: never;
+    };
+    "/api/admin/scan-batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_scan_batches_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/scan-batches/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_scan_batches_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/admin/scan-runs": {
@@ -3548,7 +3596,7 @@ export interface components {
             new_password?: string | null;
         };
         ActivityEntryView: {
-            /** @description `'audit' | 'scan' | 'health' | 'reading'`. */
+            /** @description `'audit' | 'reading'`. */
             kind: string;
             /** @description Kind-specific structured fields (action, severity, library_id, ...). */
             payload: unknown;
@@ -3815,6 +3863,44 @@ export interface components {
              * @description Retention slot: 0 = most recent (`.bak`), 1 = `.bak.1`, …
              */
             slot: number;
+        };
+        /**
+         * @description Per-state tally of a batch's member runs — drives the dashboard progress
+         *     bar without the client refetching the run list.
+         */
+        BatchRunTally: {
+            /** Format: int64 */
+            cancelled: number;
+            /** Format: int64 */
+            complete: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            queued: number;
+            /** Format: int64 */
+            running: number;
+        };
+        /**
+         * @description Aggregated `ScanStats` counters summed across a batch's member runs — the
+         *     "what did this Scan all do overall" roll-up.
+         */
+        BatchTotals: {
+            /** Format: int64 */
+            files_added: number;
+            /** Format: int64 */
+            files_duplicate: number;
+            /** Format: int64 */
+            files_malformed: number;
+            /** Format: int64 */
+            files_seen: number;
+            /** Format: int64 */
+            files_updated: number;
+            /** Format: int64 */
+            issues_removed: number;
+            /** Format: int64 */
+            issues_restored: number;
+            /** Format: int64 */
+            series_created: number;
         };
         /**
          * @description Body for `POST /me/collections/{id}/members/bulk-add`. Each
@@ -4668,6 +4754,35 @@ export interface components {
          * @description Cursor-paginated list response. `total` is populated only on the first
          *     page of paginated lists where the count is cheap; bounded lists omit it.
          */
+        CursorPage_LibraryEventView: {
+            items: {
+                action: string;
+                batch_id?: string | null;
+                category: string;
+                created_at: string;
+                detail?: unknown;
+                entity_id?: string | null;
+                entity_label?: string | null;
+                entity_type?: string | null;
+                id: string;
+                library_id: string;
+                /**
+                 * @description Joined `library.name` so the cross-library activity log renders without
+                 *     an N+1. `null` if the library row was since deleted.
+                 */
+                library_name?: string | null;
+                scan_run_id?: string | null;
+                severity: string;
+                summary: string;
+            }[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
         CursorPage_LogWidgetView: {
             items: {
                 config: unknown;
@@ -4715,6 +4830,33 @@ export interface components {
                 show_in_sidebar: boolean;
                 slug: string;
                 updated_at: string;
+            }[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
+        CursorPage_ScanBatchView: {
+            items: {
+                actor_id?: string | null;
+                ended_at?: string | null;
+                force: boolean;
+                id: string;
+                /** @description Trigger discriminator — today always `scan_all`. */
+                kind: string;
+                /**
+                 * Format: int32
+                 * @description Number of runs that adopted the batch (newly-enqueued libraries).
+                 */
+                library_count: number;
+                /** @description Live per-state breakdown of the member runs. */
+                runs: components["schemas"]["BatchRunTally"];
+                started_at: string;
+                /** @description `running` | `complete` | `partial_failed` | `failed`. */
+                state: string;
             }[];
             next_cursor?: string | null;
             /** Format: int64 */
@@ -5471,6 +5613,26 @@ export interface components {
              */
             library_ids: string[];
         };
+        LibraryEventView: {
+            action: string;
+            batch_id?: string | null;
+            category: string;
+            created_at: string;
+            detail?: unknown;
+            entity_id?: string | null;
+            entity_label?: string | null;
+            entity_type?: string | null;
+            id: string;
+            library_id: string;
+            /**
+             * @description Joined `library.name` so the cross-library activity log renders without
+             *     an N+1. `null` if the library row was since deleted.
+             */
+            library_name?: string | null;
+            scan_run_id?: string | null;
+            severity: string;
+            summary: string;
+        };
         LibraryView: {
             /**
              * @description Hard prerequisite for any code path that mutates archive bytes
@@ -5598,6 +5760,13 @@ export interface components {
             smtp_configured: boolean;
         };
         LogEntryView: {
+            /** @description `server` | `library` — which observability stream this entry belongs to. */
+            domain: string;
+            /**
+             * @description Convenience: `fields["error_code"]` lifted out for the Server-log
+             *     error-code facet. `null` for non-error events.
+             */
+            error_code?: string | null;
             fields: unknown;
             /** Format: int64 */
             id: number;
@@ -6908,12 +7077,48 @@ export interface components {
          */
         ScanAllResp: {
             already_running: number;
+            /**
+             * @description The scan-all batch grouping these runs (observability-split M6). The
+             *     dashboard links here for aggregate live progress + a post-run roll-up.
+             */
+            batch_id: string;
             enqueued: components["schemas"]["ScanAllItem"][];
             failed: number;
             /** @description `true` when the request was made with `force=true`. */
             force: boolean;
             newly_enqueued: number;
             total: number;
+        };
+        ScanBatchDetailView: components["schemas"]["ScanBatchView"] & {
+            /**
+             * Format: int64
+             * @description Number of durable `library_events` recorded under this batch. The web
+             *     detail links to the Library activity log filtered by `batch_id` to
+             *     drill into the itemized manifest.
+             */
+            event_count: number;
+            /** @description Every member run, newest first, with library context. */
+            member_runs: components["schemas"]["CrossLibScanRunView"][];
+            /** @description Aggregated counters across the member runs. */
+            totals: components["schemas"]["BatchTotals"];
+        };
+        ScanBatchView: {
+            actor_id?: string | null;
+            ended_at?: string | null;
+            force: boolean;
+            id: string;
+            /** @description Trigger discriminator — today always `scan_all`. */
+            kind: string;
+            /**
+             * Format: int32
+             * @description Number of runs that adopted the batch (newly-enqueued libraries).
+             */
+            library_count: number;
+            /** @description Live per-state breakdown of the member runs. */
+            runs: components["schemas"]["BatchRunTally"];
+            started_at: string;
+            /** @description `running` | `complete` | `partial_failed` | `failed`. */
+            state: string;
         };
         ScanCancelResp: {
             ended_at?: string | null;
@@ -8067,7 +8272,8 @@ export interface operations {
                 cursor?: string | null;
                 /**
                  * @description Comma-separated list of kinds to include. Defaults to all.
-                 *     Allowed: `audit`, `scan`, `health`, `reading`.
+                 *     Allowed: `audit`, `reading` (Server stream). `scan`/`health` were
+                 *     moved to the Library stream (M13) and are silently ignored here.
                  */
                 kinds?: string | null;
             };
@@ -8733,6 +8939,48 @@ export interface operations {
             };
         };
     };
+    admin_library_events_list: {
+        parameters: {
+            query?: {
+                library_id?: string;
+                batch_id?: string;
+                scan_run_id?: string;
+                category?: string;
+                action?: string;
+                severity?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_LibraryEventView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid filter value */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     admin_logs_list: {
         parameters: {
             query?: {
@@ -8749,6 +8997,12 @@ export interface operations {
                  *     cross-library.
                  */
                 library_id?: string | null;
+                /**
+                 * @description Stream filter (observability-split M12): `server` (app runtime, the
+                 *     Server-log default) | `library` (scanner/worker events, also surfaced
+                 *     in Library activity) | `all`. Omit ⇒ all.
+                 */
+                domain?: string | null;
             };
             header?: never;
             path?: never;
@@ -9213,6 +9467,78 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+        };
+    };
+    admin_scan_batches_list: {
+        parameters: {
+            query?: {
+                state?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_ScanBatchView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid filter value */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_scan_batches_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanBatchDetailView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description batch not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

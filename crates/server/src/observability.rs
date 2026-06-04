@@ -47,6 +47,22 @@ pub struct LogEntry {
     pub message: String,
     /// Captured field key/value pairs, stringified.
     pub fields: BTreeMap<String, String>,
+    /// Observability-split M12 — which stream this log belongs to.
+    /// `'library'` when the event carries library-scoped span context
+    /// (`library_id` / `scan_id`); `'server'` otherwise. The admin Server-log
+    /// view filters to `server`; library-operational truth lives in the
+    /// durable `library_events` manifest (Library activity).
+    pub domain: String,
+}
+
+/// Classify a captured event by stream from its (already span-enriched)
+/// fields. Library-scoped context ⇒ library stream.
+fn classify_domain(fields: &BTreeMap<String, String>) -> &'static str {
+    if fields.contains_key("library_id") || fields.contains_key("scan_id") {
+        "library"
+    } else {
+        "server"
+    }
 }
 
 /// Shared ring buffer. Cheap to clone (Arc internally); locking is a single
@@ -107,6 +123,11 @@ impl LogRingBuffer {
             if !filter.level.matches(&entry.level) {
                 continue;
             }
+            if let Some(domain) = filter.domain
+                && entry.domain != domain
+            {
+                continue;
+            }
             if let Some(needle) = filter.q {
                 let needle = needle.to_lowercase();
                 let hay = format!(
@@ -147,6 +168,9 @@ pub struct SnapshotFilter<'a> {
     pub level: LevelFilter,
     /// Free-text substring (case-insensitive) over message + target + fields.
     pub q: Option<&'a str>,
+    /// Stream filter (observability-split M12): `Some("server")` /
+    /// `Some("library")`, or `None` for both.
+    pub domain: Option<&'a str>,
     /// Hard cap on returned entries. The default endpoint passes 500.
     pub limit: usize,
 }
@@ -157,6 +181,7 @@ impl Default for SnapshotFilter<'_> {
             since: 0,
             level: LevelFilter::Trace,
             q: None,
+            domain: None,
             limit: 500,
         }
     }
@@ -261,6 +286,7 @@ where
             .remove("message")
             .unwrap_or_else(|| metadata.name().to_owned());
 
+        let domain = classify_domain(&visitor.fields).to_owned();
         let entry = LogEntry {
             id: 0, // overwritten in push()
             timestamp: Utc::now(),
@@ -268,6 +294,7 @@ where
             target,
             message,
             fields: visitor.fields,
+            domain,
         };
         self.buffer.push(entry);
     }
@@ -596,6 +623,7 @@ mod tests {
                 target: "t".into(),
                 message: format!("msg{n}"),
                 fields: BTreeMap::new(),
+                domain: "server".into(),
             });
         }
         let snap = ring.snapshot(SnapshotFilter::default());
@@ -615,6 +643,7 @@ mod tests {
                 target: "t".into(),
                 message: format!("{level} msg"),
                 fields: BTreeMap::new(),
+                domain: "server".into(),
             });
         }
         let snap = ring.snapshot(SnapshotFilter {
@@ -637,6 +666,7 @@ mod tests {
                 target: "t".into(),
                 message: format!("msg{n}"),
                 fields: BTreeMap::new(),
+                domain: "server".into(),
             });
         }
         let snap_all = ring.snapshot(SnapshotFilter::default());
@@ -662,6 +692,7 @@ mod tests {
                 target: "t".into(),
                 message: msg.into(),
                 fields: BTreeMap::new(),
+                domain: "server".into(),
             });
         }
         let snap = ring.snapshot(SnapshotFilter {

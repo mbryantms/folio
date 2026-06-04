@@ -37,6 +37,12 @@ pub enum ScanEvent {
         library_id: Uuid,
         scan_id: Uuid,
         at: DateTime<Utc>,
+        /// The "Scan all" batch this run belongs to (observability-split M8).
+        /// `None` for single-library / series / issue scans. The live
+        /// dashboard uses this to learn which libraries are members of a
+        /// batch; subsequent `Progress` events are correlated by `library_id`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<Uuid>,
     },
     #[serde(rename = "scan.progress")]
     Progress {
@@ -101,12 +107,16 @@ pub enum ScanEvent {
         updated: u64,
         removed: u64,
         duration_ms: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<Uuid>,
     },
     #[serde(rename = "scan.failed")]
     Failed {
         library_id: Uuid,
         scan_id: Uuid,
         error: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        batch_id: Option<Uuid>,
     },
     /// Thumbnail pipeline (M4): the post-scan worker started a job for this
     /// issue. Lets the admin Live scan view tick a "Thumbnails: X/Y" counter

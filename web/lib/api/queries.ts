@@ -50,6 +50,9 @@ import type {
   BackupStorageView,
   CrossLibHealthIssueView,
   CrossLibScanRunView,
+  ScanBatchView,
+  ScanBatchDetailView,
+  LibraryEventView,
   HealthIssueView,
   NextUpView,
   PageCountResponse,
@@ -278,6 +281,19 @@ export const queryKeys = {
     "scan-runs",
     "latest-per-library",
   ] as const,
+  /** Scan-all batches — observability-split M9 dashboard. */
+  adminScanBatches: (state?: string) =>
+    ["admin", "scan-batches", state ?? "all"] as const,
+  adminScanBatch: (id: string) => ["admin", "scan-batches", id] as const,
+  /** Durable library-event manifest (observability-split M10/M11). */
+  adminLibraryEventsInfinite: (filters: {
+    library_id?: string;
+    batch_id?: string;
+    scan_run_id?: string;
+    category?: string;
+    action?: string;
+    severity?: string;
+  }) => ["admin", "library-events-infinite", filters] as const,
   issueHealth: (seriesSlug: string, issueSlug: string) =>
     ["issues", seriesSlug, issueSlug, "health"] as const,
   scanRuns: (libraryId: string, kind?: string) =>
@@ -599,6 +615,9 @@ export type AdminLogFilters = {
    *  scan-emitted events carry the library_id via the RingLayer's
    *  parent-span walk. */
   library_id?: string;
+  /** Stream filter (observability-split M12): `server` (app runtime, the
+   *  Server-log default) | `library` (scanner/worker) | `all`. */
+  domain?: "server" | "library";
 };
 
 export type AdminActivityFilters = {
@@ -894,6 +913,78 @@ export function useAdminLatestScanPerLibrary() {
     queryKey: queryKeys.adminLatestScanPerLibrary,
     queryFn: () =>
       jsonFetch<CrossLibScanRunView[]>(`/admin/scan-runs/latest-per-library`),
+  });
+}
+
+/**
+ * Recent "Scan all" batches for the dashboard's batch rail
+ * (observability-split M9). Polls while any batch is still running so the
+ * list reflects newly-finished batches without a WS round-trip.
+ */
+export function useScanBatches(state?: string) {
+  return useQuery({
+    queryKey: queryKeys.adminScanBatches(state),
+    queryFn: () => {
+      const qs = state ? `?state=${encodeURIComponent(state)}` : "";
+      return jsonFetch<{ items: ScanBatchView[]; next_cursor: string | null }>(
+        `/admin/scan-batches${qs}`,
+      );
+    },
+    refetchInterval: (q) =>
+      q.state.data?.items.some((b) => b.state === "running") ? 5_000 : false,
+  });
+}
+
+/**
+ * Single scan-all batch detail: member runs, aggregated totals, event count.
+ * `enabled` is false when no batch is selected. Polls while the batch is
+ * running as a backstop to the live WS reducer.
+ */
+export function useScanBatch(id: string | null) {
+  return useQuery({
+    queryKey: queryKeys.adminScanBatch(id ?? ""),
+    enabled: !!id,
+    queryFn: () => jsonFetch<ScanBatchDetailView>(`/admin/scan-batches/${id}`),
+    refetchInterval: (q) => (q.state.data?.state === "running" ? 5_000 : false),
+  });
+}
+
+/**
+ * Infinite list over the durable `library_events` manifest
+ * (observability-split M10). Filters are server-side query params; the caller
+ * drives an IntersectionObserver sentinel off `fetchNextPage` /
+ * `hasNextPage` (no silent truncation).
+ */
+export function useLibraryEventsInfinite(filters: {
+  library_id?: string;
+  batch_id?: string;
+  scan_run_id?: string;
+  category?: string;
+  action?: string;
+  severity?: string;
+  limit?: number;
+}) {
+  const { limit, ...keyFilters } = filters;
+  return useInfiniteQuery({
+    queryKey: queryKeys.adminLibraryEventsInfinite(keyFilters),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams();
+      if (filters.library_id) params.set("library_id", filters.library_id);
+      if (filters.batch_id) params.set("batch_id", filters.batch_id);
+      if (filters.scan_run_id) params.set("scan_run_id", filters.scan_run_id);
+      if (filters.category) params.set("category", filters.category);
+      if (filters.action) params.set("action", filters.action);
+      if (filters.severity) params.set("severity", filters.severity);
+      if (limit != null) params.set("limit", String(limit));
+      if (pageParam) params.set("cursor", pageParam);
+      const qs = params.toString();
+      return jsonFetch<{
+        items: LibraryEventView[];
+        next_cursor: string | null;
+      }>(`/admin/library-events${qs ? `?${qs}` : ""}`);
+    },
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
 }
 

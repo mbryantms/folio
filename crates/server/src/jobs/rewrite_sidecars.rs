@@ -45,6 +45,7 @@
 
 use crate::archive_rewrite::{self, RewriteError, mutex};
 use crate::audit::{self, AuditEntry};
+use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::state::AppState;
 use apalis::prelude::*;
 use archive::ArchiveLimits;
@@ -376,6 +377,10 @@ async fn audit_writeback(
     job: &RewriteIssueSidecarsJob,
     outcome: &Result<RewriteResult, WritebackError>,
 ) {
+    // Library stream (observability-split M3b): durable manifest row for the
+    // sidecar rewrite, independent of the audit trail below.
+    record_writeback_manifest(state, job, outcome).await;
+
     let payload = match outcome {
         Ok(r) => serde_json::json!({
             "issue_id": job.issue_id,
@@ -416,6 +421,80 @@ async fn audit_writeback(
         },
     )
     .await;
+}
+
+/// Emit an `archive` library-event for a sidecar writeback. `triggering_run_id`
+/// is a metadata-run id (not a scan run), so it goes in `detail` rather than
+/// the `scan_run_id` FK column; the event carries no scan link.
+async fn record_writeback_manifest(
+    state: &AppState,
+    job: &RewriteIssueSidecarsJob,
+    outcome: &Result<RewriteResult, WritebackError>,
+) {
+    match outcome {
+        Ok(r) => {
+            let series = series_name(state, r.series_id).await;
+            event_log::record(
+                &state.db,
+                NewEvent::new(
+                    r.library_id,
+                    Category::Archive,
+                    Action::Updated,
+                    Severity::Info,
+                    format!(
+                        "Sidecar metadata written back ({} entries)",
+                        r.summary.entries_written
+                    ),
+                )
+                .entity("issue", job.issue_id.clone(), None)
+                .detail(serde_json::json!({
+                    "entries_written": r.summary.entries_written,
+                    "series_id": r.series_id,
+                    "series": series,
+                    "path": r.archive_path.to_string_lossy(),
+                    "triggering_run_id": job.triggering_run_id,
+                })),
+            )
+            .await;
+        }
+        Err(e) => {
+            let Ok(Some(row)) = entity::issue::Entity::find_by_id(job.issue_id.clone())
+                .one(&state.db)
+                .await
+            else {
+                return;
+            };
+            let series = series_name(state, row.series_id).await;
+            event_log::record(
+                &state.db,
+                NewEvent::new(
+                    row.library_id,
+                    Category::Archive,
+                    Action::Errored,
+                    Severity::Error,
+                    format!("Sidecar writeback failed for {}", row.slug),
+                )
+                .entity("issue", row.id.clone(), Some(row.slug.clone()))
+                .detail(serde_json::json!({
+                    "error": e.to_string(),
+                    "series": series,
+                    "path": row.file_path,
+                    "triggering_run_id": job.triggering_run_id,
+                })),
+            )
+            .await;
+        }
+    }
+}
+
+/// Best-effort series-name lookup for manifest enrichment.
+async fn series_name(state: &AppState, series_id: Uuid) -> Option<String> {
+    entity::series::Entity::find_by_id(series_id)
+        .one(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.name)
 }
 
 #[cfg(test)]

@@ -109,6 +109,30 @@ impl JobRuntime {
         library_id: Uuid,
         force: bool,
     ) -> anyhow::Result<CoalesceOutcome> {
+        self.coalesce_scan_inner(library_id, force, None).await
+    }
+
+    /// Like [`Self::coalesce_scan`], but stamps `batch_id` on the
+    /// scan_run row when one is newly enqueued (observability-split M6 —
+    /// "Scan all" batch grouping). A *coalesced* request (a scan was already
+    /// in flight) does not adopt the batch: the in-flight run belongs to
+    /// whatever first triggered it.
+    pub async fn coalesce_scan_with_batch(
+        &self,
+        library_id: Uuid,
+        force: bool,
+        batch_id: Uuid,
+    ) -> anyhow::Result<CoalesceOutcome> {
+        self.coalesce_scan_inner(library_id, force, Some(batch_id))
+            .await
+    }
+
+    async fn coalesce_scan_inner(
+        &self,
+        library_id: Uuid,
+        force: bool,
+        batch_id: Option<Uuid>,
+    ) -> anyhow::Result<CoalesceOutcome> {
         let mut conn = self.redis.clone();
         let in_flight_key = in_flight_key(library_id);
         let queued_key = queued_key(library_id);
@@ -135,7 +159,7 @@ impl JobRuntime {
         let scan_id = Uuid::now_v7();
         let _: () = conn.set(&scan_id_key, scan_id.to_string()).await?;
         let _: () = conn.set(&in_flight_key, scan_id.to_string()).await?;
-        self.insert_queued_scan_run(library_id, scan_id, "library", None, None)
+        self.insert_queued_scan_run(library_id, scan_id, "library", None, None, batch_id)
             .await?;
         // Push to apalis last; if push fails the in_flight key is stale, but
         // the next request will see no apalis backlog and overwrite cleanly.
@@ -170,7 +194,7 @@ impl JobRuntime {
             let new_id = Uuid::now_v7();
             let _: () = conn.set(&scan_id_key, new_id.to_string()).await?;
             let _: () = conn.set(&in_flight_key, new_id.to_string()).await?;
-            self.insert_queued_scan_run(library_id, new_id, "library", None, None)
+            self.insert_queued_scan_run(library_id, new_id, "library", None, None, None)
                 .await?;
             use apalis::prelude::Storage;
             let mut storage = self.scan_storage.clone();
@@ -407,6 +431,7 @@ impl JobRuntime {
             kind_str,
             Some(series_id),
             issue_for_run.clone(),
+            None,
         )
         .await?;
         let _: () = conn.set(&key, scan_id.to_string()).await?;
@@ -450,6 +475,7 @@ impl JobRuntime {
         kind: &str,
         series_id: Option<Uuid>,
         issue_id: Option<String>,
+        batch_id: Option<Uuid>,
     ) -> anyhow::Result<()> {
         if ScanRunEntity::find_by_id(scan_id)
             .one(&self.db)
@@ -472,6 +498,7 @@ impl JobRuntime {
             kind: Set(kind.to_owned()),
             series_id: Set(series_id),
             issue_id: Set(issue_id),
+            batch_id: Set(batch_id),
         }
         .insert(&self.db)
         .await?;

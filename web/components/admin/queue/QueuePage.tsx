@@ -132,7 +132,7 @@ function ArchiveOpRow({ row }: { row: AuditEntryView }) {
   const when = new Date(row.created_at).toLocaleString();
 
   return (
-    <li className="rounded-md border">
+    <li className="border-border bg-card rounded-md border">
       <details className="group">
         <summary className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm">
           <span className="flex min-w-0 items-center gap-2">
@@ -151,7 +151,7 @@ function ArchiveOpRow({ row }: { row: AuditEntryView }) {
           </span>
           <span className="text-muted-foreground shrink-0 text-xs">{when}</span>
         </summary>
-        <div className="border-t px-3 py-2">
+        <div className="border-border border-t px-3 py-2">
           <div className="text-muted-foreground mb-1 text-xs">
             {row.actor_label ?? row.actor_id}
           </div>

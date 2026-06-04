@@ -14,7 +14,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use entity::{issue, library, library_user_access, scan_run, series};
+use entity::{issue, library, library_user_access, scan_batch, scan_run, series};
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ModelTrait, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, Set,
@@ -926,6 +926,9 @@ pub struct ScanAllResp {
     pub failed: usize,
     /// `true` when the request was made with `force=true`.
     pub force: bool,
+    /// The scan-all batch grouping these runs (observability-split M6). The
+    /// dashboard links here for aggregate live progress + a post-run roll-up.
+    pub batch_id: String,
 }
 
 #[utoipa::path(
@@ -962,12 +965,40 @@ pub async fn scan_all(
         }
     };
 
+    // Observability-split M6: group this Scan-all's runs under a batch so the
+    // dashboard can aggregate live progress + a post-run roll-up. Created up
+    // front (state=running) so each newly-enqueued run can adopt the id;
+    // `library_count` is patched to the real member count after the loop, and
+    // the batch is closed early if nothing was actually enqueued.
+    let batch_id = Uuid::now_v7();
+    let now = chrono::Utc::now().fixed_offset();
+    if let Err(e) = (scan_batch::ActiveModel {
+        id: ActiveValue::Set(batch_id),
+        kind: ActiveValue::Set("scan_all".to_owned()),
+        actor_id: ActiveValue::Set(Some(actor.id)),
+        force: ActiveValue::Set(req.force),
+        started_at: ActiveValue::Set(now),
+        ended_at: ActiveValue::Set(None),
+        library_count: ActiveValue::Set(0),
+        state: ActiveValue::Set("running".to_owned()),
+    }
+    .insert(&app.db)
+    .await)
+    {
+        tracing::error!(error = %e, "scan-all: create batch failed");
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
+
     let mut items: Vec<ScanAllItem> = Vec::with_capacity(libraries.len());
     let mut newly_enqueued: usize = 0;
     let mut already_running: usize = 0;
     let mut failed: usize = 0;
     for lib in &libraries {
-        match app.jobs.coalesce_scan(lib.id, mode.force()).await {
+        match app
+            .jobs
+            .coalesce_scan_with_batch(lib.id, mode.force(), batch_id)
+            .await
+        {
             Ok(outcome) => {
                 let was_coalesced = outcome.was_coalesced();
                 if was_coalesced {
@@ -995,6 +1026,25 @@ pub async fn scan_all(
         }
     }
 
+    // Finalize the batch bookkeeping. `library_count` is the number of runs
+    // that actually adopted the batch (newly enqueued); coalesced/failed
+    // libraries are not members. If none were enqueued the batch has no runs
+    // to track its completion, so close it now — otherwise the per-run
+    // finalize path (`scanner::finalize_run`) flips it to a terminal state
+    // once every member run finishes.
+    let mut batch_update = scan_batch::ActiveModel {
+        id: ActiveValue::Set(batch_id),
+        library_count: ActiveValue::Set(newly_enqueued as i32),
+        ..Default::default()
+    };
+    if newly_enqueued == 0 {
+        batch_update.state = ActiveValue::Set("complete".to_owned());
+        batch_update.ended_at = ActiveValue::Set(Some(chrono::Utc::now().fixed_offset()));
+    }
+    if let Err(e) = batch_update.update(&app.db).await {
+        tracing::error!(error = %e, %batch_id, "scan-all: finalize batch bookkeeping failed");
+    }
+
     // Audit-log the bulk action. Per-library `scan_run` rows record
     // the execution of each individual scan, but the user-intent
     // event ("admin clicked Scan All at 17:42") is only captured
@@ -1011,6 +1061,7 @@ pub async fn scan_all(
             "newly_enqueued": newly_enqueued,
             "already_running": already_running,
             "failed": failed,
+            "batch_id": batch_id,
         }),
     );
 
@@ -1022,6 +1073,7 @@ pub async fn scan_all(
             already_running,
             failed,
             force: req.force,
+            batch_id: batch_id.to_string(),
             enqueued: items,
         }),
     )

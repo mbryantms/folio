@@ -153,6 +153,11 @@ export type ScanResp = Schemas["ScanResp"];
 export type ScanAllReq = Schemas["ScanAllReq"];
 export type ScanAllItem = Schemas["ScanAllItem"];
 export type ScanAllResp = Schemas["ScanAllResp"];
+export type ScanBatchView = Schemas["ScanBatchView"];
+export type ScanBatchDetailView = Schemas["ScanBatchDetailView"];
+export type BatchRunTally = Schemas["BatchRunTally"];
+export type BatchTotals = Schemas["BatchTotals"];
+export type LibraryEventView = Schemas["LibraryEventView"];
 export type ScanPreviewView = Schemas["ScanPreviewView"];
 export type DeleteLibraryResp = Schemas["DeleteLibraryResp"];
 export type RemovedIssueView = Schemas["RemovedIssueView"];
@@ -455,7 +460,9 @@ export type AdminOpenHealth = {
 
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
-export type ActivityKind = "audit" | "scan" | "health" | "reading";
+// Server stream only (observability-split M13). Scan + health moved to the
+// Library stream ("Library activity" / /admin/findings).
+export type ActivityKind = "audit" | "reading";
 
 export type SettingKind = "string" | "bool" | "uint" | "duration";
 
@@ -476,7 +483,15 @@ export type ScanMode = "normal" | "content_verify";
 export type ThumbnailFormat = "webp" | "jpeg" | "png";
 
 export type ScanEvent =
-  | { type: "scan.started"; library_id: string; scan_id: string; at: string }
+  | {
+      type: "scan.started";
+      library_id: string;
+      scan_id: string;
+      at: string;
+      // "Scan all" batch this run belongs to (observability-split M8); absent
+      // for single-library / series / issue scans.
+      batch_id?: string;
+    }
   | {
       type: "scan.progress";
       library_id: string;
@@ -532,12 +547,14 @@ export type ScanEvent =
       updated: number;
       removed: number;
       duration_ms: number;
+      batch_id?: string;
     }
   | {
       type: "scan.failed";
       library_id: string;
       scan_id: string;
       error: string;
+      batch_id?: string;
     }
   | {
       type: "thumbs.started";

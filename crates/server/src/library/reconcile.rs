@@ -30,6 +30,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use uuid::Uuid;
 
+use super::event_log::{Action, Category, EventCollector, Severity};
 use super::scanner::stats::ScanStats;
 
 /// Walk all non-removed issues for `library_id`. Soft-delete the ones whose
@@ -96,6 +97,7 @@ pub async fn reconcile_library(
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments)]
 pub async fn reconcile_library_seen(
     db: &DatabaseConnection,
     library_id: Uuid,
@@ -112,6 +114,7 @@ pub async fn reconcile_library_seen(
     scanned_folder_paths: &HashSet<String>,
     present_folders: &HashSet<String>,
     stats: &mut ScanStats,
+    events: &mut EventCollector,
 ) -> anyhow::Result<()> {
     let now = Utc::now().fixed_offset();
 
@@ -124,8 +127,18 @@ pub async fn reconcile_library_seen(
             )
             .all(db)
             .await?;
-        reconcile_issue_rows_seen(db, issues, seen_paths, scanned_folder_paths, now, stats).await?;
-        mark_empty_series_removed(db, scanned_series_ids.iter().copied(), now, stats).await?;
+        reconcile_issue_rows_seen(
+            db,
+            issues,
+            seen_paths,
+            scanned_folder_paths,
+            now,
+            stats,
+            events,
+        )
+        .await?;
+        mark_empty_series_removed(db, scanned_series_ids.iter().copied(), now, stats, events)
+            .await?;
     }
 
     let series_rows = series::Entity::find()
@@ -140,18 +153,33 @@ pub async fn reconcile_library_seen(
         if present_folders.contains(folder) {
             continue;
         }
-        missing_series.push(srow.id);
+        let series_label = srow.name.clone();
+        let series_id = srow.id;
+        missing_series.push(series_id);
         let res = IssueEntity::update_many()
             .col_expr(issue::Column::RemovedAt, Expr::value(now))
             .col_expr(
                 issue::Column::RemovalConfirmedAt,
                 Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
             )
-            .filter(issue::Column::SeriesId.eq(srow.id))
+            .filter(issue::Column::SeriesId.eq(series_id))
             .filter(issue::Column::RemovedAt.is_null())
             .exec(db)
             .await?;
         stats.issues_removed += res.rows_affected;
+        // Whole folder gone: one series-scoped removed event carrying the
+        // issue count, rather than N per-issue rows (the issues went via a
+        // bulk `update_many`, so individual ids aren't materialized here).
+        let ev = events
+            .build(
+                Category::Series,
+                Action::Removed,
+                Severity::Warning,
+                format!("Removed series {series_label} (folder missing)"),
+            )
+            .entity("series", series_id.to_string(), Some(series_label))
+            .detail(serde_json::json!({ "issues_removed": res.rows_affected }));
+        events.push(ev);
     }
     if !missing_series.is_empty() {
         for chunk in missing_series.chunks(500) {
@@ -257,6 +285,7 @@ pub async fn reconcile_series_seen(
     // [`reconcile_library_seen`] for the rationale.
     scanned_folder_paths: &HashSet<String>,
     stats: &mut ScanStats,
+    events: &mut EventCollector,
 ) -> anyhow::Result<()> {
     let now = Utc::now().fixed_offset();
 
@@ -264,8 +293,17 @@ pub async fn reconcile_series_seen(
         .filter(issue::Column::SeriesId.eq(series_id))
         .all(db)
         .await?;
-    reconcile_issue_rows_seen(db, issues, seen_paths, scanned_folder_paths, now, stats).await?;
-    mark_empty_series_removed(db, std::iter::once(series_id), now, stats).await?;
+    reconcile_issue_rows_seen(
+        db,
+        issues,
+        seen_paths,
+        scanned_folder_paths,
+        now,
+        stats,
+        events,
+    )
+    .await?;
+    mark_empty_series_removed(db, std::iter::once(series_id), now, stats, events).await?;
 
     Ok(())
 }
@@ -288,6 +326,7 @@ async fn reconcile_issue_rows_seen(
     scanned_folder_paths: &HashSet<String>,
     now: chrono::DateTime<chrono::FixedOffset>,
     stats: &mut ScanStats,
+    events: &mut EventCollector,
 ) -> anyhow::Result<()> {
     let mut remove_ids = Vec::new();
     let mut restore_ids = Vec::new();
@@ -301,10 +340,34 @@ async fn reconcile_issue_rows_seen(
                 // sibling folder we didn't visit — leave it alone for
                 // that folder's own scan.
                 if path_under_any(&row.file_path, scanned_folder_paths) {
+                    let ev = events
+                        .build(
+                            Category::Issue,
+                            Action::Removed,
+                            Severity::Warning,
+                            format!("Removed issue {} (file missing)", row.slug),
+                        )
+                        .entity("issue", row.id.clone(), Some(row.slug.clone()))
+                        .detail(serde_json::json!({
+                            "series_id": row.series_id,
+                            "file_path": row.file_path,
+                        }));
+                    events.push(ev);
                     remove_ids.push(row.id);
                 }
             }
-            (true, true) => restore_ids.push(row.id),
+            (true, true) => {
+                let ev = events
+                    .build(
+                        Category::Issue,
+                        Action::Restored,
+                        Severity::Info,
+                        format!("Restored issue {}", row.slug),
+                    )
+                    .entity("issue", row.id.clone(), Some(row.slug.clone()));
+                events.push(ev);
+                restore_ids.push(row.id);
+            }
             _ => {}
         }
     }
@@ -345,6 +408,7 @@ async fn mark_empty_series_removed(
     series_ids: impl IntoIterator<Item = Uuid>,
     now: chrono::DateTime<chrono::FixedOffset>,
     stats: &mut ScanStats,
+    events: &mut EventCollector,
 ) -> anyhow::Result<()> {
     for series_id in series_ids {
         let any_active = IssueEntity::find()
@@ -365,6 +429,15 @@ async fn mark_empty_series_removed(
                 .exec(db)
                 .await?;
             stats.series_removed += res.rows_affected;
+            // Only fire when we actually flipped the row (not already removed).
+            if res.rows_affected > 0 {
+                events.record(
+                    Category::Series,
+                    Action::Removed,
+                    Severity::Warning,
+                    format!("Removed empty series {series_id}"),
+                );
+            }
         }
     }
     Ok(())

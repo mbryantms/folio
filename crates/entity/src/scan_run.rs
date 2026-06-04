@@ -27,6 +27,10 @@ pub struct Model {
     /// clicked the button so the History view can link back.
     #[sea_orm(nullable)]
     pub issue_id: Option<String>,
+    /// The scan-all batch this run belongs to (observability-split M5).
+    /// `None` for single-library / series / issue scans.
+    #[sea_orm(nullable)]
+    pub batch_id: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -37,11 +41,24 @@ pub enum Relation {
         to = "super::library::Column::Id"
     )]
     Library,
+    #[sea_orm(
+        belongs_to = "super::scan_batch::Entity",
+        from = "Column::BatchId",
+        to = "super::scan_batch::Column::Id",
+        on_delete = "SetNull"
+    )]
+    ScanBatch,
 }
 
 impl Related<super::library::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Library.def()
+    }
+}
+
+impl Related<super::scan_batch::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::ScanBatch.def()
     }
 }
 

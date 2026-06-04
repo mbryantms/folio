@@ -103,6 +103,8 @@ fn seed_entry(level: &str, target: &str, message: &str) -> LogEntry {
         target: target.into(),
         message: message.into(),
         fields: BTreeMap::new(),
+        // No library context → server stream (matches `classify_domain`).
+        domain: "server".into(),
     }
 }
 
@@ -122,6 +124,12 @@ fn seed_entry_with_fields(
     for (k, v) in fields {
         map.insert((*k).to_owned(), (*v).to_owned());
     }
+    // Mirror `classify_domain`: library-scoped context ⇒ library stream.
+    let domain = if map.contains_key("library_id") || map.contains_key("scan_id") {
+        "library"
+    } else {
+        "server"
+    };
     LogEntry {
         id: 0,
         timestamp: Utc::now(),
@@ -129,6 +137,7 @@ fn seed_entry_with_fields(
         target: target.into(),
         message: message.into(),
         fields: map,
+        domain: domain.into(),
     }
 }
 
@@ -261,6 +270,65 @@ async fn library_id_filter_scopes_to_one_library() {
     // Invalid UUID → 422 (not a silent empty list).
     let (s, _) = get(&app, &admin, "/api/admin/logs?library_id=not-a-uuid").await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn domain_filter_separates_streams() {
+    // observability-split M12: server vs library stream filter.
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let buf = app.state().log_buffer.clone();
+    buf.push(seed_entry(
+        "info",
+        "server::api::reading",
+        "request handled",
+    ));
+    buf.push(seed_entry_with_fields(
+        "info",
+        "server::library::scanner",
+        "scan complete",
+        &[("library_id", "019e5c65-825f-7913-8d8d-35076c162065")],
+    ));
+
+    let (_, server) = get(&app, &admin, "/api/admin/logs?domain=server").await;
+    let s = server["entries"].as_array().unwrap();
+    assert_eq!(s.len(), 1);
+    assert_eq!(s[0]["message"], "request handled");
+    assert_eq!(s[0]["domain"], "server");
+
+    let (_, library) = get(&app, &admin, "/api/admin/logs?domain=library").await;
+    let l = library["entries"].as_array().unwrap();
+    assert_eq!(l.len(), 1);
+    assert_eq!(l[0]["domain"], "library");
+
+    // No domain filter → both.
+    let (_, all) = get(&app, &admin, "/api/admin/logs").await;
+    assert_eq!(all["entries"].as_array().unwrap().len(), 2);
+
+    // Bad value → 422, not a silent empty list.
+    let (s, _) = get(&app, &admin, "/api/admin/logs?domain=bogus").await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn error_code_is_lifted_into_view() {
+    // M12: `fields["error_code"]` is surfaced as a top-level `error_code`
+    // for the Server-log error-code facet.
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let buf = app.state().log_buffer.clone();
+    buf.push(seed_entry_with_fields(
+        "error",
+        "server::api::libraries",
+        "api error: boom",
+        &[("error_code", "internal"), ("status", "500")],
+    ));
+
+    let (_, body) = get(&app, &admin, "/api/admin/logs?level=error").await;
+    let entries = body["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["error_code"], "internal");
+    assert_eq!(entries[0]["domain"], "server");
 }
 
 #[tokio::test]

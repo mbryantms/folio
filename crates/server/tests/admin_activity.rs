@@ -1,8 +1,7 @@
-//! M6d: integration coverage for `GET /admin/activity`.
-//!
-//! Seeds one entry per source kind (audit/scan/health/reading) and asserts
-//! the combined feed surfaces all four, that filter chips drop the others,
-//! and that pagination via the opaque cursor is stable.
+//! Integration coverage for `GET /admin/activity` — the **Server stream**
+//! (observability-split M13): audit + reading only. Seeds all four legacy
+//! source kinds and asserts scan/health are excluded (they're the Library
+//! stream now), that filter chips work, and that cursor pagination is stable.
 
 mod common;
 
@@ -363,6 +362,7 @@ async fn seed_scan_run(app: &TestApp, library_id: Uuid) -> Uuid {
         kind: Set("library".into()),
         series_id: Set(None),
         issue_id: Set(None),
+        batch_id: Set(None),
     }
     .insert(&db)
     .await
@@ -420,7 +420,10 @@ async fn rejects_non_admin() {
 }
 
 #[tokio::test]
-async fn feed_includes_all_four_kinds() {
+async fn feed_is_server_stream_only() {
+    // observability-split M13: the feed is the Server stream — audit +
+    // reading. scan + health are seeded but must NOT appear (they're the
+    // Library stream now, surfaced in /admin/findings).
     let app = TestApp::spawn().await;
     let admin = register(&app, "admin@example.com").await;
     let user = register(&app, "reader@example.com").await;
@@ -440,9 +443,15 @@ async fn feed_includes_all_four_kinds() {
         .map(|e| e["kind"].as_str().unwrap())
         .collect();
     assert!(kinds.contains("audit"));
-    assert!(kinds.contains("scan"));
-    assert!(kinds.contains("health"));
     assert!(kinds.contains("reading"));
+    assert!(
+        !kinds.contains("scan"),
+        "scan is Library-stream now: {body}"
+    );
+    assert!(
+        !kinds.contains("health"),
+        "health is Library-stream now: {body}"
+    );
 
     // Reading entries are aggregated and never include user_id.
     for entry in entries {
@@ -469,18 +478,10 @@ async fn filter_chips_restrict_kinds() {
     let entries = body["entries"].as_array().unwrap();
     assert!(entries.iter().all(|e| e["kind"] == "audit"));
 
+    // scan/health are no longer valid kinds (M13) → no valid entries selected
+    // → empty list (same as any other unknown-kinds request).
     let (_, body) = get(&app, &admin, "/api/admin/activity?kinds=health,scan").await;
-    let entries = body["entries"].as_array().unwrap();
-    let kinds: std::collections::HashSet<&str> = entries
-        .iter()
-        .map(|e| e["kind"].as_str().unwrap())
-        .collect();
-    assert_eq!(
-        kinds,
-        ["scan", "health"]
-            .into_iter()
-            .collect::<std::collections::HashSet<_>>()
-    );
+    assert_eq!(body["entries"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -528,51 +529,28 @@ async fn invalid_cursor_400s() {
 
 #[tokio::test]
 async fn payloads_carry_resolved_names() {
-    // Phase B follow-up: scan/health/audit payloads should include
-    // `library_name`, `series_name`, `issue_label`, and `actor_name`
-    // alongside the raw IDs so the UI never has to render a UUID.
+    // The Server-stream feed resolves `actor_name` (and audit target labels)
+    // alongside the raw IDs so the UI never renders a bare UUID. (Scan/health
+    // name-resolution moved to the Library stream with M13.)
     let app = TestApp::spawn().await;
     let admin = register(&app, "named-admin@example.com").await;
-    let (lib_id, _series_id, _issue_id) = seed_one(&app, "named-fixture").await;
+    let (_lib_id, _series_id, _issue_id) = seed_one(&app, "named-fixture").await;
     seed_audit(&app, admin.user_id).await;
-    seed_scan_run(&app, lib_id).await;
-    seed_health_issue(&app, lib_id).await;
 
     let (s, body) = get(&app, &admin, "/api/admin/activity").await;
     assert_eq!(s, StatusCode::OK, "body={body}");
     let entries = body["entries"].as_array().unwrap();
-    let mut saw_scan_lib = false;
-    let mut saw_health_lib = false;
     let mut saw_audit_actor = false;
     for entry in entries {
-        match entry["kind"].as_str() {
-            Some("scan") => {
-                assert_eq!(
-                    entry["payload"]["library_name"], "Lib named-fixture",
-                    "scan payload missing library_name: {entry}"
-                );
-                saw_scan_lib = true;
-            }
-            Some("health") => {
-                assert_eq!(
-                    entry["payload"]["library_name"], "Lib named-fixture",
-                    "health payload missing library_name: {entry}"
-                );
-                saw_health_lib = true;
-            }
-            Some("audit") => {
-                let actor_name = entry["payload"]["actor_name"].as_str();
-                assert!(
-                    actor_name.is_some_and(|n| n.contains("named-admin@example.com")),
-                    "audit payload missing actor_name: {entry}"
-                );
-                saw_audit_actor = true;
-            }
-            _ => {}
+        if entry["kind"].as_str() == Some("audit") {
+            let actor_name = entry["payload"]["actor_name"].as_str();
+            assert!(
+                actor_name.is_some_and(|n| n.contains("named-admin@example.com")),
+                "audit payload missing actor_name: {entry}"
+            );
+            saw_audit_actor = true;
         }
     }
-    assert!(saw_scan_lib, "no scan entry in feed");
-    assert!(saw_health_lib, "no health entry in feed");
     assert!(saw_audit_actor, "no audit entry in feed");
 }
 

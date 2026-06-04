@@ -4,6 +4,11 @@ Folio's server uses `tracing` for structured logging with a JSON stdout sink and
 an in-process ring buffer that backs the admin `/admin/logs` page. This doc
 covers what to log, how, and what *never* to log.
 
+> For how the ring buffer fits into the two-stream admin observability model
+> (Server stream vs Library stream, the durable `library_events` manifest, and
+> the `domain` / `error_code` classification on log entries), see
+> [observability.md](observability.md).
+
 ## The `#[handler]` macro
 
 Every axum handler in `crates/server/src/api/` is annotated with `#[handler]`

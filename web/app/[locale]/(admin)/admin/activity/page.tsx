@@ -5,8 +5,8 @@ export default function ActivityPage() {
   return (
     <>
       <PageHeader
-        title="Activity"
-        description="Combined feed of audit entries, scan runs, open health issues, and aggregate reading volume. Reading entries are aggregated per hour — never per-user."
+        title="Server activity"
+        description="The Server stream: audit entries (who did what) and aggregate reading volume (per-hour, never per-user). Library scans, health, and changes live in Library activity."
       />
       <ActivityFeedClient />
     </>

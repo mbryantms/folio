@@ -24,7 +24,7 @@ pub mod validate;
 use crate::state::AppState;
 use chrono::Utc;
 use entity::{
-    issue, library,
+    issue, library, scan_batch,
     scan_run::{ActiveModel as ScanRunAM, Entity as ScanRunEntity},
     series,
 };
@@ -43,6 +43,7 @@ use uuid::Uuid;
 
 pub use stats::ScanStats;
 
+use crate::library::event_log::{Action, Category, EventCollector, Severity};
 use crate::library::events::ScanEvent;
 use crate::library::health::HealthCollector;
 
@@ -91,10 +92,20 @@ pub async fn scan_library_with_run_id(
     // makes this `.record()` work — fields not declared at
     // attr-time can't be added later.
     tracing::Span::current().record("scan_id", tracing::field::display(scan_id));
+    // A "Scan all" pre-inserts this run with a `batch_id` (M6); surface it on
+    // the Started event so the live dashboard can attribute the library to the
+    // batch. `None` for an ordinary single-library scan.
+    let batch_id = ScanRunEntity::find_by_id(scan_id)
+        .one(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.batch_id);
     state.events.emit(ScanEvent::Started {
         library_id,
         scan_id,
         at: chrono::Utc::now(),
+        batch_id,
     });
 
     let started = Instant::now();
@@ -102,10 +113,30 @@ pub async fn scan_library_with_run_id(
     let now = Utc::now().fixed_offset();
     let mut health =
         HealthCollector::new(library_id, scan_id, now).with_events(state.events.clone());
+    let mut events = EventCollector::new(library_id, Some(scan_id));
+    events.record(
+        Category::Scan,
+        Action::Started,
+        Severity::Info,
+        "Scan started",
+    );
 
-    let result = run_phases(state, &lib, scan_id, now, force, &mut stats, &mut health).await;
+    let result = run_phases(
+        state,
+        &lib,
+        scan_id,
+        now,
+        force,
+        &mut stats,
+        &mut health,
+        &mut events,
+    )
+    .await;
 
-    finalize_run(state, &lib, scan_id, started, &mut stats, health, &result).await?;
+    finalize_run(
+        state, &lib, scan_id, started, &mut stats, health, events, &result,
+    )
+    .await?;
 
     // Bump library.last_scan_at on full scans only — per-series scans leave
     // it alone so the scheduler still knows when a true library-wide pass
@@ -401,6 +432,8 @@ pub async fn scan_series_folder(
         library_id,
         scan_id,
         at: chrono::Utc::now(),
+        // Series / issue scans are never part of a "Scan all" batch.
+        batch_id: None,
     });
 
     let started = Instant::now();
@@ -408,6 +441,13 @@ pub async fn scan_series_folder(
     let now = Utc::now().fixed_offset();
     let mut health =
         HealthCollector::new_scoped(library_id, scan_id, now).with_events(state.events.clone());
+    let mut events = EventCollector::new(library_id, Some(scan_id));
+    events.record(
+        Category::Scan,
+        Action::Started,
+        Severity::Info,
+        "Series scan started",
+    );
 
     let result = run_series_phases(
         state,
@@ -417,11 +457,15 @@ pub async fn scan_series_folder(
         &folder_canon,
         &mut stats,
         &mut health,
+        &mut events,
         force,
     )
     .await;
 
-    finalize_run(state, &lib, scan_id, started, &mut stats, health, &result).await?;
+    finalize_run(
+        state, &lib, scan_id, started, &mut stats, health, events, &result,
+    )
+    .await?;
 
     result.map(|()| stats)
 }
@@ -466,6 +510,8 @@ pub async fn scan_issue_file(
         library_id,
         scan_id,
         at: chrono::Utc::now(),
+        // Series / issue scans are never part of a "Scan all" batch.
+        batch_id: None,
     });
 
     let started = Instant::now();
@@ -473,9 +519,29 @@ pub async fn scan_issue_file(
     let now = Utc::now().fixed_offset();
     let mut health =
         HealthCollector::new_scoped(library_id, scan_id, now).with_events(state.events.clone());
-    let result = run_issue_phase(state, scan_id, &lib, &row, &mut stats, &mut health, force).await;
+    let mut events = EventCollector::new(library_id, Some(scan_id));
+    events.record(
+        Category::Scan,
+        Action::Started,
+        Severity::Info,
+        "Issue scan started",
+    );
+    let result = run_issue_phase(
+        state,
+        scan_id,
+        &lib,
+        &row,
+        &mut stats,
+        &mut health,
+        &mut events,
+        force,
+    )
+    .await;
 
-    finalize_run(state, &lib, scan_id, started, &mut stats, health, &result).await?;
+    finalize_run(
+        state, &lib, scan_id, started, &mut stats, health, events, &result,
+    )
+    .await?;
     result.map(|()| stats)
 }
 
@@ -513,6 +579,9 @@ async fn open_scan_run(
         kind: Set(kind.to_owned()),
         series_id: Set(series_id),
         issue_id: Set(issue_id),
+        // Stamped by the scan-all path (M6); single/series/issue scans are
+        // not part of a batch.
+        batch_id: Set(None),
     };
     am.insert(&state.db).await?;
     Ok(scan_id)
@@ -521,6 +590,7 @@ async fn open_scan_run(
 /// Persist health issues, close the `scan_runs` row, emit the final WS event
 /// (Completed | Failed), and record Prometheus metrics. Shared by full and
 /// per-series scans so both paths produce identical observability output.
+#[expect(clippy::too_many_arguments)]
 async fn finalize_run(
     state: &AppState,
     lib: &library::Model,
@@ -528,6 +598,7 @@ async fn finalize_run(
     started: Instant,
     stats: &mut ScanStats,
     health: HealthCollector,
+    mut events: EventCollector,
     result: &anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     stats.elapsed_ms = started.elapsed().as_millis() as u64;
@@ -558,16 +629,23 @@ async fn finalize_run(
         Err(e) => ("failed".to_string(), Some(e.to_string())),
     };
 
-    let mut close: ScanRunAM = ScanRunEntity::find_by_id(scan_id)
+    let run_row = ScanRunEntity::find_by_id(scan_id)
         .one(&state.db)
         .await?
-        .expect("scan run row")
-        .into();
+        .expect("scan run row");
+    let run_batch_id = run_row.batch_id;
+    let mut close: ScanRunAM = run_row.into();
     close.state = Set(final_state);
     close.ended_at = Set(Some(Utc::now().fixed_offset()));
     close.stats = Set(stats_json);
     close.error = Set(error);
     close.update(&state.db).await?;
+
+    // observability-split M6: if this run belongs to a "Scan all" batch, roll
+    // the batch up to a terminal state once every member run has finished.
+    if let Some(batch_id) = run_batch_id {
+        maybe_finalize_batch(&state.db, batch_id).await;
+    }
 
     match result {
         Ok(()) => state.events.emit(ScanEvent::Completed {
@@ -577,13 +655,43 @@ async fn finalize_run(
             updated: stats.files_updated,
             removed: stats.issues_removed,
             duration_ms: stats.elapsed_ms,
+            batch_id: run_batch_id,
         }),
         Err(e) => state.events.emit(ScanEvent::Failed {
             library_id,
             scan_id,
             error: e.to_string(),
+            batch_id: run_batch_id,
         }),
     }
+
+    // Durable manifest: terminal lifecycle event, then flush the whole
+    // per-scan buffer (issue/series add/update/remove + this row) in one
+    // bulk insert. Done after the WS emit so the flush latency never blocks
+    // the live UI.
+    match result {
+        Ok(()) => events.record(
+            Category::Scan,
+            Action::Completed,
+            Severity::Info,
+            format!(
+                "Scan complete — {} added, {} updated, {} removed",
+                stats.files_added, stats.files_updated, stats.issues_removed
+            ),
+        ),
+        Err(e) => {
+            let ev = events
+                .build(
+                    Category::Scan,
+                    Action::Errored,
+                    Severity::Error,
+                    format!("Scan failed: {e}"),
+                )
+                .detail(serde_json::json!({ "error": e.to_string() }));
+            events.push(ev);
+        }
+    }
+    events.flush(&state.db).await;
 
     let lib_label = library_id.to_string();
     let result_label = if result.is_ok() { "complete" } else { "failed" };
@@ -631,6 +739,53 @@ async fn finalize_run(
     .increment(stats.files_duplicate);
 
     Ok(())
+}
+
+/// Roll a "Scan all" batch up to a terminal state once every member run has
+/// finished (observability-split M6). Idempotent + best-effort: called from
+/// each member's [`finalize_run`], it no-ops while any sibling is still
+/// running/queued and only writes the terminal state on the run that happens
+/// to finish last. A write failure is logged, never bubbled — the scans
+/// themselves already succeeded.
+///
+/// Derived state: all members `complete` → `complete`; none complete →
+/// `failed`; a mix → `partial_failed`.
+async fn maybe_finalize_batch(db: &impl ConnectionTrait, batch_id: Uuid) {
+    let runs = match ScanRunEntity::find()
+        .filter(entity::scan_run::Column::BatchId.eq(batch_id))
+        .all(db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, %batch_id, "scan batch: load member runs failed");
+            return;
+        }
+    };
+    // Still in progress — let the run that finishes last close the batch.
+    let pending = runs
+        .iter()
+        .any(|r| r.state == "running" || r.state == "queued");
+    if runs.is_empty() || pending {
+        return;
+    }
+    let complete = runs.iter().filter(|r| r.state == "complete").count();
+    let state = if complete == runs.len() {
+        "complete"
+    } else if complete == 0 {
+        "failed"
+    } else {
+        "partial_failed"
+    };
+    let update = scan_batch::ActiveModel {
+        id: Set(batch_id),
+        state: Set(state.to_owned()),
+        ended_at: Set(Some(Utc::now().fixed_offset())),
+        ..Default::default()
+    };
+    if let Err(e) = update.update(db).await {
+        tracing::error!(error = %e, %batch_id, "scan batch: finalize update failed");
+    }
 }
 
 fn stats_json_with_progress(
@@ -873,6 +1028,7 @@ async fn run_series_phases(
     folder: &std::path::Path,
     stats: &mut ScanStats,
     health: &mut HealthCollector,
+    events: &mut EventCollector,
     force: bool,
 ) -> anyhow::Result<()> {
     let ignore = crate::library::ignore::IgnoreRules::for_library(lib)
@@ -923,8 +1079,10 @@ async fn run_series_phases(
         .unwrap_or_else(|| planned.path.to_string_lossy().into_owned());
     let folder_path_str = planned.path.to_string_lossy().into_owned();
     let process_started = Instant::now();
-    let outcome =
-        process_planned_folder(state, lib, planned, stats, health, None, force, false).await?;
+    let outcome = process_planned_folder(
+        state, lib, planned, stats, health, events, None, force, false,
+    )
+    .await?;
     stats.record_phase("process", process_started.elapsed());
     progress.series_scanned = 1;
     progress.completed = progress
@@ -971,6 +1129,7 @@ async fn run_series_phases(
         &seen_paths,
         &scanned_folder_paths,
         stats,
+        events,
     )
     .await?;
     stats.record_phase("reconcile", reconcile_started.elapsed());
@@ -1016,6 +1175,7 @@ async fn run_series_phases(
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn run_issue_phase(
     state: &AppState,
     scan_id: Uuid,
@@ -1023,6 +1183,7 @@ async fn run_issue_phase(
     row: &issue::Model,
     stats: &mut ScanStats,
     health: &mut HealthCollector,
+    events: &mut EventCollector,
     force: bool,
 ) -> anyhow::Result<()> {
     // Narrow issue scan runs one archive, so parallel-phase totals equal wall.
@@ -1060,6 +1221,18 @@ async fn run_issue_phase(
             am.removal_confirmed_at = Set(None);
             am.update(&state.db).await?;
             stats.issues_removed += 1;
+            let ev = events
+                .build(
+                    Category::Issue,
+                    Action::Removed,
+                    Severity::Warning,
+                    format!("Removed issue {} (file missing)", row.slug),
+                )
+                .entity("issue", row.id.clone(), Some(row.slug.clone()))
+                .detail(
+                    serde_json::json!({ "series_id": row.series_id, "file_path": row.file_path }),
+                );
+            events.push(ev);
         }
         progress.completed = 1;
         progress.health_issues = health.count() as u64;
@@ -1125,7 +1298,11 @@ async fn run_issue_phase(
         manifest: Some(&manifest),
         force,
     };
-    let mut outputs = process::IngestOutputs { stats, health };
+    let mut outputs = process::IngestOutputs {
+        stats,
+        health,
+        events,
+    };
     let ingest = process::ingest_one(
         &ctx,
         &txn,
@@ -1207,6 +1384,7 @@ async fn run_issue_phase(
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn run_phases(
     state: &AppState,
     lib: &library::Model,
@@ -1215,6 +1393,7 @@ async fn run_phases(
     force: bool,
     stats: &mut ScanStats,
     health: &mut HealthCollector,
+    events: &mut EventCollector,
 ) -> anyhow::Result<()> {
     use crate::library::health::IssueKind;
     let root = PathBuf::from(&lib.root_path);
@@ -1321,6 +1500,7 @@ async fn run_phases(
                 let mut local_stats = ScanStats::default();
                 let mut local_health = HealthCollector::new(lib.id, scan_id, scan_started_at)
                     .with_events(state.events.clone());
+                let mut local_events = EventCollector::new(lib.id, Some(scan_id));
                 let label = planned
                     .path
                     .file_name()
@@ -1338,6 +1518,7 @@ async fn run_phases(
                     planned,
                     &mut local_stats,
                     &mut local_health,
+                    &mut local_events,
                     Some(live_tracker),
                     force,
                     true,
@@ -1350,6 +1531,7 @@ async fn run_phases(
                     result,
                     local_stats,
                     local_health,
+                    local_events,
                 )
             }
         })
@@ -1363,7 +1545,7 @@ async fn run_phases(
     loop {
         tokio::select! {
             maybe_result = folder_results.next() => {
-                let Some((label, folder_path_str, work_units, result, local_stats, local_health)) = maybe_result else {
+                let Some((label, folder_path_str, work_units, result, local_stats, local_health, local_events)) = maybe_result else {
                     break;
                 };
                 let mut folder_processed = false;
@@ -1399,6 +1581,7 @@ async fn run_phases(
         live_tracker.record_folder_done();
         stats.merge(local_stats);
         health.merge(local_health);
+        events.merge(local_events);
         progress = live_tracker.progress_snapshot(&progress);
         progress.health_issues = health.count() as u64;
         let live_stats = live_tracker.stats_snapshot();
@@ -1462,6 +1645,7 @@ async fn run_phases(
         &scanned_folder_paths,
         &present_folders,
         stats,
+        events,
     )
     .await
     {
@@ -1568,6 +1752,7 @@ async fn process_planned_folder(
     planned: PlannedFolder,
     stats: &mut ScanStats,
     health: &mut HealthCollector,
+    events: &mut EventCollector,
     live_progress: Option<Arc<LiveProgressTracker>>,
     // When `true`, every archive in the folder is re-parsed even if its
     // size+mtime match the existing row. Used by manual "force" scans.
@@ -1709,6 +1894,19 @@ async fn process_planned_folder(
         .await?;
         if resolved.was_created() {
             stats.series_created += 1;
+            let e = events
+                .build(
+                    Category::Series,
+                    Action::Added,
+                    Severity::Info,
+                    format!("Added series {folder_label}"),
+                )
+                .entity(
+                    "series",
+                    resolved.id().to_string(),
+                    Some(folder_label.clone()),
+                );
+            events.push(e);
         }
         resolved.id()
     };
@@ -1808,6 +2006,7 @@ async fn process_planned_folder(
             let mut outputs = process::IngestOutputs {
                 stats: &mut *stats,
                 health: &mut *health,
+                events: &mut *events,
             };
             let ingest = if let Some((size, mtime)) = fingerprint {
                 process::ingest_one_with_fingerprint(

@@ -9,6 +9,7 @@
 //! Milestone 8 expands this with series.json / MetronInfo / volume
 //! disambiguation / specials detection / hash-mismatch supersession.
 
+use crate::library::event_log::{Action, Category, EventCollector, Severity};
 use crate::library::health::{HealthCollector, IssueKind};
 use crate::library::identity::SeriesIdentityHint;
 use crate::state::AppState;
@@ -168,6 +169,10 @@ pub struct IngestCtx<'a> {
 pub struct IngestOutputs<'a> {
     pub stats: &'a mut ScanStats,
     pub health: &'a mut HealthCollector,
+    /// Durable per-entity manifest (observability-split M3). Issue
+    /// add/update/remove/restore events are buffered here during ingest and
+    /// bulk-flushed at scan finalize. Observational only — never a data write.
+    pub events: &'a mut EventCollector,
 }
 
 pub async fn ingest_one<C: ConnectionTrait>(
@@ -514,6 +519,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     // `outputs.stats` / `outputs.health` at every site.
     let stats: &mut ScanStats = &mut *outputs.stats;
     let health: &mut HealthCollector = &mut *outputs.health;
+    let events: &mut EventCollector = &mut *outputs.events;
     let path_str = path.to_string_lossy().into_owned();
 
     // Existing row? If size+mtime match, skip re-hash (spec §9.1 fast path).
@@ -555,6 +561,24 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
                 match convert_cbr_for_ingest(state, path).await? {
                     CbrIngestAction::Converted(dst) => {
                         stats.files_converted += 1;
+                        let e = events
+                            .build(
+                                Category::File,
+                                Action::Converted,
+                                Severity::Info,
+                                format!(
+                                    "Converted {} → {}",
+                                    path.display(),
+                                    dst.file_name()
+                                        .map(|n| n.to_string_lossy())
+                                        .unwrap_or_default()
+                                ),
+                            )
+                            .detail(serde_json::json!({
+                                "from": path.to_string_lossy(),
+                                "to": dst.to_string_lossy(),
+                            }));
+                        events.push(e);
                         // The original `.cbr` is now `.cbr.bak` (not a
                         // recognized extension), so it won't re-enumerate and
                         // conversion never re-fires. Stamp the library's
@@ -628,6 +652,10 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         .or(inferred.number.clone())
         .filter(|s| !s.is_empty());
     let sort_number = number_raw.as_deref().and_then(parse_sort_number);
+    // Cheap clone kept for the event-log label: `number_raw` is moved into the
+    // issue ActiveModel further down (both the add and update branches), so we
+    // can't borrow it for the manifest summary after that point.
+    let number_label = number_raw.clone();
 
     let comic_info_raw = serde_json::to_value(&info)?;
     let pages_json = serde_json::to_value(&info.pages)?;
@@ -842,6 +870,21 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // F-1: pass the just-updated model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &updated).await?;
         stats.files_updated += 1;
+        let label = issue_label(info.title.as_deref(), number_label.as_deref(), &updated.id);
+        let e = events
+            .build(
+                Category::Issue,
+                Action::Updated,
+                Severity::Info,
+                format!("Updated issue {label}"),
+            )
+            .entity("issue", updated.id.clone(), Some(label))
+            .detail(serde_json::json!({
+                "series_id": series_id,
+                "content_changed": content_changed,
+                "file_path": path_str,
+            }));
+        events.push(e);
     } else {
         let issue_slug = if let Some(set) = slug_set {
             crate::slug::allocate_issue_slug_in_set(
@@ -973,9 +1016,33 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // F-1: pass the just-inserted model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &inserted).await?;
         stats.files_added += 1;
+        let label = issue_label(info.title.as_deref(), number_label.as_deref(), &inserted.id);
+        let e = events
+            .build(
+                Category::Issue,
+                Action::Added,
+                Severity::Info,
+                format!("Added issue {label}"),
+            )
+            .entity("issue", inserted.id.clone(), Some(label))
+            .detail(serde_json::json!({
+                "series_id": series_id,
+                "file_path": path_str,
+            }));
+        events.push(e);
     }
 
     Ok(())
+}
+
+/// Human-friendly one-line label for an issue event: the title if the
+/// archive carried one, else `#<number>`, else the synthesized issue id.
+fn issue_label(title: Option<&str>, number_raw: Option<&str>, issue_id: &str) -> String {
+    match (title, number_raw) {
+        (Some(t), _) if !t.trim().is_empty() => t.trim().to_owned(),
+        (_, Some(n)) if !n.trim().is_empty() => format!("#{}", n.trim()),
+        _ => issue_id.to_owned(),
+    }
 }
 
 async fn remember_moved_issue_path<C: ConnectionTrait>(

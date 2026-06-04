@@ -85,6 +85,7 @@ pub async fn run(state: &AppState, library_id: Uuid) -> anyhow::Result<DeepValid
         kind: Set("deep_validate".into()),
         series_id: Set(None),
         issue_id: Set(None),
+        batch_id: Set(None),
     }
     .insert(&state.db)
     .await?;

@@ -27,6 +27,7 @@
 use crate::archive_rewrite::{self, RewriteError, mutex};
 use crate::audit::{self, AuditEntry};
 use crate::jobs::archive_transforms::{TransformStep, apply_chain};
+use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::state::AppState;
 use apalis::prelude::*;
 use archive::cbr::Cbr;
@@ -777,6 +778,11 @@ async fn audit_edit(
     job: &ArchiveEditJob,
     outcome: &Result<EditResult, EditError>,
 ) {
+    // Library stream (observability-split M3b): durable manifest row for the
+    // rewrite, independent of the audit trail below (which is skipped for
+    // anonymous runs).
+    record_edit_manifest(state, job, outcome).await;
+
     let payload = match outcome {
         Ok(r) => serde_json::json!({
             "issue_id": job.issue_id,
@@ -813,6 +819,80 @@ async fn audit_edit(
         },
     )
     .await;
+}
+
+/// Emit an `archive` library-event for a page-edit rewrite. On success the
+/// `EditResult` carries `library_id` directly; on failure we resolve it from
+/// the issue row (skip the event if the row is already gone). Archive edits are
+/// user-triggered, outside any scan — no `scan_run_id`.
+async fn record_edit_manifest(
+    state: &AppState,
+    job: &ArchiveEditJob,
+    outcome: &Result<EditResult, EditError>,
+) {
+    match outcome {
+        Ok(r) => {
+            let series = series_name(state, r.series_id).await;
+            event_log::record(
+                &state.db,
+                NewEvent::new(
+                    r.library_id,
+                    Category::Archive,
+                    Action::Updated,
+                    Severity::Info,
+                    format!(
+                        "Archive rewritten ({} → {} pages)",
+                        r.page_count_before, r.page_count_after
+                    ),
+                )
+                .entity("issue", job.issue_id.clone(), None)
+                .detail(serde_json::json!({
+                    "page_count_before": r.page_count_before,
+                    "page_count_after": r.page_count_after,
+                    "series_id": r.series_id,
+                    "series": series,
+                    "path": r.archive_path.to_string_lossy(),
+                })),
+            )
+            .await;
+        }
+        Err(e) => {
+            let Ok(Some(row)) = entity::issue::Entity::find_by_id(job.issue_id.clone())
+                .one(&state.db)
+                .await
+            else {
+                return;
+            };
+            let series = series_name(state, row.series_id).await;
+            event_log::record(
+                &state.db,
+                NewEvent::new(
+                    row.library_id,
+                    Category::Archive,
+                    Action::Errored,
+                    Severity::Error,
+                    format!("Archive rewrite failed for {}", row.slug),
+                )
+                .entity("issue", row.id.clone(), Some(row.slug.clone()))
+                .detail(serde_json::json!({
+                    "error": e.to_string(),
+                    "series": series,
+                    "path": row.file_path,
+                })),
+            )
+            .await;
+        }
+    }
+}
+
+/// Best-effort series-name lookup for manifest enrichment.
+async fn series_name(state: &AppState, series_id: Uuid) -> Option<String> {
+    entity::series::Entity::find_by_id(series_id)
+        .one(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.name)
 }
 
 #[cfg(test)]

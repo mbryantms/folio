@@ -44,6 +44,10 @@ pub struct LogsQuery {
     /// `RingLayer::on_event` parent-span walk. Omit / `all` for
     /// cross-library.
     pub library_id: Option<String>,
+    /// Stream filter (observability-split M12): `server` (app runtime, the
+    /// Server-log default) | `library` (scanner/worker events, also surfaced
+    /// in Library activity) | `all`. Omit ⇒ all.
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -64,10 +68,17 @@ pub struct LogEntryView {
     pub target: String,
     pub message: String,
     pub fields: serde_json::Value,
+    /// `server` | `library` — which observability stream this entry belongs to.
+    pub domain: String,
+    /// Convenience: `fields["error_code"]` lifted out for the Server-log
+    /// error-code facet. `null` for non-error events.
+    pub error_code: Option<String>,
 }
 
 impl From<LogEntry> for LogEntryView {
     fn from(e: LogEntry) -> Self {
+        let error_code = e.fields.get("error_code").cloned();
+        let domain = e.domain;
         let fields_obj: serde_json::Map<String, serde_json::Value> = e
             .fields
             .into_iter()
@@ -80,6 +91,8 @@ impl From<LogEntry> for LogEntryView {
             target: e.target,
             message: e.message,
             fields: serde_json::Value::Object(fields_obj),
+            domain,
+            error_code,
         }
     }
 }
@@ -133,10 +146,23 @@ pub async fn list(
         },
     };
 
+    let domain_filter = match q.domain.as_deref() {
+        None | Some("") | Some("all") => None,
+        Some(d @ ("server" | "library")) => Some(d),
+        Some(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation.domain",
+                "domain must be 'server', 'library', or 'all'",
+            );
+        }
+    };
+
     let snap = app.log_buffer.snapshot(SnapshotFilter {
         since,
         level,
         q: q.q.as_deref(),
+        domain: domain_filter,
         limit,
     });
 

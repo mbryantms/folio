@@ -19,6 +19,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
 import { useDismissHealthIssue } from "@/lib/api/mutations";
 import {
   useAdminHealthIssuesInfinite,
@@ -27,7 +28,7 @@ import {
 } from "@/lib/api/queries";
 import type { CrossLibHealthIssueView } from "@/lib/api/types";
 
-type Tab = "health" | "scans";
+type Tab = "activity" | "health" | "scans";
 type Severity = "all" | "error" | "warning" | "info";
 
 /**
@@ -51,15 +52,18 @@ type Severity = "all" | "error" | "warning" | "info";
  * same outcome — see the logs this scan emitted — without leaving
  * the admin shell.
  *
- * **Why no Activity tab here**: `/admin/activity` owns the unified
- * persistent feed (audit + scans + health + reading hours). Findings
- * is operational triage — current concerns only.
+ * **Activity tab** (observability-split M11): the durable, itemized
+ * Library-stream manifest (`library_events`) — every issue/series
+ * add·update·remove, thumbnail/metadata/archive op, scoped by library +
+ * filterable by category/severity. This is distinct from `/admin/activity`,
+ * which is the *Server* stream (audit + user activity); the two streams are
+ * deliberately non-overlapping.
  */
 export function FindingsView() {
   const router = useRouter();
   const sp = useSearchParams();
 
-  const tab = (sp.get("tab") as Tab) ?? "health";
+  const tab = (sp.get("tab") as Tab) ?? "activity";
   const severity = (sp.get("severity") as Severity) ?? "all";
   const libraryId = sp.get("library_id") ?? "all";
   const state = sp.get("state") ?? "all";
@@ -79,9 +83,24 @@ export function FindingsView() {
   return (
     <Tabs value={tab} onValueChange={(v) => setParam("tab", v)}>
       <TabsList>
+        <TabsTrigger value="activity">Activity</TabsTrigger>
         <TabsTrigger value="health">Open health issues</TabsTrigger>
         <TabsTrigger value="scans">Scan runs</TabsTrigger>
       </TabsList>
+
+      <TabsContent value="activity" className="mt-4 space-y-3">
+        <FilterRow>
+          <LibraryFilter
+            libraries={libraries ?? []}
+            value={libraryId}
+            onChange={(v) => setParam("library_id", v)}
+          />
+        </FilterRow>
+        <LibraryEventsList
+          libraryId={libraryId === "all" ? undefined : libraryId}
+          showLibrary
+        />
+      </TabsContent>
 
       <TabsContent value="health" className="mt-4 space-y-3">
         <FilterRow>

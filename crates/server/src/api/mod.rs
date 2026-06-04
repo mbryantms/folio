@@ -29,6 +29,7 @@ pub mod issue_ocr;
 pub mod issues;
 pub mod komga_compat;
 pub mod libraries;
+pub mod library_events;
 pub mod log_widgets;
 pub mod markers;
 pub mod meta;
@@ -48,6 +49,7 @@ pub mod reading_log;
 pub mod reading_sessions;
 pub mod reconcile;
 pub mod saved_views;
+pub mod scan_batches;
 pub mod scan_runs;
 pub mod series;
 pub mod server_info;
@@ -72,7 +74,31 @@ pub(crate) fn respond(
     code: ApiErrorCode,
     message: impl Into<String>,
 ) -> Response {
+    let message = message.into();
+    log_api_error(status, code.as_str(), &message);
     (status, Json(ApiError::new(code, message))).into_response()
+}
+
+/// Drop every API error into the ring buffer carrying its `error_code` +
+/// `status` (observability-split M12) so the Server-log view can facet by
+/// code. Server errors (5xx) are real problems → `error`; client errors (4xx)
+/// are usually caller mistakes → `debug` (searchable, but out of the default
+/// info+ view). These run inside request-handler spans (no `library_id` /
+/// `scan_id`), so `classify_domain` files them under the **server** stream.
+fn log_api_error(status: StatusCode, code: &str, message: &str) {
+    if status.is_server_error() {
+        tracing::error!(
+            error_code = code,
+            status = status.as_u16(),
+            "api error: {message}"
+        );
+    } else if status.is_client_error() {
+        tracing::debug!(
+            error_code = code,
+            status = status.as_u16(),
+            "api error: {message}"
+        );
+    }
 }
 
 /// 422 with the canonical envelope. Use for semantic validation failures
@@ -100,6 +126,7 @@ pub(crate) fn not_found_msg(message: impl Into<String>) -> Response {
 /// Legacy error helper retained during M0/M3 migration. New code uses
 /// [`respond`] with an [`ApiErrorCode`] variant.
 pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {
+    log_api_error(status, code, message);
     (
         status,
         Json(serde_json::json!({"error": {"code": code, "message": message}})),
