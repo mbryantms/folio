@@ -15,6 +15,39 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-06-04
+
+### Added
+
+- **Observability: two non-overlapping admin streams.** The old unified
+  `/admin/activity` feed is split into a **Server stream** (app-runtime logs +
+  audit + user activity) and a **Library stream** (a durable, itemized record
+  of scans, thumbnails, covers, metadata, and archive rewrites).
+  - **Library activity** (`/admin/findings`): a durable `library_events`
+    manifest of every change — issue/series add·update·remove·restore,
+    thumbnail / metadata / archive ops — with expandable rows showing target,
+    error, series, and on-disk path, alongside the health-issue and scan-run
+    tabs.
+  - **Scan dashboard** (`/admin/scan-dashboard`): live aggregate progress
+    across a "Scan all" run — per-library status, overall completion, and a
+    post-run summary of what changed — backed by a new `scan_batch` grouping.
+  - **Server log** (`/admin/logs`): a Server/Library stream toggle and an
+    error-code facet (every API error is captured with its `error_code`).
+  - New read endpoints: `GET /admin/scan-batches[/{id}]` and
+    `GET /admin/library-events`. See `docs/dev/observability.md`.
+
+### Changed
+
+- `/admin/activity` ("Server activity") is now audit + reading volume only;
+  scan and health moved to the Library stream so the two never overlap. Nav:
+  "Logs" → "Server log", "Activity" → "Server activity", plus new "Scan
+  dashboard" and "Library activity" entries.
+
+### Internal
+
+- New migrations `library_events` + `scan_batch`; a daily retention prune
+  bounds the event manifest (90 days / 50k rows per library).
+
 ## [0.8.0] - 2026-06-04
 
 ### Added
@@ -518,7 +551,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/mbryantms/folio/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/mbryantms/folio/compare/v0.7.23...v0.8.0
 [0.7.21]: https://github.com/mbryantms/folio/compare/v0.7.20...v0.7.21
 [0.7.20]: https://github.com/mbryantms/folio/compare/v0.7.19...v0.7.20
