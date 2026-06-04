@@ -103,7 +103,11 @@ export function MultiSelectEditor({
             />
             <CommandList>
               <CommandEmpty>
-                {endpoint && remote.isLoading ? "Loading…" : "No results."}
+                {endpoint && remote.isLoading
+                  ? "Loading…"
+                  : endpoint && remote.isError
+                    ? "Failed to load options."
+                    : "No results."}
               </CommandEmpty>
               <CommandGroup>
                 {options.map((opt) => {

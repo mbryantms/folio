@@ -10,6 +10,7 @@ import {
   type Row,
   useReactTable,
 } from "@tanstack/react-table";
+import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 
 import {
   Table,
@@ -19,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 export interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
@@ -53,16 +55,52 @@ export function DataTable<TData, TValue>({
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <TableHead key={header.id}>
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(
+              {headerGroup.headers.map((header) => {
+                const canSort = header.column.getCanSort();
+                const sortState = header.column.getIsSorted();
+                const SortIcon =
+                  sortState === "asc"
+                    ? ArrowUp
+                    : sortState === "desc"
+                      ? ArrowDown
+                      : ChevronsUpDown;
+                const ariaSort = canSort
+                  ? sortState === "asc"
+                    ? "ascending"
+                    : sortState === "desc"
+                      ? "descending"
+                      : "none"
+                  : undefined;
+                return (
+                  <TableHead key={header.id} aria-sort={ariaSort}>
+                    {header.isPlaceholder ? null : canSort ? (
+                      <button
+                        type="button"
+                        onClick={header.column.getToggleSortingHandler()}
+                        className={cn(
+                          "hover:text-foreground focus-visible:ring-ring focus-visible:ring-offset-background inline-flex max-w-full items-center gap-1 rounded-sm text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+                          sortState
+                            ? "text-foreground"
+                            : "text-muted-foreground",
+                        )}
+                      >
+                        <span className="truncate">
+                          {flexRender(
+                            header.column.columnDef.header,
+                            header.getContext(),
+                          )}
+                        </span>
+                        <SortIcon className="size-3.5 shrink-0" />
+                      </button>
+                    ) : (
+                      flexRender(
                         header.column.columnDef.header,
                         header.getContext(),
-                      )}
-                </TableHead>
-              ))}
+                      )
+                    )}
+                  </TableHead>
+                );
+              })}
             </TableRow>
           ))}
         </TableHeader>

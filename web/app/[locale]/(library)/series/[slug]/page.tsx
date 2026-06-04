@@ -26,7 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
   IssueListView,
-  IssueSummaryView,
+  SeriesResumeView,
   SeriesView,
 } from "@/lib/api/types";
 import {
@@ -38,13 +38,7 @@ import {
   formatRelativeDate,
 } from "@/lib/format";
 import { collectionStatus } from "@/lib/series-status";
-import {
-  type ProgressLike,
-  type ReadState,
-  indexProgress,
-  pickNextIssue,
-  readButtonLabel,
-} from "@/lib/reading-state";
+import { type ReadState, readButtonLabel } from "@/lib/reading-state";
 
 import { readerUrl } from "@/lib/urls";
 
@@ -53,8 +47,6 @@ import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
 import { SeriesSourcesFooter } from "./SeriesSourcesFooter";
-
-type ProgressDelta = { records: ProgressLike[] };
 
 export default async function SeriesPage({
   params,
@@ -67,12 +59,17 @@ export default async function SeriesPage({
   const { q: initialQuery } = await searchParams;
 
   let series: SeriesView;
-  let firstPage: IssueListView;
+  let firstIssuePage: IssueListView;
+  let resume: SeriesResumeView;
   try {
     series = await apiGet<SeriesView>(`/series/${slug}`);
-    // First page used purely for resume detection. Client component
-    // re-fetches with the chosen sort/search.
-    firstPage = await apiGet<IssueListView>(`/series/${slug}/issues?limit=100`);
+    // A bounded issue preview feeds "Read from beginning" and the activity
+    // heatmap. The primary resume CTA comes from the server endpoint below so
+    // long series are not capped to this preview page.
+    firstIssuePage = await apiGet<IssueListView>(
+      `/series/${slug}/issues?limit=200`,
+    );
+    resume = await apiGet<SeriesResumeView>(`/series/${slug}/resume`);
   } catch (e) {
     if (e instanceof ApiError) {
       if (e.status === 401) redirect(`/sign-in`);
@@ -81,11 +78,13 @@ export default async function SeriesPage({
     throw e;
   }
 
-  const next = await pickNextWithProgress(firstPage.items);
+  const nextHref = resumeReaderHref(resume);
+  const nextState = readStateFromResume(resume.state);
   // The first active issue is the "Read from beginning" target — independent
   // of the resume target so users can always restart from #1 even when
   // they're mid-way through a later issue.
-  const firstIssue = firstPage.items.find((i) => i.state === "active") ?? null;
+  const firstIssue =
+    firstIssuePage.items.find((i) => i.state === "active") ?? null;
 
   const status = formatPublicationStatus(series.status);
   const readingTime = formatReadingTime(series.total_page_count ?? 0);
@@ -148,7 +147,7 @@ export default async function SeriesPage({
             />
           </div>
           <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm sm:flex-col lg:mx-0 lg:max-w-72">
-            {next.target ? (
+            {nextHref ? (
               // `sm:flex-none` cancels mobile's `flex-1` once the
               // container flips to `sm:flex-col` — otherwise
               // flex-grow stretches the button vertically along the
@@ -158,10 +157,7 @@ export default async function SeriesPage({
                 size="lg"
                 className="h-12 flex-1 sm:h-10 sm:w-full sm:flex-none"
               >
-                <Link href={readerUrl(next.target)}>
-                  {readButtonLabel(next.state)}
-                  {next.target.number ? ` · #${next.target.number}` : ""}
-                </Link>
+                <Link href={nextHref}>{readButtonLabel(nextState)}</Link>
               </Button>
             ) : (
               <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-auto sm:flex-none sm:py-2">
@@ -171,7 +167,7 @@ export default async function SeriesPage({
             <SeriesActions
               series={series}
               libraryId={series.library_id}
-              firstIssueId={firstIssue?.id ?? null}
+              firstIssue={firstIssue}
             />
           </div>
         </div>
@@ -413,7 +409,7 @@ export default async function SeriesPage({
           <SeriesActivityTab
             seriesId={series.id}
             seriesSlug={series.slug}
-            issues={firstPage.items}
+            issues={firstIssuePage.items}
             totalIssueCount={
               series.progress_summary?.total ??
               series.issue_count ??
@@ -513,25 +509,15 @@ function FactBlock({
   );
 }
 
-/**
- * Resolve the dynamic CTA target ("Read" / "Continue reading" / "Read
- * again"). Uses just the first 100 issues for resume detection — that's
- * enough for almost every series, and the *aggregate* read-progress
- * counts now come from `series.progress_summary` (server-computed, not
- * bound by the client-side page cap).
- */
-async function pickNextWithProgress(
-  issues: IssueSummaryView[],
-): Promise<{ target: IssueSummaryView | null; state: ReadState }> {
-  const issueIds = new Set(issues.map((i) => i.id));
-  let progressByIssueId = new Map<string, ProgressLike>();
-  try {
-    const delta = await apiGet<ProgressDelta>(`/progress`);
-    progressByIssueId = indexProgress(delta.records, issueIds);
-  } catch {
-    /* no progress yet */
-  }
-  return pickNextIssue(issues, progressByIssueId);
+function readStateFromResume(state: string): ReadState {
+  if (state === "in_progress" || state === "finished") return state;
+  return "unread";
+}
+
+function resumeReaderHref(resume: SeriesResumeView): string | null {
+  if (!resume.issue_slug) return null;
+  const base = readerUrl(resume.series_slug, resume.issue_slug);
+  return resume.page > 0 ? `${base}?page=${resume.page}` : base;
 }
 
 /**

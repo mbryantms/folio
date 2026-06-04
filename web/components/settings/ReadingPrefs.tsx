@@ -222,6 +222,7 @@ export function ReadingPrefs() {
 function ActivityThresholdsCard() {
   const me = useMe();
   const update = useUpdatePreferences({ silent: true });
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   if (me.isLoading) return <Skeleton className="h-40 w-full" />;
   if (me.error || !me.data) return null;
@@ -235,6 +236,28 @@ function ActivityThresholdsCard() {
 
   function commit(body: PreferencesReq) {
     update.mutate(body);
+  }
+  function validateAndCommit(
+    key: string,
+    raw: string,
+    min: number,
+    max: number,
+    toBody: (value: number) => PreferencesReq,
+  ) {
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < min || value > max) {
+      setErrors((prev) => ({
+        ...prev,
+        [key]: `Enter a value from ${min} to ${max}.`,
+      }));
+      return;
+    }
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    commit(toBody(value));
   }
 
   return (
@@ -253,13 +276,26 @@ function ActivityThresholdsCard() {
             step={5}
             defaultValue={minActiveSec}
             onBlur={(e) => {
-              const v = Number(e.currentTarget.value);
-              if (!Number.isFinite(v) || v < 1 || v > 600) return;
-              commit({ reading_min_active_ms: Math.round(v * 1000) });
+              validateAndCommit(
+                "min-active",
+                e.currentTarget.value,
+                1,
+                600,
+                (v) => ({ reading_min_active_ms: Math.round(v * 1000) }),
+              );
             }}
             disabled={update.isPending}
+            aria-invalid={!!errors["min-active"]}
           />
-          <p className="text-muted-foreground text-xs">1–600 seconds.</p>
+          <p
+            className={
+              errors["min-active"]
+                ? "text-destructive text-xs"
+                : "text-muted-foreground text-xs"
+            }
+          >
+            {errors["min-active"] ?? "1–600 seconds."}
+          </p>
         </div>
         <div className="space-y-1">
           <Label htmlFor="min-pages">Minimum distinct pages</Label>
@@ -271,13 +307,26 @@ function ActivityThresholdsCard() {
             step={1}
             defaultValue={minPages}
             onBlur={(e) => {
-              const v = Number(e.currentTarget.value);
-              if (!Number.isFinite(v) || v < 1 || v > 200) return;
-              commit({ reading_min_pages: v });
+              validateAndCommit(
+                "min-pages",
+                e.currentTarget.value,
+                1,
+                200,
+                (v) => ({ reading_min_pages: v }),
+              );
             }}
             disabled={update.isPending}
+            aria-invalid={!!errors["min-pages"]}
           />
-          <p className="text-muted-foreground text-xs">1–200 pages.</p>
+          <p
+            className={
+              errors["min-pages"]
+                ? "text-destructive text-xs"
+                : "text-muted-foreground text-xs"
+            }
+          >
+            {errors["min-pages"] ?? "1–200 pages."}
+          </p>
         </div>
         <div className="space-y-1">
           <Label htmlFor="idle">Idle timeout (seconds)</Label>
@@ -289,15 +338,42 @@ function ActivityThresholdsCard() {
             step={10}
             defaultValue={idleSec}
             onBlur={(e) => {
-              const v = Number(e.currentTarget.value);
-              if (!Number.isFinite(v) || v < 30 || v > 1800) return;
-              commit({ reading_idle_ms: Math.round(v * 1000) });
+              validateAndCommit(
+                "idle",
+                e.currentTarget.value,
+                30,
+                1800,
+                (v) => ({ reading_idle_ms: Math.round(v * 1000) }),
+              );
             }}
             disabled={update.isPending}
+            aria-invalid={!!errors.idle}
           />
-          <p className="text-muted-foreground text-xs">30–1800 seconds.</p>
+          <p
+            className={
+              errors.idle
+                ? "text-destructive text-xs"
+                : "text-muted-foreground text-xs"
+            }
+          >
+            {errors.idle ?? "30–1800 seconds."}
+          </p>
         </div>
       </div>
+      <p
+        aria-live="polite"
+        className={
+          update.isError
+            ? "text-destructive mt-3 text-xs"
+            : "text-muted-foreground mt-3 text-xs"
+        }
+      >
+        {update.isPending
+          ? "Saving thresholds…"
+          : update.isError
+            ? "Failed to save thresholds."
+            : "Changes save when each field loses focus."}
+      </p>
     </SettingsSection>
   );
 }

@@ -13,7 +13,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useForceRecreateSeriesPageMap } from "@/lib/api/mutations";
-import type { SeriesView } from "@/lib/api/types";
+import type { IssueSummaryView, SeriesView } from "@/lib/api/types";
 
 import { SeriesEditDrawer } from "./SeriesEditDrawer";
 import { SeriesSettingsMenu } from "./SeriesSettingsMenu";
@@ -29,14 +29,14 @@ import { SeriesSettingsMenu } from "./SeriesSettingsMenu";
 export function SeriesActions({
   series,
   libraryId,
-  firstIssueId,
+  firstIssue,
 }: {
   series: SeriesView;
   libraryId: string;
   /** Series-scope "Read from beginning" target — typically the lowest-
    *  sorted active issue. `null` when the series has no active issues
    *  (in which case the menu suppresses the item). */
-  firstIssueId: string | null;
+  firstIssue: Pick<IssueSummaryView, "slug" | "series_slug"> | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmForceRecreate, setConfirmForceRecreate] = useState(false);
@@ -52,7 +52,7 @@ export function SeriesActions({
         seriesSlug={series.slug}
         seriesName={series.name}
         libraryId={libraryId}
-        firstIssueId={firstIssueId}
+        firstIssue={firstIssue}
         onEdit={() => setEditOpen(true)}
         onForceRecreatePageMap={() => setConfirmForceRecreate(true)}
       />

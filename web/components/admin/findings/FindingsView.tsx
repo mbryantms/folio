@@ -18,16 +18,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDismissHealthIssue } from "@/lib/api/mutations";
 import {
-  useAdminHealthIssues,
-  useAdminScanRuns,
+  useAdminHealthIssuesInfinite,
+  useAdminScanRunsInfinite,
   useLibraryList,
 } from "@/lib/api/queries";
 import type { CrossLibHealthIssueView } from "@/lib/api/types";
@@ -90,17 +85,17 @@ export function FindingsView() {
 
       <TabsContent value="health" className="mt-4 space-y-3">
         <FilterRow>
-          <SeverityChips value={severity} onChange={(v) => setParam("severity", v)} />
+          <SeverityChips
+            value={severity}
+            onChange={(v) => setParam("severity", v)}
+          />
           <LibraryFilter
             libraries={libraries ?? []}
             value={libraryId}
             onChange={(v) => setParam("library_id", v)}
           />
         </FilterRow>
-        <HealthIssuesRail
-          severity={severity}
-          libraryId={libraryId}
-        />
+        <HealthIssuesRail severity={severity} libraryId={libraryId} />
       </TabsContent>
 
       <TabsContent value="scans" className="mt-4 space-y-3">
@@ -141,7 +136,9 @@ function SeverityChips({
   ];
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-muted-foreground mr-1 text-xs uppercase">Severity</span>
+      <span className="text-muted-foreground mr-1 text-xs uppercase">
+        Severity
+      </span>
       {options.map((o) => (
         <FilterPill
           key={o.v}
@@ -171,7 +168,9 @@ function StateChips({
   ];
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-muted-foreground mr-1 text-xs uppercase">State</span>
+      <span className="text-muted-foreground mr-1 text-xs uppercase">
+        State
+      </span>
       {options.map((o) => (
         <FilterPill
           key={o.v}
@@ -196,7 +195,9 @@ function LibraryFilter({
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-muted-foreground mr-1 text-xs uppercase">Library</span>
+      <span className="text-muted-foreground mr-1 text-xs uppercase">
+        Library
+      </span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -225,11 +226,18 @@ function HealthIssuesRail({
     library_id: libraryId === "all" ? undefined : libraryId,
     limit: 50,
   };
-  const { data, isLoading, error } = useAdminHealthIssues(filters);
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useAdminHealthIssuesInfinite(filters);
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
-  const items = data?.items ?? [];
+  const items = data?.pages.flatMap((p) => p.items) ?? [];
   if (items.length === 0) {
     return (
       <Card>
@@ -246,10 +254,28 @@ function HealthIssuesRail({
       {items.map((row) => (
         <HealthIssueRow key={row.id} row={row} />
       ))}
-      {data?.next_cursor ? (
-        <p className="text-muted-foreground text-center text-xs">
-          More rows available — refine the filters to drill in.
-        </p>
+      {hasNextPage ? (
+        <div className="flex flex-col items-center gap-2 pt-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                Loading more…
+              </>
+            ) : (
+              "Load more"
+            )}
+          </Button>
+          <p className="text-muted-foreground text-center text-xs">
+            Refine the filters to narrow this list.
+          </p>
+        </div>
       ) : null}
     </div>
   );
@@ -329,11 +355,18 @@ function ScanRunsRail({
     library_id: libraryId === "all" ? undefined : libraryId,
     limit: 50,
   };
-  const { data, isLoading, error } = useAdminScanRuns(filters);
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useAdminScanRunsInfinite(filters);
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
-  const items = data?.items ?? [];
+  const items = data?.pages.flatMap((p) => p.items) ?? [];
   if (items.length === 0) {
     return (
       <Card>
@@ -344,71 +377,100 @@ function ScanRunsRail({
     );
   }
   return (
-    <Card>
-      <CardContent className="p-0">
-        <table className="w-full text-sm">
-          <thead className="text-muted-foreground text-xs uppercase">
-            <tr>
-              <th className="border-border border-b p-3 text-left">State</th>
-              <th className="border-border border-b p-3 text-left">Library</th>
-              <th className="border-border border-b p-3 text-left">Kind</th>
-              <th className="border-border border-b p-3 text-left">Started</th>
-              <th className="border-border border-b p-3 text-left">Ended</th>
-              <th className="border-border border-b p-3 text-left">Error</th>
-              <th className="border-border border-b p-3 text-left"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((row) => (
-              <tr key={row.id} className="hover:bg-muted/40">
-                <td className="border-border border-b p-3">
-                  <StateBadge state={row.state} />
-                </td>
-                <td className="border-border border-b p-3">
-                  {row.library_slug ? (
-                    <Link
-                      href={`/admin/libraries/${row.library_slug}/history`}
-                      className="hover:underline"
-                    >
-                      {row.library_name}
-                    </Link>
-                  ) : (
-                    row.library_name
-                  )}
-                </td>
-                <td className="border-border border-b p-3 font-mono text-xs">
-                  {row.kind}
-                  {row.series_name ? ` · ${row.series_name}` : ""}
-                </td>
-                <td className="border-border text-muted-foreground border-b p-3 text-xs">
-                  {new Date(row.started_at).toLocaleString()}
-                </td>
-                <td className="border-border text-muted-foreground border-b p-3 text-xs">
-                  {row.ended_at
-                    ? new Date(row.ended_at).toLocaleString()
-                    : "—"}
-                </td>
-                <td className="border-border border-b p-3 text-xs wrap-anywhere">
-                  {row.error ?? ""}
-                </td>
-                <td className="border-border border-b p-3 text-xs">
-                  {/* Cross-link into the live log tail scoped to
+    <div className="space-y-3">
+      <Card>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="text-muted-foreground text-xs uppercase">
+              <tr>
+                <th className="border-border border-b p-3 text-left">State</th>
+                <th className="border-border border-b p-3 text-left">
+                  Library
+                </th>
+                <th className="border-border border-b p-3 text-left">Kind</th>
+                <th className="border-border border-b p-3 text-left">
+                  Started
+                </th>
+                <th className="border-border border-b p-3 text-left">Ended</th>
+                <th className="border-border border-b p-3 text-left">Error</th>
+                <th className="border-border border-b p-3 text-left"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row) => (
+                <tr key={row.id} className="hover:bg-muted/40">
+                  <td className="border-border border-b p-3">
+                    <StateBadge state={row.state} />
+                  </td>
+                  <td className="border-border border-b p-3">
+                    {row.library_slug ? (
+                      <Link
+                        href={`/admin/libraries/${row.library_slug}/history`}
+                        className="hover:underline"
+                      >
+                        {row.library_name}
+                      </Link>
+                    ) : (
+                      row.library_name
+                    )}
+                  </td>
+                  <td className="border-border border-b p-3 font-mono text-xs">
+                    {row.kind}
+                    {row.series_name ? ` · ${row.series_name}` : ""}
+                  </td>
+                  <td className="border-border text-muted-foreground border-b p-3 text-xs">
+                    {new Date(row.started_at).toLocaleString()}
+                  </td>
+                  <td className="border-border text-muted-foreground border-b p-3 text-xs">
+                    {row.ended_at
+                      ? new Date(row.ended_at).toLocaleString()
+                      : "—"}
+                  </td>
+                  <td className="border-border border-b p-3 text-xs wrap-anywhere">
+                    {row.error ?? ""}
+                  </td>
+                  <td className="border-border border-b p-3 text-xs">
+                    {/* Cross-link into the live log tail scoped to
                       this scan's library. The Logs page picks up
                       `?library_id=` from the URL on mount. */}
-                  <Link
-                    href={`/admin/logs?library_id=${encodeURIComponent(row.library_id)}`}
-                    className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
-                  >
-                    <ScrollText className="h-3.5 w-3.5" aria-hidden="true" />
-                    Logs
-                  </Link>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
+                    <Link
+                      href={`/admin/logs?library_id=${encodeURIComponent(row.library_id)}`}
+                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
+                    >
+                      <ScrollText className="h-3.5 w-3.5" aria-hidden="true" />
+                      Logs
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+      {hasNextPage ? (
+        <div className="flex flex-col items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                Loading more…
+              </>
+            ) : (
+              "Load more"
+            )}
+          </Button>
+          <p className="text-muted-foreground text-center text-xs">
+            Refine the filters to narrow this list.
+          </p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -478,7 +540,14 @@ function formatPayload(kind: string, p: unknown): string {
     const suffix = `${dropped} of ${total} entries dropped (${reason})`;
     return path ? `${path} — ${suffix}` : suffix;
   }
-  for (const k of ["path", "file_path", "series_id", "issue_id", "reason", "details"]) {
+  for (const k of [
+    "path",
+    "file_path",
+    "series_id",
+    "issue_id",
+    "reason",
+    "details",
+  ]) {
     const v = obj[k];
     if (typeof v === "string" && v.length > 0) return v;
   }

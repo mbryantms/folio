@@ -127,6 +127,10 @@ pub struct LoginReq {
 pub struct MeResp {
     pub id: String,
     pub email: Option<String>,
+    /// True when `/me/account` accepts email edits for this user.
+    pub email_editable: bool,
+    /// True when `/me/account` accepts local password changes for this user.
+    pub password_editable: bool,
     pub display_name: String,
     pub role: String,
     pub csrf_token: String,
@@ -1491,9 +1495,12 @@ fn finalize_session(
 /// Build a `MeResp` from a fully-loaded user row. Used by login, refresh,
 /// and the preferences PATCH so the response shape stays consistent.
 pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp {
+    let is_local = row.external_id.starts_with("local:");
     MeResp {
         id: row.id.to_string(),
         email: row.email.clone(),
+        email_editable: is_local,
+        password_editable: is_local && row.password_hash.is_some(),
         display_name: row.display_name.clone(),
         role: row.role.clone(),
         csrf_token,
@@ -1529,6 +1536,8 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
         MeResp {
             id: user.id.to_string(),
             email: user.email.clone(),
+            email_editable: true,
+            password_editable: true,
             display_name: user.display_name.clone(),
             role: user.role.clone(),
             csrf_token,

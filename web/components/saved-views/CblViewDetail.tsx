@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { toast } from "sonner";
 import {
   BookOpen,
   Check,
@@ -94,33 +95,16 @@ function CblViewDetailInner({
   // separate hydration round-trip is needed (the old
   // `useCblListIssues({ limit: 1000 })` is gone).
   const [hideMissing, setHideMissing] = useCblHideMissing(listId);
-  const entriesQuery = useCblListEntriesInfinite(listId, {
-    status: hideMissing ? "matched,ambiguous,manual" : undefined,
-  });
-  // Page-local search (M5 of search-improvements). Filters the CBL's
-  // entries client-side by series name / issue title / number. To
-  // give a stable, correct result-set we eagerly walk all pages
-  // whenever a search is active — same pattern used by the
-  // drag-reorder surfaces (per CLAUDE.md list-pagination conventions),
-  // so the filter never lies by missing rows that exist on a
-  // not-yet-loaded page.
   const [q, setQ] = React.useState("");
   const [debouncedQ, setDebouncedQ] = React.useState("");
   React.useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(q.trim().toLowerCase()), 200);
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 200);
     return () => clearTimeout(t);
   }, [q]);
-  React.useEffect(() => {
-    if (debouncedQ.length === 0) return;
-    if (entriesQuery.hasNextPage && !entriesQuery.isFetchingNextPage) {
-      void entriesQuery.fetchNextPage();
-    }
-  }, [
-    debouncedQ,
-    entriesQuery,
-    entriesQuery.hasNextPage,
-    entriesQuery.isFetchingNextPage,
-  ]);
+  const entriesQuery = useCblListEntriesInfinite(listId, {
+    status: hideMissing ? "matched,ambiguous,manual" : undefined,
+    q: debouncedQ || undefined,
+  });
   // Tiny piggy-back on the rail's window query so the detail page
   // highlights the same "Up next" anchor card as the home rail.
   // before=0 keeps the response cheap — we only need `current_index`
@@ -225,6 +209,10 @@ function CblViewDetailInner({
     }
     return out;
   }, [loadedEntries, selection]);
+  const skippedSelectedCount = Math.max(
+    0,
+    selection.count - selectedIssueIds.length,
+  );
 
   // Hooks must run unconditionally — declared above the early
   // returns so the loading / error branches don't break the
@@ -250,30 +238,53 @@ function CblViewDetailInner({
   const filterTotal = entriesQuery.data?.pages[0]?.total ?? null;
   const missingCount = list.stats.missing;
   const canRefresh = list.source_kind !== "upload";
+  const warnNoMatchedSelection = () => {
+    toast.warning("No matched issues selected", {
+      description: "Missing CBL entries cannot be marked read or unread.",
+    });
+  };
+  const notifySkippedSelection = () => {
+    if (skippedSelectedCount > 0) {
+      toast.info(
+        `${skippedSelectedCount} missing ${
+          skippedSelectedCount === 1 ? "entry was" : "entries were"
+        } skipped`,
+      );
+    }
+  };
   const submitMarkRead = (backfill: boolean) => {
-    if (selectedIssueIds.length === 0) return;
+    if (selectedIssueIds.length === 0) {
+      warnNoMatchedSelection();
+      return;
+    }
     bulkMark.mutate(
       { issue_ids: selectedIssueIds, finished: true, backfill },
       {
         onSuccess: () => {
           selection.clear();
           setMarkReadOpen(false);
+          notifySkippedSelection();
         },
       },
     );
   };
   const runBulkMark = (finished: boolean) => {
-    if (selectedIssueIds.length === 0) return;
-    if (
-      finished
-      && selectedIssueIds.length >= BULK_BACKFILL_PROMPT_THRESHOLD
-    ) {
+    if (selectedIssueIds.length === 0) {
+      warnNoMatchedSelection();
+      return;
+    }
+    if (finished && selectedIssueIds.length >= BULK_BACKFILL_PROMPT_THRESHOLD) {
       setMarkReadOpen(true);
       return;
     }
     bulkMark.mutate(
       { issue_ids: selectedIssueIds, finished },
-      { onSuccess: () => selection.clear() },
+      {
+        onSuccess: () => {
+          selection.clear();
+          notifySkippedSelection();
+        },
+      },
     );
   };
   const gridStyle: React.CSSProperties = {
@@ -302,14 +313,11 @@ function CblViewDetailInner({
     }
   }
 
-  // When a search is active, filter loaded entries by series name /
-  // issue title / issue number. Gap markers are dropped while
-  // searching — they'd be meaningless against a free-text filter
-  // (we're no longer walking the canonical position sequence).
-  const filteredEntries =
-    debouncedQ.length === 0
-      ? loadedEntries
-      : loadedEntries.filter((e) => entryMatchesQuery(e, debouncedQ));
+  // The server applies the page-local search (`q`) before pagination,
+  // so loaded entries are already the filtered result set. Gap markers
+  // are dropped while searching because the canonical CBL position
+  // sequence no longer represents the visible rows.
+  const filteredEntries = loadedEntries;
 
   // Build the render plan. When `hideMissing` is on, the server has
   // already filtered out missing entries; we still walk loaded
@@ -373,9 +381,8 @@ function CblViewDetailInner({
             )}
             {/* Page-local search input. Folded into the header's
              *  actions row alongside card-size + select so the
-             *  toolbar reads as one cluster. Auto-walks pages while
-             *  active (see effect above) so the filter sees the
-             *  full list. */}
+             *  toolbar reads as one cluster. Search is server-side,
+             *  preserving pagination + totals for long CBLs. */}
             <div className="relative w-56">
               <SearchIcon
                 aria-hidden="true"
@@ -488,12 +495,14 @@ function CblViewDetailInner({
             label: "Mark read",
             icon: Check,
             onClick: () => runBulkMark(true),
+            disabled: selectedIssueIds.length === 0,
           },
           {
             id: "mark-unread",
             label: "Mark unread",
             icon: Circle,
             onClick: () => runBulkMark(false),
+            disabled: selectedIssueIds.length === 0,
           },
         ]}
         overflow={
@@ -524,18 +533,18 @@ function CblViewDetailInner({
         </div>
       ) : items.length === 0 ? (
         <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
-          Every entry in this list is currently missing from your library.
-          Toggle &ldquo;Hide missing&rdquo; off to see them.
+          {debouncedQ
+            ? `No entries match "${debouncedQ}".`
+            : hideMissing
+              ? 'Every entry in this list is currently missing from your library. Toggle "Hide missing" off to see them.'
+              : "No entries to show."}
         </div>
       ) : (
         <>
           <ul role="list" className="grid gap-3" style={gridStyle}>
             {items.map((item) =>
               item.kind === "entry" ? (
-                <li
-                  key={item.entry.id}
-                  id={`cbl-entry-${item.entry.position}`}
-                >
+                <li key={item.entry.id} id={`cbl-entry-${item.entry.position}`}>
                   <CblIssueCard
                     entry={item.entry}
                     issue={item.entry.issue ?? undefined}
@@ -683,26 +692,4 @@ function renderYearRangeBadge(
       </Tooltip>
     </TooltipProvider>
   );
-}
-
-/** Case-insensitive substring match against the visible facets of a
- *  CBL entry: series name, issue title, issue number (raw + sort
- *  representations). Caller passes a pre-lowercased needle so we
- *  don't re-lowercase on every entry. */
-function entryMatchesQuery(
-  entry: CblEntryHydratedView,
-  lowerQ: string,
-): boolean {
-  if (!lowerQ) return true;
-  const buckets: Array<string | null | undefined> = [
-    entry.series_name,
-    entry.issue_number,
-    entry.issue?.title,
-    entry.issue?.number,
-    entry.issue?.series_name,
-  ];
-  for (const v of buckets) {
-    if (v && v.toLowerCase().includes(lowerQ)) return true;
-  }
-  return false;
 }

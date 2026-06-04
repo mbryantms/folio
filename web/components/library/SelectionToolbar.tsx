@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { MoreHorizontal, X } from "lucide-react";
+import { ChevronDown, MoreHorizontal, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -29,10 +30,10 @@ import { cn } from "@/lib/utils";
  *     this. On mobile, the explicit "Done" button is the only way
  *     out.
  *
- * **Responsive overflow:** `primary` actions render inline at all
- * widths. `overflow` actions render inline at `sm+` and collapse
- * into a `MoreHorizontal` dropdown at `sm-` so the toolbar still
- * fits a 375 px viewport.
+ * **Responsive overflow:** `primary` and grouped actions render
+ * inline at all widths. Utility actions and `overflow` actions
+ * render inline only at `2xl+` and collapse into a `MoreHorizontal`
+ * dropdown below that so the toolbar stays usable on narrow screens.
  *
  * **Mount/unmount animation (v0.3.19+):** the public `SelectionToolbar`
  * owns an `open` prop; when `open` flips false the toolbar plays an
@@ -52,14 +53,25 @@ export type SelectionAction = {
   destructive?: boolean;
 };
 
+export type SelectionActionGroup = {
+  id: string;
+  label: string;
+  icon?: LucideIcon;
+  actions: SelectionAction[];
+  disabled?: boolean;
+};
+
 export type SelectionToolbarProps = {
   count: number;
   total: number;
   primary: SelectionAction[];
   overflow?: SelectionAction[];
+  actionGroups?: SelectionActionGroup[];
   onDone: () => void;
   onClear: () => void;
   onSelectAll?: () => void;
+  onSelectAllMatching?: () => void;
+  matchingTotal?: number | null;
   /** When true, primary action buttons are disabled (mid-mutation).
    *  Lets the toolbar prevent double-firing while a bulk request
    *  is in-flight. */
@@ -143,18 +155,31 @@ export function SelectionToolbarBody({
   total,
   primary,
   overflow,
+  actionGroups,
   onDone,
   onClear,
   onSelectAll,
+  onSelectAllMatching,
+  matchingTotal,
   isPending,
   dataState = "open",
 }: SelectionToolbarProps & { dataState?: "open" | "closed" }) {
   const allSelected = count === total && total > 0;
   const overflowItems = overflow ?? [];
+  const groupedItems = actionGroups ?? [];
   const canSelectAll = !!onSelectAll && !allSelected;
+  const canSelectAllMatching = !!onSelectAllMatching;
   const canClear = count > 0;
-  const hasMobileMenu = overflowItems.length > 0 || !!onSelectAll || canClear;
+  const hasOverflowMenu =
+    overflowItems.length > 0 ||
+    !!onSelectAll ||
+    canSelectAllMatching ||
+    canClear;
   const actionDisabled = isPending || count === 0;
+  const matchingLabel =
+    matchingTotal != null
+      ? `Select all matching (${matchingTotal})`
+      : "Select all matching";
 
   return (
     <div
@@ -164,7 +189,7 @@ export function SelectionToolbarBody({
       aria-live="polite"
       className={cn(
         "bg-background/95 border-border sticky top-0 z-20 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b py-2 backdrop-blur",
-        "sm:flex sm:flex-nowrap",
+        "sm:flex sm:flex-wrap 2xl:flex-nowrap",
         // Mount + unmount animation: keyframes selection-toolbar-in
         // / -out in `web/styles/globals.css`. Toggled via the
         // `data-state` attribute the presence wrapper sets.
@@ -186,7 +211,7 @@ export function SelectionToolbarBody({
         {count} selected
       </span>
 
-      <div className="hidden min-w-[13rem] items-center gap-1 sm:flex">
+      <div className="hidden min-w-[13rem] items-center gap-1 2xl:flex">
         {canSelectAll && (
           <Button
             type="button"
@@ -195,7 +220,19 @@ export function SelectionToolbarBody({
             onClick={onSelectAll}
             className="text-muted-foreground hover:text-foreground"
           >
-            Select all ({total})
+            Select loaded ({total})
+          </Button>
+        )}
+
+        {canSelectAllMatching && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onSelectAllMatching}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            {matchingLabel}
           </Button>
         )}
 
@@ -212,8 +249,8 @@ export function SelectionToolbarBody({
         )}
       </div>
 
-      {hasMobileMenu && (
-        <div className="flex justify-end sm:hidden">
+      {hasOverflowMenu && (
+        <div className="flex justify-end 2xl:hidden">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -226,6 +263,7 @@ export function SelectionToolbarBody({
                   isPending &&
                   overflowItems.length > 0 &&
                   !canSelectAll &&
+                  !canSelectAllMatching &&
                   !canClear
                 }
                 className="h-9 w-9"
@@ -236,15 +274,19 @@ export function SelectionToolbarBody({
             <DropdownMenuContent align="end">
               {canSelectAll && (
                 <DropdownMenuItem onClick={onSelectAll}>
-                  Select all ({total})
+                  Select loaded ({total})
+                </DropdownMenuItem>
+              )}
+              {canSelectAllMatching && (
+                <DropdownMenuItem onClick={onSelectAllMatching}>
+                  {matchingLabel}
                 </DropdownMenuItem>
               )}
               {canClear && (
                 <DropdownMenuItem onClick={onClear}>Clear</DropdownMenuItem>
               )}
-              {(canSelectAll || canClear) && overflowItems.length > 0 && (
-                <DropdownMenuSeparator />
-              )}
+              {(canSelectAll || canSelectAllMatching || canClear) &&
+                overflowItems.length > 0 && <DropdownMenuSeparator />}
               {overflowItems.map((a, i) => {
                 const Icon = a.icon;
                 return (
@@ -285,10 +327,59 @@ export function SelectionToolbarBody({
           );
         })}
 
-        {/* Overflow actions render inline at sm+. The mobile menu above
-         *  combines utilities + overflow in one stable top-right slot. */}
+        {groupedItems.map((group) => {
+          const GroupIcon = group.icon;
+          const triggerDisabled =
+            group.disabled ||
+            actionDisabled ||
+            group.actions.every((a) => a.disabled);
+          return (
+            <DropdownMenu key={group.id}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={triggerDisabled}
+                  className="min-w-0 flex-1 sm:flex-none"
+                >
+                  {GroupIcon && <GroupIcon className="mr-1.5 h-4 w-4" />}
+                  {group.label}
+                  <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>{group.label}</DropdownMenuLabel>
+                {group.actions.map((a, i) => {
+                  const Icon = a.icon;
+                  return (
+                    <React.Fragment key={a.id}>
+                      {a.destructive && i > 0 && <DropdownMenuSeparator />}
+                      <DropdownMenuItem
+                        onClick={a.onClick}
+                        disabled={
+                          group.disabled || a.disabled || actionDisabled
+                        }
+                        className={
+                          a.destructive ? "text-destructive" : undefined
+                        }
+                      >
+                        {Icon && <Icon className="mr-2 h-4 w-4" />}
+                        {a.label}
+                      </DropdownMenuItem>
+                    </React.Fragment>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          );
+        })}
+
+        {/* Utility + overflow actions render inline only on very wide
+         *  screens. Below that, the menu above owns them so the primary
+         *  actions never collide with long "Select all matching" labels. */}
         {overflowItems.length > 0 && (
-          <div className="hidden items-center gap-1 sm:flex">
+          <div className="hidden items-center gap-1 2xl:flex">
             {overflowItems.map((a) => {
               const Icon = a.icon;
               return (

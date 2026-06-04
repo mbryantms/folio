@@ -24,7 +24,7 @@ use entity::{
     progress_record::{self, ActiveModel as ProgressAM, Entity as ProgressEntity},
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set, Unchanged,
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, Set, Unchanged,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -46,6 +46,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
             axum::routing::post(upsert).get(list),
         )
         .routes(routes!(upsert_series))
+        .routes(routes!(upsert_series_matching))
         .routes(routes!(upsert_bulk))
         .routes(routes!(upsert_series_bulk))
 }
@@ -421,6 +422,152 @@ pub async fn upsert_series(
     }
 
     (StatusCode::OK, Json(UpsertSeriesResp { updated, skipped })).into_response()
+}
+
+/// Body for `POST /series/{slug}/progress-matching` — bulk read/unread for
+/// every active issue in the series matching the current UI query. This is the
+/// server-side companion to "Select all matching": the client sends the same
+/// search text it used for `/series/{slug}/issues?q=...`, and the server walks
+/// the complete result set instead of requiring the browser to load every
+/// cursor page first.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpsertSeriesMatchingReq {
+    pub finished: bool,
+    #[serde(default)]
+    pub device: Option<String>,
+    #[serde(default)]
+    pub backfill: bool,
+    #[serde(default)]
+    pub q: Option<String>,
+}
+
+#[utoipa::path(
+    operation_id = "progress_upsert_series_matching",    post,
+    path = "/series/{slug}/progress-matching",
+    params(("slug" = String, Path,)),
+    request_body = UpsertSeriesMatchingReq,
+    responses(
+        (status = 200, body = UpsertBulkResp),
+        (status = 404, description = "series not found"),
+    )
+)]
+#[handler]
+pub async fn upsert_series_matching(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(slug): AxPath<String>,
+    Json(req): Json<UpsertSeriesMatchingReq>,
+) -> Response {
+    let srow = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if !visible(&app, &user, srow.library_id).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
+    }
+
+    let mut query = issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(srow.id))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null());
+
+    if let Some(raw) = req.q.as_deref() {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let pattern = format!("%{}%", trimmed.replace('%', "\\%").replace('_', "\\_"));
+            query = query.filter(
+                Condition::any()
+                    .add(issue::Column::Title.like(pattern.as_str()))
+                    .add(issue::Column::NumberRaw.like(pattern.as_str())),
+            );
+        }
+    }
+
+    let issues = match query.all(&app.db).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "series matching-progress issue lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let now = Utc::now().fixed_offset();
+    let mut updated: u32 = 0;
+    let mut skipped: u32 = 0;
+
+    for iss in issues {
+        let target_page = if req.finished {
+            iss.page_count.unwrap_or(1).max(1) - 1
+        } else {
+            0
+        };
+        let target_percent = if req.finished { 1.0 } else { 0.0 };
+        let existing = match ProgressEntity::find_by_id((user.id, iss.id.clone()))
+            .one(&app.db)
+            .await
+        {
+            Ok(opt) => opt,
+            Err(e) => {
+                tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress lookup failed");
+                continue;
+            }
+        };
+
+        match existing {
+            Some(row) if row.finished == req.finished && row.last_page == target_page => {
+                skipped += 1;
+            }
+            Some(prev) => {
+                let next_finished_at =
+                    resolve_finished_at(prev.finished, req.finished, prev.finished_at, now);
+                let am = ProgressAM {
+                    user_id: Unchanged(user.id),
+                    issue_id: Unchanged(iss.id.clone()),
+                    last_page: Set(target_page),
+                    percent: Set(target_percent),
+                    finished: Set(req.finished),
+                    finished_at: Set(next_finished_at),
+                    updated_at: Set(now),
+                    device: Set(req.device.clone()),
+                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                };
+                if let Err(e) = am.update(&app.db).await {
+                    tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress update failed");
+                    continue;
+                }
+                updated += 1;
+            }
+            None => {
+                let am = ProgressAM {
+                    user_id: Set(user.id),
+                    issue_id: Set(iss.id.clone()),
+                    last_page: Set(target_page),
+                    percent: Set(target_percent),
+                    finished: Set(req.finished),
+                    finished_at: Set(if req.finished { Some(now) } else { None }),
+                    updated_at: Set(now),
+                    device: Set(req.device.clone()),
+                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                };
+                if let Err(e) = am.insert(&app.db).await {
+                    tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress insert failed");
+                    continue;
+                }
+                updated += 1;
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(UpsertBulkResp {
+            updated,
+            skipped,
+            forbidden: 0,
+            not_found: 0,
+        }),
+    )
+        .into_response()
 }
 
 /// Body for `POST /me/progress/bulk` — bulk read/unread for an

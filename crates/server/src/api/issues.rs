@@ -1900,20 +1900,59 @@ pub async fn list(
     let limit = clamp_limit(q.limit);
     let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
 
-    // Search mode: rank by ts_rank_cd; cursor + sort options are
-    // ignored. Search results are always a single ranked page —
-    // items.len() IS the total.
+    // Search mode: rank by ts_rank_cd by default and paginate with an
+    // opaque offset cursor. If the caller passes an explicit sort, use
+    // the same deterministic issue ordering as the non-search branch.
     if let Some(text) = q_text {
-        let ranked = select
-            .filter(Expr::cust_with_values(
-                "search_doc @@ websearch_to_tsquery('simple', $1)",
-                [text],
-            ))
-            .order_by_desc(Expr::cust_with_values(
-                "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
-                [text],
-            ))
-            .limit(limit);
+        let offset = match q.cursor.as_deref() {
+            Some(cursor) => match super::series::parse_offset_cursor(cursor) {
+                Ok(v) => v,
+                Err(_) => {
+                    return error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "validation",
+                        "invalid cursor",
+                    );
+                }
+            },
+            None => 0,
+        };
+        let filtered = select.filter(Expr::cust_with_values(
+            "search_doc @@ websearch_to_tsquery('simple', $1)",
+            [text],
+        ));
+        let total = if q.cursor.is_none() {
+            use sea_orm::PaginatorTrait;
+            match filtered.clone().count(&app.db).await {
+                Ok(n) => Some(n as i64),
+                Err(e) => {
+                    tracing::error!(error = %e, "list issues cross search count failed");
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
+            }
+        } else {
+            None
+        };
+        let ranked = if let Some(sort) = q.sort {
+            let order = q.order.unwrap_or(match sort {
+                IssueSort::Number => SortOrder::Asc,
+                IssueSort::CreatedAt
+                | IssueSort::UpdatedAt
+                | IssueSort::Year
+                | IssueSort::PageCount
+                | IssueSort::UserRating => SortOrder::Desc,
+            });
+            apply_issue_sort_ordering(filtered, sort, matches!(order, SortOrder::Asc), user.id)
+        } else {
+            filtered
+                .order_by_desc(Expr::cust_with_values(
+                    "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
+                    [text],
+                ))
+                .order_by_asc(issue::Column::Id)
+        }
+        .offset(offset)
+        .limit(limit + 1);
         let rows = match ranked.all(&app.db).await {
             Ok(v) => v,
             Err(e) => {
@@ -1921,8 +1960,10 @@ pub async fn list(
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         };
-        let total = Some(rows.len() as i64);
-        return hydrate_and_respond(&app, rows, None, total).await;
+        let has_more = rows.len() as u64 > limit;
+        let next_cursor = has_more.then(|| super::series::encode_offset_cursor(offset + limit));
+        let page: Vec<issue::Model> = rows.into_iter().take(limit as usize).collect();
+        return hydrate_and_respond(&app, page, next_cursor, total).await;
     }
 
     let sort = q.sort.unwrap_or_default();

@@ -48,6 +48,8 @@ import {
 } from "@/lib/api/mutations";
 import { useCollections, useMe } from "@/lib/api/queries";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import type { IssueSummaryView } from "@/lib/api/types";
+import { readerUrl } from "@/lib/urls";
 
 const WANT_TO_READ_KEY = "want_to_read";
 
@@ -62,7 +64,7 @@ export function SeriesSettingsMenu({
   seriesSlug,
   seriesName,
   libraryId,
-  firstIssueId,
+  firstIssue,
   onEdit,
   onForceRecreatePageMap,
 }: {
@@ -70,8 +72,8 @@ export function SeriesSettingsMenu({
   seriesSlug: string;
   seriesName: string;
   libraryId: string;
-  /** Lowest-sorted active issue id for the "Read from beginning" item. */
-  firstIssueId: string | null;
+  /** Lowest-sorted active issue for the "Read from beginning" item. */
+  firstIssue: Pick<IssueSummaryView, "slug" | "series_slug"> | null;
   /** Called when the user picks "Edit series" — the parent owns the
    *  edit-drawer state because the menu auto-closes on item select. */
   onEdit?: () => void;
@@ -153,10 +155,10 @@ export function SeriesSettingsMenu({
   const triggerScan = () =>
     scan.mutate(undefined, { onSuccess: () => router.refresh() });
   const readFromStart = () => {
-    if (!firstIssueId) return;
+    if (!firstIssue) return;
     // `?from=start` makes the reader page bypass saved progress and open at
     // page 0, even when the user is mid-way through a different issue.
-    router.push(`/read/${firstIssueId}?from=start`);
+    router.push(`${readerUrl(firstIssue)}?from=start`);
   };
 
   const busy =
@@ -191,7 +193,7 @@ export function SeriesSettingsMenu({
         <DropdownMenuContent align="end" className="w-60">
           <DropdownMenuLabel>Reading</DropdownMenuLabel>
           <DropdownMenuGroup>
-            {firstIssueId && (
+            {firstIssue && (
               <DropdownMenuItem onSelect={readFromStart}>
                 <RotateCcw className="mr-2 h-4 w-4" />
                 Read from beginning

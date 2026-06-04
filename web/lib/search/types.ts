@@ -10,6 +10,7 @@
  */
 
 import type { ComponentType } from "react";
+import type { MarkerRegion } from "@/lib/api/types";
 
 export type SearchCategory = "series" | "issues" | "markers" | "people";
 
@@ -41,6 +42,9 @@ export interface SearchHit {
   subtitle?: string | null;
   href: string;
   thumbUrl?: string | null;
+  issueId?: string | null;
+  pageIndex?: number | null;
+  region?: MarkerRegion | null;
   /** Optional inline icon for hits that don't have a cover image
    *  (people, …). */
   icon?: ComponentType<{ className?: string }>;

@@ -518,6 +518,38 @@ export function useBulkMarkProgress() {
 }
 
 /**
+ * `POST /series/{slug}/progress-matching` — mark every active issue matching
+ * the current series issue-list query. Used by "Select all matching" so the
+ * browser does not have to load every cursor page before a bulk mark.
+ */
+export function useBulkMarkSeriesMatchingProgress(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<
+    BulkProgressResp,
+    {
+      finished: boolean;
+      q?: string;
+      backfill?: boolean;
+    }
+  >(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/progress-matching`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: (data, input) =>
+        summarizeBulkProgress(data, input.finished),
+      toastId: "bulk-progress-matching",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+        invalidateRails(qc);
+      },
+    },
+  );
+}
+
+/**
  * Bulk-edit a subset of ComicInfo metadata across N issues. Backs
  * the "Edit metadata…" dialog in the SelectionToolbar. See
  * `~/.claude/plans/manga-and-bulk-metadata-1.0.md` M4/M5.

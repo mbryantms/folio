@@ -5,8 +5,9 @@
  * confirm structural invariants the list pages rely on:
  *   - The Done button (X icon) wires `onDone`.
  *   - Primary actions render with their onClick + label.
- *   - Overflow actions render in BOTH the inline sm+ slot and the
- *     sm- dropdown (Tailwind responsive classes, not JS branching).
+ *   - Overflow actions render in BOTH the inline 2xl+ slot and the
+ *     below-2xl dropdown (Tailwind responsive classes, not JS branching).
+ *   - Grouped actions stay behind their own dropdown trigger.
  *   - `isPending`, per-action `disabled`, and `count === 0` all
  *     disable action buttons so a mid-mutation toolbar can't
  *     double-fire.
@@ -183,8 +184,8 @@ describe("<SelectionToolbar>", () => {
     expect(btn!.props.disabled).toBe(true);
   });
 
-  it("renders overflow actions in both the sm+ inline slot and the sm- dropdown", () => {
-    // Tailwind responsive variants (hidden sm:flex / flex sm:hidden)
+  it("renders overflow actions in both the 2xl+ inline slot and the below-2xl dropdown", () => {
+    // Tailwind responsive variants (hidden 2xl:flex / flex 2xl:hidden)
     // mean both branches always render — visibility is CSS-driven.
     // The test verifies BOTH paths emit a clickable per overflow
     // entry so SSR / hydration sees consistent markup at every
@@ -203,12 +204,40 @@ describe("<SelectionToolbar>", () => {
       if (typeof el.props.onClick !== "function") continue;
       if (textOf(el).includes("add-to-collection")) hits += 1;
     }
-    // One clickable for the inline sm+ Button, one for the
-    // DropdownMenuItem in the sm- dropdown.
+    // One clickable for the inline 2xl+ Button, one for the
+    // DropdownMenuItem in the below-2xl dropdown.
     expect(hits).toBeGreaterThanOrEqual(2);
   });
 
-  it("hides Select all when every item is already selected", () => {
+  it("renders grouped actions behind a grouped dropdown trigger", () => {
+    const edit = action("edit-metadata", { label: "Edit metadata…" });
+    const fetch = action("fetch-metadata", { label: "Fetch metadata" });
+    const tree = SelectionToolbar({
+      count: 2,
+      total: 10,
+      primary: [],
+      actionGroups: [
+        {
+          id: "editing",
+          label: "Editing",
+          actions: [edit, fetch],
+        },
+      ],
+      onDone: () => {},
+      onClear: () => {},
+    });
+
+    expect(textOf(tree)).toContain("Editing");
+    const editItem = findClickableByLabel(tree, "Edit metadata…");
+    const fetchItem = findClickableByLabel(tree, "Fetch metadata");
+    expect(editItem).toBeDefined();
+    expect(fetchItem).toBeDefined();
+
+    (editItem!.props.onClick as () => void)();
+    expect(edit.onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Select loaded when every item is already selected", () => {
     const tree = SelectionToolbar({
       count: 10,
       total: 10,
@@ -217,7 +246,7 @@ describe("<SelectionToolbar>", () => {
       onClear: () => {},
       onSelectAll: () => {},
     });
-    expect(findClickableByLabel(tree, "Select all")).toBeUndefined();
+    expect(findClickableByLabel(tree, "Select loaded")).toBeUndefined();
   });
 
   it("hides Clear when count is zero (nothing to clear)", () => {

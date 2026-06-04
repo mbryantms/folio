@@ -11,9 +11,10 @@
 //!
 //! Filter views compile their `conditions` JSONB through
 //! `crate::views::compile` into a single sea_query select that joins
-//! the per-user reading-state view (M2) on demand. CBL views (kind
-//! `'cbl'`) are scaffolded here but their `/results` is empty until M4
-//! materializes the underlying entries.
+//! the per-user reading-state view (M2) on demand. Mixed-kind CBL and
+//! collection detail data lives on dedicated endpoints; the generic
+//! `/results` endpoint intentionally rejects those kinds so callers do
+//! not mistake an unsupported path for an empty result set.
 
 use axum::{
     Extension, Json,
@@ -1841,27 +1842,18 @@ pub async fn results(
     }
 
     if view.kind == KIND_CBL {
-        // M4 stub: empty result set until cbl_lists/entries materialize.
-        return Json(SeriesListView {
-            items: Vec::new(),
-            next_cursor: None,
-            total: Some(0),
-        })
-        .into_response();
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_view_kind",
+            "CBL results are available from /me/cbl-lists/{id}/entries",
+        );
     }
     if view.kind == KIND_COLLECTION {
-        // Collections carry *mixed* series + issue entries, which don't
-        // round-trip cleanly through `SeriesListView`. Pinned-collection
-        // rails and the detail page fetch via
-        // `GET /me/collections/{id}/entries` instead. Return an empty
-        // stub here so callers that hit the generic path get a clean
-        // response.
-        return Json(SeriesListView {
-            items: Vec::new(),
-            next_cursor: None,
-            total: Some(0),
-        })
-        .into_response();
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_view_kind",
+            "collection results are available from /me/collections/{id}/entries",
+        );
     }
 
     let filter = match dsl_from_view(&view) {

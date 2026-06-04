@@ -283,9 +283,7 @@ function ResultsBody({
   if (flat.length === 0) {
     return (
       <p className="text-muted-foreground px-4 py-6 text-center text-xs">
-        {commandMode
-          ? "No commands match."
-          : `No matches for “${query}”.`}
+        {commandMode ? "No commands match." : `No matches for “${query}”.`}
       </p>
     );
   }
@@ -405,7 +403,7 @@ function ResultsBody({
                           // only HTML we forward is the `<mark>`
                           // allowlist; everything else is escaped.
                           <span
-                            className="block truncate text-xs opacity-70 [&_mark]:bg-amber-500/30 [&_mark]:text-current [&_mark]:rounded-sm [&_mark]:px-0.5"
+                            className="block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:bg-amber-500/30 [&_mark]:px-0.5 [&_mark]:text-current"
                             dangerouslySetInnerHTML={{
                               __html: renderSearchSnippet(hit.snippet),
                             }}
@@ -488,7 +486,7 @@ function EmptyStateBody({
       <ul className="flex flex-wrap gap-1.5 px-3 pb-3">
         {recents.map((q) => (
           <li key={q}>
-            <span className="bg-muted/60 hover:bg-muted text-foreground border-border inline-flex items-center gap-1 rounded-full border py-0.5 pl-3 pr-1 text-xs transition-colors">
+            <span className="bg-muted/60 hover:bg-muted text-foreground border-border inline-flex items-center gap-1 rounded-full border py-0.5 pr-1 pl-3 text-xs transition-colors">
               <button
                 type="button"
                 onClick={() => onPickRecent(q)}
@@ -517,6 +515,29 @@ function Thumb({ hit }: { hit: SearchHit }) {
   const cls =
     "border-border bg-muted h-12 w-9 shrink-0 overflow-hidden rounded border";
   if (hit.thumbUrl) {
+    if (hit.region) {
+      const scaleW = Math.min(100, 100 / Math.max(hit.region.w, 1));
+      const scaleH = Math.min(100, 100 / Math.max(hit.region.h, 1));
+      return (
+        <div className={cn(cls, "relative")}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={hit.thumbUrl}
+            alt={hit.title}
+            loading="lazy"
+            decoding="async"
+            className="max-w-none"
+            style={{
+              position: "absolute",
+              width: `${scaleW * 100}%`,
+              height: `${scaleH * 100}%`,
+              left: `${-hit.region.x * scaleW}%`,
+              top: `${-hit.region.y * scaleH}%`,
+            }}
+          />
+        </div>
+      );
+    }
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
@@ -554,7 +575,7 @@ function SearchFooter({
 }) {
   // Drop `truncate` here on purpose: it was clipping the kbd glyph chips
   // (especially `⌘ ↵`) whenever the modal was narrower than its content.
-  // The shortcut hints hide on narrow viewports so the "View all" link
+  // The shortcut hints hide on narrow viewports so the top-results link
   // always remains visible without competing for space.
   return (
     <div className="border-border text-muted-foreground flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t px-3 py-2 text-xs">
@@ -562,10 +583,10 @@ function SearchFooter({
         {enabled && total > 0 ? (
           <>
             <ShortcutHint keys={["↵"]} label="open" />
-            <ShortcutHint keys={["⌘", "↵"]} label="full results" />
+            <ShortcutHint keys={["⌘", "↵"]} label="top results" />
           </>
         ) : enabled ? (
-          <span>No quick hits — try the full search page.</span>
+          <span>No quick hits — try the search page.</span>
         ) : (
           <span>Quick search across your library.</span>
         )}
@@ -581,7 +602,7 @@ function SearchFooter({
         className="hover:text-foreground ml-auto inline-flex shrink-0 items-center gap-1 font-medium"
       >
         {enabled && query.length > 0
-          ? `View all results for "${query}"`
+          ? `View top results for "${query}"`
           : "Open search page"}
         <ArrowRight className="size-3" aria-hidden="true" />
       </Link>

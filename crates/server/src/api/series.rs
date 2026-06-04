@@ -1095,6 +1095,27 @@ pub(crate) fn parse_cursor(s: &str) -> Result<(String, String), ()> {
     Ok((value.to_string(), id.to_string()))
 }
 
+/// Opaque offset cursor for text-ranked search results. Search ordering is
+/// rank-based and not all callers can express a stable keyset boundary, so
+/// this keeps pagination incremental without exposing raw offsets in URLs.
+pub(crate) fn encode_offset_cursor(offset: u64) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!("offset:{offset}"))
+}
+
+pub(crate) fn parse_offset_cursor(s: &str) -> Result<u64, ()> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(s.as_bytes())
+        .map_err(|_| ())?;
+    let decoded = String::from_utf8(bytes).map_err(|_| ())?;
+    decoded
+        .strip_prefix("offset:")
+        .ok_or(())?
+        .parse::<u64>()
+        .map_err(|_| ())
+}
+
 // ───── /series list helpers ─────
 //
 // Pattern mirrors `issues::list` (M7.1): validation up front, then
@@ -1491,9 +1512,9 @@ pub async fn list(
     let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
 
     // Search mode: filter by tsvector match (or trigram similarity
-    // fallback for fuzzy spellings). Cursor pagination is single-page
-    // for now (search-result sets are bounded by `clamp_limit`); the
-    // sort path is chosen by the caller:
+    // fallback for fuzzy spellings). Pagination uses an opaque offset
+    // cursor so relevance-ranked result order can stay intact without
+    // exposing page numbers. The sort path is chosen by the caller:
     //
     // - `?sort` absent → relevance (ts_rank_cd), the modal default.
     // - `?sort=name` / `year` / `created_at` / `updated_at` → respect
@@ -1501,6 +1522,19 @@ pub async fn list(
     //   when the user picks a sort option (M4 of the search-
     //   improvements plan).
     if let Some(text) = q_text {
+        let offset = match q.cursor.as_deref() {
+            Some(cursor) => match parse_offset_cursor(cursor) {
+                Ok(v) => v,
+                Err(_) => {
+                    return error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "validation",
+                        "invalid cursor",
+                    );
+                }
+            },
+            None => 0,
+        };
         let filtered = select.filter(
             Condition::any()
                 .add(Expr::cust_with_values(
@@ -1512,6 +1546,17 @@ pub async fn list(
                     [entity::series::normalize_name(text)],
                 )),
         );
+        let total = if q.cursor.is_none() {
+            match filtered.clone().count(&app.db).await {
+                Ok(n) => Some(n as i64),
+                Err(e) => {
+                    tracing::error!(error = %e, "list series search count failed");
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
+            }
+        } else {
+            None
+        };
         let ranked = if let Some(sort) = q.sort {
             // Explicit sort overrides relevance. Honour the order
             // param too (defaults match the non-search branch:
@@ -1522,7 +1567,9 @@ pub async fn list(
                 SeriesSort::CreatedAt | SeriesSort::UpdatedAt | SeriesSort::Year => SortOrder::Desc,
             });
             let asc = matches!(order, SortOrder::Asc);
-            apply_series_sort_ordering(filtered, sort, asc).limit(limit)
+            apply_series_sort_ordering(filtered, sort, asc)
+                .offset(offset)
+                .limit(limit + 1)
         } else {
             filtered
                 .order_by_desc(Expr::cust_with_values(
@@ -1530,7 +1577,9 @@ pub async fn list(
                     [text],
                 ))
                 .order_by_asc(series::Column::NormalizedName)
-                .limit(limit)
+                .order_by_asc(series::Column::Id)
+                .offset(offset)
+                .limit(limit + 1)
         };
         let rows = match ranked.all(&app.db).await {
             Ok(v) => v,
@@ -1539,20 +1588,23 @@ pub async fn list(
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         };
+        let has_more = rows.len() as u64 > limit;
+        let page_rows: Vec<series::Model> = rows.into_iter().take(limit as usize).collect();
+        let next_cursor = has_more.then(|| encode_offset_cursor(offset + limit));
         // Second pass: fetch per-row `ts_headline` excerpts so result
         // rows render with a snippet showing *why* the row matched.
         // Cheap PK lookup on already-fetched IDs, scoped to whichever
         // free-text fields we want to highlight (currently summary —
         // name is in the row title, publisher/year already show as
         // metadata badges, so summary is the high-signal target).
-        let snippets = match fetch_series_snippets(&app, &rows, text).await {
+        let snippets = match fetch_series_snippets(&app, &page_rows, text).await {
             Ok(map) => map,
             Err(e) => {
                 tracing::warn!(error = %e, "series snippet fetch failed; continuing without");
                 std::collections::HashMap::new()
             }
         };
-        let mut items = hydrate_series(&app, rows).await;
+        let mut items = hydrate_series(&app, page_rows).await;
         for item in items.iter_mut() {
             if let Ok(uuid) = Uuid::parse_str(&item.id)
                 && let Some(s) = snippets.get(&uuid).cloned()
@@ -1560,10 +1612,9 @@ pub async fn list(
                 item.snippet = Some(s);
             }
         }
-        let total = Some(items.len() as i64);
         return Json(SeriesListView {
             items,
-            next_cursor: None,
+            next_cursor,
             total,
         })
         .into_response();
@@ -2536,18 +2587,45 @@ pub async fn list_issues(
         .filter(issue::Column::SeriesId.eq(s.id))
         .filter(issue::Column::RemovedAt.is_null());
 
-    // Search mode: rank by ts_rank_cd; ignore sort/cursor.
+    // Search mode: rank by ts_rank_cd and paginate with opaque offset
+    // cursors so filtered issue searches can continue past the first page.
     if let Some(text) = q_text {
+        let offset = match q.cursor.as_deref() {
+            Some(cursor) => match parse_offset_cursor(cursor) {
+                Ok(v) => v,
+                Err(_) => {
+                    return error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "validation",
+                        "invalid cursor",
+                    );
+                }
+            },
+            None => 0,
+        };
+        let select = select.filter(Expr::cust_with_values(
+            "search_doc @@ websearch_to_tsquery('simple', $1)",
+            [text],
+        ));
+        let total = if q.cursor.is_none() {
+            match select.clone().count(&app.db).await {
+                Ok(n) => Some(n as i64),
+                Err(e) => {
+                    tracing::error!(error = %e, "list issues search count failed");
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
+            }
+        } else {
+            None
+        };
         let select = select
-            .filter(Expr::cust_with_values(
-                "search_doc @@ websearch_to_tsquery('simple', $1)",
-                [text],
-            ))
             .order_by_desc(Expr::cust_with_values(
                 "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
                 [text],
             ))
-            .limit(limit);
+            .order_by_asc(issue::Column::Id)
+            .offset(offset)
+            .limit(limit + 1);
         let rows: Vec<issue::Model> = match select.all(&app.db).await {
             Ok(v) => v,
             Err(e) => {
@@ -2555,15 +2633,17 @@ pub async fn list_issues(
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         };
+        let has_more = rows.len() as u64 > limit;
+        let next_cursor = has_more.then(|| encode_offset_cursor(offset + limit));
         let series_slug = s.slug.clone();
         let items: Vec<IssueSummaryView> = rows
             .into_iter()
+            .take(limit as usize)
             .map(|m| IssueSummaryView::from_model(m, &series_slug))
             .collect();
-        let total = Some(items.len() as i64);
         return Json(IssueListView {
             items,
-            next_cursor: None,
+            next_cursor,
             total,
         })
         .into_response();
@@ -2891,14 +2971,31 @@ pub async fn resume(
         .into_response();
     }
 
-    // 2. First unfinished issue → "Read".
-    let unread = issues.iter().find(|i| {
+    let is_main = |i: &&issue::Model| i.sort_number.map(|n| n >= 1.0).unwrap_or(true);
+    let is_unread = |i: &&issue::Model| {
         progress_by_id
             .get(&i.id)
             .map(|p| !p.finished)
             .unwrap_or(true)
-    });
-    if let Some(iss) = unread {
+    };
+
+    // 2. First unfinished main-run issue → "Read". Preludes (#0,
+    // #1/2, FCBD specials) stay visible in the issue list, but the
+    // primary series CTA should anchor on #1 when a main issue exists.
+    if let Some(iss) = issues.iter().find(|i| is_main(i) && is_unread(i)) {
+        return Json(SeriesResumeView {
+            series_slug: srow.slug,
+            issue_slug: Some(iss.slug.clone()),
+            issue_id: Some(iss.id.clone()),
+            page: 0,
+            state: "unread".into(),
+        })
+        .into_response();
+    }
+
+    // 2b. Every main issue is finished. Fall back to unread preludes so
+    // the user can mop up specials before the series is truly done.
+    if let Some(iss) = issues.iter().find(|i| is_unread(i)) {
         return Json(SeriesResumeView {
             series_slug: srow.slug,
             issue_slug: Some(iss.slug.clone()),
@@ -2910,7 +3007,10 @@ pub async fn resume(
     }
 
     // 3. Every active issue is finished — restart from #1 ("Read again").
-    let first = &issues[0];
+    let first = issues
+        .iter()
+        .find(|i| is_main(i))
+        .unwrap_or_else(|| &issues[0]);
     Json(SeriesResumeView {
         series_slug: srow.slug,
         issue_slug: Some(first.slug.clone()),

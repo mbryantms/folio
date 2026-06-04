@@ -42,11 +42,11 @@ export const DENSITY_COOKIE = "comic_density";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 /**
- * Resolve the user's stored theme token to the `data-theme` attribute value
- * the CSS in `globals.css` keys off. `system` stays mapped to `dark` because
- * `ThemeProvider` is configured with `enableSystem={false}` — flipping that
- * is a separate scope item (FOUC handling on hydration). Users who want
- * light or amber pick them explicitly.
+ * Resolve the user's stored theme token to the server-rendered `data-theme`
+ * fallback. The client passes `system` through to `next-themes`, whose
+ * no-flash script resolves `prefers-color-scheme` before hydration. The
+ * server cannot observe the browser's OS preference, so `system` falls back
+ * to dark for the static HTML attribute.
  */
 export function resolvedDataTheme(
   theme: Theme | null | undefined,

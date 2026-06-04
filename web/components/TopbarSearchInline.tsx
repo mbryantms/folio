@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  Bookmark,
-  ChevronRight,
-  Clock,
-  Search,
-  X,
-} from "lucide-react";
+import { Bookmark, ChevronRight, Clock, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 
@@ -170,10 +164,17 @@ export function TopbarSearchInline({ className }: { className?: string }) {
   }
 
   const showRecentsRow =
-    !enabled && !commandMode && actions.length === 0 && recents.recents.length > 0;
+    !enabled &&
+    !commandMode &&
+    actions.length === 0 &&
+    recents.recents.length > 0;
   const showEmptyHint =
-    !enabled && !commandMode && actions.length === 0 && recents.recents.length === 0;
-  const showLoading = isLoading && !commandMode && total === 0 && actions.length === 0;
+    !enabled &&
+    !commandMode &&
+    actions.length === 0 &&
+    recents.recents.length === 0;
+  const showLoading =
+    isLoading && !commandMode && total === 0 && actions.length === 0;
   const showNoMatch = enabled && flat.length === 0;
 
   return (
@@ -372,7 +373,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
                             </span>
                             {hit.snippet ? (
                               <span
-                                className="block truncate text-xs opacity-70 [&_mark]:bg-amber-500/30 [&_mark]:text-current [&_mark]:rounded-sm [&_mark]:px-0.5"
+                                className="block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:bg-amber-500/30 [&_mark]:px-0.5 [&_mark]:text-current"
                                 dangerouslySetInnerHTML={{
                                   __html: renderSearchSnippet(hit.snippet),
                                 }}
@@ -400,14 +401,14 @@ export function TopbarSearchInline({ className }: { className?: string }) {
                 <kbd className="bg-muted text-foreground border-border inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
                   ↵
                 </kbd>{" "}
-                for full results
+                for top results
               </span>
               <button
                 type="button"
                 onClick={commitFullSearch}
                 className="hover:text-foreground ml-auto inline-flex items-center gap-1 font-medium"
               >
-                View all results for &ldquo;{contentQuery}&rdquo;
+                View top results for &ldquo;{contentQuery}&rdquo;
                 <ChevronRight className="size-3" aria-hidden="true" />
               </button>
             </div>
@@ -471,6 +472,29 @@ function Thumb({ hit }: { hit: SearchHit }) {
   const cls =
     "border-border bg-muted h-12 w-9 shrink-0 overflow-hidden rounded border";
   if (hit.thumbUrl) {
+    if (hit.region) {
+      const scaleW = Math.min(100, 100 / Math.max(hit.region.w, 1));
+      const scaleH = Math.min(100, 100 / Math.max(hit.region.h, 1));
+      return (
+        <div className={cn(cls, "relative")}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={hit.thumbUrl}
+            alt={hit.title}
+            loading="lazy"
+            decoding="async"
+            className="max-w-none"
+            style={{
+              position: "absolute",
+              width: `${scaleW * 100}%`,
+              height: `${scaleH * 100}%`,
+              left: `${-hit.region.x * scaleW}%`,
+              top: `${-hit.region.y * scaleH}%`,
+            }}
+          />
+        </div>
+      );
+    }
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img

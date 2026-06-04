@@ -3413,6 +3413,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/progress-matching": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["progress_upsert_series_matching"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/resume": {
         parameters: {
             query?: never;
@@ -5793,6 +5809,8 @@ export interface components {
             density?: null | components["schemas"]["Density"];
             display_name: string;
             email?: string | null;
+            /** @description True when `/me/account` accepts email edits for this user. */
+            email_editable: boolean;
             /**
              * @description Stats v2: opt-out from server-wide aggregates. When true, admin
              *     dashboards exclude this user's sessions from totals/top-series. Does
@@ -5817,6 +5835,8 @@ export interface components {
              *     1..=50 enforced by DB CHECK + PATCH validation. Default 12.
              */
             max_rails_per_page: number;
+            /** @description True when `/me/account` accepts local password changes for this user. */
+            password_editable: boolean;
             /**
              * Format: int32
              * @description M6a: idle threshold (ms) after which the client ends the session.
@@ -7941,6 +7961,20 @@ export interface components {
              * @description Issue rows that received a new or updated progress record.
              */
             updated: number;
+        };
+        /**
+         * @description Body for `POST /series/{slug}/progress-matching` — bulk read/unread for
+         *     every active issue in the series matching the current UI query. This is the
+         *     server-side companion to "Select all matching": the client sends the same
+         *     search text it used for `/series/{slug}/issues?q=...`, and the server walks
+         *     the complete result set instead of requiring the browser to load every
+         *     cursor page first.
+         */
+        UpsertSeriesMatchingReq: {
+            backfill?: boolean;
+            device?: string | null;
+            finished: boolean;
+            q?: string | null;
         };
         /**
          * @description Body for `POST /series/{id}/progress` — bulk read/unread for every active
@@ -11866,6 +11900,8 @@ export interface operations {
                 limit?: number;
                 /** @description Comma-separated subset of matched,ambiguous,missing,manual */
                 status?: string;
+                /** @description Search imported CBL series, issue, year, or ids */
+                q?: string;
             };
             header?: never;
             path: {
@@ -15156,6 +15192,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UpsertSeriesResp"];
+                };
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    progress_upsert_series_matching: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpsertSeriesMatchingReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpsertBulkResp"];
                 };
             };
             /** @description series not found */

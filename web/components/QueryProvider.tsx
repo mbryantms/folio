@@ -17,17 +17,17 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
       }),
   );
 
-  // Offline/online surface (notifications cleanup, post-ship #4).
-  // Surfaces a one-time warning when the browser goes offline and a
-  // confirmation when connectivity returns, so failed mutations
-  // don't look like server bugs. The same `id:` on both toasts means
+  // Offline/online surface. Surfaces a one-time warning when the
+  // browser goes offline and a confirmation when connectivity
+  // returns, so failed mutations don't look like server bugs. The
+  // same `id:` on both toasts means
   // sonner reuses one element — the offline toast morphs into the
   // "back online" toast rather than stacking.
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const onOffline = () => {
-      toast.warning("You're offline — changes will queue", {
+      toast.warning("You're offline — changes may fail until you reconnect", {
         id: "network-status",
         duration: Infinity,
       });
