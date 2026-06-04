@@ -133,7 +133,11 @@ export function SignInClient({
             value={mode}
             onValueChange={(v) => setMode(v as "login" | "register")}
           >
-            <TabsList className="grid w-full grid-cols-2">
+            {/* Override the shared TabsList's md+ defaults (`md:inline-flex
+                md:w-fit`, meant for the scrollable many-tab admin case) so the
+                two auth tabs stay a full-width 2-up grid at every breakpoint —
+                otherwise they shrink + left-align on tablet/desktop. */}
+            <TabsList className="grid w-full grid-cols-2 md:grid md:w-full">
               <TabsTrigger value="login">Sign in</TabsTrigger>
               <TabsTrigger value="register" disabled={!showRegister}>
                 Register
