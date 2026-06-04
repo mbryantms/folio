@@ -14,9 +14,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Cheap (~5s) path-change detector. Other jobs depend on this instead of
+  # the ~1h rust-check, so backend-free PRs (web/docs/lockfile-only) skip the
+  # expensive Rust compile + test suite while the required checks still report.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-24.04
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      backend_or_spec: ${{ steps.filter.outputs.backend_or_spec }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yml'
+            backend_or_spec:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'web/lib/api/openapi.json'
+              - '.github/workflows/ci.yml'
+
   rust-check:
     name: Rust — fmt / clippy / test
     runs-on: ubuntu-24.04
+    needs: [changes]
     services:
       postgres:
         image: postgres:18-alpine
@@ -37,9 +67,20 @@ jobs:
         with:
           components: rustfmt,clippy
       - uses: Swatinem/rust-cache@v2
+      # fmt is pure-syntax and instant — always run it as a cheap guard.
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --all-features
+      # clippy + the test suite require a full compile; skip them when no
+      # Rust/Cargo/spec input changed (the job still reports success, so the
+      # required check is satisfied). Triggered by crates/**, Cargo.*,
+      # rust-toolchain.toml, or this workflow file.
+      - name: clippy
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # --no-fail-fast: run every test binary so all failures surface in one
+      # run instead of stopping at the first failing binary.
+      - name: test
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo test --workspace --all-features --no-fail-fast
         env:
           COMIC_DATABASE_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_REDIS_URL: redis://localhost:6379
@@ -113,7 +154,9 @@ jobs:
   openapi-drift:
     name: OpenAPI — snapshot + breaking-change check
     runs-on: ubuntu-24.04
-    needs: [rust-check]
+    # Decoupled from rust-check (it builds its own spec); depends only on the
+    # ~5s `changes` job so drift feedback isn't queued behind the test suite.
+    needs: [changes]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -124,11 +167,17 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: 11.5.1
+      # The Rust build (to emit the spec) only matters when backend or the
+      # checked-in spec changed; the spec can't have drifted otherwise.
       - uses: dtolnay/rust-toolchain@1.96.0
+        if: needs.changes.outputs.backend_or_spec == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: needs.changes.outputs.backend_or_spec == 'true'
       - name: Generate spec from PR
+        if: needs.changes.outputs.backend_or_spec == 'true'
         run: cargo run --release --bin server -- --emit-openapi > /tmp/pr-openapi.json
       - name: Snapshot match
+        if: needs.changes.outputs.backend_or_spec == 'true'
         run: |
           if [ -f web/lib/api/openapi.json ]; then
             diff -q /tmp/pr-openapi.json web/lib/api/openapi.json || \
@@ -137,7 +186,8 @@ jobs:
       # Audit-remediation M10.1 spec-drift gate: regen the generated
       # types and fail if they disagree with the checked-in copy.
       # Catches the case where a contributor commits openapi.json
-      # but forgets to run `pnpm openapi:gen`.
+      # but forgets to run `pnpm openapi:gen`. Node-only + fast, so it
+      # always runs (also catches a hand-edited openapi.json / types file).
       - name: Generated TS types match
         run: |
           pnpm install --frozen-lockfile
@@ -150,11 +200,13 @@ jobs:
           diff -q /tmp/pr-types.generated.ts web/lib/api/types.generated.ts || \
             (echo "::error::web/lib/api/types.generated.ts is stale. Run 'just openapi'." && exit 1)
       - name: oasdiff vs main
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && needs.changes.outputs.backend_or_spec == 'true'
         run: |
           BASE_REF="${{ github.base_ref }}"
           git fetch origin "$BASE_REF"
-          git checkout "origin/$BASE_REF" -- web/lib/api/openapi.json 2>/dev/null || \
+          # Surface real git errors (don't swallow stderr); the || branch still
+          # handles the expected "no baseline spec on this ref" case.
+          git checkout "origin/$BASE_REF" -- web/lib/api/openapi.json || \
             (echo "no baseline spec on $BASE_REF; skipping oasdiff" && exit 0)
           curl -fsSL https://raw.githubusercontent.com/Tufin/oasdiff/main/install.sh | sh
           # The installer drops the binary in /usr/local/bin (on PATH); invoke
@@ -167,21 +219,29 @@ jobs:
   audit-check:
     name: Rust — audit-log enforcement (M10.2)
     runs-on: ubuntu-24.04
-    needs: [rust-check]
+    # Decoupled from rust-check; gated on Rust changes (a handler audit only
+    # matters when crates/** changed). Job still reports success when skipped.
+    needs: [changes]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.96.0
+        if: needs.changes.outputs.rust == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: needs.changes.outputs.rust == 'true'
       # AST-walks every handler under crates/server/src/api/ and
       # fails if any RequireAdmin-gated function returns success
       # without calling `record_admin_action!` (or its `audit::record`
       # equivalent). Exemptions in crates/tools/audit-check/allowlist.txt
       # cover read-only admin GETs + delegate-pattern wrappers.
-      - run: cargo run -p audit-check --release
+      - name: audit-log enforcement
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo run -p audit-check --release
 
   docker-build:
     name: Docker — amd64 build
     runs-on: ubuntu-24.04
+    # Intentionally gated on the full check jobs — don't burn an image build
+    # if fmt/clippy/test or the web suite failed.
     needs: [rust-check, web-check]
     strategy:
       fail-fast: false
