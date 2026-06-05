@@ -982,6 +982,43 @@ async fn on_deck_cbl_next_picks_lowest_unfinished_position() {
 }
 
 #[tokio::test]
+async fn on_deck_excludes_in_progress_issue_surfacing_via_cbl() {
+    // The next unfinished CBL entry can be an *in-progress* issue (the
+    // user is mid-read). That issue already lives in Continue Reading, so
+    // On Deck must not duplicate it. (SeriesNext can't hit this — its
+    // series is excluded upstream — so the CBL path is the one that leaks.)
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-inprog@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-inprog").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-inprog-2").await;
+    let issue3_id = seed_extra_issue(&app, lib_id, series_id, 3.0, "od-inprog-3").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let _list_id = seed_cbl_list(
+        &app,
+        "InProgress",
+        &[(0, &issue1_id), (1, &issue2_id), (2, &issue3_id)],
+    )
+    .await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    // Finish entry 0, so entry 1 (issue2) becomes the CBL's next-unfinished…
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
+    // …but issue2 is mid-read — it belongs to Continue Reading.
+    let t1 = chrono::DateTime::parse_from_rfc3339("2030-01-02T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue2_id, 5, false, t1).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+    assert!(
+        items.iter().all(|i| i["issue"]["id"] != issue2_id),
+        "in-progress issue (in Continue Reading) must not appear in On Deck: {items:#?}",
+    );
+}
+
+#[tokio::test]
 async fn on_deck_cbl_wins_when_issue_overlaps_series_next() {
     // When the same issue is the next-unread in both a user's series and a
     // CBL that contains it, surface the CBL card only — the CBL frame
