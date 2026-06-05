@@ -3136,6 +3136,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{series_slug}/issues/{issue_slug}/prev": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Returns the single issue immediately *before* the current one in the same
+         *     series — the mirror of [`next_in_series`], using the same ordering
+         *     (`sort_number` ASC NULLS LAST, `id` tie-breaker) reversed so the immediate
+         *     predecessor is selected. Removed / soft-deleted issues are filtered out.
+         *     `item` is `null` when the current issue is the first in the series.
+         */
+        get: operations["issues_prev_in_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{series_slug}/issues/{issue_slug}/rating": {
         parameters: {
             query?: never;
@@ -6930,6 +6953,9 @@ export interface components {
              *     zone is rejected so the heatmap can't silently fall back to UTC.
              */
             timezone?: string | null;
+        };
+        PrevInSeriesView: {
+            item?: null | components["schemas"]["IssueSummaryView"];
         };
         PreviewReq: {
             filter: components["schemas"]["FilterDsl"];
@@ -14953,6 +14979,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NextInSeriesView"];
+                };
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issues_prev_in_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrevInSeriesView"];
                 };
             };
             /** @description issue not found */

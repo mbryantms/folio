@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   ArrowRight,
   Building2,
   Calendar,
@@ -33,6 +34,7 @@ import type {
   IssueDetailView,
   IssueSummaryView,
   NextInSeriesView,
+  PrevInSeriesView,
   ReadingStatsView,
   SeriesView,
 } from "@/lib/api/types";
@@ -122,6 +124,19 @@ export default async function IssuePage({
     nextIssues = next.items;
   } catch {
     /* hide section on failure */
+  }
+
+  // The single issue immediately before this one (filmstrip context to the
+  // left of the next-up rail). Best-effort — null when this is the first
+  // issue, or on transient failure.
+  let prevIssue: IssueSummaryView | null = null;
+  try {
+    const prev = await apiGet<PrevInSeriesView>(
+      `/series/${seriesSlug}/issues/${issueSlug}/prev`,
+    );
+    prevIssue = prev.item ?? null;
+  } catch {
+    /* leave null */
   }
   const readState: ReadState = readStateFor(issue, issueProgress);
   const readLabel = readButtonLabel(readState);
@@ -340,8 +355,8 @@ export default async function IssuePage({
         <Stat label="Status" value={seriesStatus} />
       </section>
 
-      {nextIssues.length > 0 && series && (
-        <NextInSeries items={nextIssues} series={series} />
+      {(prevIssue || nextIssues.length > 0) && series && (
+        <NextInSeries prev={prevIssue} items={nextIssues} series={series} />
       )}
 
       <Tabs defaultValue="credits">
@@ -751,27 +766,58 @@ function hasAnyCredit(issue: IssueDetailView): boolean {
 }
 
 /**
- * "Next in series" carousel — the next N issues by sort_number, followed by
- * a "view all in series" tile that lives in the same grid slot as a cover
+ * "More in series" carousel — the previous issue (when present) as the
+ * leftmost cover, then the next N issues by sort_number, followed by a
+ * "view all in series" tile that lives in the same grid slot as a cover
  * card. The tile sits flush against the last issue on wide screens so the
  * affordance doesn't drift to the far right edge of the section.
  */
 function NextInSeries({
+  prev,
   items,
   series,
 }: {
+  /** The single issue before the current one, shown as the leftmost cover.
+   *  Null on the first issue of the series — then the rail starts at the
+   *  next issues. */
+  prev: IssueSummaryView | null;
   items: IssueSummaryView[];
   series: SeriesView;
 }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-base font-semibold tracking-tight">Next in series</h2>
+      <h2 className="text-base font-semibold tracking-tight">More in series</h2>
       <ul
         className="grid gap-4"
         style={{
           gridTemplateColumns: "repeat(auto-fill, minmax(7.5rem, 1fr))",
         }}
       >
+        {prev && (
+          <li key={prev.id}>
+            <Link
+              href={issueUrl(prev)}
+              className="group block space-y-1.5 focus-visible:outline-none"
+            >
+              <Cover
+                src={prev.cover_url}
+                alt={prev.title ?? `Issue ${prev.number ?? ""}`}
+                fallback={prev.state === "active" ? "Cover" : prev.state}
+                className="group-focus-visible:ring-ring transition-transform duration-200 group-hover:scale-[1.02] group-focus-visible:ring-2"
+              />
+              <div className="min-w-0">
+                <p className="text-muted-foreground flex items-center gap-1 text-[11px] font-medium tracking-wide uppercase">
+                  <ArrowLeft aria-hidden="true" className="size-3" />
+                  Previous
+                </p>
+                <p className="text-foreground truncate text-xs font-medium">
+                  {prev.number ? `#${prev.number}` : "—"}
+                  {prev.title ? ` · ${prev.title}` : ""}
+                </p>
+              </div>
+            </Link>
+          </li>
+        )}
         {items.map((it) => (
           <li key={it.id}>
             <Link
