@@ -381,108 +381,116 @@ export default async function IssuePage({
           <TabsContent
             forceMount
             value="details"
-            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
+            className="col-start-1 row-start-1 space-y-8 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
-            <MetadataGrid
-              items={[
-                { label: "Series", value: series?.name },
-                {
-                  label: "Issue number",
-                  value: issue.number ?? null,
-                },
-                {
-                  label: "Sort order",
-                  value:
-                    issue.sort_number != null
-                      ? issue.sort_number.toString()
-                      : null,
-                },
-                {
-                  label: "Volume",
-                  value: issue.volume ?? series?.volume ?? null,
-                },
-                { label: "Publication date", value: publicationDate },
-                {
-                  label: "Publication status",
-                  value: seriesStatus,
-                },
-                {
-                  label: "Language",
-                  value: issue.language_code?.toUpperCase(),
-                },
-                { label: "Age rating", value: issue.age_rating },
-                { label: "Format", value: issue.format },
-                {
-                  label: "Black & white",
-                  value:
-                    issue.black_and_white == null
-                      ? null
-                      : issue.black_and_white
-                        ? "Yes"
-                        : "No",
-                },
-                { label: "Manga", value: issue.manga },
-                { label: "Publisher", value: issue.publisher },
-                { label: "Imprint", value: issue.imprint },
-                { label: "Story arc", value: issue.story_arc },
-                { label: "Story arc number", value: issue.story_arc_number },
-                { label: "GTIN", value: issue.gtin },
-                // ComicVine ID + Metron ID intentionally absent — they
-                // live in the "External IDs" tab alongside every other
-                // provider identifier. Surfacing them twice was confusing
-                // (the Details grid showed two while the panel below
-                // showed N including those two).
-                { label: "Pages", value: formatPageCount(issue.page_count) },
-                {
-                  label: "Reading time",
-                  value: readingTime ? `≈ ${readingTime}` : null,
-                },
-                { label: "Added", value: formatRelativeDate(issue.created_at) },
-                {
-                  label: "Updated",
-                  value: formatRelativeDate(issue.updated_at),
-                },
-                {
-                  label: "File",
-                  value: (
-                    <span className="font-mono text-xs break-all">
-                      {issue.file_path}
-                    </span>
-                  ),
-                  wide: true,
-                },
-                { label: "File size", value: formatFileSize(issue.file_size) },
-                // External links row removed — provider IDs live in the
-                // External IDs tab and link out from there; the curated
-                // additional_links live in the Edit sheet. A second
-                // copy here was just duplication.
-              ]}
-            />
-            {/* Genres & Tags folded in here (its own tab was removed) so the
-                issue and series tab rows line up; it's descriptive metadata,
-                so it belongs alongside the facts grid. */}
-            <div className="mt-6 space-y-3">
-              <h3 className="text-foreground text-sm font-semibold">
-                Genres &amp; Tags
-              </h3>
-              <div className="grid gap-6 sm:grid-cols-2">
+            {/* Grouped into scannable categories rather than one flat 20-row
+                grid. Provider IDs (ComicVine / Metron) and external links are
+                intentionally absent — they live in the Metadata tab so they
+                aren't duplicated here. */}
+            <DetailSection title="Publication">
+              <MetadataGrid
+                columns={3}
+                items={[
+                  { label: "Series", value: series?.name },
+                  { label: "Issue number", value: issue.number ?? null },
+                  {
+                    label: "Volume",
+                    value: issue.volume ?? series?.volume ?? null,
+                  },
+                  { label: "Publication date", value: publicationDate },
+                  { label: "Publication status", value: seriesStatus },
+                  { label: "Publisher", value: issue.publisher },
+                  { label: "Imprint", value: issue.imprint },
+                  { label: "Story arc", value: issue.story_arc },
+                  { label: "Story arc number", value: issue.story_arc_number },
+                ]}
+              />
+            </DetailSection>
+
+            <DetailSection title="Format">
+              <MetadataGrid
+                columns={3}
+                items={[
+                  {
+                    label: "Language",
+                    value: issue.language_code?.toUpperCase(),
+                  },
+                  { label: "Age rating", value: issue.age_rating },
+                  { label: "Format", value: issue.format },
+                  {
+                    label: "Black & white",
+                    value:
+                      issue.black_and_white == null
+                        ? null
+                        : issue.black_and_white
+                          ? "Yes"
+                          : "No",
+                  },
+                  { label: "Manga", value: issue.manga },
+                  { label: "Pages", value: formatPageCount(issue.page_count) },
+                  {
+                    label: "Reading time",
+                    value: readingTime ? `≈ ${readingTime}` : null,
+                  },
+                  { label: "GTIN", value: issue.gtin },
+                ]}
+              />
+            </DetailSection>
+
+            <DetailSection title="Genres & Tags">
+              <div className="divide-border/60 divide-y">
                 <ChipList
+                  orientation="horizontal"
+                  className="py-3 first:pt-0 last:pb-0"
                   label="Genres"
                   items={splitCsv(issue.genre)}
                   filterField="genres"
                 />
                 <ChipList
+                  orientation="horizontal"
+                  className="py-3 first:pt-0 last:pb-0"
                   label="Tags"
                   items={splitCsv(issue.tags)}
                   filterField="tags"
                 />
               </div>
               {!issue.genre && !issue.tags && (
-                <p className="text-muted-foreground text-sm">
-                  No genres or tags.
-                </p>
+                <p className="text-muted-foreground text-sm">No genres or tags.</p>
               )}
-            </div>
+            </DetailSection>
+
+            <DetailSection title="Library & file">
+              <MetadataGrid
+                columns={3}
+                items={[
+                  {
+                    label: "Sort order",
+                    value:
+                      issue.sort_number != null
+                        ? issue.sort_number.toString()
+                        : null,
+                  },
+                  { label: "Added", value: formatRelativeDate(issue.created_at) },
+                  {
+                    label: "Updated",
+                    value: formatRelativeDate(issue.updated_at),
+                  },
+                  {
+                    label: "File size",
+                    value: formatFileSize(issue.file_size),
+                  },
+                  {
+                    label: "File",
+                    value: (
+                      <span className="font-mono text-xs break-all">
+                        {issue.file_path}
+                      </span>
+                    ),
+                    wide: true,
+                  },
+                ]}
+              />
+            </DetailSection>
             {/* "Locally edited fields" summary moved into the Edit sheet
                 — fields surface a per-row release control alongside their
                 input, so the user can both see what's pinned and release
@@ -494,38 +502,50 @@ export default async function IssuePage({
             value="credits"
             className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
-            <div className="grid gap-6 sm:grid-cols-2">
+            <div className="divide-border/60 divide-y">
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Writer"
                 items={splitCsv(issue.writer)}
                 filterField="writer"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Penciller"
                 items={splitCsv(issue.penciller)}
                 filterField="penciller"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Inker"
                 items={splitCsv(issue.inker)}
                 filterField="inker"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Colorist"
                 items={splitCsv(issue.colorist)}
                 filterField="colorist"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Letterer"
                 items={splitCsv(issue.letterer)}
                 filterField="letterer"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Cover artist"
                 items={splitCsv(issue.cover_artist)}
                 filterField="cover_artist"
@@ -544,25 +564,36 @@ export default async function IssuePage({
             value="cast"
             className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
-            <div className="grid gap-6 sm:grid-cols-2">
+            <div className="divide-border/60 divide-y">
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Characters"
                 items={splitCsv(issue.characters)}
                 filterField="characters"
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Teams"
                 items={splitCsv(issue.teams)}
                 filterField="teams"
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Locations"
                 items={splitCsv(issue.locations)}
                 filterField="locations"
               />
               {/* Story arc has no series-level library filter (it's an
                   issue-level concept), so the chip stays read-only. */}
-              <ChipList label="Story arc" items={splitCsv(issue.story_arc)} />
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Story arc"
+                items={splitCsv(issue.story_arc)}
+              />
             </div>
             {!issue.characters &&
               !issue.teams &&
@@ -623,6 +654,26 @@ export default async function IssuePage({
        * regardless of which tab the user has open. */}
       <IssueSourcesFooter seriesSlug={seriesSlug} issueSlug={issue.slug} />
     </div>
+  );
+}
+
+/**
+ * A titled block inside the Details tab. Keeps the section heading style and
+ * spacing consistent across the Publication / Format / Genres / Library
+ * groups so the tab reads as a set of categories rather than one long list.
+ */
+function DetailSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3">
+      <h3 className="text-foreground text-sm font-semibold">{title}</h3>
+      {children}
+    </section>
   );
 }
 
