@@ -41,7 +41,8 @@ use crate::state::AppState;
 use chrono::{Datelike, NaiveDate, Utc};
 use entity::{field_provenance, issue, metadata_run, metadata_run_candidate, series};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -702,6 +703,11 @@ pub(crate) async fn apply_series_via_sidecar(
 
     flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
 
+    // Stamp series-level sync time (parity with the DB-direct `apply_series`,
+    // which calls `bump_series_sync`). The XML the rescan re-ingests doesn't
+    // carry this bookkeeping field.
+    bump_series_sync(&state.db, series_row.id).await?;
+
     let outcome = ApplyOutcome {
         enqueued_rewrite: composed_sidecars > 0,
         composed_sidecars,
@@ -857,6 +863,13 @@ pub(crate) async fn apply_issue_via_sidecar(
     }
 
     flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
+
+    // `last_metadata_sync_at` is bookkeeping the XML doesn't carry, so the
+    // scoped rescan can't set it from the rewritten sidecar — stamp it here on
+    // the writeback path too (the DB-direct `apply_issue` does this via
+    // `bump_issue_sync` at the end of its flow). Same metadata-only exception
+    // as the variant-cover write above.
+    bump_issue_sync(&state.db, &row.id).await?;
 
     let outcome = ApplyOutcome {
         enqueued_rewrite: true,
@@ -1745,6 +1758,23 @@ pub(crate) async fn fetch_field_provenance_map(
         .all(db)
         .await?;
     Ok(rows.into_iter().map(|r| (r.field, r.set_by)).collect())
+}
+
+/// Full provenance rows (field + set_by + set_at + source) for an entity —
+/// the richer counterpart to [`fetch_field_provenance_map`], used by the
+/// issue Metadata tab to render a "field → source → when" table. Ordered by
+/// `set_at` descending (most recently touched first).
+pub(crate) async fn fetch_field_provenance_rows(
+    db: &DatabaseConnection,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<Vec<field_provenance::Model>, sea_orm::DbErr> {
+    field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq(entity_type))
+        .filter(field_provenance::Column::EntityId.eq(entity_id))
+        .order_by_desc(field_provenance::Column::SetAt)
+        .all(db)
+        .await
 }
 
 async fn apply_external_ids(

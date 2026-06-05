@@ -19,7 +19,6 @@ import { ChipList } from "@/components/library/ChipList";
 import { Description } from "@/components/library/Description";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
 import { CoverGallery } from "@/components/library/CoverGallery";
-import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
 
 import { IssueSourcesFooter } from "./IssueMetadataPanel";
@@ -53,6 +52,7 @@ import {
 
 import { InlineNotesEditor } from "./InlineNotesEditor";
 import { IssueActions } from "./IssueActions";
+import { IssueMetadataTab } from "./IssueMetadataTab";
 
 export default async function IssuePage({
   params,
@@ -290,6 +290,26 @@ export default async function IssuePage({
                 <Badge variant="destructive">{issue.state}</Badge>
               )}
               <IssueHealthBadge seriesSlug={seriesSlug} issueSlug={issueSlug} />
+              {issue.metadata_completeness &&
+                issue.metadata_completeness.tier !== "complete" && (
+                  <Badge
+                    variant="outline"
+                    className={
+                      issue.metadata_completeness.tier === "needs_metadata"
+                        ? "border-amber-500/60 text-amber-600 dark:text-amber-400"
+                        : undefined
+                    }
+                    title={
+                      issue.metadata_completeness.missing_core.length > 0
+                        ? `Missing: ${issue.metadata_completeness.missing_core.join(", ")}`
+                        : undefined
+                    }
+                  >
+                    {issue.metadata_completeness.tier === "needs_metadata"
+                      ? "Needs metadata"
+                      : "Partial metadata"}
+                  </Badge>
+                )}
               <UserRating
                 scope="issue"
                 seriesSlug={issue.series_slug}
@@ -331,7 +351,7 @@ export default async function IssuePage({
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
           <TabsTrigger value="genres">Genres &amp; Tags</TabsTrigger>
           <TabsTrigger value="covers">Covers</TabsTrigger>
-          <TabsTrigger value="external-ids">External IDs</TabsTrigger>
+          <TabsTrigger value="metadata">Metadata</TabsTrigger>
           <TabsTrigger value="notes">Notes</TabsTrigger>
           {hasActivity && <TabsTrigger value="activity">Activity</TabsTrigger>}
         </TabsList>
@@ -363,7 +383,10 @@ export default async function IssuePage({
                       ? issue.sort_number.toString()
                       : null,
                 },
-                { label: "Volume", value: issue.volume ?? series?.volume ?? null },
+                {
+                  label: "Volume",
+                  value: issue.volume ?? series?.volume ?? null,
+                },
                 { label: "Publication date", value: publicationDate },
                 {
                   label: "Publication status",
@@ -538,15 +561,10 @@ export default async function IssuePage({
 
           <TabsContent
             forceMount
-            value="external-ids"
+            value="metadata"
             className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
-            <ExternalIdsCard
-              entityType="issue"
-              seriesSlug={seriesSlug}
-              issueSlug={issue.slug}
-              chrome="bare"
-            />
+            <IssueMetadataTab seriesSlug={seriesSlug} issueSlug={issue.slug} />
           </TabsContent>
 
           <TabsContent
@@ -561,11 +579,11 @@ export default async function IssuePage({
             />
           </TabsContent>
           {/* Covers tab is intentionally OUTSIDE the forceMount stack:
-            * variant cover tiles are tall, and pinning them into the
-            * stack would force every other tab's panel to that height
-            * (the "lots of empty space at the bottom" effect). On-demand
-            * mount also matches Activity, which stays out of the stack
-            * for its own perf reason. */}
+           * variant cover tiles are tall, and pinning them into the
+           * stack would force every other tab's panel to that height
+           * (the "lots of empty space at the bottom" effect). On-demand
+           * mount also matches Activity, which stays out of the stack
+           * for its own perf reason. */}
           <TabsContent value="covers" className="col-start-1 row-start-1 pt-6">
             <CoverGallery issueId={issue.id} chrome="bare" />
           </TabsContent>
@@ -724,11 +742,11 @@ function splitCsv(value: string | null | undefined): string[] {
 function hasAnyCredit(issue: IssueDetailView): boolean {
   return Boolean(
     issue.writer ||
-      issue.penciller ||
-      issue.inker ||
-      issue.colorist ||
-      issue.letterer ||
-      issue.cover_artist,
+    issue.penciller ||
+    issue.inker ||
+    issue.colorist ||
+    issue.letterer ||
+    issue.cover_artist,
   );
 }
 

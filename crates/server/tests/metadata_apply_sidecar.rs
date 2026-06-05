@@ -21,7 +21,7 @@ mod common;
 use chrono::Utc;
 use common::TestApp;
 use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
-use entity::{field_provenance, metadata_run, metadata_run_candidate};
+use entity::{field_provenance, issue, metadata_run, metadata_run_candidate};
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use serde_json::json;
 use server::jobs::metadata_apply::apply_issue_inline;
@@ -88,6 +88,7 @@ async fn seed_issue_run(app: &TestApp, issue_id: &str, source: &str) -> (Uuid, i
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -243,6 +244,20 @@ async fn apply_issue_with_writeback_enabled_enqueues_rewrite() {
         .expect("run present");
     assert_eq!(run.items_applied, 1, "items_applied bumps on enqueue");
     assert_eq!(run.items_skipped, 0);
+
+    // Regression: the writeback path must stamp `last_metadata_sync_at` even
+    // though it doesn't write entity rows directly. It previously stayed NULL,
+    // so the issue Metadata tab's "Last metadata sync" showed "Never" after a
+    // successful pull.
+    let issue_row = issue::Entity::find_by_id(issue_id.clone())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("issue present");
+    assert!(
+        issue_row.last_metadata_sync_at.is_some(),
+        "writeback apply must stamp last_metadata_sync_at",
+    );
 }
 
 #[tokio::test]
@@ -628,6 +643,7 @@ async fn apply_series_with_writeback_enabled_composes_per_issue_and_triggers_one
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)
@@ -744,6 +760,7 @@ async fn apply_series_with_writeback_skips_removed_issues() {
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)
@@ -832,6 +849,7 @@ async fn apply_series_writeback_disabled_takes_legacy_path() {
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)

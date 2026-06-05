@@ -31,6 +31,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list))
         .routes(routes!(get_one))
+        .routes(routes!(collection_report))
         .routes(routes!(update_series))
         .routes(routes!(scan_series))
         .routes(routes!(list_issues))
@@ -566,6 +567,31 @@ pub struct SeriesView {
     /// XSS surface area.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
+    /// Metadata-completeness assessment ("does this need metadata pulled?").
+    /// Detail-only — populated by `get_one`; `None` on the list endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_completeness: Option<crate::metadata::completeness::CompletenessReport>,
+    /// At-a-glance completeness tier (`"complete"` | `"partial"` |
+    /// `"needs_metadata"`) rolled up across the series' active issues. The
+    /// lightweight card-badge counterpart to [`Self::metadata_completeness`];
+    /// populated by `hydrate_series` on list endpoints. `None` when no signal
+    /// (e.g. zero active issues) — the card shows no badge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_completeness_tier: Option<String>,
+    /// Per-issue completeness rollup across the series (`complete` of `total`
+    /// active issues whose metadata is [`CompletenessTier::Complete`]). Drives
+    /// the Collection tab's "N of M issues have complete metadata" line.
+    /// Detail-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_completeness_summary: Option<MetadataCompletenessSummary>,
+}
+
+/// Issue-level completeness rollup for a series. `complete` counts active
+/// issues meeting the issue core criteria; `total` is the active-issue count.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct MetadataCompletenessSummary {
+    pub complete: i64,
+    pub total: i64,
 }
 
 /// Per-user, server-computed read progress for the whole series. Sidesteps
@@ -632,6 +658,9 @@ impl From<series::Model> for SeriesView {
             user_rating: None,
             reading_direction: m.reading_direction,
             snippet: None,
+            metadata_completeness: None,
+            metadata_completeness_summary: None,
+            metadata_completeness_tier: None,
         }
     }
 }
@@ -767,6 +796,11 @@ pub struct IssueDetailView {
     /// Paired with [`Self::last_rewrite_at`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_rewrite_kind: Option<String>,
+    /// ISO-8601 timestamp of the last provider metadata sync for this issue
+    /// (`issue.last_metadata_sync_at`). `None` when never synced. Surfaced in
+    /// the Metadata tab's freshness section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_metadata_sync_at: Option<String>,
     /// Whether the parent library has archive writeback enabled. Gates
     /// the admin "Edit archive…" affordance in the UI
     /// (`archive-rewrite-1.0` M3). Populated by the issue-detail handler;
@@ -783,6 +817,12 @@ pub struct IssueDetailView {
     /// explainer when editing a `.cbr`. `archive-rewrite-1.0` M6.
     #[serde(default)]
     pub library_cbr_convert_confirmed: bool,
+    /// Metadata-completeness assessment ("does this issue need metadata
+    /// pulled?"). Populated by the issue-detail handler; `None` on list
+    /// endpoints (the cheaper `IssueSummaryView.metadata_completeness_tier`
+    /// carries the at-a-glance signal there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_completeness: Option<crate::metadata::completeness::CompletenessReport>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -898,9 +938,11 @@ impl IssueDetailView {
             creator_slugs: std::collections::HashMap::new(),
             last_rewrite_at: m.last_rewrite_at.map(|t| t.to_rfc3339()),
             last_rewrite_kind: m.last_rewrite_kind,
+            last_metadata_sync_at: m.last_metadata_sync_at.map(|t| t.to_rfc3339()),
             allow_archive_writeback: false,
             cover_page_index: m.cover_page_index,
             library_cbr_convert_confirmed: false,
+            metadata_completeness: None,
         }
     }
 }
@@ -1748,6 +1790,11 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
         }
     }
 
+    // Batched metadata-completeness tier for the card badge — one aggregate
+    // over the whole page, same FILTER predicate as the saved-view filter and
+    // the series rollup so all three agree.
+    let tiers = fetch_metadata_completeness_tiers(app, &rows).await;
+
     rows.into_iter()
         .map(|s| {
             let series_id = s.id;
@@ -1760,7 +1807,87 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
                 v.comicvine_id = *cv;
                 v.metron_id = *metron;
             }
+            v.metadata_completeness_tier = tiers.get(&series_id).cloned();
             v
+        })
+        .collect()
+}
+
+/// Batched per-series metadata-completeness tier for card badges. One
+/// aggregate over every series on the page; the `complete_count` FILTER
+/// matches [`compute_metadata_completeness_summary`] and the saved-view
+/// `metadata_completeness` predicate exactly. Series with zero active issues
+/// are omitted (no badge). Returns `series_id → tier` where tier is
+/// `"complete"` | `"partial"` | `"needs_metadata"`.
+async fn fetch_metadata_completeness_tiers(
+    app: &AppState,
+    rows: &[series::Model],
+) -> HashMap<Uuid, String> {
+    use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
+    if rows.is_empty() {
+        return HashMap::new();
+    }
+    #[derive(FromQueryResult)]
+    struct TierRow {
+        series_id: Uuid,
+        active_count: i64,
+        complete_count: i64,
+    }
+    let mut params: Vec<Value> = Vec::with_capacity(rows.len());
+    let placeholders: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            params.push(Value::from(r.id));
+            format!("${}", params.len())
+        })
+        .collect();
+    let sql = format!(
+        r#"
+        SELECT i.series_id AS series_id,
+               COUNT(*)::bigint AS active_count,
+               COUNT(*) FILTER (
+                 -- `title` intentionally excluded: optional for comic issues.
+                 WHERE i.year IS NOT NULL AND i.year >= 1800
+                   AND COALESCE(btrim(i.summary), '') <> ''
+                   AND i.page_count IS NOT NULL AND i.page_count > 0
+                   AND (
+                     COALESCE(i.writer, '') <> '' OR COALESCE(i.penciller, '') <> '' OR
+                     COALESCE(i.inker, '') <> '' OR COALESCE(i.colorist, '') <> '' OR
+                     COALESCE(i.letterer, '') <> '' OR COALESCE(i.cover_artist, '') <> '' OR
+                     COALESCE(i.editor, '') <> '' OR COALESCE(i.translator, '') <> ''
+                   )
+                   AND EXISTS (
+                     SELECT 1 FROM external_ids x
+                     WHERE x.entity_type = 'issue' AND x.entity_id = i.id
+                       AND x.source IN ('comicvine', 'metron')
+                   )
+               )::bigint AS complete_count
+          FROM issues i
+         WHERE i.state = 'active' AND i.removed_at IS NULL
+           AND i.series_id IN ({})
+         GROUP BY i.series_id
+    "#,
+        placeholders.join(",")
+    );
+    let backend = app.db.get_database_backend();
+    let stmt = Statement::from_sql_and_values(backend, sql, params);
+    TierRow::find_by_statement(stmt)
+        .all(&app.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|r| {
+            if r.active_count == 0 {
+                return None;
+            }
+            let tier = if r.complete_count >= r.active_count {
+                "complete"
+            } else if r.complete_count == 0 {
+                "needs_metadata"
+            } else {
+                "partial"
+            };
+            Some((r.series_id, tier.to_owned()))
         })
         .collect()
 }
@@ -1796,6 +1923,69 @@ pub(crate) async fn enrich_issue_detail_legacy_ids(
         view.metron_id = metron;
         view.gtin = gtin;
     }
+}
+
+/// Assess a hydrated [`SeriesView`]'s metadata completeness. Pure — reads only
+/// fields already on the view, so call it *after* `enrich_series_view_legacy_ids`
+/// (so the provider-match signal sees the CV/Metron ids) and after the facet
+/// rollups populate `genres`. Zero extra queries.
+pub(crate) fn assess_series_view(view: &SeriesView) -> crate::metadata::completeness::CompletenessReport {
+    use crate::metadata::completeness::{
+        SeriesCompletenessInput, assess_series, non_empty, plausible_year,
+    };
+    assess_series(&SeriesCompletenessInput {
+        // CV + Metron are the shipped metadata providers; matching either is
+        // "matched to a provider". Barcode-only external_ids (GTIN/ISBN/UPC)
+        // are intentionally excluded — they aren't provider matches.
+        has_external_id: view.comicvine_id.is_some() || view.metron_id.is_some(),
+        has_summary: non_empty(view.summary.as_deref()),
+        has_publisher: non_empty(view.publisher.as_deref()),
+        // `status` is non-null and defaults to "continuing" on creation, so
+        // it's effectively always present — kept in the criteria set for
+        // documentation symmetry, contributes no false "needs metadata".
+        has_status: non_empty(Some(view.status.as_str())),
+        has_total_issues: view.total_issues.is_some(),
+        has_year_began: plausible_year(view.year),
+        has_genres: !view.genres.is_empty(),
+    })
+}
+
+/// Assess a hydrated [`IssueDetailView`]'s metadata completeness. Pure — call
+/// *after* `enrich_issue_detail_legacy_ids`. Credits come from the per-role
+/// CSV columns already on the view (a non-empty role implies ≥1 credit), so
+/// there's no extra junction query.
+pub(crate) fn assess_issue_view(
+    view: &IssueDetailView,
+) -> crate::metadata::completeness::CompletenessReport {
+    use crate::metadata::completeness::{
+        IssueCompletenessInput, assess_issue, non_empty, plausible_year,
+    };
+    let has_credits = [
+        &view.writer,
+        &view.penciller,
+        &view.inker,
+        &view.colorist,
+        &view.letterer,
+        &view.cover_artist,
+        &view.editor,
+        &view.translator,
+    ]
+    .iter()
+    .any(|f| non_empty(f.as_deref()));
+    assess_issue(&IssueCompletenessInput {
+        has_external_id: view.comicvine_id.is_some() || view.metron_id.is_some(),
+        has_title: non_empty(view.title.as_deref()),
+        has_cover_date: plausible_year(view.year),
+        has_summary: non_empty(view.summary.as_deref()),
+        has_page_count: view.page_count.is_some_and(|p| p > 0),
+        has_credits,
+        // An on-disk active issue always has a renderable cover (page 0). No
+        // separate extract-failed flag exists today.
+        has_cover: view.state == "active",
+        has_characters: non_empty(view.characters.as_deref()),
+        has_story_arcs: non_empty(view.story_arc.as_deref()),
+        has_genres: non_empty(view.genre.as_deref()),
+    })
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -1965,6 +2155,374 @@ where
     }
 }
 
+/// Collection-completeness report for a series: how many issues are owned
+/// versus expected, and **which** main-run issue numbers are missing.
+///
+/// The denominator (`total_expected`) comes from `series.total_issues`, which
+/// the scanner resolves from a `series.json` sidecar or the max ComicInfo
+/// `<Count>`. series.json carries only the *count*, never a per-issue
+/// manifest — so interior `missing` numbers are *inferred* by interpolating
+/// the integer run between the lowest and highest owned issue. `expected_source`
+/// records this provenance; a future provider-backed exact manifest will flip
+/// it to `"provider_manifest"` and make `missing` exact.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CollectionReportView {
+    /// Active (non-removed) issues owned. Matches the saved-view
+    /// `collection_completeness` `active_count`, so this report and the
+    /// SeriesCard collection dot never disagree.
+    pub total_owned: i64,
+    /// Publisher-claimed total from `series.total_issues`. `None` when the
+    /// scanner couldn't resolve a count.
+    pub total_expected: Option<i32>,
+    /// `total_owned / total_expected * 100`, `None` when `total_expected` is
+    /// `None`. Capped at 100 (over-collection still reads as complete).
+    pub completeness_pct: Option<f64>,
+    /// `"complete"` | `"incomplete"` | `"unknown"` — same vocabulary and CASE
+    /// semantics as the `collection_completeness` saved-view predicate.
+    pub completeness_state: String,
+    pub main_run: MainRunReport,
+    /// Annuals, one-shots, TPBs, point issues (`#2.5`), and unnumbered files —
+    /// listed but excluded from the integer gap math.
+    pub specials: Vec<SpecialEntry>,
+    /// `"series_total"` today (count-only). `"provider_manifest"` once an
+    /// exact provider issue list backs the report.
+    pub expected_source: String,
+    /// Every owned active issue with its metadata-completeness status, ordered
+    /// by `sort_number`. Lets the UI color each issue chip by status
+    /// (complete / partial / needs-metadata) and reveal the missing fields on
+    /// click — no separate per-issue request. Uses the same scorer as the
+    /// issue detail page.
+    pub issues: Vec<CollectionIssueEntry>,
+}
+
+/// One owned issue's identity + metadata-completeness status, for the
+/// collection grid. `metadata_tier` is `"complete"` | `"partial"` |
+/// `"needs_metadata"`; `missing_core` lists the absent core fields (empty when
+/// complete).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CollectionIssueEntry {
+    pub slug: String,
+    pub number_raw: Option<String>,
+    pub title: Option<String>,
+    pub sort_number: Option<f64>,
+    /// Spec §6.5 tag (`"Annual"`, `"OneShot"`, …) when classified; `None` for
+    /// ordinary main-run issues.
+    pub special_type: Option<String>,
+    pub metadata_tier: String,
+    /// Missing core field keys ([`crate::metadata::completeness`] keys).
+    pub missing_core: Vec<String>,
+}
+
+/// The integer-numbered backbone of a series and its inferred gaps.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MainRunReport {
+    /// Owned main-run `sort_number`s, ascending (e.g. `[0.0, 1.0, 2.0, 4.0]`).
+    pub present: Vec<f64>,
+    /// `number_raw` labels aligned 1:1 with [`Self::present`] for display.
+    pub present_labels: Vec<String>,
+    /// Integers in `min..=max` not owned (e.g. `[3]`). **Inferred** — see
+    /// [`CollectionReportView::expected_source`].
+    pub missing: Vec<i64>,
+    /// Lowest / highest owned main-run number (as f64), `None` when the run is
+    /// empty.
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    /// Count expected beyond `max` when `total_expected > max` (e.g. own up to
+    /// #4 with `total_expected = 6` → `2`).
+    pub trailing_missing: i64,
+}
+
+/// A non-main-run issue: special_type-tagged, fractional, or unnumbered.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SpecialEntry {
+    pub number_raw: Option<String>,
+    pub sort_number: Option<f64>,
+    /// Spec §6.5 tag (`"Annual"`, `"OneShot"`, `"TPB"`, `"Special"`) when the
+    /// scanner classified it; `None` for plain point/unnumbered issues.
+    pub special_type: Option<String>,
+}
+
+/// Minimal per-issue projection for the collection report — only the three
+/// columns the gap algorithm needs, so the query stays cheap even for a
+/// 1000-issue run and never truncates (no `.limit()`).
+#[derive(Debug, FromQueryResult)]
+struct CollectionNumberRow {
+    sort_number: Option<f64>,
+    number_raw: Option<String>,
+    special_type: Option<String>,
+}
+
+/// How a single issue participates in the collection report.
+enum NumberClass {
+    /// Integral `sort_number`, not special-tagged — part of the gap-detected
+    /// backbone. Carries the rounded integer.
+    MainRun(i64),
+    /// Special-tagged, fractional (`#2.5`), or unnumbered — listed under
+    /// `specials`, excluded from gap math.
+    Special,
+}
+
+/// Classify an issue for the collection report. A stored `special_type`
+/// (scanner-assigned at scan time) takes precedence over the numeric shape,
+/// so an annual parsed to `sort_number = 1.0` never pollutes the main run.
+fn classify_issue_number(sort_number: Option<f64>, special_type: Option<&str>) -> NumberClass {
+    if special_type.is_some() {
+        return NumberClass::Special;
+    }
+    match sort_number {
+        Some(n) if n >= 0.0 && (n - n.round()).abs() < 1e-9 => NumberClass::MainRun(n.round() as i64),
+        _ => NumberClass::Special,
+    }
+}
+
+/// Derive `completeness_state` with the exact CASE semantics of the
+/// `collection_completeness` saved-view predicate in `views/compile.rs`.
+fn collection_state(total_owned: i64, total_expected: Option<i32>) -> &'static str {
+    match total_expected {
+        None => "unknown",
+        Some(t) if total_owned >= t as i64 => "complete",
+        Some(_) => "incomplete",
+    }
+}
+
+/// Pure builder — kept free of DB access so the gap algorithm is unit-testable.
+fn build_collection_report(
+    rows: Vec<CollectionNumberRow>,
+    total_expected: Option<i32>,
+) -> CollectionReportView {
+    let total_owned = rows.len() as i64;
+    let mut present: Vec<f64> = Vec::new();
+    let mut present_labels: Vec<String> = Vec::new();
+    let mut present_ints: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+    let mut specials: Vec<SpecialEntry> = Vec::new();
+
+    for r in rows {
+        match classify_issue_number(r.sort_number, r.special_type.as_deref()) {
+            NumberClass::MainRun(n) => {
+                present.push(r.sort_number.unwrap_or(n as f64));
+                present_labels.push(r.number_raw.unwrap_or_else(|| n.to_string()));
+                present_ints.insert(n);
+            }
+            NumberClass::Special => specials.push(SpecialEntry {
+                number_raw: r.number_raw,
+                sort_number: r.sort_number,
+                special_type: r.special_type,
+            }),
+        }
+    }
+
+    let min = present_ints.iter().next().copied();
+    let max = present_ints.iter().next_back().copied();
+    let mut missing: Vec<i64> = Vec::new();
+    if let (Some(lo), Some(hi)) = (min, max) {
+        missing.extend((lo..=hi).filter(|k| !present_ints.contains(k)));
+    }
+    let max_owned = max.unwrap_or(0);
+    let trailing_missing = match total_expected {
+        Some(t) if (t as i64) > max_owned => (t as i64) - max_owned,
+        _ => 0,
+    };
+
+    let completeness_pct = total_expected.map(|t| {
+        if t <= 0 {
+            0.0
+        } else {
+            ((total_owned as f64 / t as f64) * 100.0).min(100.0)
+        }
+    });
+
+    CollectionReportView {
+        total_owned,
+        total_expected,
+        completeness_pct,
+        completeness_state: collection_state(total_owned, total_expected).to_owned(),
+        main_run: MainRunReport {
+            present,
+            present_labels,
+            missing,
+            min: min.map(|n| n as f64),
+            max: max.map(|n| n as f64),
+            trailing_missing,
+        },
+        specials,
+        expected_source: "series_total".to_owned(),
+        // Populated by the handler (needs DB access for per-issue scoring).
+        issues: Vec::new(),
+    }
+}
+
+/// Per-issue projection for the collection report's metadata-completeness
+/// scan. Carries exactly the columns [`assess_issue_view`]'s logic needs.
+#[derive(Debug, FromQueryResult)]
+struct IssueCompletenessRow {
+    id: String,
+    slug: String,
+    number_raw: Option<String>,
+    title: Option<String>,
+    sort_number: Option<f64>,
+    special_type: Option<String>,
+    year: Option<i32>,
+    summary: Option<String>,
+    page_count: Option<i32>,
+    writer: Option<String>,
+    penciller: Option<String>,
+    inker: Option<String>,
+    colorist: Option<String>,
+    letterer: Option<String>,
+    cover_artist: Option<String>,
+    editor: Option<String>,
+    translator: Option<String>,
+    state: String,
+}
+
+/// Score every active issue in a series for metadata completeness, ordered by
+/// `sort_number`. Two queries total (issue rows + a batched provider-id
+/// lookup), then a pure per-issue scoring loop — no N+1.
+async fn collect_issue_completeness(app: &AppState, series_id: Uuid) -> Vec<CollectionIssueEntry> {
+    use crate::metadata::completeness::{
+        CompletenessTier, IssueCompletenessInput, assess_issue, non_empty, plausible_year,
+    };
+    let rows = issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(series_id))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .select_only()
+        .column(issue::Column::Id)
+        .column(issue::Column::Slug)
+        .column(issue::Column::NumberRaw)
+        .column(issue::Column::Title)
+        .column(issue::Column::SortNumber)
+        .column(issue::Column::SpecialType)
+        .column(issue::Column::Year)
+        .column(issue::Column::Summary)
+        .column(issue::Column::PageCount)
+        .column(issue::Column::Writer)
+        .column(issue::Column::Penciller)
+        .column(issue::Column::Inker)
+        .column(issue::Column::Colorist)
+        .column(issue::Column::Letterer)
+        .column(issue::Column::CoverArtist)
+        .column(issue::Column::Editor)
+        .column(issue::Column::Translator)
+        .column(issue::Column::State)
+        .order_by_asc(issue::Column::SortNumber)
+        .into_model::<IssueCompletenessRow>()
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    if rows.is_empty() {
+        return Vec::new();
+    }
+
+    // Batched provider-match lookup: which of these issues have a CV/Metron
+    // external_ids row. One query, not one-per-issue.
+    let issue_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let matched: std::collections::HashSet<String> = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::EntityId.is_in(issue_ids))
+        .filter(entity::external_id::Column::Source.is_in(["comicvine", "metron"]))
+        .select_only()
+        .column(entity::external_id::Column::EntityId)
+        .into_tuple::<String>()
+        .all(&app.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    rows.into_iter()
+        .map(|r| {
+            let has_credits = [
+                &r.writer,
+                &r.penciller,
+                &r.inker,
+                &r.colorist,
+                &r.letterer,
+                &r.cover_artist,
+                &r.editor,
+                &r.translator,
+            ]
+            .iter()
+            .any(|f| non_empty(f.as_deref()));
+            let report = assess_issue(&IssueCompletenessInput {
+                has_external_id: matched.contains(&r.id),
+                has_title: non_empty(r.title.as_deref()),
+                has_cover_date: plausible_year(r.year),
+                has_summary: non_empty(r.summary.as_deref()),
+                has_page_count: r.page_count.is_some_and(|p| p > 0),
+                has_credits,
+                has_cover: r.state == "active",
+                ..Default::default()
+            });
+            let tier = match report.tier {
+                CompletenessTier::Complete => "complete",
+                CompletenessTier::NeedsMetadata => "needs_metadata",
+                CompletenessTier::Partial => "partial",
+            };
+            CollectionIssueEntry {
+                slug: r.slug,
+                number_raw: r.number_raw,
+                title: r.title,
+                sort_number: r.sort_number,
+                special_type: r.special_type,
+                metadata_tier: tier.to_owned(),
+                missing_core: report.missing_core,
+            }
+        })
+        .collect()
+}
+
+#[utoipa::path(
+    operation_id = "series_collection_report",    get,
+    path = "/series/{slug}/collection",
+    params(("slug" = String, Path,)),
+    responses(
+        (status = 200, body = CollectionReportView),
+        (status = 404)
+    )
+)]
+#[handler]
+pub async fn collection_report(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(slug): AxPath<String>,
+) -> impl IntoResponse {
+    let row = match find_by_slug(&app.db, &slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if !visible_in_library(&app, &user, row.library_id).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
+    }
+    // No `.limit()` — the whole run must be visible for gap detection. The
+    // three-column projection keeps this cheap even at 1000+ issues. Filter
+    // matches `active_issue_count_subquery` so `total_owned` lines up with the
+    // saved-view `collection_completeness` count.
+    let rows = match issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(row.id))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .select_only()
+        .column(issue::Column::SortNumber)
+        .column(issue::Column::NumberRaw)
+        .column(issue::Column::SpecialType)
+        .order_by_asc(issue::Column::SortNumber)
+        .into_model::<CollectionNumberRow>()
+        .all(&app.db)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!(series_id = %row.id, error = %e, "collection report query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let mut report = build_collection_report(rows, row.total_issues);
+    report.issues = collect_issue_completeness(&app, row.id).await;
+    Json(report).into_response()
+}
+
 #[utoipa::path(
     operation_id = "series_get_one",    get,
     path = "/series/{slug}",
@@ -2105,6 +2663,14 @@ pub async fn get_one(
     v.earliest_year = earliest_year;
     v.latest_year = latest_year;
     enrich_series_view_legacy_ids(&app.db, &mut v, &series_id_for_lookups.to_string()).await;
+
+    // Metadata-completeness: assessed from the fully-hydrated view (provider
+    // ids + facet rollups already populated), so it costs no extra query.
+    v.metadata_completeness = Some(assess_series_view(&v));
+    // Per-issue rollup ("N of M issues have complete metadata") via one
+    // aggregate query — drives the Collection tab's metadata-health line.
+    v.metadata_completeness_summary =
+        Some(compute_metadata_completeness_summary(&app, series_id_for_lookups).await);
 
     // Per-user read-progress summary — computed against the *full* series,
     // not the 100-issue page the client typically pulls. Two cheap counts
@@ -2266,6 +2832,66 @@ async fn compute_progress_summary(
         in_progress,
         finished_pages,
     }
+}
+
+/// Per-issue metadata-completeness rollup for a series: count of active
+/// issues meeting the issue **core** criteria (provider-matched + title +
+/// cover date + summary + page count + ≥1 credit; cover is implicit for an
+/// active issue) over the active-issue count.
+///
+/// One aggregate query — no per-issue scoring loop. The FILTER predicate
+/// mirrors [`assess_issue_view`] exactly so the rollup and the per-issue
+/// detail report never disagree: credits come from the per-role CSV columns,
+/// the provider match from an `external_ids` row with a provider source
+/// (CV/Metron — barcode sources excluded).
+async fn compute_metadata_completeness_summary(
+    app: &AppState,
+    series_id: Uuid,
+) -> MetadataCompletenessSummary {
+    use sea_orm::{ConnectionTrait, FromQueryResult, Statement};
+    #[derive(FromQueryResult)]
+    struct Row {
+        active_count: i64,
+        complete_count: i64,
+    }
+    let sql = r#"
+        SELECT
+          COUNT(*)::bigint AS active_count,
+          COUNT(*) FILTER (
+            -- `title` intentionally excluded: optional for comic issues.
+            WHERE i.year IS NOT NULL AND i.year >= 1800
+              AND COALESCE(btrim(i.summary), '') <> ''
+              AND i.page_count IS NOT NULL AND i.page_count > 0
+              AND (
+                COALESCE(i.writer, '') <> '' OR COALESCE(i.penciller, '') <> '' OR
+                COALESCE(i.inker, '') <> '' OR COALESCE(i.colorist, '') <> '' OR
+                COALESCE(i.letterer, '') <> '' OR COALESCE(i.cover_artist, '') <> '' OR
+                COALESCE(i.editor, '') <> '' OR COALESCE(i.translator, '') <> ''
+              )
+              AND EXISTS (
+                SELECT 1 FROM external_ids x
+                WHERE x.entity_type = 'issue' AND x.entity_id = i.id
+                  AND x.source IN ('comicvine', 'metron')
+              )
+          )::bigint AS complete_count
+        FROM issues i
+        WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+    "#;
+    let backend = app.db.get_database_backend();
+    let stmt = Statement::from_sql_and_values(backend, sql, [series_id.into()]);
+    Row::find_by_statement(stmt)
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| MetadataCompletenessSummary {
+            complete: r.complete_count,
+            total: r.active_count,
+        })
+        .unwrap_or(MetadataCompletenessSummary {
+            complete: 0,
+            total: 0,
+        })
 }
 
 /// One-row lookup against `user_ratings`. Returns `None` when no row
@@ -2469,9 +3095,104 @@ fn aggregate_csv<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> Vec<S
 #[cfg(test)]
 mod tests {
     use super::aggregate_csv;
+    use super::{CollectionNumberRow, build_collection_report};
 
     fn run(values: &[&str]) -> Vec<String> {
         aggregate_csv(values.iter().map(|s| Some(*s)))
+    }
+
+    /// Build a projection row: `(sort_number, number_raw, special_type)`.
+    fn row(
+        sort_number: Option<f64>,
+        number_raw: Option<&str>,
+        special_type: Option<&str>,
+    ) -> CollectionNumberRow {
+        CollectionNumberRow {
+            sort_number,
+            number_raw: number_raw.map(str::to_owned),
+            special_type: special_type.map(str::to_owned),
+        }
+    }
+
+    fn main_run(nums: &[i64]) -> Vec<CollectionNumberRow> {
+        nums.iter()
+            .map(|n| row(Some(*n as f64), Some(&n.to_string()), None))
+            .collect()
+    }
+
+    #[test]
+    fn detects_interior_gap_and_trailing_missing() {
+        // Own #1, #2, #4 with a publisher total of 6 → #3 missing, +2 trailing.
+        let mut rows = main_run(&[1, 2, 4]);
+        rows.reverse(); // builder must not assume input ordering
+        let r = build_collection_report(rows, Some(6));
+        assert_eq!(r.total_owned, 3);
+        assert_eq!(r.total_expected, Some(6));
+        assert_eq!(r.main_run.missing, vec![3]);
+        assert_eq!(r.main_run.trailing_missing, 2);
+        assert_eq!(r.main_run.min, Some(1.0));
+        assert_eq!(r.main_run.max, Some(4.0));
+        assert_eq!(r.completeness_state, "incomplete");
+        assert_eq!(r.completeness_pct, Some(50.0));
+    }
+
+    #[test]
+    fn issue_zero_is_part_of_the_main_run() {
+        // #0 is a legit prelude; it anchors the run and is gap-detected from.
+        let r = build_collection_report(main_run(&[0, 1, 3]), None);
+        assert_eq!(r.main_run.min, Some(0.0));
+        assert_eq!(r.main_run.missing, vec![2]);
+        assert!(r.specials.is_empty());
+    }
+
+    #[test]
+    fn point_issues_are_specials_not_gaps() {
+        // #2.5 must NOT make #3 look missing — it's a point issue, listed
+        // under specials, excluded from the integer run.
+        let mut rows = main_run(&[1, 2, 3]);
+        rows.push(row(Some(2.5), Some("2.5"), None));
+        let r = build_collection_report(rows, None);
+        assert!(r.main_run.missing.is_empty());
+        assert_eq!(r.specials.len(), 1);
+        assert_eq!(r.specials[0].sort_number, Some(2.5));
+    }
+
+    #[test]
+    fn special_type_beats_integral_sort_number() {
+        // An annual parsed to sort_number = 1.0 must land in specials, not
+        // collide with main-run #1.
+        let mut rows = main_run(&[1, 2]);
+        rows.push(row(Some(1.0), Some("Annual 1"), Some("Annual")));
+        let r = build_collection_report(rows, None);
+        assert_eq!(r.main_run.present.len(), 2);
+        assert_eq!(r.specials.len(), 1);
+        assert_eq!(r.specials[0].special_type.as_deref(), Some("Annual"));
+    }
+
+    #[test]
+    fn unnumbered_issue_is_special() {
+        let rows = vec![row(None, Some("Preview"), None), row(Some(1.0), Some("1"), None)];
+        let r = build_collection_report(rows, None);
+        assert_eq!(r.main_run.present, vec![1.0]);
+        assert_eq!(r.specials.len(), 1);
+        assert!(r.main_run.missing.is_empty());
+    }
+
+    #[test]
+    fn no_total_yields_unknown_state() {
+        let r = build_collection_report(main_run(&[1, 2, 3]), None);
+        assert_eq!(r.completeness_state, "unknown");
+        assert_eq!(r.completeness_pct, None);
+        assert_eq!(r.main_run.trailing_missing, 0);
+    }
+
+    #[test]
+    fn over_collection_is_complete_and_capped() {
+        // Own more than the publisher claim → complete, pct capped at 100.
+        let r = build_collection_report(main_run(&[1, 2, 3, 4, 5]), Some(4));
+        assert_eq!(r.completeness_state, "complete");
+        assert_eq!(r.completeness_pct, Some(100.0));
+        assert_eq!(r.main_run.trailing_missing, 0);
     }
 
     #[test]

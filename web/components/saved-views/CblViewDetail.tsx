@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   BookOpen,
@@ -13,6 +14,7 @@ import {
   Loader2,
   RefreshCw,
   Search as SearchIcon,
+  Sparkles,
 } from "lucide-react";
 
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
@@ -49,7 +51,11 @@ import {
   useCblListWindow,
   useMe,
 } from "@/lib/api/queries";
-import { useBulkMarkProgress, useRefreshCblList } from "@/lib/api/mutations";
+import {
+  useBulkMarkProgress,
+  useCreateSavedViewBatch,
+  useRefreshCblList,
+} from "@/lib/api/mutations";
 import { cn } from "@/lib/utils";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
@@ -89,6 +95,27 @@ function CblViewDetailInner({
   listId: string;
 }) {
   const detail = useCblList(listId);
+  const router = useRouter();
+  const createBatch = useCreateSavedViewBatch();
+  const fetchViewMetadata = () => {
+    createBatch.mutate(
+      { saved_view_id: savedView.id },
+      {
+        onSuccess: (resp) => {
+          if (!resp) return;
+          toast.success(`Searching ${resp.items_total} issues for metadata`, {
+            action: {
+              label: "Review",
+              onClick: () =>
+                router.push(
+                  `/admin/metadata?tab=review&batch=${resp.batch_id}`,
+                ),
+            },
+          });
+        },
+      },
+    );
+  };
   // Server-filter when `hideMissing` is on: only fetch entries we'll
   // render. Otherwise pull everything in position order. Entries
   // arrive with their `IssueSummaryView` already attached, so no
@@ -431,6 +458,12 @@ function CblViewDetailInner({
         }
         extraMenuItems={
           <>
+            <DropdownMenuItem
+              onSelect={fetchViewMetadata}
+              disabled={createBatch.isPending}
+            >
+              <Sparkles className="mr-2 h-4 w-4" /> Fetch metadata for view
+            </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <a
                 href={`/api/me/cbl-lists/${list.id}/export`}

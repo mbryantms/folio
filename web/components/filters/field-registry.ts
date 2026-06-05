@@ -87,6 +87,14 @@ const COLLECTION_COMPLETENESS_VALUES = [
   "unknown",
 ] as const;
 
+/** Three-state metadata completeness rolled up over a series' active issues.
+ *  Mirrors `METADATA_COMPLETENESS_VALUES` in the Rust registry. */
+const METADATA_COMPLETENESS_VALUES = [
+  "complete",
+  "partial",
+  "needs_metadata",
+] as const;
+
 const AGE_RATING_VALUES = [
   "Unknown",
   "Adults Only 18+",
@@ -277,6 +285,19 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
       complete: "Complete",
       incomplete: "Incomplete",
       unknown: "Unknown (no expected count)",
+    },
+  },
+  // metadata-completeness: which series still need metadata pulled
+  {
+    id: "metadata_completeness",
+    label: "Metadata Completeness",
+    kind: "enum",
+    allowedOps: ENUM_OPS,
+    enumValues: METADATA_COMPLETENESS_VALUES,
+    enumLabels: {
+      complete: "Complete",
+      partial: "Partial",
+      needs_metadata: "Needs metadata",
     },
   },
 ] as const;

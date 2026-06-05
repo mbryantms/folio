@@ -23,10 +23,10 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use entity::{cbl_list, saved_view, user as user_entity, user_view_pin};
+use entity::{cbl_entry, cbl_list, saved_view, user as user_entity, user_view_pin};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult,
-    ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, Statement, TransactionTrait,
+    ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
     sea_query::PostgresQueryBuilder,
 };
 use serde::{Deserialize, Serialize};
@@ -1947,6 +1947,103 @@ async fn run_filter_query(app: &AppState, input: CompileInput<'_>) -> axum::resp
         total: None,
     })
     .into_response()
+}
+
+/// Resolved targets for a metadata bulk-fetch over a saved view.
+pub enum BatchTargets {
+    /// Filter/smart view → matching series ids (search per series).
+    Series(Vec<Uuid>),
+    /// CBL reading list → matched library issue ids (search per issue).
+    Issues(Vec<String>),
+}
+
+/// Resolve a saved view to its metadata-fetch targets for the bulk-fetch batch
+/// endpoint. Filter views compile to matching series (capped at
+/// [`REFRESH_BATCH_CAP`]); CBL views enumerate their matched library issues.
+/// Returns an `Err(Response)` (404/403/422/500) the caller forwards verbatim.
+pub async fn resolve_metadata_batch_targets(
+    app: &AppState,
+    user: &CurrentUser,
+    view_id: Uuid,
+) -> Result<BatchTargets, axum::response::Response> {
+    use crate::metadata::refresh::REFRESH_BATCH_CAP;
+
+    let view = match fetch_view(&app.db, view_id).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return Err(error(StatusCode::NOT_FOUND, "not_found", "view not found")),
+        Err(_) => {
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
+    if let Some(owner) = view.user_id
+        && owner != user.id
+    {
+        return Err(error(StatusCode::FORBIDDEN, "forbidden", "not your view"));
+    }
+
+    match view.kind.as_str() {
+        KIND_FILTER_SERIES => {
+            let filter = dsl_from_view(&view).map_err(|_| {
+                error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+            })?;
+            let visible = access::for_user(app, user).await;
+            let input = CompileInput {
+                dsl: &filter,
+                sort_field: SortField::CreatedAt,
+                sort_order: SortOrder::Desc,
+                limit: REFRESH_BATCH_CAP as u64,
+                cursor: None,
+                user_id: user.id,
+                visible_libraries: visible,
+            };
+            let stmt = compile::compile(&input)
+                .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
+            let (sql, values) = stmt.build(PostgresQueryBuilder);
+            let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
+            let rows = entity::series::Model::find_by_statement(raw)
+                .all(&app.db)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "batch targets: filter query failed");
+                    error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+                })?;
+            Ok(BatchTargets::Series(rows.into_iter().map(|r| r.id).collect()))
+        }
+        KIND_CBL => {
+            let Some(list_id) = view.cbl_list_id else {
+                return Err(error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "unsupported_view_kind",
+                    "cbl view has no list",
+                ));
+            };
+            // Only entries matched to a library issue are searchable.
+            let issue_ids: Vec<String> = cbl_entry::Entity::find()
+                .filter(cbl_entry::Column::CblListId.eq(list_id))
+                .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
+                .order_by_asc(cbl_entry::Column::Position)
+                .limit(REFRESH_BATCH_CAP as u64)
+                .all(&app.db)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "batch targets: cbl entries query failed");
+                    error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+                })?
+                .into_iter()
+                .filter_map(|e| e.matched_issue_id)
+                .collect();
+            Ok(BatchTargets::Issues(issue_ids))
+        }
+        _ => Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_view_kind",
+            "metadata batch supports filter and cbl views only",
+        )),
+    }
 }
 
 fn sort_value_for(row: &entity::series::Model, field: SortField) -> String {

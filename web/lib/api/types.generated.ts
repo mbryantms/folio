@@ -2915,6 +2915,81 @@ export interface paths {
         patch: operations["sidebar_layout_update_layout"];
         trace?: never;
     };
+    "/api/metadata/batch/saved-view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /metadata/batch/saved-view` — fan out a metadata search over the
+         *     targets of a saved view: a filter/smart view searches each matching series;
+         *     a CBL reading list searches each issue. One `metadata_batch` groups them.
+         */
+        post: operations["metadata_create_saved_view_batch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/metadata/batch/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_batch_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/metadata/batch/{batch_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /metadata/batch/{batch_id}/apply` — accept many reviewed candidates
+         *     at once. Loops the existing per-entity `ApplySeriesJob`/`ApplyIssueJob`
+         *     push (decision matrix, apply mutex, writeback dispatch, audit all
+         *     unchanged); only the fan-out is new.
+         */
+        post: operations["metadata_batch_apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/metadata/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_list_batches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/people": {
         parameters: {
             query?: never;
@@ -3023,6 +3098,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{series_slug}/issues/{issue_slug}/metadata-overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["issues_metadata_overview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{series_slug}/issues/{issue_slug}/next": {
         parameters: {
             query?: never;
@@ -3123,6 +3214,22 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["series_update_series"];
+        trace?: never;
+    };
+    "/api/series/{slug}/collection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["series_collection_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/series/{slug}/external-ids": {
@@ -3311,6 +3418,28 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["metadata_apply_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search
+         *     over every active issue in the series, grouped under one `metadata_batch`
+         *     so progress + review happen in one place. Children run as `manual` (held
+         *     for review, never auto-applied).
+         */
+        post: operations["metadata_create_series_batch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3864,6 +3993,112 @@ export interface components {
              */
             slot: number;
         };
+        /** @description Live aggregate over a batch's child runs. */
+        BatchAggregate: {
+            /**
+             * Format: int64
+             * @description Children with an applied candidate.
+             */
+            applied: number;
+            /** Format: int64 */
+            awaiting_quota: number;
+            /** Format: int64 */
+            failed: number;
+            /**
+             * Format: int64
+             * @description Still queued / searching.
+             */
+            in_flight: number;
+            /**
+             * Format: int64
+             * @description `multi_good` | `single_bad_cover` | `multi_bad_cover` — needs a look.
+             */
+            needs_review: number;
+            /** Format: int64 */
+            no_match: number;
+            /**
+             * Format: int64
+             * @description Children whose search has finalized (completed / failed / awaiting_quota).
+             */
+            searched: number;
+            /**
+             * Format: int64
+             * @description `single_good` — one strong match, ready for "Accept all strong".
+             */
+            strong: number;
+        };
+        BatchApplyReq: {
+            apply_cover?: boolean;
+            cover_overwrite_policy?: components["schemas"]["ApplyCoverPolicy"];
+            /**
+             * @description `"all_strong"` → every child with a `single_good` outcome whose top
+             *     candidate isn't applied yet. `"ordinals"` → the explicit
+             *     `run_ordinals` list the operator curated.
+             */
+            filter: string;
+            mode?: components["schemas"]["ApplyMode"];
+            override_user_edits?: boolean;
+            run_ordinals?: components["schemas"]["RunOrdinal"][] | null;
+            selected_fields?: string[] | null;
+        };
+        BatchApplyResp: {
+            enqueued: number;
+            /** @description Targets beyond the per-request cap; re-trigger to apply the rest. */
+            remainder: number;
+            skipped_already_applied: number;
+            skipped_not_eligible: number;
+        };
+        /** @description One child run in a batch, for the Review queue list. */
+        BatchChildRow: {
+            applied: boolean;
+            /** @description Issue slug for issue-scope children. */
+            issue_slug?: string | null;
+            /** @description Human label resolved from the run's stored query (series / issue name). */
+            label?: string | null;
+            /** @description Parent library id — the review dialog's scope requires it. */
+            library_id?: string | null;
+            /** @description `MatchOutcomeKind` string once searched; `None` while in flight. */
+            outcome_kind?: string | null;
+            /** Format: uuid */
+            run_id: string;
+            scope: string;
+            scope_entity_id?: string | null;
+            /**
+             * @description Parent series slug, for opening the review dialog (or deep-linking) to
+             *     the child's entity.
+             */
+            series_slug?: string | null;
+            status: string;
+        };
+        /**
+         * @description Response for the batch-create endpoints. Mirrors [`RefreshOutcome`] plus the
+         *     new `batch_id` the caller deep-links the Review queue to.
+         */
+        BatchCreatedResp: {
+            /** Format: uuid */
+            batch_id: string;
+            /** @description Child runs created under this batch (the progress denominator). */
+            items_total: number;
+            /**
+             * @description Targets whose search coalesced onto an already-in-flight run (tracked
+             *     under that run, not this batch).
+             */
+            jobs_coalesced: number;
+            jobs_enqueued: number;
+            jobs_failed: number;
+        };
+        BatchListResp: {
+            batches: components["schemas"]["BatchListRow"][];
+        };
+        BatchListRow: {
+            /** Format: uuid */
+            batch_id: string;
+            created_at: string;
+            /** Format: int32 */
+            items_total: number;
+            scope: string;
+            status: string;
+        };
         /**
          * @description Per-state tally of a batch's member runs — drives the dashboard progress
          *     bar without the client refetching the run list.
@@ -3879,6 +4114,32 @@ export interface components {
             queued: number;
             /** Format: int64 */
             running: number;
+        };
+        BatchStatusResp: {
+            aggregate: components["schemas"]["BatchAggregate"];
+            /** Format: uuid */
+            batch_id: string;
+            budget: components["schemas"]["ProviderBudget"][];
+            children: components["schemas"]["BatchChildRow"][];
+            created_at: string;
+            /**
+             * @description `true` when `items_total` exceeds the smallest provider daily budget —
+             *     the batch will span multiple windows (children park + auto-resume).
+             */
+            exceeds_budget: boolean;
+            /** Format: int32 */
+            items_total: number;
+            /**
+             * @description Earliest `resume_after` across parked children (RFC3339), for the
+             *     "resumes ~HH:MM" hint.
+             */
+            resume_eta?: string | null;
+            scope: string;
+            /**
+             * @description Derived from the child aggregate: `running` | `completed` |
+             *     `partial_failed` | `awaiting_quota`.
+             */
+            status: string;
         };
         /**
          * @description Aggregated `ScanStats` counters summed across a batch's member runs — the
@@ -4393,6 +4654,101 @@ export interface components {
             position: number;
             series?: null | components["schemas"]["SeriesView"];
         };
+        /**
+         * @description One owned issue's identity + metadata-completeness status, for the
+         *     collection grid. `metadata_tier` is `"complete"` | `"partial"` |
+         *     `"needs_metadata"`; `missing_core` lists the absent core fields (empty when
+         *     complete).
+         */
+        CollectionIssueEntry: {
+            metadata_tier: string;
+            /** @description Missing core field keys ([`crate::metadata::completeness`] keys). */
+            missing_core: string[];
+            number_raw?: string | null;
+            slug: string;
+            /** Format: double */
+            sort_number?: number | null;
+            /**
+             * @description Spec §6.5 tag (`"Annual"`, `"OneShot"`, …) when classified; `None` for
+             *     ordinary main-run issues.
+             */
+            special_type?: string | null;
+            title?: string | null;
+        };
+        /**
+         * @description Collection-completeness report for a series: how many issues are owned
+         *     versus expected, and **which** main-run issue numbers are missing.
+         *
+         *     The denominator (`total_expected`) comes from `series.total_issues`, which
+         *     the scanner resolves from a `series.json` sidecar or the max ComicInfo
+         *     `<Count>`. series.json carries only the *count*, never a per-issue
+         *     manifest — so interior `missing` numbers are *inferred* by interpolating
+         *     the integer run between the lowest and highest owned issue. `expected_source`
+         *     records this provenance; a future provider-backed exact manifest will flip
+         *     it to `"provider_manifest"` and make `missing` exact.
+         */
+        CollectionReportView: {
+            /**
+             * Format: double
+             * @description `total_owned / total_expected * 100`, `None` when `total_expected` is
+             *     `None`. Capped at 100 (over-collection still reads as complete).
+             */
+            completeness_pct?: number | null;
+            /**
+             * @description `"complete"` | `"incomplete"` | `"unknown"` — same vocabulary and CASE
+             *     semantics as the `collection_completeness` saved-view predicate.
+             */
+            completeness_state: string;
+            /**
+             * @description `"series_total"` today (count-only). `"provider_manifest"` once an
+             *     exact provider issue list backs the report.
+             */
+            expected_source: string;
+            /**
+             * @description Every owned active issue with its metadata-completeness status, ordered
+             *     by `sort_number`. Lets the UI color each issue chip by status
+             *     (complete / partial / needs-metadata) and reveal the missing fields on
+             *     click — no separate per-issue request. Uses the same scorer as the
+             *     issue detail page.
+             */
+            issues: components["schemas"]["CollectionIssueEntry"][];
+            main_run: components["schemas"]["MainRunReport"];
+            /**
+             * @description Annuals, one-shots, TPBs, point issues (`#2.5`), and unnumbered files —
+             *     listed but excluded from the integer gap math.
+             */
+            specials: components["schemas"]["SpecialEntry"][];
+            /**
+             * Format: int32
+             * @description Publisher-claimed total from `series.total_issues`. `None` when the
+             *     scanner couldn't resolve a count.
+             */
+            total_expected?: number | null;
+            /**
+             * Format: int64
+             * @description Active (non-removed) issues owned. Matches the saved-view
+             *     `collection_completeness` `active_count`, so this report and the
+             *     SeriesCard collection dot never disagree.
+             */
+            total_owned: number;
+        };
+        CompletenessReport: {
+            /**
+             * @description Core field keys that are absent ([`MetadataField::key`] or
+             *     [`EXTERNAL_ID_KEY`]). Empty for a [`CompletenessTier::Complete`] record.
+             */
+            missing_core: string[];
+            /** @description Recommended (non-gating) field keys that are absent. */
+            missing_recommended: string[];
+            /**
+             * Format: double
+             * @description Weighted fraction of core fields present, `0.0..=1.0`.
+             */
+            score: number;
+            tier: components["schemas"]["CompletenessTier"];
+        };
+        /** @enum {string} */
+        CompletenessTier: "complete" | "partial" | "needs_metadata";
         CompletionView: {
             /**
              * Format: int64
@@ -5242,7 +5598,21 @@ export interface components {
          *     JSON constant.
          * @enum {string}
          */
-        Field: "library" | "name" | "year" | "volume" | "total_issues" | "publisher" | "imprint" | "status" | "age_rating" | "language_code" | "created_at" | "updated_at" | "genres" | "tags" | "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor" | "translator" | "characters" | "teams" | "locations" | "read_progress" | "last_read" | "read_count" | "read_status" | "unread_issues" | "collection_completeness";
+        Field: "library" | "name" | "year" | "volume" | "total_issues" | "publisher" | "imprint" | "status" | "age_rating" | "language_code" | "created_at" | "updated_at" | "genres" | "tags" | "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor" | "translator" | "characters" | "teams" | "locations" | "read_progress" | "last_read" | "read_count" | "read_status" | "unread_issues" | "collection_completeness" | "metadata_completeness";
+        /**
+         * @description One field's provenance: which source set it, when, and (for provider
+         *     sources) which external record it came from.
+         */
+        FieldProvenanceRow: {
+            /** @description `MetadataField::key()` value (e.g. `"summary"`, `"credits"`). */
+            field: string;
+            set_at: string;
+            /** @description Raw provenance code (`"user"`, `"comicinfo"`, `"metron"`, …). */
+            set_by: string;
+            source_external_id?: string | null;
+            /** @description Human label for `set_by` (e.g. `"ComicInfo.xml"`, `"You"`). */
+            source_label: string;
+        };
         FilterDsl: {
             conditions: components["schemas"]["Condition"][];
             match_mode: components["schemas"]["MatchMode"];
@@ -5436,6 +5806,12 @@ export interface components {
             inker?: string | null;
             language_code?: string | null;
             /**
+             * @description ISO-8601 timestamp of the last provider metadata sync for this issue
+             *     (`issue.last_metadata_sync_at`). `None` when never synced. Surfaced in
+             *     the Metadata tab's freshness section.
+             */
+            last_metadata_sync_at?: string | null;
+            /**
              * @description ISO-8601 timestamp of the last in-place rewrite of this issue's
              *     archive bytes (from `metadata-sidecar-writeback-1.0` M3+ or
              *     `archive-rewrite-1.0` M2+). `None` when Folio has never
@@ -5467,6 +5843,7 @@ export interface components {
             library_id: string;
             locations?: string | null;
             manga?: string | null;
+            metadata_completeness?: null | components["schemas"]["CompletenessReport"];
             /** Format: int64 */
             metron_id?: number | null;
             /** Format: int32 */
@@ -5808,6 +6185,32 @@ export interface components {
              */
             watermark: number;
         };
+        /** @description The integer-numbered backbone of a series and its inferred gaps. */
+        MainRunReport: {
+            /** Format: double */
+            max?: number | null;
+            /**
+             * Format: double
+             * @description Lowest / highest owned main-run number (as f64), `None` when the run is
+             *     empty.
+             */
+            min?: number | null;
+            /**
+             * @description Integers in `min..=max` not owned (e.g. `[3]`). **Inferred** — see
+             *     [`CollectionReportView::expected_source`].
+             */
+            missing: number[];
+            /** @description Owned main-run `sort_number`s, ascending (e.g. `[0.0, 1.0, 2.0, 4.0]`). */
+            present: number[];
+            /** @description `number_raw` labels aligned 1:1 with [`Self::present`] for display. */
+            present_labels: string[];
+            /**
+             * Format: int64
+             * @description Count expected beyond `max` when `total_expected > max` (e.g. own up to
+             *     #4 with `total_expected = 6` → `2`).
+             */
+            trailing_missing: number;
+        };
         ManualMatchReq: {
             issue_id: string;
         };
@@ -6031,6 +6434,16 @@ export interface components {
             /** @description M6a: IANA timezone string for daily-bucket aggregations. */
             timezone: string;
         };
+        /**
+         * @description Issue-level completeness rollup for a series. `complete` counts active
+         *     issues meeting the issue core criteria; `total` is the active-issue count.
+         */
+        MetadataCompletenessSummary: {
+            /** Format: int64 */
+            complete: number;
+            /** Format: int64 */
+            total: number;
+        };
         MetadataCoverageView: {
             /** Format: int64 */
             missing_cover_artist: number;
@@ -6044,6 +6457,20 @@ export interface components {
             missing_writer: number;
             /** Format: int64 */
             total_issues: number;
+        };
+        /**
+         * @description Total metadata overview for an issue: completeness, source files,
+         *     freshness, per-field provenance, external IDs, and user-pinned fields.
+         */
+        MetadataOverviewView: {
+            completeness?: null | components["schemas"]["CompletenessReport"];
+            external_ids: components["schemas"]["ExternalIdRow"][];
+            last_metadata_sync_at?: string | null;
+            last_rewrite_at?: string | null;
+            last_rewrite_kind?: string | null;
+            provenance: components["schemas"]["FieldProvenanceRow"][];
+            source_files: components["schemas"]["SourceFilesView"];
+            user_edited: string[];
         };
         NextInSeriesView: {
             items: components["schemas"]["IssueSummaryView"][];
@@ -6525,6 +6952,14 @@ export interface components {
             /** @description RFC 3339 timestamp of the most recent progress write. */
             updated_at: string;
         };
+        /** @description Per-provider remaining budget for the batch's pacing warning. */
+        ProviderBudget: {
+            /** Format: int32 */
+            remaining_day?: number | null;
+            /** Format: int32 */
+            remaining_hour?: number | null;
+            source: string;
+        };
         ProviderView: {
             /**
              * @description `true` when the credential is set but the master toggle is off
@@ -6921,6 +7356,13 @@ export interface components {
             query?: unknown;
             run: components["schemas"]["RunRow"];
         };
+        /** @description A specific candidate to apply. */
+        RunOrdinal: {
+            /** Format: int32 */
+            ordinal: number;
+            /** Format: uuid */
+            run_id: string;
+        };
         RunRow: {
             error_summary?: string | null;
             finished_at?: string | null;
@@ -6954,6 +7396,11 @@ export interface components {
              */
             next_cursor?: string | null;
             runs: components["schemas"]["RunRow"][];
+        };
+        /** @description Request for the saved-view batch endpoint. */
+        SavedViewBatchReq: {
+            /** Format: uuid */
+            saved_view_id: string;
         };
         SavedViewListView: {
             items: components["schemas"]["SavedViewView"][];
@@ -7321,6 +7768,16 @@ export interface components {
             letterers?: string[];
             library_id: string;
             locations?: string[];
+            metadata_completeness?: null | components["schemas"]["CompletenessReport"];
+            metadata_completeness_summary?: null | components["schemas"]["MetadataCompletenessSummary"];
+            /**
+             * @description At-a-glance completeness tier (`"complete"` | `"partial"` |
+             *     `"needs_metadata"`) rolled up across the series' active issues. The
+             *     lightweight card-badge counterpart to [`Self::metadata_completeness`];
+             *     populated by `hydrate_series` on list endpoints. `None` when no signal
+             *     (e.g. zero active issues) — the card shows no badge.
+             */
+            metadata_completeness_tier?: string | null;
             /** Format: int64 */
             metron_id?: number | null;
             name: string;
@@ -7508,6 +7965,30 @@ export interface components {
         SortField: "name" | "year" | "created_at" | "updated_at" | "last_read" | "read_progress";
         /** @enum {string} */
         SortOrder: "asc" | "desc";
+        /**
+         * @description Which metadata source files the scanner found for this issue. ComicInfo
+         *     presence comes from `comic_info_raw`; MetronInfo from
+         *     `issue.metroninfo_present`; series.json (a per-folder file) from the parent
+         *     `series.series_json_present`. Each is `"present"` | `"absent"` |
+         *     `"unknown"` (the last meaning the row was scanned before the tracking
+         *     column existed — a rescan resolves it).
+         */
+        SourceFilesView: {
+            comicinfo: string;
+            metroninfo: string;
+            series_json: string;
+        };
+        /** @description A non-main-run issue: special_type-tagged, fractional, or unnumbered. */
+        SpecialEntry: {
+            number_raw?: string | null;
+            /** Format: double */
+            sort_number?: number | null;
+            /**
+             * @description Spec §6.5 tag (`"Annual"`, `"OneShot"`, `"TPB"`, `"Special"`) when the
+             *     scanner classified it; `None` for plain point/unnumbered issues.
+             */
+            special_type?: string | null;
+        };
         SyncStatusResp: {
             last_metadata_sync_at?: string | null;
             /**
@@ -14076,6 +14557,136 @@ export interface operations {
             };
         };
     };
+    metadata_create_saved_view_batch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedViewBatchReq"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchCreatedResp"];
+                };
+            };
+            /** @description view not visible */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description saved view not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_batch_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchStatusResp"];
+                };
+            };
+            /** @description batch not visible */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description batch not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_batch_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchApplyReq"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchApplyResp"];
+                };
+            };
+            /** @description batch not visible / override_user_edits requires admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description batch not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_list_batches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchListResp"];
+                };
+            };
+        };
+    };
     people_list: {
         parameters: {
             query?: {
@@ -14285,6 +14896,34 @@ export interface operations {
                 };
             };
             /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issues_metadata_overview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataOverviewView"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -14542,6 +15181,33 @@ export interface operations {
                 content?: never;
             };
             /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_collection_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionReportView"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -15155,6 +15821,41 @@ export interface operations {
             };
             /** @description queue error */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_create_series_batch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchCreatedResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

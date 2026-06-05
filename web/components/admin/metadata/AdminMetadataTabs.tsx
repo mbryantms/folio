@@ -18,6 +18,7 @@
  */
 
 import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
@@ -41,9 +42,17 @@ const SettingsTab = dynamic(
   () => import("./SettingsTab").then((m) => m.SettingsTab),
   { ssr: false, loading: () => <Skeleton className="h-64 w-full" /> },
 );
+const ReviewTab = dynamic(
+  () => import("./ReviewTab").then((m) => m.ReviewTab),
+  {
+    ssr: false,
+    loading: () => <Skeleton className="h-64 w-full" />,
+  },
+);
 
 const TABS = [
   { value: "dashboard", label: "Dashboard" },
+  { value: "review", label: "Review" },
   { value: "providers", label: "Providers" },
   { value: "auto-synced", label: "Auto-synced" },
   { value: "runs", label: "Runs" },
@@ -52,7 +61,14 @@ const TABS = [
 type TabValue = (typeof TABS)[number]["value"];
 
 export function AdminMetadataTabs() {
-  const [tab, setTab] = useState<TabValue>("dashboard");
+  // Deep-link support: `?tab=review&batch=<id>` from the bulk-fetch triggers.
+  const params = useSearchParams();
+  const deepTab = params.get("tab");
+  const initialTab = TABS.some((t) => t.value === deepTab)
+    ? (deepTab as TabValue)
+    : "dashboard";
+  const initialBatchId = params.get("batch");
+  const [tab, setTab] = useState<TabValue>(initialTab);
   return (
     <Tabs value={tab} onValueChange={(v) => setTab(v as TabValue)}>
       <TabsList>
@@ -64,6 +80,9 @@ export function AdminMetadataTabs() {
       </TabsList>
       <TabsContent value="dashboard" className="pt-4">
         <DashboardTab />
+      </TabsContent>
+      <TabsContent value="review" className="pt-4">
+        <ReviewTab initialBatchId={initialBatchId} />
       </TabsContent>
       <TabsContent value="providers" className="pt-4">
         <ProvidersTab />

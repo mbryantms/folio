@@ -15,7 +15,6 @@ import { ChipList } from "@/components/library/ChipList";
 import { Description } from "@/components/library/Description";
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
-import { MetadataSyncStatusCard } from "@/components/library/MetadataSyncStatusCard";
 import { Stat } from "@/components/library/Stat";
 import { UserRating } from "@/components/library/UserRating";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +43,7 @@ import { readerUrl } from "@/lib/urls";
 
 import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
 
+import { CollectionTab } from "./CollectionTab";
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
 import { SeriesSourcesFooter } from "./SeriesSourcesFooter";
@@ -259,7 +259,7 @@ export default async function SeriesPage({
           <TabsTrigger value="genres">Genres &amp; Tags</TabsTrigger>
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
-          <TabsTrigger value="external">External IDs</TabsTrigger>
+          <TabsTrigger value="collection">Collection</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
         <TabsContent value="credits" className="pt-6">
@@ -386,24 +386,24 @@ export default async function SeriesPage({
                   series.last_issue_updated_at ?? series.updated_at,
                 ),
               },
-              // ComicVine ID + Metron ID + GTIN intentionally absent —
-              // they live in the External IDs tab alongside every other
-              // provider identifier (mirrors the issue page split).
+              // ComicVine ID + Metron ID + GTIN intentionally absent from this
+              // grid — they render in the External IDs section below alongside
+              // every other provider identifier.
             ]}
           />
           <div className="mt-6 space-y-2">
             <h3 className="text-foreground text-sm font-semibold">
-              Metadata sync
+              External IDs
             </h3>
-            <MetadataSyncStatusCard seriesSlug={series.slug} chrome="bare" />
+            <ExternalIdsCard
+              entityType="series"
+              seriesSlug={series.slug}
+              chrome="bare"
+            />
           </div>
         </TabsContent>
-        <TabsContent value="external" className="pt-6">
-          <ExternalIdsCard
-            entityType="series"
-            seriesSlug={series.slug}
-            chrome="bare"
-          />
+        <TabsContent value="collection" className="pt-6">
+          <CollectionTab seriesSlug={series.slug} />
         </TabsContent>
         <TabsContent value="activity" className="pt-6">
           <SeriesActivityTab

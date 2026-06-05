@@ -200,6 +200,7 @@ pub async fn fan_out_scope(
     library_id: Uuid,
     scope: RefreshScope,
     trigger_kind: &'static str,
+    batch_id: Option<Uuid>,
 ) -> Result<RefreshOutcome, sea_orm::DbErr> {
     let cfg = state.cfg();
     let stale_after = cfg.metadata_stale_after_days;
@@ -210,8 +211,14 @@ pub async fn fan_out_scope(
     let mut jobs_coalesced = 0usize;
     let mut jobs_failed = 0usize;
     for id in ids {
-        match crate::jobs::metadata_search::enqueue_series_search(state, id, None, trigger_kind)
-            .await
+        match crate::jobs::metadata_search::enqueue_series_search(
+            state,
+            id,
+            None,
+            trigger_kind,
+            batch_id,
+        )
+        .await
         {
             Ok(outcome) => {
                 if outcome.coalesced {

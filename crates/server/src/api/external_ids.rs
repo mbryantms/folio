@@ -278,7 +278,11 @@ pub async fn delete_issue(
 
 // ───────── shared ─────────
 
-async fn fetch_rows(app: &AppState, entity_type: &str, entity_id: &str) -> Vec<ExternalIdRow> {
+pub(crate) async fn fetch_rows(
+    app: &AppState,
+    entity_type: &str,
+    entity_id: &str,
+) -> Vec<ExternalIdRow> {
     let rows = external_id::Entity::find()
         .filter(external_id::Column::EntityType.eq(entity_type))
         .filter(external_id::Column::EntityId.eq(entity_id))

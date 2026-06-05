@@ -29,6 +29,7 @@ pub mod archive_edit;
 pub mod archive_transforms;
 pub mod close_dangling_sessions;
 pub mod metadata_apply;
+pub mod metadata_resume;
 pub mod metadata_search;
 pub mod metrics_layer;
 pub mod orphan_sweep;

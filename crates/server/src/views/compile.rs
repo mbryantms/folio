@@ -104,6 +104,21 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
         );
     }
 
+    // Metadata-completeness aggregate (active_count + complete_count per
+    // series). Same join-gating discipline: only emitted when a filter
+    // references `metadata_completeness`, so baseline filters never pay for
+    // the EXISTS-per-issue scan.
+    if needs_metadata_completeness_join(input.dsl) {
+        let alias = metadata_completeness_alias();
+        q.join_subquery(
+            JoinType::LeftJoin,
+            metadata_completeness_subquery(),
+            alias.clone(),
+            Expr::col((alias, Alias::new("series_id")))
+                .equals((series::Entity, series::Column::Id)),
+        );
+    }
+
     let mut combined = match input.dsl.match_mode {
         MatchMode::All => SeaCondition::all(),
         MatchMode::Any => SeaCondition::any(),
@@ -166,6 +181,65 @@ fn needs_active_issue_count_join(dsl: &FilterDsl) -> bool {
 /// `series_computed_predicate` doesn't sprinkle string literals.
 fn active_issue_count_alias() -> Alias {
     Alias::new("aic")
+}
+
+/// Whether any filter references `metadata_completeness` — gates the
+/// metadata-completeness aggregate join (mirrors
+/// [`needs_active_issue_count_join`]).
+fn needs_metadata_completeness_join(dsl: &FilterDsl) -> bool {
+    dsl.conditions.iter().any(|c| {
+        matches!(
+            registry::spec_for(c.field).source,
+            Source::SeriesComputed("metadata_completeness"),
+        )
+    })
+}
+
+/// Alias for the metadata-completeness aggregate subquery.
+fn metadata_completeness_alias() -> Alias {
+    Alias::new("mca")
+}
+
+/// `SELECT series_id, COUNT(*) AS active_count, COUNT(*) FILTER (issue core
+/// met) AS complete_count FROM issues … GROUP BY series_id`. The FILTER
+/// predicate mirrors `api::series::compute_metadata_completeness_summary` and
+/// `assess_issue_view` exactly — credits from the per-role CSV columns, the
+/// provider match from a CV/Metron `external_ids` row — so the saved-view
+/// filter, the series rollup, and the per-issue detail report never disagree.
+fn metadata_completeness_subquery() -> SelectStatement {
+    use entity::issue;
+    Query::select()
+        .column(issue::Column::SeriesId)
+        .expr_as(
+            Func::count(Expr::col((issue::Entity, issue::Column::Id))),
+            Alias::new("active_count"),
+        )
+        .expr_as(
+            Expr::cust(
+                // `title` intentionally excluded: optional for comic issues.
+                "COUNT(*) FILTER (WHERE \
+                 issues.year IS NOT NULL AND issues.year >= 1800 \
+                 AND COALESCE(btrim(issues.summary), '') <> '' \
+                 AND issues.page_count IS NOT NULL AND issues.page_count > 0 \
+                 AND (COALESCE(issues.writer, '') <> '' \
+                   OR COALESCE(issues.penciller, '') <> '' \
+                   OR COALESCE(issues.inker, '') <> '' \
+                   OR COALESCE(issues.colorist, '') <> '' \
+                   OR COALESCE(issues.letterer, '') <> '' \
+                   OR COALESCE(issues.cover_artist, '') <> '' \
+                   OR COALESCE(issues.editor, '') <> '' \
+                   OR COALESCE(issues.translator, '') <> '') \
+                 AND EXISTS (SELECT 1 FROM external_ids x \
+                   WHERE x.entity_type = 'issue' AND x.entity_id = issues.id \
+                   AND x.source IN ('comicvine', 'metron')))",
+            ),
+            Alias::new("complete_count"),
+        )
+        .from(issue::Entity)
+        .and_where(Expr::col(issue::Column::State).eq("active"))
+        .and_where(Expr::col(issue::Column::RemovedAt).is_null())
+        .add_group_by([Expr::col(issue::Column::SeriesId).into()])
+        .to_owned()
 }
 
 /// `SELECT series_id, COUNT(*) AS active_count FROM issues WHERE state =
@@ -310,6 +384,21 @@ fn series_computed_predicate(
                  WHEN series.total_issues IS NULL THEN 'unknown' \
                  WHEN COALESCE(aic.active_count, 0) >= series.total_issues THEN 'complete' \
                  ELSE 'incomplete' END",
+            );
+            Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
+        }
+        "metadata_completeness" => {
+            // Evaluates against the metadata-completeness aggregate (`mca`):
+            // `complete` when every active issue meets the issue core
+            // criteria, `needs_metadata` when none do (or the series has no
+            // active issues), `partial` otherwise. Mirrors the per-issue
+            // `CompletenessTier` rollup.
+            let lhs: SimpleExpr = Expr::cust(
+                "CASE \
+                 WHEN COALESCE(mca.active_count, 0) = 0 THEN 'needs_metadata' \
+                 WHEN COALESCE(mca.complete_count, 0) >= mca.active_count THEN 'complete' \
+                 WHEN COALESCE(mca.complete_count, 0) = 0 THEN 'needs_metadata' \
+                 ELSE 'partial' END",
             );
             Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
         }

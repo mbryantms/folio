@@ -211,6 +211,11 @@ struct ParsedArchive {
     /// straight to `external_ids` with `SetBy::MetronInfo`.
     /// metadata-providers-1.0 M8.
     metron_ids: Option<BTreeMap<String, String>>,
+    /// Whether a `MetronInfo.xml` entry was present in the archive — tracked
+    /// independently of `metron_ids` (a MetronInfo with no `<ID>` block still
+    /// counts as present). Persisted to `issues.metroninfo_present` for the
+    /// issue Metadata tab's source-files report.
+    metroninfo_present: bool,
 }
 
 /// Outcome of the by-content-hash dedupe check, when no row was found
@@ -356,6 +361,7 @@ async fn parse_archive_for_ingest(
     }
 
     let metron_ids = metron_opt.as_ref().map(|m| m.ids.clone());
+    let metroninfo_present = metron_opt.is_some();
 
     Ok(Some(ParsedArchive {
         hash,
@@ -363,6 +369,7 @@ async fn parse_archive_for_ingest(
         actual_pages,
         parse_state,
         metron_ids,
+        metroninfo_present,
     }))
 }
 
@@ -629,6 +636,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         actual_pages,
         parse_state,
         metron_ids,
+        metroninfo_present,
     }) = parse_archive_for_ingest(state, lib, path, size, stats, health).await?
     else {
         return Ok(());
@@ -735,6 +743,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         am.state = Set(parse_state.into());
         am.content_hash = Set(hash);
         am.special_type = Set(special_type.clone());
+        am.metroninfo_present = Set(Some(metroninfo_present));
         am.title = Set(info.title.clone());
         if !edited.contains("sort_number") {
             am.sort_number = Set(sort_number);
@@ -979,6 +988,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             removal_confirmed_at: Set(None),
             superseded_by: Set(None),
             special_type: Set(special_type),
+            metroninfo_present: Set(Some(metroninfo_present)),
             hash_algorithm: Set(1),
             // M1: post-scan thumbs worker stamps these on success.
             thumbnails_generated_at: Set(None),

@@ -40,6 +40,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(search))
         .routes(routes!(bulk_metadata))
         .routes(routes!(get_one))
+        .routes(routes!(metadata_overview))
         .routes(routes!(update))
         .routes(routes!(clear_field_pin))
         .routes(routes!(scan_issue))
@@ -162,7 +163,163 @@ pub async fn get_one(
     view.library_cbr_convert_confirmed = library_cbr_convert_confirmed;
     view.creator_slugs = creator_slugs;
     crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &issue_id).await;
+    view.metadata_completeness = Some(crate::api::series::assess_issue_view(&view));
     Json(view).into_response()
+}
+
+// ───── GET /series/{slug}/issues/{slug}/metadata-overview ─────
+
+/// One field's provenance: which source set it, when, and (for provider
+/// sources) which external record it came from.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FieldProvenanceRow {
+    /// `MetadataField::key()` value (e.g. `"summary"`, `"credits"`).
+    pub field: String,
+    /// Raw provenance code (`"user"`, `"comicinfo"`, `"metron"`, …).
+    pub set_by: String,
+    /// Human label for `set_by` (e.g. `"ComicInfo.xml"`, `"You"`).
+    pub source_label: String,
+    pub set_at: String,
+    pub source_external_id: Option<String>,
+}
+
+/// Which metadata source files the scanner found for this issue. ComicInfo
+/// presence comes from `comic_info_raw`; MetronInfo from
+/// `issue.metroninfo_present`; series.json (a per-folder file) from the parent
+/// `series.series_json_present`. Each is `"present"` | `"absent"` |
+/// `"unknown"` (the last meaning the row was scanned before the tracking
+/// column existed — a rescan resolves it).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SourceFilesView {
+    pub comicinfo: String,
+    pub metroninfo: String,
+    pub series_json: String,
+}
+
+/// Total metadata overview for an issue: completeness, source files,
+/// freshness, per-field provenance, external IDs, and user-pinned fields.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MetadataOverviewView {
+    pub completeness: Option<crate::metadata::completeness::CompletenessReport>,
+    pub source_files: SourceFilesView,
+    pub external_ids: Vec<crate::api::external_ids::ExternalIdRow>,
+    pub provenance: Vec<FieldProvenanceRow>,
+    pub user_edited: Vec<String>,
+    pub last_metadata_sync_at: Option<String>,
+    pub last_rewrite_at: Option<String>,
+    pub last_rewrite_kind: Option<String>,
+}
+
+/// Human label for a `field_provenance.set_by` code.
+fn provenance_source_label(set_by: &str) -> &'static str {
+    match set_by {
+        "user" => "You",
+        "comicinfo" => "ComicInfo.xml",
+        "metroninfo" => "MetronInfo.xml",
+        "comicvine" => "ComicVine",
+        "metron" => "Metron",
+        "scanner_inference" => "Scanner (filename)",
+        "scanner_folder_tag" => "Scanner (folder)",
+        "cross_reference" => "Cross-reference",
+        "migration_v1" => "Migration",
+        _ => "Other",
+    }
+}
+
+#[utoipa::path(
+    operation_id = "issues_metadata_overview",    get,
+    path = "/series/{series_slug}/issues/{issue_slug}/metadata-overview",
+    params(
+        ("series_slug" = String, Path,),
+        ("issue_slug" = String, Path,),
+    ),
+    responses(
+        (status = 200, body = MetadataOverviewView),
+        (status = 404)
+    )
+)]
+#[handler]
+pub async fn metadata_overview(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath((series_slug, issue_slug)): AxPath<(String, String)>,
+) -> impl IntoResponse {
+    let row = match find_by_slugs(&app.db, &series_slug, &issue_slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if !visible_in_library(&app, &user, row.library_id).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    }
+
+    let issue_id = row.id.clone();
+    let series_id = row.series_id;
+    let has_comicinfo = !row.comic_info_raw.is_null();
+    let metroninfo_present = row.metroninfo_present;
+    let last_metadata_sync_at = row.last_metadata_sync_at.map(|t| t.to_rfc3339());
+    let last_rewrite_at = row.last_rewrite_at.map(|t| t.to_rfc3339());
+    let last_rewrite_kind = row.last_rewrite_kind.clone();
+    let user_edited: Vec<String> =
+        serde_json::from_value(row.user_edited.clone()).unwrap_or_default();
+
+    // series.json is a per-folder file → its presence lives on the parent
+    // series row.
+    let series_json_present = series::Entity::find_by_id(series_id)
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.series_json_present);
+
+    // Completeness via the shared scorer — build the view the same way
+    // `get_one` does so the provider-match signal sees the legacy CV/Metron ids.
+    let mut view = IssueDetailView::from_model(row, &series_slug);
+    crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &issue_id).await;
+    let completeness = Some(crate::api::series::assess_issue_view(&view));
+
+    // Provenance rows (field → source → when), most-recent first.
+    let provenance: Vec<FieldProvenanceRow> =
+        crate::metadata::apply::fetch_field_provenance_rows(&app.db, "issue", &issue_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| FieldProvenanceRow {
+                source_label: provenance_source_label(&p.set_by).to_owned(),
+                field: p.field,
+                set_by: p.set_by,
+                set_at: p.set_at.to_rfc3339(),
+                source_external_id: p.source_external_id,
+            })
+            .collect();
+
+    let external_ids = crate::api::external_ids::fetch_rows(&app, "issue", &issue_id).await;
+
+    Json(MetadataOverviewView {
+        completeness,
+        source_files: SourceFilesView {
+            comicinfo: if has_comicinfo { "present" } else { "absent" }.to_owned(),
+            metroninfo: presence_str(metroninfo_present).to_owned(),
+            series_json: presence_str(series_json_present).to_owned(),
+        },
+        external_ids,
+        provenance,
+        user_edited,
+        last_metadata_sync_at,
+        last_rewrite_at,
+        last_rewrite_kind,
+    })
+    .into_response()
+}
+
+/// Map a nullable scanner presence flag to the wire string. `None` = scanned
+/// before the column existed (rescan to learn), distinct from a definite
+/// `"absent"`.
+fn presence_str(v: Option<bool>) -> &'static str {
+    match v {
+        Some(true) => "present",
+        Some(false) => "absent",
+        None => "unknown",
+    }
 }
 
 async fn build_issue_creator_slugs(

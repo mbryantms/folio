@@ -280,6 +280,7 @@ async fn runs_list_empty_then_returns_seeded_row() {
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)

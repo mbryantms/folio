@@ -86,6 +86,7 @@ async fn start_series_run(app: &TestApp, facts: &SeriesQueryFacts) -> Uuid {
             trigger_kind: orchestrator::trigger_kind::MANUAL,
             providers: &providers,
             query: StoredQuery::Series(facts.clone()),
+            batch_id: None,
         },
     )
     .await
@@ -391,6 +392,7 @@ async fn run_issue_search_buckets_high_when_number_and_name_match() {
             trigger_kind: orchestrator::trigger_kind::MANUAL,
             providers: &[Source::Metron],
             query: StoredQuery::Issue(facts.clone()),
+            batch_id: None,
         },
     )
     .await

@@ -91,6 +91,7 @@ async fn seed_run_with_candidate(
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -567,6 +568,7 @@ async fn apply_issue_writes_credits_through_writer_helpers() {
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)
@@ -1052,6 +1054,7 @@ async fn seed_issue_with_junction_candidate(
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)

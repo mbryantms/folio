@@ -253,6 +253,15 @@ where
     let mut am: series::ActiveModel = row.clone().into();
     let mut dirty = false;
 
+    // series.json presence: record whether a usable sidecar was found in the
+    // folder at scan time, for the issue Metadata tab's source-files report.
+    let sj_present = Some(sidecar.is_some());
+    if row.series_json_present != sj_present {
+        am.series_json_present = Set(sj_present);
+        am.updated_at = Set(Utc::now().fixed_offset());
+        dirty = true;
+    }
+
     // total_issues: write only when we have a signal AND it differs.
     // No-signal scans (e.g. tombstone path with no sidecar and no
     // Count) leave the previous value intact — this is the bug fix

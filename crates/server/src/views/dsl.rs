@@ -77,6 +77,12 @@ pub enum Field {
     /// `unknown` (`series.total_issues` IS NULL — no canonical
     /// expected count from ComicInfo).
     CollectionCompleteness,
+    /// Three-state metadata completeness rolled up across the series'
+    /// active issues: `complete` (every issue meets the issue core
+    /// criteria) / `partial` (some do) / `needs_metadata` (none do, or
+    /// the series has no active issues). Mirrors the per-issue scorer in
+    /// `metadata::completeness`.
+    MetadataCompleteness,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]

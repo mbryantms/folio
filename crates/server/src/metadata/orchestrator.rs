@@ -134,6 +134,9 @@ pub struct StartRunArgs<'a> {
     pub trigger_kind: &'static str,
     pub providers: &'a [Source],
     pub query: StoredQuery,
+    /// Groups this run under a bulk-fetch `metadata_batch`. `None` for
+    /// standalone per-entity runs.
+    pub batch_id: Option<Uuid>,
 }
 
 pub async fn start_run<C: ConnectionTrait>(
@@ -170,6 +173,7 @@ pub async fn start_run<C: ConnectionTrait>(
         error_summary: Set(None),
         resume_after: Set(None),
         query: Set(Some(query_json)),
+        batch_id: Set(args.batch_id),
     };
     am.insert(db).await?;
     Ok(id)

@@ -6497,6 +6497,134 @@
         }
       }
     },
+    "/api/metadata/batch/saved-view": {
+      "post": {
+        "summary": "`POST /metadata/batch/saved-view` — fan out a metadata search over the\ntargets of a saved view: a filter/smart view searches each matching series;\na CBL reading list searches each issue. One `metadata_batch` groups them.",
+        "operationId": "metadata_create_saved_view_batch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedViewBatchReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchCreatedResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "view not visible"
+          },
+          "404": {
+            "description": "saved view not found"
+          }
+        }
+      }
+    },
+    "/api/metadata/batch/{batch_id}": {
+      "get": {
+        "operationId": "metadata_batch_status",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchStatusResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "batch not visible"
+          },
+          "404": {
+            "description": "batch not found"
+          }
+        }
+      }
+    },
+    "/api/metadata/batch/{batch_id}/apply": {
+      "post": {
+        "summary": "`POST /metadata/batch/{batch_id}/apply` — accept many reviewed candidates\nat once. Loops the existing per-entity `ApplySeriesJob`/`ApplyIssueJob`\npush (decision matrix, apply mutex, writeback dispatch, audit all\nunchanged); only the fan-out is new.",
+        "operationId": "metadata_batch_apply",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchApplyReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchApplyResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "batch not visible / override_user_edits requires admin"
+          },
+          "404": {
+            "description": "batch not found"
+          }
+        }
+      }
+    },
+    "/api/metadata/batches": {
+      "get": {
+        "operationId": "metadata_list_batches",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchListResp"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/people": {
       "get": {
         "operationId": "people_list",
@@ -6756,6 +6884,44 @@
           },
           "404": {
             "description": "issue not found"
+          }
+        }
+      }
+    },
+    "/api/series/{series_slug}/issues/{issue_slug}/metadata-overview": {
+      "get": {
+        "operationId": "issues_metadata_overview",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataOverviewView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
           }
         }
       }
@@ -7051,6 +7217,36 @@
           },
           "404": {
             "description": "series not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/collection": {
+      "get": {
+        "operationId": "series_collection_report",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionReportView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
           }
         }
       }
@@ -7749,6 +7945,40 @@
           },
           "502": {
             "description": "queue error"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/batch": {
+      "post": {
+        "summary": "`POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search\nover every active issue in the series, grouped under one `metadata_batch`\nso progress + review happen in one place. Children run as `manual` (held\nfor review, never auto-applied).",
+        "operationId": "metadata_create_series_batch",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchCreatedResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
           }
         }
       }
@@ -9109,6 +9339,273 @@
           }
         }
       },
+      "BatchAggregate": {
+        "type": "object",
+        "description": "Live aggregate over a batch's child runs.",
+        "required": [
+          "searched",
+          "strong",
+          "needs_review",
+          "no_match",
+          "applied",
+          "awaiting_quota",
+          "failed",
+          "in_flight"
+        ],
+        "properties": {
+          "applied": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Children with an applied candidate."
+          },
+          "awaiting_quota": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Still queued / searching."
+          },
+          "needs_review": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`multi_good` | `single_bad_cover` | `multi_bad_cover` — needs a look."
+          },
+          "no_match": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "searched": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Children whose search has finalized (completed / failed / awaiting_quota)."
+          },
+          "strong": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`single_good` — one strong match, ready for \"Accept all strong\"."
+          }
+        }
+      },
+      "BatchApplyReq": {
+        "type": "object",
+        "required": [
+          "filter"
+        ],
+        "properties": {
+          "apply_cover": {
+            "type": "boolean"
+          },
+          "cover_overwrite_policy": {
+            "$ref": "#/components/schemas/ApplyCoverPolicy"
+          },
+          "filter": {
+            "type": "string",
+            "description": "`\"all_strong\"` → every child with a `single_good` outcome whose top\ncandidate isn't applied yet. `\"ordinals\"` → the explicit\n`run_ordinals` list the operator curated."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ApplyMode"
+          },
+          "override_user_edits": {
+            "type": "boolean"
+          },
+          "run_ordinals": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/RunOrdinal"
+            }
+          },
+          "selected_fields": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BatchApplyResp": {
+        "type": "object",
+        "required": [
+          "enqueued",
+          "skipped_already_applied",
+          "skipped_not_eligible",
+          "remainder"
+        ],
+        "properties": {
+          "enqueued": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remainder": {
+            "type": "integer",
+            "description": "Targets beyond the per-request cap; re-trigger to apply the rest.",
+            "minimum": 0
+          },
+          "skipped_already_applied": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped_not_eligible": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "BatchChildRow": {
+        "type": "object",
+        "description": "One child run in a batch, for the Review queue list.",
+        "required": [
+          "run_id",
+          "scope",
+          "status",
+          "applied"
+        ],
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "issue_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue slug for issue-scope children."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Human label resolved from the run's stored query (series / issue name)."
+          },
+          "library_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parent library id — the review dialog's scope requires it."
+          },
+          "outcome_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`MatchOutcomeKind` string once searched; `None` while in flight."
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "scope_entity_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parent series slug, for opening the review dialog (or deep-linking) to\nthe child's entity."
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "BatchCreatedResp": {
+        "type": "object",
+        "description": "Response for the batch-create endpoints. Mirrors [`RefreshOutcome`] plus the\nnew `batch_id` the caller deep-links the Review queue to.",
+        "required": [
+          "batch_id",
+          "items_total",
+          "jobs_enqueued",
+          "jobs_coalesced",
+          "jobs_failed"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "items_total": {
+            "type": "integer",
+            "description": "Child runs created under this batch (the progress denominator).",
+            "minimum": 0
+          },
+          "jobs_coalesced": {
+            "type": "integer",
+            "description": "Targets whose search coalesced onto an already-in-flight run (tracked\nunder that run, not this batch).",
+            "minimum": 0
+          },
+          "jobs_enqueued": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "jobs_failed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "BatchListResp": {
+        "type": "object",
+        "required": [
+          "batches"
+        ],
+        "properties": {
+          "batches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchListRow"
+            }
+          }
+        }
+      },
+      "BatchListRow": {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "scope",
+          "status",
+          "items_total",
+          "created_at"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "items_total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "BatchRunTally": {
         "type": "object",
         "description": "Per-state tally of a batch's member runs — drives the dashboard progress\nbar without the client refetching the run list.",
@@ -9144,6 +9641,66 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "BatchStatusResp": {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "scope",
+          "status",
+          "items_total",
+          "created_at",
+          "aggregate",
+          "children",
+          "budget",
+          "exceeds_budget"
+        ],
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/BatchAggregate"
+          },
+          "batch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "budget": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderBudget"
+            }
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchChildRow"
+            }
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "exceeds_budget": {
+            "type": "boolean",
+            "description": "`true` when `items_total` exceeds the smallest provider daily budget —\nthe batch will span multiple windows (children park + auto-resume)."
+          },
+          "items_total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "resume_eta": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Earliest `resume_after` across parked children (RFC3339), for the\n\"resumes ~HH:MM\" hint."
+          },
+          "scope": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "Derived from the child aggregate: `running` | `completed` |\n`partial_failed` | `awaiting_quota`."
           }
         }
       },
@@ -10322,6 +10879,157 @@
             ]
           }
         }
+      },
+      "CollectionIssueEntry": {
+        "type": "object",
+        "description": "One owned issue's identity + metadata-completeness status, for the\ncollection grid. `metadata_tier` is `\"complete\"` | `\"partial\"` |\n`\"needs_metadata\"`; `missing_core` lists the absent core fields (empty when\ncomplete).",
+        "required": [
+          "slug",
+          "metadata_tier",
+          "missing_core"
+        ],
+        "properties": {
+          "metadata_tier": {
+            "type": "string"
+          },
+          "missing_core": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Missing core field keys ([`crate::metadata::completeness`] keys)."
+          },
+          "number_raw": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slug": {
+            "type": "string"
+          },
+          "sort_number": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "special_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Spec §6.5 tag (`\"Annual\"`, `\"OneShot\"`, …) when classified; `None` for\nordinary main-run issues."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CollectionReportView": {
+        "type": "object",
+        "description": "Collection-completeness report for a series: how many issues are owned\nversus expected, and **which** main-run issue numbers are missing.\n\nThe denominator (`total_expected`) comes from `series.total_issues`, which\nthe scanner resolves from a `series.json` sidecar or the max ComicInfo\n`<Count>`. series.json carries only the *count*, never a per-issue\nmanifest — so interior `missing` numbers are *inferred* by interpolating\nthe integer run between the lowest and highest owned issue. `expected_source`\nrecords this provenance; a future provider-backed exact manifest will flip\nit to `\"provider_manifest\"` and make `missing` exact.",
+        "required": [
+          "total_owned",
+          "completeness_state",
+          "main_run",
+          "specials",
+          "expected_source",
+          "issues"
+        ],
+        "properties": {
+          "completeness_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`total_owned / total_expected * 100`, `None` when `total_expected` is\n`None`. Capped at 100 (over-collection still reads as complete)."
+          },
+          "completeness_state": {
+            "type": "string",
+            "description": "`\"complete\"` | `\"incomplete\"` | `\"unknown\"` — same vocabulary and CASE\nsemantics as the `collection_completeness` saved-view predicate."
+          },
+          "expected_source": {
+            "type": "string",
+            "description": "`\"series_total\"` today (count-only). `\"provider_manifest\"` once an\nexact provider issue list backs the report."
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CollectionIssueEntry"
+            },
+            "description": "Every owned active issue with its metadata-completeness status, ordered\nby `sort_number`. Lets the UI color each issue chip by status\n(complete / partial / needs-metadata) and reveal the missing fields on\nclick — no separate per-issue request. Uses the same scorer as the\nissue detail page."
+          },
+          "main_run": {
+            "$ref": "#/components/schemas/MainRunReport"
+          },
+          "specials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpecialEntry"
+            },
+            "description": "Annuals, one-shots, TPBs, point issues (`#2.5`), and unnumbered files —\nlisted but excluded from the integer gap math."
+          },
+          "total_expected": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Publisher-claimed total from `series.total_issues`. `None` when the\nscanner couldn't resolve a count."
+          },
+          "total_owned": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active (non-removed) issues owned. Matches the saved-view\n`collection_completeness` `active_count`, so this report and the\nSeriesCard collection dot never disagree."
+          }
+        }
+      },
+      "CompletenessReport": {
+        "type": "object",
+        "required": [
+          "tier",
+          "score",
+          "missing_core",
+          "missing_recommended"
+        ],
+        "properties": {
+          "missing_core": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Core field keys that are absent ([`MetadataField::key`] or\n[`EXTERNAL_ID_KEY`]). Empty for a [`CompletenessTier::Complete`] record."
+          },
+          "missing_recommended": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Recommended (non-gating) field keys that are absent."
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "Weighted fraction of core fields present, `0.0..=1.0`."
+          },
+          "tier": {
+            "$ref": "#/components/schemas/CompletenessTier"
+          }
+        }
+      },
+      "CompletenessTier": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "partial",
+          "needs_metadata"
+        ]
       },
       "CompletionView": {
         "type": "object",
@@ -12627,8 +13335,42 @@
           "read_count",
           "read_status",
           "unread_issues",
-          "collection_completeness"
+          "collection_completeness",
+          "metadata_completeness"
         ]
+      },
+      "FieldProvenanceRow": {
+        "type": "object",
+        "description": "One field's provenance: which source set it, when, and (for provider\nsources) which external record it came from.",
+        "required": [
+          "field",
+          "set_by",
+          "source_label",
+          "set_at"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "`MetadataField::key()` value (e.g. `\"summary\"`, `\"credits\"`)."
+          },
+          "set_at": {
+            "type": "string"
+          },
+          "set_by": {
+            "type": "string",
+            "description": "Raw provenance code (`\"user\"`, `\"comicinfo\"`, `\"metron\"`, …)."
+          },
+          "source_external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_label": {
+            "type": "string",
+            "description": "Human label for `set_by` (e.g. `\"ComicInfo.xml\"`, `\"You\"`)."
+          }
+        }
       },
       "FilterDsl": {
         "type": "object",
@@ -13082,6 +13824,13 @@
               "null"
             ]
           },
+          "last_metadata_sync_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO-8601 timestamp of the last provider metadata sync for this issue\n(`issue.last_metadata_sync_at`). `None` when never synced. Surfaced in\nthe Metadata tab's freshness section."
+          },
           "last_rewrite_at": {
             "type": [
               "string",
@@ -13126,6 +13875,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "metadata_completeness": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CompletenessReport",
+                "description": "Metadata-completeness assessment (\"does this issue need metadata\npulled?\"). Populated by the issue-detail handler; `None` on list\nendpoints (the cheaper `IssueSummaryView.metadata_completeness_tier`\ncarries the at-a-glance signal there)."
+              }
             ]
           },
           "metron_id": {
@@ -13932,6 +14692,61 @@
           }
         }
       },
+      "MainRunReport": {
+        "type": "object",
+        "description": "The integer-numbered backbone of a series and its inferred gaps.",
+        "required": [
+          "present",
+          "present_labels",
+          "missing",
+          "trailing_missing"
+        ],
+        "properties": {
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Lowest / highest owned main-run number (as f64), `None` when the run is\nempty."
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Integers in `min..=max` not owned (e.g. `[3]`). **Inferred** — see\n[`CollectionReportView::expected_source`]."
+          },
+          "present": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "Owned main-run `sort_number`s, ascending (e.g. `[0.0, 1.0, 2.0, 4.0]`)."
+          },
+          "present_labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`number_raw` labels aligned 1:1 with [`Self::present`] for display."
+          },
+          "trailing_missing": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Count expected beyond `max` when `total_expected > max` (e.g. own up to\n#4 with `total_expected = 6` → `2`)."
+          }
+        }
+      },
       "ManualMatchReq": {
         "type": "object",
         "required": [
@@ -14439,6 +15254,24 @@
           }
         }
       },
+      "MetadataCompletenessSummary": {
+        "type": "object",
+        "description": "Issue-level completeness rollup for a series. `complete` counts active\nissues meeting the issue core criteria; `total` is the active-issue count.",
+        "required": [
+          "complete",
+          "total"
+        ],
+        "properties": {
+          "complete": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "MetadataCoverageView": {
         "type": "object",
         "required": [
@@ -14473,6 +15306,67 @@
           "total_issues": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "MetadataOverviewView": {
+        "type": "object",
+        "description": "Total metadata overview for an issue: completeness, source files,\nfreshness, per-field provenance, external IDs, and user-pinned fields.",
+        "required": [
+          "source_files",
+          "external_ids",
+          "provenance",
+          "user_edited"
+        ],
+        "properties": {
+          "completeness": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CompletenessReport"
+              }
+            ]
+          },
+          "external_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdRow"
+            }
+          },
+          "last_metadata_sync_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_rewrite_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_rewrite_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provenance": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldProvenanceRow"
+            }
+          },
+          "source_files": {
+            "$ref": "#/components/schemas/SourceFilesView"
+          },
+          "user_edited": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -15523,6 +16417,34 @@
           }
         }
       },
+      "ProviderBudget": {
+        "type": "object",
+        "description": "Per-provider remaining budget for the batch's pacing warning.",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "remaining_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "remaining_hour": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
       "ProviderView": {
         "type": "object",
         "required": [
@@ -16553,6 +17475,24 @@
           }
         }
       },
+      "RunOrdinal": {
+        "type": "object",
+        "description": "A specific candidate to apply.",
+        "required": [
+          "run_id",
+          "ordinal"
+        ],
+        "properties": {
+          "ordinal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "RunRow": {
         "type": "object",
         "required": [
@@ -16661,6 +17601,19 @@
             "items": {
               "$ref": "#/components/schemas/RunRow"
             }
+          }
+        }
+      },
+      "SavedViewBatchReq": {
+        "type": "object",
+        "description": "Request for the saved-view batch endpoint.",
+        "required": [
+          "saved_view_id"
+        ],
+        "properties": {
+          "saved_view_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -17483,6 +18436,35 @@
               "type": "string"
             }
           },
+          "metadata_completeness": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CompletenessReport",
+                "description": "Metadata-completeness assessment (\"does this need metadata pulled?\").\nDetail-only — populated by `get_one`; `None` on the list endpoint."
+              }
+            ]
+          },
+          "metadata_completeness_summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetadataCompletenessSummary",
+                "description": "Per-issue completeness rollup across the series (`complete` of `total`\nactive issues whose metadata is [`CompletenessTier::Complete`]). Drives\nthe Collection tab's \"N of M issues have complete metadata\" line.\nDetail-only."
+              }
+            ]
+          },
+          "metadata_completeness_tier": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "At-a-glance completeness tier (`\"complete\"` | `\"partial\"` |\n`\"needs_metadata\"`) rolled up across the series' active issues. The\nlightweight card-badge counterpart to [`Self::metadata_completeness`];\npopulated by `hydrate_series` on list endpoints. `None` when no signal\n(e.g. zero active issues) — the card shows no badge."
+          },
           "metron_id": {
             "type": [
               "integer",
@@ -17837,6 +18819,52 @@
           "asc",
           "desc"
         ]
+      },
+      "SourceFilesView": {
+        "type": "object",
+        "description": "Which metadata source files the scanner found for this issue. ComicInfo\npresence comes from `comic_info_raw`; MetronInfo from\n`issue.metroninfo_present`; series.json (a per-folder file) from the parent\n`series.series_json_present`. Each is `\"present\"` | `\"absent\"` |\n`\"unknown\"` (the last meaning the row was scanned before the tracking\ncolumn existed — a rescan resolves it).",
+        "required": [
+          "comicinfo",
+          "metroninfo",
+          "series_json"
+        ],
+        "properties": {
+          "comicinfo": {
+            "type": "string"
+          },
+          "metroninfo": {
+            "type": "string"
+          },
+          "series_json": {
+            "type": "string"
+          }
+        }
+      },
+      "SpecialEntry": {
+        "type": "object",
+        "description": "A non-main-run issue: special_type-tagged, fractional, or unnumbered.",
+        "properties": {
+          "number_raw": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort_number": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "special_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Spec §6.5 tag (`\"Annual\"`, `\"OneShot\"`, `\"TPB\"`, `\"Special\"`) when the\nscanner classified it; `None` for plain point/unnumbered issues."
+          }
+        }
       },
       "SyncStatusResp": {
         "type": "object",

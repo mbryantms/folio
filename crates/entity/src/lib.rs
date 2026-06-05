@@ -44,6 +44,7 @@ pub mod location;
 pub mod log_widget;
 pub mod marker;
 pub mod metadata_cache;
+pub mod metadata_batch;
 pub mod metadata_match_outcome;
 pub mod metadata_run;
 pub mod metadata_run_candidate;

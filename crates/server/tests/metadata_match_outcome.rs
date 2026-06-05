@@ -53,6 +53,7 @@ async fn start_series_run(app: &TestApp, facts: &SeriesQueryFacts) -> Uuid {
             trigger_kind: orchestrator::trigger_kind::MANUAL,
             providers: &[Source::ComicVine],
             query: StoredQuery::Series(facts.clone()),
+            batch_id: None,
         },
     )
     .await

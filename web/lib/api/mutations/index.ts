@@ -2331,6 +2331,8 @@ import type {
   ApplyCoverPolicy,
   ApplyMode,
   AddExternalIdReq,
+  BatchApplyResp,
+  BatchCreatedResp,
   CompositeApplyResp,
   ExternalIdRow,
   SearchStartedResp,
@@ -2435,6 +2437,57 @@ export function useApplyMetadataForIssue(
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "issues", issueSlug],
         });
+      },
+    },
+  );
+}
+
+// ───────── bulk-metadata batches (refine-bulk-metadata) ─────────
+
+/** Fan out a per-issue metadata search over a whole series → one batch. */
+export function useCreateSeriesBatch(seriesSlug: string) {
+  return useApiMutation<BatchCreatedResp, void>(
+    () => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/batch`,
+      method: "POST",
+    }),
+    { successMessage: "Queued metadata search" },
+  );
+}
+
+/** Fan out a metadata search over a saved view's targets → one batch. */
+export function useCreateSavedViewBatch() {
+  return useApiMutation<BatchCreatedResp, { saved_view_id: string }>(
+    (input) => ({
+      path: `/metadata/batch/saved-view`,
+      method: "POST",
+      body: input,
+    }),
+    { successMessage: "Queued metadata search" },
+  );
+}
+
+export type BatchApplyInput = {
+  filter: "all_strong" | "ordinals";
+  run_ordinals?: { run_id: string; ordinal: number }[];
+  mode?: ApplyMode;
+  apply_cover?: boolean;
+  override_user_edits?: boolean;
+};
+
+/** Bulk-accept reviewed candidates across a batch. */
+export function useBatchApply(batchId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<BatchApplyResp, BatchApplyInput>(
+    (input) => ({
+      path: `/metadata/batch/${encodeURIComponent(batchId)}/apply`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Applying metadata",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["metadata", "batch", batchId] });
       },
     },
   );

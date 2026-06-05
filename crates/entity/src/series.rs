@@ -77,6 +77,11 @@ pub struct Model {
     /// When true, the weekly refresh cron + bulk-refresh fan-out
     /// skip this series. User-facing toggle on the series page.
     pub metadata_sync_paused: bool,
+    /// Whether a Mylar3 `series.json` was present in the series folder at the
+    /// last scan. `None` = scanned before this column existed (rescan to
+    /// backfill); `Some(false)` = definitely absent.
+    #[sea_orm(nullable)]
+    pub series_json_present: Option<bool>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     /// Disk path of the series folder. Used as the fast-path identity match

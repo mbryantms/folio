@@ -1,7 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { BookOpenCheck, BookOpen, FolderPlus, ListChecks, Sparkles } from "lucide-react";
+import {
+  BookOpenCheck,
+  BookOpen,
+  FolderPlus,
+  ListChecks,
+  Sparkles,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
@@ -18,7 +25,11 @@ import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { apiMutate } from "@/lib/api/mutations";
-import { useBulkMarkSeriesProgress } from "@/lib/api/mutations";
+import {
+  useBulkMarkSeriesProgress,
+  useCreateSavedViewBatch,
+} from "@/lib/api/mutations";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useSavedViewResultsInfinite } from "@/lib/api/queries";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
@@ -43,6 +54,28 @@ const CARD_SIZE_STORAGE_KEY = "folio.savedView.cardSize";
 export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const [editOpen, setEditOpen] = React.useState(false);
   const results = useSavedViewResultsInfinite(view.id);
+  const router = useRouter();
+  const createBatch = useCreateSavedViewBatch();
+
+  const fetchViewMetadata = () => {
+    createBatch.mutate(
+      { saved_view_id: view.id },
+      {
+        onSuccess: (resp) => {
+          if (!resp) return;
+          toast.success(`Searching ${resp.items_total} items for metadata`, {
+            action: {
+              label: "Review",
+              onClick: () =>
+                router.push(
+                  `/admin/metadata?tab=review&batch=${resp.batch_id}`,
+                ),
+            },
+          });
+        },
+      },
+    );
+  };
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
     min: CARD_SIZE_MIN,
@@ -111,9 +144,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const runBulkMetadataFetch = async () => {
     const ids = selection.selected;
     if (ids.size === 0) return;
-    const slugs = items
-      .filter((s) => ids.has(s.id))
-      .map((s) => s.slug);
+    const slugs = items.filter((s) => ids.has(s.id)).map((s) => s.slug);
     if (slugs.length === 0) return;
     setBulkFetchPending(true);
     const toastId = toast.loading(
@@ -130,11 +161,16 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
     const ok = results.filter((r) => r.status === "fulfilled").length;
     const failed = results.length - ok;
     if (failed === 0) {
-      toast.success(`Queued metadata search for ${ok} series.`, { id: toastId });
-    } else if (ok === 0) {
-      toast.error(`Failed to queue any metadata searches (${failed} error${failed === 1 ? "" : "s"}).`, {
+      toast.success(`Queued metadata search for ${ok} series.`, {
         id: toastId,
       });
+    } else if (ok === 0) {
+      toast.error(
+        `Failed to queue any metadata searches (${failed} error${failed === 1 ? "" : "s"}).`,
+        {
+          id: toastId,
+        },
+      );
     } else {
       toast.message(`Queued ${ok}, ${failed} failed.`, { id: toastId });
     }
@@ -154,6 +190,15 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
       <ViewHeader
         view={view}
         onEdit={() => setEditOpen(true)}
+        extraMenuItems={
+          <DropdownMenuItem
+            onSelect={fetchViewMetadata}
+            disabled={createBatch.isPending}
+          >
+            <Sparkles className="mr-2 h-4 w-4" />
+            Fetch metadata for view
+          </DropdownMenuItem>
+        }
         extraActions={
           <>
             <CardSizeOptions

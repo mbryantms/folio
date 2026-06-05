@@ -123,6 +123,10 @@ const READ_STATUS_VALUES: &[&str] = &["read", "in_progress", "unread"];
 /// without a canonical expected count from ComicInfo).
 /// library-filters-richer-1.0 M4.
 const COLLECTION_COMPLETENESS_VALUES: &[&str] = &["complete", "incomplete", "unknown"];
+/// Three-state metadata completeness rolled up over a series' active issues
+/// (every / some / no issue meets the issue core criteria). Mirrors the
+/// per-issue tiers in `metadata::completeness::CompletenessTier`.
+const METADATA_COMPLETENESS_VALUES: &[&str] = &["complete", "partial", "needs_metadata"];
 /// ComicInfo `AgeRating` values per the Anansi schema. Open-ended in the
 /// data (the scanner stores any string), but the UI restricts choices to
 /// the known set — unknown values still match via direct equality.
@@ -479,6 +483,16 @@ const SPECS: &[FieldSpec] = &[
         allowed_ops: ENUM_OPS,
         enum_values: COLLECTION_COMPLETENESS_VALUES,
     },
+    // ─── metadata-completeness enum (needs-metadata filter) ──────────────
+    FieldSpec {
+        field: Field::MetadataCompleteness,
+        kind: FieldKind::Enum,
+        id: "metadata_completeness",
+        label: "Metadata Completeness",
+        source: Source::SeriesComputed("metadata_completeness"),
+        allowed_ops: ENUM_OPS,
+        enum_values: METADATA_COMPLETENESS_VALUES,
+    },
 ];
 
 pub fn spec_for(field: Field) -> &'static FieldSpec {
@@ -506,7 +520,7 @@ mod tests {
         // and a matching `FieldSpec` row. Forgetting both leaves the
         // count unchanged but `spec_for` would panic at runtime — the
         // mismatch is the alarm.
-        const KNOWN_FIELD_COUNT: usize = 31;
+        const KNOWN_FIELD_COUNT: usize = 32;
         assert_eq!(SPECS.len(), KNOWN_FIELD_COUNT);
         for spec in SPECS {
             let looked_up = spec_for(spec.field);

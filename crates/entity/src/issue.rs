@@ -156,6 +156,12 @@ pub struct Model {
     /// `Special` | `Annual` | `OneShot` | `TPB` | NULL (spec §6.5).
     #[sea_orm(nullable)]
     pub special_type: Option<String>,
+    /// Whether a `MetronInfo.xml` was present inside the archive at the last
+    /// scan. `None` = scanned before this column existed (rescan to backfill);
+    /// `Some(false)` = definitely absent. ComicInfo presence is inferred from
+    /// `comic_info_raw` instead.
+    #[sea_orm(nullable)]
+    pub metroninfo_present: Option<bool>,
     /// Hash algorithm version (spec §14.2). 1 = BLAKE3.
     pub hash_algorithm: i16,
 

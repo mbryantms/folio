@@ -54,6 +54,7 @@ import type {
   ScanBatchDetailView,
   LibraryEventView,
   HealthIssueView,
+  MetadataOverviewView,
   NextUpView,
   PageCountResponse,
   OnDeckView,
@@ -296,6 +297,8 @@ export const queryKeys = {
   }) => ["admin", "library-events-infinite", filters] as const,
   issueHealth: (seriesSlug: string, issueSlug: string) =>
     ["issues", seriesSlug, issueSlug, "health"] as const,
+  issueMetadataOverview: (seriesSlug: string, issueSlug: string) =>
+    ["issues", seriesSlug, issueSlug, "metadata-overview"] as const,
   scanRuns: (libraryId: string, kind?: string) =>
     ["libraries", libraryId, "scan-runs", kind ?? "all"] as const,
   /** Prefix that matches every `scanRuns(libraryId, *)` variant — used by
@@ -467,6 +470,12 @@ export const queryKeys = {
   /** Sync-status card (last_metadata_sync_at + paused). */
   metadataSyncStatusSeries: (slug: string) =>
     ["series", slug, "metadata", "status"] as const,
+  /** Collection-completeness report (owned vs. expected + missing issues). */
+  seriesCollection: (slug: string) => ["series", slug, "collection"] as const,
+  /** Bulk-metadata batch status (live progress + child list). */
+  metadataBatch: (batchId: string) => ["metadata", "batch", batchId] as const,
+  /** Recent bulk-metadata batches (Review tab picker). */
+  metadataBatches: ["metadata", "batches"] as const,
   /** External-IDs card listing. */
   externalIdsSeries: (slug: string) =>
     ["series", slug, "external-ids"] as const,
@@ -750,6 +759,24 @@ export function useIssueHealth(seriesSlug: string, issueSlug: string) {
         `/series/${seriesSlug}/issues/${issueSlug}/health-issues`,
       ),
     enabled: !!seriesSlug && !!issueSlug,
+  });
+}
+
+/** Total metadata overview for an issue: completeness, source files,
+ *  freshness, per-field provenance, external IDs, and pinned fields. Powers
+ *  the issue page's Metadata tab. */
+export function useIssueMetadataOverview(
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  return useQuery({
+    queryKey: queryKeys.issueMetadataOverview(seriesSlug, issueSlug),
+    queryFn: () =>
+      jsonFetch<MetadataOverviewView>(
+        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata-overview`,
+      ),
+    enabled: !!seriesSlug && !!issueSlug,
+    staleTime: 30_000,
   });
 }
 
@@ -2133,7 +2160,10 @@ export function useUserProgress() {
 // ───────── metadata-providers-1.0 ─────────
 
 import type {
+  BatchListResp,
+  BatchStatusResp,
   CandidatesResp,
+  CollectionReportView,
   CompositeDiffResp,
   DiffResp,
   ExternalIdsListResp,
@@ -2343,6 +2373,47 @@ export function useMetadataSyncStatus(seriesSlug: string) {
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
+  });
+}
+
+/** Collection-completeness report: owned vs. expected issue counts plus the
+ *  inferred missing main-run numbers. Single-shot (not a cursor list), so a
+ *  plain `useQuery` is correct. */
+export function useSeriesCollection(seriesSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.seriesCollection(seriesSlug),
+    queryFn: () =>
+      jsonFetch<CollectionReportView>(
+        `/series/${encodeURIComponent(seriesSlug)}/collection`,
+      ),
+    enabled: !!seriesSlug,
+    staleTime: 30_000,
+  });
+}
+
+/** Bulk-metadata batch status — polls every 2s while children are still in
+ *  flight or parked, then settles. Powers the Review tab progress + queue. */
+export function useMetadataBatch(batchId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.metadataBatch(batchId ?? ""),
+    queryFn: () =>
+      jsonFetch<BatchStatusResp>(
+        `/metadata/batch/${encodeURIComponent(batchId ?? "")}`,
+      ),
+    enabled: !!batchId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      return s === "running" || s === "awaiting_quota" ? 2000 : false;
+    },
+  });
+}
+
+/** Recent bulk-metadata batches for the Review tab picker. */
+export function useMetadataBatches() {
+  return useQuery({
+    queryKey: queryKeys.metadataBatches,
+    queryFn: () => jsonFetch<BatchListResp>(`/metadata/batches`),
+    staleTime: 10_000,
   });
 }
 

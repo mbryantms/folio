@@ -18,6 +18,7 @@
 pub mod apply;
 pub mod cache;
 pub mod comicvine;
+pub mod completeness;
 pub mod composite;
 pub mod diff;
 pub mod drift;

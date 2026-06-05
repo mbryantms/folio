@@ -35,6 +35,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_cbl_refresh_sweep(&scheduler, &state).await;
     register_prune_auth_sessions(&scheduler, &state).await;
     register_metadata_weekly_refresh(&scheduler, &state).await;
+    register_metadata_resume_sweep(&scheduler, &state).await;
     register_writeback_migration_progress(&scheduler, &state).await;
     register_metadata_match_outcome_prune(&scheduler, &state).await;
     register_job_queue_depth(&scheduler, &state).await;
@@ -475,6 +476,32 @@ async fn register_reconcile_sweep(scheduler: &JobScheduler, state: &AppState) {
 /// The settings UI flags this with a `since=2026-Q3` note in
 /// `docs/dev/runtime-configuration.md`. Toggling the enabled bool
 /// IS live, since that gate is checked inside the handler.
+/// Auto-resume `awaiting_quota` metadata runs once their window passes. Runs
+/// every minute; the sweep itself is quota-snapshot-gated + capped so it never
+/// bursts back into a denial. refine-bulk-metadata M5.
+async fn register_metadata_resume_sweep(scheduler: &JobScheduler, state: &AppState) {
+    let state = state.clone();
+    let job_result = Job::new_async("0 * * * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            let n = crate::jobs::metadata_resume::run(&state).await;
+            if n > 0 {
+                tracing::info!(resumed = n, "metadata awaiting_quota resume sweep");
+            }
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add metadata_resume_sweep failed");
+            } else {
+                tracing::info!("metadata_resume_sweep registered (every minute)");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build metadata_resume_sweep failed"),
+    }
+}
+
 async fn register_metadata_weekly_refresh(scheduler: &JobScheduler, state: &AppState) {
     let state = state.clone();
     let cron_expr = {
@@ -534,6 +561,7 @@ async fn run_metadata_weekly_refresh(state: &AppState) {
             lib.id,
             RefreshScope::Recent,
             trigger_kind::WEEKLY_REFRESH,
+            None,
         )
         .await
         {
@@ -558,6 +586,7 @@ async fn run_metadata_weekly_refresh(state: &AppState) {
             lib.id,
             RefreshScope::Stale,
             trigger_kind::WEEKLY_REFRESH,
+            None,
         )
         .await
         {

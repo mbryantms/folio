@@ -4,6 +4,8 @@ import Link from "next/link";
 
 import { formatDurationMs } from "@/lib/activity";
 import type { IssueSummaryView, RereadIssueEntry } from "@/lib/api/types";
+import { ISSUE_GRID_CELL_RADIUS, ISSUE_GRID_COLS } from "@/lib/issue-grid";
+import { cn } from "@/lib/utils";
 
 /**
  * Square grid: one cell per issue in publication order, color = read count.
@@ -32,7 +34,7 @@ export function IssueGridHeatmap({
 
   return (
     <figure className="space-y-2">
-      <ul className="text-primary grid [grid-template-columns:repeat(auto-fill,minmax(28px,1fr))] gap-1.5">
+      <ul className={cn("text-primary", ISSUE_GRID_COLS)}>
         {issues.map((issue) => {
           const entry = readsById.get(issue.id);
           const reads = entry?.reads ?? 0;
@@ -44,10 +46,25 @@ export function IssueGridHeatmap({
               <Link
                 href={`/series/${seriesSlug}/issues/${issue.slug}`}
                 title={`#${issue.number ?? "?"} ${issue.title ?? ""}\n${reads > 0 ? `Read ×${reads}` : "Unread"}${entry ? ` · ${formatDurationMs(entry.active_ms)}` : ""}`}
-                className="focus-visible:ring-ring block size-full rounded focus-visible:ring-2 focus-visible:outline-none"
-                style={{ backgroundColor: fill, opacity }}
+                className={cn(
+                  "focus-visible:ring-ring relative block size-full overflow-hidden focus-visible:ring-2 focus-visible:outline-none",
+                  ISSUE_GRID_CELL_RADIUS,
+                )}
                 aria-label={`Issue ${issue.number ?? issue.title ?? "?"}, ${reads > 0 ? `read ${reads} time${reads === 1 ? "" : "s"}` : "unread"}`}
-              />
+              >
+                {/* Color/intensity lives on a bg layer so the number stays
+                    crisp (the cell's opacity would otherwise dim it too). */}
+                <span
+                  aria-hidden="true"
+                  className={cn("absolute inset-0", ISSUE_GRID_CELL_RADIUS)}
+                  style={{ backgroundColor: fill, opacity }}
+                />
+                {issue.number && (
+                  <span className="text-foreground/55 absolute inset-0 grid place-items-center text-[10px] tabular-nums">
+                    {issue.number}
+                  </span>
+                )}
+              </Link>
             </li>
           );
         })}
@@ -81,7 +98,7 @@ function Legend() {
         <span key={level} className="flex items-center gap-1.5">
           <span
             aria-hidden="true"
-            className="text-primary inline-block size-2.5 rounded-sm"
+            className="text-primary inline-block size-3 rounded-sm"
             style={{
               backgroundColor:
                 level === 0 ? "var(--color-muted)" : "currentColor",

@@ -39,6 +39,7 @@ const ALL_FIELDS: Field[] = [
   "read_status",
   "unread_issues",
   "collection_completeness",
+  "metadata_completeness",
 ];
 
 const ALL_OPS: Op[] = [

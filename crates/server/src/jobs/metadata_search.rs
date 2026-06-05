@@ -376,6 +376,7 @@ pub async fn enqueue_series_search(
     series_id: Uuid,
     triggered_by: Option<Uuid>,
     trigger_kind: &'static str,
+    batch_id: Option<Uuid>,
 ) -> Result<EnqueueOutcome, anyhow::Error> {
     use entity::series;
     use sea_orm::EntityTrait;
@@ -405,6 +406,7 @@ pub async fn enqueue_series_search(
             trigger_kind,
             providers: &providers_listed,
             query: series_stored_query(&facts),
+            batch_id,
         },
     )
     .await?;
@@ -430,6 +432,108 @@ pub async fn enqueue_series_search(
             series_id: row.id,
             library_id: Some(row.library_id),
             facts,
+        })
+        .await
+    {
+        let _ = orchestrator::fail_run(&state.db, new_run_id, "queue push failed").await;
+        return Err(anyhow::Error::from(e));
+    }
+
+    Ok(EnqueueOutcome {
+        run_id: new_run_id,
+        coalesced: false,
+    })
+}
+
+/// Issue-scope sibling of [`enqueue_series_search`]. Loads the issue + its
+/// parent series, builds the query facts + parent-series external ids, starts
+/// a run (optionally under `batch_id`), and pushes a `SearchIssueJob` through
+/// the same coalesce gate. Errors (skipped by the batch fan-out) when the
+/// issue has no `number_raw` (unsearchable) or no providers are configured.
+pub async fn enqueue_issue_search(
+    state: &AppState,
+    issue_id: &str,
+    triggered_by: Option<Uuid>,
+    trigger_kind: &'static str,
+    batch_id: Option<Uuid>,
+) -> Result<EnqueueOutcome, anyhow::Error> {
+    use entity::{external_id, issue, series};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    use std::str::FromStr;
+
+    let Some(i) = issue::Entity::find_by_id(issue_id.to_owned())
+        .one(&state.db)
+        .await?
+    else {
+        return Err(anyhow::anyhow!("issue {issue_id} not found"));
+    };
+    let Some(s) = series::Entity::find_by_id(i.series_id).one(&state.db).await? else {
+        return Err(anyhow::anyhow!("series {} not found", i.series_id));
+    };
+    let Some(issue_number) = i.number_raw.clone().filter(|s| !s.trim().is_empty()) else {
+        return Err(anyhow::anyhow!("issue {issue_id} has no number_raw"));
+    };
+
+    let facts = IssueQueryFacts {
+        series_name: s.name.clone(),
+        series_year: s.year,
+        publisher: s.publisher.clone(),
+        volume: s.volume,
+        issue_number,
+        issue_year: i.year,
+    };
+
+    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
+    if providers.is_empty() {
+        return Err(anyhow::anyhow!("no metadata providers configured"));
+    }
+    let providers_listed: Vec<_> = providers.iter().map(|p| p.id()).collect();
+
+    let series_external_ids: Vec<(Source, String)> = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq("series"))
+        .filter(external_id::Column::EntityId.eq(s.id.to_string()))
+        .all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|row| Source::from_str(&row.source).ok().map(|src| (src, row.external_id)))
+        .collect();
+
+    let new_run_id = orchestrator::start_run(
+        &state.db,
+        orchestrator::StartRunArgs {
+            scope: orchestrator::scope::ISSUE,
+            scope_entity_id: Some(i.id.clone()),
+            library_id: Some(s.library_id),
+            triggered_by,
+            trigger_kind,
+            providers: &providers_listed,
+            query: issue_stored_query(&facts),
+            batch_id,
+        },
+    )
+    .await?;
+
+    let winner_run_id = reserve_issue_slot(state, &i.id, new_run_id).await?;
+    if winner_run_id != new_run_id {
+        use sea_orm::EntityTrait;
+        let _ = entity::metadata_run::Entity::delete_by_id(new_run_id)
+            .exec(&state.db)
+            .await;
+        return Ok(EnqueueOutcome {
+            run_id: winner_run_id,
+            coalesced: true,
+        });
+    }
+
+    let mut storage = state.jobs.metadata_search_issue_storage.clone();
+    if let Err(e) = storage
+        .push(SearchIssueJob {
+            run_id: new_run_id,
+            issue_id: i.id.clone(),
+            library_id: Some(s.library_id),
+            facts,
+            series_external_ids,
         })
         .await
     {

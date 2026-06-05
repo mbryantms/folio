@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   useAddCollectionEntry,
+  useCreateSeriesBatch,
   useGenerateSeriesPageMap,
   useRegenerateSeriesCover,
   useRemoveCollectionEntry,
@@ -89,6 +90,22 @@ export function SeriesSettingsMenu({
   const scan = useTriggerSeriesScan(seriesSlug, libraryId);
   const regenerateCover = useRegenerateSeriesCover(seriesSlug, libraryId);
   const generatePageMap = useGenerateSeriesPageMap(seriesSlug, libraryId);
+  const createBatch = useCreateSeriesBatch(seriesSlug);
+
+  const fetchAllMetadata = () => {
+    createBatch.mutate(undefined, {
+      onSuccess: (resp) => {
+        if (!resp) return;
+        toast.success(`Searching ${resp.items_total} issues for metadata`, {
+          action: {
+            label: "Review",
+            onClick: () =>
+              router.push(`/admin/metadata?tab=review&batch=${resp.batch_id}`),
+          },
+        });
+      },
+    });
+  };
 
   // Want to Read is the per-user auto-seeded collection (system_key='want_to_read').
   // The sidebar fetch of /me/collections seeds it on first load; by the time the
@@ -226,6 +243,13 @@ export function SeriesSettingsMenu({
             <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
               <Sparkles className="mr-2 h-4 w-4" />
               Fetch metadata…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={fetchAllMetadata}
+              disabled={createBatch.isPending}
+            >
+              <Sparkles className="mr-2 h-4 w-4" />
+              Fetch all issues&rsquo; metadata
             </DropdownMenuItem>
           </DropdownMenuGroup>
 

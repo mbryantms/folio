@@ -199,6 +199,7 @@ export function SeriesCard({
           </Badge>
         )}
         <CollectionDot series={series} />
+        <MetaNeedsBadge series={series} />
         {!inSelectMode && (
           <>
             <CoverMenuButton
@@ -302,5 +303,27 @@ function CollectionDot({ series }: { series: SeriesView }) {
         state === "complete" ? "bg-emerald-500" : "bg-amber-500",
       )}
     />
+  );
+}
+
+/** Small amber "metadata" chip in the cover's top-left, shown only when the
+ *  series' metadata is so sparse it likely needs pulling
+ *  (`metadata_completeness_tier === "needs_metadata"`). Shares the
+ *  `useCoverCollectionDot` opt-out so pristine-cover readers hide both cover
+ *  overlays at once. The kebab hover affordance lives in the same corner but
+ *  only appears on hover, so the at-rest glance stays clear. */
+function MetaNeedsBadge({ series }: { series: SeriesView }) {
+  const dotPref = useCoverCollectionDot();
+  if (!dotPref.enabled) return null;
+  if (series.metadata_completeness_tier !== "needs_metadata") return null;
+  const label = "Metadata likely incomplete";
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      className="absolute top-2 left-2 inline-flex items-center rounded-md bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white ring-1 ring-black/10 dark:ring-white/10"
+    >
+      meta
+    </span>
   );
 }

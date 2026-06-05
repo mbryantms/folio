@@ -226,6 +226,8 @@ pub async fn resolve_or_create(
             imprint_id: Set(None),
             last_metadata_sync_at: Set(None),
             metadata_sync_paused: Set(false),
+            // Stamped by `reconcile_series_status` once the folder is scanned.
+            series_json_present: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
             folder_path: Set(Some(folder_str.clone())),

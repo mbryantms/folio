@@ -152,16 +152,12 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
         )}
       </CardHeader>
     ) : (
-      // Bare mode: tab label is the title; only surface the "+ Add"
-      // affordance, right-aligned, on a thin row above the list. Keeps
-      // the action discoverable without a heavy header.
+      // Bare mode: tab label is the title; surface the "+ Add" affordance as
+      // a thin right-aligned row rendered *below* the list (see the return
+      // block), so it doesn't offset the content from the sibling tabs.
       !adding && (
-        <div className="flex justify-end pb-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setAdding(true)}
-          >
+        <div className="flex justify-end">
+          <Button variant="ghost" size="sm" onClick={() => setAdding(true)}>
             <Plus className="mr-1 h-3.5 w-3.5" /> Add ID
           </Button>
         </div>
@@ -224,10 +220,19 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
             ))}
           </ul>
         )}
-        {adding && renderAddForm(source, setSource, extId, setExtId, onAdd, add.isPending, () => {
-          setAdding(false);
-          setExtId("");
-        })}
+        {adding &&
+          renderAddForm(
+            source,
+            setSource,
+            extId,
+            setExtId,
+            onAdd,
+            add.isPending,
+            () => {
+              setAdding(false);
+              setExtId("");
+            },
+          )}
       </>
     ) : (
       // Bare layout: ChipList-style grid matching the Credits / Cast
@@ -269,7 +274,10 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                       </Badge>
                     </a>
                   ) : (
-                    <Badge variant="secondary" className="cursor-default font-normal">
+                    <Badge
+                      variant="secondary"
+                      className="cursor-default font-normal"
+                    >
                       {r.external_id}
                     </Badge>
                   )}
@@ -292,10 +300,19 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
             ))}
           </div>
         )}
-        {adding && renderAddForm(source, setSource, extId, setExtId, onAdd, add.isPending, () => {
-          setAdding(false);
-          setExtId("");
-        })}
+        {adding &&
+          renderAddForm(
+            source,
+            setSource,
+            extId,
+            setExtId,
+            onAdd,
+            add.isPending,
+            () => {
+              setAdding(false);
+              setExtId("");
+            },
+          )}
       </>
     );
 
@@ -307,9 +324,14 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
           <CardContent className="space-y-2 text-sm">{body}</CardContent>
         </Card>
       ) : (
-        <div className="space-y-2 text-sm">
-          {header}
+        // Bare mode renders the content first so the tab's top edge lines up
+        // with every other tab (Credits, Cast, Details — all of which start
+        // straight into their content). The "Add ID" affordance sits *below*
+        // the list; placing it on its own row above left an empty band that
+        // pushed the IDs down relative to the sibling tabs.
+        <div className="space-y-3 text-sm">
           {body}
+          {header}
         </div>
       )}
 

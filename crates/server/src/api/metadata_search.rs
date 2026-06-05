@@ -19,9 +19,12 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{issue, library_user_access, metadata_run, series};
+use entity::{
+    issue, library_user_access, metadata_batch, metadata_match_outcome, metadata_run, series,
+};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -29,6 +32,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use crate::api::saved_views::BatchTargets;
 use crate::auth::CurrentUser;
 use crate::jobs::{metadata_apply, metadata_search};
 use crate::metadata::apply::{self, ApplyArgs, ApplyMode};
@@ -58,6 +62,11 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(proposed_diff_issue))
         .routes(routes!(apply_issue))
         .routes(routes!(refresh_library_metadata))
+        .routes(routes!(create_series_batch))
+        .routes(routes!(create_saved_view_batch))
+        .routes(routes!(batch_status))
+        .routes(routes!(list_batches))
+        .routes(routes!(batch_apply))
 }
 
 // ───────── response shapes ─────────
@@ -271,6 +280,7 @@ pub async fn search_series(
             trigger_kind: orchestrator::trigger_kind::MANUAL,
             providers: &providers_listed,
             query: metadata_search::series_stored_query(&facts),
+            batch_id: None,
         },
     )
     .await
@@ -638,6 +648,7 @@ pub async fn search_issue(
             trigger_kind: orchestrator::trigger_kind::MANUAL,
             providers: &providers_listed,
             query: metadata_search::issue_stored_query(&facts),
+            batch_id: None,
         },
     )
     .await
@@ -1413,7 +1424,14 @@ pub async fn refresh_library_metadata(
             "scope must be one of: unmatched, stale, all, recent",
         );
     };
-    match refresh::fan_out_scope(&app, lib.id, scope, orchestrator::trigger_kind::BULK_ACTION).await
+    match refresh::fan_out_scope(
+        &app,
+        lib.id,
+        scope,
+        orchestrator::trigger_kind::BULK_ACTION,
+        None,
+    )
+    .await
     {
         Ok(RefreshOutcome {
             series_eligible,
@@ -1704,6 +1722,900 @@ pub async fn composite_apply_issue(
         }
         Err(e) => map_diff_err(e),
     }
+}
+
+// ───────── bulk-fetch batches (refine-bulk-metadata M1) ─────────
+
+/// Response for the batch-create endpoints. Mirrors [`RefreshOutcome`] plus the
+/// new `batch_id` the caller deep-links the Review queue to.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BatchCreatedResp {
+    pub batch_id: Uuid,
+    /// Child runs created under this batch (the progress denominator).
+    pub items_total: usize,
+    pub jobs_enqueued: usize,
+    /// Targets whose search coalesced onto an already-in-flight run (tracked
+    /// under that run, not this batch).
+    pub jobs_coalesced: usize,
+    pub jobs_failed: usize,
+}
+
+/// Insert a `metadata_batch` row in the `running` state. `items_total` is
+/// updated to the enqueued child count after fan-out.
+async fn insert_metadata_batch(
+    db: &sea_orm::DatabaseConnection,
+    scope: &str,
+    library_id: Option<Uuid>,
+    created_by: Option<Uuid>,
+) -> Result<Uuid, sea_orm::DbErr> {
+    use sea_orm::Set;
+    let id = Uuid::now_v7();
+    let am = entity::metadata_batch::ActiveModel {
+        id: Set(id),
+        library_id: Set(library_id),
+        scope: Set(scope.to_owned()),
+        // Bulk fetch always holds for review — children run as `manual` so
+        // nothing auto-applies (the queue is the accept surface).
+        trigger_kind: Set(orchestrator::trigger_kind::MANUAL.to_owned()),
+        status: Set("running".to_owned()),
+        items_total: Set(0),
+        created_by: Set(created_by),
+        created_at: Set(chrono::Utc::now().into()),
+        ended_at: Set(None),
+    };
+    am.insert(db).await?;
+    Ok(id)
+}
+
+/// Stamp the final child count on a batch once fan-out completes.
+async fn set_batch_items_total(
+    db: &sea_orm::DatabaseConnection,
+    batch_id: Uuid,
+    items_total: i32,
+) {
+    use sea_orm::Set;
+    if let Ok(Some(row)) = entity::metadata_batch::Entity::find_by_id(batch_id).one(db).await {
+        let mut am: entity::metadata_batch::ActiveModel = row.into();
+        am.items_total = Set(items_total);
+        let _ = am.update(db).await;
+    }
+}
+
+/// `POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search
+/// over every active issue in the series, grouped under one `metadata_batch`
+/// so progress + review happen in one place. Children run as `manual` (held
+/// for review, never auto-applied).
+#[utoipa::path(
+    operation_id = "metadata_create_series_batch",    post,
+    path = "/series/{slug}/metadata/batch",
+    params(("slug" = String, Path)),
+    responses(
+        (status = 202, body = BatchCreatedResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "series not found"),
+    )
+)]
+#[handler]
+pub async fn create_series_batch(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path(slug): Path<String>,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
+    }
+
+    // Active issues, capped like the library refresh fan-out.
+    let issue_ids: Vec<String> = match issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(s.id))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .order_by_asc(issue::Column::SortNumber)
+        .limit(refresh::REFRESH_BATCH_CAP as u64)
+        .all(&app.db)
+        .await
+    {
+        Ok(rows) => rows.into_iter().map(|r| r.id).collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "create_series_batch: issue query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let batch_id = match insert_metadata_batch(
+        &app.db,
+        "series_issues",
+        Some(s.library_id),
+        Some(user.id),
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!(error = %e, "create_series_batch: batch insert failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let outcome = fan_out_issue_batch(&app, &issue_ids, Some(user.id), batch_id).await;
+    set_batch_items_total(&app.db, batch_id, outcome.jobs_enqueued as i32).await;
+
+    (
+        StatusCode::ACCEPTED,
+        Json(BatchCreatedResp {
+            batch_id,
+            items_total: outcome.jobs_enqueued,
+            jobs_enqueued: outcome.jobs_enqueued,
+            jobs_coalesced: outcome.jobs_coalesced,
+            jobs_failed: outcome.jobs_failed,
+        }),
+    )
+        .into_response()
+}
+
+/// Tally for an issue-batch fan-out.
+struct FanOutTally {
+    jobs_enqueued: usize,
+    jobs_coalesced: usize,
+    jobs_failed: usize,
+}
+
+/// Enqueue a per-issue search for each id under `batch_id`, honoring the
+/// per-entity coalesce gate. Children run as `manual`.
+async fn fan_out_issue_batch(
+    app: &AppState,
+    issue_ids: &[String],
+    triggered_by: Option<Uuid>,
+    batch_id: Uuid,
+) -> FanOutTally {
+    let mut jobs_enqueued = 0usize;
+    let mut jobs_coalesced = 0usize;
+    let mut jobs_failed = 0usize;
+    for id in issue_ids {
+        match metadata_search::enqueue_issue_search(
+            app,
+            id,
+            triggered_by,
+            orchestrator::trigger_kind::MANUAL,
+            Some(batch_id),
+        )
+        .await
+        {
+            Ok(o) if o.coalesced => jobs_coalesced += 1,
+            Ok(_) => jobs_enqueued += 1,
+            Err(e) => {
+                tracing::warn!(issue_id = %id, error = %e, "issue batch fan-out: enqueue failed");
+                jobs_failed += 1;
+            }
+        }
+    }
+    FanOutTally {
+        jobs_enqueued,
+        jobs_coalesced,
+        jobs_failed,
+    }
+}
+
+/// Request for the saved-view batch endpoint.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SavedViewBatchReq {
+    pub saved_view_id: Uuid,
+}
+
+/// `POST /metadata/batch/saved-view` — fan out a metadata search over the
+/// targets of a saved view: a filter/smart view searches each matching series;
+/// a CBL reading list searches each issue. One `metadata_batch` groups them.
+#[utoipa::path(
+    operation_id = "metadata_create_saved_view_batch",    post,
+    path = "/metadata/batch/saved-view",
+    request_body = SavedViewBatchReq,
+    responses(
+        (status = 202, body = BatchCreatedResp),
+        (status = 403, description = "view not visible"),
+        (status = 404, description = "saved view not found"),
+    )
+)]
+#[handler]
+pub async fn create_saved_view_batch(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<SavedViewBatchReq>,
+) -> Response {
+    match crate::api::saved_views::resolve_metadata_batch_targets(&app, &user, req.saved_view_id)
+        .await
+    {
+        Ok(BatchTargets::Series(series_ids)) => {
+            let batch_id =
+                match insert_metadata_batch(&app.db, "saved_view", None, Some(user.id)).await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::error!(error = %e, "saved_view batch: insert failed");
+                        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                    }
+                };
+            let mut t = FanOutTally {
+                jobs_enqueued: 0,
+                jobs_coalesced: 0,
+                jobs_failed: 0,
+            };
+            for id in series_ids {
+                match metadata_search::enqueue_series_search(
+                    &app,
+                    id,
+                    Some(user.id),
+                    orchestrator::trigger_kind::MANUAL,
+                    Some(batch_id),
+                )
+                .await
+                {
+                    Ok(o) if o.coalesced => t.jobs_coalesced += 1,
+                    Ok(_) => t.jobs_enqueued += 1,
+                    Err(e) => {
+                        tracing::warn!(series_id = %id, error = %e, "saved_view batch: enqueue failed");
+                        t.jobs_failed += 1;
+                    }
+                }
+            }
+            set_batch_items_total(&app.db, batch_id, t.jobs_enqueued as i32).await;
+            (
+                StatusCode::ACCEPTED,
+                Json(BatchCreatedResp {
+                    batch_id,
+                    items_total: t.jobs_enqueued,
+                    jobs_enqueued: t.jobs_enqueued,
+                    jobs_coalesced: t.jobs_coalesced,
+                    jobs_failed: t.jobs_failed,
+                }),
+            )
+                .into_response()
+        }
+        Ok(BatchTargets::Issues(issue_ids)) => {
+            let batch_id =
+                match insert_metadata_batch(&app.db, "saved_view", None, Some(user.id)).await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::error!(error = %e, "saved_view batch: insert failed");
+                        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                    }
+                };
+            let outcome = fan_out_issue_batch(&app, &issue_ids, Some(user.id), batch_id).await;
+            set_batch_items_total(&app.db, batch_id, outcome.jobs_enqueued as i32).await;
+            (
+                StatusCode::ACCEPTED,
+                Json(BatchCreatedResp {
+                    batch_id,
+                    items_total: outcome.jobs_enqueued,
+                    jobs_enqueued: outcome.jobs_enqueued,
+                    jobs_coalesced: outcome.jobs_coalesced,
+                    jobs_failed: outcome.jobs_failed,
+                }),
+            )
+                .into_response()
+        }
+        Err(resp) => resp,
+    }
+}
+
+// ───────── batch status + budget (refine-bulk-metadata M2) ─────────
+
+/// Live aggregate over a batch's child runs.
+#[derive(Debug, Default, Serialize, utoipa::ToSchema)]
+pub struct BatchAggregate {
+    /// Children whose search has finalized (completed / failed / awaiting_quota).
+    pub searched: i64,
+    /// `single_good` — one strong match, ready for "Accept all strong".
+    pub strong: i64,
+    /// `multi_good` | `single_bad_cover` | `multi_bad_cover` — needs a look.
+    pub needs_review: i64,
+    pub no_match: i64,
+    /// Children with an applied candidate.
+    pub applied: i64,
+    pub awaiting_quota: i64,
+    pub failed: i64,
+    /// Still queued / searching.
+    pub in_flight: i64,
+}
+
+/// One child run in a batch, for the Review queue list.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BatchChildRow {
+    pub run_id: Uuid,
+    pub scope: String,
+    pub scope_entity_id: Option<String>,
+    /// Human label resolved from the run's stored query (series / issue name).
+    pub label: Option<String>,
+    pub status: String,
+    /// `MatchOutcomeKind` string once searched; `None` while in flight.
+    pub outcome_kind: Option<String>,
+    pub applied: bool,
+    /// Parent series slug, for opening the review dialog (or deep-linking) to
+    /// the child's entity.
+    pub series_slug: Option<String>,
+    /// Issue slug for issue-scope children.
+    pub issue_slug: Option<String>,
+    /// Parent library id — the review dialog's scope requires it.
+    pub library_id: Option<String>,
+}
+
+/// Per-provider remaining budget for the batch's pacing warning.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ProviderBudget {
+    pub source: String,
+    pub remaining_hour: Option<u32>,
+    pub remaining_day: Option<u32>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BatchStatusResp {
+    pub batch_id: Uuid,
+    pub scope: String,
+    /// Derived from the child aggregate: `running` | `completed` |
+    /// `partial_failed` | `awaiting_quota`.
+    pub status: String,
+    pub items_total: i32,
+    pub created_at: String,
+    pub aggregate: BatchAggregate,
+    pub children: Vec<BatchChildRow>,
+    pub budget: Vec<ProviderBudget>,
+    /// `true` when `items_total` exceeds the smallest provider daily budget —
+    /// the batch will span multiple windows (children park + auto-resume).
+    pub exceeds_budget: bool,
+    /// Earliest `resume_after` across parked children (RFC3339), for the
+    /// "resumes ~HH:MM" hint.
+    pub resume_eta: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BatchListRow {
+    pub batch_id: Uuid,
+    pub scope: String,
+    pub status: String,
+    pub items_total: i32,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BatchListResp {
+    pub batches: Vec<BatchListRow>,
+}
+
+/// `needs_review` outcome discriminants.
+fn is_needs_review(outcome_kind: &str) -> bool {
+    matches!(
+        outcome_kind,
+        "multi_good" | "single_bad_cover" | "multi_bad_cover"
+    )
+}
+
+/// Label a child run from its stored query JSON.
+fn label_from_query(query: &Option<serde_json::Value>) -> Option<String> {
+    let q = query.as_ref()?;
+    match q.get("kind").and_then(|k| k.as_str()) {
+        Some("series") => q
+            .get("name")
+            .and_then(|n| n.as_str())
+            .map(|n| n.to_owned()),
+        Some("issue") => {
+            let series = q.get("series_name").and_then(|n| n.as_str()).unwrap_or("?");
+            let number = q.get("issue_number").and_then(|n| n.as_str()).unwrap_or("?");
+            Some(format!("{series} #{number}"))
+        }
+        _ => None,
+    }
+}
+
+/// Per-provider remaining budget (reuses the provider `quota()` snapshot).
+async fn provider_budgets(app: &AppState) -> Vec<ProviderBudget> {
+    let providers = orchestrator::build_providers(&app.cfg(), app.jobs.redis.clone());
+    let mut out = Vec::new();
+    for p in providers {
+        if let Ok(snap) = p.quota().await {
+            out.push(ProviderBudget {
+                source: p.id().as_str().to_owned(),
+                remaining_hour: snap.remaining_hour,
+                remaining_day: snap.remaining_day,
+            });
+        }
+    }
+    out
+}
+
+/// Can the caller view this batch? Admins see all; otherwise the creator, or
+/// a user who can see the batch's (single) library.
+async fn user_can_see_batch(
+    app: &AppState,
+    user: &CurrentUser,
+    batch: &metadata_batch::Model,
+) -> bool {
+    if user.role == "admin" || batch.created_by == Some(user.id) {
+        return true;
+    }
+    match batch.library_id {
+        Some(lib) => user_can_see_library(app, user, lib).await,
+        None => false,
+    }
+}
+
+#[utoipa::path(
+    operation_id = "metadata_batch_status",    get,
+    path = "/metadata/batch/{batch_id}",
+    params(("batch_id" = String, Path)),
+    responses(
+        (status = 200, body = BatchStatusResp),
+        (status = 403, description = "batch not visible"),
+        (status = 404, description = "batch not found"),
+    )
+)]
+#[handler]
+pub async fn batch_status(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path(batch_id): Path<Uuid>,
+) -> Response {
+    let batch = match metadata_batch::Entity::find_by_id(batch_id).one(&app.db).await {
+        Ok(Some(b)) => b,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "batch not found"),
+        Err(e) => {
+            tracing::error!(error = %e, "batch_status: lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if !user_can_see_batch(&app, &user, &batch).await {
+        return error(StatusCode::FORBIDDEN, "forbidden", "batch not visible");
+    }
+
+    let runs = metadata_run::Entity::find()
+        .filter(metadata_run::Column::BatchId.eq(batch_id))
+        .order_by_asc(metadata_run::Column::StartedAt)
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+
+    // Outcome map (run_id → outcome_kind) for searched children.
+    let run_ids: Vec<Uuid> = runs.iter().map(|r| r.id).collect();
+    let outcomes: std::collections::HashMap<Uuid, String> = if run_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        metadata_match_outcome::Entity::find()
+            .filter(metadata_match_outcome::Column::RunId.is_in(run_ids))
+            .all(&app.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|o| (o.run_id, o.outcome_kind))
+            .collect()
+    };
+
+    // Resolve slugs for deep-linking each child to its entity page. Two
+    // batched lookups: series ids → slug, issue ids → (slug, series slug).
+    let series_scope_ids: Vec<Uuid> = runs
+        .iter()
+        .filter(|r| r.scope == orchestrator::scope::SERIES)
+        .filter_map(|r| r.scope_entity_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()))
+        .collect();
+    let issue_scope_ids: Vec<String> = runs
+        .iter()
+        .filter(|r| r.scope == orchestrator::scope::ISSUE)
+        .filter_map(|r| r.scope_entity_id.clone())
+        .collect();
+    // series id → (slug, library_id)
+    let mut series_meta: std::collections::HashMap<String, (String, String)> =
+        series::Entity::find()
+            .filter(series::Column::Id.is_in(series_scope_ids.clone()))
+            .all(&app.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| (s.id.to_string(), (s.slug, s.library_id.to_string())))
+            .collect();
+    // issue id → (issue slug, parent series id)
+    let issue_rows = issue::Entity::find()
+        .filter(issue::Column::Id.is_in(issue_scope_ids))
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    // Backfill any parent-series meta not already loaded.
+    let extra_series: Vec<Uuid> = issue_rows
+        .iter()
+        .map(|i| i.series_id)
+        .filter(|id| !series_meta.contains_key(&id.to_string()))
+        .collect();
+    if !extra_series.is_empty() {
+        for s in series::Entity::find()
+            .filter(series::Column::Id.is_in(extra_series))
+            .all(&app.db)
+            .await
+            .unwrap_or_default()
+        {
+            series_meta.insert(s.id.to_string(), (s.slug, s.library_id.to_string()));
+        }
+    }
+    let issue_slugs: std::collections::HashMap<String, (String, String)> = issue_rows
+        .into_iter()
+        .map(|i| (i.id, (i.slug, i.series_id.to_string())))
+        .collect();
+
+    let mut agg = BatchAggregate::default();
+    let mut children = Vec::with_capacity(runs.len());
+    let mut resume_eta: Option<chrono::DateTime<chrono::FixedOffset>> = None;
+    let mut any_failed = false;
+    let mut any_unfinished = false;
+    for r in &runs {
+        let outcome = outcomes.get(&r.id).cloned();
+        let applied = r.items_applied > 0;
+        match r.status.as_str() {
+            "awaiting_quota" => {
+                agg.awaiting_quota += 1;
+                if let Some(ra) = r.resume_after {
+                    resume_eta = Some(resume_eta.map_or(ra, |cur| cur.min(ra)));
+                }
+            }
+            "failed" => {
+                agg.failed += 1;
+                any_failed = true;
+            }
+            "completed" => {}
+            _ => {
+                agg.in_flight += 1;
+                any_unfinished = true;
+            }
+        }
+        if outcome.is_some() || r.status == "completed" {
+            agg.searched += 1;
+        }
+        match outcome.as_deref() {
+            Some("single_good") => agg.strong += 1,
+            Some("no_match") => agg.no_match += 1,
+            Some(k) if is_needs_review(k) => agg.needs_review += 1,
+            _ => {}
+        }
+        if applied {
+            agg.applied += 1;
+        }
+        let (series_slug, issue_slug, library_id) = match r.scope.as_str() {
+            "series" => match r.scope_entity_id.as_ref().and_then(|id| series_meta.get(id)) {
+                Some((slug, lib)) => (Some(slug.clone()), None, Some(lib.clone())),
+                None => (None, None, None),
+            },
+            "issue" => match r.scope_entity_id.as_ref().and_then(|id| issue_slugs.get(id)) {
+                Some((islug, sid)) => match series_meta.get(sid) {
+                    Some((slug, lib)) => {
+                        (Some(slug.clone()), Some(islug.clone()), Some(lib.clone()))
+                    }
+                    None => (None, Some(islug.clone()), None),
+                },
+                None => (None, None, None),
+            },
+            _ => (None, None, None),
+        };
+        children.push(BatchChildRow {
+            run_id: r.id,
+            scope: r.scope.clone(),
+            scope_entity_id: r.scope_entity_id.clone(),
+            label: label_from_query(&r.query),
+            status: r.status.clone(),
+            outcome_kind: outcome,
+            applied,
+            series_slug,
+            issue_slug,
+            library_id,
+        });
+    }
+
+    let status = if agg.awaiting_quota > 0 {
+        "awaiting_quota"
+    } else if any_unfinished {
+        "running"
+    } else if any_failed {
+        "partial_failed"
+    } else {
+        "completed"
+    };
+
+    let budget = provider_budgets(&app).await;
+    let min_day = budget.iter().filter_map(|b| b.remaining_day).min();
+    let exceeds_budget = matches!(min_day, Some(d) if (batch.items_total as u32) > d);
+
+    Json(BatchStatusResp {
+        batch_id,
+        scope: batch.scope.clone(),
+        status: status.to_owned(),
+        items_total: batch.items_total,
+        created_at: batch.created_at.to_rfc3339(),
+        aggregate: agg,
+        children,
+        budget,
+        exceeds_budget,
+        resume_eta: resume_eta.map(|t| t.to_rfc3339()),
+    })
+    .into_response()
+}
+
+#[utoipa::path(
+    operation_id = "metadata_list_batches",    get,
+    path = "/metadata/batches",
+    responses(
+        (status = 200, body = BatchListResp),
+    )
+)]
+#[handler]
+pub async fn list_batches(State(app): State<AppState>, user: CurrentUser) -> Response {
+    // Admins see every batch; others only the ones they triggered.
+    let mut q = metadata_batch::Entity::find();
+    if user.role != "admin" {
+        q = q.filter(metadata_batch::Column::CreatedBy.eq(user.id));
+    }
+    let rows = q
+        .order_by_desc(metadata_batch::Column::CreatedAt)
+        .limit(50)
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    Json(BatchListResp {
+        batches: rows
+            .into_iter()
+            .map(|b| BatchListRow {
+                batch_id: b.id,
+                scope: b.scope,
+                status: b.status,
+                items_total: b.items_total,
+                created_at: b.created_at.to_rfc3339(),
+            })
+            .collect(),
+    })
+    .into_response()
+}
+
+// ───────── bulk-accept (refine-bulk-metadata M4) ─────────
+
+/// A specific candidate to apply.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct RunOrdinal {
+    pub run_id: Uuid,
+    pub ordinal: i32,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BatchApplyReq {
+    /// `"all_strong"` → every child with a `single_good` outcome whose top
+    /// candidate isn't applied yet. `"ordinals"` → the explicit
+    /// `run_ordinals` list the operator curated.
+    pub filter: String,
+    #[serde(default)]
+    pub run_ordinals: Option<Vec<RunOrdinal>>,
+    #[serde(default = "default_fill_missing")]
+    pub mode: ApplyMode,
+    #[serde(default = "default_true")]
+    pub apply_cover: bool,
+    #[serde(default = "default_when_missing")]
+    pub cover_overwrite_policy: ApplyCoverPolicy,
+    #[serde(default)]
+    pub override_user_edits: bool,
+    #[serde(default)]
+    pub selected_fields: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BatchApplyResp {
+    pub enqueued: usize,
+    pub skipped_already_applied: usize,
+    pub skipped_not_eligible: usize,
+    /// Targets beyond the per-request cap; re-trigger to apply the rest.
+    pub remainder: usize,
+}
+
+/// `POST /metadata/batch/{batch_id}/apply` — accept many reviewed candidates
+/// at once. Loops the existing per-entity `ApplySeriesJob`/`ApplyIssueJob`
+/// push (decision matrix, apply mutex, writeback dispatch, audit all
+/// unchanged); only the fan-out is new.
+#[utoipa::path(
+    operation_id = "metadata_batch_apply",    post,
+    path = "/metadata/batch/{batch_id}/apply",
+    params(("batch_id" = String, Path)),
+    request_body = BatchApplyReq,
+    responses(
+        (status = 202, body = BatchApplyResp),
+        (status = 403, description = "batch not visible / override_user_edits requires admin"),
+        (status = 404, description = "batch not found"),
+    )
+)]
+#[handler]
+pub async fn batch_apply(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Path(batch_id): Path<Uuid>,
+    axum::Json(req): axum::Json<BatchApplyReq>,
+) -> Response {
+    use apalis::prelude::Storage;
+
+    let batch = match metadata_batch::Entity::find_by_id(batch_id).one(&app.db).await {
+        Ok(Some(b)) => b,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "batch not found"),
+        Err(e) => {
+            tracing::error!(error = %e, "batch_apply: lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if !user_can_see_batch(&app, &user, &batch).await {
+        return error(StatusCode::FORBIDDEN, "forbidden", "batch not visible");
+    }
+    if req.override_user_edits && user.role != "admin" {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "override_user_edits requires admin",
+        );
+    }
+
+    // Child runs of this batch, keyed by id.
+    let runs: std::collections::HashMap<Uuid, metadata_run::Model> = metadata_run::Entity::find()
+        .filter(metadata_run::Column::BatchId.eq(batch_id))
+        .all(&app.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| (r.id, r))
+        .collect();
+    let run_ids: Vec<Uuid> = runs.keys().copied().collect();
+
+    // All candidates for these runs (ordinal, bucket, applied) per run.
+    let mut cands_by_run: std::collections::HashMap<Uuid, Vec<entity::metadata_run_candidate::Model>> =
+        std::collections::HashMap::new();
+    if !run_ids.is_empty() {
+        let cands = entity::metadata_run_candidate::Entity::find()
+            .filter(entity::metadata_run_candidate::Column::RunId.is_in(run_ids.clone()))
+            .order_by_asc(entity::metadata_run_candidate::Column::Ordinal)
+            .all(&app.db)
+            .await
+            .unwrap_or_default();
+        for c in cands {
+            cands_by_run.entry(c.run_id).or_default().push(c);
+        }
+    }
+
+    // Resolve the target (run_id, ordinal) set.
+    let mut targets: Vec<(Uuid, i32)> = Vec::new();
+    let mut skipped_already_applied = 0usize;
+    let mut skipped_not_eligible = 0usize;
+
+    match req.filter.as_str() {
+        "all_strong" => {
+            // single_good children → their top unapplied high candidate.
+            let strong: std::collections::HashSet<Uuid> = metadata_match_outcome::Entity::find()
+                .filter(metadata_match_outcome::Column::RunId.is_in(run_ids.clone()))
+                .filter(metadata_match_outcome::Column::OutcomeKind.eq("single_good"))
+                .all(&app.db)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|o| o.run_id)
+                .collect();
+            for run_id in strong {
+                let Some(cands) = cands_by_run.get(&run_id) else {
+                    skipped_not_eligible += 1;
+                    continue;
+                };
+                match cands
+                    .iter()
+                    .find(|c| c.bucket == "high" && c.applied_at.is_none())
+                {
+                    Some(c) => targets.push((run_id, c.ordinal)),
+                    None => skipped_already_applied += 1,
+                }
+            }
+        }
+        "ordinals" => {
+            for ro in req.run_ordinals.unwrap_or_default() {
+                if !runs.contains_key(&ro.run_id) {
+                    skipped_not_eligible += 1;
+                    continue;
+                }
+                match cands_by_run
+                    .get(&ro.run_id)
+                    .and_then(|cs| cs.iter().find(|c| c.ordinal == ro.ordinal))
+                {
+                    Some(c) if c.applied_at.is_some() => skipped_already_applied += 1,
+                    Some(_) => targets.push((ro.run_id, ro.ordinal)),
+                    None => skipped_not_eligible += 1,
+                }
+            }
+        }
+        _ => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "metadata.bad_filter",
+                "filter must be all_strong or ordinals",
+            );
+        }
+    }
+
+    // Cap per request; surface the remainder so the caller re-triggers.
+    let cap = refresh::REFRESH_BATCH_CAP;
+    let remainder = targets.len().saturating_sub(cap);
+    targets.truncate(cap);
+
+    let selected: Option<std::collections::HashSet<String>> =
+        req.selected_fields.clone().map(std::collections::HashSet::from_iter);
+    let mut enqueued = 0usize;
+    for (run_id, ordinal) in targets {
+        let Some(run) = runs.get(&run_id) else {
+            continue;
+        };
+        let Some(entity_id) = run.scope_entity_id.as_deref() else {
+            skipped_not_eligible += 1;
+            continue;
+        };
+        let pushed = if run.scope == orchestrator::scope::SERIES {
+            let Ok(series_id) = Uuid::parse_str(entity_id) else {
+                skipped_not_eligible += 1;
+                continue;
+            };
+            let mut storage = app.jobs.metadata_apply_series_storage.clone();
+            storage
+                .push(metadata_apply::ApplySeriesJob {
+                    run_id,
+                    ordinal,
+                    series_id,
+                    mode: req.mode,
+                    apply_cover: req.apply_cover,
+                    cover_overwrite_policy: req.cover_overwrite_policy.into(),
+                    override_user_edits: req.override_user_edits,
+                    actor_id: Some(user.id),
+                    actor_ip: ctx.ip_string(),
+                    actor_ua: ctx.user_agent.clone(),
+                    selected_fields: selected.clone(),
+                    override_external_id_sources: std::collections::HashSet::new(),
+                    is_auto: false,
+                })
+                .await
+                .is_ok()
+        } else {
+            let mut storage = app.jobs.metadata_apply_issue_storage.clone();
+            storage
+                .push(metadata_apply::ApplyIssueJob {
+                    run_id,
+                    ordinal,
+                    issue_id: entity_id.to_owned(),
+                    mode: req.mode,
+                    apply_cover: req.apply_cover,
+                    cover_overwrite_policy: req.cover_overwrite_policy.into(),
+                    override_user_edits: req.override_user_edits,
+                    actor_id: Some(user.id),
+                    actor_ip: ctx.ip_string(),
+                    actor_ua: ctx.user_agent.clone(),
+                    selected_fields: selected.clone(),
+                    override_external_id_sources: std::collections::HashSet::new(),
+                    is_auto: false,
+                })
+                .await
+                .is_ok()
+        };
+        if pushed {
+            enqueued += 1;
+        } else {
+            skipped_not_eligible += 1;
+        }
+    }
+
+    (
+        StatusCode::ACCEPTED,
+        Json(BatchApplyResp {
+            enqueued,
+            skipped_already_applied,
+            skipped_not_eligible,
+            remainder,
+        }),
+    )
+        .into_response()
 }
 
 async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {

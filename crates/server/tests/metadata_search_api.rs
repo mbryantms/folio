@@ -20,7 +20,7 @@ use axum::{
 use chrono::Utc;
 use common::TestApp;
 use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde_json::{Value, json};
 use std::path::Path;
 use tempfile::tempdir;
@@ -262,6 +262,7 @@ async fn candidates_series_returns_completed_run_with_rows() {
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(Some(json!({
             "kind": "series",
             "name": "Saga",
@@ -335,6 +336,7 @@ async fn candidates_series_404_when_run_id_belongs_to_different_series() {
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -435,6 +437,7 @@ async fn seed_completed_series_run(
         items_failed: Set(0),
         error_summary: Set(None),
         resume_after: Set(None),
+        batch_id: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -703,4 +706,56 @@ async fn composite_apply_series_404_when_run_unknown() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn series_batch_groups_per_issue_runs_and_holds_for_review() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    // Two active, numbered issues → two searchable children.
+    let cbz1 = dir.path().join("saga-1.cbz");
+    let cbz2 = dir.path().join("saga-2.cbz");
+    let _i1 = IssueSeed::new(lib_id, series_id, &cbz1, b"x", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let _i2 = IssueSeed::new(lib_id, series_id, &cbz2, b"y", 2.0)
+        .insert(&app.state().db)
+        .await;
+
+    let resp = post(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/batch"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    let batch_id = Uuid::parse_str(body["batch_id"].as_str().expect("batch_id")).unwrap();
+    assert_eq!(body["jobs_enqueued"].as_u64().unwrap(), 2);
+
+    // One batch row, scoped + manual + correct denominator.
+    let batch = entity::metadata_batch::Entity::find_by_id(batch_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("batch row");
+    assert_eq!(batch.scope, "series_issues");
+    assert_eq!(batch.trigger_kind, "manual");
+    assert_eq!(batch.items_total, 2);
+
+    // Both child runs carry the batch_id, are issue-scoped, and run as
+    // `manual` so nothing auto-applies (the queue is the accept surface).
+    let children = entity::metadata_run::Entity::find()
+        .filter(entity::metadata_run::Column::BatchId.eq(batch_id))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(children.len(), 2);
+    assert!(
+        children
+            .iter()
+            .all(|r| r.scope == "issue" && r.trigger_kind == "manual")
+    );
 }

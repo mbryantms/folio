@@ -53,6 +53,10 @@ pub struct Model {
     /// keeps Apply jobs (M4) usable without a query).
     #[sea_orm(nullable)]
     pub query: Option<Json>,
+    /// Groups this run under a bulk-fetch [`super::metadata_batch`]. NULL for
+    /// standalone per-entity runs (the common case). FK SET NULL on delete.
+    #[sea_orm(nullable)]
+    pub batch_id: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -71,11 +75,24 @@ pub enum Relation {
         on_delete = "SetNull"
     )]
     TriggeredBy,
+    #[sea_orm(
+        belongs_to = "super::metadata_batch::Entity",
+        from = "Column::BatchId",
+        to = "super::metadata_batch::Column::Id",
+        on_delete = "SetNull"
+    )]
+    Batch,
 }
 
 impl Related<super::library::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Library.def()
+    }
+}
+
+impl Related<super::metadata_batch::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Batch.def()
     }
 }
 

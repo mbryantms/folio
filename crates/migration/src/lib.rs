@@ -89,6 +89,8 @@ mod m20270110_000001_drop_candidate_dismissed_at;
 mod m20270111_000001_library_auto_convert_cbr_on_scan;
 mod m20270112_000001_library_event_log;
 mod m20270113_000001_scan_batch;
+mod m20270114_000001_sidecar_presence;
+mod m20270115_000001_metadata_batch;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -186,6 +188,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20270111_000001_library_auto_convert_cbr_on_scan::Migration),
             Box::new(m20270112_000001_library_event_log::Migration),
             Box::new(m20270113_000001_scan_batch::Migration),
+            Box::new(m20270114_000001_sidecar_presence::Migration),
+            Box::new(m20270115_000001_metadata_batch::Migration),
         ]
     }
 }
