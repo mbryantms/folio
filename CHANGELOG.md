@@ -15,6 +15,41 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-05
+
+### Added
+
+- **Bulk-metadata Review queue.** A bulk fetch ("fetch all issues in a
+  series", a saved view, a library refresh) now groups its per-issue/series
+  runs into a single batch with live aggregate progress and one consolidated
+  accept surface in `/admin/metadata` → **Review**: one-click "Accept all
+  strong", per-item review that reuses the candidates already pulled by the
+  batch (no re-search), and a fresh search only on no-match.
+- **Metadata completeness.** Issues and series are scored against a
+  provider-complete baseline (matched + cover date + summary + page count +
+  a credit + cover; title/characters/arcs/genres surfaced as gaps but
+  non-gating). The tier drives a card/list badge, a new series **Collection**
+  tab (ownership gaps + per-issue completeness coloring), and a saved-view
+  filter so you can build a "needs metadata" view.
+- **Issue Metadata tab.** A per-issue overview of provenance (field → source
+  → when), which sidecar files Folio has (ComicInfo / MetronInfo /
+  series.json), and freshness (last synced / last rewritten).
+- **Auto-resume for quota-parked fetches.** Runs parked at `awaiting_quota`
+  when every provider is out of budget now resume on their own once the
+  window passes, reusing the stored entity + batch so a large bulk fetch
+  finishes without a re-trigger.
+
+### Fixed
+
+- Sign-in: auth tabs stay full-width on tablet/desktop.
+
+### Internal
+
+- New migrations: `metadata_batch` + `metadata_run.batch_id`; sidecar-presence
+  columns (`issues.metroninfo_present`, `series.series_json_present`, both
+  nullable so `NULL` reads as "unknown until next rescan", distinct from a
+  definite absent).
+
 ## [0.8.1] - 2026-06-04
 
 ### Added
@@ -551,7 +586,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/mbryantms/folio/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/mbryantms/folio/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/mbryantms/folio/compare/v0.7.23...v0.8.0
 [0.7.21]: https://github.com/mbryantms/folio/compare/v0.7.20...v0.7.21
