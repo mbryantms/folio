@@ -256,7 +256,6 @@ export default async function SeriesPage({
       <Tabs defaultValue="credits">
         <TabsList>
           <TabsTrigger value="credits">Credits</TabsTrigger>
-          <TabsTrigger value="genres">Genres &amp; Tags</TabsTrigger>
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="collection">Collection</TabsTrigger>
@@ -311,21 +310,6 @@ export default async function SeriesPage({
           ) && (
             <p className="text-muted-foreground text-sm">
               No creator metadata across this series&rsquo;s issues.
-            </p>
-          )}
-        </TabsContent>
-        <TabsContent value="genres" className="pt-6">
-          <div className="grid gap-6 sm:grid-cols-2">
-            <ChipList
-              label="Genres"
-              items={series.genres}
-              filterField="genres"
-            />
-            <ChipList label="Tags" items={series.tags} filterField="tags" />
-          </div>
-          {!hasAny(series.genres, series.tags) && (
-            <p className="text-muted-foreground text-sm">
-              No genres or tags in this series&rsquo;s metadata.
             </p>
           )}
         </TabsContent>
@@ -391,6 +375,26 @@ export default async function SeriesPage({
               // every other provider identifier.
             ]}
           />
+          {/* Genres & Tags folded in here (its own tab was removed) so the
+              series and issue tab rows line up. */}
+          <div className="mt-6 space-y-3">
+            <h3 className="text-foreground text-sm font-semibold">
+              Genres &amp; Tags
+            </h3>
+            <div className="grid gap-6 sm:grid-cols-2">
+              <ChipList
+                label="Genres"
+                items={series.genres}
+                filterField="genres"
+              />
+              <ChipList label="Tags" items={series.tags} filterField="tags" />
+            </div>
+            {!hasAny(series.genres, series.tags) && (
+              <p className="text-muted-foreground text-sm">
+                No genres or tags in this series&rsquo;s metadata.
+              </p>
+            )}
+          </div>
           <div className="mt-6 space-y-2">
             <h3 className="text-foreground text-sm font-semibold">
               External IDs

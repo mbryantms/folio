@@ -344,12 +344,11 @@ export default async function IssuePage({
         <NextInSeries items={nextIssues} series={series} />
       )}
 
-      <Tabs defaultValue="details">
+      <Tabs defaultValue="credits">
         <TabsList>
-          <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="credits">Credits</TabsTrigger>
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
-          <TabsTrigger value="genres">Genres &amp; Tags</TabsTrigger>
+          <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="covers">Covers</TabsTrigger>
           <TabsTrigger value="metadata">Metadata</TabsTrigger>
           <TabsTrigger value="notes">Notes</TabsTrigger>
@@ -358,7 +357,7 @@ export default async function IssuePage({
 
         {/* Static-metadata tabs are `forceMount`-ed and stacked in a single
          * grid cell. The cell sizes to the tallest tab so switching between
-         * Details (long) and Genres (short) no longer shrinks the document
+         * Details (long) and Credits (short) no longer shrinks the document
          * height — preventing the page-jump that happens when the browser
          * clamps `scrollTop` to a smaller scroll range. Activity is left
          * out of the stack on purpose: it triggers `useReadingStats` /
@@ -444,6 +443,31 @@ export default async function IssuePage({
                 // copy here was just duplication.
               ]}
             />
+            {/* Genres & Tags folded in here (its own tab was removed) so the
+                issue and series tab rows line up; it's descriptive metadata,
+                so it belongs alongside the facts grid. */}
+            <div className="mt-6 space-y-3">
+              <h3 className="text-foreground text-sm font-semibold">
+                Genres &amp; Tags
+              </h3>
+              <div className="grid gap-6 sm:grid-cols-2">
+                <ChipList
+                  label="Genres"
+                  items={splitCsv(issue.genre)}
+                  filterField="genres"
+                />
+                <ChipList
+                  label="Tags"
+                  items={splitCsv(issue.tags)}
+                  filterField="tags"
+                />
+              </div>
+              {!issue.genre && !issue.tags && (
+                <p className="text-muted-foreground text-sm">
+                  No genres or tags.
+                </p>
+              )}
+            </div>
             {/* "Locally edited fields" summary moved into the Edit sheet
                 — fields surface a per-row release control alongside their
                 input, so the user can both see what's pinned and release
@@ -533,30 +557,6 @@ export default async function IssuePage({
                   No cast or setting metadata.
                 </p>
               )}
-          </TabsContent>
-
-          <TabsContent
-            forceMount
-            value="genres"
-            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
-          >
-            <div className="grid gap-6 sm:grid-cols-2">
-              <ChipList
-                label="Genres"
-                items={splitCsv(issue.genre)}
-                filterField="genres"
-              />
-              <ChipList
-                label="Tags"
-                items={splitCsv(issue.tags)}
-                filterField="tags"
-              />
-            </div>
-            {!issue.genre && !issue.tags && (
-              <p className="text-muted-foreground text-sm">
-                No genres or tags.
-              </p>
-            )}
           </TabsContent>
 
           <TabsContent
