@@ -17,6 +17,7 @@ import { issueUrl, readerUrl, seriesUrl } from "@/lib/urls";
 import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
+import { DetailSection } from "@/components/library/DetailSection";
 import { Description } from "@/components/library/Description";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
 import { CoverGallery } from "@/components/library/CoverGallery";
@@ -654,26 +655,6 @@ export default async function IssuePage({
        * regardless of which tab the user has open. */}
       <IssueSourcesFooter seriesSlug={seriesSlug} issueSlug={issue.slug} />
     </div>
-  );
-}
-
-/**
- * A titled block inside the Details tab. Keeps the section heading style and
- * spacing consistent across the Publication / Format / Genres / Library
- * groups so the tab reads as a set of categories rather than one long list.
- */
-function DetailSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-3">
-      <h3 className="text-foreground text-sm font-semibold">{title}</h3>
-      {children}
-    </section>
   );
 }
 

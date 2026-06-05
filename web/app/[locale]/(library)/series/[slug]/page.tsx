@@ -12,6 +12,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
+import { DetailSection } from "@/components/library/DetailSection";
 import { Description } from "@/components/library/Description";
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
@@ -262,38 +263,50 @@ export default async function SeriesPage({
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
         <TabsContent value="credits" className="pt-6">
-          <div className="grid gap-6 sm:grid-cols-2">
+          <div className="divide-border/60 divide-y">
             <ChipList
+              orientation="horizontal"
+              className="py-3 first:pt-0 last:pb-0"
               label="Writers"
               items={series.writers}
               filterField="writer"
               creatorSlugs={series.creator_slugs}
             />
             <ChipList
+              orientation="horizontal"
+              className="py-3 first:pt-0 last:pb-0"
               label="Pencillers"
               items={series.pencillers}
               filterField="penciller"
               creatorSlugs={series.creator_slugs}
             />
             <ChipList
+              orientation="horizontal"
+              className="py-3 first:pt-0 last:pb-0"
               label="Inkers"
               items={series.inkers}
               filterField="inker"
               creatorSlugs={series.creator_slugs}
             />
             <ChipList
+              orientation="horizontal"
+              className="py-3 first:pt-0 last:pb-0"
               label="Colorists"
               items={series.colorists}
               filterField="colorist"
               creatorSlugs={series.creator_slugs}
             />
             <ChipList
+              orientation="horizontal"
+              className="py-3 first:pt-0 last:pb-0"
               label="Letterers"
               items={series.letterers}
               filterField="letterer"
               creatorSlugs={series.creator_slugs}
             />
             <ChipList
+              orientation="horizontal"
+              className="py-3 first:pt-0 last:pb-0"
               label="Cover artists"
               items={series.cover_artists}
               filterField="cover_artist"
@@ -314,14 +327,24 @@ export default async function SeriesPage({
           )}
         </TabsContent>
         <TabsContent value="cast" className="pt-6">
-          <div className="grid gap-6 sm:grid-cols-2">
+          <div className="divide-border/60 divide-y">
             <ChipList
+              orientation="horizontal"
+              className="py-3 first:pt-0 last:pb-0"
               label="Characters"
               items={series.characters}
               filterField="characters"
             />
-            <ChipList label="Teams" items={series.teams} filterField="teams" />
             <ChipList
+              orientation="horizontal"
+              className="py-3 first:pt-0 last:pb-0"
+              label="Teams"
+              items={series.teams}
+              filterField="teams"
+            />
+            <ChipList
+              orientation="horizontal"
+              className="py-3 first:pt-0 last:pb-0"
               label="Locations"
               items={series.locations}
               filterField="locations"
@@ -333,78 +356,91 @@ export default async function SeriesPage({
             </p>
           )}
         </TabsContent>
-        <TabsContent value="details" className="pt-6">
-          <MetadataGrid
-            items={[
-              { label: "Series name", value: series.name },
-              { label: "Publisher", value: series.publisher },
-              { label: "Volume", value: series.volume },
-              { label: "Year", value: series.year },
-              { label: "Status", value: status },
-              { label: "Age rating", value: series.age_rating },
-              {
-                label: "Language",
-                value: series.language_code?.toUpperCase(),
-              },
-              {
-                label: "Issues",
-                value: series.issue_count ?? series.total_issues ?? null,
-              },
-              {
-                label: "Total pages",
-                value: formatPageCount(series.total_page_count),
-              },
-              {
-                label: "Reading time",
-                value: readingTime ? `≈ ${readingTime}` : null,
-              },
-              {
-                label: "Last issue added",
-                value: formatRelativeDate(
-                  series.last_issue_added_at ?? series.updated_at,
-                ),
-              },
-              {
-                label: "Last issue updated",
-                value: formatRelativeDate(
-                  series.last_issue_updated_at ?? series.updated_at,
-                ),
-              },
-              // ComicVine ID + Metron ID + GTIN intentionally absent from this
-              // grid — they render in the External IDs section below alongside
-              // every other provider identifier.
-            ]}
-          />
-          {/* Genres & Tags folded in here (its own tab was removed) so the
-              series and issue tab rows line up. */}
-          <div className="mt-6 space-y-3">
-            <h3 className="text-foreground text-sm font-semibold">
-              Genres &amp; Tags
-            </h3>
-            <div className="grid gap-6 sm:grid-cols-2">
+        <TabsContent value="details" className="space-y-8 pt-6">
+          {/* Grouped into scannable categories, mirroring the issue page's
+              Details tab. Provider IDs / GTIN live in External IDs below, not
+              the grids, so they aren't duplicated. */}
+          <DetailSection title="Publication">
+            <MetadataGrid
+              columns={3}
+              items={[
+                { label: "Series name", value: series.name },
+                { label: "Publisher", value: series.publisher },
+                { label: "Volume", value: series.volume },
+                { label: "Year", value: series.year },
+                { label: "Status", value: status },
+                { label: "Age rating", value: series.age_rating },
+                {
+                  label: "Language",
+                  value: series.language_code?.toUpperCase(),
+                },
+              ]}
+            />
+          </DetailSection>
+
+          <DetailSection title="Library">
+            <MetadataGrid
+              columns={3}
+              items={[
+                {
+                  label: "Issues",
+                  value: series.issue_count ?? series.total_issues ?? null,
+                },
+                {
+                  label: "Total pages",
+                  value: formatPageCount(series.total_page_count),
+                },
+                {
+                  label: "Reading time",
+                  value: readingTime ? `≈ ${readingTime}` : null,
+                },
+                {
+                  label: "Last issue added",
+                  value: formatRelativeDate(
+                    series.last_issue_added_at ?? series.updated_at,
+                  ),
+                },
+                {
+                  label: "Last issue updated",
+                  value: formatRelativeDate(
+                    series.last_issue_updated_at ?? series.updated_at,
+                  ),
+                },
+              ]}
+            />
+          </DetailSection>
+
+          <DetailSection title="Genres & Tags">
+            <div className="divide-border/60 divide-y">
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Genres"
                 items={series.genres}
                 filterField="genres"
               />
-              <ChipList label="Tags" items={series.tags} filterField="tags" />
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Tags"
+                items={series.tags}
+                filterField="tags"
+              />
             </div>
             {!hasAny(series.genres, series.tags) && (
               <p className="text-muted-foreground text-sm">
                 No genres or tags in this series&rsquo;s metadata.
               </p>
             )}
-          </div>
-          <div className="mt-6 space-y-2">
-            <h3 className="text-foreground text-sm font-semibold">
-              External IDs
-            </h3>
+          </DetailSection>
+
+          <DetailSection title="External IDs">
             <ExternalIdsCard
               entityType="series"
               seriesSlug={series.slug}
               chrome="bare"
             />
-          </div>
+          </DetailSection>
         </TabsContent>
         <TabsContent value="collection" className="pt-6">
           <CollectionTab seriesSlug={series.slug} />

@@ -60,71 +60,86 @@ export function IssueMetadataTab({
   const c = data.completeness;
 
   return (
-    <div className="space-y-8">
-      {/* ── Completeness ── */}
-      {c && (
-        <section className="space-y-2">
-          <div className="flex items-center gap-2">
-            <h3 className="text-foreground text-sm font-semibold">
-              Completeness
-            </h3>
-            <TierPill tier={c.tier} />
-          </div>
-          {c.missing_core.length > 0 ? (
-            <p className="text-muted-foreground text-sm">
-              Missing core: {metadataFieldLabels(c.missing_core)}
-            </p>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              All core metadata present.
-            </p>
-          )}
-          {c.missing_recommended.length > 0 && (
-            <p className="text-muted-foreground text-xs">
-              Also nice to have: {metadataFieldLabels(c.missing_recommended)}
-            </p>
-          )}
-        </section>
-      )}
+    <div className="space-y-6">
+      {/* ── At-a-glance status: the three short sections sit side-by-side as
+           cards so they use the full width instead of each stranding its
+           right half on desktop. The detail tables stay full-width below. ── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {c && (
+          <MetaCard
+            title="Completeness"
+            headerExtra={<TierPill tier={c.tier} />}
+          >
+            {c.missing_core.length > 0 ? (
+              <p className="text-muted-foreground text-sm">
+                Missing core: {metadataFieldLabels(c.missing_core)}
+              </p>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                All core metadata present.
+              </p>
+            )}
+            {c.missing_recommended.length > 0 && (
+              <p className="text-muted-foreground text-xs">
+                Also nice to have: {metadataFieldLabels(c.missing_recommended)}
+              </p>
+            )}
+          </MetaCard>
+        )}
 
-      {/* ── Source files ── */}
-      <section className="space-y-2">
-        <h3 className="text-foreground text-sm font-semibold">Source files</h3>
-        <ul className="space-y-1.5 text-sm">
-          <SourceFileRow
-            label="ComicInfo.xml"
-            state={data.source_files.comicinfo}
-          />
-          <SourceFileRow
-            label="MetronInfo.xml"
-            state={data.source_files.metroninfo}
-          />
-          <SourceFileRow
-            label="series.json"
-            state={data.source_files.series_json}
-          />
-        </ul>
-      </section>
+        <MetaCard title="Source files">
+          <ul className="space-y-1.5 text-sm">
+            <SourceFileRow
+              label="ComicInfo.xml"
+              state={data.source_files.comicinfo}
+            />
+            <SourceFileRow
+              label="MetronInfo.xml"
+              state={data.source_files.metroninfo}
+            />
+            <SourceFileRow
+              label="series.json"
+              state={data.source_files.series_json}
+            />
+          </ul>
+        </MetaCard>
 
-      {/* ── Freshness ── */}
-      <section className="space-y-2">
-        <h3 className="text-foreground text-sm font-semibold">Freshness</h3>
-        <dl className="grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
-          <FreshnessRow
-            label="Last metadata sync"
-            value={data.last_metadata_sync_at}
-          />
-          <FreshnessRow
-            label="Last file rewrite"
-            value={data.last_rewrite_at}
-            suffix={
-              data.last_rewrite_kind
-                ? ` (${data.last_rewrite_kind})`
-                : undefined
-            }
-          />
-        </dl>
-      </section>
+        <MetaCard title="Freshness">
+          <dl className="space-y-2 text-sm">
+            <FreshnessRow
+              label="Last metadata sync"
+              value={data.last_metadata_sync_at}
+            />
+            <FreshnessRow
+              label="Last file rewrite"
+              value={data.last_rewrite_at}
+              suffix={
+                data.last_rewrite_kind
+                  ? ` (${data.last_rewrite_kind})`
+                  : undefined
+              }
+            />
+          </dl>
+        </MetaCard>
+
+        {data.user_edited.length > 0 && (
+          <MetaCard title="Your pinned fields">
+            <p className="text-muted-foreground mb-2 text-xs">
+              Edited by you — preserved across rescans and provider syncs.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {data.user_edited.map((f) => (
+                <span
+                  key={f}
+                  className="bg-secondary text-secondary-foreground inline-flex items-center rounded-md px-2 py-0.5 text-xs"
+                >
+                  {metadataFieldLabel(f)}
+                </span>
+              ))}
+            </div>
+          </MetaCard>
+        )}
+      </div>
 
       {/* ── External IDs (folded-in tab) ── */}
       <section className="space-y-2">
@@ -158,7 +173,7 @@ export function IssueMetadataTab({
               </thead>
               <tbody className="divide-border/60 divide-y">
                 {data.provenance.map((p) => (
-                  <tr key={p.field}>
+                  <tr key={p.field} className="hover:bg-muted/30">
                     <td className="text-foreground px-3 py-2">
                       {metadataFieldLabel(p.field)}
                     </td>
@@ -175,30 +190,29 @@ export function IssueMetadataTab({
           </div>
         )}
       </section>
-
-      {/* ── Pinned edits ── */}
-      {data.user_edited.length > 0 && (
-        <section className="space-y-2">
-          <h3 className="text-foreground text-sm font-semibold">
-            Your pinned fields
-          </h3>
-          <p className="text-muted-foreground text-xs">
-            These were edited by you and are preserved across rescans and
-            provider syncs.
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {data.user_edited.map((f) => (
-              <span
-                key={f}
-                className="bg-secondary text-secondary-foreground inline-flex items-center rounded-md px-2 py-0.5 text-xs"
-              >
-                {metadataFieldLabel(f)}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
+  );
+}
+
+/** Card wrapper for the at-a-glance status row. Uses theme card tokens so it
+ *  groups a short status block without the heavy full-width section feel. */
+function MetaCard({
+  title,
+  headerExtra,
+  children,
+}: {
+  title: string;
+  headerExtra?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="border-border bg-card space-y-3 rounded-lg border p-4">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-foreground text-sm font-semibold">{title}</h3>
+        {headerExtra}
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -263,9 +277,9 @@ function FreshnessRow({
   suffix?: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 sm:block">
+    <div className="flex items-baseline justify-between gap-3">
       <dt className="text-muted-foreground text-xs">{label}</dt>
-      <dd className="text-foreground">
+      <dd className="text-foreground text-right">
         {value ? `${formatRelativeDate(value)}${suffix ?? ""}` : "Never"}
       </dd>
     </div>
