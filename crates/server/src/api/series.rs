@@ -1929,7 +1929,9 @@ pub(crate) async fn enrich_issue_detail_legacy_ids(
 /// fields already on the view, so call it *after* `enrich_series_view_legacy_ids`
 /// (so the provider-match signal sees the CV/Metron ids) and after the facet
 /// rollups populate `genres`. Zero extra queries.
-pub(crate) fn assess_series_view(view: &SeriesView) -> crate::metadata::completeness::CompletenessReport {
+pub(crate) fn assess_series_view(
+    view: &SeriesView,
+) -> crate::metadata::completeness::CompletenessReport {
     use crate::metadata::completeness::{
         SeriesCompletenessInput, assess_series, non_empty, plausible_year,
     };
@@ -2270,7 +2272,9 @@ fn classify_issue_number(sort_number: Option<f64>, special_type: Option<&str>) -
         return NumberClass::Special;
     }
     match sort_number {
-        Some(n) if n >= 0.0 && (n - n.round()).abs() < 1e-9 => NumberClass::MainRun(n.round() as i64),
+        Some(n) if n >= 0.0 && (n - n.round()).abs() < 1e-9 => {
+            NumberClass::MainRun(n.round() as i64)
+        }
         _ => NumberClass::Special,
     }
 }
@@ -3171,7 +3175,10 @@ mod tests {
 
     #[test]
     fn unnumbered_issue_is_special() {
-        let rows = vec![row(None, Some("Preview"), None), row(Some(1.0), Some("1"), None)];
+        let rows = vec![
+            row(None, Some("Preview"), None),
+            row(Some(1.0), Some("1"), None),
+        ];
         let r = build_collection_report(rows, None);
         assert_eq!(r.main_run.present, vec![1.0]);
         assert_eq!(r.specials.len(), 1);
