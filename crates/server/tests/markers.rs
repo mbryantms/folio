@@ -1249,3 +1249,63 @@ async fn search_returns_mark_highlighted_snippets_scoped_to_user() {
         );
     }
 }
+
+/// The marker editor's "Clear" affordance sends `selection: null` to drop
+/// OCR'd detected text. Verify the `Option<Option<_>>` field actually
+/// distinguishes present-null (clear) from absent (leave unchanged).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_selection_null_clears_detected_text() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "selclear@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_lib, _series, issue_id) = seed_issue(&app, "sel-clear").await;
+
+    let create = serde_json::json!({
+        "issue_id": issue_id,
+        "page_index": 0,
+        "kind": "highlight",
+        "region": { "x": 10, "y": 20, "w": 30, "h": 15, "shape": "rect" },
+        "selection": { "text": "detected words", "ocr_confidence": 0.9 },
+    });
+    let (status, marker) =
+        http(&app, Method::POST, "/api/me/markers", Some(&auth), Some(create)).await;
+    assert_eq!(status, StatusCode::CREATED, "marker: {marker:#?}");
+    assert_eq!(marker["selection"]["text"], "detected words");
+    let id = marker["id"].as_str().unwrap().to_owned();
+    let url = format!("/api/me/issues/{issue_id}/markers");
+
+    // Omitting `selection` must leave it unchanged (the "absent" arm).
+    let (status, _) = http(
+        &app,
+        Method::PATCH,
+        &format!("/api/me/markers/{id}"),
+        Some(&auth),
+        Some(serde_json::json!({ "is_favorite": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    assert_eq!(
+        list["items"][0]["selection"]["text"], "detected words",
+        "omitting selection must not clear it",
+    );
+
+    // Sending `selection: null` clears the detected text (the editor's
+    // "Clear" button path).
+    let (status, patched) = http(
+        &app,
+        Method::PATCH,
+        &format!("/api/me/markers/{id}"),
+        Some(&auth),
+        Some(serde_json::json!({ "selection": null })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "patched: {patched:#?}");
+
+    let (_, list) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    let cleared = &list["items"][0]["selection"];
+    assert!(
+        cleared.is_null(),
+        "selection should be cleared by `selection: null`, got: {cleared:#?}",
+    );
+}
