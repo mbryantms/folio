@@ -4,6 +4,10 @@ on:
   push:
     branches: [master, main]
   pull_request:
+  # Required for the merge queue: GitHub dispatches a `merge_group` event for
+  # each queued entry and waits on these checks against the projected merge
+  # result. Without this, queued PRs would hang forever (checks never report).
+  merge_group:
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,12 +25,20 @@ jobs:
     name: Detect changed paths
     runs-on: ubuntu-24.04
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
-      backend_or_spec: ${{ steps.filter.outputs.backend_or_spec }}
+      rust: ${{ steps.filter.outputs.rust || steps.mergequeue.outputs.full }}
+      backend_or_spec: ${{ steps.filter.outputs.backend_or_spec || steps.mergequeue.outputs.full }}
     steps:
       - uses: actions/checkout@v6
+      # In the merge queue we validate the actual merged result, so run the
+      # full suite rather than path-skipping. paths-filter also has no PR/push
+      # base to diff against on a `merge_group` event. `full=true` flows into
+      # both outputs above (empty filter output `|| 'true'` → 'true').
+      - id: mergequeue
+        if: github.event_name == 'merge_group'
+        run: echo "full=true" >> "$GITHUB_OUTPUT"
       - uses: dorny/paths-filter@v3
         id: filter
+        if: github.event_name != 'merge_group'
         with:
           filters: |
             rust:
