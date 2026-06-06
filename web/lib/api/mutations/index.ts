@@ -2468,8 +2468,11 @@ export function useCreateSavedViewBatch() {
 }
 
 export type BatchApplyInput = {
-  filter: "all_strong" | "ordinals";
+  filter: "all_strong" | "ordinals" | "all_needs_review";
   run_ordinals?: { run_id: string; ordinal: number }[];
+  /** Restrict `all_needs_review` to these runs (the "Selected" subset).
+   *  Omit for every needs-review child in the batch ("All"). */
+  run_ids?: string[];
   mode?: ApplyMode;
   apply_cover?: boolean;
   override_user_edits?: boolean;
@@ -2485,7 +2488,14 @@ export function useBatchApply(batchId: string) {
       body: input,
     }),
     {
-      successMessage: "Applying metadata",
+      successMessage: (data) => {
+        if (!data) return "Applying metadata";
+        const n = data.enqueued;
+        const base = `Applying ${n} item${n === 1 ? "" : "s"}`;
+        return data.remainder > 0
+          ? `${base} · ${data.remainder} more — run again to finish`
+          : base;
+      },
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: ["metadata", "batch", batchId] });
       },

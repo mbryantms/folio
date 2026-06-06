@@ -108,7 +108,7 @@ struct PickedCandidate {
 /// Default candidate set: the lowest-ordinal (best-ranked) candidate per
 /// provider. Used when the caller doesn't specify an explicit set of
 /// ordinals (the initial compare-view open).
-fn default_best_per_provider(candidates: &[metadata_run_candidate::Model]) -> Vec<i32> {
+pub fn default_best_per_provider(candidates: &[metadata_run_candidate::Model]) -> Vec<i32> {
     let mut seen: HashSet<Source> = HashSet::new();
     let mut out = Vec::new();
     // `candidates` arrives ordered by ordinal asc (fetch_candidates).
@@ -376,6 +376,7 @@ pub async fn compute_composite_diff(
 
     let policy = MergePolicyConfig {
         provider_preference: state.cfg().merge_provider_preference(),
+        preferred_cover_provider: None,
     };
     let candidates = orchestrator::fetch_candidates(&state.db, run_id).await?;
     let picked = pick_candidates(candidates, included, &policy);
@@ -757,6 +758,102 @@ pub async fn apply_composite(
     Ok(outcome)
 }
 
+/// Fold the merge-policy field choices into the `field_sources` map
+/// [`apply_composite`] consumes. Only fields a provider can fill (a `Some`
+/// ordinal) are kept. The map MUST be non-empty for a meaningful apply —
+/// `apply_composite` derives `selected_fields` from its keys, so an empty
+/// map is a silent no-op. See the [`apply_composite_auto`] doc comment.
+fn field_sources_from_choices(choices: Vec<merge::FieldChoice>) -> HashMap<String, i32> {
+    choices
+        .into_iter()
+        .filter_map(|fc| fc.ordinal.map(|ord| (fc.field.key(), ord)))
+        .collect()
+}
+
+/// Inputs for an **auto** composite apply — the bulk "Fill missing /
+/// Replace all" path, where there is no human picking per-field sources.
+/// The included candidate set defaults to the best-ranked candidate per
+/// provider; the per-field winners are derived from the merge policy.
+pub struct AutoCompositeArgs {
+    pub run_id: Uuid,
+    /// Candidate `ordinal`s to merge. Empty → best-per-provider default.
+    pub included: Vec<i32>,
+    pub mode: ApplyMode,
+    pub apply_cover: bool,
+    pub cover_overwrite_policy: CoverOverwritePolicy,
+    pub override_user_edits: bool,
+    pub override_external_id_sources: HashSet<String>,
+    /// Cover-only source override (bulk prefers ComicVine).
+    pub preferred_cover_provider: Option<Source>,
+    pub actor_id: Option<Uuid>,
+}
+
+/// Auto composite apply: assemble the **most-complete** record across the
+/// run's providers and apply it without any per-field human selection.
+///
+/// This is the crux of the bulk apply. It computes a fully-populated
+/// `field_sources` map from [`merge::build_default_merge`] (every field any
+/// included provider can fill) and hands it to [`apply_composite`]. Passing
+/// an empty map would be a no-op, because `apply_composite` derives
+/// `selected_fields` from `field_sources.keys()` — so the map MUST carry
+/// every applicable field, which is exactly what `build_default_merge`
+/// returns.
+pub async fn apply_composite_auto(
+    state: &AppState,
+    args: AutoCompositeArgs,
+) -> Result<ApplyOutcome, ApplyError> {
+    let run = load_run(&state.db, args.run_id).await?;
+    let scope = match run.scope.as_str() {
+        orchestrator::scope::SERIES => MergeScope::Series,
+        orchestrator::scope::ISSUE => MergeScope::Issue,
+        other => return Err(ApplyError::InvalidScope(other.to_owned())),
+    };
+
+    // Cover-aware policy: the bulk path prefers ComicVine for the primary
+    // cover while keeping the global preference for every other field.
+    let policy = MergePolicyConfig {
+        provider_preference: state.cfg().merge_provider_preference(),
+        preferred_cover_provider: args.preferred_cover_provider,
+    };
+
+    let candidates = orchestrator::fetch_candidates(&state.db, args.run_id).await?;
+    // Effective included set: caller's explicit list, else best-per-provider.
+    let included = if args.included.is_empty() {
+        default_best_per_provider(&candidates)
+    } else {
+        args.included.clone()
+    };
+    let picked = pick_candidates(candidates, &included, &policy);
+    let details = assemble_details(state, scope, &picked).await;
+    if details.is_empty() {
+        return Err(ApplyError::InvalidScope(
+            "no included providers resolved to a detail".to_owned(),
+        ));
+    }
+
+    // Most-complete merge → full field_sources map (every field any provider
+    // can fill). Non-empty by construction whenever a provider supplied a
+    // value; see the doc comment for why this matters.
+    let field_sources =
+        field_sources_from_choices(merge::build_default_merge(&details, &policy, scope));
+
+    apply_composite(
+        state,
+        CompositeApplyArgs {
+            run_id: args.run_id,
+            field_sources,
+            included,
+            mode: args.mode,
+            apply_cover: args.apply_cover,
+            cover_overwrite_policy: args.cover_overwrite_policy,
+            override_user_edits: args.override_user_edits,
+            override_external_id_sources: args.override_external_id_sources,
+            actor_id: args.actor_id,
+        },
+    )
+    .await
+}
+
 async fn library_is_writeback(state: &AppState, library_id: Uuid) -> Result<bool, ApplyError> {
     let lib = entity::library::Entity::find_by_id(library_id)
         .one(&state.db)
@@ -764,4 +861,53 @@ async fn library_is_writeback(state: &AppState, library_id: Uuid) -> Result<bool
     Ok(lib
         .map(|l| l.metadata_writeback_enabled && l.allow_archive_writeback)
         .unwrap_or(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::field_sources_from_choices;
+    use crate::metadata::field::MetadataField;
+    use crate::metadata::merge::FieldChoice;
+
+    /// The auto-composite map must keep exactly the fields a provider can
+    /// fill and drop the `None` ones — and stay non-empty, guarding against
+    /// the silent no-op where an empty `field_sources` applies nothing.
+    #[test]
+    fn field_sources_keeps_only_filled_fields() {
+        let choices = vec![
+            FieldChoice {
+                field: MetadataField::Title,
+                ordinal: Some(0),
+                value: Some("X".into()),
+            },
+            FieldChoice {
+                field: MetadataField::Deck,
+                ordinal: None,
+                value: None,
+            },
+            FieldChoice {
+                field: MetadataField::CoverPrimary,
+                ordinal: Some(1),
+                value: Some("https://cv/cover.jpg".into()),
+            },
+        ];
+        let map = field_sources_from_choices(choices);
+        assert_eq!(map.len(), 2, "only the two filled fields survive");
+        assert!(!map.is_empty(), "non-empty guards against a no-op apply");
+        assert_eq!(map.get(&MetadataField::Title.key()), Some(&0));
+        assert_eq!(map.get(&MetadataField::CoverPrimary.key()), Some(&1));
+        assert!(!map.contains_key(&MetadataField::Deck.key()));
+    }
+
+    /// All-`None` choices (no provider supplied anything) → empty map; the
+    /// caller treats this as "nothing to apply".
+    #[test]
+    fn field_sources_empty_when_no_choices_filled() {
+        let choices = vec![FieldChoice {
+            field: MetadataField::Title,
+            ordinal: None,
+            value: None,
+        }];
+        assert!(field_sources_from_choices(choices).is_empty());
+    }
 }

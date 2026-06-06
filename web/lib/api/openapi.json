@@ -6567,6 +6567,7 @@
     "/api/metadata/batch/{batch_id}/apply": {
       "post": {
         "summary": "`POST /metadata/batch/{batch_id}/apply` — accept many reviewed candidates\nat once. Loops the existing per-entity `ApplySeriesJob`/`ApplyIssueJob`\npush (decision matrix, apply mutex, writeback dispatch, audit all\nunchanged); only the fan-out is new.",
+        "description": "`all_strong` / `ordinals` enqueue single-candidate applies. `all_needs_review`\nenqueues one **composite** apply per needs-review run (best candidate per\nprovider merged \"most-complete\", covers preferring ComicVine) — the bulk\n\"Fill missing / Replace all\" path. The per-request cap + `remainder` then\ncount runs; re-trigger to drain the rest.",
         "operationId": "metadata_batch_apply",
         "parameters": [
           {
@@ -9431,6 +9432,15 @@
           }
         }
       },
+      "BatchApplyFilter": {
+        "type": "string",
+        "description": "Which batch children to apply.",
+        "enum": [
+          "all_strong",
+          "ordinals",
+          "all_needs_review"
+        ]
+      },
       "BatchApplyReq": {
         "type": "object",
         "required": [
@@ -9444,14 +9454,24 @@
             "$ref": "#/components/schemas/ApplyCoverPolicy"
           },
           "filter": {
-            "type": "string",
-            "description": "`\"all_strong\"` → every child with a `single_good` outcome whose top\ncandidate isn't applied yet. `\"ordinals\"` → the explicit\n`run_ordinals` list the operator curated."
+            "$ref": "#/components/schemas/BatchApplyFilter"
           },
           "mode": {
             "$ref": "#/components/schemas/ApplyMode"
           },
           "override_user_edits": {
             "type": "boolean"
+          },
+          "run_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Restrict `all_needs_review` to these runs (the \"Selected\" subset).\nAbsent ⇒ every needs-review child in the batch (\"All\")."
           },
           "run_ordinals": {
             "type": [
