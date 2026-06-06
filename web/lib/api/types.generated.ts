@@ -3461,12 +3461,6 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * `POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search
-         *     over every active issue in the series, grouped under one `metadata_batch`
-         *     so progress + review happen in one place. Children run as `manual` (held
-         *     for review, never auto-applied).
-         */
         post: operations["metadata_create_series_batch"];
         delete?: never;
         options?: never;
@@ -15895,7 +15889,10 @@ export interface operations {
     };
     metadata_create_series_batch: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `all` (default) or `incomplete` (only partial / needs-metadata issues). */
+                scope?: "all" | "incomplete";
+            };
             header?: never;
             path: {
                 slug: string;

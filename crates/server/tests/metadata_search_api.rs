@@ -914,3 +914,90 @@ async fn batch_apply_all_needs_review_skips_fully_applied_runs() {
     assert_eq!(body["enqueued"].as_u64().unwrap(), 0);
     assert_eq!(body["skipped_already_applied"].as_u64().unwrap(), 1);
 }
+
+#[tokio::test]
+async fn create_series_batch_incomplete_scope_skips_complete_issues() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let db = &app.state().db;
+    let now = Utc::now().fixed_offset();
+
+    // Issue 1 → COMPLETE: title + page count from the seed, then the remaining
+    // core fields (cover date / summary / a credit) + a matched external_id.
+    let c1 = dir.path().join("c1.cbz");
+    let complete_id = IssueSeed::new(lib_id, series_id, &c1, b"a", 1.0)
+        .with_title("Chapter One")
+        .with_page_count(22)
+        .insert(db)
+        .await;
+    let mut am: entity::issue::ActiveModel = entity::issue::Entity::find_by_id(&complete_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.year = Set(Some(2011));
+    am.summary = Set(Some("A complete summary.".into()));
+    am.writer = Set(Some("Jonathan Hickman".into()));
+    am.update(db).await.unwrap();
+    entity::external_id::ActiveModel {
+        entity_type: Set("issue".into()),
+        entity_id: Set(complete_id.clone()),
+        source: Set("comicvine".into()),
+        external_id: Set("12345".into()),
+        external_url: Set(None),
+        set_by: Set("comicvine".into()),
+        first_set_at: Set(now),
+        last_synced_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    // Issue 2 → bare (needs_metadata).
+    let c2 = dir.path().join("c2.cbz");
+    let bare_id = IssueSeed::new(lib_id, series_id, &c2, b"b", 2.0)
+        .insert(db)
+        .await;
+
+    // scope=incomplete fans out over the bare issue only.
+    let resp = post(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/batch?scope=incomplete"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(
+        body["items_total"].as_u64().unwrap(),
+        1,
+        "only the incomplete issue should be queued"
+    );
+
+    // A child run exists for the bare issue, none for the complete one.
+    let runs = entity::metadata_run::Entity::find()
+        .filter(
+            entity::metadata_run::Column::ScopeEntityId
+                .is_in([bare_id.clone(), complete_id.clone()]),
+        )
+        .all(db)
+        .await
+        .unwrap();
+    assert_eq!(
+        runs.iter()
+            .filter(|r| r.scope_entity_id.as_deref() == Some(bare_id.as_str()))
+            .count(),
+        1,
+        "bare issue gets a run"
+    );
+    assert_eq!(
+        runs.iter()
+            .filter(|r| r.scope_entity_id.as_deref() == Some(complete_id.as_str()))
+            .count(),
+        0,
+        "complete issue is skipped"
+    );
+}

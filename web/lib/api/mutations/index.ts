@@ -2444,13 +2444,19 @@ export function useApplyMetadataForIssue(
 
 // ───────── bulk-metadata batches (refine-bulk-metadata) ─────────
 
-/** Fan out a per-issue metadata search over a whole series → one batch. */
+/** Fan out a per-issue metadata search over a whole series → one batch.
+ *  `scope: "incomplete"` restricts the fan-out to issues whose metadata is
+ *  missing or partial; omit (or `"all"`) to search every active issue. */
 export function useCreateSeriesBatch(seriesSlug: string) {
-  return useApiMutation<BatchCreatedResp, void>(
-    () => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/batch`,
-      method: "POST",
-    }),
+  return useApiMutation<BatchCreatedResp, { scope?: "all" | "incomplete" } | void>(
+    (input) => {
+      const scope = input?.scope;
+      const qs = scope && scope !== "all" ? `?scope=${scope}` : "";
+      return {
+        path: `/series/${encodeURIComponent(seriesSlug)}/metadata/batch${qs}`,
+        method: "POST",
+      };
+    },
     { successMessage: "Queued metadata search" },
   );
 }

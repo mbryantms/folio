@@ -7991,7 +7991,6 @@
     },
     "/api/series/{slug}/metadata/batch": {
       "post": {
-        "summary": "`POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search\nover every active issue in the series, grouped under one `metadata_batch`\nso progress + review happen in one place. Children run as `manual` (held\nfor review, never auto-applied).",
         "operationId": "metadata_create_series_batch",
         "parameters": [
           {
@@ -8000,6 +7999,20 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`all` (default) or `incomplete` (only partial / needs-metadata issues).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "`POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search\nover every active issue in the series, grouped under one `metadata_batch`\nso progress + review happen in one place. Children run as `manual` (held\nfor review, never auto-applied).\nWhich issues a series metadata batch fans out over.",
+              "enum": [
+                "all",
+                "incomplete"
+              ]
             }
           }
         ],
