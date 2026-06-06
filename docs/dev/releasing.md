@@ -50,10 +50,16 @@ It refuses to proceed unless the working tree is clean, you're on `main`, and
 local `main` matches `origin/main` exactly — no unpushed commits, because `main`
 is protected (strict checks + merge queue) and everything, including the
 changelog, lands via a merged PR. It then verifies `CHANGELOG.md` already has a
-**dated** `## [X.Y.Z]` section, runs the full check suite, creates the annotated
-tag, and prints the push command — it does **not** push for you (pushing the tag
-is the irreversible, image-publishing step, so it stays a deliberate manual
-action).
+**dated** `## [X.Y.Z]` section, confirms **CI is already green on that `main`
+commit** (via `gh` check-runs — the commit passed CI to reach protected `main`,
+so re-running the whole suite locally is redundant; set `RELEASE_LOCAL_CHECK=1`
+to force a local `just check` anyway), creates the annotated tag, and prints the
+push command — it does **not** push for you (pushing the tag is the irreversible,
+image-publishing step, so it stays a deliberate manual action).
+
+> If `just release` reports "CI not finished," the post-merge `main` run is
+> still going — wait for it to go green, then re-run. You're waiting on a run
+> that happens regardless, not adding one.
 
 ### Before you run it
 
