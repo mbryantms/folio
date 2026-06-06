@@ -1,0 +1,47 @@
+name: Security audit (scheduled)
+
+# CI gates the per-PR dependency audits (cargo-deny / cargo-audit / pnpm audit)
+# on dependency-file changes — but advisories are disclosed on their own clock,
+# not on a commit. This sweep re-runs the audits against the current lockfiles
+# weekly so a CVE published against an *unchanged* dependency still surfaces.
+# (Renovate's `vulnerabilityAlerts` opens fix PRs "at any time" too; this is the
+# belt to that suspenders.) Not a required check — it informs, it doesn't gate.
+#
+# Scheduled workflows run only from the default branch, so this takes effect
+# once it's merged to main.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC (matches the Renovate window)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-audit:
+    name: Rust — cargo deny / audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
+  web-audit:
+    name: Web — pnpm audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.5.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=high

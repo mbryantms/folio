@@ -15,7 +15,11 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs on PR/merge_group refs, but NEVER on main: a
+  # main-push run that gets cancelled doesn't save the rust-cache, which
+  # leaves every subsequent PR compiling cold. Let main runs finish so the
+  # cache is populated.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Cheap (~5s) path-change detector. Other jobs depend on this instead of
@@ -30,6 +34,8 @@ jobs:
       web: ${{ steps.filter.outputs.web || steps.mergequeue.outputs.full }}
       docs: ${{ steps.filter.outputs.docs || steps.mergequeue.outputs.full }}
       docker: ${{ steps.filter.outputs.docker || steps.mergequeue.outputs.full }}
+      cargo_deps: ${{ steps.filter.outputs.cargo_deps || steps.mergequeue.outputs.full }}
+      web_deps: ${{ steps.filter.outputs.web_deps || steps.mergequeue.outputs.full }}
     steps:
       - uses: actions/checkout@v6
       # In the merge queue we validate the actual merged result, so run the
@@ -73,6 +79,17 @@ jobs:
               - 'Dockerfile'
               - 'web/Dockerfile'
               - '.dockerignore'
+              - '.github/workflows/ci.yml'
+            cargo_deps:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'crates/*/Cargo.toml'
+              - 'deny.toml'
+              - '.github/workflows/ci.yml'
+            web_deps:
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
               - '.github/workflows/ci.yml'
 
   rust-check:
@@ -120,17 +137,33 @@ jobs:
   rust-audit:
     name: Rust — cargo deny / audit
     runs-on: ubuntu-24.04
+    # cargo-deny + cargo-audit inspect the dependency tree, so they only need
+    # to run when deps change (Cargo.*, deny.toml). The job still RUNS (required
+    # check reports) but skips its steps otherwise. A weekly scheduled sweep
+    # (.github/workflows/security-audit.yml) catches newly-disclosed advisories
+    # in unchanged deps. `cargo_deps` is true for any merge_group entry.
+    needs: [changes]
+    env:
+      DEPS: ${{ needs.changes.outputs.cargo_deps }}
     steps:
       - uses: actions/checkout@v6
+        if: env.DEPS == 'true'
       - uses: dtolnay/rust-toolchain@1.96.0
+        if: env.DEPS == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: env.DEPS == 'true'
       - uses: EmbarkStudios/cargo-deny-action@v2
+        if: env.DEPS == 'true'
         with:
           command: check
+      # Prebuilt binary — avoids the ~1min `cargo install cargo-audit` compile.
+      - uses: taiki-e/install-action@v2
+        if: env.DEPS == 'true'
+        with:
+          tool: cargo-audit
       - name: cargo audit
-        run: |
-          cargo install cargo-audit --locked || true
-          cargo audit
+        if: env.DEPS == 'true'
+        run: cargo audit
 
   web-check:
     name: Web — lint / typecheck / test
@@ -180,8 +213,11 @@ jobs:
       # CI. Accepted moderates (e.g. the sockjs→uuid dev-server-only
       # advisory) are documented in SECURITY-EXCEPTIONS.md and sit
       # below this `--audit-level=high` gate.
+      # Only when deps changed (lockfile/manifest) — code-only web PRs don't
+      # alter the dep tree. The weekly security-audit workflow covers advisory
+      # drift in unchanged deps.
       - name: pnpm audit
-        if: env.WEB == 'true'
+        if: needs.changes.outputs.web_deps == 'true'
         run: pnpm audit --audit-level=high
 
   docs-build:
@@ -230,7 +266,9 @@ jobs:
         if: needs.changes.outputs.backend_or_spec == 'true'
       - name: Generate spec from PR
         if: needs.changes.outputs.backend_or_spec == 'true'
-        run: cargo run --release --bin server -- --emit-openapi > /tmp/pr-openapi.json
+        # Debug build — the emitted spec is identical to release, and a debug
+        # build is far faster on every backend PR.
+        run: cargo run --bin server -- --emit-openapi > /tmp/pr-openapi.json
       - name: Snapshot match
         if: needs.changes.outputs.backend_or_spec == 'true'
         run: |
@@ -301,7 +339,10 @@ jobs:
     # job still runs so the required check reports, it just does nothing.
     needs: [changes, rust-check, web-check]
     env:
-      BUILD: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.docker == 'true' }}
+      # Per-image: the server image rebuilds on Rust changes, the web image on
+      # web changes; either rebuilds on a Dockerfile change. `docker` is true
+      # for any merge_group entry (full run).
+      BUILD: ${{ (matrix.image == 'folio' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.docker == 'true')) || (matrix.image == 'folio-web' && (needs.changes.outputs.web == 'true' || needs.changes.outputs.docker == 'true')) }}
     strategy:
       fail-fast: false
       matrix:
