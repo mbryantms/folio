@@ -7,6 +7,8 @@ import {
   ChevronRight,
   Clock,
   FileStack,
+  HardDrive,
+  Hash,
   History,
   Languages,
 } from "lucide-react";
@@ -17,11 +19,20 @@ import { issueUrl, readerUrl, seriesUrl } from "@/lib/urls";
 import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
-import { DetailSection } from "@/components/library/DetailSection";
+import {
+  DetailSection,
+  DetailSummaryGrid,
+  DetailSummaryItem,
+} from "@/components/library/DetailSection";
 import { Description } from "@/components/library/Description";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
 import { CoverGallery } from "@/components/library/CoverGallery";
 import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
+import {
+  StableTabsPanel,
+  StableTabsPanelStack,
+  StackedTabsPanel,
+} from "@/components/library/StableTabsPanelStack";
 
 import { IssueSourcesFooter } from "./IssueMetadataPanel";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
@@ -29,9 +40,11 @@ import { Stat } from "@/components/library/Stat";
 import { UserRating } from "@/components/library/UserRating";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
+  ExternalIdRow,
+  ExternalIdsListResp,
   IssueDetailView,
   IssueSummaryView,
   NextInSeriesView,
@@ -46,6 +59,7 @@ import {
   formatReadingTime,
   formatRelativeDate,
 } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import {
   type ProgressLike,
   type ReadState,
@@ -139,6 +153,17 @@ export default async function IssuePage({
   } catch {
     /* leave null */
   }
+
+  let issueExternalIds: ExternalIdRow[] = [];
+  try {
+    const externalIds = await apiGet<ExternalIdsListResp>(
+      `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
+    );
+    issueExternalIds = externalIds.rows;
+  } catch {
+    /* keep Web visible if provider rows cannot be loaded */
+  }
+
   const readState: ReadState = readStateFor(issue, issueProgress);
   const readLabel = readButtonLabel(readState);
 
@@ -154,6 +179,20 @@ export default async function IssuePage({
   );
   const seriesStatus = formatPublicationStatus(series?.status);
   const readingTime = formatReadingTime(issue.page_count);
+  const readingDirectionRaw =
+    issue.series_reading_direction ?? issue.library_default_reading_direction;
+  const readingDirection =
+    readingDirectionRaw === "rtl"
+      ? "Right-to-left"
+      : readingDirectionRaw === "ltr"
+        ? "Left-to-right"
+        : (readingDirectionRaw ?? null);
+  const detailsWebUrl = isProviderWebUrlDuplicate(
+    issue.web_url,
+    issueExternalIds,
+  )
+    ? null
+    : issue.web_url;
 
   return (
     <div className="space-y-10">
@@ -371,74 +410,167 @@ export default async function IssuePage({
           {hasActivity && <TabsTrigger value="activity">Activity</TabsTrigger>}
         </TabsList>
 
-        {/* Static-metadata tabs are `forceMount`-ed and stacked in a single
-         * grid cell. The cell sizes to the tallest tab so switching between
-         * Details (long) and Credits (short) no longer shrinks the document
-         * height — preventing the page-jump that happens when the browser
-         * clamps `scrollTop` to a smaller scroll range. Activity is left
-         * out of the stack on purpose: it triggers `useReadingStats` /
-         * `useReadingSessions` on mount, so we keep it on-demand. */}
-        <div className="grid">
-          <TabsContent
-            forceMount
-            value="details"
-            className="col-start-1 row-start-1 space-y-4 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
-          >
-            {/* Grouped into scannable categories rather than one flat 20-row
-                grid. Provider IDs (ComicVine / Metron) and external links are
-                intentionally absent — they live in the Metadata tab so they
-                aren't duplicated here. */}
-            <DetailSection title="Publication">
-              <MetadataGrid
-                columns={3}
-                items={[
-                  { label: "Series", value: series?.name },
-                  { label: "Issue number", value: issue.number ?? null },
-                  {
-                    label: "Volume",
-                    value: issue.volume ?? series?.volume ?? null,
-                  },
-                  { label: "Publication date", value: publicationDate },
-                  { label: "Publication status", value: seriesStatus },
-                  { label: "Publisher", value: issue.publisher },
-                  { label: "Imprint", value: issue.imprint },
-                  { label: "Story arc", value: issue.story_arc },
-                  { label: "Story arc number", value: issue.story_arc_number },
-                ]}
+        {/* Credits and Cast are lightweight, high-traffic tabs, so they stay
+         * force-mounted in one grid cell and reserve a compact baseline height.
+         * Details / Metadata / Covers / Activity render on demand; they can be
+         * much taller and should not leave their full height behind when the
+         * user returns to the common tabs. */}
+        <StableTabsPanelStack>
+          <StackedTabsPanel value="details" className="space-y-6">
+            <DetailSummaryGrid>
+              <DetailSummaryItem
+                label="Issue"
+                value={issue.number ? `#${issue.number}` : null}
+                hint={series?.name ?? null}
+                icon={<Hash className="h-4 w-4" />}
               />
-            </DetailSection>
-
-            <DetailSection title="Format">
-              <MetadataGrid
-                columns={3}
-                items={[
-                  {
-                    label: "Language",
-                    value: issue.language_code?.toUpperCase(),
-                  },
-                  { label: "Age rating", value: issue.age_rating },
-                  { label: "Format", value: issue.format },
-                  {
-                    label: "Black & white",
-                    value:
-                      issue.black_and_white == null
-                        ? null
-                        : issue.black_and_white
-                          ? "Yes"
-                          : "No",
-                  },
-                  { label: "Manga", value: issue.manga },
-                  { label: "Pages", value: formatPageCount(issue.page_count) },
-                  {
-                    label: "Reading time",
-                    value: readingTime ? `≈ ${readingTime}` : null,
-                  },
-                  { label: "GTIN", value: issue.gtin },
-                ]}
+              <DetailSummaryItem
+                label="Published"
+                value={publicationDate}
+                hint={seriesStatus}
+                icon={<Calendar className="h-4 w-4" />}
               />
-            </DetailSection>
+              <DetailSummaryItem
+                label="Length"
+                value={formatPageCount(issue.page_count)}
+                hint={readingTime ? `≈ ${readingTime}` : null}
+                icon={<FileStack className="h-4 w-4" />}
+              />
+              <DetailSummaryItem
+                label="Archive"
+                value={formatFileSize(issue.file_size)}
+                hint={issue.state === "active" ? null : issue.state}
+                icon={<HardDrive className="h-4 w-4" />}
+              />
+            </DetailSummaryGrid>
 
-            <DetailSection title="Genres & Tags">
+            <div className="grid gap-4 xl:grid-cols-2">
+              <DetailSection
+                title="Publication"
+                description="Series identity, release data, and source page."
+              >
+                <MetadataGrid
+                  columns={2}
+                  items={[
+                    {
+                      label: "Series",
+                      value: series ? (
+                        <Link
+                          href={seriesUrl(series)}
+                          className="text-primary font-medium hover:underline"
+                        >
+                          {series.name}
+                        </Link>
+                      ) : null,
+                    },
+                    {
+                      label: "Issue number",
+                      value: issue.number ? (
+                        <Badge variant="outline" className="font-mono">
+                          #{issue.number}
+                        </Badge>
+                      ) : null,
+                    },
+                    {
+                      label: "Volume",
+                      value: issue.volume ?? series?.volume ?? null,
+                    },
+                    {
+                      label: "Alternate series",
+                      value: issue.alternate_series,
+                    },
+                    { label: "Publication date", value: publicationDate },
+                    {
+                      label: "Publication status",
+                      value: seriesStatus ? (
+                        <Badge variant="outline">{seriesStatus}</Badge>
+                      ) : null,
+                    },
+                    { label: "Publisher", value: issue.publisher },
+                    { label: "Imprint", value: issue.imprint },
+                    { label: "Story arc", value: issue.story_arc },
+                    {
+                      label: "Story arc number",
+                      value: issue.story_arc_number,
+                    },
+                    {
+                      label: "Web page",
+                      value: detailsWebUrl ? (
+                        <ExternalTextLink url={detailsWebUrl} />
+                      ) : null,
+                      wide: true,
+                    },
+                  ]}
+                />
+              </DetailSection>
+
+              <DetailSection
+                title="Reading & format"
+                description="Reader behavior, content rating, and source format."
+              >
+                <MetadataGrid
+                  columns={2}
+                  items={[
+                    {
+                      label: "Language",
+                      value: issue.language_code ? (
+                        <Badge variant="secondary">
+                          {issue.language_code.toUpperCase()}
+                        </Badge>
+                      ) : null,
+                    },
+                    { label: "Reading direction", value: readingDirection },
+                    {
+                      label: "Age rating",
+                      value: issue.age_rating ? (
+                        <Badge variant="secondary">{issue.age_rating}</Badge>
+                      ) : null,
+                    },
+                    {
+                      label: "Format",
+                      value: issue.format ? (
+                        <Badge variant="secondary">{issue.format}</Badge>
+                      ) : null,
+                    },
+                    {
+                      label: "Color",
+                      value:
+                        issue.black_and_white == null
+                          ? null
+                          : issue.black_and_white
+                            ? "Black & white"
+                            : "Color",
+                    },
+                    {
+                      label: "Manga",
+                      value: issue.manga ? (
+                        <Badge variant="outline">{issue.manga}</Badge>
+                      ) : null,
+                    },
+                    {
+                      label: "Pages",
+                      value: formatPageCount(issue.page_count),
+                    },
+                    {
+                      label: "Estimated reading time",
+                      value: readingTime ? `≈ ${readingTime}` : null,
+                    },
+                    {
+                      label: "GTIN",
+                      value: issue.gtin ? (
+                        <code className="font-mono text-xs">{issue.gtin}</code>
+                      ) : null,
+                      wide: true,
+                    },
+                  ]}
+                />
+              </DetailSection>
+            </div>
+
+            <DetailSection
+              title="Classification"
+              description="Searchable genre and tag metadata used by library filters."
+            >
               <div className="divide-border/60 divide-y">
                 <ChipList
                   orientation="horizontal"
@@ -456,11 +588,16 @@ export default async function IssuePage({
                 />
               </div>
               {!issue.genre && !issue.tags && (
-                <p className="text-muted-foreground text-sm">No genres or tags.</p>
+                <p className="text-muted-foreground pt-1 text-sm">
+                  No genres or tags.
+                </p>
               )}
             </DetailSection>
 
-            <DetailSection title="Library & file">
+            <DetailSection
+              title="Library & file"
+              description="Local archive details and scanner timestamps."
+            >
               <MetadataGrid
                 columns={3}
                 items={[
@@ -471,7 +608,17 @@ export default async function IssuePage({
                         ? issue.sort_number.toString()
                         : null,
                   },
-                  { label: "Added", value: formatRelativeDate(issue.created_at) },
+                  {
+                    label: "Cover page",
+                    value:
+                      issue.cover_page_index != null
+                        ? `Page ${issue.cover_page_index + 1}`
+                        : null,
+                  },
+                  {
+                    label: "Added",
+                    value: formatRelativeDate(issue.created_at),
+                  },
                   {
                     label: "Updated",
                     value: formatRelativeDate(issue.updated_at),
@@ -482,27 +629,35 @@ export default async function IssuePage({
                   },
                   {
                     label: "File",
-                    value: (
-                      <span className="font-mono text-xs break-all">
-                        {issue.file_path}
-                      </span>
-                    ),
+                    value: <FilePathValue path={issue.file_path} />,
                     wide: true,
                   },
                 ]}
               />
             </DetailSection>
+
+            {issue.additional_links.length > 0 && (
+              <DetailSection
+                title="External links"
+                description="Additional curated links stored with this issue."
+              >
+                <MetadataGrid
+                  columns={2}
+                  items={issue.additional_links.map((link, i) => ({
+                    label: link.label ?? `Link ${i + 1}`,
+                    value: <ExternalTextLink url={link.url} />,
+                    wide: true,
+                  }))}
+                />
+              </DetailSection>
+            )}
             {/* "Locally edited fields" summary moved into the Edit sheet
                 — fields surface a per-row release control alongside their
                 input, so the user can both see what's pinned and release
                 it without leaving the editor. */}
-          </TabsContent>
+          </StackedTabsPanel>
 
-          <TabsContent
-            forceMount
-            value="credits"
-            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
-          >
+          <StableTabsPanel value="credits">
             <div className="divide-border/60 divide-y">
               <ChipList
                 orientation="horizontal"
@@ -558,13 +713,9 @@ export default async function IssuePage({
                 No creator metadata in this issue.
               </p>
             )}
-          </TabsContent>
+          </StableTabsPanel>
 
-          <TabsContent
-            forceMount
-            value="cast"
-            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
-          >
+          <StableTabsPanel value="cast">
             <div className="divide-border/60 divide-y">
               <ChipList
                 orientation="horizontal"
@@ -604,48 +755,32 @@ export default async function IssuePage({
                   No cast or setting metadata.
                 </p>
               )}
-          </TabsContent>
+          </StableTabsPanel>
 
-          <TabsContent
-            forceMount
-            value="metadata"
-            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
-          >
+          <StackedTabsPanel value="metadata">
             <IssueMetadataTab seriesSlug={seriesSlug} issueSlug={issue.slug} />
-          </TabsContent>
+          </StackedTabsPanel>
 
-          <TabsContent
-            forceMount
-            value="notes"
-            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
-          >
+          <StackedTabsPanel value="notes">
             <InlineNotesEditor
               seriesSlug={seriesSlug}
               issueSlug={issue.slug}
               initial={issue.notes ?? null}
             />
-          </TabsContent>
-          {/* Covers tab is intentionally OUTSIDE the forceMount stack:
-           * variant cover tiles are tall, and pinning them into the
-           * stack would force every other tab's panel to that height
-           * (the "lots of empty space at the bottom" effect). On-demand
-           * mount also matches Activity, which stays out of the stack
-           * for its own perf reason. */}
-          <TabsContent value="covers" className="col-start-1 row-start-1 pt-6">
+          </StackedTabsPanel>
+
+          <StackedTabsPanel value="covers">
             <CoverGallery issueId={issue.id} chrome="bare" />
-          </TabsContent>
+          </StackedTabsPanel>
           {hasActivity && (
-            <TabsContent
-              value="activity"
-              className="col-start-1 row-start-1 pt-6"
-            >
+            <StackedTabsPanel value="activity">
               <IssueActivityTab
                 issueId={issue.id}
                 pageCount={issue.page_count ?? null}
               />
-            </TabsContent>
+            </StackedTabsPanel>
           )}
-        </div>
+        </StableTabsPanelStack>
       </Tabs>
 
       {/* TOS attribution footer (ComicVine / Metron require source
@@ -765,6 +900,130 @@ function formatFileSize(bytes: number | null | undefined): string | null {
   return i === 0 ? `${n} ${units[i]}` : `${n.toFixed(1)} ${units[i]}`;
 }
 
+function ExternalTextLink({
+  url,
+  label,
+}: {
+  url: string;
+  label?: string | null;
+}) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="text-primary break-all hover:underline"
+    >
+      {label ?? url.replace(/^https?:\/\//, "")}
+    </a>
+  );
+}
+
+function FilePathValue({ path }: { path: string }) {
+  return (
+    <code className="bg-muted/50 block rounded-md px-3 py-2 font-mono text-xs break-all">
+      {path}
+    </code>
+  );
+}
+
+const REDUNDANT_WEB_URL_SOURCES = new Set(["comicvine", "metron", "gcd"]);
+
+function isProviderWebUrlDuplicate(
+  webUrl: string | null | undefined,
+  externalIds: ExternalIdRow[],
+): boolean {
+  if (!webUrl) return false;
+  const comparableWebUrl = normalizeComparableUrl(webUrl);
+  const webProviderId = extractProviderIssueIdFromUrl(webUrl);
+
+  return externalIds.some((row) => {
+    if (!REDUNDANT_WEB_URL_SOURCES.has(row.source)) return false;
+    if (
+      comparableWebUrl &&
+      row.external_url &&
+      comparableWebUrl === normalizeComparableUrl(row.external_url)
+    ) {
+      return true;
+    }
+    return (
+      webProviderId?.source === row.source &&
+      webProviderId.id === normalizeExternalId(row.external_id)
+    );
+  });
+}
+
+function normalizeComparableUrl(value: string): string | null {
+  const parsed = parseComparableUrl(value);
+  if (!parsed) return null;
+  parsed.hash = "";
+  parsed.search = "";
+  parsed.protocol = "https:";
+  parsed.hostname = parsed.hostname.replace(/^www\./, "").toLowerCase();
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString();
+}
+
+function parseComparableUrl(value: string): URL | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed);
+  } catch {
+    try {
+      return new URL(`https://${trimmed}`);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function extractProviderIssueIdFromUrl(
+  value: string,
+): { source: string; id: string } | null {
+  const parsed = parseComparableUrl(value);
+  if (!parsed) return null;
+  const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+  const segments = parsed.pathname
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (host === "comicvine.gamespot.com") {
+    for (const segment of segments) {
+      const match = /^4000-(\d+)$/i.exec(segment);
+      if (match) return { source: "comicvine", id: match[1] };
+    }
+    return null;
+  }
+
+  if (host === "metron.cloud") {
+    return extractPathScopedId("metron", "issue", segments);
+  }
+
+  if (host === "comics.org") {
+    return extractPathScopedId("gcd", "issue", segments);
+  }
+
+  return null;
+}
+
+function extractPathScopedId(
+  source: string,
+  scope: string,
+  segments: string[],
+): { source: string; id: string } | null {
+  const scopeIndex = segments.findIndex(
+    (segment) => segment.toLowerCase() === scope,
+  );
+  const id = scopeIndex >= 0 ? segments[scopeIndex + 1] : null;
+  return id ? { source, id: normalizeExternalId(id) } : null;
+}
+
+function normalizeExternalId(value: string): string {
+  return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
 function splitCsv(value: string | null | undefined): string[] {
   if (!value) return [];
   // Mirrors `server::library::scanner::metadata_rollup::split_csv`. If
@@ -798,11 +1057,9 @@ function hasAnyCredit(issue: IssueDetailView): boolean {
 }
 
 /**
- * "More in series" carousel — the previous issue (when present) as the
- * leftmost cover, then the next N issues by sort_number, followed by a
- * "view all in series" tile that lives in the same grid slot as a cover
- * card. The tile sits flush against the last issue on wide screens so the
- * affordance doesn't drift to the far right edge of the section.
+ * "More in series" carousel — the previous issue is a labeled convenience
+ * slot, separated from the up-next sequence so it does not read as the first
+ * upcoming issue. All issue cards use the same width.
  */
 function NextInSeries({
   prev,
@@ -819,76 +1076,79 @@ function NextInSeries({
   return (
     <section className="space-y-3">
       <h2 className="text-base font-semibold tracking-tight">More in series</h2>
-      <ul
-        className="grid gap-4"
-        style={{
-          gridTemplateColumns: "repeat(auto-fill, minmax(7.5rem, 1fr))",
-        }}
+      <div
+        className={cn(
+          "grid gap-4",
+          prev && "md:grid-cols-[10rem_minmax(0,1fr)]",
+        )}
       >
         {prev && (
-          <li key={prev.id}>
-            <Link
-              href={issueUrl(prev)}
-              className="group block space-y-1.5 focus-visible:outline-none"
-            >
-              <Cover
-                src={prev.cover_url}
-                alt={prev.title ?? `Issue ${prev.number ?? ""}`}
-                fallback={prev.state === "active" ? "Cover" : prev.state}
-                className="group-focus-visible:ring-ring transition-transform duration-200 group-hover:scale-[1.02] group-focus-visible:ring-2"
-              />
-              <div className="min-w-0">
-                <p className="text-muted-foreground flex items-center gap-1 text-[11px] font-medium tracking-wide uppercase">
-                  <ArrowLeft aria-hidden="true" className="size-3" />
-                  Previous
-                </p>
-                <p className="text-foreground truncate text-xs font-medium">
-                  {prev.number ? `#${prev.number}` : "—"}
-                  {prev.title ? ` · ${prev.title}` : ""}
-                </p>
-              </div>
-            </Link>
-          </li>
+          <div className="w-36 space-y-2 sm:w-40">
+            <p className="text-muted-foreground flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase">
+              <ArrowLeft aria-hidden="true" className="size-3" />
+              Previous issue
+            </p>
+            <MoreInSeriesIssueCard issue={prev} />
+          </div>
         )}
-        {items.map((it) => (
-          <li key={it.id}>
-            <Link
-              href={issueUrl(it)}
-              className="group block space-y-1.5 focus-visible:outline-none"
-            >
-              <Cover
-                src={it.cover_url}
-                alt={it.title ?? `Issue ${it.number ?? ""}`}
-                fallback={it.state === "active" ? "Cover" : it.state}
-                className="group-focus-visible:ring-ring transition-transform duration-200 group-hover:scale-[1.02] group-focus-visible:ring-2"
-              />
-              <div className="min-w-0">
-                <p className="text-foreground truncate text-xs font-medium">
-                  {it.number ? `#${it.number}` : "—"}
-                  {it.title ? ` · ${it.title}` : ""}
-                </p>
-                {it.year != null && (
-                  <p className="text-muted-foreground text-[11px]">{it.year}</p>
-                )}
-              </div>
-            </Link>
-          </li>
-        ))}
-        {/* Sits in the same `auto-fill` slot as the trailing issue card, but
-         * styled as a small shadcn outline button vertically centered in the
-         * cell so it doesn't masquerade as another issue. */}
-        <li className="flex items-center">
-          <Button asChild variant="outline" size="sm" className="shrink-0">
-            <Link
-              href={seriesUrl(series)}
-              aria-label="View all issues in series"
-            >
-              <span>View all</span>
-              <ArrowRight aria-hidden="true" />
-            </Link>
-          </Button>
-        </li>
-      </ul>
+        <div
+          className={cn(
+            "min-w-0 space-y-2",
+            prev &&
+              "border-border/70 border-t pt-4 md:border-t-0 md:border-l md:pt-0 md:pl-4",
+          )}
+        >
+          {items.length > 0 && (
+            <p className="text-foreground flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase">
+              <ArrowRight aria-hidden="true" className="size-3" />
+              Up next
+            </p>
+          )}
+          <ul className="flex flex-wrap gap-4">
+            {items.map((it) => (
+              <li key={it.id} className="w-36 sm:w-40">
+                <MoreInSeriesIssueCard issue={it} />
+              </li>
+            ))}
+            <li className="flex w-36 items-center sm:w-40">
+              <Button asChild variant="outline" size="sm" className="shrink-0">
+                <Link
+                  href={seriesUrl(series)}
+                  aria-label="View all issues in series"
+                >
+                  <span>View all</span>
+                  <ArrowRight aria-hidden="true" />
+                </Link>
+              </Button>
+            </li>
+          </ul>
+        </div>
+      </div>
     </section>
+  );
+}
+
+function MoreInSeriesIssueCard({ issue }: { issue: IssueSummaryView }) {
+  return (
+    <Link
+      href={issueUrl(issue)}
+      className="group block min-w-0 space-y-1.5 rounded-md focus-visible:outline-none"
+    >
+      <Cover
+        src={issue.cover_url}
+        alt={issue.title ?? `Issue ${issue.number ?? ""}`}
+        fallback={issue.state === "active" ? "Cover" : issue.state}
+        className="group-focus-visible:ring-ring transition duration-200 group-hover:scale-[1.02] group-focus-visible:ring-2"
+      />
+      <div className="min-w-0">
+        <p className="text-foreground truncate text-xs font-medium">
+          {issue.number ? `#${issue.number}` : "—"}
+          {issue.title ? ` · ${issue.title}` : ""}
+        </p>
+        {issue.year != null && (
+          <p className="text-muted-foreground text-[11px]">{issue.year}</p>
+        )}
+      </div>
+    </Link>
   );
 }
