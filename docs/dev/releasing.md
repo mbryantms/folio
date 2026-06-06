@@ -47,33 +47,48 @@ just release 0.7.2
 ```
 
 It refuses to proceed unless the working tree is clean, you're on `main`, and
-`main` is in sync with `origin`. It then runs the full check suite, verifies
-`CHANGELOG.md` has a section for the version, stamps that section's date,
-commits the stamp if needed, creates the annotated tag, and prints the exact
-`git push` commands — it does **not** push for you (pushing the tag is the
-irreversible, image-publishing step, so it stays a deliberate manual action).
+local `main` matches `origin/main` exactly — no unpushed commits, because `main`
+is protected (strict checks + merge queue) and everything, including the
+changelog, lands via a merged PR. It then verifies `CHANGELOG.md` already has a
+**dated** `## [X.Y.Z]` section, runs the full check suite, creates the annotated
+tag, and prints the push command — it does **not** push for you (pushing the tag
+is the irreversible, image-publishing step, so it stays a deliberate manual
+action).
 
 ### Before you run it
 
-1. **Land all the work** for the release on `main`.
-2. **Update `CHANGELOG.md`**: move items out of `## [Unreleased]` into a new
-   `## [X.Y.Z] - YYYY-MM-DD` section (the date can be left as a placeholder;
-   `just release` stamps today's date), and add the `compare` link at the
-   bottom. Group entries under Added / Changed / Fixed / Removed.
-3. Sanity-check the diff that will ship: `git diff vLAST..HEAD --stat`.
+1. **Land all the work** for the release on `main` (via PRs / the merge queue).
+2. **Land the changelog via its own PR.** `main` is protected, so the changelog
+   commit can't be pushed straight to it. Open a `docs: changelog for vX.Y.Z`
+   PR that moves items out of `## [Unreleased]` into a new, **dated**
+   `## [X.Y.Z] - YYYY-MM-DD` section (use today's date — the recipe no longer
+   stamps it) and adds the `compare` link at the bottom, grouped under Added /
+   Changed / Fixed / Removed. Merge it through the queue.
+3. **Pull `main`** so it includes the merged changelog:
+   `git checkout main && git pull`.
+4. Sanity-check the diff that will ship: `git diff vLAST..HEAD --stat`.
 
 ### Manual fallback
 
 If you're not using the recipe, the steps are:
 
 ```sh
-just check            # full suite must be green
-# edit CHANGELOG.md: new section, dated, compare link
+# 1. Changelog via a PR — main is protected, so no direct push:
+git checkout -b docs/changelog-vX.Y.Z
+# edit CHANGELOG.md: new dated [X.Y.Z] section + compare link
 git commit -am "docs: changelog for vX.Y.Z"
+git push -u origin docs/changelog-vX.Y.Z
+gh pr create --base main --fill        # then merge it via the queue
+
+# 2. From an up-to-date main, tag and publish:
+git checkout main && git pull
+just check                             # full suite must be green
 git tag -a vX.Y.Z -m "vX.Y.Z"
-git push origin main
-git push origin vX.Y.Z   # ← triggers the release workflow
+git push origin vX.Y.Z                 # ← the only direct push; triggers release
 ```
+
+Branch protection covers `main`, not tags, so `git push origin vX.Y.Z` is the
+one push allowed directly — and it's what publishes the release.
 
 ## Good release notes
 
