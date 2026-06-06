@@ -15,12 +15,35 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-06-06
+
+### Added
+
+- **Bulk "Fill missing" / "Replace all" in the Review queue.** The metadata
+  batch Review tab's *Needs review* section gains one-click bulk actions that
+  auto-apply the most-complete metadata merged across every provider that
+  matched (covers prefer ComicVine), with an All / Selected scope — clearing
+  the review queue without opening each item one at a time. Your pinned fields
+  are preserved.
+
 ### Changed
 
 - **Issue and series detail pages are easier to scan.** Details tabs now use
   card-based summary sections, avoid reserving empty space from large tabs, hide
   redundant provider web links, and keep empty series genre/tag fields out of
   the page header.
+
+### Fixed
+
+- Metadata matching: zero-padded issue numbers (e.g. `014`) now match a
+  provider's unpadded number, and series search no longer hard-filters on a
+  too-strict start year — fixing spurious "no matches" on issues that clearly
+  exist at the provider.
+
+### Internal
+
+- CI/release: docs-only PRs skip redundant build work, and the release-tagging
+  workflow trims steps that re-ran needlessly.
 
 ## [0.9.1] - 2026-06-06
 
@@ -632,7 +655,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/mbryantms/folio/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/mbryantms/folio/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/mbryantms/folio/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/mbryantms/folio/compare/v0.8.0...v0.8.1
