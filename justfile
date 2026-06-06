@@ -626,10 +626,12 @@ check:
     just openapi-check
     just audit-check
 
-# Cut a release. Validates, runs the full check suite, stamps the
-# changelog date, and creates the annotated tag — but does NOT push.
-# Pushing the tag is the irreversible, image-publishing step, so it
-# stays a deliberate manual action (the recipe prints the commands).
+# Cut a release. Validates (incl. that a DATED changelog section for the
+# version already landed on main via PR — main is protected, so the stamp
+# can't be pushed straight to it), runs the full check suite, and creates the
+# annotated tag — but does NOT push. Pushing the tag is the irreversible,
+# image-publishing step and the only direct push (tags aren't branch-protected
+# like main), so it stays a deliberate manual action.
 # Usage: just release 0.7.2   (no leading 'v')
 # See docs/dev/releasing.md.
 release version:
@@ -653,19 +655,33 @@ release version:
     if [[ -n "$(git rev-list HEAD..origin/main)" ]]; then
         echo "✗ local main is behind origin/main — pull first" >&2; exit 1
     fi
-    if ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
-        echo "✗ CHANGELOG.md has no '## [$VERSION]' section — add it first" >&2; exit 1
+    # main is protected (strict checks + merge queue): every commit lands via a
+    # merged PR, so local main must match origin/main exactly. A local-only
+    # commit (e.g. a hand-stamped changelog) can't be pushed and would tag a
+    # commit that isn't on main.
+    if [[ -n "$(git rev-list origin/main..HEAD)" ]]; then
+        echo "✗ local main has commit(s) not on origin/main." >&2
+        echo "  main is protected — land them via a PR first (the changelog too)," >&2
+        echo "  then re-run from an up-to-date main so the tag points at the real" >&2
+        echo "  main commit." >&2
+        exit 1
+    fi
+    # The changelog section is written + dated in a 'docs: changelog for vX.Y.Z'
+    # PR and merged before tagging (the stamp can't be pushed straight to
+    # protected main). Require it present AND already dated.
+    if ! grep -qE "^## \[$VERSION\] - [0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md; then
+        echo "✗ CHANGELOG.md has no dated '## [$VERSION] - YYYY-MM-DD' section." >&2
+        echo "  Land it first: open a 'docs: changelog for $TAG' PR (move [Unreleased]" >&2
+        echo "  into a dated [$VERSION] section + add the compare link), merge it via" >&2
+        echo "  the queue, then re-run from an up-to-date main." >&2
+        exit 1
     fi
     echo "==> running full check suite"
     just check
-    TODAY="$(date +%Y-%m-%d)"
-    if grep -qE "^## \[$VERSION\] - (TBD|YYYY-MM-DD)? *$" CHANGELOG.md; then
-        echo "==> stamping changelog date $TODAY"
-        sed -i -E "s/^## \[$VERSION\].*/## [$VERSION] - $TODAY/" CHANGELOG.md
-        git commit -am "docs: changelog for $TAG"
-    fi
     git tag -a "$TAG" -m "$TAG"
     echo
-    echo "✓ Tagged $TAG (not pushed). To publish — triggers GHCR build + GitHub release:"
-    echo "    git push origin main"
+    echo "✓ Tagged $TAG (not pushed). Publish it — triggers GHCR build + GitHub release:"
     echo "    git push origin $TAG"
+    echo
+    echo "  (No 'git push origin main': the changelog already landed via PR and main"
+    echo "   is protected. The tag is the only direct push.)"
