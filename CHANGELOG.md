@@ -15,6 +15,45 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-06
+
+### Added
+
+- **Previous-issue cover on the issue page.** The in-series rail now shows the
+  preceding issue's cover to the left of the next-issue strip (omitted on the
+  first issue of a series); the section is retitled "More in series."
+- **Clear detected (OCR) text on a marker.** The marker editor gains a "Clear"
+  control to drop a highlighted region's OCR'd text.
+
+### Changed
+
+- **Issue & series tabs reorganized.** Both pages now lead with the same tab
+  order (Credits · Cast & Setting · Details · …), and the standalone
+  "Genres & Tags" tab folds into Details. Tab contents are regrouped into
+  scannable categories that use the full width — full-width credit/cast rows,
+  the Details fields split into Publication / Format / Library sections, and
+  the issue Metadata tab's status moved into a card row.
+
+### Fixed
+
+- Activity tab: the ranking-dimension selector no longer overflows off the
+  screen on mobile (it scrolls within the control instead).
+- Home rails: an in-progress issue shown in **Continue Reading** no longer also
+  appears in **On Deck**.
+
+### Internal
+
+- Clearing a marker's `selection` / `body` / `region` / `color` by sending
+  `null` now works (a `double_option` deserialize fix; previously a silent
+  no-op).
+- New `GET /series/{slug}/issues/{slug}/prev` endpoint backing the
+  previous-issue cover.
+- Tooling/CI: a pre-commit `cargo fmt` guard (`.githooks` + `just bootstrap`);
+  CI runs on `merge_group`; Renovate uses GitHub-native auto-merge
+  (`platformAutomerge`); the release ritual is adapted to a protected `main`
+  (changelog lands via PR, only the tag is pushed). Plus a developer-workflow
+  cheat sheet under `docs/dev/`.
+
 ## [0.9.0] - 2026-06-05
 
 ### Added
@@ -586,7 +625,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/mbryantms/folio/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/mbryantms/folio/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/mbryantms/folio/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/mbryantms/folio/compare/v0.7.23...v0.8.0
