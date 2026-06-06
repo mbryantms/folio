@@ -236,7 +236,7 @@ testcontainers-modules = { version = "0.15", features = ["postgres", "redis"] }
 # two reqwest versions side-by-side and the `AsyncHttpClient` impl
 # from oauth2's vendored 0.12 doesn't apply to our 0.13 `Client`.
 # Revisit when oauth2 ships a release that supports reqwest 0.13.
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.13", features = ["json", "rustls-tls", "stream"] }
 insta = { version = "1.41", features = ["json"] }
 proptest = "1.5"
 
