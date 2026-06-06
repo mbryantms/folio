@@ -382,7 +382,7 @@ export default async function IssuePage({
           <TabsContent
             forceMount
             value="details"
-            className="col-start-1 row-start-1 space-y-8 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
+            className="col-start-1 row-start-1 space-y-4 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
             {/* Grouped into scannable categories rather than one flat 20-row
                 grid. Provider IDs (ComicVine / Metron) and external links are

@@ -356,7 +356,7 @@ export default async function SeriesPage({
             </p>
           )}
         </TabsContent>
-        <TabsContent value="details" className="space-y-8 pt-6">
+        <TabsContent value="details" className="space-y-4 pt-6">
           {/* Grouped into scannable categories, mirroring the issue page's
               Details tab. Provider IDs / GTIN live in External IDs below, not
               the grids, so they aren't duplicated. */}
