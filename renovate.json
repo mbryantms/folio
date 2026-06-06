@@ -20,7 +20,8 @@
       "matchUpdateTypes": ["patch", "minor"],
       "matchCurrentVersion": "!/^0\\./",
       "automerge": true,
-      "automergeType": "branch"
+      "automergeType": "pr",
+      "platformAutomerge": true
     },
     {
       "description": "0.x deps: any bump can break; never auto-merge.",
