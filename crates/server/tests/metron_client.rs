@@ -10,7 +10,7 @@
 //! - HTTP 404 → NotFound
 //! - HTTP 429 → QuotaExceeded
 //! - cache short-circuit (`.expect(1)` on the mock)
-//! - search_series uses ?name + ?year_began
+//! - search_series uses ?name only (year is left to the pre-filter gate)
 //! - structured credit roles map straight through (no comma-splitting
 //!   needed — Metron normalizes upstream)
 
@@ -121,12 +121,14 @@ fn issue_detail_fixture() -> serde_json::Value {
 // ────────────────────── tests ──────────────────────
 
 #[tokio::test]
-async fn search_series_uses_name_and_year_filters() {
+async fn search_series_uses_name_filter_only() {
+    // Series search is name-only on purpose: year is NOT sent as a hard
+    // `year_began` filter (it would exclude a series whose local year is
+    // wrong/off-by-one). The tolerant pre_filter_series gate handles year.
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/series/"))
         .and(query_param("name", "Saga"))
-        .and(query_param("year_began", "2012"))
         .and(basic_auth("metron-user", "metron-pass"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(paged(json!([series_list_fixture()]))),

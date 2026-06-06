@@ -32,6 +32,7 @@
 
 use crate::metadata::cache;
 use crate::metadata::identifier::{Identifier, Source};
+use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::provider::{
     CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate, IssueQuery,
     MetadataProvider, ProviderError, ProviderResult, QuotaSnapshot, ReprintCandidate,
@@ -792,10 +793,12 @@ impl MetadataProvider for MetronClient {
     }
 
     async fn search_series(&self, query: &SeriesQuery) -> ProviderResult<Vec<SeriesCandidate>> {
+        // Search by name only — `query.year` is NOT a hard `year_began:` filter.
+        // The local series year is often wrong/off-by-one, and an exact filter
+        // would exclude the correct series; the tolerant
+        // `orchestrator::pre_filter_series` gate (±1) handles year on the
+        // returned candidates instead.
         let mut params = vec![("name", query.name.clone())];
-        if let Some(year) = query.year {
-            params.push(("year_began", year.to_string()));
-        }
         params.push(("page_size", query.limit.clamp(1, 100).to_string()));
         let envelope: Paged<MSeriesList> = self.request("/api/series/", &params).await?;
         Ok(envelope
@@ -806,7 +809,9 @@ impl MetadataProvider for MetronClient {
     }
 
     async fn search_issue(&self, query: &IssueQuery) -> ProviderResult<Vec<IssueCandidate>> {
-        let mut params = vec![("number", query.issue_number.clone())];
+        // Canonicalize so a zero-padded scan value ("014") matches Metron's
+        // stored "14".
+        let mut params = vec![("number", canonical_issue_number(&query.issue_number))];
         if let Some(ref vol) = query.series_external_id {
             params.push(("series_id", vol.clone()));
         } else if let Some(ref name) = query.series_name {

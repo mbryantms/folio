@@ -411,3 +411,42 @@ async fn search_issue_filters_by_volume_when_id_known() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].external_id, "67890");
 }
+
+#[tokio::test]
+async fn search_issue_by_name_matches_zero_padded_number() {
+    // Regression (Spawn #14): a zero-padded scan value "014" must match CV's
+    // un-padded "14". The /search fallback (no known volume id) filters
+    // candidates client-side; before the fix it compared raw strings, so
+    // "14" != "014" dropped the real issue and the fetch found "no matches".
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .and(query_param("query", "Spawn"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!({
+            "issue": [cv_issue_fixture(37769, "14")]
+        }))))
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let app = TestApp::spawn_with_comicvine("test-key", true).await;
+    let client = ComicVineClient::with_base_url(
+        "test-key".into(),
+        mock.uri(),
+        app.state().jobs.redis.clone(),
+    );
+
+    let out = client
+        .search_issue(&IssueQuery {
+            series_external_id: None, // forces the /search-by-name path
+            series_name: Some("Spawn".into()),
+            series_year: Some(2016), // intentionally wrong — must not gate this path
+            issue_number: "014".into(),
+            cover_year: Some(1993),
+            limit: 5,
+        })
+        .await
+        .expect("search_issue");
+    assert_eq!(out.len(), 1, "zero-padded 014 should match CV's 14");
+    assert_eq!(out[0].external_id, "37769");
+}
