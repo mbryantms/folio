@@ -1987,9 +1987,8 @@ pub async fn resolve_metadata_batch_targets(
 
     match view.kind.as_str() {
         KIND_FILTER_SERIES => {
-            let filter = dsl_from_view(&view).map_err(|_| {
-                error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
-            })?;
+            let filter = dsl_from_view(&view)
+                .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
             let visible = access::for_user(app, user).await;
             let input = CompileInput {
                 dsl: &filter,
@@ -2011,7 +2010,9 @@ pub async fn resolve_metadata_batch_targets(
                     tracing::error!(error = %e, "batch targets: filter query failed");
                     error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
                 })?;
-            Ok(BatchTargets::Series(rows.into_iter().map(|r| r.id).collect()))
+            Ok(BatchTargets::Series(
+                rows.into_iter().map(|r| r.id).collect(),
+            ))
         }
         KIND_CBL => {
             let Some(list_id) = view.cbl_list_id else {

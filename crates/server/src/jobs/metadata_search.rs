@@ -467,7 +467,10 @@ pub async fn enqueue_issue_search(
     else {
         return Err(anyhow::anyhow!("issue {issue_id} not found"));
     };
-    let Some(s) = series::Entity::find_by_id(i.series_id).one(&state.db).await? else {
+    let Some(s) = series::Entity::find_by_id(i.series_id)
+        .one(&state.db)
+        .await?
+    else {
         return Err(anyhow::anyhow!("series {} not found", i.series_id));
     };
     let Some(issue_number) = i.number_raw.clone().filter(|s| !s.trim().is_empty()) else {
@@ -496,7 +499,11 @@ pub async fn enqueue_issue_search(
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|row| Source::from_str(&row.source).ok().map(|src| (src, row.external_id)))
+        .filter_map(|row| {
+            Source::from_str(&row.source)
+                .ok()
+                .map(|src| (src, row.external_id))
+        })
         .collect();
 
     let new_run_id = orchestrator::start_run(

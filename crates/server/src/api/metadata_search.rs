@@ -1768,13 +1768,12 @@ async fn insert_metadata_batch(
 }
 
 /// Stamp the final child count on a batch once fan-out completes.
-async fn set_batch_items_total(
-    db: &sea_orm::DatabaseConnection,
-    batch_id: Uuid,
-    items_total: i32,
-) {
+async fn set_batch_items_total(db: &sea_orm::DatabaseConnection, batch_id: Uuid, items_total: i32) {
     use sea_orm::Set;
-    if let Ok(Some(row)) = entity::metadata_batch::Entity::find_by_id(batch_id).one(db).await {
+    if let Ok(Some(row)) = entity::metadata_batch::Entity::find_by_id(batch_id)
+        .one(db)
+        .await
+    {
         let mut am: entity::metadata_batch::ActiveModel = row.into();
         am.items_total = Set(items_total);
         let _ = am.update(db).await;
@@ -1830,20 +1829,16 @@ pub async fn create_series_batch(
         }
     };
 
-    let batch_id = match insert_metadata_batch(
-        &app.db,
-        "series_issues",
-        Some(s.library_id),
-        Some(user.id),
-    )
-    .await
-    {
-        Ok(id) => id,
-        Err(e) => {
-            tracing::error!(error = %e, "create_series_batch: batch insert failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
-    };
+    let batch_id =
+        match insert_metadata_batch(&app.db, "series_issues", Some(s.library_id), Some(user.id))
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!(error = %e, "create_series_batch: batch insert failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
 
     let outcome = fan_out_issue_batch(&app, &issue_ids, Some(user.id), batch_id).await;
     set_batch_items_total(&app.db, batch_id, outcome.jobs_enqueued as i32).await;
@@ -2099,13 +2094,13 @@ fn is_needs_review(outcome_kind: &str) -> bool {
 fn label_from_query(query: &Option<serde_json::Value>) -> Option<String> {
     let q = query.as_ref()?;
     match q.get("kind").and_then(|k| k.as_str()) {
-        Some("series") => q
-            .get("name")
-            .and_then(|n| n.as_str())
-            .map(|n| n.to_owned()),
+        Some("series") => q.get("name").and_then(|n| n.as_str()).map(|n| n.to_owned()),
         Some("issue") => {
             let series = q.get("series_name").and_then(|n| n.as_str()).unwrap_or("?");
-            let number = q.get("issue_number").and_then(|n| n.as_str()).unwrap_or("?");
+            let number = q
+                .get("issue_number")
+                .and_then(|n| n.as_str())
+                .unwrap_or("?");
             Some(format!("{series} #{number}"))
         }
         _ => None,
@@ -2160,7 +2155,10 @@ pub async fn batch_status(
     user: CurrentUser,
     Path(batch_id): Path<Uuid>,
 ) -> Response {
-    let batch = match metadata_batch::Entity::find_by_id(batch_id).one(&app.db).await {
+    let batch = match metadata_batch::Entity::find_by_id(batch_id)
+        .one(&app.db)
+        .await
+    {
         Ok(Some(b)) => b,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "batch not found"),
         Err(e) => {
@@ -2199,7 +2197,11 @@ pub async fn batch_status(
     let series_scope_ids: Vec<Uuid> = runs
         .iter()
         .filter(|r| r.scope == orchestrator::scope::SERIES)
-        .filter_map(|r| r.scope_entity_id.as_deref().and_then(|s| Uuid::parse_str(s).ok()))
+        .filter_map(|r| {
+            r.scope_entity_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok())
+        })
         .collect();
     let issue_scope_ids: Vec<String> = runs
         .iter()
@@ -2281,11 +2283,19 @@ pub async fn batch_status(
             agg.applied += 1;
         }
         let (series_slug, issue_slug, library_id) = match r.scope.as_str() {
-            "series" => match r.scope_entity_id.as_ref().and_then(|id| series_meta.get(id)) {
+            "series" => match r
+                .scope_entity_id
+                .as_ref()
+                .and_then(|id| series_meta.get(id))
+            {
                 Some((slug, lib)) => (Some(slug.clone()), None, Some(lib.clone())),
                 None => (None, None, None),
             },
-            "issue" => match r.scope_entity_id.as_ref().and_then(|id| issue_slugs.get(id)) {
+            "issue" => match r
+                .scope_entity_id
+                .as_ref()
+                .and_then(|id| issue_slugs.get(id))
+            {
                 Some((islug, sid)) => match series_meta.get(sid) {
                     Some((slug, lib)) => {
                         (Some(slug.clone()), Some(islug.clone()), Some(lib.clone()))
@@ -2437,7 +2447,10 @@ pub async fn batch_apply(
 ) -> Response {
     use apalis::prelude::Storage;
 
-    let batch = match metadata_batch::Entity::find_by_id(batch_id).one(&app.db).await {
+    let batch = match metadata_batch::Entity::find_by_id(batch_id)
+        .one(&app.db)
+        .await
+    {
         Ok(Some(b)) => b,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "batch not found"),
         Err(e) => {
@@ -2468,8 +2481,10 @@ pub async fn batch_apply(
     let run_ids: Vec<Uuid> = runs.keys().copied().collect();
 
     // All candidates for these runs (ordinal, bucket, applied) per run.
-    let mut cands_by_run: std::collections::HashMap<Uuid, Vec<entity::metadata_run_candidate::Model>> =
-        std::collections::HashMap::new();
+    let mut cands_by_run: std::collections::HashMap<
+        Uuid,
+        Vec<entity::metadata_run_candidate::Model>,
+    > = std::collections::HashMap::new();
     if !run_ids.is_empty() {
         let cands = entity::metadata_run_candidate::Entity::find()
             .filter(entity::metadata_run_candidate::Column::RunId.is_in(run_ids.clone()))
@@ -2543,8 +2558,10 @@ pub async fn batch_apply(
     let remainder = targets.len().saturating_sub(cap);
     targets.truncate(cap);
 
-    let selected: Option<std::collections::HashSet<String>> =
-        req.selected_fields.clone().map(std::collections::HashSet::from_iter);
+    let selected: Option<std::collections::HashSet<String>> = req
+        .selected_fields
+        .clone()
+        .map(std::collections::HashSet::from_iter);
     let mut enqueued = 0usize;
     for (run_id, ordinal) in targets {
         let Some(run) = runs.get(&run_id) else {
