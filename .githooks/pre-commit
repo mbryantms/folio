@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# Block commits that aren't `cargo fmt`-clean. CI's "Rust — fmt / clippy /
+# test" job runs `cargo fmt --all -- --check` as its first step, so unformatted
+# Rust that compiles fine locally still fails the PR. This catches it at commit
+# time. `cargo fmt --check` does no compilation, so the hook is near-instant.
+#
+# Installed by `just bootstrap` (sets core.hooksPath to .githooks). Bypass a
+# single commit with `git commit --no-verify` if you really must.
+set -euo pipefail
+
+# stderr carries only the harmless "can't set <nightly option>" warnings on
+# stable rustfmt; the actual "Diff in <file>" report goes to stdout.
+unformatted="$(cargo fmt --all -- --check 2>/dev/null || true)"
+if [ -n "$unformatted" ]; then
+    echo "✗ Commit blocked — Rust is not cargo-fmt clean (CI's fmt job would fail):" >&2
+    echo "$unformatted" | grep '^Diff in' >&2 || true
+    echo "" >&2
+    echo "  Fix:  cargo fmt --all   (then re-stage and commit)" >&2
+    exit 1
+fi
