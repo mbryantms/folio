@@ -1267,8 +1267,14 @@ async fn update_selection_null_clears_detected_text() {
         "region": { "x": 10, "y": 20, "w": 30, "h": 15, "shape": "rect" },
         "selection": { "text": "detected words", "ocr_confidence": 0.9 },
     });
-    let (status, marker) =
-        http(&app, Method::POST, "/api/me/markers", Some(&auth), Some(create)).await;
+    let (status, marker) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&auth),
+        Some(create),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "marker: {marker:#?}");
     assert_eq!(marker["selection"]["text"], "detected words");
     let id = marker["id"].as_str().unwrap().to_owned();
