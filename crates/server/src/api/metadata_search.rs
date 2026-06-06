@@ -1786,10 +1786,30 @@ async fn set_batch_items_total(db: &sea_orm::DatabaseConnection, batch_id: Uuid,
 /// over every active issue in the series, grouped under one `metadata_batch`
 /// so progress + review happen in one place. Children run as `manual` (held
 /// for review, never auto-applied).
+/// Which issues a series metadata batch fans out over.
+#[derive(Copy, Clone, Debug, Default, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SeriesBatchScope {
+    /// Every active issue (the default — bare POST stays this).
+    #[default]
+    All,
+    /// Only issues whose metadata completeness tier is not `complete`
+    /// (i.e. `partial` or `needs_metadata`) — "missing or partial".
+    Incomplete,
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+pub struct SeriesBatchQuery {
+    /// `all` (default) or `incomplete` (only partial / needs-metadata issues).
+    #[serde(default)]
+    #[param(inline)]
+    pub scope: SeriesBatchScope,
+}
+
 #[utoipa::path(
     operation_id = "metadata_create_series_batch",    post,
     path = "/series/{slug}/metadata/batch",
-    params(("slug" = String, Path)),
+    params(("slug" = String, Path), SeriesBatchQuery),
     responses(
         (status = 202, body = BatchCreatedResp),
         (status = 403, description = "library access denied"),
@@ -1801,6 +1821,7 @@ pub async fn create_series_batch(
     State(app): State<AppState>,
     user: CurrentUser,
     Path(slug): Path<String>,
+    Query(q): Query<SeriesBatchQuery>,
 ) -> Response {
     let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
         Ok(s) => s,
@@ -1814,20 +1835,34 @@ pub async fn create_series_batch(
         );
     }
 
-    // Active issues, capped like the library refresh fan-out.
-    let issue_ids: Vec<String> = match issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(s.id))
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
-        .order_by_asc(issue::Column::SortNumber)
-        .limit(refresh::REFRESH_BATCH_CAP as u64)
-        .all(&app.db)
-        .await
-    {
-        Ok(rows) => rows.into_iter().map(|r| r.id).collect(),
-        Err(e) => {
-            tracing::error!(error = %e, "create_series_batch: issue query failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    // Target issues, capped like the library refresh fan-out. `incomplete`
+    // scores each active issue and keeps only the non-complete ones; the
+    // scorer is shared with the series Collection grid so the two can't drift.
+    let issue_ids: Vec<String> = match q.scope {
+        SeriesBatchScope::All => match issue::Entity::find()
+            .filter(issue::Column::SeriesId.eq(s.id))
+            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::RemovedAt.is_null())
+            .order_by_asc(issue::Column::SortNumber)
+            .limit(refresh::REFRESH_BATCH_CAP as u64)
+            .all(&app.db)
+            .await
+        {
+            Ok(rows) => rows.into_iter().map(|r| r.id).collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "create_series_batch: issue query failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        },
+        SeriesBatchScope::Incomplete => {
+            use crate::metadata::completeness::CompletenessTier;
+            crate::api::series::assess_series_issue_tiers(&app, s.id)
+                .await
+                .into_iter()
+                .filter(|(_, tier)| !matches!(tier, CompletenessTier::Complete))
+                .map(|(id, _)| id)
+                .take(refresh::REFRESH_BATCH_CAP)
+                .collect()
         }
     };
 

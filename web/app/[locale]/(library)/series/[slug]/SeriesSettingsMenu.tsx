@@ -92,19 +92,32 @@ export function SeriesSettingsMenu({
   const generatePageMap = useGenerateSeriesPageMap(seriesSlug, libraryId);
   const createBatch = useCreateSeriesBatch(seriesSlug);
 
-  const fetchAllMetadata = () => {
-    createBatch.mutate(undefined, {
-      onSuccess: (resp) => {
-        if (!resp) return;
-        toast.success(`Searching ${resp.items_total} issues for metadata`, {
-          action: {
-            label: "Review",
-            onClick: () =>
-              router.push(`/admin/metadata?tab=review&batch=${resp.batch_id}`),
-          },
-        });
+  const fetchAllMetadata = (scope: "all" | "incomplete" = "all") => {
+    createBatch.mutate(
+      { scope },
+      {
+        onSuccess: (resp) => {
+          if (!resp) return;
+          if (resp.items_total === 0) {
+            toast.info(
+              scope === "incomplete"
+                ? "Every issue already has complete metadata"
+                : "No issues to search",
+            );
+            return;
+          }
+          toast.success(`Searching ${resp.items_total} issues for metadata`, {
+            action: {
+              label: "Review",
+              onClick: () =>
+                router.push(
+                  `/admin/metadata?tab=review&batch=${resp.batch_id}`,
+                ),
+            },
+          });
+        },
       },
-    });
+    );
   };
 
   // Want to Read is the per-user auto-seeded collection (system_key='want_to_read').
@@ -240,17 +253,36 @@ export function SeriesSettingsMenu({
               <Folder className="mr-2 h-4 w-4" />
               Add to collection…
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
-              <Sparkles className="mr-2 h-4 w-4" />
-              Fetch metadata…
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={fetchAllMetadata}
-              disabled={createBatch.isPending}
-            >
-              <Sparkles className="mr-2 h-4 w-4" />
-              Fetch all issues&rsquo; metadata
-            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Sparkles className="mr-2 h-4 w-4" />
+                Fetch metadata
+              </DropdownMenuSubTrigger>
+              <DropdownMenuPortal>
+                <DropdownMenuSubContent>
+                  <DropdownMenuItem
+                    onSelect={() => setMetadataDialogOpen(true)}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    Match this series…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => fetchAllMetadata("all")}
+                    disabled={createBatch.isPending}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    All issues
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => fetchAllMetadata("incomplete")}
+                    disabled={createBatch.isPending}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    Only missing or partial
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuPortal>
+            </DropdownMenuSub>
           </DropdownMenuGroup>
 
           {isAdmin && (

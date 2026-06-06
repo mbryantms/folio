@@ -2381,10 +2381,18 @@ struct IssueCompletenessRow {
 
 /// Score every active issue in a series for metadata completeness, ordered by
 /// `sort_number`. Two queries total (issue rows + a batched provider-id
-/// lookup), then a pure per-issue scoring loop — no N+1.
-async fn collect_issue_completeness(app: &AppState, series_id: Uuid) -> Vec<CollectionIssueEntry> {
+/// lookup), then a pure per-issue scoring loop — no N+1. Returns each issue
+/// row paired with its report so callers can project whatever they need
+/// (the Collection grid, the bulk-fetch tier filter) off one source of truth.
+async fn score_series_issues(
+    app: &AppState,
+    series_id: Uuid,
+) -> Vec<(
+    IssueCompletenessRow,
+    crate::metadata::completeness::CompletenessReport,
+)> {
     use crate::metadata::completeness::{
-        CompletenessTier, IssueCompletenessInput, assess_issue, non_empty, plausible_year,
+        IssueCompletenessInput, assess_issue, non_empty, plausible_year,
     };
     let rows = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
@@ -2458,6 +2466,17 @@ async fn collect_issue_completeness(app: &AppState, series_id: Uuid) -> Vec<Coll
                 has_cover: r.state == "active",
                 ..Default::default()
             });
+            (r, report)
+        })
+        .collect()
+}
+
+async fn collect_issue_completeness(app: &AppState, series_id: Uuid) -> Vec<CollectionIssueEntry> {
+    use crate::metadata::completeness::CompletenessTier;
+    score_series_issues(app, series_id)
+        .await
+        .into_iter()
+        .map(|(r, report)| {
             let tier = match report.tier {
                 CompletenessTier::Complete => "complete",
                 CompletenessTier::NeedsMetadata => "needs_metadata",
@@ -2473,6 +2492,21 @@ async fn collect_issue_completeness(app: &AppState, series_id: Uuid) -> Vec<Coll
                 missing_core: report.missing_core,
             }
         })
+        .collect()
+}
+
+/// Per-issue completeness tiers for a series — `(issue id, tier)` in
+/// `sort_number` order. Backs the bulk-fetch "only missing or partial" scope;
+/// shares [`score_series_issues`] with the Collection grid so the two can't
+/// drift.
+pub(crate) async fn assess_series_issue_tiers(
+    app: &AppState,
+    series_id: Uuid,
+) -> Vec<(String, crate::metadata::completeness::CompletenessTier)> {
+    score_series_issues(app, series_id)
+        .await
+        .into_iter()
+        .map(|(r, report)| (r.id, report.tier))
         .collect()
 }
 
