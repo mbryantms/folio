@@ -27,6 +27,7 @@ import {
 import { Description } from "@/components/library/Description";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
 import { CoverGallery } from "@/components/library/CoverGallery";
+import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
 import {
   StableTabsPanel,
@@ -1057,9 +1058,8 @@ function hasAnyCredit(issue: IssueDetailView): boolean {
 }
 
 /**
- * "More in series" carousel — the previous issue is a labeled convenience
- * slot, separated from the up-next sequence so it does not read as the first
- * upcoming issue. All issue cards use the same width.
+ * "More in series" rail — the previous issue is a labeled convenience slot,
+ * then the up-next sequence continues on the same horizontal scroller.
  */
 function NextInSeries({
   prev,
@@ -1076,14 +1076,9 @@ function NextInSeries({
   return (
     <section className="space-y-3">
       <h2 className="text-base font-semibold tracking-tight">More in series</h2>
-      <div
-        className={cn(
-          "grid gap-4",
-          prev && "md:grid-cols-[10rem_minmax(0,1fr)]",
-        )}
-      >
+      <HorizontalScrollRail className="-mx-1">
         {prev && (
-          <div className="w-36 space-y-2 sm:w-40">
+          <div className="w-36 shrink-0 space-y-2 sm:w-40">
             <p className="text-muted-foreground flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase">
               <ArrowLeft aria-hidden="true" className="size-3" />
               Previous issue
@@ -1091,39 +1086,43 @@ function NextInSeries({
             <MoreInSeriesIssueCard issue={prev} />
           </div>
         )}
-        <div
-          className={cn(
-            "min-w-0 space-y-2",
-            prev &&
-              "border-border/70 border-t pt-4 md:border-t-0 md:border-l md:pt-0 md:pl-4",
-          )}
-        >
-          {items.length > 0 && (
-            <p className="text-foreground flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase">
+
+        {items.map((it, index) => (
+          <div key={it.id} className="w-36 shrink-0 space-y-2 sm:w-40">
+            <p
+              aria-hidden={index === 0 ? undefined : "true"}
+              className={cn(
+                "text-foreground flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase",
+                index > 0 && "invisible",
+              )}
+            >
               <ArrowRight aria-hidden="true" className="size-3" />
               Up next
             </p>
-          )}
-          <ul className="flex flex-wrap gap-4">
-            {items.map((it) => (
-              <li key={it.id} className="w-36 sm:w-40">
-                <MoreInSeriesIssueCard issue={it} />
-              </li>
-            ))}
-            <li className="flex w-36 items-center sm:w-40">
-              <Button asChild variant="outline" size="sm" className="shrink-0">
-                <Link
-                  href={seriesUrl(series)}
-                  aria-label="View all issues in series"
-                >
-                  <span>View all</span>
-                  <ArrowRight aria-hidden="true" />
-                </Link>
-              </Button>
-            </li>
-          </ul>
+            <MoreInSeriesIssueCard issue={it} />
+          </div>
+        ))}
+
+        <div className="w-36 shrink-0 space-y-2 sm:w-40">
+          <p
+            aria-hidden="true"
+            className="invisible flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase"
+          >
+            View all
+          </p>
+          <div className="flex aspect-[2/3] items-center justify-center">
+            <Button asChild variant="outline" size="sm" className="shrink-0">
+              <Link
+                href={seriesUrl(series)}
+                aria-label="View all issues in series"
+              >
+                <span>View all</span>
+                <ArrowRight aria-hidden="true" />
+              </Link>
+            </Button>
+          </div>
         </div>
-      </div>
+      </HorizontalScrollRail>
     </section>
   );
 }

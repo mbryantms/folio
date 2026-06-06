@@ -15,12 +15,17 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+### Fixed
+
+- Issue page: the "More in series" strip now stays on one horizontal rail on
+  mobile instead of wrapping the previous and up-next cards.
+
 ## [0.9.2] - 2026-06-06
 
 ### Added
 
 - **Bulk "Fill missing" / "Replace all" in the Review queue.** The metadata
-  batch Review tab's *Needs review* section gains one-click bulk actions that
+  batch Review tab's _Needs review_ section gains one-click bulk actions that
   auto-apply the most-complete metadata merged across every provider that
   matched (covers prefer ComicVine), with an All / Selected scope — clearing
   the review queue without opening each item one at a time. Your pinned fields
