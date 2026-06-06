@@ -247,9 +247,9 @@ pub struct CreateMarkerReq {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateMarkerReq {
     /// Sending `null` clears the field; omitting leaves it unchanged.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "double_option")]
     pub body: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "double_option")]
     pub color: Option<Option<String>>,
     /// Toggle star flag. Omit to leave unchanged.
     #[serde(default)]
@@ -257,10 +257,24 @@ pub struct UpdateMarkerReq {
     /// Replace tag list. Send `[]` to clear, omit to leave unchanged.
     #[serde(default)]
     pub tags: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "double_option")]
     pub region: Option<Option<serde_json::Value>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "double_option")]
     pub selection: Option<Option<serde_json::Value>>,
+}
+
+/// Deserialize an `Option<Option<T>>` so a **present** JSON `null` becomes
+/// `Some(None)` (clear) rather than the outer `None`. Plain serde maps a
+/// present `null` to the outer `None`, making it indistinguishable from an
+/// absent field — so `#[serde(default)]` alone can't honour the
+/// "`null` clears, omit leaves unchanged" contract these fields document.
+/// `#[serde(default)]` still supplies the outer `None` when the key is absent.
+fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Deserialize::deserialize(de).map(Some)
 }
 
 /// `kind` filter values for `GET /me/markers` — typed enum so a

@@ -6976,6 +6976,45 @@
         }
       }
     },
+    "/api/series/{series_slug}/issues/{issue_slug}/prev": {
+      "get": {
+        "summary": "Returns the single issue immediately *before* the current one in the same\nseries — the mirror of [`next_in_series`], using the same ordering\n(`sort_number` ASC NULLS LAST, `id` tie-breaker) reversed so the immediate\npredecessor is selected. Removed / soft-deleted issues are filtered out.\n`item` is `null` when the current issue is the first in the series.",
+        "operationId": "issues_prev_in_series",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrevInSeriesView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
     "/api/series/{series_slug}/issues/{issue_slug}/rating": {
       "put": {
         "operationId": "ratings_set_issue_rating",
@@ -16366,6 +16405,22 @@
               "null"
             ],
             "description": "M6a: IANA timezone string. Server validates it's parseable; an unknown\nzone is rejected so the heatmap can't silently fall back to UTC."
+          }
+        }
+      },
+      "PrevInSeriesView": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IssueSummaryView",
+                "description": "The issue immediately preceding the current one in `sort_number`\norder, or `null` when the current issue is the first in the series."
+              }
+            ]
           }
         }
       },

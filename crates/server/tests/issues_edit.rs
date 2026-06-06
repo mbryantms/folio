@@ -582,6 +582,62 @@ async fn next_in_series_returns_upcoming_in_order() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prev_in_series_returns_immediate_predecessor() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let (_lib, _sid, series_slug, _ids) = seed(
+        &app,
+        "prev",
+        &[
+            IssueSeed {
+                slug: "issue-1",
+                sort_number: Some(1.0),
+                number_raw: Some("1"),
+            },
+            IssueSeed {
+                slug: "issue-2",
+                sort_number: Some(2.0),
+                number_raw: Some("2"),
+            },
+            IssueSeed {
+                slug: "issue-3",
+                sort_number: Some(3.0),
+                number_raw: Some("3"),
+            },
+        ],
+    )
+    .await;
+
+    // From issue-3, the immediate predecessor is issue-2.
+    let (status, json) = get(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-3/prev"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {json}");
+    assert_eq!(json["item"]["slug"], "issue-2");
+
+    // From issue-2, predecessor is issue-1.
+    let (_, json) = get(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-2/prev"),
+    )
+    .await;
+    assert_eq!(json["item"]["slug"], "issue-1");
+
+    // From the first issue, there is no predecessor — `item` is null.
+    let (_, json) = get(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1/prev"),
+    )
+    .await;
+    assert!(json["item"].is_null(), "body: {json}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn patch_external_ids_persist_and_round_trip() {
     let app = TestApp::spawn().await;
     let auth = register_admin(&app).await;

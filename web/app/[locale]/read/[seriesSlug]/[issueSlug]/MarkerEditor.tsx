@@ -22,6 +22,7 @@ import {
   useDeleteMarker,
   useUpdateMarker,
 } from "@/lib/api/mutations";
+import type { MarkerSelection } from "@/lib/api/types";
 import { useReaderStore } from "@/lib/reader/store";
 import { cn } from "@/lib/utils";
 
@@ -142,13 +143,18 @@ export function MarkerEditor({
     // If OCR ran inside this editor (not at drag time) the detected
     // text is in local state. Merge it into the saved selection so a
     // user-triggered "Detect text" persists alongside whatever the
-    // overlay's drag-time pass produced.
-    const mergedSelection = detectedText
-      ? {
-          ...(pendingMarker.selection ?? {}),
-          text: detectedText,
-        }
-      : (pendingMarker.selection ?? null);
+    // overlay's drag-time pass produced. An empty string is the explicit
+    // "cleared" sentinel — drop the text (and confidence) from the saved
+    // selection rather than fall back to the drag-time pass.
+    const mergedSelection =
+      detectedText === ""
+        ? selectionWithoutText(pendingMarker.selection)
+        : detectedText
+          ? {
+              ...(pendingMarker.selection ?? {}),
+              text: detectedText,
+            }
+          : (pendingMarker.selection ?? null);
 
     // Stamp the page's natural pixel size onto the region so the saved-markers
     // grid renders the crop at its true aspect (no decode, no reflow). Only
@@ -276,6 +282,20 @@ export function MarkerEditor({
     }
   }
 
+  /** Drop the OCR'd text from the marker. `""` is the local "cleared"
+   *  sentinel that hides the preview and (for new markers) keeps the text
+   *  out of the saved selection. For an existing marker it patches the row
+   *  immediately, preserving any non-text selection fields. */
+  function handleClearText() {
+    setDetectedText("");
+    if (editingMarkerId) {
+      update.mutate(
+        { selection: selectionWithoutText(pendingMarker?.selection) },
+        { onSuccess: () => toast.success("Detected text cleared") },
+      );
+    }
+  }
+
   if (!pendingMarker) return null;
 
   const title =
@@ -320,9 +340,20 @@ export function MarkerEditor({
         <div className="flex flex-1 flex-col gap-4 px-4 py-4">
           {selectionPreview ? (
             <div className="space-y-1">
-              <Label className="text-muted-foreground text-xs">
-                Detected text
-              </Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-muted-foreground text-xs">
+                  Detected text
+                </Label>
+                <button
+                  type="button"
+                  onClick={handleClearText}
+                  disabled={ocrPending || update.isPending}
+                  className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs disabled:opacity-50"
+                >
+                  <X className="h-3 w-3" />
+                  Clear
+                </button>
+              </div>
               <div className="border-border/60 bg-muted/30 max-h-32 overflow-y-auto rounded-md border p-2 text-sm whitespace-pre-wrap">
                 {selectionPreview}
               </div>
@@ -480,4 +511,16 @@ export function MarkerEditor({
       </SheetContent>
     </Sheet>
   );
+}
+
+/** Returns the selection with the OCR text (and its confidence) removed,
+ *  preserving any other fields (e.g. `image_hash`). Collapses to `null` when
+ *  nothing else remains so the row's whole selection is cleared. */
+function selectionWithoutText(
+  selection: MarkerSelection | null | undefined,
+): MarkerSelection | null {
+  if (!selection) return null;
+  const kept: MarkerSelection = {};
+  if (selection.image_hash != null) kept.image_hash = selection.image_hash;
+  return Object.keys(kept).length > 0 ? kept : null;
 }

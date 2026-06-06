@@ -74,6 +74,7 @@ export type BackupStorageView = Schemas["BackupStorageView"];
 export type PageCountResponse = Schemas["PageCountResponse"];
 export type UploadView = Schemas["UploadView"];
 export type NextInSeriesView = Schemas["NextInSeriesView"];
+export type PrevInSeriesView = Schemas["PrevInSeriesView"];
 export type SetRatingReq = Schemas["SetRatingReq"];
 export type RatingView = Schemas["RatingView"];
 export type MeView = Schemas["MeResp"]; // renamed in codegen as MeResp

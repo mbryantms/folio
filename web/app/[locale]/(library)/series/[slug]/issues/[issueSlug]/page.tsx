@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   ArrowRight,
   Building2,
   Calendar,
@@ -16,6 +17,7 @@ import { issueUrl, readerUrl, seriesUrl } from "@/lib/urls";
 import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
+import { DetailSection } from "@/components/library/DetailSection";
 import { Description } from "@/components/library/Description";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
 import { CoverGallery } from "@/components/library/CoverGallery";
@@ -33,6 +35,7 @@ import type {
   IssueDetailView,
   IssueSummaryView,
   NextInSeriesView,
+  PrevInSeriesView,
   ReadingStatsView,
   SeriesView,
 } from "@/lib/api/types";
@@ -122,6 +125,19 @@ export default async function IssuePage({
     nextIssues = next.items;
   } catch {
     /* hide section on failure */
+  }
+
+  // The single issue immediately before this one (filmstrip context to the
+  // left of the next-up rail). Best-effort — null when this is the first
+  // issue, or on transient failure.
+  let prevIssue: IssueSummaryView | null = null;
+  try {
+    const prev = await apiGet<PrevInSeriesView>(
+      `/series/${seriesSlug}/issues/${issueSlug}/prev`,
+    );
+    prevIssue = prev.item ?? null;
+  } catch {
+    /* leave null */
   }
   const readState: ReadState = readStateFor(issue, issueProgress);
   const readLabel = readButtonLabel(readState);
@@ -340,16 +356,15 @@ export default async function IssuePage({
         <Stat label="Status" value={seriesStatus} />
       </section>
 
-      {nextIssues.length > 0 && series && (
-        <NextInSeries items={nextIssues} series={series} />
+      {(prevIssue || nextIssues.length > 0) && series && (
+        <NextInSeries prev={prevIssue} items={nextIssues} series={series} />
       )}
 
-      <Tabs defaultValue="details">
+      <Tabs defaultValue="credits">
         <TabsList>
-          <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="credits">Credits</TabsTrigger>
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
-          <TabsTrigger value="genres">Genres &amp; Tags</TabsTrigger>
+          <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="covers">Covers</TabsTrigger>
           <TabsTrigger value="metadata">Metadata</TabsTrigger>
           <TabsTrigger value="notes">Notes</TabsTrigger>
@@ -358,7 +373,7 @@ export default async function IssuePage({
 
         {/* Static-metadata tabs are `forceMount`-ed and stacked in a single
          * grid cell. The cell sizes to the tallest tab so switching between
-         * Details (long) and Genres (short) no longer shrinks the document
+         * Details (long) and Credits (short) no longer shrinks the document
          * height — preventing the page-jump that happens when the browser
          * clamps `scrollTop` to a smaller scroll range. Activity is left
          * out of the stack on purpose: it triggers `useReadingStats` /
@@ -367,83 +382,116 @@ export default async function IssuePage({
           <TabsContent
             forceMount
             value="details"
-            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
+            className="col-start-1 row-start-1 space-y-8 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
-            <MetadataGrid
-              items={[
-                { label: "Series", value: series?.name },
-                {
-                  label: "Issue number",
-                  value: issue.number ?? null,
-                },
-                {
-                  label: "Sort order",
-                  value:
-                    issue.sort_number != null
-                      ? issue.sort_number.toString()
-                      : null,
-                },
-                {
-                  label: "Volume",
-                  value: issue.volume ?? series?.volume ?? null,
-                },
-                { label: "Publication date", value: publicationDate },
-                {
-                  label: "Publication status",
-                  value: seriesStatus,
-                },
-                {
-                  label: "Language",
-                  value: issue.language_code?.toUpperCase(),
-                },
-                { label: "Age rating", value: issue.age_rating },
-                { label: "Format", value: issue.format },
-                {
-                  label: "Black & white",
-                  value:
-                    issue.black_and_white == null
-                      ? null
-                      : issue.black_and_white
-                        ? "Yes"
-                        : "No",
-                },
-                { label: "Manga", value: issue.manga },
-                { label: "Publisher", value: issue.publisher },
-                { label: "Imprint", value: issue.imprint },
-                { label: "Story arc", value: issue.story_arc },
-                { label: "Story arc number", value: issue.story_arc_number },
-                { label: "GTIN", value: issue.gtin },
-                // ComicVine ID + Metron ID intentionally absent — they
-                // live in the "External IDs" tab alongside every other
-                // provider identifier. Surfacing them twice was confusing
-                // (the Details grid showed two while the panel below
-                // showed N including those two).
-                { label: "Pages", value: formatPageCount(issue.page_count) },
-                {
-                  label: "Reading time",
-                  value: readingTime ? `≈ ${readingTime}` : null,
-                },
-                { label: "Added", value: formatRelativeDate(issue.created_at) },
-                {
-                  label: "Updated",
-                  value: formatRelativeDate(issue.updated_at),
-                },
-                {
-                  label: "File",
-                  value: (
-                    <span className="font-mono text-xs break-all">
-                      {issue.file_path}
-                    </span>
-                  ),
-                  wide: true,
-                },
-                { label: "File size", value: formatFileSize(issue.file_size) },
-                // External links row removed — provider IDs live in the
-                // External IDs tab and link out from there; the curated
-                // additional_links live in the Edit sheet. A second
-                // copy here was just duplication.
-              ]}
-            />
+            {/* Grouped into scannable categories rather than one flat 20-row
+                grid. Provider IDs (ComicVine / Metron) and external links are
+                intentionally absent — they live in the Metadata tab so they
+                aren't duplicated here. */}
+            <DetailSection title="Publication">
+              <MetadataGrid
+                columns={3}
+                items={[
+                  { label: "Series", value: series?.name },
+                  { label: "Issue number", value: issue.number ?? null },
+                  {
+                    label: "Volume",
+                    value: issue.volume ?? series?.volume ?? null,
+                  },
+                  { label: "Publication date", value: publicationDate },
+                  { label: "Publication status", value: seriesStatus },
+                  { label: "Publisher", value: issue.publisher },
+                  { label: "Imprint", value: issue.imprint },
+                  { label: "Story arc", value: issue.story_arc },
+                  { label: "Story arc number", value: issue.story_arc_number },
+                ]}
+              />
+            </DetailSection>
+
+            <DetailSection title="Format">
+              <MetadataGrid
+                columns={3}
+                items={[
+                  {
+                    label: "Language",
+                    value: issue.language_code?.toUpperCase(),
+                  },
+                  { label: "Age rating", value: issue.age_rating },
+                  { label: "Format", value: issue.format },
+                  {
+                    label: "Black & white",
+                    value:
+                      issue.black_and_white == null
+                        ? null
+                        : issue.black_and_white
+                          ? "Yes"
+                          : "No",
+                  },
+                  { label: "Manga", value: issue.manga },
+                  { label: "Pages", value: formatPageCount(issue.page_count) },
+                  {
+                    label: "Reading time",
+                    value: readingTime ? `≈ ${readingTime}` : null,
+                  },
+                  { label: "GTIN", value: issue.gtin },
+                ]}
+              />
+            </DetailSection>
+
+            <DetailSection title="Genres & Tags">
+              <div className="divide-border/60 divide-y">
+                <ChipList
+                  orientation="horizontal"
+                  className="py-3 first:pt-0 last:pb-0"
+                  label="Genres"
+                  items={splitCsv(issue.genre)}
+                  filterField="genres"
+                />
+                <ChipList
+                  orientation="horizontal"
+                  className="py-3 first:pt-0 last:pb-0"
+                  label="Tags"
+                  items={splitCsv(issue.tags)}
+                  filterField="tags"
+                />
+              </div>
+              {!issue.genre && !issue.tags && (
+                <p className="text-muted-foreground text-sm">No genres or tags.</p>
+              )}
+            </DetailSection>
+
+            <DetailSection title="Library & file">
+              <MetadataGrid
+                columns={3}
+                items={[
+                  {
+                    label: "Sort order",
+                    value:
+                      issue.sort_number != null
+                        ? issue.sort_number.toString()
+                        : null,
+                  },
+                  { label: "Added", value: formatRelativeDate(issue.created_at) },
+                  {
+                    label: "Updated",
+                    value: formatRelativeDate(issue.updated_at),
+                  },
+                  {
+                    label: "File size",
+                    value: formatFileSize(issue.file_size),
+                  },
+                  {
+                    label: "File",
+                    value: (
+                      <span className="font-mono text-xs break-all">
+                        {issue.file_path}
+                      </span>
+                    ),
+                    wide: true,
+                  },
+                ]}
+              />
+            </DetailSection>
             {/* "Locally edited fields" summary moved into the Edit sheet
                 — fields surface a per-row release control alongside their
                 input, so the user can both see what's pinned and release
@@ -455,38 +503,50 @@ export default async function IssuePage({
             value="credits"
             className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
-            <div className="grid gap-6 sm:grid-cols-2">
+            <div className="divide-border/60 divide-y">
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Writer"
                 items={splitCsv(issue.writer)}
                 filterField="writer"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Penciller"
                 items={splitCsv(issue.penciller)}
                 filterField="penciller"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Inker"
                 items={splitCsv(issue.inker)}
                 filterField="inker"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Colorist"
                 items={splitCsv(issue.colorist)}
                 filterField="colorist"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Letterer"
                 items={splitCsv(issue.letterer)}
                 filterField="letterer"
                 creatorSlugs={issue.creator_slugs}
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Cover artist"
                 items={splitCsv(issue.cover_artist)}
                 filterField="cover_artist"
@@ -505,25 +565,36 @@ export default async function IssuePage({
             value="cast"
             className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
           >
-            <div className="grid gap-6 sm:grid-cols-2">
+            <div className="divide-border/60 divide-y">
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Characters"
                 items={splitCsv(issue.characters)}
                 filterField="characters"
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Teams"
                 items={splitCsv(issue.teams)}
                 filterField="teams"
               />
               <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
                 label="Locations"
                 items={splitCsv(issue.locations)}
                 filterField="locations"
               />
               {/* Story arc has no series-level library filter (it's an
                   issue-level concept), so the chip stays read-only. */}
-              <ChipList label="Story arc" items={splitCsv(issue.story_arc)} />
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Story arc"
+                items={splitCsv(issue.story_arc)}
+              />
             </div>
             {!issue.characters &&
               !issue.teams &&
@@ -533,30 +604,6 @@ export default async function IssuePage({
                   No cast or setting metadata.
                 </p>
               )}
-          </TabsContent>
-
-          <TabsContent
-            forceMount
-            value="genres"
-            className="col-start-1 row-start-1 pt-6 data-[state=inactive]:pointer-events-none data-[state=inactive]:invisible"
-          >
-            <div className="grid gap-6 sm:grid-cols-2">
-              <ChipList
-                label="Genres"
-                items={splitCsv(issue.genre)}
-                filterField="genres"
-              />
-              <ChipList
-                label="Tags"
-                items={splitCsv(issue.tags)}
-                filterField="tags"
-              />
-            </div>
-            {!issue.genre && !issue.tags && (
-              <p className="text-muted-foreground text-sm">
-                No genres or tags.
-              </p>
-            )}
           </TabsContent>
 
           <TabsContent
@@ -751,27 +798,58 @@ function hasAnyCredit(issue: IssueDetailView): boolean {
 }
 
 /**
- * "Next in series" carousel — the next N issues by sort_number, followed by
- * a "view all in series" tile that lives in the same grid slot as a cover
+ * "More in series" carousel — the previous issue (when present) as the
+ * leftmost cover, then the next N issues by sort_number, followed by a
+ * "view all in series" tile that lives in the same grid slot as a cover
  * card. The tile sits flush against the last issue on wide screens so the
  * affordance doesn't drift to the far right edge of the section.
  */
 function NextInSeries({
+  prev,
   items,
   series,
 }: {
+  /** The single issue before the current one, shown as the leftmost cover.
+   *  Null on the first issue of the series — then the rail starts at the
+   *  next issues. */
+  prev: IssueSummaryView | null;
   items: IssueSummaryView[];
   series: SeriesView;
 }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-base font-semibold tracking-tight">Next in series</h2>
+      <h2 className="text-base font-semibold tracking-tight">More in series</h2>
       <ul
         className="grid gap-4"
         style={{
           gridTemplateColumns: "repeat(auto-fill, minmax(7.5rem, 1fr))",
         }}
       >
+        {prev && (
+          <li key={prev.id}>
+            <Link
+              href={issueUrl(prev)}
+              className="group block space-y-1.5 focus-visible:outline-none"
+            >
+              <Cover
+                src={prev.cover_url}
+                alt={prev.title ?? `Issue ${prev.number ?? ""}`}
+                fallback={prev.state === "active" ? "Cover" : prev.state}
+                className="group-focus-visible:ring-ring transition-transform duration-200 group-hover:scale-[1.02] group-focus-visible:ring-2"
+              />
+              <div className="min-w-0">
+                <p className="text-muted-foreground flex items-center gap-1 text-[11px] font-medium tracking-wide uppercase">
+                  <ArrowLeft aria-hidden="true" className="size-3" />
+                  Previous
+                </p>
+                <p className="text-foreground truncate text-xs font-medium">
+                  {prev.number ? `#${prev.number}` : "—"}
+                  {prev.title ? ` · ${prev.title}` : ""}
+                </p>
+              </div>
+            </Link>
+          </li>
+        )}
         {items.map((it) => (
           <li key={it.id}>
             <Link

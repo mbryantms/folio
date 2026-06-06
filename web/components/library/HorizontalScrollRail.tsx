@@ -31,7 +31,7 @@ const LEFT_FADE_PX = 36;
  *
  * For rails that have more items than the preview window can show, set
  * `viewAllHref` so the rail ends with an outline "View all" tile that
- * matches the affordance used by the issue page's "Next in series"
+ * matches the affordance used by the issue page's "More in series"
  * carousel. Pass `itemWidthPx` (the per-card pixel width set by the
  * density slider) so the tile aligns visually with its siblings.
  */
