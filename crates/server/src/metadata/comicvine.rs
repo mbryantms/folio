@@ -5,7 +5,8 @@
 //!
 //! Endpoints we use:
 //! - `GET /search?resources=volume,issue,publisher&query=...` — keyword search.
-//! - `GET /volumes?filter=name:...,start_year:...` — narrowed series search.
+//! - `GET /volumes?filter=name:...` — series search (name only; year filtering
+//!   is the tolerant `pre_filter_series` gate's job, not a hard provider filter).
 //! - `GET /volume/4050-{id}` — series detail.
 //! - `GET /issues?filter=volume:{id},issue_number:...` — narrowed issue search.
 //! - `GET /issue/4000-{id}` — issue detail.
@@ -31,6 +32,7 @@
 
 use crate::metadata::cache;
 use crate::metadata::identifier::{Identifier, Source};
+use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::provider::{
     CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate, IssueQuery,
     MetadataProvider, ProviderError, ProviderResult, QuotaSnapshot, SeriesCandidate, SeriesQuery,
@@ -835,10 +837,14 @@ impl MetadataProvider for ComicVineClient {
 
     async fn search_series(&self, query: &SeriesQuery) -> ProviderResult<Vec<SeriesCandidate>> {
         let limit = query.limit.clamp(1, 100).to_string();
-        let mut filters = vec![format!("name:{}", query.name.replace(',', " "))];
-        if let Some(year) = query.year {
-            filters.push(format!("start_year:{year}"));
-        }
+        // Search by name only — `query.year` is NOT used as a hard
+        // `start_year:` filter. The local series year is often wrong or off by
+        // a year (re-collections, mislabeled folders), and an exact provider
+        // filter would exclude the correct volume outright (e.g. a Spawn row
+        // mislabeled 2016 would miss the real 1992 volume). Year filtering is
+        // the tolerant `orchestrator::pre_filter_series` gate's job (±1), which
+        // runs on the returned candidates.
+        let filters = vec![format!("name:{}", query.name.replace(',', " "))];
         let envelope: CvEnvelope<Vec<CvVolume>> = self
             .request(
                 "/volumes",
@@ -855,7 +861,11 @@ impl MetadataProvider for ComicVineClient {
 
     async fn search_issue(&self, query: &IssueQuery) -> ProviderResult<Vec<IssueCandidate>> {
         let limit = query.limit.clamp(1, 100).to_string();
-        let mut filters = vec![format!("issue_number:{}", query.issue_number)];
+        // CV stores un-padded issue numbers ("14"), so a zero-padded scan
+        // value ("014") must be canonicalized or both the `/issues` filter and
+        // the `/search` client-side match below would miss it.
+        let qnum = canonical_issue_number(&query.issue_number);
+        let mut filters = vec![format!("issue_number:{qnum}")];
         if let Some(vol) = query.series_external_id.as_deref() {
             filters.push(format!("volume:{vol}"));
         } else if let Some(name) = query.series_name.as_deref() {
@@ -878,11 +888,12 @@ impl MetadataProvider for ComicVineClient {
                 .map(|r| r.issue.unwrap_or_default())
                 .unwrap_or_default();
             // Filter to matching issue_number client-side since
-            // /search doesn't honour the filter param.
+            // /search doesn't honour the filter param. Compare canonical
+            // forms so "014" (scan) matches CV's "14".
             out.retain(|i| {
                 i.issue_number
                     .as_deref()
-                    .map(|n| n == query.issue_number)
+                    .map(|n| canonical_issue_number(n) == qnum)
                     .unwrap_or(false)
             });
             return Ok(out.iter().filter_map(cv_issue_to_candidate).collect());

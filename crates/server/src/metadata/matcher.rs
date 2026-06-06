@@ -452,6 +452,22 @@ pub fn publisher_similarity(a: Option<&str>, b: Option<&str>) -> f32 {
 
 /// Issue-number match: 1.0 for parsed-equal numeric values ("1" == "1.0"
 /// == "01"), 0.5 when only one side is present, 0.0 for a hard mismatch.
+/// Canonicalize an issue number for provider queries + cross-provider
+/// comparison. Scanners emit zero-padded numbers ("014"), but providers store
+/// the un-padded form ("14"), so filtering/comparing the raw scan value as a
+/// string misses. Strips leading-zero padding and a trailing `.0`
+/// ("014" → "14", "1.0" → "1") while leaving fractional ("1.5") and
+/// non-numeric ("Annual 1", "½", "14AU") values as the trimmed input.
+pub(crate) fn canonical_issue_number(raw: &str) -> String {
+    let t = raw.trim();
+    match t.parse::<f64>() {
+        Ok(n) if n.is_finite() && n.fract() == 0.0 => format!("{}", n as i64),
+        // `{}` on f64 drops trailing zeros ("1.50" → 1.5 → "1.5").
+        Ok(n) if n.is_finite() => format!("{n}"),
+        _ => t.to_string(),
+    }
+}
+
 pub fn issue_number_similarity(query: &str, candidate: Option<&str>) -> f32 {
     let Some(candidate) = candidate else {
         return 0.5;
@@ -612,6 +628,21 @@ mod tests {
         assert_eq!(issue_number_similarity("½", Some("½")), 1.0);
         // Missing candidate side falls to partial.
         assert_eq!(issue_number_similarity("1", None), 0.5);
+    }
+
+    #[test]
+    fn canonical_issue_number_strips_padding() {
+        // The Spawn #14 case: "014" must canonicalize to "14" so the provider
+        // query/compare matches the un-padded value providers store.
+        assert_eq!(canonical_issue_number("014"), "14");
+        assert_eq!(canonical_issue_number(" 14 "), "14");
+        assert_eq!(canonical_issue_number("0"), "0");
+        assert_eq!(canonical_issue_number("1.0"), "1");
+        assert_eq!(canonical_issue_number("1.50"), "1.5");
+        // Non-numeric variants pass through unchanged (trimmed).
+        assert_eq!(canonical_issue_number("Annual 1"), "Annual 1");
+        assert_eq!(canonical_issue_number("14AU"), "14AU");
+        assert_eq!(canonical_issue_number("½"), "½");
     }
 
     #[test]
