@@ -15,6 +15,13 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+### Changed
+
+- **Issue and series detail pages are easier to scan.** Details tabs now use
+  card-based summary sections, avoid reserving empty space from large tabs, hide
+  redundant provider web links, and keep empty series genre/tag fields out of
+  the page header.
+
 ## [0.9.1] - 2026-06-06
 
 ### Added
@@ -174,7 +181,7 @@ this file starts at the first release that ships with a curated changelog.
   (+ redis crate 0.27 → 0.32), fast_image_resize 5 → 6, and out-of-range rust
   0.x crates (imageproc 0.26, testcontainers 0.27, metrics-exporter-prometheus
   0.18, tokio-cron-scheduler 0.15). CI runner actions bumped to current majors
-  (checkout v6, setup-node v6, docker/* v7/v6/v4, cosign v4) and the
+  (checkout v6, setup-node v6, docker/\* v7/v6/v4, cosign v4) and the
   `docker/dockerfile` syntax + dev `dex` image tags refreshed.
 
   **Operator note:** an existing dev `.dev-data/postgres` directory is
@@ -231,7 +238,7 @@ this file starts at the first release that ships with a curated changelog.
   navigation after a fresh page load (e.g. tapping a creator pill) could
   hang on the loading skeleton, after which every link went dead until a
   reload. Root cause: the service worker's `clientsClaim` seized a page
-  that had loaded *without* the worker, and on WebKit the first RSC
+  that had loaded _without_ the worker, and on WebKit the first RSC
   navigation through that mid-session-claimed worker never resolved. The
   worker no longer claims already-open pages, disables navigation preload,
   and hands **all** navigation/RSC requests straight to the browser — so it
@@ -345,7 +352,7 @@ this file starts at the first release that ships with a curated changelog.
 ### Changed
 
 - **"Generate page thumbnails" now queues only the issues that actually need
-  them.** It previously enqueued one strip job per *active* issue regardless of
+  them.** It previously enqueued one strip job per _active_ issue regardless of
   whether the page thumbnails already existed — so on a near-complete library it
   flooded the queue with tens of thousands of redundant jobs (the worker skipped
   each one after a disk check, but the queue depth was meaningless and took
@@ -420,7 +427,7 @@ this file starts at the first release that ships with a curated changelog.
 - **Bulk archive editing.** The multi-select toolbar on the series, collection,
   and reading-list views gains an admin-only **Edit archives…** action that
   applies one operation across the whole selection — rotate cover, rotate every
-  page, or remove the first/last N pages. Each op is *relative*, lowered per
+  page, or remove the first/last N pages. Each op is _relative_, lowered per
   issue once its page count is known (so "remove the last page" does the right
   thing on every archive, and removal never empties a file). The server skips
   issues whose library has writeback disabled or whose format isn't editable and

@@ -32,15 +32,17 @@ export function MetadataGrid({
     2: "grid-cols-1 sm:grid-cols-2",
     3: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3",
   }[columns];
+  const wideClass = {
+    1: "",
+    2: "sm:col-span-2",
+    3: "sm:col-span-2 lg:col-span-3",
+  }[columns];
   return (
     <dl className={cn("grid gap-x-6 gap-y-4", colsClass, className)}>
       {visible.map((it) => (
         <div
           key={it.label}
-          className={cn(
-            "flex flex-col gap-1",
-            it.wide && "sm:col-span-2 lg:col-span-3",
-          )}
+          className={cn("flex flex-col gap-1", it.wide && wideClass)}
         >
           <dt className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
             {it.label}

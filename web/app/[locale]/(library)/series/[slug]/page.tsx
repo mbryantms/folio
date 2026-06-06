@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   Building2,
@@ -12,17 +13,26 @@ import { notFound, redirect } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
-import { DetailSection } from "@/components/library/DetailSection";
+import {
+  DetailSection,
+  DetailSummaryGrid,
+  DetailSummaryItem,
+} from "@/components/library/DetailSection";
 import { Description } from "@/components/library/Description";
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
+import {
+  StableTabsPanel,
+  StableTabsPanelStack,
+  StackedTabsPanel,
+} from "@/components/library/StableTabsPanelStack";
 import { UserRating } from "@/components/library/UserRating";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { SeriesActivityTab } from "@/components/activity/SeriesActivityTab";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
   IssueListView,
@@ -93,6 +103,8 @@ export default async function SeriesPage({
     series.earliest_year ?? series.year ?? null,
     series.latest_year ?? null,
   );
+  const hasGenres = series.genres && series.genres.length > 0;
+  const hasTags = series.tags && series.tags.length > 0;
 
   // Read-progress numbers come from the server now (`progress_summary`),
   // not the client-side first 100 issues — fixes the cap that pinned 192-
@@ -226,20 +238,16 @@ export default async function SeriesPage({
             <FactBlock label="Publication">
               <p className="text-sm">{status ?? "—"}</p>
             </FactBlock>
-            <FactBlock label="Genres">
-              {series.genres && series.genres.length > 0 ? (
+            {hasGenres && (
+              <FactBlock label="Genres">
                 <ChipList items={series.genres} filterField="genres" />
-              ) : (
-                <p className="text-muted-foreground text-sm">—</p>
-              )}
-            </FactBlock>
-            <FactBlock label="Tags">
-              {series.tags && series.tags.length > 0 ? (
+              </FactBlock>
+            )}
+            {hasTags && (
+              <FactBlock label="Tags">
                 <ChipList items={series.tags} filterField="tags" />
-              ) : (
-                <p className="text-muted-foreground text-sm">—</p>
-              )}
-            </FactBlock>
+              </FactBlock>
+            )}
           </div>
         </div>
       </header>
@@ -262,202 +270,286 @@ export default async function SeriesPage({
           <TabsTrigger value="collection">Collection</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
-        <TabsContent value="credits" className="pt-6">
-          <div className="divide-border/60 divide-y">
-            <ChipList
-              orientation="horizontal"
-              className="py-3 first:pt-0 last:pb-0"
-              label="Writers"
-              items={series.writers}
-              filterField="writer"
-              creatorSlugs={series.creator_slugs}
-            />
-            <ChipList
-              orientation="horizontal"
-              className="py-3 first:pt-0 last:pb-0"
-              label="Pencillers"
-              items={series.pencillers}
-              filterField="penciller"
-              creatorSlugs={series.creator_slugs}
-            />
-            <ChipList
-              orientation="horizontal"
-              className="py-3 first:pt-0 last:pb-0"
-              label="Inkers"
-              items={series.inkers}
-              filterField="inker"
-              creatorSlugs={series.creator_slugs}
-            />
-            <ChipList
-              orientation="horizontal"
-              className="py-3 first:pt-0 last:pb-0"
-              label="Colorists"
-              items={series.colorists}
-              filterField="colorist"
-              creatorSlugs={series.creator_slugs}
-            />
-            <ChipList
-              orientation="horizontal"
-              className="py-3 first:pt-0 last:pb-0"
-              label="Letterers"
-              items={series.letterers}
-              filterField="letterer"
-              creatorSlugs={series.creator_slugs}
-            />
-            <ChipList
-              orientation="horizontal"
-              className="py-3 first:pt-0 last:pb-0"
-              label="Cover artists"
-              items={series.cover_artists}
-              filterField="cover_artist"
-              creatorSlugs={series.creator_slugs}
-            />
-          </div>
-          {!hasAny(
-            series.writers,
-            series.pencillers,
-            series.inkers,
-            series.colorists,
-            series.letterers,
-            series.cover_artists,
-          ) && (
-            <p className="text-muted-foreground text-sm">
-              No creator metadata across this series&rsquo;s issues.
-            </p>
-          )}
-        </TabsContent>
-        <TabsContent value="cast" className="pt-6">
-          <div className="divide-border/60 divide-y">
-            <ChipList
-              orientation="horizontal"
-              className="py-3 first:pt-0 last:pb-0"
-              label="Characters"
-              items={series.characters}
-              filterField="characters"
-            />
-            <ChipList
-              orientation="horizontal"
-              className="py-3 first:pt-0 last:pb-0"
-              label="Teams"
-              items={series.teams}
-              filterField="teams"
-            />
-            <ChipList
-              orientation="horizontal"
-              className="py-3 first:pt-0 last:pb-0"
-              label="Locations"
-              items={series.locations}
-              filterField="locations"
-            />
-          </div>
-          {!hasAny(series.characters, series.teams, series.locations) && (
-            <p className="text-muted-foreground text-sm">
-              No cast or setting metadata across this series.
-            </p>
-          )}
-        </TabsContent>
-        <TabsContent value="details" className="space-y-4 pt-6">
-          {/* Grouped into scannable categories, mirroring the issue page's
-              Details tab. Provider IDs / GTIN live in External IDs below, not
-              the grids, so they aren't duplicated. */}
-          <DetailSection title="Publication">
-            <MetadataGrid
-              columns={3}
-              items={[
-                { label: "Series name", value: series.name },
-                { label: "Publisher", value: series.publisher },
-                { label: "Volume", value: series.volume },
-                { label: "Year", value: series.year },
-                { label: "Status", value: status },
-                { label: "Age rating", value: series.age_rating },
-                {
-                  label: "Language",
-                  value: series.language_code?.toUpperCase(),
-                },
-              ]}
-            />
-          </DetailSection>
-
-          <DetailSection title="Library">
-            <MetadataGrid
-              columns={3}
-              items={[
-                {
-                  label: "Issues",
-                  value: series.issue_count ?? series.total_issues ?? null,
-                },
-                {
-                  label: "Total pages",
-                  value: formatPageCount(series.total_page_count),
-                },
-                {
-                  label: "Reading time",
-                  value: readingTime ? `≈ ${readingTime}` : null,
-                },
-                {
-                  label: "Last issue added",
-                  value: formatRelativeDate(
-                    series.last_issue_added_at ?? series.updated_at,
-                  ),
-                },
-                {
-                  label: "Last issue updated",
-                  value: formatRelativeDate(
-                    series.last_issue_updated_at ?? series.updated_at,
-                  ),
-                },
-              ]}
-            />
-          </DetailSection>
-
-          <DetailSection title="Genres & Tags">
+        {/* Keep the common, lightweight metadata tabs in one force-mounted
+            grid cell so the issue list below does not jump between Credits
+            and Cast. Details / Collection / Activity render on demand because
+            they can be substantially taller and should not reserve blank
+            space when inactive. */}
+        <StableTabsPanelStack>
+          <StableTabsPanel value="credits">
             <div className="divide-border/60 divide-y">
               <ChipList
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
-                label="Genres"
-                items={series.genres}
-                filterField="genres"
+                label="Writers"
+                items={series.writers}
+                filterField="writer"
+                creatorSlugs={series.creator_slugs}
               />
               <ChipList
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
-                label="Tags"
-                items={series.tags}
-                filterField="tags"
+                label="Pencillers"
+                items={series.pencillers}
+                filterField="penciller"
+                creatorSlugs={series.creator_slugs}
+              />
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Inkers"
+                items={series.inkers}
+                filterField="inker"
+                creatorSlugs={series.creator_slugs}
+              />
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Colorists"
+                items={series.colorists}
+                filterField="colorist"
+                creatorSlugs={series.creator_slugs}
+              />
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Letterers"
+                items={series.letterers}
+                filterField="letterer"
+                creatorSlugs={series.creator_slugs}
+              />
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Cover artists"
+                items={series.cover_artists}
+                filterField="cover_artist"
+                creatorSlugs={series.creator_slugs}
               />
             </div>
-            {!hasAny(series.genres, series.tags) && (
+            {!hasAny(
+              series.writers,
+              series.pencillers,
+              series.inkers,
+              series.colorists,
+              series.letterers,
+              series.cover_artists,
+            ) && (
               <p className="text-muted-foreground text-sm">
-                No genres or tags in this series&rsquo;s metadata.
+                No creator metadata across this series&rsquo;s issues.
               </p>
             )}
-          </DetailSection>
+          </StableTabsPanel>
+          <StableTabsPanel value="cast">
+            <div className="divide-border/60 divide-y">
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Characters"
+                items={series.characters}
+                filterField="characters"
+              />
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Teams"
+                items={series.teams}
+                filterField="teams"
+              />
+              <ChipList
+                orientation="horizontal"
+                className="py-3 first:pt-0 last:pb-0"
+                label="Locations"
+                items={series.locations}
+                filterField="locations"
+              />
+            </div>
+            {!hasAny(series.characters, series.teams, series.locations) && (
+              <p className="text-muted-foreground text-sm">
+                No cast or setting metadata across this series.
+              </p>
+            )}
+          </StableTabsPanel>
+          <StackedTabsPanel value="details" className="space-y-6">
+            <DetailSummaryGrid>
+              <DetailSummaryItem
+                label="Issues"
+                value={formatIssueTotal(series)}
+                hint={formatCollectionHint(series)}
+                icon={<BookOpen className="h-4 w-4" />}
+              />
+              <DetailSummaryItem
+                label="Published"
+                value={releasedLabel}
+                hint={status}
+                icon={<Calendar className="h-4 w-4" />}
+              />
+              <DetailSummaryItem
+                label="Length"
+                value={formatPageCount(series.total_page_count)}
+                hint={readingTime ? `≈ ${readingTime}` : null}
+                icon={<FileStack className="h-4 w-4" />}
+              />
+              <DetailSummaryItem
+                label="Updated"
+                value={formatRelativeDate(
+                  series.last_issue_updated_at ?? series.updated_at,
+                )}
+                hint="Issue metadata"
+                icon={<Clock className="h-4 w-4" />}
+              />
+            </DetailSummaryGrid>
 
-          <DetailSection title="External IDs">
-            <ExternalIdsCard
-              entityType="series"
+            <div className="grid gap-4 xl:grid-cols-2">
+              <DetailSection
+                title="Publication"
+                description="Series identity, release range, and reading defaults."
+              >
+                <MetadataGrid
+                  columns={2}
+                  items={[
+                    { label: "Series name", value: series.name },
+                    { label: "Publisher", value: series.publisher },
+                    { label: "Volume", value: series.volume },
+                    { label: "Release years", value: releasedLabel },
+                    {
+                      label: "Publication status",
+                      value: status ? (
+                        <Badge variant="outline">{status}</Badge>
+                      ) : null,
+                    },
+                    {
+                      label: "Reading direction",
+                      value:
+                        series.reading_direction === "rtl"
+                          ? "Right-to-left"
+                          : series.reading_direction === "ltr"
+                            ? "Left-to-right"
+                            : "Auto",
+                    },
+                    {
+                      label: "Age rating",
+                      value: series.age_rating ? (
+                        <Badge variant="secondary">{series.age_rating}</Badge>
+                      ) : null,
+                    },
+                    {
+                      label: "Language",
+                      value: series.language_code ? (
+                        <Badge variant="secondary">
+                          {series.language_code.toUpperCase()}
+                        </Badge>
+                      ) : null,
+                    },
+                  ]}
+                />
+              </DetailSection>
+
+              <DetailSection
+                title="Library & reading"
+                description="Local collection size, estimated reading load, and scanner freshness."
+              >
+                <MetadataGrid
+                  columns={2}
+                  items={[
+                    {
+                      label: "Owned issues",
+                      value: series.issue_count,
+                    },
+                    {
+                      label: "Expected issues",
+                      value: series.total_issues,
+                    },
+                    {
+                      label: "Collection",
+                      value: collectionStatus(series) ? (
+                        <CollectionBadge series={series} />
+                      ) : null,
+                    },
+                    {
+                      label: "Total pages",
+                      value: formatPageCount(series.total_page_count),
+                    },
+                    {
+                      label: "Reading time",
+                      value: readingTime ? `≈ ${readingTime}` : null,
+                    },
+                    {
+                      label: "Last issue added",
+                      value: formatRelativeDate(
+                        series.last_issue_added_at ?? series.updated_at,
+                      ),
+                    },
+                    {
+                      label: "Last issue updated",
+                      value: formatRelativeDate(
+                        series.last_issue_updated_at ?? series.updated_at,
+                      ),
+                    },
+                    {
+                      label: "Series added",
+                      value: formatRelativeDate(series.created_at),
+                    },
+                  ]}
+                />
+              </DetailSection>
+            </div>
+
+            <DetailSection
+              title="Classification"
+              description="Searchable genre and tag metadata rolled up from this series."
+            >
+              <div className="divide-border/60 divide-y">
+                <ChipList
+                  orientation="horizontal"
+                  className="py-3 first:pt-0 last:pb-0"
+                  label="Genres"
+                  items={series.genres}
+                  filterField="genres"
+                />
+                <ChipList
+                  orientation="horizontal"
+                  className="py-3 first:pt-0 last:pb-0"
+                  label="Tags"
+                  items={series.tags}
+                  filterField="tags"
+                />
+              </div>
+              {!hasAny(series.genres, series.tags) && (
+                <p className="text-muted-foreground pt-1 text-sm">
+                  No genres or tags in this series&rsquo;s metadata.
+                </p>
+              )}
+            </DetailSection>
+
+            <DetailSection
+              title="External IDs"
+              description="Provider identifiers linked to this series."
+            >
+              <ExternalIdsCard
+                entityType="series"
+                seriesSlug={series.slug}
+                chrome="bare"
+              />
+            </DetailSection>
+          </StackedTabsPanel>
+          <StackedTabsPanel value="collection">
+            <CollectionTab seriesSlug={series.slug} />
+          </StackedTabsPanel>
+          <StackedTabsPanel value="activity">
+            <SeriesActivityTab
+              seriesId={series.id}
               seriesSlug={series.slug}
-              chrome="bare"
+              issues={firstIssuePage.items}
+              totalIssueCount={
+                series.progress_summary?.total ??
+                series.issue_count ??
+                series.total_issues ??
+                null
+              }
             />
-          </DetailSection>
-        </TabsContent>
-        <TabsContent value="collection" className="pt-6">
-          <CollectionTab seriesSlug={series.slug} />
-        </TabsContent>
-        <TabsContent value="activity" className="pt-6">
-          <SeriesActivityTab
-            seriesId={series.id}
-            seriesSlug={series.slug}
-            issues={firstIssuePage.items}
-            totalIssueCount={
-              series.progress_summary?.total ??
-              series.issue_count ??
-              series.total_issues ??
-              null
-            }
-          />
-        </TabsContent>
+          </StackedTabsPanel>
+        </StableTabsPanelStack>
       </Tabs>
 
       <IssuesPanel
@@ -575,6 +667,22 @@ function formatYearRange(
   const hi = end ?? start!;
   if (lo === hi) return String(lo);
   return `${lo}–${hi}`;
+}
+
+function formatIssueTotal(series: SeriesView): string | null {
+  const owned = series.issue_count ?? null;
+  const expected = series.total_issues ?? null;
+  if (owned == null && expected == null) return null;
+  if (owned != null && expected != null && expected > 0) {
+    return `${owned} / ${expected}`;
+  }
+  return String(owned ?? expected);
+}
+
+function formatCollectionHint(series: SeriesView): string | null {
+  const state = collectionStatus(series);
+  if (!state) return null;
+  return state === "complete" ? "Complete collection" : "Incomplete collection";
 }
 
 /**
