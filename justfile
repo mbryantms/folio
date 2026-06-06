@@ -628,10 +628,12 @@ check:
 
 # Cut a release. Validates (incl. that a DATED changelog section for the
 # version already landed on main via PR — main is protected, so the stamp
-# can't be pushed straight to it), runs the full check suite, and creates the
-# annotated tag — but does NOT push. Pushing the tag is the irreversible,
-# image-publishing step and the only direct push (tags aren't branch-protected
-# like main), so it stays a deliberate manual action.
+# can't be pushed straight to it), confirms CI is green on this main commit
+# (rather than re-running the whole suite locally — the commit already passed
+# CI to get onto protected main; RELEASE_LOCAL_CHECK=1 forces a local run),
+# and creates the annotated tag — but does NOT push. Pushing the tag is the
+# irreversible, image-publishing step and the only direct push (tags aren't
+# branch-protected like main), so it stays a deliberate manual action.
 # Usage: just release 0.7.2   (no leading 'v')
 # See docs/dev/releasing.md.
 release version:
@@ -676,8 +678,33 @@ release version:
         echo "  the queue, then re-run from an up-to-date main." >&2
         exit 1
     fi
-    echo "==> running full check suite"
-    just check
+    # This commit is on protected main, so it only got here by passing CI on
+    # its PR — re-running the whole suite locally just re-checks an
+    # already-green commit. Instead, confirm CI is green on this exact SHA
+    # (the authoritative gate). Set RELEASE_LOCAL_CHECK=1 to also run `just
+    # check` locally (offline / extra-paranoid).
+    if [[ "${RELEASE_LOCAL_CHECK:-0}" == "1" ]]; then
+        echo "==> RELEASE_LOCAL_CHECK=1 — running full check suite locally"
+        just check
+    else
+        command -v gh >/dev/null || { echo "✗ gh not found — install it, or use RELEASE_LOCAL_CHECK=1" >&2; exit 1; }
+        HEAD_SHA="$(git rev-parse HEAD)"
+        echo "==> verifying CI is green on main @ ${HEAD_SHA:0:7}"
+        runs="$(gh api "repos/{owner}/{repo}/commits/$HEAD_SHA/check-runs" --paginate \
+            --jq '.check_runs[] | .name + "=" + .status + "/" + (.conclusion // "pending")')"
+        if [[ -z "$runs" ]]; then
+            echo "✗ no CI check runs for $HEAD_SHA yet — wait for main's CI to start, then re-run." >&2; exit 1
+        fi
+        if pending="$(echo "$runs" | grep -v '=completed/')" && [[ -n "$pending" ]]; then
+            echo "✗ CI not finished on $HEAD_SHA — wait for it, then re-run:" >&2
+            echo "$pending" | sed 's/^/    /' >&2; exit 1
+        fi
+        if failed="$(echo "$runs" | grep -E '/(failure|cancelled|timed_out|action_required|stale)$')" && [[ -n "$failed" ]]; then
+            echo "✗ CI is not green on $HEAD_SHA:" >&2
+            echo "$failed" | sed 's/^/    /' >&2; exit 1
+        fi
+        echo "✓ CI green on $HEAD_SHA ($(echo "$runs" | wc -l | tr -d ' ') checks passed/skipped)"
+    fi
     git tag -a "$TAG" -m "$TAG"
     echo
     echo "✓ Tagged $TAG (not pushed). Publish it — triggers GHCR build + GitHub release:"

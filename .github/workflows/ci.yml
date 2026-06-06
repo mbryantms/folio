@@ -27,6 +27,9 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust || steps.mergequeue.outputs.full }}
       backend_or_spec: ${{ steps.filter.outputs.backend_or_spec || steps.mergequeue.outputs.full }}
+      web: ${{ steps.filter.outputs.web || steps.mergequeue.outputs.full }}
+      docs: ${{ steps.filter.outputs.docs || steps.mergequeue.outputs.full }}
+      docker: ${{ steps.filter.outputs.docker || steps.mergequeue.outputs.full }}
     steps:
       - uses: actions/checkout@v6
       # In the merge queue we validate the actual merged result, so run the
@@ -53,6 +56,23 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'web/lib/api/openapi.json'
+              - '.github/workflows/ci.yml'
+            web:
+              - 'web/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'docs-site/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/ci.yml'
+            docker:
+              - 'Dockerfile'
+              - 'web/Dockerfile'
+              - '.dockerignore'
               - '.github/workflows/ci.yml'
 
   rust-check:
@@ -115,22 +135,36 @@ jobs:
   web-check:
     name: Web — lint / typecheck / test
     runs-on: ubuntu-24.04
+    # Job always runs (so the required check always reports), but its steps are
+    # gated on web changes — a docs/CHANGELOG-only PR skips the ~3min suite and
+    # still goes green. `web` is true for any merge_group entry (full run).
+    needs: [changes]
+    env:
+      WEB: ${{ needs.changes.outputs.web }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
+        if: env.WEB == 'true'
         with:
           node-version: 24
       - uses: pnpm/action-setup@v6
+        if: env.WEB == 'true'
         with:
           version: 11.5.1
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter web run lint
-      - run: pnpm --filter web run typecheck
-      - run: pnpm --filter web run test
+      - if: env.WEB == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: env.WEB == 'true'
+        run: pnpm --filter web run lint
+      - if: env.WEB == 'true'
+        run: pnpm --filter web run typecheck
+      - if: env.WEB == 'true'
+        run: pnpm --filter web run test
       # Build once so the bundle-budget script reads a real `.next/`
       # output rather than triggering an implicit build itself.
-      - run: pnpm --filter web run build
+      - if: env.WEB == 'true'
+        run: pnpm --filter web run build
       - name: Reader bundle budget
+        if: env.WEB == 'true'
         run: pnpm --filter web run check-bundle-size
       # Playwright is intentionally not run in CI. The current specs
       # only cover two static-degradation a11y checks (sign-in,
@@ -147,21 +181,30 @@ jobs:
       # advisory) are documented in SECURITY-EXCEPTIONS.md and sit
       # below this `--audit-level=high` gate.
       - name: pnpm audit
+        if: env.WEB == 'true'
         run: pnpm audit --audit-level=high
 
   docs-build:
     name: Docs site — build
     runs-on: ubuntu-24.04
+    # Always runs (required check reports); steps gated on docs-site changes.
+    needs: [changes]
+    env:
+      DOCS: ${{ needs.changes.outputs.docs }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
+        if: env.DOCS == 'true'
         with:
           node-version: 24
       - uses: pnpm/action-setup@v6
+        if: env.DOCS == 'true'
         with:
           version: 11.5.1
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter docs-site run build
+      - if: env.DOCS == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: env.DOCS == 'true'
+        run: pnpm --filter docs-site run build
 
   openapi-drift:
     name: OpenAPI — snapshot + breaking-change check
@@ -253,8 +296,12 @@ jobs:
     name: Docker — amd64 build
     runs-on: ubuntu-24.04
     # Intentionally gated on the full check jobs — don't burn an image build
-    # if fmt/clippy/test or the web suite failed.
-    needs: [rust-check, web-check]
+    # if fmt/clippy/test or the web suite failed. Build steps additionally skip
+    # when neither image's inputs changed (e.g. a docs/CHANGELOG-only PR): the
+    # job still runs so the required check reports, it just does nothing.
+    needs: [changes, rust-check, web-check]
+    env:
+      BUILD: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.docker == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -266,7 +313,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v4
+        if: env.BUILD == 'true'
       - name: Build (no push)
+        if: env.BUILD == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
