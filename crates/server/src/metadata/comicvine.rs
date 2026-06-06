@@ -844,12 +844,12 @@ impl MetadataProvider for ComicVineClient {
         // mislabeled 2016 would miss the real 1992 volume). Year filtering is
         // the tolerant `orchestrator::pre_filter_series` gate's job (±1), which
         // runs on the returned candidates.
-        let filters = vec![format!("name:{}", query.name.replace(',', " "))];
+        let filter = format!("name:{}", query.name.replace(',', " "));
         let envelope: CvEnvelope<Vec<CvVolume>> = self
             .request(
                 "/volumes",
                 &[
-                    ("filter", filters.join(",")),
+                    ("filter", filter),
                     ("limit", limit),
                     ("field_list", SERIES_FIELDS.to_owned()),
                 ],

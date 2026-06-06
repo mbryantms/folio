@@ -460,12 +460,33 @@ pub fn publisher_similarity(a: Option<&str>, b: Option<&str>) -> f32 {
 /// non-numeric ("Annual 1", "½", "14AU") values as the trimmed input.
 pub(crate) fn canonical_issue_number(raw: &str) -> String {
     let t = raw.trim();
-    match t.parse::<f64>() {
-        Ok(n) if n.is_finite() && n.fract() == 0.0 => format!("{}", n as i64),
-        // `{}` on f64 drops trailing zeros ("1.50" → 1.5 → "1.5").
-        Ok(n) if n.is_finite() => format!("{n}"),
-        _ => t.to_string(),
+    let Some((whole, fraction)) = t.split_once('.') else {
+        return if t.chars().all(|c| c.is_ascii_digit()) {
+            strip_integer_padding(t).to_owned()
+        } else {
+            t.to_string()
+        };
+    };
+
+    if whole.is_empty()
+        || !whole.chars().all(|c| c.is_ascii_digit())
+        || !fraction.chars().all(|c| c.is_ascii_digit())
+    {
+        return t.to_string();
     }
+
+    let whole = strip_integer_padding(whole);
+    let fraction = fraction.trim_end_matches('0');
+    if fraction.is_empty() {
+        whole.to_owned()
+    } else {
+        format!("{whole}.{fraction}")
+    }
+}
+
+fn strip_integer_padding(value: &str) -> &str {
+    let stripped = value.trim_start_matches('0');
+    if stripped.is_empty() { "0" } else { stripped }
 }
 
 pub fn issue_number_similarity(query: &str, candidate: Option<&str>) -> f32 {
