@@ -576,6 +576,59 @@ pub(crate) async fn compute_on_deck(
         items.push((ts, card));
     }
 
+    // ───── Continue Reading dedup ─────
+    //
+    // Any issue the user has in-progress (read past page 0, not finished)
+    // already surfaces in the Continue Reading rail, so it must never also
+    // appear here. SeriesNext cards can't trip this — their series is
+    // excluded upstream by the `in_progress` CTE — but a CblNext card points
+    // at the next *unfinished* CBL entry, and "unfinished" includes
+    // "in-progress", so a half-read issue can leak in via the CBL path.
+    // Mirror Continue Reading's filter (finished = false AND last_page > 0)
+    // and drop any matching card.
+    #[derive(Debug, FromQueryResult)]
+    struct InProgressRow {
+        issue_id: String,
+    }
+    let in_progress: std::collections::HashSet<String> =
+        match InProgressRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"
+                SELECT DISTINCT p.issue_id AS issue_id
+                FROM progress_records p
+                JOIN issues i ON i.id = p.issue_id
+                WHERE p.user_id = $1
+                  AND p.finished = false
+                  AND p.last_page > 0
+                  AND i.state = 'active'
+                  AND i.removed_at IS NULL
+            "#,
+            [user_id.into()],
+        ))
+        .all(&app.db)
+        .await
+        {
+            Ok(rows) => rows.into_iter().map(|r| r.issue_id).collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "rails: on-deck in-progress dedup query failed");
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal",
+                ));
+            }
+        };
+    if !in_progress.is_empty() {
+        items.retain(|(_, card)| {
+            let id = match card {
+                OnDeckCard::SeriesNext { issue, .. } | OnDeckCard::CblNext { issue, .. } => {
+                    issue.id.as_str()
+                }
+            };
+            !in_progress.contains(id)
+        });
+    }
+
     // Merge by most-recent activity desc; caller caps to per-surface
     // limit (the rail truncates to 24, the next-up resolver takes 1).
     items.sort_by_key(|item| std::cmp::Reverse(item.0));

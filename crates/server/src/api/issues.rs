@@ -45,6 +45,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(clear_field_pin))
         .routes(routes!(scan_issue))
         .routes(routes!(next_in_series))
+        .routes(routes!(prev_in_series))
         .routes(routes!(list_issue_health))
 }
 
@@ -1135,6 +1136,87 @@ pub async fn next_in_series(
         .map(|m| IssueSummaryView::from_model(m, &series_slug))
         .collect();
     Json(NextInSeriesView { items }).into_response()
+}
+
+// ───── GET /series/{series_slug}/issues/{issue_slug}/prev ─────
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PrevInSeriesView {
+    /// The issue immediately preceding the current one in `sort_number`
+    /// order, or `null` when the current issue is the first in the series.
+    pub item: Option<IssueSummaryView>,
+}
+
+/// Returns the single issue immediately *before* the current one in the same
+/// series — the mirror of [`next_in_series`], using the same ordering
+/// (`sort_number` ASC NULLS LAST, `id` tie-breaker) reversed so the immediate
+/// predecessor is selected. Removed / soft-deleted issues are filtered out.
+/// `item` is `null` when the current issue is the first in the series.
+#[utoipa::path(
+    operation_id = "issues_prev_in_series",
+    get,
+    path = "/series/{series_slug}/issues/{issue_slug}/prev",
+    params(
+        ("series_slug" = String, Path,),
+        ("issue_slug" = String, Path,),
+    ),
+    responses(
+        (status = 200, body = PrevInSeriesView),
+        (status = 404, description = "issue not found"),
+    )
+)]
+#[handler]
+pub async fn prev_in_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath((series_slug, issue_slug)): AxPath<(String, String)>,
+) -> impl IntoResponse {
+    let row = match find_by_slugs(&app.db, &series_slug, &issue_slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if !visible_in_library(&app, &user, row.library_id).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    }
+
+    let mut select = issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(row.series_id))
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::Id.ne(row.id.clone()));
+
+    // Reverse of next_in_series' sort so `.one()` yields the *immediate*
+    // predecessor: (sort_number IS NULL) DESC, sort_number DESC, id DESC.
+    let nulls_first = Expr::cust("sort_number IS NULL");
+    select = select
+        .order_by_desc(nulls_first)
+        .order_by_desc(issue::Column::SortNumber)
+        .order_by_desc(issue::Column::Id);
+
+    // Candidates strictly *before* the current row in the ASC ordering — the
+    // complement of next_in_series' "after" predicate.
+    select = match row.sort_number {
+        Some(curr) => select.filter(Expr::cust_with_values(
+            "(sort_number IS NOT NULL) AND ((sort_number < $1) OR (sort_number = $1 AND id < $2))",
+            vec![Value::from(curr), Value::from(row.id.clone())],
+        )),
+        // Current row is in the NULLS-LAST bucket: every non-null row precedes
+        // it, as do NULL rows with a smaller id.
+        None => select.filter(Expr::cust_with_values(
+            "(sort_number IS NOT NULL) OR (sort_number IS NULL AND id < $1)",
+            vec![Value::from(row.id.clone())],
+        )),
+    };
+
+    let prev: Option<issue::Model> = match select.one(&app.db).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "prev_in_series query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let item = prev.map(|m| IssueSummaryView::from_model(m, &series_slug));
+    Json(PrevInSeriesView { item }).into_response()
 }
 
 // ───── GET /series/{series_slug}/issues/{issue_slug}/health-issues ─────

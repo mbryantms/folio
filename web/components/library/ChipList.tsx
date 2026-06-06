@@ -22,12 +22,18 @@ export function ChipList({
   variant = "secondary",
   filterField,
   creatorSlugs,
+  orientation = "vertical",
   className,
 }: {
   label?: string;
   items: string[] | undefined;
   emptyLabel?: string;
   variant?: "secondary" | "outline" | "default";
+  /** `"horizontal"` lays the label in a fixed-width column with the chips
+   *  flowing in the remaining width (a definition-list row) instead of
+   *  stacking label-over-chips. Lets long lists (e.g. a 16-character cast)
+   *  use the full row width. Collapses back to stacked on narrow screens. */
+  orientation?: "vertical" | "horizontal";
   /** When set, chips become quick-apply links into the library grid.
    *  Accepts saved-view field ids (`"writer"`, `"genres"`, etc.); the
    *  component maps each to its corresponding `/series` query param. */
@@ -41,17 +47,32 @@ export function ChipList({
 }) {
   const list = items ?? [];
   if (list.length === 0 && !emptyLabel) return null;
+  const horizontal = orientation === "horizontal";
   return (
-    <div className={cn("space-y-2", className)}>
+    <div
+      className={cn(
+        horizontal ? "flex flex-col gap-1 sm:flex-row sm:gap-4" : "space-y-2",
+        className,
+      )}
+    >
       {label && (
-        <h3 className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+        <h3
+          className={cn(
+            "text-muted-foreground text-xs font-semibold tracking-wider uppercase",
+            horizontal && "sm:w-32 sm:shrink-0 sm:pt-1.5",
+          )}
+        >
           {label}
         </h3>
       )}
       {list.length === 0 ? (
-        <p className="text-muted-foreground text-sm">{emptyLabel}</p>
+        <p
+          className={cn("text-muted-foreground text-sm", horizontal && "flex-1")}
+        >
+          {emptyLabel}
+        </p>
       ) : (
-        <div className="flex flex-wrap gap-1.5">
+        <div className={cn("flex flex-wrap gap-1.5", horizontal && "flex-1")}>
           {list.map((item) => {
             const chip = (
               <Badge
