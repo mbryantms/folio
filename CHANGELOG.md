@@ -15,6 +15,17 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-06-06
+
+### Added
+
+- **Bulk-fetch only missing or partial metadata.** A series&rsquo; bulk
+  metadata fetch can now be scoped to just the issues whose metadata is
+  incomplete (partial or missing) rather than every issue — saving provider
+  budget and keeping the Review queue focused. The Series&nbsp;… menu&rsquo;s
+  three metadata actions are grouped into one **Fetch metadata** submenu (Match
+  this series · All issues · Only missing or partial).
+
 ## [0.9.3] - 2026-06-06
 
 ### Fixed
@@ -662,7 +673,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/mbryantms/folio/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/mbryantms/folio/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/mbryantms/folio/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/mbryantms/folio/compare/v0.9.0...v0.9.1
