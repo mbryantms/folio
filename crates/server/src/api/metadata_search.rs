@@ -999,6 +999,7 @@ pub async fn apply_series(
                 .cloned()
                 .collect(),
             is_auto: false,
+            composite: None,
         })
         .await
     {
@@ -1338,6 +1339,7 @@ pub async fn apply_issue(
                 .cloned()
                 .collect(),
             is_auto: false,
+            composite: None,
         })
         .await
     {
@@ -2393,14 +2395,31 @@ pub struct RunOrdinal {
     pub ordinal: i32,
 }
 
+/// Which batch children to apply.
+#[derive(Copy, Clone, Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchApplyFilter {
+    /// Every child with a `single_good` outcome whose top high candidate
+    /// isn't applied yet — single-candidate apply (the "Accept all strong").
+    AllStrong,
+    /// The explicit `run_ordinals` list the operator curated.
+    Ordinals,
+    /// Every **needs-review** child (`multi_good` / `single_bad_cover` /
+    /// `multi_bad_cover`), each applied via the multi-provider composite
+    /// "most-complete" merge (bulk "Fill missing / Replace all"). Optionally
+    /// restricted to `run_ids`.
+    AllNeedsReview,
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct BatchApplyReq {
-    /// `"all_strong"` → every child with a `single_good` outcome whose top
-    /// candidate isn't applied yet. `"ordinals"` → the explicit
-    /// `run_ordinals` list the operator curated.
-    pub filter: String,
+    pub filter: BatchApplyFilter,
     #[serde(default)]
     pub run_ordinals: Option<Vec<RunOrdinal>>,
+    /// Restrict `all_needs_review` to these runs (the "Selected" subset).
+    /// Absent ⇒ every needs-review child in the batch ("All").
+    #[serde(default)]
+    pub run_ids: Option<Vec<Uuid>>,
     #[serde(default = "default_fill_missing")]
     pub mode: ApplyMode,
     #[serde(default = "default_true")]
@@ -2411,6 +2430,21 @@ pub struct BatchApplyReq {
     pub override_user_edits: bool,
     #[serde(default)]
     pub selected_fields: Option<Vec<String>>,
+}
+
+/// One resolved apply target inside a batch. Single-candidate (strong /
+/// curated ordinals) vs composite (needs-review multi-provider merge).
+enum ApplyTarget {
+    Single { run_id: Uuid, ordinal: i32 },
+    Composite { run_id: Uuid, included: Vec<i32> },
+}
+
+impl ApplyTarget {
+    fn run_id(&self) -> Uuid {
+        match self {
+            ApplyTarget::Single { run_id, .. } | ApplyTarget::Composite { run_id, .. } => *run_id,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -2426,6 +2460,12 @@ pub struct BatchApplyResp {
 /// at once. Loops the existing per-entity `ApplySeriesJob`/`ApplyIssueJob`
 /// push (decision matrix, apply mutex, writeback dispatch, audit all
 /// unchanged); only the fan-out is new.
+///
+/// `all_strong` / `ordinals` enqueue single-candidate applies. `all_needs_review`
+/// enqueues one **composite** apply per needs-review run (best candidate per
+/// provider merged "most-complete", covers preferring ComicVine) — the bulk
+/// "Fill missing / Replace all" path. The per-request cap + `remainder` then
+/// count runs; re-trigger to drain the rest.
 #[utoipa::path(
     operation_id = "metadata_batch_apply",    post,
     path = "/metadata/batch/{batch_id}/apply",
@@ -2497,13 +2537,13 @@ pub async fn batch_apply(
         }
     }
 
-    // Resolve the target (run_id, ordinal) set.
-    let mut targets: Vec<(Uuid, i32)> = Vec::new();
+    // Resolve the apply-target set (single-candidate or composite per run).
+    let mut targets: Vec<ApplyTarget> = Vec::new();
     let mut skipped_already_applied = 0usize;
     let mut skipped_not_eligible = 0usize;
 
-    match req.filter.as_str() {
-        "all_strong" => {
+    match req.filter {
+        BatchApplyFilter::AllStrong => {
             // single_good children → their top unapplied high candidate.
             let strong: std::collections::HashSet<Uuid> = metadata_match_outcome::Entity::find()
                 .filter(metadata_match_outcome::Column::RunId.is_in(run_ids.clone()))
@@ -2523,12 +2563,15 @@ pub async fn batch_apply(
                     .iter()
                     .find(|c| c.bucket == "high" && c.applied_at.is_none())
                 {
-                    Some(c) => targets.push((run_id, c.ordinal)),
+                    Some(c) => targets.push(ApplyTarget::Single {
+                        run_id,
+                        ordinal: c.ordinal,
+                    }),
                     None => skipped_already_applied += 1,
                 }
             }
         }
-        "ordinals" => {
+        BatchApplyFilter::Ordinals => {
             for ro in req.run_ordinals.unwrap_or_default() {
                 if !runs.contains_key(&ro.run_id) {
                     skipped_not_eligible += 1;
@@ -2539,17 +2582,47 @@ pub async fn batch_apply(
                     .and_then(|cs| cs.iter().find(|c| c.ordinal == ro.ordinal))
                 {
                     Some(c) if c.applied_at.is_some() => skipped_already_applied += 1,
-                    Some(_) => targets.push((ro.run_id, ro.ordinal)),
+                    Some(_) => targets.push(ApplyTarget::Single {
+                        run_id: ro.run_id,
+                        ordinal: ro.ordinal,
+                    }),
                     None => skipped_not_eligible += 1,
                 }
             }
         }
-        _ => {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "metadata.bad_filter",
-                "filter must be all_strong or ordinals",
-            );
+        BatchApplyFilter::AllNeedsReview => {
+            // Needs-review children → one composite apply per run, seeded
+            // with the best-ranked candidate from each provider that matched.
+            // Optionally restricted to the operator's selected `run_ids`.
+            let restrict: Option<std::collections::HashSet<Uuid>> =
+                req.run_ids.clone().map(|v| v.into_iter().collect());
+            let review_runs: Vec<Uuid> = metadata_match_outcome::Entity::find()
+                .filter(metadata_match_outcome::Column::RunId.is_in(run_ids.clone()))
+                .all(&app.db)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|o| is_needs_review(&o.outcome_kind))
+                .map(|o| o.run_id)
+                .filter(|rid| restrict.as_ref().is_none_or(|set| set.contains(rid)))
+                .collect();
+            for run_id in review_runs {
+                let Some(cands) = cands_by_run.get(&run_id) else {
+                    skipped_not_eligible += 1;
+                    continue;
+                };
+                // Skip a run only when it has zero unapplied candidates.
+                if cands.iter().all(|c| c.applied_at.is_some()) {
+                    skipped_already_applied += 1;
+                    continue;
+                }
+                let included = crate::metadata::composite::default_best_per_provider(cands);
+                if included.is_empty() {
+                    skipped_not_eligible += 1;
+                    continue;
+                }
+                targets.push(ApplyTarget::Composite { run_id, included });
+            }
         }
     }
 
@@ -2562,14 +2635,37 @@ pub async fn batch_apply(
         .selected_fields
         .clone()
         .map(std::collections::HashSet::from_iter);
+    // Composite (needs-review) covers are server-derived from the mode so the
+    // one-click bulk action is consistent: Fill missing only fills an absent
+    // cover; Replace all overwrites it. Single-candidate paths keep the
+    // operator's `cover_overwrite_policy`.
+    let composite_cover_policy = match req.mode {
+        ApplyMode::FillMissing => metadata_apply::CoverPolicy::WhenMissing,
+        ApplyMode::ReplaceAll => metadata_apply::CoverPolicy::Always,
+    };
     let mut enqueued = 0usize;
-    for (run_id, ordinal) in targets {
+    for target in targets {
+        let run_id = target.run_id();
         let Some(run) = runs.get(&run_id) else {
             continue;
         };
         let Some(entity_id) = run.scope_entity_id.as_deref() else {
             skipped_not_eligible += 1;
             continue;
+        };
+        // Per-target apply shape: single-candidate vs composite merge.
+        let (ordinal, composite, cover_policy) = match &target {
+            ApplyTarget::Single { ordinal, .. } => {
+                (*ordinal, None, req.cover_overwrite_policy.into())
+            }
+            ApplyTarget::Composite { included, .. } => (
+                included.first().copied().unwrap_or(0),
+                Some(metadata_apply::CompositeSpec {
+                    included: included.clone(),
+                    preferred_cover_provider: Some(crate::metadata::identifier::Source::ComicVine),
+                }),
+                composite_cover_policy,
+            ),
         };
         let pushed = if run.scope == orchestrator::scope::SERIES {
             let Ok(series_id) = Uuid::parse_str(entity_id) else {
@@ -2584,7 +2680,7 @@ pub async fn batch_apply(
                     series_id,
                     mode: req.mode,
                     apply_cover: req.apply_cover,
-                    cover_overwrite_policy: req.cover_overwrite_policy.into(),
+                    cover_overwrite_policy: cover_policy,
                     override_user_edits: req.override_user_edits,
                     actor_id: Some(user.id),
                     actor_ip: ctx.ip_string(),
@@ -2592,6 +2688,7 @@ pub async fn batch_apply(
                     selected_fields: selected.clone(),
                     override_external_id_sources: std::collections::HashSet::new(),
                     is_auto: false,
+                    composite: composite.clone(),
                 })
                 .await
                 .is_ok()
@@ -2604,7 +2701,7 @@ pub async fn batch_apply(
                     issue_id: entity_id.to_owned(),
                     mode: req.mode,
                     apply_cover: req.apply_cover,
-                    cover_overwrite_policy: req.cover_overwrite_policy.into(),
+                    cover_overwrite_policy: cover_policy,
                     override_user_edits: req.override_user_edits,
                     actor_id: Some(user.id),
                     actor_ip: ctx.ip_string(),
@@ -2612,6 +2709,7 @@ pub async fn batch_apply(
                     selected_fields: selected.clone(),
                     override_external_id_sources: std::collections::HashSet::new(),
                     is_auto: false,
+                    composite,
                 })
                 .await
                 .is_ok()

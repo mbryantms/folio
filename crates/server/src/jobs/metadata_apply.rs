@@ -19,6 +19,8 @@
 use crate::audit::{self, AuditEntry};
 use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::metadata::apply::{self, ApplyArgs, ApplyError, ApplyMode, ApplyOutcome};
+use crate::metadata::composite::{self, AutoCompositeArgs};
+use crate::metadata::identifier::Source;
 use crate::metadata::writers::CoverOverwritePolicy;
 use crate::state::AppState;
 use apalis::prelude::*;
@@ -45,6 +47,19 @@ impl From<CoverPolicy> for CoverOverwritePolicy {
             CoverPolicy::Always => CoverOverwritePolicy::Always,
         }
     }
+}
+
+/// Bulk "Fill missing / Replace all" spec carried on an apply job. When
+/// present, the handler runs the multi-provider [`composite::apply_composite_auto`]
+/// merge instead of a single-candidate apply — the per-field winners are
+/// derived from the merge policy at apply time (no human selection).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompositeSpec {
+    /// Candidate `ordinal`s to merge. Empty → best-per-provider default.
+    pub included: Vec<i32>,
+    /// Cover-only source override (bulk prefers ComicVine).
+    #[serde(default)]
+    pub preferred_cover_provider: Option<Source>,
 }
 
 // ───────── coalescing / mutex ─────────
@@ -126,6 +141,11 @@ pub struct ApplySeriesJob {
     /// `#[serde(default)]` so pre-M12 queued jobs still deserialize.
     #[serde(default)]
     pub is_auto: bool,
+    /// Bulk multi-provider merge spec. `Some` → run `apply_composite_auto`
+    /// (the "Fill missing / Replace all" path); `None` → single-candidate
+    /// apply on `ordinal`. `#[serde(default)]` for queued-job back-compat.
+    #[serde(default)]
+    pub composite: Option<CompositeSpec>,
 }
 
 pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result<(), Error> {
@@ -144,6 +164,7 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         selected_fields,
         override_external_id_sources,
         is_auto,
+        composite,
     } = job;
 
     let claimed = match try_claim_series_mutex(&state, series_id).await {
@@ -158,19 +179,39 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         return Ok(());
     }
 
-    let args = ApplyArgs {
-        run_id,
-        ordinal,
-        mode,
-        apply_cover,
-        cover_overwrite_policy: cover_overwrite_policy.into(),
-        override_user_edits,
-        actor_id,
-        selected_fields,
-        override_external_id_sources,
+    let outcome = match composite {
+        Some(spec) => {
+            composite::apply_composite_auto(
+                &state,
+                AutoCompositeArgs {
+                    run_id,
+                    included: spec.included,
+                    mode,
+                    apply_cover,
+                    cover_overwrite_policy: cover_overwrite_policy.into(),
+                    override_user_edits,
+                    override_external_id_sources,
+                    preferred_cover_provider: spec.preferred_cover_provider,
+                    actor_id,
+                },
+            )
+            .await
+        }
+        None => {
+            let args = ApplyArgs {
+                run_id,
+                ordinal,
+                mode,
+                apply_cover,
+                cover_overwrite_policy: cover_overwrite_policy.into(),
+                override_user_edits,
+                actor_id,
+                selected_fields,
+                override_external_id_sources,
+            };
+            apply::apply_series(&state, args).await
+        }
     };
-
-    let outcome = apply::apply_series(&state, args).await;
     audit_apply(
         &state,
         "series",
@@ -214,6 +255,10 @@ pub struct ApplyIssueJob {
     /// audit step uses the distinct `metadata_auto_apply` action.
     #[serde(default)]
     pub is_auto: bool,
+    /// Bulk multi-provider merge spec. `Some` → run `apply_composite_auto`;
+    /// `None` → single-candidate apply on `ordinal`.
+    #[serde(default)]
+    pub composite: Option<CompositeSpec>,
 }
 
 pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(), Error> {
@@ -232,6 +277,7 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
         selected_fields,
         override_external_id_sources,
         is_auto,
+        composite,
     } = job;
 
     let claimed = match try_claim_issue_mutex(&state, &issue_id).await {
@@ -246,19 +292,39 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
         return Ok(());
     }
 
-    let args = ApplyArgs {
-        run_id,
-        ordinal,
-        mode,
-        apply_cover,
-        cover_overwrite_policy: cover_overwrite_policy.into(),
-        override_user_edits,
-        actor_id,
-        selected_fields,
-        override_external_id_sources,
+    let outcome = match composite {
+        Some(spec) => {
+            composite::apply_composite_auto(
+                &state,
+                AutoCompositeArgs {
+                    run_id,
+                    included: spec.included,
+                    mode,
+                    apply_cover,
+                    cover_overwrite_policy: cover_overwrite_policy.into(),
+                    override_user_edits,
+                    override_external_id_sources,
+                    preferred_cover_provider: spec.preferred_cover_provider,
+                    actor_id,
+                },
+            )
+            .await
+        }
+        None => {
+            let args = ApplyArgs {
+                run_id,
+                ordinal,
+                mode,
+                apply_cover,
+                cover_overwrite_policy: cover_overwrite_policy.into(),
+                override_user_edits,
+                actor_id,
+                selected_fields,
+                override_external_id_sources,
+            };
+            apply::apply_issue(&state, args).await
+        }
     };
-
-    let outcome = apply::apply_issue(&state, args).await;
     audit_apply(
         &state,
         "issue",

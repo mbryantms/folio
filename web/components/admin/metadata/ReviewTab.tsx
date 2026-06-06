@@ -6,12 +6,14 @@
  * Pick a batch (or arrive deep-linked from a series / saved-view bulk fetch),
  * watch live progress, then accept findings:
  *   - **Strong** (`single_good`) — one click "Accept all strong (N)".
- *   - **Needs review** — open each in the Fetch-metadata dialog (which reuses
- *     the candidates already pulled by the batch — no re-search) and apply.
+ *   - **Needs review** — bulk "Fill missing" / "Replace all" that auto-applies
+ *     the most-complete merge across providers (no per-item review), or open
+ *     each in the Fetch-metadata dialog to compare candidates by hand.
  *   - **No match** — opening runs a fresh search.
  *
- * Nothing here auto-applies: batch children run as `manual`, so this queue is
- * the accept surface.
+ * The bulk needs-review actions are the operator's consent to auto-resolve:
+ * they leverage whatever providers matched to assemble the complete record and
+ * apply directly, draining the queue without opening each item.
  */
 
 import { AlertCircle, CheckCircle2, ChevronRight, Loader2 } from "lucide-react";
@@ -22,8 +24,19 @@ import {
   MetadataMatchDialog,
   type MetadataMatchScope,
 } from "@/components/library/MetadataMatchDialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { useBatchApply } from "@/lib/api/mutations";
 import {
@@ -225,17 +238,13 @@ function BatchReview({
         )}
       </section>
 
-      {/* Needs review → open the dialog in place (reuses the stored run) */}
+      {/* Needs review → bulk auto-apply across providers, or open by hand */}
       {needsReview.length > 0 && (
-        <section className="space-y-2">
-          <h4 className="text-foreground text-sm font-semibold">
-            Needs review ({needsReview.length})
-          </h4>
-          <p className="text-muted-foreground text-xs">
-            Open each to compare the candidates already pulled and apply.
-          </p>
-          <ChildList rows={needsReview} tone="review" onOpen={setDialogScope} />
-        </section>
+        <NeedsReviewSection
+          rows={needsReview}
+          apply={apply}
+          onOpen={setDialogScope}
+        />
       )}
 
       {/* No match → opening re-runs a fresh search */}
@@ -267,38 +276,212 @@ function BatchReview({
   );
 }
 
+/**
+ * Needs-review queue with bulk auto-apply. "Fill missing" / "Replace all"
+ * apply the most-complete multi-provider merge to every unapplied item (or
+ * the selected subset) without per-item review. Operators can still open a
+ * single item to compare candidates by hand.
+ */
+function NeedsReviewSection({
+  rows,
+  apply,
+  onOpen,
+}: {
+  rows: BatchChildRow[];
+  apply: ReturnType<typeof useBatchApply>;
+  onOpen: (scope: MetadataMatchScope) => void;
+}) {
+  const [scopeMode, setScopeMode] = React.useState<"all" | "selected">("all");
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [confirmReplace, setConfirmReplace] = React.useState(false);
+
+  // Only unapplied rows are actionable; an already-applied child is skipped
+  // server-side anyway.
+  const unapplied = rows.filter((c) => !c.applied);
+  const targetCount =
+    scopeMode === "selected" ? selected.size : unapplied.length;
+  const runIds =
+    scopeMode === "selected" ? Array.from(selected) : undefined;
+  const busy = apply.isPending;
+  const disabled = busy || targetCount === 0;
+
+  const toggle = (runId: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+
+  const runApply = (mode: "fill_missing" | "replace_all") =>
+    apply.mutate({ filter: "all_needs_review", mode, run_ids: runIds });
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-foreground text-sm font-semibold">
+          Needs review ({rows.length})
+        </h4>
+        {/* Scope toggle: act on all unapplied items, or a hand-picked subset. */}
+        <div className="bg-muted/40 inline-flex rounded-md p-0.5 text-xs">
+          {(["all", "selected"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setScopeMode(m)}
+              className={
+                scopeMode === m
+                  ? "bg-background text-foreground rounded px-2 py-1 shadow-sm"
+                  : "text-muted-foreground px-2 py-1"
+              }
+            >
+              {m === "all" ? "All" : `Selected (${selected.size})`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <p className="text-muted-foreground text-xs">
+        Auto-apply the most-complete metadata merged across every provider that
+        matched — no per-item review. Covers prefer ComicVine. Your pinned
+        fields are preserved. Or open a row to compare candidates by hand.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          disabled={disabled}
+          onClick={() => runApply("fill_missing")}
+        >
+          {busy && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+          Fill missing ({targetCount})
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled}
+          onClick={() => setConfirmReplace(true)}
+        >
+          Replace all ({targetCount})
+        </Button>
+      </div>
+
+      <ChildList
+        rows={rows}
+        tone="review"
+        onOpen={onOpen}
+        selectable={scopeMode === "selected"}
+        selectedIds={selected}
+        onToggleSelect={toggle}
+      />
+
+      <AlertDialog open={confirmReplace} onOpenChange={setConfirmReplace}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Replace metadata for {targetCount} item{targetCount === 1 ? "" : "s"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This overwrites existing non-pinned fields and the primary cover
+              with the most-complete merge across providers. Fields you pinned
+              are preserved. This can&rsquo;t be undone in bulk.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmReplace(false);
+                runApply("replace_all");
+              }}
+            >
+              Replace all
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
+  );
+}
+
 function ChildList({
   rows,
   tone,
   onOpen,
+  selectable = false,
+  selectedIds,
+  onToggleSelect,
 }: {
   rows: BatchChildRow[];
   tone: "strong" | "review" | "none";
   /** Open the Fetch-metadata dialog for a child (reuses its stored run). */
   onOpen: (scope: MetadataMatchScope) => void;
+  /** Render a selection checkbox per unapplied row (Selected scope). */
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (runId: string) => void;
 }) {
   return (
     <ul className="divide-border/60 border-border/60 divide-y overflow-hidden rounded-md border">
       {rows.map((c) => {
         const scope = scopeFor(c);
+        const label = (
+          <div className="min-w-0">
+            <span className="text-foreground text-sm">
+              {c.label ?? c.scope_entity_id ?? c.run_id}
+            </span>
+            {c.applied && (
+              <Badge variant="outline" className="ml-2 text-[10px]">
+                Applied
+              </Badge>
+            )}
+          </div>
+        );
+        const trailing = (
+          <div className="flex items-center gap-2">
+            <ToneDot tone={tone} />
+            {scope && <ChevronRight className="text-muted-foreground h-4 w-4" />}
+          </div>
+        );
+
+        // Selectable rows can't nest the open-button inside a checkbox row
+        // (invalid HTML), so the checkbox toggles selection and a separate
+        // open-button carries the label. Already-applied rows aren't
+        // selectable (skipped server-side).
+        if (selectable) {
+          const checkable = !c.applied;
+          return (
+            <li
+              key={c.run_id}
+              className="flex items-center gap-3 px-3 py-2"
+            >
+              <Checkbox
+                checked={selectedIds?.has(c.run_id) ?? false}
+                disabled={!checkable}
+                onCheckedChange={() => onToggleSelect?.(c.run_id)}
+                aria-label="Select for bulk apply"
+              />
+              {scope ? (
+                <button
+                  type="button"
+                  onClick={() => onOpen(scope)}
+                  className="hover:bg-muted/50 flex min-w-0 flex-1 items-center justify-between gap-3 rounded text-left transition-colors"
+                >
+                  {label}
+                  {trailing}
+                </button>
+              ) : (
+                <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                  {label}
+                  {trailing}
+                </div>
+              )}
+            </li>
+          );
+        }
+
         const inner = (
           <div className="flex items-center justify-between gap-3 px-3 py-2">
-            <div className="min-w-0">
-              <span className="text-foreground text-sm">
-                {c.label ?? c.scope_entity_id ?? c.run_id}
-              </span>
-              {c.applied && (
-                <Badge variant="outline" className="ml-2 text-[10px]">
-                  Applied
-                </Badge>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <ToneDot tone={tone} />
-              {scope && (
-                <ChevronRight className="text-muted-foreground h-4 w-4" />
-              )}
-            </div>
+            {label}
+            {trailing}
           </div>
         );
         return (

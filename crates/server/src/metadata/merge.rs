@@ -50,6 +50,12 @@ pub struct ProviderDetail {
 #[derive(Clone, Debug)]
 pub struct MergePolicyConfig {
     pub provider_preference: Vec<Source>,
+    /// Cover-only source override. When `Some(src)`, the primary-cover field
+    /// prefers `src`'s candidate over the normal `provider_preference` order
+    /// (every other field keeps the normal preference). `None` = use
+    /// `provider_preference` for covers too. Drives the bulk "prefer
+    /// ComicVine covers" requirement without perturbing scalar/junction picks.
+    pub preferred_cover_provider: Option<Source>,
 }
 
 impl MergePolicyConfig {
@@ -254,6 +260,22 @@ pub fn choose_field_candidate(
             .map(|d| d.ordinal)
     } else {
         // Non-empty wins; among those, lowest (preference rank, ordinal).
+        // Covers honour the cover-only preference override first: if the
+        // preferred source supplied a cover, take its best candidate; only
+        // when it has none do we fall through to the normal preference order.
+        if field == MetadataField::CoverPrimary
+            && let Some(preferred) = policy.preferred_cover_provider
+        {
+            let from_preferred = details
+                .iter()
+                .filter(|d| d.source == preferred)
+                .filter(|d| field_value_as_string(&d.detail, field, scope).is_some())
+                .min_by_key(|d| d.ordinal)
+                .map(|d| d.ordinal);
+            if from_preferred.is_some() {
+                return from_preferred;
+            }
+        }
         details
             .iter()
             .filter(|d| field_value_as_string(&d.detail, field, scope).is_some())
@@ -311,6 +333,7 @@ mod tests {
     fn policy(order: &[Source]) -> MergePolicyConfig {
         MergePolicyConfig {
             provider_preference: order.to_vec(),
+            preferred_cover_provider: None,
         }
     }
 
@@ -357,6 +380,73 @@ mod tests {
         let pref = policy(&[Source::Metron, Source::ComicVine]);
         assert_eq!(
             choose_field_candidate(MetadataField::Title, &details, &pref, MergeScope::Issue),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn cover_preference_override_picks_comicvine_under_metron_first() {
+        let mut cv = detail();
+        cv.cover_image_url = Some("https://cv/cover.jpg".into());
+        let mut metron = detail();
+        metron.cover_image_url = Some("https://metron/cover.jpg".into());
+        let details = vec![
+            pd(Source::Metron, 20, metron),
+            pd(Source::ComicVine, 10, cv),
+        ];
+        // Metron is the global preference, but the cover-only override prefers
+        // ComicVine → the CV candidate (10) wins the primary-cover field.
+        let pref = MergePolicyConfig {
+            provider_preference: vec![Source::Metron, Source::ComicVine],
+            preferred_cover_provider: Some(Source::ComicVine),
+        };
+        assert_eq!(
+            choose_field_candidate(
+                MetadataField::CoverPrimary,
+                &details,
+                &pref,
+                MergeScope::Issue
+            ),
+            Some(10)
+        );
+        // Other scalar fields are untouched by the cover override — Metron
+        // still wins the preference tiebreak when both have a value.
+        let mut cv2 = detail();
+        cv2.title = Some("CV".into());
+        let mut metron2 = detail();
+        metron2.title = Some("Metron".into());
+        let details2 = vec![
+            pd(Source::ComicVine, 10, cv2),
+            pd(Source::Metron, 20, metron2),
+        ];
+        assert_eq!(
+            choose_field_candidate(MetadataField::Title, &details2, &pref, MergeScope::Issue),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn cover_preference_override_falls_back_when_preferred_has_no_cover() {
+        // Only Metron supplied a cover; the ComicVine override falls through
+        // to the normal preference order rather than dropping the cover.
+        let mut metron = detail();
+        metron.cover_image_url = Some("https://metron/cover.jpg".into());
+        let cv = detail(); // no cover
+        let details = vec![
+            pd(Source::ComicVine, 10, cv),
+            pd(Source::Metron, 20, metron),
+        ];
+        let pref = MergePolicyConfig {
+            provider_preference: vec![Source::Metron, Source::ComicVine],
+            preferred_cover_provider: Some(Source::ComicVine),
+        };
+        assert_eq!(
+            choose_field_candidate(
+                MetadataField::CoverPrimary,
+                &details,
+                &pref,
+                MergeScope::Issue
+            ),
             Some(20)
         );
     }

@@ -2966,6 +2966,11 @@ export interface paths {
          *     at once. Loops the existing per-entity `ApplySeriesJob`/`ApplyIssueJob`
          *     push (decision matrix, apply mutex, writeback dispatch, audit all
          *     unchanged); only the fan-out is new.
+         * @description `all_strong` / `ordinals` enqueue single-candidate applies. `all_needs_review`
+         *     enqueues one **composite** apply per needs-review run (best candidate per
+         *     provider merged "most-complete", covers preferring ComicVine) — the bulk
+         *     "Fill missing / Replace all" path. The per-request cap + `remainder` then
+         *     count runs; re-trigger to drain the rest.
          */
         post: operations["metadata_batch_apply"];
         delete?: never;
@@ -4050,17 +4055,22 @@ export interface components {
              */
             strong: number;
         };
+        /**
+         * @description Which batch children to apply.
+         * @enum {string}
+         */
+        BatchApplyFilter: "all_strong" | "ordinals" | "all_needs_review";
         BatchApplyReq: {
             apply_cover?: boolean;
             cover_overwrite_policy?: components["schemas"]["ApplyCoverPolicy"];
-            /**
-             * @description `"all_strong"` → every child with a `single_good` outcome whose top
-             *     candidate isn't applied yet. `"ordinals"` → the explicit
-             *     `run_ordinals` list the operator curated.
-             */
-            filter: string;
+            filter: components["schemas"]["BatchApplyFilter"];
             mode?: components["schemas"]["ApplyMode"];
             override_user_edits?: boolean;
+            /**
+             * @description Restrict `all_needs_review` to these runs (the "Selected" subset).
+             *     Absent ⇒ every needs-review child in the batch ("All").
+             */
+            run_ids?: string[] | null;
             run_ordinals?: components["schemas"]["RunOrdinal"][] | null;
             selected_fields?: string[] | null;
         };

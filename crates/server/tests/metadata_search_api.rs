@@ -759,3 +759,158 @@ async fn series_batch_groups_per_issue_runs_and_holds_for_review() {
             .all(|r| r.scope == "issue" && r.trigger_kind == "manual")
     );
 }
+
+/// Seed a one-child batch whose child is a `multi_good` (needs-review) run
+/// with two providers' candidates. `applied` flips both candidates' applied_at
+/// so the run looks already-applied. Returns the batch id.
+async fn seed_needs_review_batch(
+    app: &TestApp,
+    lib_id: Uuid,
+    issue_id: &str,
+    applied: bool,
+) -> Uuid {
+    let db = &app.state().db;
+    let now = Utc::now().fixed_offset();
+    let batch_id = Uuid::now_v7();
+    entity::metadata_batch::ActiveModel {
+        id: Set(batch_id),
+        library_id: Set(Some(lib_id)),
+        scope: Set("series_issues".into()),
+        trigger_kind: Set("manual".into()),
+        status: Set("completed".into()),
+        items_total: Set(1),
+        created_by: Set(None),
+        created_at: Set(now),
+        ended_at: Set(Some(now)),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    let run_id = Uuid::now_v7();
+    entity::metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("issue".into()),
+        scope_entity_id: Set(Some(issue_id.to_string())),
+        library_id: Set(Some(lib_id)),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into(), "metron".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(1),
+        items_matched_high: Set(0),
+        items_matched_medium: Set(1),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        batch_id: Set(Some(batch_id)),
+        query: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    let applied_at = if applied { Some(now) } else { None };
+    for (ord, src) in [(0i32, "comicvine"), (1, "metron")] {
+        entity::metadata_run_candidate::ActiveModel {
+            run_id: Set(run_id),
+            ordinal: Set(ord),
+            source: Set(src.into()),
+            external_id: Set(format!("ext-{ord}")),
+            bucket: Set("medium".into()),
+            score: Set(70.0),
+            score_breakdown: Set(json!({})),
+            candidate: Set(json!({})),
+            applied_at: Set(applied_at),
+        }
+        .insert(db)
+        .await
+        .unwrap();
+    }
+    entity::metadata_match_outcome::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        run_id: Set(run_id),
+        scope: Set("issue".into()),
+        outcome_kind: Set("multi_good".into()),
+        top_score: Set(70.0),
+        top_hamming: Set(None),
+        second_score: Set(Some(68.0)),
+        second_hamming: Set(None),
+        candidate_count: Set(2),
+        created_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    batch_id
+}
+
+#[tokio::test]
+async fn batch_apply_all_needs_review_enqueues_one_composite_per_run() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"x", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let batch_id = seed_needs_review_batch(&app, lib_id, &issue_id, false).await;
+
+    // "All" → the one needs-review run is enqueued for composite apply.
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/metadata/batch/{batch_id}/apply"),
+        json!({"filter": "all_needs_review", "mode": "fill_missing"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["enqueued"].as_u64().unwrap(), 1);
+    assert_eq!(body["skipped_already_applied"].as_u64().unwrap(), 0);
+
+    // `run_ids: []` (Selected scope with nothing picked) → enqueues nothing.
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/metadata/batch/{batch_id}/apply"),
+        json!({"filter": "all_needs_review", "mode": "fill_missing", "run_ids": []}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["enqueued"].as_u64().unwrap(), 0);
+}
+
+#[tokio::test]
+async fn batch_apply_all_needs_review_skips_fully_applied_runs() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"x", 1.0)
+        .insert(&app.state().db)
+        .await;
+    // Both candidates already applied → the run is skipped, not re-enqueued.
+    let batch_id = seed_needs_review_batch(&app, lib_id, &issue_id, true).await;
+
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/metadata/batch/{batch_id}/apply"),
+        json!({"filter": "all_needs_review", "mode": "replace_all"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["enqueued"].as_u64().unwrap(), 0);
+    assert_eq!(body["skipped_already_applied"].as_u64().unwrap(), 1);
+}
