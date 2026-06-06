@@ -34,9 +34,43 @@ permissions:
   attestations: write   # GHA attestations API (SBOM/provenance)
 
 jobs:
+  # On a plain push to main we only need to rebuild the floating `:edge` images
+  # when code that affects them changed — a docs/CHANGELOG-only merge shouldn't
+  # rebuild + push. The paths-filter runs ONLY for branch pushes, so a tag
+  # release is never gated on it (publish's `if` short-circuits on the tag ref).
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          filters: |
+            code:
+              - 'crates/**'
+              - 'web/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'Dockerfile'
+              - 'web/Dockerfile'
+              - '.dockerignore'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/release.yml'
+
   publish:
     name: ${{ matrix.image }} (${{ matrix.arch }})
     runs-on: ubuntu-24.04
+    needs: [changes]
+    # Always build on a tag (the actual release) or a manual dispatch; on a
+    # plain push to main, only when image-affecting code changed — skipping the
+    # redundant edge rebuild for docs/CHANGELOG-only merges.
+    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true' }}
     strategy:
       fail-fast: false
       matrix:
