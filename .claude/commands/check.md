@@ -1,7 +1,7 @@
 ---
 description: Run the full Rust + web check suite (check, clippy, test, typecheck, lint) and report failures.
 argument-hint: "[--skip-test|--rust-only|--web-only]"
-allowed-tools: Bash(cargo check:*), Bash(cargo clippy:*), Bash(cargo test:*), Bash(pnpm:*), Bash(pnpm --filter web run:*)
+allowed-tools: Bash(cargo fmt:*), Bash(cargo check:*), Bash(cargo clippy:*), Bash(cargo test:*), Bash(pnpm:*), Bash(pnpm --filter web run:*)
 ---
 
 Run the project's check suite and report results compactly.
@@ -13,9 +13,12 @@ Arg `$ARGUMENTS` may include `--skip-test`, `--rust-only`, `--web-only`. Honor
 those filters; otherwise run everything.
 
 **Rust side** (from repo root):
-1. `cargo check --workspace --all-targets`
-2. `cargo clippy --workspace --all-targets -- -D warnings`
-3. `cargo test --workspace` *(unless `--skip-test`)*
+1. `cargo fmt --all -- --check` — CI's "Rust — fmt / clippy / test" job runs
+   this first, so it's the cheapest gate to fail (no compilation). On failure,
+   report the offending files (`Diff in …`) and that `cargo fmt --all` fixes it.
+2. `cargo check --workspace --all-targets`
+3. `cargo clippy --workspace --all-targets -- -D warnings`
+4. `cargo test --workspace` *(unless `--skip-test`)*
 
 **Web side**:
 1. `pnpm --filter web run typecheck`
@@ -29,6 +32,7 @@ or `pnpm build` — those are slower and not part of the contract.
 
 ```
 Rust
+  fmt       ✓ / ✗ N files need cargo fmt
   check     ✓ / ✗ N errors
   clippy    ✓ / ✗ N warnings (treated as errors)
   test      ✓ N passed / ✗ N failed

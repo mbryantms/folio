@@ -22,6 +22,11 @@ bootstrap:
     @test -f .env || (cp .env.example .env && echo "==> Created .env from .env.example — edit it now")
     pnpm install
     cargo fetch
+    @# Route git hooks at the tracked .githooks/ dir so the pre-commit fmt
+    @# guard is active for everyone (CI's fmt job is otherwise the first place
+    @# unformatted Rust gets caught — too late, on the PR).
+    git config core.hooksPath .githooks
+    @echo "==> Git hooks installed (core.hooksPath=.githooks)"
     @echo "==> Bootstrap complete. Next: just dev-services-up && just migrate && just dev"
 
 # ───── dev services ─────
