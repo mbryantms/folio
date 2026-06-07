@@ -1787,6 +1787,13 @@ async fn apply_external_ids(
 ) -> Result<(), ApplyError> {
     for id in identifiers {
         match writers::set_external_id(db, entity_type, entity_id, id, set_by).await {
+            Ok(writers::SetExternalIdOutcome::SkippedConflict { owner }) => {
+                outcome.external_ids_skipped.push(ExternalIdSkipped {
+                    source: id.source.as_str().into(),
+                    external_id: id.id.clone(),
+                    reason: format!("already assigned to another item ({owner})"),
+                })
+            }
             Ok(_) => outcome.external_ids_added.push(ExternalIdAdded {
                 source: id.source.as_str().into(),
                 external_id: id.id.clone(),

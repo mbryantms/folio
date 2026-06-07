@@ -18,7 +18,9 @@ use chrono::Utc;
 use common::TestApp;
 use entity::prelude::*;
 use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, Set};
-use server::metadata::writers::{self, CharacterSpec, CsvRebuildBatch, SetBy};
+use server::metadata::writers::{
+    self, CharacterSpec, CsvRebuildBatch, SetBy, SetExternalIdOutcome,
+};
 use server::metadata::{Identifier, Source};
 use uuid::Uuid;
 
@@ -469,4 +471,111 @@ async fn csv_rebuild_batch_dedupes_queued_issues() {
     let drained = batch.drain();
     assert_eq!(drained.len(), 2);
     assert!(batch.is_empty());
+}
+
+/// Insert a second issue row in the same series by cloning the seeded one
+/// (so both are real, lifecycle-aware rows for the reclaim/skip checks).
+async fn clone_issue(db: &sea_orm::DatabaseConnection, src_id: &str, new_id: String) -> String {
+    let src = entity::issue::Entity::find_by_id(src_id.to_owned())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = src.into();
+    am.id = Set(new_id.clone());
+    am.slug = Set(format!("clone-{}", &new_id[..8]));
+    am.file_path = Set(format!("/tmp/{new_id}.cbz"));
+    am.content_hash = Set(new_id.clone());
+    am.insert(db).await.unwrap();
+    new_id
+}
+
+async fn cv_owner(db: &sea_orm::DatabaseConnection, external_id: &str) -> Vec<String> {
+    ExternalId::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .filter(entity::external_id::Column::ExternalId.eq(external_id))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.entity_id)
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_external_id_skips_when_a_live_issue_owns_the_id() {
+    let app = TestApp::spawn().await;
+    let (db, issue_a, _lib, _series) = seed_minimal_issue(&app).await;
+    let issue_b = clone_issue(&db, &issue_a, "1".repeat(64)).await;
+
+    // A claims ComicVine 100.
+    let o = writers::set_external_id(
+        &db,
+        "issue",
+        &issue_a,
+        &Identifier::new(Source::ComicVine, "100"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+    assert_eq!(o, SetExternalIdOutcome::Set);
+
+    // B tries to claim the same ID while A is live → skipped, A keeps it.
+    let o = writers::set_external_id(
+        &db,
+        "issue",
+        &issue_b,
+        &Identifier::new(Source::ComicVine, "100"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        o,
+        SetExternalIdOutcome::SkippedConflict {
+            owner: issue_a.clone()
+        }
+    );
+    assert_eq!(cv_owner(&db, "100").await, vec![issue_a]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_external_id_reclaims_from_a_removed_owner() {
+    let app = TestApp::spawn().await;
+    let (db, issue_a, _lib, _series) = seed_minimal_issue(&app).await;
+    let issue_b = clone_issue(&db, &issue_a, "1".repeat(64)).await;
+
+    // A claims ComicVine 200, then A is soft-removed (duplicate file deleted).
+    writers::set_external_id(
+        &db,
+        "issue",
+        &issue_a,
+        &Identifier::new(Source::ComicVine, "200"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+    let mut am: entity::issue::ActiveModel = entity::issue::Entity::find_by_id(issue_a.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&db).await.unwrap();
+
+    // B now claims the ID — the survivor reclaims it from the removed owner.
+    let o = writers::set_external_id(
+        &db,
+        "issue",
+        &issue_b,
+        &Identifier::new(Source::ComicVine, "200"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+    assert_eq!(o, SetExternalIdOutcome::Reclaimed { from: issue_a });
+    // Exactly one owner now — B.
+    assert_eq!(cv_owner(&db, "200").await, vec![issue_b]);
 }

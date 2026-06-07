@@ -1001,3 +1001,51 @@ async fn series_folder_tag_does_not_overwrite_user_pinned() {
     );
     assert_eq!(row.set_by, "user");
 }
+
+/// Two files for the same issue both carry the same embedded ComicVine id
+/// (the duplicate/variant case from prod). The scan must NOT wedge on the
+/// `external_ids_source_external_id_entity_type_key` unique: it ingests both
+/// issues, the id sticks to exactly one, and the collision surfaces as a
+/// `DuplicateExternalId` health finding.
+#[tokio::test]
+async fn duplicate_embedded_external_id_surfaces_health_without_wedging_scan() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Dup (2009)");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    // Same ComicInfo (incl. the ComicVine 4000-12345 Web URL) in two distinct
+    // archives → two issue rows both claiming ComicVine 12345.
+    let xml = r#"<?xml version="1.0"?><ComicInfo><Series>Dup</Series><Number>36</Number><Web>https://comicvine.gamespot.com/dup-36/4000-12345/</Web></ComicInfo>"#;
+    write_cbz_with_xml(&folder.join("Dup 036 (digital).cbz"), 1, 2, Some(xml), None);
+    write_cbz_with_xml(&folder.join("Dup 036 (variant).cbz"), 2, 2, Some(xml), None);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    // Pre-fix this returned/propagated a duplicate-key error; it must succeed now.
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issues = IssueEntity::find().all(&state.db).await.unwrap();
+    assert_eq!(issues.len(), 2, "both files ingest despite the shared id");
+
+    let owners = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .filter(entity::external_id::Column::ExternalId.eq("12345"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(owners.len(), 1, "the id is claimed by exactly one issue");
+
+    let health = entity::library_health_issue::Entity::find()
+        .filter(entity::library_health_issue::Column::Kind.eq("DuplicateExternalId"))
+        .filter(entity::library_health_issue::Column::ResolvedAt.is_null())
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        health.len(),
+        1,
+        "the duplicate id raised one DuplicateExternalId finding"
+    );
+}

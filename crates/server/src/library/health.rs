@@ -119,6 +119,18 @@ pub enum IssueKind {
         path: PathBuf,
         reason: String,
     },
+    /// A provider ID embedded in this archive's ComicInfo/MetronInfo is
+    /// already owned by another *live* issue — almost always a duplicate
+    /// or variant file carrying the same ComicVine/Metron/GTIN id. The
+    /// scanner skips that one ID (rather than aborting) and surfaces this
+    /// so the operator can de-dup. The survivor reclaims the ID
+    /// automatically once the duplicate is removed.
+    DuplicateExternalId {
+        path: PathBuf,
+        source: String,
+        external_id: String,
+        owner_entity_id: String,
+    },
 }
 
 impl IssueKind {
@@ -142,6 +154,7 @@ impl IssueKind {
             Self::SkippedArchiveEntries { .. } => "SkippedArchiveEntries",
             Self::UnreadablePage { .. } => "UnreadablePage",
             Self::AmbiguousFolder { .. } => "AmbiguousFolder",
+            Self::DuplicateExternalId { .. } => "DuplicateExternalId",
         }
     }
 
@@ -161,7 +174,8 @@ impl IssueKind {
             | Self::UnsupportedArchiveFormat { .. }
             | Self::SkippedArchiveEntries { .. }
             | Self::UnreadablePage { .. }
-            | Self::AmbiguousFolder { .. } => Severity::Warning,
+            | Self::AmbiguousFolder { .. }
+            | Self::DuplicateExternalId { .. } => Severity::Warning,
 
             Self::MissingComicInfo { .. } | Self::RecoveredArchive { .. } => Severity::Info,
         }
@@ -230,6 +244,20 @@ impl IssueKind {
                 // still UPDATE the existing row, not duplicate it.
                 format!("AmbiguousFolder:{}", path.display())
             }
+            Self::DuplicateExternalId {
+                path,
+                source,
+                external_id,
+                ..
+            } => {
+                // One row per (file, conflicting id). `owner_entity_id`
+                // intentionally isn't in the key — if the owner changes
+                // the same on-disk conflict should UPDATE, not duplicate.
+                format!(
+                    "DuplicateExternalId:{}:{source}:{external_id}",
+                    path.display()
+                )
+            }
         };
         // Hash the key so the column stays a fixed length and doesn't leak
         // the full path through the unique index.
@@ -255,7 +283,8 @@ impl IssueKind {
             | Self::RecoveredArchive { path, .. }
             | Self::SkippedArchiveEntries { path, .. }
             | Self::UnreadablePage { path, .. }
-            | Self::AmbiguousFolder { path, .. } => Some(path.to_string_lossy().into_owned()),
+            | Self::AmbiguousFolder { path, .. }
+            | Self::DuplicateExternalId { path, .. } => Some(path.to_string_lossy().into_owned()),
             Self::FolderNameMismatch { folder, .. } => Some(folder.clone()),
             Self::MixedSeriesInFolder { folder, .. } | Self::OrphanedSeriesJson { folder } => {
                 Some(folder.to_string_lossy().into_owned())

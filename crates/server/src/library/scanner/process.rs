@@ -854,7 +854,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         remember_primary_issue_path(db, &row_id, &path_str).await?;
         // Persist CV / Metron / GTIN from ComicInfo into external_ids.
         // User-pinned values (set_by='user') are skipped automatically.
-        crate::metadata::writers::set_legacy_id_trio(
+        let skips = crate::metadata::writers::set_legacy_id_trio(
             db,
             "issue",
             &updated.id,
@@ -864,6 +864,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             crate::metadata::writers::SetBy::ComicInfo,
         )
         .await?;
+        emit_external_id_skips(health, path, skips);
         // metadata-providers-1.0 M8: MetronInfo's `<ID source="…">` list
         // carries IDs for any number of providers (GCD, Marvel, LoCG,
         // ISBN, etc.) — not just CV/Metron. Write each one so cross-
@@ -874,7 +875,8 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // here is harmless (set_external_id is idempotent and the
         // user-precedence rule is symmetric across non-user set_by).
         if let Some(ids) = &metron_ids {
-            write_metroninfo_external_ids(db, "issue", &updated.id, ids).await?;
+            let skips = write_metroninfo_external_ids(db, "issue", &updated.id, ids).await?;
+            emit_external_id_skips(health, path, skips);
         }
         // F-1: pass the just-updated model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &updated).await?;
@@ -1008,7 +1010,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         };
         let inserted = am.insert(db).await?;
         remember_primary_issue_path(db, &issue_id, &path_str).await?;
-        crate::metadata::writers::set_legacy_id_trio(
+        let skips = crate::metadata::writers::set_legacy_id_trio(
             db,
             "issue",
             &inserted.id,
@@ -1018,10 +1020,12 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             crate::metadata::writers::SetBy::ComicInfo,
         )
         .await?;
+        emit_external_id_skips(health, path, skips);
         // metadata-providers-1.0 M8 — see the matching block on the
         // update path above for the cross-source-IDs rationale.
         if let Some(ids) = &metron_ids {
-            write_metroninfo_external_ids(db, "issue", &inserted.id, ids).await?;
+            let skips = write_metroninfo_external_ids(db, "issue", &inserted.id, ids).await?;
+            emit_external_id_skips(health, path, skips);
         }
         // F-1: pass the just-inserted model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &inserted).await?;
@@ -1952,12 +1956,32 @@ pub async fn write_series_folder_tags<C: ConnectionTrait>(
 /// run on every rescan.
 ///
 /// metadata-providers-1.0 M8.
+/// Raise a `DuplicateExternalId` health finding for each provider ID a
+/// write skipped because a live issue already owns it (the duplicate /
+/// variant-file case). The scan still completes; the operator sees the
+/// dups in `/admin/findings` instead of a wedged, retrying scan.
+fn emit_external_id_skips(
+    health: &mut HealthCollector,
+    path: &Path,
+    skips: Vec<crate::metadata::writers::SkippedExternalId>,
+) {
+    for s in skips {
+        health.emit(IssueKind::DuplicateExternalId {
+            path: path.to_path_buf(),
+            source: s.source.as_str().to_owned(),
+            external_id: s.external_id,
+            owner_entity_id: s.owner,
+        });
+    }
+}
+
 async fn write_metroninfo_external_ids<C: ConnectionTrait>(
     db: &C,
     entity_type: &str,
     entity_id: &str,
     ids: &BTreeMap<String, String>,
-) -> Result<(), sea_orm::DbErr> {
+) -> Result<Vec<crate::metadata::writers::SkippedExternalId>, sea_orm::DbErr> {
+    let mut skipped = Vec::new();
     for (raw_source, raw_id) in ids {
         let trimmed = raw_id.trim();
         if trimmed.is_empty() {
@@ -1972,16 +1996,24 @@ async fn write_metroninfo_external_ids<C: ConnectionTrait>(
             continue;
         };
         let identifier = crate::metadata::identifier::Identifier::new(source, trimmed);
-        crate::metadata::writers::set_external_id(
-            db,
-            entity_type,
-            entity_id,
-            &identifier,
-            crate::metadata::writers::SetBy::MetronInfo,
-        )
-        .await?;
+        if let crate::metadata::writers::SetExternalIdOutcome::SkippedConflict { owner } =
+            crate::metadata::writers::set_external_id(
+                db,
+                entity_type,
+                entity_id,
+                &identifier,
+                crate::metadata::writers::SetBy::MetronInfo,
+            )
+            .await?
+        {
+            skipped.push(crate::metadata::writers::SkippedExternalId {
+                source,
+                external_id: trimmed.to_owned(),
+                owner,
+            });
+        }
     }
-    Ok(())
+    Ok(skipped)
 }
 
 #[cfg(test)]

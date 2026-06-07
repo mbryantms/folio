@@ -30,11 +30,11 @@
 use crate::metadata::{Identifier, Source};
 use crate::slug::slugify_segment;
 use entity::{
-    character, concept, external_id, field_provenance, imprint, issue_arc, issue_character,
+    character, concept, external_id, field_provenance, imprint, issue, issue_arc, issue_character,
     issue_concept, issue_cover, issue_credit, issue_genre, issue_location, issue_object,
     issue_reprint, issue_tag, issue_team, issue_universe, location, object, person, publisher,
-    series_arc, series_character, series_concept, series_location, series_object, series_team,
-    series_universe, story_arc, team, universe,
+    series, series_arc, series_character, series_concept, series_location, series_object,
+    series_team, series_universe, story_arc, team, universe,
 };
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
@@ -153,16 +153,77 @@ async fn lookup_by_identifier<C: ConnectionTrait>(
     Ok(row.map(|r| r.entity_id))
 }
 
+/// Outcome of a single external-ID write. A provider ID can only ever
+/// belong to one entity (the `external_ids_source_external_id_entity_type_key`
+/// unique), so a write either lands cleanly, reclaims the ID from an
+/// owner that's since been removed, or is skipped because a **live**
+/// entity still holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetExternalIdOutcome {
+    /// Written (or refreshed in place for the same entity).
+    Set,
+    /// The ID was held by an entity that's gone/removed; we reassigned
+    /// it to this entity. `from` is the prior owner's `entity_id`.
+    Reclaimed { from: String },
+    /// A still-live entity owns this ID; nothing was written. `owner`
+    /// is that entity's id. Callers decide how to surface it (the
+    /// scanner raises a health finding; a user add returns 409).
+    SkippedConflict { owner: String },
+}
+
+/// One provider ID that [`set_legacy_id_trio`] /
+/// [`write_metroninfo_external_ids`] couldn't write because a live
+/// entity already owns it. Surfaced by the scanner as a health finding.
+#[derive(Debug, Clone)]
+pub struct SkippedExternalId {
+    pub source: Source,
+    pub external_id: String,
+    pub owner: String,
+}
+
+/// Is the entity currently holding an ID eligible to lose it? True when
+/// the owning issue/series is gone or soft-removed (`removed_at` set) —
+/// the duplicate-file case where the survivor should reclaim the ID.
+/// Other entity types are never auto-reclaimed (returns false → skip).
+async fn owner_is_reclaimable<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    owner_entity_id: &str,
+) -> Result<bool, DbErr> {
+    match entity_type {
+        "issue" => Ok(issue::Entity::find_by_id(owner_entity_id.to_owned())
+            .one(db)
+            .await?
+            .is_none_or(|r| r.removed_at.is_some())),
+        "series" => {
+            let Ok(uuid) = Uuid::parse_str(owner_entity_id) else {
+                return Ok(false);
+            };
+            Ok(series::Entity::find_by_id(uuid)
+                .one(db)
+                .await?
+                .is_none_or(|r| r.removed_at.is_some()))
+        }
+        _ => Ok(false),
+    }
+}
+
 /// Internal: write the `external_ids` row, computing the canonical
 /// URL when the caller didn't supply one. Honors set_by precedence
 /// — never overwrites a `set_by='user'` row with a non-user write.
+///
+/// Also enforces the cross-entity unique `(source, external_id,
+/// entity_type)` *before* inserting (a `SELECT`, not a caught
+/// constraint error — the latter poisons the surrounding scan
+/// transaction): if a different entity already owns the ID, reclaim it
+/// when that owner is gone/removed, else skip and report the conflict.
 async fn put_external_id<C: ConnectionTrait>(
     db: &C,
     entity_type: &str,
     entity_id: &str,
     identifier: &Identifier,
     set_by: SetBy,
-) -> Result<(), DbErr> {
+) -> Result<SetExternalIdOutcome, DbErr> {
     let url = identifier.url.clone().or_else(|| {
         crate::metadata::identifier::canonical_url(identifier.source, entity_type, &identifier.id)
     });
@@ -187,7 +248,34 @@ async fn put_external_id<C: ConnectionTrait>(
             source = identifier.source.as_str(),
             "skipping external_id write: user-set value differs"
         );
-        return Ok(());
+        return Ok(SetExternalIdOutcome::Set);
+    }
+
+    // Cross-entity unique: does a *different* entity already own this
+    // (source, external_id, entity_type)? Reclaim from a removed owner,
+    // otherwise skip so the caller can surface the duplicate.
+    let mut reclaimed_from: Option<String> = None;
+    if let Some(owner) = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq(entity_type))
+        .filter(external_id::Column::Source.eq(identifier.source.as_str()))
+        .filter(external_id::Column::ExternalId.eq(&identifier.id))
+        .one(db)
+        .await?
+        && owner.entity_id != entity_id
+    {
+        if owner_is_reclaimable(db, entity_type, &owner.entity_id).await? {
+            external_id::Entity::delete_many()
+                .filter(external_id::Column::EntityType.eq(entity_type))
+                .filter(external_id::Column::Source.eq(identifier.source.as_str()))
+                .filter(external_id::Column::ExternalId.eq(&identifier.id))
+                .exec(db)
+                .await?;
+            reclaimed_from = Some(owner.entity_id);
+        } else {
+            return Ok(SetExternalIdOutcome::SkippedConflict {
+                owner: owner.entity_id,
+            });
+        }
     }
 
     let am = external_id::ActiveModel {
@@ -217,7 +305,10 @@ async fn put_external_id<C: ConnectionTrait>(
         )
         .exec(db)
         .await?;
-    Ok(())
+    Ok(match reclaimed_from {
+        Some(from) => SetExternalIdOutcome::Reclaimed { from },
+        None => SetExternalIdOutcome::Set,
+    })
 }
 
 /// Public surface for external-ID writes — used by the
@@ -228,7 +319,7 @@ pub async fn set_external_id<C: ConnectionTrait>(
     entity_id: &str,
     identifier: &Identifier,
     set_by: SetBy,
-) -> Result<(), DbErr> {
+) -> Result<SetExternalIdOutcome, DbErr> {
     put_external_id(db, entity_type, entity_id, identifier, set_by).await
 }
 
@@ -249,40 +340,62 @@ pub async fn set_legacy_id_trio<C: ConnectionTrait>(
     metron: Option<i64>,
     gtin: Option<&str>,
     set_by: SetBy,
-) -> Result<(), DbErr> {
+) -> Result<Vec<SkippedExternalId>, DbErr> {
+    let mut skipped = Vec::new();
     if let Some(cv) = comicvine {
-        set_external_id(
+        let id = cv.to_string();
+        if let SetExternalIdOutcome::SkippedConflict { owner } = set_external_id(
             db,
             entity_type,
             entity_id,
-            &Identifier::new(Source::ComicVine, cv.to_string()),
+            &Identifier::new(Source::ComicVine, id.clone()),
             set_by,
         )
-        .await?;
+        .await?
+        {
+            skipped.push(SkippedExternalId {
+                source: Source::ComicVine,
+                external_id: id,
+                owner,
+            });
+        }
     }
     if let Some(m) = metron {
-        set_external_id(
+        let id = m.to_string();
+        if let SetExternalIdOutcome::SkippedConflict { owner } = set_external_id(
             db,
             entity_type,
             entity_id,
-            &Identifier::new(Source::Metron, m.to_string()),
+            &Identifier::new(Source::Metron, id.clone()),
             set_by,
         )
-        .await?;
+        .await?
+        {
+            skipped.push(SkippedExternalId {
+                source: Source::Metron,
+                external_id: id,
+                owner,
+            });
+        }
     }
     if let Some(g) = gtin
         && !g.is_empty()
-    {
-        set_external_id(
+        && let SetExternalIdOutcome::SkippedConflict { owner } = set_external_id(
             db,
             entity_type,
             entity_id,
             &Identifier::new(Source::Gtin, g),
             set_by,
         )
-        .await?;
+        .await?
+    {
+        skipped.push(SkippedExternalId {
+            source: Source::Gtin,
+            external_id: g.to_string(),
+            owner,
+        });
     }
-    Ok(())
+    Ok(skipped)
 }
 
 /// Inverse of [`set_legacy_id_trio`] — query the trio for a given
