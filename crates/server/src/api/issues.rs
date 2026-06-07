@@ -472,6 +472,26 @@ fn norm_str(v: Option<String>) -> Option<String> {
     })
 }
 
+/// Log a user external-ID edit that was skipped because the ID is
+/// already assigned to another item (the cross-entity unique). Maps the
+/// write outcome to `()` so it composes with the sibling `delete`
+/// arm. The user-facing `<ExternalIdsCard>` add path returns a 409
+/// instead; these legacy PATCH fields stay best-effort + logged.
+fn log_external_id_skip(
+    issue_id: &str,
+    field: &str,
+    outcome: crate::metadata::writers::SetExternalIdOutcome,
+) {
+    if let crate::metadata::writers::SetExternalIdOutcome::SkippedConflict { owner } = outcome {
+        tracing::warn!(
+            issue_id,
+            field,
+            owner,
+            "issue external_id edit skipped: identifier already assigned to another item"
+        );
+    }
+}
+
 #[utoipa::path(
     operation_id = "issues_update",    patch,
     path = "/series/{series_slug}/issues/{issue_slug}",
@@ -779,16 +799,15 @@ pub async fn update(
     use crate::metadata::{Identifier, Source};
     if let Some(opt) = pending_gtin {
         let res = match opt {
-            Some(v) if !v.is_empty() => {
-                writers::set_external_id(
-                    &app.db,
-                    "issue",
-                    &updated.id,
-                    &Identifier::new(Source::Gtin, v),
-                    SetBy::User,
-                )
-                .await
-            }
+            Some(v) if !v.is_empty() => writers::set_external_id(
+                &app.db,
+                "issue",
+                &updated.id,
+                &Identifier::new(Source::Gtin, v),
+                SetBy::User,
+            )
+            .await
+            .map(|o| log_external_id_skip(&updated.id, "gtin", o)),
             _ => writers::delete_external_id(&app.db, "issue", &updated.id, Source::Gtin).await,
         };
         if let Err(e) = res {
@@ -797,16 +816,15 @@ pub async fn update(
     }
     if let Some(opt) = pending_cv {
         let res = match opt {
-            Some(v) => {
-                writers::set_external_id(
-                    &app.db,
-                    "issue",
-                    &updated.id,
-                    &Identifier::new(Source::ComicVine, v.to_string()),
-                    SetBy::User,
-                )
-                .await
-            }
+            Some(v) => writers::set_external_id(
+                &app.db,
+                "issue",
+                &updated.id,
+                &Identifier::new(Source::ComicVine, v.to_string()),
+                SetBy::User,
+            )
+            .await
+            .map(|o| log_external_id_skip(&updated.id, "comicvine", o)),
             None => {
                 writers::delete_external_id(&app.db, "issue", &updated.id, Source::ComicVine).await
             }
@@ -817,16 +835,15 @@ pub async fn update(
     }
     if let Some(opt) = pending_metron {
         let res = match opt {
-            Some(v) => {
-                writers::set_external_id(
-                    &app.db,
-                    "issue",
-                    &updated.id,
-                    &Identifier::new(Source::Metron, v.to_string()),
-                    SetBy::User,
-                )
-                .await
-            }
+            Some(v) => writers::set_external_id(
+                &app.db,
+                "issue",
+                &updated.id,
+                &Identifier::new(Source::Metron, v.to_string()),
+                SetBy::User,
+            )
+            .await
+            .map(|o| log_external_id_skip(&updated.id, "metron", o)),
             None => {
                 writers::delete_external_id(&app.db, "issue", &updated.id, Source::Metron).await
             }

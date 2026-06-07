@@ -53,6 +53,24 @@ pub fn routes() -> OpenApiRouter<AppState> {
 /// Slug values are kebab-cased and never collide with the canonical UUID
 /// 8-4-4-4-12 format, so a successful `Uuid::parse_str` unambiguously means
 /// the caller passed an id.
+/// Log a user series external-ID edit skipped because the identifier is
+/// already assigned to another item (cross-entity unique). Maps the write
+/// outcome to `()` so it composes with the sibling `delete` arm.
+fn log_series_external_id_skip(
+    series_id: Uuid,
+    field: &str,
+    outcome: crate::metadata::writers::SetExternalIdOutcome,
+) {
+    if let crate::metadata::writers::SetExternalIdOutcome::SkippedConflict { owner } = outcome {
+        tracing::warn!(
+            %series_id,
+            field,
+            owner,
+            "series external_id edit skipped: identifier already assigned to another item"
+        );
+    }
+}
+
 pub(crate) async fn find_by_slug(
     db: &sea_orm::DatabaseConnection,
     slug: &str,
@@ -358,16 +376,15 @@ pub async fn update_series(
             use crate::metadata::{Identifier, Source};
             if let Some(opt) = pending_cv {
                 let res = match opt {
-                    Some(v) => {
-                        writers::set_external_id(
-                            &app.db,
-                            "series",
-                            &updated.id.to_string(),
-                            &Identifier::new(Source::ComicVine, v.to_string()),
-                            SetBy::User,
-                        )
-                        .await
-                    }
+                    Some(v) => writers::set_external_id(
+                        &app.db,
+                        "series",
+                        &updated.id.to_string(),
+                        &Identifier::new(Source::ComicVine, v.to_string()),
+                        SetBy::User,
+                    )
+                    .await
+                    .map(|o| log_series_external_id_skip(updated.id, "comicvine", o)),
                     None => {
                         writers::delete_external_id(
                             &app.db,
@@ -384,16 +401,15 @@ pub async fn update_series(
             }
             if let Some(opt) = pending_metron {
                 let res = match opt {
-                    Some(v) => {
-                        writers::set_external_id(
-                            &app.db,
-                            "series",
-                            &updated.id.to_string(),
-                            &Identifier::new(Source::Metron, v.to_string()),
-                            SetBy::User,
-                        )
-                        .await
-                    }
+                    Some(v) => writers::set_external_id(
+                        &app.db,
+                        "series",
+                        &updated.id.to_string(),
+                        &Identifier::new(Source::Metron, v.to_string()),
+                        SetBy::User,
+                    )
+                    .await
+                    .map(|o| log_series_external_id_skip(updated.id, "metron", o)),
                     None => {
                         writers::delete_external_id(
                             &app.db,

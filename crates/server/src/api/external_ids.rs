@@ -337,15 +337,24 @@ async fn upsert_user_identifier(
         id: id_value.to_owned(),
         url,
     };
-    if let Err(e) =
-        writers::set_external_id(&app.db, entity_type, entity_id, &identifier, SetBy::User).await
+    match writers::set_external_id(&app.db, entity_type, entity_id, &identifier, SetBy::User).await
     {
-        tracing::warn!(error = %e, "external_id set failed");
-        return error(
-            StatusCode::BAD_GATEWAY,
-            "internal",
-            "external_id write failed",
-        );
+        Ok(writers::SetExternalIdOutcome::SkippedConflict { .. }) => {
+            return error(
+                StatusCode::CONFLICT,
+                "metadata.external_id_taken",
+                "that identifier is already assigned to another item — remove it there first",
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "external_id set failed");
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "internal",
+                "external_id write failed",
+            );
+        }
     }
     audit::record(
         &app.db,
