@@ -15,6 +15,19 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-06-07
+
+### Fixed
+
+- **Duplicate provider IDs no longer wedge a scan.** When two files for one
+  issue carried the same ComicVine/Metron/GTIN id, the second file&rsquo;s scan
+  used to abort on a unique-constraint violation and then retry forever. The
+  scanner now skips the already-claimed id and raises a **Duplicate external
+  ID** finding under Admin&nbsp;→ Findings instead, so the scan completes. The
+  surviving file automatically reclaims the id once a duplicate is removed (no
+  more manual database cleanup), and manually adding an id that&rsquo;s already
+  assigned now returns a clear conflict error.
+
 ## [0.9.4] - 2026-06-06
 
 ### Added
@@ -673,7 +686,8 @@ this file starts at the first release that ships with a curated changelog.
 
 - Dropped the vestigial `metadata_run_candidate.dismissed_at` column.
 
-[Unreleased]: https://github.com/mbryantms/folio/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/mbryantms/folio/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/mbryantms/folio/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/mbryantms/folio/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/mbryantms/folio/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/mbryantms/folio/compare/v0.9.1...v0.9.2
