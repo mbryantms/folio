@@ -92,7 +92,7 @@ async fn fetch_url_and_apply(
             backfill_status_counts(db, list.id, &mut summary).await?;
             return Ok(summary);
         }
-        UrlFetch::Fetched(fetched) => fetched,
+        UrlFetch::Fetched(fetched) => *fetched,
     };
     let etag = fetched
         .headers
@@ -125,7 +125,7 @@ async fn fetch_url_and_apply(
 
 enum UrlFetch {
     NotModified,
-    Fetched(crate::util::ssrf::FetchedBytes),
+    Fetched(Box<crate::util::ssrf::FetchedBytes>),
 }
 
 async fn fetch_url_source(
@@ -143,7 +143,7 @@ async fn fetch_url_source(
             true,
         )
         .await
-        .map(UrlFetch::Fetched)
+        .map(|fetched| UrlFetch::Fetched(Box::new(fetched)))
         .map_err(|e| RefreshError::Http(e.to_string()));
     }
 
@@ -187,7 +187,7 @@ async fn fetch_url_source(
             true,
         )
         .await
-        .map(UrlFetch::Fetched)
+        .map(|fetched| UrlFetch::Fetched(Box::new(fetched)))
         .map_err(|e| RefreshError::Http(e.to_string()));
     }
     if !resp.status().is_success() {
@@ -209,11 +209,13 @@ async fn fetch_url_source(
         }
         bytes.extend_from_slice(&chunk);
     }
-    Ok(UrlFetch::Fetched(crate::util::ssrf::FetchedBytes {
-        final_url: parsed_url,
-        headers,
-        bytes,
-    }))
+    Ok(UrlFetch::Fetched(Box::new(
+        crate::util::ssrf::FetchedBytes {
+            final_url: parsed_url,
+            headers,
+            bytes,
+        },
+    )))
 }
 
 fn is_allowed_cbl_response_type(content_type: Option<&str>, url: &str) -> bool {
