@@ -310,6 +310,7 @@ impl TestApp {
                 None
             },
             metrics_token: opts.metrics_token.clone(),
+            metrics_open: false,
             // progress-writeback-2.0 M4: OPDS client compat mode.
             // Default off — TestApp::spawn() preserves Folio identity;
             // tests that need Komga compat flip it via PATCH

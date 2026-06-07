@@ -457,39 +457,29 @@ pub async fn issue_phash<C: ConnectionTrait>(
 ///
 /// metadata-providers-1.0 M9.5.
 pub async fn fetch_and_hash_cover(
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
     url: &str,
     timeout: std::time::Duration,
 ) -> Option<i64> {
-    let res = match tokio::time::timeout(timeout, client.get(url).send()).await {
-        Ok(Ok(r)) if r.status().is_success() => r,
-        Ok(Ok(r)) => {
-            tracing::debug!(url, status = %r.status(), "phash fetch: non-2xx");
-            return None;
-        }
-        Ok(Err(e)) => {
-            tracing::debug!(url, error = %e, "phash fetch: transport error");
-            return None;
-        }
-        Err(_) => {
-            tracing::debug!(url, "phash fetch: timeout");
-            return None;
-        }
-    };
-    let bytes = match tokio::time::timeout(timeout, res.bytes()).await {
-        Ok(Ok(b)) => b,
-        Ok(Err(e)) => {
-            tracing::debug!(url, error = %e, "phash fetch: body read failed");
-            return None;
-        }
-        Err(_) => {
-            tracing::debug!(url, "phash fetch: body timeout");
+    let fetched = match crate::util::ssrf::fetch_public_bytes(
+        url,
+        crate::util::ssrf::MAX_IMAGE_BYTES,
+        timeout,
+        crate::build_info::USER_AGENT_COVER,
+        2,
+        false,
+    )
+    .await
+    {
+        Ok(fetched) => fetched,
+        Err(e) => {
+            tracing::debug!(url, error = %e, "phash fetch: fetch failed");
             return None;
         }
     };
     // Decoding can be CPU-intensive on large covers; punt to a
     // blocking task so the async runtime stays free.
-    let bytes_for_blocking = bytes.to_vec();
+    let bytes_for_blocking = fetched.bytes;
     let img = tokio::task::spawn_blocking(move || image::load_from_memory(&bytes_for_blocking))
         .await
         .ok()?

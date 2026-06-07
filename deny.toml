@@ -45,6 +45,11 @@ ignore = [
     # graph but our code path never exercises RSA primitives.
     # Advisory has "No safe upgrade available" upstream.
     "RUSTSEC-2023-0071",
+    # `proc-macro-error2` unmaintained — transitive via
+    # `sea-orm-macros ← sea-orm`. Build-time proc-macro path only;
+    # advisory has no safe upgrade. Revisit when SeaORM moves off
+    # `sea-bae` / `proc-macro-error2`.
+    "RUSTSEC-2026-0173",
 ]
 
 [licenses]

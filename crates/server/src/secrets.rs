@@ -51,7 +51,7 @@ impl Secrets {
             ..Default::default()
         };
         let pepper_path = dir.join("pepper");
-        let pepper_existed = pepper_path.exists();
+        let pepper_existed = secret_file_exists(&pepper_path)?;
         let pepper = load_or_generate_bytes::<32>(&pepper_path, &mut report)?;
         if !pepper_existed {
             report.pepper_regenerated = true;
@@ -60,7 +60,7 @@ impl Secrets {
         let email = load_or_generate_bytes::<32>(&dir.join("email-token.key"), &mut report)?;
         let url = load_or_generate_bytes::<32>(&dir.join("url-signing.key"), &mut report)?;
         let settings_path = dir.join("settings-encryption.key");
-        let settings_existed = settings_path.exists();
+        let settings_existed = secret_file_exists(&settings_path)?;
         let settings = load_or_generate_bytes::<32>(&settings_path, &mut report)?;
         if !settings_existed {
             report.settings_key_regenerated = true;
@@ -140,7 +140,8 @@ fn load_or_generate_bytes<const N: usize>(
     path: &PathBuf,
     report: &mut LoadReport,
 ) -> anyhow::Result<[u8; N]> {
-    if path.exists() {
+    if secret_file_exists(path)? {
+        validate_existing_secret_file(path)?;
         let bytes = fs::read(path)?;
         if bytes.len() != N {
             anyhow::bail!(
@@ -164,7 +165,8 @@ fn load_or_generate_bytes<const N: usize>(
 }
 
 fn load_or_generate_ed25519(path: &PathBuf, report: &mut LoadReport) -> anyhow::Result<SigningKey> {
-    if path.exists() {
+    if secret_file_exists(path)? {
+        validate_existing_secret_file(path)?;
         let bytes = fs::read(path)?;
         if bytes.len() != SECRET_KEY_LENGTH {
             anyhow::bail!(
@@ -198,6 +200,42 @@ fn write_secret(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     f.sync_all()?;
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+fn secret_file_exists(path: &Path) -> anyhow::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn validate_existing_secret_file(path: &Path) -> anyhow::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() {
+        anyhow::bail!(
+            "secret file {} must be a regular file with mode 0600; symlinks are refused",
+            path.display()
+        );
+    }
+    if !meta.file_type().is_file() {
+        anyhow::bail!(
+            "secret file {} must be a regular file with mode 0600",
+            path.display()
+        );
+    }
+    #[cfg(unix)]
+    {
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            anyhow::bail!(
+                "secret file {} has unsafe mode {:03o}; expected 0600 or stricter",
+                path.display(),
+                mode
+            );
+        }
+    }
     Ok(())
 }
 
@@ -237,6 +275,49 @@ mod tests {
         assert_eq!(
             &first.settings_encryption_key[..],
             &second.settings_encryption_key[..]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_group_readable_secret_file_is_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        Secrets::load(tmp.path()).unwrap();
+        let pepper = tmp.path().join("secrets/pepper");
+        fs::set_permissions(&pepper, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let err = match Secrets::load(tmp.path()) {
+            Ok(_) => panic!("expected unsafe-mode error"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("unsafe mode"),
+            "expected unsafe-mode error, got {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_symlink_secret_file_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        Secrets::load(tmp.path()).unwrap();
+        let pepper = tmp.path().join("secrets/pepper");
+        let target = tmp.path().join("pepper-target");
+        fs::write(&target, [7u8; 32]).unwrap();
+        fs::remove_file(&pepper).unwrap();
+        symlink(&target, &pepper).unwrap();
+
+        let err = match Secrets::load(tmp.path()) {
+            Ok(_) => panic!("expected symlink error"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("symlinks are refused"),
+            "expected symlink error, got {err}"
         );
     }
 

@@ -11,6 +11,7 @@
 //! marked with a `// PHASE 0 — IMPLEMENT:` comment indicating the next concrete step.
 
 pub mod app_password;
+pub(crate) mod bootstrap;
 pub mod cookies;
 pub mod csrf;
 pub mod email_token;

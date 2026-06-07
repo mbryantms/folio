@@ -46,6 +46,76 @@ use server_macros::handler;
 
 const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
 const MAX_BOOKS_PER_FILE: usize = 5_000;
+const CBL_XML_TYPES: &[&str] = &[
+    "application/xml",
+    "text/xml",
+    "application/x-cbl",
+    "application/vnd.comicbooklist+xml",
+];
+
+enum FieldReadError {
+    TooLarge,
+    Read(axum::extract::multipart::MultipartError),
+}
+
+async fn read_multipart_field_limited(
+    field: &mut axum::extract::multipart::Field<'_>,
+    max_bytes: usize,
+) -> Result<Vec<u8>, FieldReadError> {
+    let mut out = Vec::new();
+    while let Some(chunk) = field.chunk().await.map_err(FieldReadError::Read)? {
+        if out.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(FieldReadError::TooLarge);
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
+fn is_allowed_cbl_content_type(content_type: Option<&str>, file_name: Option<&str>) -> bool {
+    let has_cbl_name = file_name
+        .map(|name| name.to_ascii_lowercase().ends_with(".cbl"))
+        .unwrap_or(false);
+    let Some(content_type) = content_type else {
+        return has_cbl_name;
+    };
+    let normalized = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+    if CBL_XML_TYPES.contains(&normalized.as_str()) {
+        return true;
+    }
+    matches!(
+        normalized.as_str(),
+        "application/octet-stream" | "text/plain"
+    ) && has_cbl_name
+}
+
+fn is_allowed_cbl_response_type(content_type: Option<&str>, url: &str) -> bool {
+    let has_cbl_path = url::Url::parse(url)
+        .ok()
+        .map(|u| u.path().to_ascii_lowercase().ends_with(".cbl"))
+        .unwrap_or(false);
+    let Some(content_type) = content_type else {
+        return true;
+    };
+    let normalized = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+    if CBL_XML_TYPES.contains(&normalized.as_str()) {
+        return true;
+    }
+    matches!(
+        normalized.as_str(),
+        "application/octet-stream" | "text/plain"
+    ) && has_cbl_path
+}
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -823,28 +893,51 @@ pub async fn upload(
     let mut bytes: Option<Vec<u8>> = None;
     let mut name_override: Option<String> = None;
     let mut description: Option<String> = None;
-    while let Ok(Some(field)) = multipart.next_field().await {
+    loop {
+        let Some(mut field) = (match multipart.next_field().await {
+            Ok(field) => field,
+            Err(e) => {
+                let status = e.status();
+                let code = if status == StatusCode::PAYLOAD_TOO_LARGE {
+                    "too_large"
+                } else {
+                    "validation"
+                };
+                return error(status, code, &e.body_text());
+            }
+        }) else {
+            break;
+        };
         let field_name = field.name().unwrap_or_default().to_owned();
         match field_name.as_str() {
-            "file" => match field.bytes().await {
-                Ok(b) => {
-                    if b.len() > MAX_UPLOAD_BYTES {
+            "file" => {
+                let file_name = field.file_name().map(str::to_owned);
+                let content_type = field.content_type().map(str::to_owned);
+                if !is_allowed_cbl_content_type(content_type.as_deref(), file_name.as_deref()) {
+                    return error(
+                        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                        "unsupported_media_type",
+                        "CBL upload must be XML or a .cbl file",
+                    );
+                }
+                match read_multipart_field_limited(&mut field, MAX_UPLOAD_BYTES).await {
+                    Ok(b) => bytes = Some(b),
+                    Err(FieldReadError::TooLarge) => {
                         return error(
                             StatusCode::PAYLOAD_TOO_LARGE,
                             "too_large",
                             "file exceeds 4 MiB",
                         );
                     }
-                    bytes = Some(b.to_vec());
+                    Err(FieldReadError::Read(e)) => {
+                        return error(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "validation",
+                            &e.to_string(),
+                        );
+                    }
                 }
-                Err(e) => {
-                    return error(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "validation",
-                        &e.to_string(),
-                    );
-                }
-            },
+            }
             "name" => name_override = field.text().await.ok().filter(|s| !s.trim().is_empty()),
             "description" => description = field.text().await.ok().filter(|s| !s.trim().is_empty()),
             _ => {}
@@ -930,63 +1023,49 @@ async fn create_from_url(
     description: Option<String>,
     refresh_schedule: Option<String>,
 ) -> axum::response::Response {
-    // SSRF guard. Parse, require https, resolve host, refuse if any
-    // resolved address is loopback / RFC-1918 / link-local / cloud-metadata
-    // / multicast / etc. See `crate::util::ssrf` for the full predicate.
-    let parsed_url = match crate::util::ssrf::validate_outbound_url(&url) {
-        Ok(u) => u,
-        Err(e) => return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string()),
-    };
-    if let Some(host) = parsed_url.host_str() {
-        let port = parsed_url.port_or_known_default().unwrap_or(443);
-        if let Err(e) = crate::util::ssrf::check_host_resolves_public(host, port).await {
+    let fetched = match crate::util::ssrf::fetch_public_bytes(
+        &url,
+        MAX_UPLOAD_BYTES,
+        std::time::Duration::from_secs(30),
+        crate::build_info::USER_AGENT,
+        2,
+        true,
+    )
+    .await
+    {
+        Ok(fetched) => fetched,
+        Err(crate::util::ssrf::FetchBytesError::Ssrf(e)) => {
             return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string());
         }
-    }
-    let client = match reqwest::Client::builder()
-        .user_agent(crate::build_info::USER_AGENT)
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(crate::util::ssrf::outbound_redirect_policy(2))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            );
+        Err(crate::util::ssrf::FetchBytesError::TooLarge { .. }) => {
+            return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "exceeds 4 MiB");
         }
-    };
-    let resp = match client.get(parsed_url.clone()).send().await {
-        Ok(r) => r,
         Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
     };
-    if !resp.status().is_success() {
+    if !is_allowed_cbl_response_type(
+        fetched
+            .headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        &url,
+    ) {
         return error(
-            StatusCode::BAD_GATEWAY,
-            "fetch_failed",
-            &format!("status {}", resp.status()),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+            "CBL URL must return XML or a .cbl file",
         );
     }
-    let etag = resp
-        .headers()
+    let etag = fetched
+        .headers
         .get(reqwest::header::ETAG)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let last_modified = resp
-        .headers()
+    let last_modified = fetched
+        .headers
         .get(reqwest::header::LAST_MODIFIED)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let bytes = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
-    };
-    if bytes.len() > MAX_UPLOAD_BYTES {
-        return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "exceeds 4 MiB");
-    }
-    let xml = String::from_utf8_lossy(&bytes).into_owned();
+    let xml = String::from_utf8_lossy(&fetched.bytes).into_owned();
     let parsed = match parsers::cbl::parse(xml.as_bytes()) {
         Ok(p) => p,
         Err(e) => return error(StatusCode::BAD_REQUEST, "parse_failed", &e.to_string()),

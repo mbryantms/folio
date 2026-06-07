@@ -1266,7 +1266,7 @@ Available only when `COMIC_AUTH_MODE` includes `local` AND SMTP is configured (Â
 
 **Token construction:**
 - Verification token: HMAC-SHA256 over `(user_id, email, exp, kind='verify')` with a server-side key under `/data/secrets/email-token-key`. Stateless â€” no DB row.
-- Reset token: same HMAC scheme with `kind='reset'`, **plus** a `password_reset_uses` row recording (`token_id`, `user_id`, `consumed_at`) for single-use enforcement. Row TTL = 1 h.
+- Reset token: same HMAC scheme with `kind='reset'` and an embedded `token_id`, **plus** a `password_reset_uses` row recording (`token_id`, `user_id`, `token_hash`, `expires_at`, `consumed_at`) for single-use enforcement. Row TTL = 1 h.
 
 **Email content:**
 - From address from `COMIC_SMTP_FROM`.
@@ -1286,7 +1286,7 @@ Available only when `COMIC_AUTH_MODE` includes `local` AND SMTP is configured (Â
 - Access JWT TTL = 15 min (`COMIC_JWT_ACCESS_TTL`). Refresh token TTL = 30 days, **rotated on every use**. Refresh token hashes stored in `auth_sessions(id, user_id, refresh_token_hash, last_used_at, ua, ip, revoked_at)`.
 - `users.token_version` column embedded in JWT claims; bumped on password reset, admin-revoke, or scope change. Mismatched version on any request â†’ 401, force re-auth.
 - `POST /auth/logout` revokes the current refresh row and bumps `token_version`. Admin "log out all sessions" available at `POST /admin/users/{id}/revoke-sessions`.
-- **Web app**: session JWT lives in an `httpOnly`, `Secure`, `SameSite=Lax` cookie (`__Host-comic_session`). Refresh token lives in a separate `__Secure-comic_refresh` cookie (Path=`/auth/refresh`; the `__Host-` prefix is incompatible with a non-`/` Path so `__Secure-` is used). CSRF token lives in `__Host-comic_csrf` (not HttpOnly so JS can read it for the double-submit header). Cookie domain is host-only (no wildcard).
+- **Web app**: session JWT lives in an `httpOnly`, `Secure`, `SameSite=Lax` cookie (`__Host-comic_session`). Refresh token lives in a separate `__Host-comic_refresh` cookie with `Path=/`. CSRF token lives in `__Host-comic_csrf` (not HttpOnly so JS can read it for the double-submit header). Cookie domain is host-only (no wildcard).
 - **Mobile / API / OPDS-Bearer**: JWT in `Authorization: Bearer â€¦`.
 
 ### 17.3 CSRF

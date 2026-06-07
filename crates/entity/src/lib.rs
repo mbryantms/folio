@@ -49,6 +49,7 @@ pub mod metadata_match_outcome;
 pub mod metadata_run;
 pub mod metadata_run_candidate;
 pub mod object;
+pub mod password_reset_use;
 pub mod person;
 pub mod progress_record;
 pub mod publisher;
@@ -118,6 +119,7 @@ pub mod prelude {
     pub use super::metadata_run::Entity as MetadataRun;
     pub use super::metadata_run_candidate::Entity as MetadataRunCandidate;
     pub use super::object::Entity as Object;
+    pub use super::password_reset_use::Entity as PasswordResetUse;
     pub use super::person::Entity as Person;
     pub use super::progress_record::Entity as ProgressRecord;
     pub use super::publisher::Entity as Publisher;

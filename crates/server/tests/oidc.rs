@@ -41,7 +41,7 @@ use serde_json::json;
 use tower::ServiceExt;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{body_string_contains, method, path},
 };
 
 // ───────────────────── RSA key fixture ─────────────────────
@@ -195,6 +195,21 @@ impl MockOp {
             .mount(&self.server)
             .await;
     }
+
+    async fn register_token_response_for_code(&self, code: &str, id_token: &str) {
+        let body = json!({
+            "access_token": "test-access-token",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "id_token": id_token,
+        });
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains(format!("code={code}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&self.server)
+            .await;
+    }
 }
 
 // ───────────────────── Common helpers ─────────────────────
@@ -241,8 +256,8 @@ async fn start_oidc_flow(app: &TestApp, redirect_after: Option<&str>) -> (String
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER, "/start should 302");
-    let state_cookie = extract_set_cookie(&resp, "__Secure-comic_oidc")
-        .expect("state cookie present after /start");
+    let state_cookie =
+        extract_set_cookie(&resp, "__Host-comic_oidc").expect("state cookie present after /start");
     // Pull the state param out of the Location header to feed back to /callback.
     let location = resp
         .headers()
@@ -260,9 +275,11 @@ async fn start_oidc_flow(app: &TestApp, redirect_after: Option<&str>) -> (String
 }
 
 fn parse_state_cookie_nonce(state_cookie: &str) -> String {
-    // urldecode + json-parse the same way oidc::callback does.
+    // urldecode + json-parse the signed payload shape set by oidc::start.
     let decoded = urlencoding::decode(state_cookie).expect("decode state cookie");
-    let v: serde_json::Value = serde_json::from_str(&decoded).expect("state cookie json");
+    let signed: serde_json::Value = serde_json::from_str(&decoded).expect("signed state json");
+    let payload = signed["payload"].as_str().expect("payload");
+    let v: serde_json::Value = serde_json::from_str(payload).expect("state payload json");
     v["nonce"].as_str().expect("nonce").to_string()
 }
 
@@ -283,10 +300,7 @@ async fn callback_with(
             Request::builder()
                 .method(Method::GET)
                 .uri(uri)
-                .header(
-                    header::COOKIE,
-                    format!("__Secure-comic_oidc={state_cookie}"),
-                )
+                .header(header::COOKIE, format!("__Host-comic_oidc={state_cookie}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -337,6 +351,19 @@ async fn callback_rejects_state_mismatch() {
 }
 
 #[tokio::test]
+async fn callback_rejects_tampered_state_cookie() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let (state_cookie, state_param) = start_oidc_flow(&app, None).await;
+    let tampered_cookie = format!("{state_cookie}x");
+
+    let resp = callback_with(&app, &tampered_cookie, &state_param, "any-code").await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.invalid");
+}
+
+#[tokio::test]
 async fn callback_rejects_missing_state_cookie() {
     let op = MockOp::start().await;
     let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
@@ -348,6 +375,35 @@ async fn callback_rejects_missing_state_cookie() {
             Request::builder()
                 .method(Method::GET)
                 .uri("/auth/oidc/callback?code=x&state=y")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn callback_rejects_legacy_state_cookie_name() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let (state_cookie, state_param) = start_oidc_flow(&app, None).await;
+    let uri = format!(
+        "/auth/oidc/callback?code=x&state={}",
+        urlencoding::encode(&state_param)
+    );
+
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(uri)
+                .header(
+                    header::COOKIE,
+                    format!("__Secure-comic_oidc={state_cookie}"),
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -380,7 +436,7 @@ async fn callback_happy_path_upserts_user_and_sets_cookies() {
         "callback should 302 to redirect_after on success"
     );
     assert!(extract_set_cookie(&resp, "__Host-comic_session").is_some());
-    assert!(extract_set_cookie(&resp, "__Secure-comic_refresh").is_some());
+    assert!(extract_set_cookie(&resp, "__Host-comic_refresh").is_some());
 
     // User row must exist with the right external_id.
     use sea_orm::EntityTrait;
@@ -392,6 +448,56 @@ async fn callback_happy_path_upserts_user_and_sets_cookies() {
         .expect("oidc user upserted");
     assert_eq!(oidc_user.email.as_deref(), Some("happy@example.com"));
     assert!(oidc_user.email_verified);
+    assert_eq!(
+        oidc_user.role, "admin",
+        "first OIDC-created user should still receive first-admin bootstrap"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_first_oidc_signups_create_only_one_admin() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let mut flows = Vec::new();
+
+    for idx in 0..4 {
+        let (state_cookie, state_param) = start_oidc_flow(&app, None).await;
+        let nonce = parse_state_cookie_nonce(&state_cookie);
+        let code = format!("auth-code-{idx}");
+        let claims = IdTokenClaims::standard(
+            &op.issuer(),
+            "folio-test-client",
+            &format!("subject-{idx}"),
+            &nonce,
+            &format!("oidc-race-{idx}@example.com"),
+        );
+        let id_token = sign_id_token(&claims);
+        op.register_token_response_for_code(&code, &id_token).await;
+        flows.push((state_cookie, state_param, code));
+    }
+
+    let responses =
+        futures::future::join_all(flows.iter().map(|(state_cookie, state_param, code)| {
+            callback_with(&app, state_cookie, state_param, code)
+        }))
+        .await;
+
+    for resp in responses {
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    }
+
+    use sea_orm::EntityTrait;
+    let users = entity::user::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(users.len(), 4);
+    assert_eq!(
+        users.iter().filter(|u| u.role == "admin").count(),
+        1,
+        "exactly one concurrent OIDC signup should receive first-admin bootstrap"
+    );
+    assert_eq!(users.iter().filter(|u| u.role == "user").count(), 3);
 }
 
 #[tokio::test]
@@ -483,7 +589,7 @@ async fn logout_redirects_to_end_session_endpoint_for_oidc_session() {
         extract_set_cookie(&callback_resp, "__Host-comic_session").expect("session cookie");
     let csrf = extract_set_cookie(&callback_resp, "__Host-comic_csrf").expect("csrf cookie");
     let refresh =
-        extract_set_cookie(&callback_resp, "__Secure-comic_refresh").expect("refresh cookie");
+        extract_set_cookie(&callback_resp, "__Host-comic_refresh").expect("refresh cookie");
 
     let logout_resp = app
         .router
@@ -495,7 +601,7 @@ async fn logout_redirects_to_end_session_endpoint_for_oidc_session() {
                 .header(
                     header::COOKIE,
                     format!(
-                        "__Host-comic_session={session}; __Host-comic_csrf={csrf}; __Secure-comic_refresh={refresh}"
+                        "__Host-comic_session={session}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}"
                     ),
                 )
                 .header("x-csrf-token", csrf)

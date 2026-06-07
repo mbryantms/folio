@@ -1,7 +1,7 @@
 //! OIDC code+PKCE flow (§17.1).
 //!
 //! Routes:
-//!   GET  /auth/oidc/start    → 302 to issuer with PKCE; sets `__Secure-comic_oidc` (state+verifier)
+//!   GET  /auth/oidc/start    → 302 to issuer with PKCE; sets `__Host-comic_oidc` (state+verifier)
 //!   GET  /auth/oidc/callback → exchange code, validate ID token, upsert user, set session cookies
 //!
 //! The OpenID Connect Core 1.0 flow is implemented via the `openidconnect` crate, which
@@ -19,13 +19,18 @@ use axum::{
     routing::get,
 };
 use axum_extra::extract::{CookieJar, cookie::Cookie};
+use base64::Engine;
+use hmac::{Hmac, Mac};
 use openidconnect::{
     AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce,
     PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
     core::{CoreClient, CoreProviderMetadata, CoreResponseType},
 };
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set, TransactionTrait,
+};
 use serde::Deserialize;
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -45,14 +50,10 @@ use super::jwt::JwtKeys;
 use entity::auth_session::ActiveModel as SessionAM;
 use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 
-// `__Secure-`, NOT `__Host-`: the `__Host-` prefix requires Path=/ per
-// the cookie-prefix spec, but we deliberately scope this cookie to
-// `/auth/oidc/callback` so it isn't sent on every request. The same
-// rename was applied to the refresh cookie (see `cookies.rs`) after
-// the spec violation caused browsers to silently reject the
-// Set-Cookie header and leave the cookie unset — manifesting as
-// "missing oidc state cookie" at the callback.
-const OIDC_STATE_COOKIE: &str = "__Secure-comic_oidc";
+type HmacSha256 = Hmac<Sha256>;
+
+const OIDC_STATE_COOKIE: &str = "__Host-comic_oidc";
+const LEGACY_OIDC_STATE_COOKIE: &str = "__Secure-comic_oidc";
 const OIDC_STATE_TTL_SECS: u64 = 5 * 60;
 // Access + refresh TTLs come from config (`COMIC_JWT_ACCESS_TTL` / `_REFRESH_TTL`).
 // Defaults: 24h / 30d. Validated at startup so unwrapping in handlers is safe.
@@ -128,6 +129,12 @@ struct StateCookie {
     pkce: String,
     nonce: String,
     redirect_after: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SignedStateCookie {
+    payload: String,
+    mac: String,
 }
 
 /// Resolve a cached [`DiscoveryEntry`] for the configured issuer. Refreshes
@@ -236,6 +243,29 @@ async fn discover(app: &AppState) -> anyhow::Result<ConfiguredCoreClient> {
 /// the cache or duplicating the discovery fetch.
 pub(crate) async fn discover_entry_pub(app: &AppState) -> anyhow::Result<DiscoveryEntry> {
     discover_entry(app).await
+}
+
+fn sign_state_cookie(payload: &str, key: &[u8]) -> anyhow::Result<String> {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(payload.as_bytes());
+    let mac = mac.finalize().into_bytes();
+    Ok(serde_json::to_string(&SignedStateCookie {
+        payload: payload.to_owned(),
+        mac: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac),
+    })?)
+}
+
+fn verify_state_cookie(raw: &str, key: &[u8]) -> anyhow::Result<StateCookie> {
+    let signed: SignedStateCookie = serde_json::from_str(raw)?;
+    let mac = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(signed.mac.as_bytes())
+        .map_err(|_| anyhow::anyhow!("state mac is not base64url"))?;
+    let mut verifier = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+    verifier.update(signed.payload.as_bytes());
+    verifier
+        .verify_slice(&mac)
+        .map_err(|_| anyhow::anyhow!("state mac mismatch"))?;
+    Ok(serde_json::from_str(&signed.payload)?)
 }
 
 /// Side-fetch the discovery doc to extract `end_session_endpoint`.
@@ -347,14 +377,32 @@ pub async fn start(
         }
     };
 
-    let mut state_cookie = Cookie::new(OIDC_STATE_COOKIE, state_json);
+    let signed_state = match sign_state_cookie(&state_json, app.secrets.email_token_key.as_ref()) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "oidc state signing failed");
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "state encode",
+            );
+        }
+    };
+
+    let mut state_cookie = Cookie::new(OIDC_STATE_COOKIE, signed_state);
     state_cookie.set_http_only(true);
     state_cookie.set_secure(true);
     state_cookie.set_same_site(axum_extra::extract::cookie::SameSite::Lax);
-    state_cookie.set_path("/auth/oidc/callback");
+    state_cookie.set_path("/");
     state_cookie.set_max_age(time::Duration::seconds(OIDC_STATE_TTL_SECS as i64));
 
-    let jar = jar.add(state_cookie);
+    let jar = jar
+        .remove(cookies::clear(
+            LEGACY_OIDC_STATE_COOKIE,
+            "/auth/oidc/callback",
+        ))
+        .remove(cookies::clear(LEGACY_OIDC_STATE_COOKIE, "/"))
+        .add(state_cookie);
     (jar, Redirect::to(auth_url.as_str())).into_response()
 }
 
@@ -412,16 +460,18 @@ pub async fn callback(
             );
         }
     };
-    let state: StateCookie = match serde_json::from_str(&state_cookie) {
-        Ok(s) => s,
-        Err(_) => {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "auth.invalid",
-                "corrupt oidc state cookie",
-            );
-        }
-    };
+    let state: StateCookie =
+        match verify_state_cookie(&state_cookie, app.secrets.email_token_key.as_ref()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::info!(error = %e, "oidc state cookie rejected");
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "auth.invalid",
+                    "corrupt oidc state cookie",
+                );
+            }
+        };
     if !constant_time_eq::constant_time_eq(state.csrf.as_bytes(), state_param.as_bytes()) {
         return error(
             StatusCode::BAD_REQUEST,
@@ -609,8 +659,20 @@ pub async fn callback(
                 "an account with that email already exists; ask your admin to link or migrate it",
             );
         }
-        // First-user admin bootstrap (§12.8).
-        let user_count = UserEntity::find().count(&app.db).await.unwrap_or(1);
+        let txn = match app.db.begin().await {
+            Ok(txn) => txn,
+            Err(e) => {
+                tracing::error!(error = %e, "oidc user insert transaction begin failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+        if let Err(e) = super::bootstrap::lock_first_admin_bootstrap(&txn).await {
+            tracing::error!(error = %e, "first-admin bootstrap lock failed (oidc)");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+        // First-user admin bootstrap (§12.8). Count and insert happen under
+        // one transaction-level lock shared with local registration.
+        let user_count = UserEntity::find().count(&txn).await.unwrap_or(1);
         let role = if user_count == 0 {
             tracing::warn!("first_admin_bootstrap: granting admin role to first user (oidc)");
             "admin"
@@ -653,13 +715,18 @@ pub async fn callback(
             opds_progress_glyphs: Set(true),
             max_rails_per_page: Set(12),
         };
-        match am.insert(&app.db).await {
+        let inserted = match am.insert(&txn).await {
             Ok(m) => m,
             Err(e) => {
                 tracing::error!(error = %e, "oidc user insert failed");
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
+        };
+        if let Err(e) = txn.commit().await {
+            tracing::error!(error = %e, "oidc user insert transaction commit failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
+        inserted
     };
 
     if user_row.state == "disabled" {
@@ -711,7 +778,12 @@ pub async fn callback(
 
     let csrf_token = cookies::new_csrf_token();
     let jar = jar
-        .remove(cookies::clear(OIDC_STATE_COOKIE, "/auth/oidc/callback"))
+        .remove(cookies::clear(OIDC_STATE_COOKIE, "/"))
+        .remove(cookies::clear(
+            LEGACY_OIDC_STATE_COOKIE,
+            "/auth/oidc/callback",
+        ))
+        .remove(cookies::clear(LEGACY_OIDC_STATE_COOKIE, "/"))
         .add(session_cookie(access, access_ttl))
         .add(refresh_cookie(raw_rt, refresh_ttl))
         .add(csrf_cookie(csrf_token, access_ttl));

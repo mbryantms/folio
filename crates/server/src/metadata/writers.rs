@@ -1622,21 +1622,9 @@ pub async fn clear_user_pin<C: ConnectionTrait>(
 // Variant covers.
 // ─────────────────────────────────────────────────────────────────
 
-/// Dedicated HTTP client for downloading provider cover images from
-/// their CDN. Separate from the providers' API clients (those carry
-/// auth + rate-limit state, which the public cover CDNs need neither
-/// of). Pooled + reused across applies via `LazyLock`.
-static COVER_HTTP: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
-    reqwest::Client::builder()
-        .user_agent(crate::build_info::USER_AGENT_COVER)
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .expect("reqwest client init")
-});
-
 /// Largest cover image we'll pull into memory. Covers are typically
 /// well under 1 MB; the cap guards against a misbehaving / hostile CDN.
-const MAX_COVER_BYTES: usize = 24 * 1024 * 1024;
+const MAX_COVER_BYTES: usize = crate::util::ssrf::MAX_IMAGE_BYTES;
 
 /// On-disk + hash result of a successful cover download.
 struct StoredCover {
@@ -1686,18 +1674,23 @@ async fn download_cover_image(
     issue_id: &str,
     url: &str,
 ) -> Option<StoredCover> {
-    let resp = match COVER_HTTP.get(url).send().await {
-        Ok(r) if r.status().is_success() => r,
-        Ok(r) => {
-            tracing::debug!(url, status = %r.status(), "cover download: non-2xx");
-            return None;
-        }
+    let fetched = match crate::util::ssrf::fetch_public_bytes(
+        url,
+        MAX_COVER_BYTES,
+        std::time::Duration::from_secs(20),
+        crate::build_info::USER_AGENT_COVER,
+        2,
+        false,
+    )
+    .await
+    {
+        Ok(fetched) => fetched,
         Err(e) => {
             tracing::debug!(url, error = %e, "cover download: transport error");
             return None;
         }
     };
-    let bytes = resp.bytes().await.ok()?;
+    let bytes = fetched.bytes;
     if bytes.is_empty() || bytes.len() > MAX_COVER_BYTES {
         tracing::debug!(url, len = bytes.len(), "cover download: empty or oversize");
         return None;

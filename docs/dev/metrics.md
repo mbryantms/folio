@@ -61,26 +61,18 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ['folio-host:8080']
-    # If COMIC_METRICS_TOKEN is set (see below):
-    # authorization:
-    #   type: Bearer
-    #   credentials: "<the token>"
+    authorization:
+      type: Bearer
+      credentials: "<COMIC_METRICS_TOKEN>"
 ```
 
-## Security — the endpoint is unauthenticated by default
+## Security
 
-`/metrics` (and `/openapi.json`) are **public** on the origin: no session/admin
-auth, because a Prometheus scraper can't hold a login session (`RequireAdmin`
-would break scraping). Metric values leak operational signal (request counts,
-latencies, lockout counts) — modest, but worth protecting on a public deployment.
-Options, in order of preference:
+`/metrics` uses machine bearer auth in production/release builds. Set
+`COMIC_METRICS_TOKEN` and configure Prometheus with `Authorization: Bearer ...`.
+A debug/test build remains open by default for local development.
 
-1. **Reverse-proxy / network ACL (recommended):** restrict `/metrics` to the
-   scraper's IP/network, or basic-auth the `/metrics` location at your proxy.
-   Folio already assumes an operator-owned reverse proxy.
-2. **Bearer token (`COMIC_METRICS_TOKEN`):** set the env var and the endpoint
-   requires `Authorization: Bearer <token>` (constant-time compared). Works
-   directly with Prometheus's `authorization:` scrape config. Unset → open
-   (backward compatible). It's an env-only, deploy-time credential — see
-   [runtime-configuration.md](runtime-configuration.md).
-3. **Internal bind:** terminate scraping on a private network only.
+If you intentionally expose unauthenticated metrics in production, set
+`COMIC_METRICS_OPEN=true` and protect the route with a reverse-proxy/network ACL.
+Metric values leak operational signal such as request counts, latencies, and
+lockout counts.
