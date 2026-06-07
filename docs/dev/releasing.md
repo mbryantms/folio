@@ -40,43 +40,37 @@ images — not a release.
 
 ## Cutting a release
 
-Use the guard-railed recipe:
+Use the automated workflow:
 
-```sh
-just release 0.7.2
-```
+1. Make sure `CHANGELOG.md` has useful notes under `## [Unreleased]`.
+2. Run **Actions → prepare release** with the next SemVer version
+   (`0.7.2`, no leading `v`).
 
-It refuses to proceed unless the working tree is clean, you're on `main`, and
-local `main` matches `origin/main` exactly — no unpushed commits, because `main`
-is protected (strict checks + merge queue) and everything, including the
-changelog, lands via a merged PR. It then verifies `CHANGELOG.md` already has a
-**dated** `## [X.Y.Z]` section, confirms **CI is already green on that `main`
-commit** (via `gh` check-runs — the commit passed CI to reach protected `main`,
-so re-running the whole suite locally is redundant; set `RELEASE_LOCAL_CHECK=1`
-to force a local `just check` anyway), creates the annotated tag, and prints the
-push command — it does **not** push for you (pushing the tag is the irreversible,
-image-publishing step, so it stays a deliberate manual action).
+The workflow stamps the changelog into a dated `## [X.Y.Z] - YYYY-MM-DD`
+section, opens a `docs: changelog for vX.Y.Z` PR, enables auto-merge, waits for
+the PR to land on protected `main`, waits for `main` checks, creates the
+annotated tag, then dispatches `release.yml` at that tag. The release workflow
+builds/pushes the images, signs them, attaches SBOMs, and creates the GitHub
+Release.
 
-> If `just release` reports "CI not finished," the post-merge `main` run is
-> still going — wait for it to go green, then re-run. You're waiting on a run
-> that happens regardless, not adding one.
+The workflow requires a repository secret named `FOLIO_RELEASE_TOKEN`: a
+fine-grained PAT or GitHub App installation token with **Contents: write** and
+**Pull requests: write**. The built-in `GITHUB_TOKEN` is used only for the final
+tag + workflow dispatch; it is not used for the changelog PR because events
+created by `GITHUB_TOKEN` do not trigger the required PR checks.
 
 ### Before you run it
 
 1. **Land all the work** for the release on `main` (via PRs / the merge queue).
-2. **Land the changelog via its own PR.** `main` is protected, so the changelog
-   commit can't be pushed straight to it. Open a `docs: changelog for vX.Y.Z`
-   PR that moves items out of `## [Unreleased]` into a new, **dated**
-   `## [X.Y.Z] - YYYY-MM-DD` section (use today's date — the recipe no longer
-   stamps it) and adds the `compare` link at the bottom, grouped under Added /
-   Changed / Fixed / Removed. Merge it through the queue.
-3. **Pull `main`** so it includes the merged changelog:
-   `git checkout main && git pull`.
-4. Sanity-check the diff that will ship: `git diff vLAST..HEAD --stat`.
+2. **Write the curated changelog notes under `## [Unreleased]`.** The
+   automation moves the whole Unreleased block into the release section, so keep
+   it grouped under Added / Changed / Fixed / Removed.
+3. Optional but useful: sanity-check the diff that will ship:
+   `git diff vLAST..origin/main --stat`.
 
 ### Manual fallback
 
-If you're not using the recipe, the steps are:
+If you're not using the workflow, the steps are:
 
 ```sh
 # 1. Changelog via a PR — main is protected, so no direct push:

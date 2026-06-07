@@ -15,6 +15,13 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+### Internal
+
+- Release workflow: a new `prepare release` dispatcher can stamp the
+  changelog, open and auto-merge the changelog PR, create the release tag, and
+  hand off to the image-publishing workflow without the local/manual release
+  ritual.
+
 ## [0.9.5] - 2026-06-07
 
 ### Fixed

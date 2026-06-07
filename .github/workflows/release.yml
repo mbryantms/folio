@@ -6,7 +6,8 @@
 # Triggered by:
 #   - `git tag v*.*.*`  → immutable + floating tags + GitHub release
 #   - push to `main`    → `:edge` + `:sha-<short>`
-#   - manual dispatch   → ad-hoc, same matrix as a main push
+#   - manual dispatch at a tag → release publish for that tag
+#   - manual dispatch at a branch → ad-hoc image build
 #
 # Images published:
 #   ghcr.io/<owner>/folio        (Rust server,    Dockerfile)
