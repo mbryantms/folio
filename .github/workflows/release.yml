@@ -208,10 +208,15 @@ jobs:
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo '```'
           } > RELEASE_BODY.md
-      - name: Append image/verify snippet to the release
+      - name: Promote the release + append image/verify snippet
         uses: softprops/action-gh-release@v3
         with:
-          # release-please already created this release; append, don't replace.
+          # release-please created this release flagged as a pre-release so it
+          # doesn't read as "ready" while the images are still building. Now
+          # that publish succeeded, flip it to the real latest release and
+          # append the pull/cosign snippet (don't replace the generated notes).
           tag_name: ${{ github.ref_name }}
           append_body: true
           body_path: RELEASE_BODY.md
+          prerelease: false
+          make_latest: "true"
