@@ -88,6 +88,12 @@ pub struct Config {
     pub oidc_client_secret: Option<String>,
     #[serde(default)]
     pub oidc_trust_unverified_email: bool,
+    /// When true, a first OIDC login whose verified email matches an
+    /// existing local (password) account auto-links the OIDC identity onto
+    /// that account instead of returning `auth.email_in_use`. Opt-in because
+    /// it trusts the IdP's `email_verified` assertion for account linking.
+    #[serde(default)]
+    pub oidc_link_local_by_verified_email: bool,
 
     // Local
     #[serde(default)]
@@ -328,6 +334,10 @@ impl std::fmt::Debug for Config {
             .field(
                 "oidc_trust_unverified_email",
                 &self.oidc_trust_unverified_email,
+            )
+            .field(
+                "oidc_link_local_by_verified_email",
+                &self.oidc_link_local_by_verified_email,
             )
             .field("local_registration_open", &self.local_registration_open)
             .field("jwt_access_ttl", &self.jwt_access_ttl)
@@ -872,6 +882,19 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             }
             None => bad_type(&row.key, "bool", &row.value),
         },
+        "auth.oidc.link_local_by_verified_email" => match row.value.as_bool() {
+            Some(b) => {
+                if cfg.oidc_link_local_by_verified_email != b {
+                    tracing::debug!(
+                        env = cfg.oidc_link_local_by_verified_email,
+                        db = b,
+                        "auth.oidc.link_local_by_verified_email overridden by DB"
+                    );
+                }
+                cfg.oidc_link_local_by_verified_email = b;
+            }
+            None => bad_type(&row.key, "bool", &row.value),
+        },
 
         // ───────── Tokens + hardening + log level (M4) ─────────
         "auth.jwt.access_ttl" => match row.value.as_str() {
@@ -1189,6 +1212,7 @@ mod tests {
             oidc_client_id: None,
             oidc_client_secret: None,
             oidc_trust_unverified_email: false,
+            oidc_link_local_by_verified_email: false,
             local_registration_open: true,
             jwt_access_ttl: "24h".into(),
             jwt_refresh_ttl: "30d".into(),

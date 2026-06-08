@@ -58,6 +58,10 @@ pub struct OidcConfigView {
     /// True when `COMIC_OIDC_TRUST_UNVERIFIED_EMAIL` is set. Surfaced because
     /// it materially weakens email-claim trust.
     pub trust_unverified_email: bool,
+    /// True when a first OIDC login with a verified email may auto-link onto
+    /// an existing local account (instead of returning `auth.email_in_use`).
+    /// Surfaced because it trusts the IdP's `email_verified` for linking.
+    pub link_local_by_verified_email: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -110,6 +114,7 @@ pub async fn get_config(State(app): State<AppState>, _admin: RequireAdmin) -> Re
                 None
             },
             trust_unverified_email: cfg.oidc_trust_unverified_email,
+            link_local_by_verified_email: cfg.oidc_link_local_by_verified_email,
         },
         local: LocalConfigView {
             enabled: local_enabled,

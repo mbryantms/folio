@@ -111,6 +111,11 @@ function OidcCard({ data }: { data: AuthConfigView }) {
             status={data.oidc.trust_unverified_email}
             tone="warn"
           />
+          <Row
+            label="Auto-link local by verified email"
+            status={data.oidc.link_local_by_verified_email}
+            tone="warn"
+          />
         </dl>
         <p className="text-muted-foreground mt-3 text-xs">
           Client secret is never returned by this endpoint.

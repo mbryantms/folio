@@ -10,6 +10,13 @@
 //!
 //! `email_verified` defaults to `false` when missing (§12.7); `COMIC_OIDC_TRUST_UNVERIFIED_EMAIL=true`
 //! opts in to the workaround.
+//!
+//! When a first OIDC login's verified email matches an existing local
+//! (password) account, the default is to refuse (`auth.email_in_use`) so the
+//! identities aren't silently merged. `COMIC_OIDC_LINK_LOCAL_BY_VERIFIED_EMAIL=true`
+//! (DB key `auth.oidc.link_local_by_verified_email`) opts in to auto-linking
+//! the OIDC identity onto that local account instead, audited as
+//! `auth.oidc.auto_link`.
 
 use axum::{
     Extension, Router,
@@ -570,10 +577,15 @@ pub async fn callback(
         }
     } else {
         // Collision check (audit M-4 / S-5): if a local user already owns
-        // this email address, refuse to silently shadow them with a fresh
-        // OIDC row. Auto-linking would let an attacker who controls an
-        // OIDC account at the same email take over the local account; the
-        // documented runbook is admin-driven manual merge instead.
+        // this email address, don't silently shadow them with a fresh OIDC
+        // row. Two outcomes depending on policy:
+        //   - default: refuse (`auth.email_in_use`); admin migrates manually.
+        //   - opt-in `auth.oidc.link_local_by_verified_email`: auto-link the
+        //     OIDC identity onto the existing local account.
+        // Reaching here with `email = Some` guarantees `email_verified` is
+        // true — the gate above returns early when the email is present but
+        // unverified — so the verified-email precondition for linking is
+        // already structurally satisfied.
         if let Some(ref e) = email
             && let Ok(Some(local)) = UserEntity::find()
                 .filter(user::Column::Email.eq(e.clone()))
@@ -581,83 +593,126 @@ pub async fn callback(
                 .await
             && local.external_id.starts_with("local:")
         {
-            tracing::warn!(
-                target: "auth.oidc",
-                local_user_id = %local.id,
-                email_hash = %sha256_hex(e)[..12].to_owned(),
-                "oidc/local email collision — refusing auto-link"
-            );
-            let _ = crate::audit::record(
-                &app.db,
-                crate::audit::AuditEntry {
-                    actor_id: local.id,
-                    action: "auth.oidc.collision",
-                    target_type: Some("user"),
-                    target_id: Some(local.id.to_string()),
-                    payload: serde_json::json!({
-                        "issuer": issuer,
-                        "subject_hash": sha256_hex(&subject)[..12].to_owned(),
-                    }),
-                    ip: ctx.ip_string(),
-                    user_agent: ctx.user_agent.clone(),
-                },
-            )
-            .await;
-            return error(
-                StatusCode::CONFLICT,
-                "auth.email_in_use",
-                "an account with that email already exists; ask your admin to link or migrate it",
-            );
-        }
-        // First-user admin bootstrap (§12.8).
-        let user_count = UserEntity::find().count(&app.db).await.unwrap_or(1);
-        let role = if user_count == 0 {
-            tracing::warn!("first_admin_bootstrap: granting admin role to first user (oidc)");
-            "admin"
+            if app.cfg().oidc_link_local_by_verified_email {
+                tracing::warn!(
+                    target: "auth.oidc",
+                    local_user_id = %local.id,
+                    email_hash = %sha256_hex(e)[..12].to_owned(),
+                    "oidc/local email collision — auto-linking per opt-in"
+                );
+                let prior_external_id = local.external_id.clone();
+                let mut am: UserAM = local.clone().into();
+                am.external_id = Set(external_id.clone());
+                am.email = Set(email.clone());
+                am.email_verified = Set(email_verified);
+                am.display_name = Set(display_name.clone());
+                am.last_login_at = Set(Some(now));
+                am.updated_at = Set(now);
+                let linked = match am.update(&app.db).await {
+                    Ok(m) => m,
+                    Err(err) => {
+                        tracing::error!(error = %err, "oidc auto-link update failed");
+                        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                    }
+                };
+                let _ = crate::audit::record(
+                    &app.db,
+                    crate::audit::AuditEntry {
+                        actor_id: linked.id,
+                        action: "auth.oidc.auto_link",
+                        target_type: Some("user"),
+                        target_id: Some(linked.id.to_string()),
+                        payload: serde_json::json!({
+                            "issuer": issuer,
+                            "subject_hash": sha256_hex(&subject)[..12].to_owned(),
+                            "prior_external_id": prior_external_id,
+                        }),
+                        ip: ctx.ip_string(),
+                        user_agent: ctx.user_agent.clone(),
+                    },
+                )
+                .await;
+                linked
+            } else {
+                tracing::warn!(
+                    target: "auth.oidc",
+                    local_user_id = %local.id,
+                    email_hash = %sha256_hex(e)[..12].to_owned(),
+                    "oidc/local email collision — refusing auto-link"
+                );
+                let _ = crate::audit::record(
+                    &app.db,
+                    crate::audit::AuditEntry {
+                        actor_id: local.id,
+                        action: "auth.oidc.collision",
+                        target_type: Some("user"),
+                        target_id: Some(local.id.to_string()),
+                        payload: serde_json::json!({
+                            "issuer": issuer,
+                            "subject_hash": sha256_hex(&subject)[..12].to_owned(),
+                        }),
+                        ip: ctx.ip_string(),
+                        user_agent: ctx.user_agent.clone(),
+                    },
+                )
+                .await;
+                return error(
+                    StatusCode::CONFLICT,
+                    "auth.email_in_use",
+                    "an account with that email already exists; ask your admin to link or migrate it",
+                );
+            }
         } else {
-            "user"
-        };
-        let am = UserAM {
-            id: Set(user_id),
-            external_id: Set(external_id),
-            display_name: Set(display_name),
-            email: Set(email),
-            email_verified: Set(email_verified),
-            password_hash: Set(None),
-            totp_secret: Set(None),
-            state: Set("active".into()),
-            role: Set(role.into()),
-            token_version: Set(0),
-            created_at: Set(now),
-            updated_at: Set(now),
-            last_login_at: Set(Some(now)),
-            default_reading_direction: Set(None),
-            default_fit_mode: Set(None),
-            default_view_mode: Set(None),
-            default_page_strip: Set(false),
-            default_page_animation: Set(None),
-            default_cover_solo: Set(true),
-            theme: Set(None),
-            accent_color: Set(None),
-            density: Set(None),
-            keybinds: Set(serde_json::json!({})),
-            activity_tracking_enabled: Set(true),
-            timezone: Set("UTC".into()),
-            reading_min_active_ms: Set(30_000),
-            reading_min_pages: Set(3),
-            reading_idle_ms: Set(180_000),
-            language: Set("en".into()),
-            exclude_from_aggregates: Set(false),
-            show_marker_count: Set(false),
-            opds_wtr_reorder: Set(true),
-            opds_progress_glyphs: Set(true),
-            max_rails_per_page: Set(12),
-        };
-        match am.insert(&app.db).await {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::error!(error = %e, "oidc user insert failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            // First-user admin bootstrap (§12.8).
+            let user_count = UserEntity::find().count(&app.db).await.unwrap_or(1);
+            let role = if user_count == 0 {
+                tracing::warn!("first_admin_bootstrap: granting admin role to first user (oidc)");
+                "admin"
+            } else {
+                "user"
+            };
+            let am = UserAM {
+                id: Set(user_id),
+                external_id: Set(external_id),
+                display_name: Set(display_name),
+                email: Set(email),
+                email_verified: Set(email_verified),
+                password_hash: Set(None),
+                totp_secret: Set(None),
+                state: Set("active".into()),
+                role: Set(role.into()),
+                token_version: Set(0),
+                created_at: Set(now),
+                updated_at: Set(now),
+                last_login_at: Set(Some(now)),
+                default_reading_direction: Set(None),
+                default_fit_mode: Set(None),
+                default_view_mode: Set(None),
+                default_page_strip: Set(false),
+                default_page_animation: Set(None),
+                default_cover_solo: Set(true),
+                theme: Set(None),
+                accent_color: Set(None),
+                density: Set(None),
+                keybinds: Set(serde_json::json!({})),
+                activity_tracking_enabled: Set(true),
+                timezone: Set("UTC".into()),
+                reading_min_active_ms: Set(30_000),
+                reading_min_pages: Set(3),
+                reading_idle_ms: Set(180_000),
+                language: Set("en".into()),
+                exclude_from_aggregates: Set(false),
+                show_marker_count: Set(false),
+                opds_wtr_reorder: Set(true),
+                opds_progress_glyphs: Set(true),
+                max_rails_per_page: Set(12),
+            };
+            match am.insert(&app.db).await {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::error!(error = %e, "oidc user insert failed");
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
             }
         }
     };

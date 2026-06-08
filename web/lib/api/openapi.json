@@ -15711,7 +15711,8 @@
         "type": "object",
         "required": [
           "configured",
-          "trust_unverified_email"
+          "trust_unverified_email",
+          "link_local_by_verified_email"
         ],
         "properties": {
           "client_id": {
@@ -15728,6 +15729,10 @@
               "string",
               "null"
             ]
+          },
+          "link_local_by_verified_email": {
+            "type": "boolean",
+            "description": "True when a first OIDC login with a verified email may auto-link onto\nan existing local account (instead of returning `auth.email_in_use`).\nSurfaced because it trusts the IdP's `email_verified` for linking."
           },
           "trust_unverified_email": {
             "type": "boolean",

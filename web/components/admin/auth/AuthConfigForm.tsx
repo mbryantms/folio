@@ -28,6 +28,7 @@ export type AuthConfigInitial = {
    *  an empty input as "no change." */
   oidc_client_secret_set: boolean;
   oidc_trust_unverified_email: boolean;
+  oidc_link_local_by_verified_email: boolean;
 };
 
 type FormState = AuthConfigInitial & { oidc_client_secret_input: string };
@@ -62,7 +63,9 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
     state.oidc_issuer.trim() !== initial.oidc_issuer.trim() ||
     state.oidc_client_id.trim() !== initial.oidc_client_id.trim() ||
     state.oidc_client_secret_input !== "" ||
-    state.oidc_trust_unverified_email !== initial.oidc_trust_unverified_email;
+    state.oidc_trust_unverified_email !== initial.oidc_trust_unverified_email ||
+    state.oidc_link_local_by_verified_email !==
+      initial.oidc_link_local_by_verified_email;
 
   async function onSave() {
     // `disabled={!dirty}` on the submit button makes the no-op path
@@ -89,6 +92,13 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
     ) {
       patch["auth.oidc.trust_unverified_email"] =
         state.oidc_trust_unverified_email;
+    }
+    if (
+      state.oidc_link_local_by_verified_email !==
+      initial.oidc_link_local_by_verified_email
+    ) {
+      patch["auth.oidc.link_local_by_verified_email"] =
+        state.oidc_link_local_by_verified_email;
     }
 
     await update.mutateAsync(patch);
@@ -291,6 +301,40 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                 </span>
               </div>
             )}
+
+            <div className="flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+              <div>
+                <Label className="text-sm">
+                  Auto-link local accounts by verified email
+                </Label>
+                <p className="text-xs text-amber-200/80">
+                  When ON, a first OIDC sign-in whose verified email matches an
+                  existing password account links the OIDC identity onto that
+                  account instead of failing with <code>auth.email_in_use</code>
+                  . Avoids a manual admin merge.
+                </p>
+              </div>
+              <Switch
+                checked={state.oidc_link_local_by_verified_email}
+                onCheckedChange={(v) =>
+                  setState((s) => ({
+                    ...s,
+                    oidc_link_local_by_verified_email: v,
+                  }))
+                }
+                disabled={!oidcEnabled}
+              />
+            </div>
+            {state.oidc_link_local_by_verified_email && (
+              <div className="border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-md border p-3 text-xs">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  Anyone who can sign in at your IdP with a verified email
+                  matching a local account will take over that account. Only
+                  enable if you trust the IdP&rsquo;s email verification.
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -319,7 +363,9 @@ function FieldHint({
   return (
     <p
       className={
-        tone === "error" ? "text-destructive text-xs" : "text-muted-foreground text-xs"
+        tone === "error"
+          ? "text-destructive text-xs"
+          : "text-muted-foreground text-xs"
       }
     >
       {children}
