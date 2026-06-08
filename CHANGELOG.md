@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.10.1](https://github.com/mbryantms/folio/compare/v0.10.0...v0.10.1) (2026-06-08)
+
+
+### Fixed
+
+* **security:** harden auth and unsafe IO ([#114](https://github.com/mbryantms/folio/issues/114)) ([f71ff93](https://github.com/mbryantms/folio/commit/f71ff93f540487f7d2599cbb1d84749009f32d2f))
+
 ## [0.10.0](https://github.com/mbryantms/folio/compare/v0.9.5...v0.10.0) (2026-06-08)
 
 
