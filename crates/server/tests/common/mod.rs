@@ -77,6 +77,9 @@ pub struct SpawnOpts {
     pub oidc_issuer: Option<String>,
     /// Mirrors `COMIC_OIDC_TRUST_UNVERIFIED_EMAIL`.
     pub oidc_trust_unverified_email: bool,
+    /// Mirrors `COMIC_OIDC_LINK_LOCAL_BY_VERIFIED_EMAIL` — auto-link an OIDC
+    /// identity onto a matching local account on first verified-email login.
+    pub oidc_link_local_by_verified_email: bool,
     /// Override the library root path. Default of `/tmp/library` is a
     /// bogus path that the scanner / fs-list handlers reject as missing
     /// — pass `Some(real_dir)` when the test needs the handler to read
@@ -158,6 +161,19 @@ impl TestApp {
             metron_password: None,
             metron_enabled: false,
             metrics_token: None,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
+    /// Spawn with OIDC configured and `auth.oidc.link_local_by_verified_email`
+    /// turned on, so a first verified-email OIDC login auto-links onto a
+    /// matching local account instead of returning `auth.email_in_use`.
+    pub async fn spawn_with_oidc_link_local(issuer: impl Into<String>) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            oidc_issuer: Some(issuer.into()),
+            oidc_link_local_by_verified_email: true,
+            ..SpawnOpts::default()
         })
         .await
     }
@@ -288,6 +304,7 @@ impl TestApp {
                 .as_ref()
                 .map(|_| "folio-test-secret".to_string()),
             oidc_trust_unverified_email: opts.oidc_trust_unverified_email,
+            oidc_link_local_by_verified_email: opts.oidc_link_local_by_verified_email,
             local_registration_open: true,
             jwt_access_ttl: "15m".into(),
             jwt_refresh_ttl: "30d".into(),

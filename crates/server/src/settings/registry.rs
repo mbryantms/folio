@@ -99,6 +99,11 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Bool,
         is_secret: false,
     },
+    SettingDef {
+        key: "auth.oidc.link_local_by_verified_email",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
     // ───────── Tokens + hardening + log level (M4) ─────────
     SettingDef {
         key: "auth.jwt.access_ttl",

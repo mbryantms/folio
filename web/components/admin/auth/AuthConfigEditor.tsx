@@ -62,5 +62,9 @@ function pickAuthValues(
       "auth.oidc.trust_unverified_email",
       false,
     ),
+    oidc_link_local_by_verified_email: asBool(
+      "auth.oidc.link_local_by_verified_email",
+      false,
+    ),
   };
 }

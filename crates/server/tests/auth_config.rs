@@ -117,4 +117,5 @@ async fn returns_local_mode_with_open_registration() {
     // OIDC client_id is suppressed when not configured.
     assert!(body["oidc"]["client_id"].is_null());
     assert_eq!(body["oidc"]["trust_unverified_email"], false);
+    assert_eq!(body["oidc"]["link_local_by_verified_email"], false);
 }
