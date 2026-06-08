@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.10.0](https://github.com/mbryantms/folio/compare/v0.9.5...v0.10.0) (2026-06-08)
+
+
+### Added
+
+* **auth:** opt-in OIDC auto-link to local accounts by verified email ([#120](https://github.com/mbryantms/folio/issues/120)) ([db90d31](https://github.com/mbryantms/folio/commit/db90d31ad0b8795541cd63d24b8a484ea2f25fa4))
+
+
+### Fixed
+
+* **deps:** update radix-ui ([#118](https://github.com/mbryantms/folio/issues/118)) ([ea36555](https://github.com/mbryantms/folio/commit/ea36555d6b0a8dc2cd2c209d7fb7753ebd2145a6))
+* **deps:** update tanstack to v5.101.0 ([#124](https://github.com/mbryantms/folio/issues/124)) ([a8a2d15](https://github.com/mbryantms/folio/commit/a8a2d1594bc39e2424e14a4145882010da178c49))
+
 ## [Unreleased]
 
 ### Internal
