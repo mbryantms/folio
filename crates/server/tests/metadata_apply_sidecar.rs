@@ -475,8 +475,8 @@ async fn apply_issue_with_writeback_writes_variant_covers_to_issue_cover_table()
     );
     // The fixture's `cdn.example.com` URLs are unreachable, so the
     // downloader soft-falls-back to a metadata-only row that keeps the
-    // hotlink. (The success path — bytes downloaded to `local_path` — is
-    // covered by `apply_issue_downloads_and_stores_variant_covers_locally`.)
+    // hotlink. Internal URL rejection is covered by
+    // `apply_issue_keeps_ssrf_rejected_variant_covers_as_hotlinks`.
     assert!(
         rows[0].local_path.is_empty(),
         "unreachable fixture URL → metadata-only fallback",
@@ -952,19 +952,6 @@ async fn apply_issue_override_user_edits_collapses_pins() {
     );
 }
 
-/// Encode a small valid PNG in memory so the mock CDN serves a
-/// decodable image (the production `image` dep isn't visible to this
-/// integration-test crate, hence the `image` dev-dependency).
-fn tiny_png() -> Vec<u8> {
-    use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
-    let img = RgbImage::from_fn(8, 12, |x, y| Rgb([(x * 20) as u8, (y * 10) as u8, 40]));
-    let mut buf = Cursor::new(Vec::new());
-    DynamicImage::ImageRgb8(img)
-        .write_to(&mut buf, ImageFormat::Png)
-        .unwrap();
-    buf.into_inner()
-}
-
 /// Register the first user (→ admin) and return a `Cookie` header value
 /// carrying the session. Sufficient for GET requests (no CSRF needed).
 async fn register_admin_cookie(app: &TestApp) -> String {
@@ -997,7 +984,7 @@ async fn register_admin_cookie(app: &TestApp) -> String {
 }
 
 #[tokio::test]
-async fn apply_issue_downloads_and_stores_variant_covers_locally() {
+async fn apply_issue_keeps_ssrf_rejected_variant_covers_as_hotlinks() {
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode, header};
     use entity::issue_cover;
@@ -1006,23 +993,11 @@ async fn apply_issue_downloads_and_stores_variant_covers_locally() {
     use server::metadata::identifier::Source;
     use server::metadata::provider::VariantCoverCandidate;
     use tower::ServiceExt;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    // Mock CDN serving real PNG bytes for two variants.
-    let cdn = MockServer::start().await;
-    let png = tiny_png();
-    for name in ["walker.png", "mccaig.png"] {
-        Mock::given(method("GET"))
-            .and(path(format!("/{name}")))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-type", "image/png")
-                    .set_body_bytes(png.clone()),
-            )
-            .mount(&cdn)
-            .await;
-    }
+    let urls = [
+        "http://127.0.0.1:1/walker.png".to_owned(),
+        "http://127.0.0.1:1/mccaig.png".to_owned(),
+    ];
 
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let dir = tempdir().unwrap();
@@ -1044,13 +1019,13 @@ async fn apply_issue_downloads_and_stores_variant_covers_locally() {
             label: Some("Walker".into()),
             artist_name: None,
             identifiers: vec![],
-            image_url: Some(format!("{}/walker.png", cdn.uri())),
+            image_url: Some(urls[0].clone()),
         },
         VariantCoverCandidate {
             label: Some("McCaig".into()),
             artist_name: None,
             identifiers: vec![],
-            image_url: Some(format!("{}/mccaig.png", cdn.uri())),
+            image_url: Some(urls[1].clone()),
         },
     ];
     cache::put(
@@ -1081,26 +1056,48 @@ async fn apply_issue_downloads_and_stores_variant_covers_locally() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 2);
-    let data_path = app.state().cfg().data_path.clone();
-    for row in &rows {
+    for (idx, row) in rows.iter().enumerate() {
         assert!(
-            !row.local_path.is_empty(),
-            "variant downloaded to local storage"
+            row.local_path.is_empty(),
+            "SSRF-rejected URL should remain hotlink-only"
         );
         assert!(
-            row.width.is_some() && row.height.is_some(),
-            "source dimensions recorded"
+            row.width.is_none() && row.height.is_none(),
+            "no dimensions are recorded without downloaded bytes"
         );
-        assert!(row.phash.is_some(), "perceptual hash computed");
-        assert!(
-            data_path.join(&row.local_path).exists(),
-            "cover file written to disk: {}",
-            row.local_path,
+        assert!(row.phash.is_none(), "no perceptual hash is computed");
+        assert_eq!(
+            row.source_url.as_deref(),
+            Some(urls[idx].as_str()),
+            "provider URL is preserved for hotlink fallback"
         );
     }
 
-    // The byte endpoint serves the stored cover to an authorized user.
     let cookie = register_admin_cookie(&app).await;
+
+    // The list endpoint still exposes the hotlink URL for metadata-only rows.
+    let list = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/api/issues/{issue_id}/covers"))
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let body = to_bytes(list.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let covers = payload["covers"].as_array().expect("cover list response");
+    assert_eq!(covers.len(), 2);
+    assert_eq!(covers[0]["image_url"], urls[0]);
+    assert_eq!(covers[1]["image_url"], urls[1]);
+
+    // No local artifact was written, so the byte endpoint returns 404.
     let cover_id = rows[0].id;
     let resp = app
         .router
@@ -1115,17 +1112,7 @@ async fn apply_issue_downloads_and_stores_variant_covers_locally() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(
-        resp.headers().get(header::CONTENT_TYPE).unwrap(),
-        "image/png"
-    );
-    let served = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    assert_eq!(
-        served.as_ref(),
-        png.as_slice(),
-        "served bytes match the downloaded image"
-    );
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     // Unknown cover id → 404.
     let missing = app
@@ -1145,23 +1132,9 @@ async fn apply_issue_downloads_and_stores_variant_covers_locally() {
 }
 
 #[tokio::test]
-async fn variant_cover_backfill_downloads_hotlink_rows() {
+async fn variant_cover_backfill_skips_ssrf_rejected_hotlink_rows() {
     use entity::issue_cover;
     use sea_orm::{EntityTrait, Set};
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let cdn = MockServer::start().await;
-    let png = tiny_png();
-    Mock::given(method("GET"))
-        .and(path("/v.png"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "image/png")
-                .set_body_bytes(png.clone()),
-        )
-        .mount(&cdn)
-        .await;
 
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let dir = tempdir().unwrap();
@@ -1183,7 +1156,7 @@ async fn variant_cover_backfill_downloads_hotlink_rows() {
         ordinal: Set(1),
         source_provider: Set(Some("comicvine".into())),
         source_external_id: Set(None),
-        source_url: Set(Some(format!("{}/v.png", cdn.uri()))),
+        source_url: Set(Some("http://127.0.0.1:1/v.png".into())),
         variant_label: Set(Some("Hotlinked".into())),
         variant_artist_person_id: Set(None),
         local_path: Set(String::new()),
@@ -1199,23 +1172,21 @@ async fn variant_cover_backfill_downloads_hotlink_rows() {
     .await
     .unwrap();
 
-    let data_path = app.state().cfg().data_path.clone();
-    let outcome =
-        server::metadata::writers::run_variant_cover_backfill(&app.state().db, &data_path)
-            .await
-            .unwrap();
+    let outcome = server::metadata::writers::run_variant_cover_backfill(
+        &app.state().db,
+        &app.state().cfg().data_path,
+    )
+    .await
+    .unwrap();
     assert_eq!(outcome.considered, 1);
-    assert_eq!(outcome.stored, 1);
+    assert_eq!(outcome.stored, 0);
+    assert_eq!(outcome.skipped, 1);
 
     let row = issue_cover::Entity::find_by_id(cover_id)
         .one(&app.state().db)
         .await
         .unwrap()
         .unwrap();
-    assert!(!row.local_path.is_empty(), "backfill populated local_path");
-    assert!(row.phash.is_some(), "backfill computed perceptual hash");
-    assert!(
-        data_path.join(&row.local_path).exists(),
-        "backfilled file on disk"
-    );
+    assert!(row.local_path.is_empty(), "backfill keeps rejected hotlink");
+    assert!(row.phash.is_none(), "rejected hotlink is not hashed");
 }
