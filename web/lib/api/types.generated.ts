@@ -6659,6 +6659,12 @@ export interface components {
             configured: boolean;
             issuer?: string | null;
             /**
+             * @description True when a first OIDC login with a verified email may auto-link onto
+             *     an existing local account (instead of returning `auth.email_in_use`).
+             *     Surfaced because it trusts the IdP's `email_verified` for linking.
+             */
+            link_local_by_verified_email: boolean;
+            /**
              * @description True when `COMIC_OIDC_TRUST_UNVERIFIED_EMAIL` is set. Surfaced because
              *     it materially weakens email-claim trust.
              */

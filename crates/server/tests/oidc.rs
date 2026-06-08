@@ -567,6 +567,78 @@ async fn callback_returns_409_on_email_collision_with_local_user() {
 }
 
 #[tokio::test]
+async fn callback_auto_links_local_user_when_opt_in_enabled() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+
+    // Seed a local (password) user with the same email.
+    let reg = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"email":"link-me@example.com","password":"correctly-horse-battery"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reg.status(), StatusCode::CREATED);
+
+    use sea_orm::EntityTrait;
+    let state = app.state();
+    let before = entity::user::Entity::find().all(&state.db).await.unwrap();
+    assert_eq!(before.len(), 1, "exactly the seeded local user exists");
+    let local = &before[0];
+    assert!(local.external_id.starts_with("local:"));
+    let local_id = local.id;
+
+    // Drive an OIDC login with a verified email matching the local account.
+    let (state_cookie, state_param) = start_oidc_flow(&app, None).await;
+    let nonce = parse_state_cookie_nonce(&state_cookie);
+    let claims = IdTokenClaims::standard(
+        &op.issuer(),
+        "folio-test-client",
+        "subject-link",
+        &nonce,
+        "link-me@example.com",
+    );
+    let id_token = sign_id_token(&claims);
+    op.register_token_response(&id_token).await;
+
+    let resp = callback_with(&app, &state_cookie, &state_param, "code").await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "auto-link should sign the user in, not 409"
+    );
+    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_some());
+
+    // The SAME row was relinked — no second user was created, the OIDC
+    // identity replaced the `local:` external_id, and the row id is stable.
+    let after = entity::user::Entity::find().all(&state.db).await.unwrap();
+    assert_eq!(
+        after.len(),
+        1,
+        "no new user row — the local one was relinked"
+    );
+    let linked = &after[0];
+    assert_eq!(linked.id, local_id, "row id preserved across the link");
+    assert!(
+        linked.external_id.starts_with("oidc:"),
+        "external_id now points at the OIDC identity: {}",
+        linked.external_id
+    );
+    assert_eq!(linked.email.as_deref(), Some("link-me@example.com"));
+    // First registered user is admin; the role survives the link.
+    assert_eq!(linked.role, "admin");
+}
+
+#[tokio::test]
 async fn logout_redirects_to_end_session_endpoint_for_oidc_session() {
     let op = MockOp::start().await;
     let app = TestApp::spawn_with_oidc(op.issuer(), false).await;

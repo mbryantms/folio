@@ -40,7 +40,7 @@ config.
 | `smtp.{host,port,tls,username,password,from}` | `/admin/email` | Live — the `EmailSender` is rebuilt on save. |
 | `auth.mode` | `/admin/auth` → Mode | Live. |
 | `auth.local.registration_open` | `/admin/auth` → Local | Live. |
-| `auth.oidc.{issuer,client_id,client_secret,trust_unverified_email}` | `/admin/auth` → OIDC | Live; OIDC discovery cache is evicted on save. |
+| `auth.oidc.{issuer,client_id,client_secret,trust_unverified_email,link_local_by_verified_email}` | `/admin/auth` → OIDC | Live; OIDC discovery cache is evicted on save. |
 | `auth.jwt.{access_ttl,refresh_ttl}` | `/admin/auth` → Tokens | Live for newly-minted tokens; existing tokens keep their original `exp`. |
 | `auth.rate_limit_enabled` | `/admin/server` → Hardening | Live, but only affects the failed-auth Redis lockout. The per-route `tower_governor` buckets are sized at boot. |
 | `observability.log_level` | `/admin/server` → Diagnostics | Live via `tracing_subscriber::reload::Handle`. |

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "98840f04ad38ba691045784e775f1bdbc861f5ea",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "changelog-path": "CHANGELOG.md",
+  "pull-request-title-pattern": "chore: release v${version}",
+  "pull-request-header": "Release PR — review the notes, edit CHANGELOG.md here if you want prose, then merge to publish.",
+  "changelog-sections": [
+    { "type": "feat", "section": "Added" },
+    { "type": "fix", "section": "Fixed" },
+    { "type": "perf", "section": "Changed" },
+    { "type": "revert", "section": "Fixed" },
+    { "type": "chore", "hidden": true },
+    { "type": "ci", "hidden": true },
+    { "type": "docs", "hidden": true },
+    { "type": "style", "hidden": true },
+    { "type": "refactor", "hidden": true },
+    { "type": "test", "hidden": true },
+    { "type": "build", "hidden": true }
+  ],
+  "packages": {
+    ".": {
+      "package-name": "folio"
+    }
+  }
+}

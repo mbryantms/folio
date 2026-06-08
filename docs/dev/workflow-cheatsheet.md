@@ -22,10 +22,11 @@ Keep that picture and the three flows are just variations on it.
 |------|--------------------|
 | **branch** | A private copy of the code to work on, so `main` stays clean until you're done. Cheap and disposable. |
 | **PR** (pull request) | A request to merge your branch into `main`. It's where CI runs and a human (or auto-merge) approves. |
-| **CI** | The 8 automated checks GitHub runs on every PR: Rust build/clippy/tests, web lint/typecheck/tests, OpenAPI drift, audit-check, docs build, Docker build, security. `main` refuses changes until they pass. |
+| **CI** | The automated checks GitHub runs on every PR (Rust build/clippy/tests, web lint/typecheck/tests, OpenAPI drift, audit-check, cargo-deny). The required ones gate the merge; the slow Docker/docs builds run but don't block. |
+| **merge queue** | GitHub serializes queued PRs and tests each against the projected `main` before merging, so "branch out of date" never blocks you. Arm it with `gh pr merge --auto`. |
 | **Renovate** | A bot that watches your dependencies and opens PRs to update them, every Monday. |
-| **release / tag** | Publishing a version. Done by pushing a `vX.Y.Z` git tag, which builds the Docker images and creates a GitHub Release. Irreversible. |
-| **`[Unreleased]`** | The top section of `CHANGELOG.md` where finished-but-not-yet-released changes pile up until the next release. |
+| **release-please** | A bot that maintains a "Release PR" from your conventional-commit titles (next version + `CHANGELOG.md`). Merging it tags `vX.Y.Z` and publishes. Irreversible. |
+| **Release PR** | The auto-maintained PR release-please keeps open; merging it is how you cut a release. |
 
 ---
 
@@ -48,23 +49,24 @@ through a PR, then it ships in the next release.
    If you changed the API surface, regenerate the spec: `just openapi`.
 4. **Optional but recommended:** ask Claude for a self-review with `/review`
    (convention check) or `/code-review` (bug hunt) before you open the PR.
-5. **Write it down.** Add a bullet to the `## [Unreleased]` section of
-   `CHANGELOG.md` under **Added**, in user-facing language.
+5. **Name it for the changelog.** Use a clear conventional-commit PR title —
+   `feat(scope): user-facing summary`. That title (not a hand-edited
+   `CHANGELOG.md`) becomes the release note via release-please.
 6. **Open the PR.** Claude can do this for you:
    ```sh
    git push -u origin feat/<short-name>
    gh pr create --base main --fill
    ```
-7. **Let CI run, then merge.** When all 8 checks are green, merge (squash is
-   the tidy default). Delete the branch — GitHub offers a button, or
-   `git branch -d feat/<short-name>`.
+7. **Let CI run, then merge.** When the required checks are green, merge (squash
+   is the tidy default — the squash title is what release-please reads). Delete
+   the branch — GitHub offers a button, or `git branch -d feat/<short-name>`.
 
-The feature now sits in `main` and in `[Unreleased]`. It goes live the next
-time you cut a release (see §4).
+The feature now sits in `main` and is picked up by the next Release PR. It goes
+live when you merge that (see §4).
 
 > **Why a PR even when you're the only dev?** `main` is protected so CI is the
-> gatekeeper — a PR is how the checks get a chance to catch a problem *before*
-> it's in the shippable branch. (Admins *can* force a push straight to `main`,
+> gatekeeper — a PR is how the checks get a chance to catch a problem _before_
+> it's in the shippable branch. (Admins _can_ force a push straight to `main`,
 > but that skips the safety net — treat it as an emergency-only escape hatch,
 > not the normal path.)
 
@@ -77,13 +79,13 @@ lighter** — don't skip the branch + PR, because that's how CI gets to vet it.
 
 1. `git checkout -b fix/<short-name> origin/main`
 2. Make the change with Claude; run `/check`.
-3. Add a `CHANGELOG.md` `[Unreleased]` bullet under **Fixed** (skip only for
-   pure internal/no-user-impact changes — those go under **Internal**).
+3. Give the PR a `fix(scope): …` title (or `chore:`/`docs:`/`refactor:` for
+   no-user-impact changes — those are hidden from the changelog automatically).
 4. `git push -u origin fix/<short-name> && gh pr create --base main --fill`
 5. Merge when green; delete the branch.
 
-Small fixes accumulate in `[Unreleased]` alongside features and all ship
-together at the next release. There's no "small enough to skip the process"
+Small fixes accumulate on `main` and all ship together when you merge the next
+Release PR. There's no "small enough to skip the process"
 threshold — the process is cheap, and skipping it is what bypasses CI.
 
 ---
@@ -124,21 +126,18 @@ Then merge once green. Related breaking bumps are pre-grouped into one PR
 
 ## 4) Cutting a release (the deliberate step)
 
-Features and fixes pile up in `[Unreleased]`. When you decide to publish:
+Releases are driven by **release-please** — you don't stamp changelogs or push
+tags by hand:
 
-1. Make sure everything's merged to `main` and `main` is clean.
-2. In `CHANGELOG.md`, move the `[Unreleased]` items into a new
-   `## [X.Y.Z]` section (pre-1.0: **minor** = new features, **patch** =
-   fixes only) and add the compare link at the bottom.
-3. From a worktree that can run the full suite:
-   ```sh
-   just release X.Y.Z       # checks guards, runs all tests, stamps date, tags
-   git push origin main
-   git push origin vX.Y.Z   # ← this publishes: images + GitHub Release
-   ```
+1. Land your work on `main` via normal PRs with conventional-commit titles
+   (`feat(scope): …`, `fix(scope): …`). Those titles become the changelog.
+2. A bot keeps a single **"Release PR"** up to date on every push to `main`
+   (next version from the commits + regenerated `CHANGELOG.md`).
+3. When you're ready to ship, **merge the Release PR.** That tags `vX.Y.Z` and
+   publishes both signed images + the GitHub Release.
 
-`just release` does **not** push for you — the tag push is the irreversible,
-image-publishing action, so it stays a manual decision. Full detail in
+Pre-1.0: `feat:` → minor, `fix:` → patch. Want prose instead of one-line
+entries? Edit `CHANGELOG.md` on the Release PR before merging. Full detail in
 [releasing.md](releasing.md).
 
 ---
@@ -151,31 +150,23 @@ image-publishing action, so it stays a manual decision. Full detail in
   any time).
 - **Safe dependency updates auto-merge** themselves once CI passes (stable
   patch/minor).
-- **CI** runs all 8 checks on every PR and every push to `main`.
+- **CI** runs on every PR (via the merge queue) and every push to `main`. The
+  slow Docker image builds run but don't _gate_ merges; they build for real on
+  release.
 - **`:edge` Docker images** are built on every merge to `main`.
-- **Releasing** — pushing a `vX.Y.Z` tag builds + signs both images and writes
-  the GitHub Release notes from your changelog.
-- **Changelog date stamping** during `just release`.
+- **Version + changelog + release** — **release-please** maintains a "Release
+  PR" (version + `CHANGELOG.md` from conventional commits); merging it tags
+  `vX.Y.Z` and `release.yml` builds + signs both images and creates the GitHub
+  Release.
 
 ### Still manual on purpose
 
 - **Reviewing & merging gated dep PRs** (0.x, majors, security) — they can
   break things, so a human (with Claude's help) decides.
-- **The release tag push** — irreversible and publishes images, so it's a
-  deliberate act.
-- **Writing changelog entries** — these are human-facing highlights.
-
-### Could be automated later (options, not requirements)
-
-- **Auto-merge your *own* feature/fix PRs** once green (GitHub's built-in
-  "auto-merge" toggle, or `gh pr merge --auto`) — removes the "remember to
-  click merge" step while keeping CI as the gate.
-- **A scheduled Claude routine** (see the `/schedule` skill) to triage the
-  Renovate Dependency Dashboard weekly — e.g. attempt the gated majors on a
-  branch and report what it could and couldn't fix.
-- **Automated version + changelog** (release-please style) that proposes the
-  next version from commit messages. Folio deliberately keeps the *tag push*
-  manual, but the changelog/version prep around it could be drafted for you.
+- **Merging the Release PR** — irreversible and publishes images, so it's a
+  deliberate act (this is the one click that cuts a release).
+- **Writing good commit titles** — they _are_ the changelog (edit the Release
+  PR's `CHANGELOG.md` for prose when it matters).
 
 > Rule of thumb: automate the **safe and repetitive** (green dep bumps, CI,
 > image builds) and keep a human on the **risky and irreversible** (breaking
