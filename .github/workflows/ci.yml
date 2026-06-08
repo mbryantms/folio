@@ -183,7 +183,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: env.WEB == 'true'
         with:
-          version: 11.5.1
+          version: 11.5.2
       - if: env.WEB == 'true'
         run: pnpm install --frozen-lockfile
       - if: env.WEB == 'true'
@@ -236,7 +236,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: env.DOCS == 'true'
         with:
-          version: 11.5.1
+          version: 11.5.2
       - if: env.DOCS == 'true'
         run: pnpm install --frozen-lockfile
       - if: env.DOCS == 'true'
@@ -257,7 +257,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v6
         with:
-          version: 11.5.1
+          version: 11.5.2
       # The Rust build (to emit the spec) only matters when backend or the
       # checked-in spec changed; the spec can't have drifted otherwise.
       - uses: dtolnay/rust-toolchain@1.96.0
