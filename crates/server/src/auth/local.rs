@@ -38,8 +38,8 @@ use crate::state::AppState;
 
 use super::CurrentUser;
 use super::cookies::{
-    self, CSRF_COOKIE, REFRESH_COOKIE, REFRESH_PATH, SESSION_COOKIE, csrf_cookie, new_csrf_token,
-    new_refresh_token_raw, refresh_cookie, session_cookie, sha256_hex,
+    self, CSRF_COOKIE, LEGACY_REFRESH_COOKIE, REFRESH_COOKIE, REFRESH_PATH, SESSION_COOKIE,
+    csrf_cookie, new_csrf_token, new_refresh_token_raw, refresh_cookie, session_cookie, sha256_hex,
 };
 use super::email_token::{self, TokenPurpose};
 use super::jwt::JwtKeys;
@@ -49,6 +49,9 @@ use super::preferences::{
 };
 
 use entity::auth_session::{self, ActiveModel as SessionAM, Entity as SessionEntity};
+use entity::password_reset_use::{
+    self, ActiveModel as PasswordResetUseAM, Entity as PasswordResetUseEntity,
+};
 use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 
 // Access + refresh TTLs are operator-tunable via `COMIC_JWT_ACCESS_TTL` and
@@ -364,14 +367,33 @@ pub async fn register(
         }
     };
 
-    // First-user admin bootstrap (§12.8): if no users exist yet, this user becomes admin
-    // and skips email verification.
-    let user_count = UserEntity::find().count(&app.db).await.unwrap_or(1);
     let smtp_configured = app
         .cfg()
         .smtp_host
         .as_deref()
         .is_some_and(|s| !s.trim().is_empty());
+    let user_id = Uuid::now_v7();
+    let now = chrono::Utc::now().fixed_offset();
+    let display = req
+        .display_name
+        .clone()
+        .unwrap_or_else(|| email_lower.split('@').next().unwrap_or("user").to_string());
+
+    let txn = match app.db.begin().await {
+        Ok(txn) => txn,
+        Err(e) => {
+            tracing::error!(error = %e, "register transaction begin failed");
+            return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if let Err(e) = super::bootstrap::lock_first_admin_bootstrap(&txn).await {
+        tracing::error!(error = %e, "first-admin bootstrap lock failed");
+        return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
+    // First-user admin bootstrap (§12.8): if no users exist yet, this user becomes
+    // admin and skips email verification. Count and insert happen under the same
+    // transaction-level advisory lock so concurrent first signups cannot both win.
+    let user_count = UserEntity::find().count(&txn).await.unwrap_or(1);
     let (role, state) = if user_count == 0 {
         tracing::warn!("first_admin_bootstrap: granting admin role to first user");
         ("admin", "active")
@@ -381,13 +403,6 @@ pub async fn register(
         // No SMTP configured → no way to verify. Treat as active.
         ("user", "active")
     };
-
-    let user_id = Uuid::now_v7();
-    let now = chrono::Utc::now().fixed_offset();
-    let display = req
-        .display_name
-        .clone()
-        .unwrap_or_else(|| email_lower.split('@').next().unwrap_or("user").to_string());
 
     let am = UserAM {
         id: Set(user_id),
@@ -426,15 +441,19 @@ pub async fn register(
         max_rails_per_page: Set(12),
     };
 
-    let inserted = match am.insert(&app.db).await {
+    let inserted = match am.insert(&txn).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, "user insert failed");
             return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    if let Err(e) = txn.commit().await {
+        tracing::error!(error = %e, "register transaction commit failed");
+        return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
 
-    if state == "pending_verification" {
+    if inserted.state == "pending_verification" {
         // Mint a 24h verification token and send the welcome+verify email.
         // Token issuance / send failure is logged but doesn't fail the
         // register — the user can request a resend.
@@ -778,7 +797,8 @@ pub async fn logout(State(app): State<AppState>, jar: CookieJar) -> axum::respon
     let cleared = jar
         .remove(cookies::clear(SESSION_COOKIE, "/"))
         .remove(cookies::clear(CSRF_COOKIE, "/"))
-        .remove(cookies::clear(REFRESH_COOKIE, REFRESH_PATH));
+        .remove(cookies::clear(REFRESH_COOKIE, REFRESH_PATH))
+        .remove(cookies::clear(LEGACY_REFRESH_COOKIE, REFRESH_PATH));
 
     // RP-initiated logout (OIDC sessions only). If the session row was
     // born from an OIDC login AND the issuer publishes an
@@ -1093,17 +1113,32 @@ pub async fn request_password_reset(
         && row.external_id.starts_with("local:")
         && let Some(addr) = row.email.as_deref()
     {
-        let tok = email_token::issue(
-            TokenPurpose::PasswordReset,
+        let token_id = Uuid::now_v7();
+        let tok = email_token::issue_password_reset(
             row.id,
+            token_id,
             PASSWORD_RESET_TTL,
             app.secrets.email_token_key.as_ref(),
         );
-        let msg = templates::password_reset(&app.cfg().public_url, addr, &tok);
-        if let Err(e) = app.send_email(msg).await {
-            tracing::warn!(error = %e, user_id = %row.id, "password-reset send failed");
+        let reset_now = chrono::Utc::now();
+        let expires_at = reset_now + chrono::Duration::seconds(PASSWORD_RESET_TTL.as_secs() as i64);
+        let reset_row = PasswordResetUseAM {
+            token_id: Set(token_id),
+            user_id: Set(row.id),
+            token_hash: Set(sha256_hex(&tok)),
+            expires_at: Set(expires_at.fixed_offset()),
+            consumed_at: Set(None),
+            created_at: Set(reset_now.fixed_offset()),
+        };
+        if let Err(e) = reset_row.insert(&app.db).await {
+            tracing::warn!(error = %e, user_id = %row.id, "password-reset token persist failed");
         } else {
-            tracing::info!(user_id = %row.id, "password-reset email sent");
+            let msg = templates::password_reset(&app.cfg().public_url, addr, &tok);
+            if let Err(e) = app.send_email(msg).await {
+                tracing::warn!(error = %e, user_id = %row.id, "password-reset send failed");
+            } else {
+                tracing::info!(user_id = %row.id, "password-reset email sent");
+            }
         }
     } else {
         // Don't log the email — log only the absence of a usable account.
@@ -1173,12 +1208,12 @@ pub async fn reset_password(
             "passwords do not match",
         );
     }
-    let user_id = match email_token::verify(
+    let token_claims = match email_token::verify_claims(
         TokenPurpose::PasswordReset,
         &req.token,
         app.secrets.email_token_key.as_ref(),
     ) {
-        Ok(uid) => uid,
+        Ok(claims) => claims,
         Err(e) => {
             tracing::info!(error = ?e, "reset-password token rejected");
             return fail_at_forgot(
@@ -1188,8 +1223,61 @@ pub async fn reset_password(
             );
         }
     };
+    let user_id = token_claims.user_id;
+    let Some(token_id) = token_claims.token_id else {
+        tracing::info!(user_id = %user_id, "reset-password token rejected: missing token id");
+        return fail_at_forgot(
+            StatusCode::BAD_REQUEST,
+            "auth.token_invalid",
+            "reset link is invalid or expired",
+        );
+    };
 
-    let row = match UserEntity::find_by_id(user_id).one(&app.db).await {
+    let hash = match password::hash(&req.new_password, app.secrets.pepper.as_ref()) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(error = %e, "argon2 hash failed during reset");
+            return fail_at_reset(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let token_hash = sha256_hex(&req.token);
+    let txn = match app.db.begin().await {
+        Ok(txn) => txn,
+        Err(e) => {
+            tracing::error!(error = %e, user_id = %user_id, "reset-password transaction begin failed");
+            return fail_at_reset(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let now = chrono::Utc::now().fixed_offset();
+    let consumed = match PasswordResetUseEntity::update_many()
+        .col_expr(
+            password_reset_use::Column::ConsumedAt,
+            sea_orm::sea_query::Expr::value(now),
+        )
+        .filter(password_reset_use::Column::TokenId.eq(token_id))
+        .filter(password_reset_use::Column::UserId.eq(user_id))
+        .filter(password_reset_use::Column::TokenHash.eq(token_hash))
+        .filter(password_reset_use::Column::ConsumedAt.is_null())
+        .filter(password_reset_use::Column::ExpiresAt.gt(now))
+        .exec(&txn)
+        .await
+    {
+        Ok(res) => res.rows_affected,
+        Err(e) => {
+            tracing::error!(error = %e, user_id = %user_id, token_id = %token_id, "reset-password token consume failed");
+            return fail_at_reset(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if consumed != 1 {
+        tracing::info!(user_id = %user_id, token_id = %token_id, "reset-password token replay or missing row");
+        return fail_at_forgot(
+            StatusCode::BAD_REQUEST,
+            "auth.token_invalid",
+            "reset link is invalid or expired",
+        );
+    }
+
+    let row = match UserEntity::find_by_id(user_id).one(&txn).await {
         Ok(Some(r)) => r,
         _ => {
             return fail_at_forgot(
@@ -1207,19 +1295,25 @@ pub async fn reset_password(
         );
     }
 
-    let hash = match password::hash(&req.new_password, app.secrets.pepper.as_ref()) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!(error = %e, "argon2 hash failed during reset");
-            return fail_at_reset(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
-    };
     let mut am: UserAM = row.clone().into();
     am.password_hash = Set(Some(hash));
     am.token_version = Set(row.token_version + 1);
-    am.updated_at = Set(chrono::Utc::now().fixed_offset());
-    if let Err(e) = am.update(&app.db).await {
+    am.updated_at = Set(now);
+    if let Err(e) = am.update(&txn).await {
         tracing::error!(error = %e, user_id = %user_id, "reset-password update failed");
+        return fail_at_reset(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
+    let _ = PasswordResetUseEntity::update_many()
+        .col_expr(
+            password_reset_use::Column::ConsumedAt,
+            sea_orm::sea_query::Expr::value(now),
+        )
+        .filter(password_reset_use::Column::UserId.eq(user_id))
+        .filter(password_reset_use::Column::ConsumedAt.is_null())
+        .exec(&txn)
+        .await;
+    if let Err(e) = txn.commit().await {
+        tracing::error!(error = %e, user_id = %user_id, "reset-password transaction commit failed");
         return fail_at_reset(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
 

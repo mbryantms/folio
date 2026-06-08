@@ -53,10 +53,10 @@ Algorithm: `EdDSA` (Ed25519). Server holds the keypair under `/data/secrets/jwt-
 ```
 __Host-comic_session=<jwt>;     HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=86400
 __Host-comic_csrf=<csrf>;                 Secure; SameSite=Lax; Path=/; Max-Age=86400
-__Secure-comic_refresh=<rt>;    HttpOnly; Secure; SameSite=Lax; Path=/;        Max-Age=2592000
+__Host-comic_refresh=<rt>;      HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000
 ```
 
-`__Host-` requires `Path=/`, so the refresh cookie uses the slightly-weaker `__Secure-` prefix. The refresh path is `/` (not the narrower `/auth/refresh`) because the Next dev proxy rewrites `/api/auth/refresh` → `/auth/refresh` and browsers compare the cookie's `Path` against the original request URL — a narrower path made the cookie omit from the dev refresh call. SameSite=Lax + HttpOnly still cover the cross-site send + JS read protections; the path-narrowing was belt-and-suspenders that never paid off.
+All auth cookies are host-only. The refresh path is `/` (not the narrower `/auth/refresh`) because the Next dev proxy rewrites `/api/auth/refresh` → `/auth/refresh` and browsers compare the cookie's `Path` against the original request URL — a narrower path made the cookie omit from the dev refresh call.
 
 The CSRF cookie is intentionally **not** HttpOnly — JS reads it for the `X-CSRF-Token` header (double-submit). The session cookie is HttpOnly.
 
@@ -83,8 +83,7 @@ generate csrf       → set __Host-comic_csrf, return in body
 ```
 GET /auth/oidc/start
    ↓
-generate code_verifier, store hash in __Host-comic_pkce (HttpOnly, 5min)
-generate state, store in same cookie
+generate code_verifier + state, store in signed __Host-comic_oidc (HttpOnly, 5min)
    ↓
 302 → issuer/authorize?response_type=code&code_challenge=...&state=...
                          &redirect_uri=https://.../auth/oidc/callback

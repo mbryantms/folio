@@ -16,8 +16,9 @@ use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
 };
+use chrono::{Duration, Utc};
 use common::TestApp;
-use sea_orm::EntityTrait;
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter, Set};
 use tower::ServiceExt;
 
 async fn body_json(b: Body) -> serde_json::Value {
@@ -96,6 +97,55 @@ fn extract_token(body_text: &str) -> String {
     rest[..end].to_owned()
 }
 
+async fn register_active_user(app: &TestApp, email: &str, password: &str) {
+    let resp = post_json(
+        app,
+        "/auth/local/register",
+        serde_json::json!({
+            "email": email,
+            "password": password
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+async fn find_user(app: &TestApp, email: &str) -> entity::user::Model {
+    entity::user::Entity::find()
+        .filter(entity::user::Column::Email.eq(email))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("user exists")
+}
+
+async fn request_reset_token(app: &TestApp, email: &str) -> String {
+    app.email.clear().await;
+    let resp = post_json(
+        app,
+        "/auth/local/request-password-reset",
+        serde_json::json!({ "email": email }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let outbox = app.email.outbox().await;
+    assert_eq!(outbox.len(), 1, "exactly one reset email");
+    extract_token(&outbox[0].body_text)
+}
+
+async fn login_status(app: &TestApp, email: &str, password: &str) -> StatusCode {
+    post_json(
+        app,
+        "/auth/local/login",
+        serde_json::json!({
+            "email": email,
+            "password": password
+        }),
+    )
+    .await
+    .status()
+}
+
 #[tokio::test]
 async fn register_with_smtp_returns_202_and_sends_verify_email() {
     let app = TestApp::spawn_with_smtp().await;
@@ -171,48 +221,20 @@ async fn password_reset_round_trip_bumps_token_version() {
     let app = TestApp::spawn().await;
 
     // Register a normal account (no SMTP, so it activates immediately).
-    let resp = post_json(
-        &app,
-        "/auth/local/register",
-        serde_json::json!({
-            "email": "reset-me@example.com",
-            "password": "correctly-horse-battery"
-        }),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::CREATED);
+    register_active_user(&app, "reset-me@example.com", "correctly-horse-battery").await;
 
     // Pre-reset state — record token_version.
     let state = app.state();
-    let before = entity::user::Entity::find()
-        .all(&state.db)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|u| u.email.as_deref() == Some("reset-me@example.com"))
-        .expect("user exists");
+    let before = find_user(&app, "reset-me@example.com").await;
     let tv_before = before.token_version;
 
-    // Drop the welcome-email outbox so the next assertion is unambiguous.
-    app.email.clear().await;
-
-    let resp = post_json(
-        &app,
-        "/auth/local/request-password-reset",
-        serde_json::json!({ "email": "reset-me@example.com" }),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-
-    let outbox = app.email.outbox().await;
-    assert_eq!(outbox.len(), 1, "exactly one reset email");
-    let token = extract_token(&outbox[0].body_text);
+    let token = request_reset_token(&app, "reset-me@example.com").await;
 
     let resp = post_json(
         &app,
         "/auth/local/reset-password",
         serde_json::json!({
-            "token": token,
+            "token": token.clone(),
             "new_password": "much-better-passphrase"
         }),
     )
@@ -249,6 +271,196 @@ async fn password_reset_round_trip_bumps_token_version() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
+
+    // Reusing the same reset link must fail and must not change the password.
+    let replay = post_json(
+        &app,
+        "/auth/local/reset-password",
+        serde_json::json!({
+            "token": token,
+            "new_password": "replayed-passphrase"
+        }),
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::BAD_REQUEST);
+
+    let old_password = post_json(
+        &app,
+        "/auth/local/login",
+        serde_json::json!({
+            "email": "reset-me@example.com",
+            "password": "much-better-passphrase"
+        }),
+    )
+    .await;
+    assert_eq!(old_password.status(), StatusCode::OK);
+
+    let replayed_password = post_json(
+        &app,
+        "/auth/local/login",
+        serde_json::json!({
+            "email": "reset-me@example.com",
+            "password": "replayed-passphrase"
+        }),
+    )
+    .await;
+    assert_eq!(replayed_password.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn reset_password_rejects_malformed_and_missing_token_rows() {
+    let app = TestApp::spawn().await;
+    register_active_user(&app, "missing-row@example.com", "correctly-horse-battery").await;
+
+    let malformed = post_json(
+        &app,
+        "/auth/local/reset-password",
+        serde_json::json!({
+            "token": "not-a-valid-token",
+            "new_password": "much-better-passphrase"
+        }),
+    )
+    .await;
+    assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+
+    let user = find_user(&app, "missing-row@example.com").await;
+    let token = request_reset_token(&app, "missing-row@example.com").await;
+    entity::password_reset_use::Entity::delete_many()
+        .filter(entity::password_reset_use::Column::UserId.eq(user.id))
+        .exec(&app.state().db)
+        .await
+        .unwrap();
+
+    let missing = post_json(
+        &app,
+        "/auth/local/reset-password",
+        serde_json::json!({
+            "token": token,
+            "new_password": "much-better-passphrase"
+        }),
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        login_status(&app, "missing-row@example.com", "correctly-horse-battery").await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn reset_password_rejects_expired_and_wrong_user_token_rows() {
+    let app = TestApp::spawn().await;
+    register_active_user(&app, "expired-row@example.com", "correctly-horse-battery").await;
+    register_active_user(&app, "wrong-row@example.com", "correctly-horse-battery").await;
+    register_active_user(&app, "other-user@example.com", "correctly-horse-battery").await;
+
+    let expired_user = find_user(&app, "expired-row@example.com").await;
+    let expired_token = request_reset_token(&app, "expired-row@example.com").await;
+    let expired_row = entity::password_reset_use::Entity::find()
+        .filter(entity::password_reset_use::Column::UserId.eq(expired_user.id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("reset row exists");
+    let mut expired_row = expired_row.into_active_model();
+    expired_row.expires_at = Set((Utc::now() - Duration::minutes(1)).fixed_offset());
+    expired_row.update(&app.state().db).await.unwrap();
+
+    let expired = post_json(
+        &app,
+        "/auth/local/reset-password",
+        serde_json::json!({
+            "token": expired_token,
+            "new_password": "much-better-passphrase"
+        }),
+    )
+    .await;
+    assert_eq!(expired.status(), StatusCode::BAD_REQUEST);
+
+    let wrong_user = find_user(&app, "wrong-row@example.com").await;
+    let other_user = find_user(&app, "other-user@example.com").await;
+    let wrong_user_token = request_reset_token(&app, "wrong-row@example.com").await;
+    let wrong_row = entity::password_reset_use::Entity::find()
+        .filter(entity::password_reset_use::Column::UserId.eq(wrong_user.id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("reset row exists");
+    let mut wrong_row = wrong_row.into_active_model();
+    wrong_row.user_id = Set(other_user.id);
+    wrong_row.update(&app.state().db).await.unwrap();
+
+    let wrong = post_json(
+        &app,
+        "/auth/local/reset-password",
+        serde_json::json!({
+            "token": wrong_user_token,
+            "new_password": "wrong-row-new-passphrase"
+        }),
+    )
+    .await;
+    assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        login_status(&app, "wrong-row@example.com", "correctly-horse-battery").await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        login_status(&app, "wrong-row@example.com", "wrong-row-new-passphrase").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_reset_password_submissions_consume_token_once() {
+    let app = TestApp::spawn().await;
+    register_active_user(&app, "reset-race@example.com", "correctly-horse-battery").await;
+    let before = find_user(&app, "reset-race@example.com").await;
+    let token = request_reset_token(&app, "reset-race@example.com").await;
+
+    let attempts = (0..4).map(|idx| {
+        let app = &app;
+        let token = token.clone();
+        async move {
+            let password = format!("concurrent-passphrase-{idx}");
+            let resp = post_json(
+                app,
+                "/auth/local/reset-password",
+                serde_json::json!({
+                    "token": token,
+                    "new_password": password
+                }),
+            )
+            .await;
+            (password, resp.status())
+        }
+    });
+    let results = futures::future::join_all(attempts).await;
+    let winners: Vec<_> = results
+        .iter()
+        .filter(|(_, status)| *status == StatusCode::NO_CONTENT)
+        .collect();
+    assert_eq!(winners.len(), 1, "exactly one concurrent reset succeeds");
+
+    let after = find_user(&app, "reset-race@example.com").await;
+    assert_eq!(
+        after.token_version,
+        before.token_version + 1,
+        "token_version should bump exactly once"
+    );
+
+    let winning_password = winners[0].0.as_str();
+    assert_eq!(
+        login_status(&app, "reset-race@example.com", winning_password).await,
+        StatusCode::OK
+    );
+    for (password, status) in results {
+        if status != StatusCode::NO_CONTENT {
+            assert_eq!(
+                login_status(&app, "reset-race@example.com", &password).await,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+    }
 }
 
 #[tokio::test]

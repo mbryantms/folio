@@ -28,12 +28,23 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Security hardening for auth, imports, and operational endpoints.** Password
+  reset links are now single-use, first-admin bootstrap is serialized under
+  concurrent signups, auth cookies use `__Host-` names with signed OIDC state,
+  unsafe secret-file permissions are refused at startup, provider/CBL fetches
+  reject internal-network URLs and oversized bodies, and production metrics
+  require a bearer token unless explicitly opened.
+
 ### Internal
 
 - Release workflow: a new `prepare release` dispatcher can stamp the
   changelog, open and auto-merge the changelog PR, create the release tag, and
   hand off to the image-publishing workflow without the local/manual release
   ritual.
+- Docs dependency audit: Docusaurus transitive `uuid` callers are pinned to a
+  patched `uuid` release.
 
 ## [0.9.5] - 2026-06-07
 

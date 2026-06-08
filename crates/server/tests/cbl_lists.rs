@@ -127,13 +127,23 @@ async fn upload_cbl(
     file_name: &str,
     file_bytes: &[u8],
 ) -> (StatusCode, serde_json::Value) {
+    upload_cbl_with_content_type(app, auth, file_name, file_bytes, "application/xml").await
+}
+
+async fn upload_cbl_with_content_type(
+    app: &TestApp,
+    auth: &Authed,
+    file_name: &str,
+    file_bytes: &[u8],
+    content_type: &str,
+) -> (StatusCode, serde_json::Value) {
     let boundary = "----folio-test-boundary";
     let mut body: Vec<u8> = Vec::with_capacity(file_bytes.len() + 256);
     body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
     body.extend_from_slice(
         format!(
             "Content-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\n\
-             Content-Type: application/xml\r\n\r\n",
+             Content-Type: {content_type}\r\n\r\n",
         )
         .as_bytes(),
     );
@@ -367,6 +377,36 @@ async fn upload_imports_sample_cbl_and_matches_seeded_issues() {
     // The remaining 266 are missing — no other CV IDs match seeded issues.
     assert_eq!(stats["missing"].as_i64(), Some(266));
     assert_eq!(stats["manual"].as_i64(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upload_rejects_obvious_non_xml_content_type() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bad-type@example.com").await;
+
+    let (status, body) = upload_cbl_with_content_type(
+        &app,
+        &auth,
+        "sample.png",
+        SAMPLE_CBL.as_bytes(),
+        "image/png",
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "body: {body:#?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upload_rejects_oversized_file_before_parse() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "too-large@example.com").await;
+    let oversized = vec![b'<'; 4 * 1024 * 1024 + 1];
+
+    let (status, body) = upload_cbl(&app, &auth, "oversized.cbl", &oversized).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "body: {body:#?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

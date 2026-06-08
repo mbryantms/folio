@@ -10,6 +10,7 @@ use axum::{
     http::{Method, Request, StatusCode, header},
 };
 use common::TestApp;
+use sea_orm::EntityTrait;
 use tower::ServiceExt;
 
 async fn body_json(b: Body) -> serde_json::Value {
@@ -44,11 +45,7 @@ async fn first_user_becomes_admin() {
         .collect();
     assert!(cookies.iter().any(|c| c.contains("__Host-comic_session=")));
     assert!(cookies.iter().any(|c| c.contains("__Host-comic_csrf=")));
-    assert!(
-        cookies
-            .iter()
-            .any(|c| c.contains("__Secure-comic_refresh="))
-    );
+    assert!(cookies.iter().any(|c| c.contains("__Host-comic_refresh=")));
 
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["user"]["role"], "admin");
@@ -64,6 +61,32 @@ async fn second_user_is_regular_when_no_smtp() {
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["user"]["role"], "user");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_first_registrations_create_only_one_admin() {
+    let app = TestApp::spawn().await;
+    let attempts = (0..4).map(|i| {
+        let app = &app;
+        async move {
+            register(
+                app,
+                &format!("first-race-{i}@example.com"),
+                "correctly-horse-battery",
+            )
+            .await
+        }
+    });
+    let responses = futures::future::join_all(attempts).await;
+    for resp in responses {
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    let state = app.state();
+    let users = entity::user::Entity::find().all(&state.db).await.unwrap();
+    let admin_count = users.iter().filter(|u| u.role == "admin").count();
+    assert_eq!(admin_count, 1, "exactly one first signup may become admin");
+    assert_eq!(users.len(), 4);
 }
 
 #[tokio::test]
@@ -192,7 +215,7 @@ async fn csrf_enforced_on_unsafe_verbs() {
     let reg = register(&app, "user@example.com", "correctly-horse-battery").await;
     let session_cookie = extract_cookie(&reg, "__Host-comic_session").unwrap();
     let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
-    let refresh = extract_cookie(&reg, "__Secure-comic_refresh").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
 
     // Without CSRF header → 403
     let resp = app
@@ -205,7 +228,7 @@ async fn csrf_enforced_on_unsafe_verbs() {
                 .header(
                     header::COOKIE,
                     format!(
-                        "__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}; __Secure-comic_refresh={refresh}"
+                        "__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}"
                     ),
                 )
                 .body(Body::empty())
@@ -226,7 +249,7 @@ async fn csrf_enforced_on_unsafe_verbs() {
                 .header(
                     header::COOKIE,
                     format!(
-                        "__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}; __Secure-comic_refresh={refresh}"
+                        "__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}"
                     ),
                 )
                 .header("x-csrf-token", csrf.clone())
@@ -243,7 +266,7 @@ async fn refresh_token_reuse_is_rejected() {
     let app = TestApp::spawn().await;
     let reg = register(&app, "user@example.com", "correctly-horse-battery").await;
     let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
-    let original_refresh = extract_cookie(&reg, "__Secure-comic_refresh").unwrap();
+    let original_refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
 
     // Rotate once.
     let rotated = refresh_call(&app, &original_refresh, &csrf).await;
@@ -260,7 +283,7 @@ async fn logout_clears_cookies_and_revokes_session() {
     let reg = register(&app, "user@example.com", "correctly-horse-battery").await;
     let session_cookie = extract_cookie(&reg, "__Host-comic_session").unwrap();
     let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
-    let refresh = extract_cookie(&reg, "__Secure-comic_refresh").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
 
     let resp = app
         .router
@@ -272,7 +295,7 @@ async fn logout_clears_cookies_and_revokes_session() {
                 .header(
                     header::COOKIE,
                     format!(
-                        "__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}; __Secure-comic_refresh={refresh}"
+                        "__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}"
                     ),
                 )
                 .header("x-csrf-token", csrf.clone())
@@ -350,7 +373,7 @@ async fn refresh_call(
                 .uri("/auth/refresh")
                 .header(
                     header::COOKIE,
-                    format!("__Secure-comic_refresh={refresh_value}; __Host-comic_csrf={csrf}"),
+                    format!("__Host-comic_refresh={refresh_value}; __Host-comic_csrf={csrf}"),
                 )
                 .header("x-csrf-token", csrf)
                 .body(Body::empty())

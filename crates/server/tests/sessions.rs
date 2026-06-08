@@ -42,7 +42,7 @@ struct Auth {
 impl Auth {
     fn cookie_header(&self) -> String {
         format!(
-            "__Host-comic_session={}; __Host-comic_csrf={}; __Secure-comic_refresh={}",
+            "__Host-comic_session={}; __Host-comic_csrf={}; __Host-comic_refresh={}",
             self.session, self.csrf, self.refresh
         )
     }
@@ -50,7 +50,7 @@ impl Auth {
         Self {
             session: extract_cookie(resp, "__Host-comic_session").unwrap(),
             csrf: extract_cookie(resp, "__Host-comic_csrf").unwrap(),
-            refresh: extract_cookie(resp, "__Secure-comic_refresh").unwrap(),
+            refresh: extract_cookie(resp, "__Host-comic_refresh").unwrap(),
         }
     }
 }

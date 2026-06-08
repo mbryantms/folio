@@ -86,9 +86,7 @@ async fn form_login_success_303_with_cookies() {
         "session cookie should land on the 303 so the next request is authed"
     );
     assert!(
-        cookies
-            .iter()
-            .any(|c| c.contains("__Secure-comic_refresh=")),
+        cookies.iter().any(|c| c.contains("__Host-comic_refresh=")),
         "refresh cookie should also land"
     );
 }

@@ -29,13 +29,20 @@ async fn openapi_json() -> impl IntoResponse {
 }
 
 async fn metrics(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    // Optional bearer gate. When `COMIC_METRICS_TOKEN` is set, require a
-    // matching `Authorization: Bearer <token>` (machine auth — a Prometheus
-    // scraper can't hold an admin session). Unset → open (today's default).
-    // Constant-time compare to avoid leaking the token via timing.
-    if let Some(expected) = state.cfg().metrics_token.as_deref()
-        && !expected.is_empty()
-    {
+    // Machine bearer auth — a Prometheus scraper can't hold an admin session.
+    // Release builds require a token unless COMIC_METRICS_OPEN=true.
+    let cfg = state.cfg();
+    if cfg.metrics_requires_token() {
+        let Some(expected) = cfg
+            .metrics_token
+            .as_deref()
+            .filter(|token| !token.is_empty())
+        else {
+            let mut resp = (StatusCode::UNAUTHORIZED, "metrics: token required\n").into_response();
+            resp.headers_mut()
+                .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+            return resp;
+        };
         let provided = headers
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())

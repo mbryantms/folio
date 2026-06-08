@@ -14,17 +14,8 @@ pub const SESSION_COOKIE: &str = "__Host-comic_session";
 /// one year so unauthenticated visitors don't get locale flapping on
 /// every Accept-Language reparse.
 pub const LOCALE_COOKIE: &str = "NEXT_LOCALE";
-// Refresh cookie uses `__Secure-` (not `__Host-`) so it can carry any Path. We
-// still set Path=/ here — the original narrower `Path=/auth/refresh` was an
-// over-tightening that broke the dev proxy: Next rewrites client-side
-// `/api/auth/refresh` → `/auth/refresh` on the wire, but the browser checks
-// the cookie's Path against the *original* request URL `/api/auth/refresh`,
-// which doesn't match `/auth/refresh`. Result: refresh fired without the
-// refresh cookie attached, the server returned 401, and the user was
-// hard-bounced every access-cookie expiry. SameSite=Lax + HttpOnly already
-// give us the cross-site / JS-read protections; the Path narrowing was
-// belt-and-suspenders that never paid off.
-pub const REFRESH_COOKIE: &str = "__Secure-comic_refresh";
+pub const REFRESH_COOKIE: &str = "__Host-comic_refresh";
+pub const LEGACY_REFRESH_COOKIE: &str = "__Secure-comic_refresh";
 pub const CSRF_COOKIE: &str = "__Host-comic_csrf";
 
 pub const REFRESH_PATH: &str = "/";

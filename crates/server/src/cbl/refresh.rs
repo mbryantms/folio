@@ -11,11 +11,20 @@
 //!     compare blob SHAs to skip when unchanged.
 
 use entity::{catalog_source, cbl_list};
+use futures::StreamExt;
 use sea_orm::{ConnectionTrait, EntityTrait};
 use uuid::Uuid;
 
 use super::catalog;
 use super::import::{self, ImportSummary, RefreshTrigger};
+
+const MAX_URL_CBL_BYTES: usize = 4 * 1024 * 1024;
+const CBL_XML_TYPES: &[&str] = &[
+    "application/xml",
+    "text/xml",
+    "application/x-cbl",
+    "application/vnd.comicbooklist+xml",
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum RefreshError {
@@ -70,8 +79,76 @@ async fn fetch_url_and_apply(
         .as_deref()
         .ok_or_else(|| RefreshError::Http("url source missing source_url".into()))?;
 
-    // SSRF guard. Re-validate on every refresh — a row stored before the
-    // create-time guard landed could still hold a private-range URL.
+    let fetched = match fetch_url_source(url, list, force).await? {
+        UrlFetch::NotModified => {
+            // Bytes unchanged — re-match only.
+            let rematched = import::rematch_existing(db, list.id, trigger).await?;
+            let mut summary = ImportSummary {
+                list_id: list.id,
+                upstream_changed: false,
+                rematched,
+                ..Default::default()
+            };
+            backfill_status_counts(db, list.id, &mut summary).await?;
+            return Ok(summary);
+        }
+        UrlFetch::Fetched(fetched) => *fetched,
+    };
+    let etag = fetched
+        .headers
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let last_modified = fetched
+        .headers
+        .get(reqwest::header::LAST_MODIFIED)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    if !is_allowed_cbl_response_type(
+        fetched
+            .headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        url,
+    ) {
+        return Err(RefreshError::Http(
+            "URL source must return XML or a .cbl file".into(),
+        ));
+    }
+    let xml = String::from_utf8_lossy(&fetched.bytes).into_owned();
+    let parsed =
+        parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))?;
+    let summary = import::apply_parsed(db, list.id, &parsed, &xml, None, trigger).await?;
+    update_url_metadata(db, list.id, etag, last_modified).await?;
+    Ok(summary)
+}
+
+enum UrlFetch {
+    NotModified,
+    Fetched(Box<crate::util::ssrf::FetchedBytes>),
+}
+
+async fn fetch_url_source(
+    url: &str,
+    list: &cbl_list::Model,
+    force: bool,
+) -> Result<UrlFetch, RefreshError> {
+    if force || (list.source_etag.is_none() && list.source_last_modified.is_none()) {
+        return crate::util::ssrf::fetch_public_bytes(
+            url,
+            MAX_URL_CBL_BYTES,
+            std::time::Duration::from_secs(30),
+            crate::build_info::USER_AGENT,
+            2,
+            true,
+        )
+        .await
+        .map(|fetched| UrlFetch::Fetched(Box::new(fetched)))
+        .map_err(|e| RefreshError::Http(e.to_string()));
+    }
+
+    // Conditional refresh needs request headers; keep it local but use the
+    // same public-URL validation, redirect refusal, and byte cap.
     let parsed_url = crate::util::ssrf::validate_outbound_url(url)
         .map_err(|e| RefreshError::Http(e.to_string()))?;
     if let Some(host) = parsed_url.host_str() {
@@ -80,62 +157,88 @@ async fn fetch_url_and_apply(
             .await
             .map_err(|e| RefreshError::Http(e.to_string()))?;
     }
-
     let client = reqwest::Client::builder()
         .user_agent(crate::build_info::USER_AGENT)
         .timeout(std::time::Duration::from_secs(30))
-        .redirect(crate::util::ssrf::outbound_redirect_policy(2))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| RefreshError::Http(e.to_string()))?;
     let mut req = client.get(parsed_url.clone());
-    if !force {
-        if let Some(etag) = list.source_etag.as_deref() {
-            req = req.header(reqwest::header::IF_NONE_MATCH, etag);
-        }
-        if let Some(lm) = list.source_last_modified.as_deref() {
-            req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm);
-        }
+    if let Some(etag) = list.source_etag.as_deref() {
+        req = req.header(reqwest::header::IF_NONE_MATCH, etag);
+    }
+    if let Some(lm) = list.source_last_modified.as_deref() {
+        req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm);
     }
     let resp = req
         .send()
         .await
         .map_err(|e| RefreshError::Http(e.to_string()))?;
-
     if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
-        // Bytes unchanged — re-match only.
-        let rematched = import::rematch_existing(db, list.id, trigger).await?;
-        let mut summary = ImportSummary {
-            list_id: list.id,
-            upstream_changed: false,
-            rematched,
-            ..Default::default()
-        };
-        backfill_status_counts(db, list.id, &mut summary).await?;
-        return Ok(summary);
+        return Ok(UrlFetch::NotModified);
+    }
+    if resp.status().is_redirection() {
+        return crate::util::ssrf::fetch_public_bytes(
+            url,
+            MAX_URL_CBL_BYTES,
+            std::time::Duration::from_secs(30),
+            crate::build_info::USER_AGENT,
+            2,
+            true,
+        )
+        .await
+        .map(|fetched| UrlFetch::Fetched(Box::new(fetched)))
+        .map_err(|e| RefreshError::Http(e.to_string()));
     }
     if !resp.status().is_success() {
         return Err(RefreshError::Http(format!("status {}", resp.status())));
     }
-    let etag = resp
-        .headers()
-        .get(reqwest::header::ETAG)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    let last_modified = resp
-        .headers()
-        .get(reqwest::header::LAST_MODIFIED)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| RefreshError::Http(e.to_string()))?;
-    let xml = String::from_utf8_lossy(&bytes).into_owned();
-    let parsed =
-        parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))?;
-    let summary = import::apply_parsed(db, list.id, &parsed, &xml, None, trigger).await?;
-    update_url_metadata(db, list.id, etag, last_modified).await?;
-    Ok(summary)
+    if resp
+        .content_length()
+        .is_some_and(|len| len > MAX_URL_CBL_BYTES as u64)
+    {
+        return Err(RefreshError::Http("exceeds 4 MiB".into()));
+    }
+    let headers = resp.headers().clone();
+    let mut stream = resp.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| RefreshError::Http(e.to_string()))?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_URL_CBL_BYTES {
+            return Err(RefreshError::Http("exceeds 4 MiB".into()));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(UrlFetch::Fetched(Box::new(
+        crate::util::ssrf::FetchedBytes {
+            final_url: parsed_url,
+            headers,
+            bytes,
+        },
+    )))
+}
+
+fn is_allowed_cbl_response_type(content_type: Option<&str>, url: &str) -> bool {
+    let has_cbl_path = url::Url::parse(url)
+        .ok()
+        .map(|u| u.path().to_ascii_lowercase().ends_with(".cbl"))
+        .unwrap_or(false);
+    let Some(content_type) = content_type else {
+        return true;
+    };
+    let normalized = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+    if CBL_XML_TYPES.contains(&normalized.as_str()) {
+        return true;
+    }
+    matches!(
+        normalized.as_str(),
+        "application/octet-stream" | "text/plain"
+    ) && has_cbl_path
 }
 
 async fn fetch_catalog_and_apply(

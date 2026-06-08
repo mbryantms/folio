@@ -25,7 +25,11 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use futures::StreamExt;
+use reqwest::header::{HeaderMap, HeaderValue, LOCATION, USER_AGENT};
 use reqwest::redirect::Policy;
+
+pub const MAX_IMAGE_BYTES: usize = 24 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SsrfError {
@@ -41,11 +45,47 @@ pub enum SsrfError {
     PrivateAddress(IpAddr),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum FetchBytesError {
+    #[error("{0}")]
+    Ssrf(#[from] SsrfError),
+    #[error("transport error: {0}")]
+    Transport(String),
+    #[error("upstream returned status {0}")]
+    HttpStatus(reqwest::StatusCode),
+    #[error("response exceeds {max_bytes} bytes")]
+    TooLarge { max_bytes: usize },
+    #[error("missing or invalid redirect location")]
+    InvalidRedirect,
+    #[error("exceeded {0} redirect hops")]
+    TooManyRedirects(usize),
+    #[error("request timed out")]
+    Timeout,
+}
+
+#[derive(Debug)]
+pub struct FetchedBytes {
+    pub final_url: url::Url,
+    pub headers: HeaderMap,
+    pub bytes: Vec<u8>,
+}
+
 /// Parse + syntactic validation. Does not touch the network. Returns the
 /// parsed URL on success so callers can pass the canonical form to reqwest.
 pub fn validate_outbound_url(url: &str) -> Result<url::Url, SsrfError> {
+    validate_public_url(url, true)
+}
+
+pub fn validate_public_http_url(url: &str) -> Result<url::Url, SsrfError> {
+    validate_public_url(url, false)
+}
+
+fn validate_public_url(url: &str, require_https: bool) -> Result<url::Url, SsrfError> {
     let parsed = url::Url::parse(url).map_err(|e| SsrfError::InvalidUrl(e.to_string()))?;
-    if parsed.scheme() != "https" {
+    if require_https && parsed.scheme() != "https" {
+        return Err(SsrfError::SchemeNotHttps);
+    }
+    if !matches!(parsed.scheme(), "https" | "http") {
         return Err(SsrfError::SchemeNotHttps);
     }
     // `url::Host` distinguishes domain / v4 / v6 in a typed way, which
@@ -63,6 +103,111 @@ pub fn validate_outbound_url(url: &str) -> Result<url::Url, SsrfError> {
         return Err(SsrfError::PrivateAddress(ip));
     }
     Ok(parsed)
+}
+
+/// Fetch a public HTTP(S) URL with SSRF validation on the initial URL and every
+/// redirect target, then stream the body into memory with `max_bytes` enforced.
+/// `require_https` preserves stricter HTTPS-only call sites such as CBL URL
+/// imports while allowing provider-owned cover URLs that still use plain HTTP.
+pub async fn fetch_public_bytes(
+    url: &str,
+    max_bytes: usize,
+    timeout: std::time::Duration,
+    user_agent: &'static str,
+    max_redirects: usize,
+    require_https: bool,
+) -> Result<FetchedBytes, FetchBytesError> {
+    let client = reqwest::Client::builder()
+        .redirect(Policy::none())
+        .build()
+        .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
+    let mut current = if require_https {
+        validate_outbound_url(url)?
+    } else {
+        validate_public_http_url(url)?
+    };
+
+    for hop in 0..=max_redirects {
+        validate_and_resolve(&current, require_https).await?;
+        let resp = tokio::time::timeout(
+            timeout,
+            client
+                .get(current.clone())
+                .header(USER_AGENT, HeaderValue::from_static(user_agent))
+                .send(),
+        )
+        .await
+        .map_err(|_| FetchBytesError::Timeout)?
+        .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
+
+        if resp.status().is_redirection() {
+            if hop == max_redirects {
+                return Err(FetchBytesError::TooManyRedirects(max_redirects));
+            }
+            let location = resp
+                .headers()
+                .get(LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or(FetchBytesError::InvalidRedirect)?;
+            let next = current
+                .join(location)
+                .map_err(|_| FetchBytesError::InvalidRedirect)?;
+            current = if require_https {
+                validate_outbound_url(next.as_str())?
+            } else {
+                validate_public_http_url(next.as_str())?
+            };
+            continue;
+        }
+
+        if !resp.status().is_success() {
+            return Err(FetchBytesError::HttpStatus(resp.status()));
+        }
+        if resp
+            .content_length()
+            .is_some_and(|len| len > max_bytes as u64)
+        {
+            return Err(FetchBytesError::TooLarge { max_bytes });
+        }
+
+        let headers = resp.headers().clone();
+        let mut stream = resp.bytes_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = tokio::time::timeout(timeout, stream.next())
+            .await
+            .map_err(|_| FetchBytesError::Timeout)?
+        {
+            let chunk = chunk.map_err(|e| FetchBytesError::Transport(e.to_string()))?;
+            if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(FetchBytesError::TooLarge { max_bytes });
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+
+        return Ok(FetchedBytes {
+            final_url: current,
+            headers,
+            bytes,
+        });
+    }
+
+    Err(FetchBytesError::TooManyRedirects(max_redirects))
+}
+
+async fn validate_and_resolve(url: &url::Url, require_https: bool) -> Result<(), SsrfError> {
+    if require_https {
+        validate_outbound_url(url.as_str())?;
+    } else {
+        validate_public_http_url(url.as_str())?;
+    }
+    if let Some(host) = url.host_str() {
+        let port = url.port_or_known_default().unwrap_or(match url.scheme() {
+            "http" => 80,
+            _ => 443,
+        });
+        check_host_resolves_public(host, port).await?;
+    }
+    Ok(())
 }
 
 /// Resolve `host` (with the URL's port, defaulting to 443 for https) and
@@ -251,6 +396,30 @@ mod tests {
         assert!(matches!(err, SsrfError::SchemeNotHttps));
         let err = validate_outbound_url("ftp://example.com/list.cbl").unwrap_err();
         assert!(matches!(err, SsrfError::SchemeNotHttps));
+    }
+
+    #[test]
+    fn validate_public_http_url_accepts_http_for_cover_fetches() {
+        let parsed = validate_public_http_url("http://example.com/cover.jpg").unwrap();
+        assert_eq!(parsed.scheme(), "http");
+    }
+
+    #[tokio::test]
+    async fn fetch_public_bytes_rejects_internal_ip_before_fetch() {
+        let err = fetch_public_bytes(
+            "http://127.0.0.1/cover.jpg",
+            MAX_IMAGE_BYTES,
+            std::time::Duration::from_secs(1),
+            "folio-test",
+            2,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            FetchBytesError::Ssrf(SsrfError::PrivateAddress(_))
+        ));
     }
 
     #[test]

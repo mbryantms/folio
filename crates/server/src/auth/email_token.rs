@@ -1,11 +1,12 @@
-//! HMAC-SHA256 single-use tokens for the recovery flow (M4, audit M-1).
+//! HMAC-SHA256 email tokens for the recovery flow (M4, audit M-1).
 //!
-//! Stateless: the token IS the credential, so we don't store anything in
-//! the DB and never have to clean up. Token format (57 raw bytes,
-//! base64url-encoded with no padding ≈ 76 chars):
+//! Email verification remains stateless. Password reset tokens carry a reset
+//! `token_id` that must match a DB row in `password_reset_uses` and be consumed
+//! during the password update. Token format for email verification (57 raw
+//! bytes, base64url-encoded with no padding ≈ 76 chars):
 //!
 //! ```text
-//!  ┌─ purpose tag  (1 byte: 1=verify, 2=reset)
+//!  ┌─ purpose tag  (1 byte: 1=verify)
 //!  │  ┌─ user_id   (16 bytes: uuid)
 //!  │  │            ┌─ expires_at (8 bytes: big-endian u64 unix seconds)
 //!  │  │            │       ┌─ HMAC-SHA256 over the payload (32 bytes)
@@ -18,12 +19,9 @@
 //! the key invalidates every outstanding token, which is exactly the
 //! invariant we want for credential reset material.
 //!
-//! Replay defense: the email-verification path consumes the token by
-//! flipping `users.state` from `pending_verification` to `active`, so
-//! re-using the same link is a no-op (the user is already active). The
-//! password-reset path consumes the token by bumping `token_version` —
-//! a re-used reset link will succeed once but the bumped `tv` means any
-//! subsequent reset is moot (the password is already changed).
+//! Password-reset tokens use the same envelope plus a 16-byte token id before
+//! `expires_at`. Replay defense lives in the DB: a reset succeeds only when the
+//! matching row is still unconsumed.
 
 use base64::Engine;
 use hmac::{Hmac, Mac};
@@ -38,7 +36,9 @@ const UUID_LEN: usize = 16;
 const EXPIRES_LEN: usize = 8;
 const MAC_LEN: usize = 32;
 const PAYLOAD_LEN: usize = PURPOSE_LEN + UUID_LEN + EXPIRES_LEN;
+const RESET_PAYLOAD_LEN: usize = PURPOSE_LEN + UUID_LEN + UUID_LEN + EXPIRES_LEN;
 const TOKEN_BYTES: usize = PAYLOAD_LEN + MAC_LEN;
+const RESET_TOKEN_BYTES: usize = RESET_PAYLOAD_LEN + MAC_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenPurpose {
@@ -67,30 +67,69 @@ pub enum TokenError {
     BadMac,
     #[error("token issued in the future (clock skew?)")]
     FromFuture,
+    #[error("password reset token missing reset-use id")]
+    MissingTokenId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedToken {
+    pub user_id: Uuid,
+    pub token_id: Option<Uuid>,
 }
 
 /// Issue a fresh token for `user_id` with the given `purpose` and `ttl`.
 /// Returns a URL-safe (base64url, no padding) string suitable for inclusion
 /// in a `?token=…` query parameter.
 pub fn issue(purpose: TokenPurpose, user_id: Uuid, ttl: Duration, key: &[u8]) -> String {
+    let token_id = match purpose {
+        TokenPurpose::EmailVerification => None,
+        TokenPurpose::PasswordReset => Some(Uuid::now_v7()),
+    };
+    issue_inner(purpose, user_id, token_id, ttl, key)
+}
+
+pub fn issue_password_reset(user_id: Uuid, token_id: Uuid, ttl: Duration, key: &[u8]) -> String {
+    issue_inner(
+        TokenPurpose::PasswordReset,
+        user_id,
+        Some(token_id),
+        ttl,
+        key,
+    )
+}
+
+fn issue_inner(
+    purpose: TokenPurpose,
+    user_id: Uuid,
+    token_id: Option<Uuid>,
+    ttl: Duration,
+    key: &[u8],
+) -> String {
     let expires_at = SystemTime::now()
         .checked_add(ttl)
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
         .expect("ttl + now fits in u64 unix seconds");
 
-    let mut payload = [0u8; PAYLOAD_LEN];
-    payload[0] = purpose.byte();
-    payload[PURPOSE_LEN..PURPOSE_LEN + UUID_LEN].copy_from_slice(user_id.as_bytes());
-    payload[PURPOSE_LEN + UUID_LEN..].copy_from_slice(&expires_at.to_be_bytes());
+    let mut payload = Vec::with_capacity(if token_id.is_some() {
+        RESET_PAYLOAD_LEN
+    } else {
+        PAYLOAD_LEN
+    });
+    payload.push(purpose.byte());
+    payload.extend_from_slice(user_id.as_bytes());
+    if let Some(token_id) = token_id {
+        payload.extend_from_slice(token_id.as_bytes());
+    }
+    payload.extend_from_slice(&expires_at.to_be_bytes());
 
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
-    mac.update(&payload);
+    mac.update(payload.as_slice());
     let mac_bytes = mac.finalize().into_bytes();
 
-    let mut out = [0u8; TOKEN_BYTES];
-    out[..PAYLOAD_LEN].copy_from_slice(&payload);
-    out[PAYLOAD_LEN..].copy_from_slice(&mac_bytes);
+    let mut out = Vec::with_capacity(payload.len() + MAC_LEN);
+    out.extend_from_slice(payload.as_slice());
+    out.extend_from_slice(&mac_bytes);
 
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(out)
 }
@@ -102,18 +141,34 @@ pub fn issue(purpose: TokenPurpose, user_id: Uuid, ttl: Duration, key: &[u8]) ->
 /// "invalid or expired link" in the response, but log the discriminator
 /// for forensic).
 pub fn verify(purpose: TokenPurpose, token: &str, key: &[u8]) -> Result<Uuid, TokenError> {
+    verify_claims(purpose, token, key).map(|claims| claims.user_id)
+}
+
+pub fn verify_claims(
+    purpose: TokenPurpose,
+    token: &str,
+    key: &[u8],
+) -> Result<VerifiedToken, TokenError> {
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(token)
         .map_err(|_| TokenError::Malformed)?;
-    if bytes.len() != TOKEN_BYTES {
-        return Err(TokenError::Malformed);
-    }
-    let (payload, mac_part) = bytes.split_at(PAYLOAD_LEN);
+    let payload_len = match bytes.len() {
+        TOKEN_BYTES => PAYLOAD_LEN,
+        RESET_TOKEN_BYTES => RESET_PAYLOAD_LEN,
+        _ => return Err(TokenError::Malformed),
+    };
+    let (payload, mac_part) = bytes.split_at(payload_len);
 
     // Purpose check first — failing fast here costs nothing and gives the
     // caller a clearer error than a MAC mismatch would.
     if payload[0] != purpose.byte() {
         return Err(TokenError::WrongPurpose);
+    }
+    if purpose == TokenPurpose::PasswordReset && payload_len != RESET_PAYLOAD_LEN {
+        return Err(TokenError::MissingTokenId);
+    }
+    if purpose == TokenPurpose::EmailVerification && payload_len != PAYLOAD_LEN {
+        return Err(TokenError::Malformed);
     }
 
     // Constant-time MAC verification.
@@ -128,7 +183,18 @@ pub fn verify(purpose: TokenPurpose, token: &str, key: &[u8]) -> Result<Uuid, To
         .expect("slice length checked above");
     let user_id = Uuid::from_bytes(user_id_bytes);
 
-    let exp_bytes: [u8; EXPIRES_LEN] = payload[PURPOSE_LEN + UUID_LEN..]
+    let token_id = if payload_len == RESET_PAYLOAD_LEN {
+        let token_id_bytes: [u8; UUID_LEN] = payload
+            [PURPOSE_LEN + UUID_LEN..PURPOSE_LEN + UUID_LEN + UUID_LEN]
+            .try_into()
+            .expect("slice length checked above");
+        Some(Uuid::from_bytes(token_id_bytes))
+    } else {
+        None
+    };
+
+    let expires_offset = payload_len - EXPIRES_LEN;
+    let exp_bytes: [u8; EXPIRES_LEN] = payload[expires_offset..]
         .try_into()
         .expect("slice length checked above");
     let expires_at = u64::from_be_bytes(exp_bytes);
@@ -148,7 +214,7 @@ pub fn verify(purpose: TokenPurpose, token: &str, key: &[u8]) -> Result<Uuid, To
         return Err(TokenError::FromFuture);
     }
 
-    Ok(user_id)
+    Ok(VerifiedToken { user_id, token_id })
 }
 
 #[cfg(test)]
@@ -181,8 +247,9 @@ mod tests {
             Duration::from_secs(60),
             &key(),
         );
-        let got = verify(TokenPurpose::PasswordReset, &tok, &key()).unwrap();
-        assert_eq!(got, uid);
+        let got = verify_claims(TokenPurpose::PasswordReset, &tok, &key()).unwrap();
+        assert_eq!(got.user_id, uid);
+        assert!(got.token_id.is_some());
     }
 
     #[test]

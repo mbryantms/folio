@@ -941,22 +941,17 @@ impl MetadataProvider for ComicVineClient {
     async fn fetch_cover(&self, url: &str) -> ProviderResult<Vec<u8>> {
         // Cover URLs hit CV's CDN, not the API — no rate-limit slot
         // reserved.
-        let resp = self
-            .inner
-            .http
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(ProviderError::Upstream(format!("cover HTTP {status}")));
-        }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
-        Ok(bytes.to_vec())
+        let fetched = crate::util::ssrf::fetch_public_bytes(
+            url,
+            crate::util::ssrf::MAX_IMAGE_BYTES,
+            std::time::Duration::from_secs(20),
+            crate::build_info::USER_AGENT_COVER,
+            2,
+            false,
+        )
+        .await
+        .map_err(|e| ProviderError::Transport(e.to_string()))?;
+        Ok(fetched.bytes)
     }
 }
 

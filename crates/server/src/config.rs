@@ -195,9 +195,13 @@ pub struct Config {
 
     /// Optional bearer token gating `GET /metrics` (env `COMIC_METRICS_TOKEN`).
     /// Infra/deploy-time scrape credential like `database_url` — env-only, not
-    /// a DB-backed setting. Unset → `/metrics` stays open (today's behavior).
+    /// a DB-backed setting.
     #[serde(default)]
     pub metrics_token: Option<String>,
+    /// Explicit opt-out for unauthenticated metrics in release builds
+    /// (`COMIC_METRICS_OPEN=true`). Debug/test builds remain open by default.
+    #[serde(default)]
+    pub metrics_open: bool,
 
     // Metadata providers (metadata-providers-1.0 M1)
     /// ComicVine API key. Per-site key, account-bound. Always loaded
@@ -366,6 +370,7 @@ impl std::fmt::Debug for Config {
             .field("smtp_tls", &self.smtp_tls)
             .field("smtp_from", &self.smtp_from)
             .field("metrics_token", &redact_opt(&self.metrics_token))
+            .field("metrics_open", &self.metrics_open)
             .field("comicvine_api_key", &redact_opt(&self.comicvine_api_key))
             .field("comicvine_enabled", &self.comicvine_enabled)
             .field("metron_username", &redact_opt(&self.metron_username))
@@ -516,6 +521,13 @@ impl Config {
         self.opds_panels_mode.eq_ignore_ascii_case("komga")
     }
 
+    pub fn metrics_requires_token(&self) -> bool {
+        self.metrics_token
+            .as_deref()
+            .is_some_and(|token| !token.is_empty())
+            || (!self.metrics_open && !cfg!(debug_assertions))
+    }
+
     /// Parse `metadata_merge_provider_preference` into the ordered
     /// source list used as the composite-merge tiebreaker. Unparseable
     /// / unset → the default `[Metron, ComicVine]` order (mirrors
@@ -617,6 +629,11 @@ impl Config {
         }
         if self.oidc_trust_unverified_email {
             tracing::warn!("COMIC_OIDC_TRUST_UNVERIFIED_EMAIL=true — see §12.7 of the spec");
+        }
+        if self.metrics_open && !cfg!(debug_assertions) {
+            tracing::warn!(
+                "COMIC_METRICS_OPEN=true — /metrics is intentionally unauthenticated in a release build"
+            );
         }
         // Fail fast on misconfigured TTL strings rather than at first sign-in.
         Self::parse_duration(&self.jwt_access_ttl)
@@ -1239,6 +1256,7 @@ mod tests {
             smtp_tls: "starttls".into(),
             smtp_from: None,
             metrics_token: None,
+            metrics_open: false,
             opds_panels_mode: "off".into(),
             comicvine_api_key: None,
             comicvine_enabled: false,
