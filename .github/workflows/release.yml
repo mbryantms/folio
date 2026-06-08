@@ -178,39 +178,22 @@ jobs:
           cosign sign --yes "${IMAGE}@${DIGEST}"
 
   release-notes:
-    # Only run on tag pushes; depends on both images being published first.
+    # Runs on tag pushes after both images publish. release-please already
+    # created the GitHub Release (with notes generated from CHANGELOG.md), so
+    # this job only APPENDS the container-image pull + cosign-verify snippet to
+    # that existing release — it never creates or overwrites the body.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [publish]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      # Build the release body: the curated CHANGELOG.md section for this tag
-      # (if present) on top, then the pull/verify snippet. GitHub's
-      # auto-generated commit list is appended below by
-      # `generate_release_notes: true`. Changelog extraction is best-effort —
-      # a miss just omits the curated section, it never fails the release.
-      - name: Assemble release body
+      - name: Assemble image + verify snippet
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
           OWNER='${{ github.repository_owner }}'
           REPO='${{ github.repository }}'
           REF="${GITHUB_REF_NAME}"
-          : > RELEASE_BODY.md
-          if [ -f CHANGELOG.md ]; then
-            awk -v ver="$VER" '
-              $0 ~ "^## \\[" ver "\\]" { inblock=1; next }
-              inblock && /^## \[/ { exit }
-              inblock { print }
-            ' CHANGELOG.md > SECTION.md || true
-            if [ -s SECTION.md ]; then
-              { echo "## What's changed"; echo; cat SECTION.md; echo; } >> RELEASE_BODY.md
-            fi
-          fi
           {
             echo "### Container images"
             echo "linux/amd64, signed with cosign, SBOM attached:"
@@ -224,11 +207,11 @@ jobs:
             echo "  --certificate-identity-regexp 'https://github.com/${REPO}/.github/workflows/release.yml' \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo '```'
-          } >> RELEASE_BODY.md
-      - name: Create GitHub release
+          } > RELEASE_BODY.md
+      - name: Append image/verify snippet to the release
         uses: softprops/action-gh-release@v3
         with:
-          generate_release_notes: true
-          # Pin to the tag that triggered this run.
+          # release-please already created this release; append, don't replace.
           tag_name: ${{ github.ref_name }}
+          append_body: true
           body_path: RELEASE_BODY.md
