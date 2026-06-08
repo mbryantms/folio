@@ -1,0 +1,33 @@
+name: release-please
+
+# Maintains a single open "Release PR" off main. Each push to main updates it
+# (next semver from conventional commits + regenerated CHANGELOG.md). Merging
+# that PR creates the `vX.Y.Z` tag + GitHub Release, which triggers release.yml
+# to build, sign, and publish the images.
+#
+# Uses FOLIO_RELEASE_TOKEN (not the default GITHUB_TOKEN) for two reasons:
+#   1. so the Release PR triggers the required CI checks, and
+#   2. so the tag it creates triggers release.yml — tags pushed by the default
+#      Actions token do not start downstream workflows.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.FOLIO_RELEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
