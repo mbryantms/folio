@@ -1079,6 +1079,53 @@ async fn on_deck_cbl_wins_when_issue_overlaps_series_next() {
 }
 
 #[tokio::test]
+async fn on_deck_dedups_same_issue_across_two_cbls() {
+    // Regression: an issue can be the next-unfinished pick of *two*
+    // different CBL lists at once. Each CBL yields its own CblNext card,
+    // and the series-wide CBL>Series dedup only suppresses SeriesNext
+    // cards — never one CblNext against another. Without a final
+    // issue-level dedup the same issue rendered twice on the Home rail
+    // (the "duplicate image on deck" bug). Assert it surfaces once.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-twocbl@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-twocbl").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-twocbl-2").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    // Two distinct CBLs that both contain the same two issues. Once
+    // issue 1 is finished, both lists pick issue 2 as their next.
+    let list_a = seed_cbl_list(&app, "List A", &[(0, &issue1_id), (1, &issue2_id)]).await;
+    let list_b = seed_cbl_list(&app, "List B", &[(0, &issue1_id), (1, &issue2_id)]).await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+
+    let cards_for_issue2: Vec<_> = items
+        .iter()
+        .filter(|i| i["issue"]["id"] == issue2_id)
+        .collect();
+    assert_eq!(
+        cards_for_issue2.len(),
+        1,
+        "issue 2 belongs to two CBLs but must appear exactly once on On Deck, got {} ({:?})",
+        cards_for_issue2.len(),
+        items
+    );
+    // The surviving card is a CBL framing from one of the two lists.
+    assert_eq!(cards_for_issue2[0]["kind"], "cbl_next");
+    let surviving = cards_for_issue2[0]["cbl_list_id"].as_str().unwrap();
+    assert!(
+        surviving == list_a.to_string() || surviving == list_b.to_string(),
+        "surviving card must come from one of the seeded CBLs, got {surviving}"
+    );
+}
+
+#[tokio::test]
 async fn on_deck_excludes_caught_up_cbls() {
     let app = TestApp::spawn().await;
     let user = register(&app, "rail-od-done@example.com").await;
