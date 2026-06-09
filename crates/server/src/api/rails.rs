@@ -632,6 +632,26 @@ pub(crate) async fn compute_on_deck(
     // Merge by most-recent activity desc; caller caps to per-surface
     // limit (the rail truncates to 24, the next-up resolver takes 1).
     items.sort_by_key(|item| std::cmp::Reverse(item.0));
+
+    // ───── Final dedup by issue id ─────
+    //
+    // The composition can emit the same issue from more than one source.
+    // The series-wide CBL>Series dedup above only suppresses SeriesNext
+    // cards whose series a CBL owns; it never dedups one CblNext against
+    // another. So an issue that is the next-up pick of two different CBL
+    // lists (the series belongs to both) produces two identical CblNext
+    // cards. Collapse to one card per issue, keeping the first occurrence
+    // — after the sort that's the card with the most recent activity.
+    let mut seen_issue_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    items.retain(|(_, card)| {
+        let id = match card {
+            OnDeckCard::SeriesNext { issue, .. } | OnDeckCard::CblNext { issue, .. } => {
+                issue.id.clone()
+            }
+        };
+        seen_issue_ids.insert(id)
+    });
+
     Ok(items.into_iter().map(|(_, c)| c).collect())
 }
 
