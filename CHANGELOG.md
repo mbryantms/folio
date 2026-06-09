@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.10.2](https://github.com/mbryantms/folio/compare/v0.10.1...v0.10.2) (2026-06-09)
+
+
+### Fixed
+
+* dedup On Deck cards by issue id ([#129](https://github.com/mbryantms/folio/issues/129)) ([d9d8f23](https://github.com/mbryantms/folio/commit/d9d8f2329446f88589a2286938aae73ad9dbe826))
+
 ## [0.10.1](https://github.com/mbryantms/folio/compare/v0.10.0...v0.10.1) (2026-06-08)
 
 
