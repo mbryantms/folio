@@ -207,6 +207,34 @@ async fn second_trigger_while_in_flight_is_coalesced() {
     assert_eq!(b2["state"], "coalesced");
 }
 
+#[tokio::test]
+async fn boot_sweep_clears_stale_in_flight_key() {
+    // OPS-2: a crash can leave `scan:in_flight:<lib>` set with no job to clear
+    // it, wedging the library — every later trigger coalesces into a phantom.
+    // The boot sweep clears those orphans; after it, a trigger claims a fresh
+    // scan instead of coalescing.
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let lib_id = create_library(&app, &auth).await;
+
+    // First trigger leaves the in_flight key set (no worker runs in TestApp).
+    let (_s1, b1) = post_scan(&app, &auth, &lib_id).await;
+    let first_scan_id = b1["scan_id"].as_str().unwrap().to_owned();
+    assert_eq!(b1["coalesced"], false);
+    // Confirm the wedge: a second trigger coalesces onto the stale key.
+    let (_s2, b2) = post_scan(&app, &auth, &lib_id).await;
+    assert_eq!(b2["coalesced"], true);
+
+    // Boot sweep clears the orphaned coalesce keys.
+    let removed = app.state().jobs.clear_stale_scan_keys().await.unwrap();
+    assert!(removed >= 1, "sweep should remove the stale in_flight key");
+
+    // Now a trigger claims a brand-new scan rather than coalescing.
+    let (_s3, b3) = post_scan(&app, &auth, &lib_id).await;
+    assert_eq!(b3["coalesced"], false, "sweep must un-wedge the library");
+    assert_ne!(b3["scan_id"].as_str().unwrap(), first_scan_id);
+}
+
 async fn post_scan_all(
     app: &TestApp,
     auth: &Authed,

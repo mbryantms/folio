@@ -143,11 +143,15 @@ impl JobRuntime {
         if let Some(_existing) = in_flight {
             // A scan is running. Mark another one queued and return the
             // running id so the caller can advertise a stable scan_id.
-            let _: () = conn.set(&queued_key, "1").await?;
+            let _: () = conn
+                .set_ex(&queued_key, "1", SCAN_COALESCE_TTL_SECS)
+                .await?;
             // Persist the queued-force flag so the post-completion re-enqueue
             // honors the strongest request.
             if force {
-                let _: () = conn.set(format!("{queued_key}:force"), "1").await?;
+                let _: () = conn
+                    .set_ex(format!("{queued_key}:force"), "1", SCAN_COALESCE_TTL_SECS)
+                    .await?;
             }
             let scan_id: Option<String> = conn.get(&scan_id_key).await?;
             let scan_id = scan_id
@@ -156,10 +160,14 @@ impl JobRuntime {
             return Ok(CoalesceOutcome::Coalesced { scan_id });
         }
 
-        // No scan in flight — claim it.
+        // No scan in flight — claim it (TTL'd; see SCAN_COALESCE_TTL_SECS).
         let scan_id = Uuid::now_v7();
-        let _: () = conn.set(&scan_id_key, scan_id.to_string()).await?;
-        let _: () = conn.set(&in_flight_key, scan_id.to_string()).await?;
+        let _: () = conn
+            .set_ex(&scan_id_key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
+            .await?;
+        let _: () = conn
+            .set_ex(&in_flight_key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
+            .await?;
         self.insert_queued_scan_run(library_id, scan_id, "library", None, None, batch_id)
             .await?;
         // Push to apalis last; if push fails the in_flight key is stale, but
@@ -193,8 +201,12 @@ impl JobRuntime {
             let _: () = conn.del(&queued_key).await?;
             let _: () = conn.del(&queued_force_key).await?;
             let new_id = Uuid::now_v7();
-            let _: () = conn.set(&scan_id_key, new_id.to_string()).await?;
-            let _: () = conn.set(&in_flight_key, new_id.to_string()).await?;
+            let _: () = conn
+                .set_ex(&scan_id_key, new_id.to_string(), SCAN_COALESCE_TTL_SECS)
+                .await?;
+            let _: () = conn
+                .set_ex(&in_flight_key, new_id.to_string(), SCAN_COALESCE_TTL_SECS)
+                .await?;
             self.insert_queued_scan_run(library_id, new_id, "library", None, None, None)
                 .await?;
             use apalis::prelude::Storage;
@@ -389,6 +401,13 @@ impl JobRuntime {
             .register(metadata_apply_issue_worker)
             .register(rewrite_issue_sidecars_worker)
             .register(archive_edit_worker)
+            // Bound the graceful drain (OPS-3, JOBS-3): without this the monitor
+            // waits indefinitely for an in-flight job, so a SIGTERM during a
+            // 30-minute scan wouldn't return until the scan finished — past the
+            // container's grace period, which then SIGKILLs. Cap the wait so the
+            // process exits cleanly; an abandoned job is re-enqueued by apalis's
+            // orphan recovery (reenqueue_orphaned_after, 300s) on the next boot.
+            .shutdown_timeout(std::time::Duration::from_secs(JOB_SHUTDOWN_TIMEOUT_SECS))
             .run_with_signal(shutdown_fut)
             .await
     }
@@ -435,8 +454,12 @@ impl JobRuntime {
             None,
         )
         .await?;
-        let _: () = conn.set(&key, scan_id.to_string()).await?;
-        let _: () = conn.set(&scan_id_key, scan_id.to_string()).await?;
+        let _: () = conn
+            .set_ex(&key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
+            .await?;
+        let _: () = conn
+            .set_ex(&scan_id_key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
+            .await?;
 
         use apalis::prelude::Storage;
         let mut storage = self.scan_series_storage.clone();
@@ -527,6 +550,23 @@ impl CoalesceOutcome {
     }
 }
 
+/// TTL on the scan-coalescing Redis keys (OPS-2). Without an expiry, a process
+/// crash between claiming `in_flight` and pushing the apalis job — or a
+/// retry-exhausted scan that never calls `release_scan` — leaves the key set
+/// forever, so every later trigger coalesces into a phantom run and the
+/// library's scans wedge permanently. The TTL is a self-healing backstop for a
+/// box that's never restarted; the boot sweep ([`JobRuntime::clear_stale_scan_keys`])
+/// clears them immediately on the common recovery path. Generous (6h) so it
+/// never expires under a legitimately long scan — and if it somehow did, the
+/// worst case is a redundant, idempotent re-scan, not data loss.
+const SCAN_COALESCE_TTL_SECS: u64 = 6 * 60 * 60;
+
+/// Max seconds the apalis monitor waits for in-flight jobs to drain on shutdown
+/// before exiting anyway (OPS-3). Kept under a typical container stop grace
+/// period (~30s) so the process exits on its own rather than being SIGKILLed
+/// mid-drain; abandoned jobs are recovered by apalis's orphan re-enqueue.
+const JOB_SHUTDOWN_TIMEOUT_SECS: u64 = 25;
+
 fn in_flight_key(library_id: Uuid) -> String {
     format!("scan:in_flight:{library_id}")
 }
@@ -583,4 +623,53 @@ impl JobRuntime {
         let _: () = conn.del(&scan_id_key).await?;
         Ok(())
     }
+
+    /// Boot-time sweep of every scan-coalescing key left over from a previous
+    /// process (OPS-2). A crash between claiming `in_flight` and pushing the
+    /// apalis job leaves the key set with no job that will ever clear it,
+    /// wedging the library's scans permanently; on restart this removes the
+    /// orphans so coalescing starts clean. Safe because nothing is actually
+    /// scanning at boot — any in-flight scan died with the previous process,
+    /// and apalis re-enqueues its orphaned job independently. Matches only the
+    /// three folio coalescing prefixes (covers library + scoped + force keys),
+    /// never apalis's own `scan` queue keys. Returns the number removed.
+    pub async fn clear_stale_scan_keys(&self) -> anyhow::Result<usize> {
+        let mut conn = self.redis.clone();
+        let mut total = 0usize;
+        for pattern in ["scan:in_flight:*", "scan:scan_id:*", "scan:queued:*"] {
+            total += delete_matching_scan_keys(&mut conn, pattern).await?;
+        }
+        Ok(total)
+    }
+}
+
+/// SCAN + DEL every key matching `pattern`. Cursor-based (never `KEYS`) so it
+/// stays non-blocking on a large keyspace; deletes in 500-key batches.
+async fn delete_matching_scan_keys(
+    conn: &mut ConnectionManager,
+    pattern: &str,
+) -> redis::RedisResult<usize> {
+    let mut cursor = 0_u64;
+    let mut keys = Vec::<String>::new();
+    loop {
+        let (next, mut batch): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(pattern)
+            .arg("COUNT")
+            .arg(1000)
+            .query_async(&mut *conn)
+            .await?;
+        keys.append(&mut batch);
+        cursor = next;
+        if cursor == 0 {
+            break;
+        }
+    }
+    let mut deleted = 0usize;
+    for chunk in keys.chunks(500) {
+        let n: usize = redis::cmd("DEL").arg(chunk).query_async(&mut *conn).await?;
+        deleted += n;
+    }
+    Ok(deleted)
 }

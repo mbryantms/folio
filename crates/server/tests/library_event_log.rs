@@ -171,6 +171,39 @@ async fn record_many_bulk_inserts_all_severities() {
 }
 
 #[tokio::test]
+async fn record_many_chunks_past_bind_param_cap() {
+    // OPS-1: `library_event` has 13 columns, so an unchunked `insert_many` tops
+    // out near ~5040 rows under Postgres's 65535 bind-parameter limit. A first
+    // scan of a large library emits ~1 event per added issue, so writing more
+    // than that in a single call must still persist every row (chunked) rather
+    // than fail wholesale and silently drop the entire scan manifest.
+    let app = TestApp::spawn().await;
+    let db = app.state().db.clone();
+    let lib = create_library(&app).await;
+
+    const N: usize = 6_000; // > 65535 / 13 ≈ 5041, so it must span >1 statement
+    let events: Vec<NewEvent> = (0..N)
+        .map(|i| {
+            NewEvent::new(
+                lib,
+                Category::Issue,
+                Action::Added,
+                Severity::Info,
+                format!("evt {i}"),
+            )
+        })
+        .collect();
+    event_log::record_many(&db, events).await;
+
+    let count = EventEntity::find()
+        .filter(EventCol::LibraryId.eq(lib))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(count, N as u64, "every event must persist across chunks");
+}
+
+#[tokio::test]
 async fn record_with_dangling_scan_run_is_dropped_silently() {
     // The scan_run FK is enforced. A caller that references a non-existent
     // scan run gets a logged error and a dropped row — never a panic or a
