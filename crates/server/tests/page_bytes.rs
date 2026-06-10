@@ -293,6 +293,64 @@ async fn full_body_returns_200_with_sniffed_content_type() {
 }
 
 #[tokio::test]
+async fn if_none_match_returns_304_without_body() {
+    // PERF-4: a conditional GET whose If-None-Match matches the page's ETag
+    // returns 304 with no body and the validators echoed back.
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("cond.cbz");
+    let payload = page_payload();
+    build_cbz(&cbz, &payload);
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+
+    // First GET to capture the ETag.
+    let first = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/issues/{id}/pages/0"))
+                .header(header::COOKIE, format!("__Host-comic_session={session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let etag = first
+        .headers()
+        .get(header::ETAG)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+
+    // Re-request with If-None-Match → 304, empty body, ETag preserved.
+    let second = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/issues/{id}/pages/0"))
+                .header(header::COOKIE, format!("__Host-comic_session={session}"))
+                .header(header::IF_NONE_MATCH, &etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(second.headers().get(header::ETAG).unwrap(), &etag);
+    let body = body_bytes(second.into_body()).await;
+    assert!(body.is_empty(), "304 must not carry a body");
+}
+
+#[tokio::test]
 async fn range_request_returns_206_with_content_range() {
     let app = TestApp::spawn().await;
     let session = register_admin(&app).await;

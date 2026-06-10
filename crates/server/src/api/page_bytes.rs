@@ -20,6 +20,7 @@ use axum::{
 };
 use entity::{issue, library_user_access};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::error;
 use crate::auth::CurrentUser;
@@ -42,6 +43,24 @@ pub async fn serve(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
+    let page_index = n as usize;
+    // Content-derived ETag: `issue.id` is stable across archive rewrites by
+    // design, so fold in `content_hash` (which changes when the bytes change) so
+    // a cached page is revalidated after an edit / sidecar rewrite (PERF-4).
+    // `.min(len)` guards a short hash from a panicking slice.
+    let hash = row.content_hash.as_str();
+    let etag_value = format!("\"{}-{}\"", &hash[..32.min(hash.len())], page_index);
+
+    // Conditional GET: a matching If-None-Match revalidation returns 304 before
+    // we even open the archive (PERF-4).
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|c| c.trim() == etag_value))
+    {
+        return not_modified(&etag_value);
+    }
+
     let arc = match app
         .zip_lru
         .get_or_open(&row.id, std::path::Path::new(&row.file_path))
@@ -56,13 +75,6 @@ pub async fn serve(
             );
         }
     };
-
-    // Resolve which entry in `pages()` corresponds to page index `n`.
-    // `pages()` is in natural-sort order (the same order surfaced to the reader).
-    let page_index = n as usize;
-
-    // Hop into a blocking task: zip reads + central-dir lookup are sync I/O.
-    let etag_value = format!("\"{}-{}\"", &row.id[..32], page_index);
 
     // Range parsing happens before the blocking task so we can short-circuit
     // 416 / If-Range without paying the blocking-task cost.
@@ -146,7 +158,66 @@ pub async fn serve(
         (StatusCode::OK, 0, info.total)
     };
 
-    // Pull the byte slice in another blocking task.
+    // Headers shared by the streamed (200) and buffered (206) paths.
+    let mut hdrs = HeaderMap::new();
+    hdrs.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(info.mime)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    hdrs.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("inline; filename=\"page-{n}.{}\"", info.ext))
+            .unwrap_or_else(|_| HeaderValue::from_static("inline")),
+    );
+    hdrs.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=3600"),
+    );
+    hdrs.insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag_value)
+            .unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
+    );
+
+    // Full-page request (200, whole entry): stream the entry straight into the
+    // response body so memory stays flat regardless of page size — a 100 MB page
+    // no longer means a 100 MB per-request allocation (PERF-2). The per-issue zip
+    // mutex is held for the stream's duration; PERF-3 lifts that with a lock-free
+    // pread fast path. Range requests stay buffered below — already bounded by
+    // the client-requested length and rare on this path.
+    if status == StatusCode::OK && start == 0 && len == info.total {
+        hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(info.total));
+        let arc_for_read = info.cbz_arc.clone();
+        let entry_idx = info.entry_index_in_pages;
+        let (writer, reader) = tokio::io::duplex(STREAM_BUF_BYTES);
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let mut sink = SyncIoBridge::new_with_handle(writer, handle);
+            let mut cbz = match arc_for_read.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let entry = {
+                let pages = cbz.pages();
+                match pages.get(entry_idx).copied().cloned() {
+                    Some(e) => e,
+                    None => return,
+                }
+            };
+            if let Err(e) = cbz.pipe_entry(&entry, &mut sink) {
+                // Headers are already sent; we can only truncate the stream.
+                tracing::warn!(error = %e, "page stream failed mid-body");
+            }
+            // Flush + close so the ReaderStream terminates cleanly.
+            let _ = std::io::Write::flush(&mut sink);
+            let _ = sink.shutdown();
+        });
+        return (status, hdrs, Body::from_stream(ReaderStream::new(reader))).into_response();
+    }
+
+    // Range path: read the (bounded) slice into memory and return it.
     let arc_for_read = info.cbz_arc.clone();
     let entry_idx = info.entry_index_in_pages;
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
@@ -172,28 +243,6 @@ pub async fn serve(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-
-    let mut hdrs = HeaderMap::new();
-    hdrs.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(info.mime)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
-    );
-    hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    hdrs.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("inline; filename=\"page-{n}.{}\"", info.ext))
-            .unwrap_or_else(|_| HeaderValue::from_static("inline")),
-    );
-    hdrs.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("private, max-age=3600"),
-    );
-    hdrs.insert(
-        header::ETAG,
-        HeaderValue::from_str(&etag_value)
-            .unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
-    );
     hdrs.insert(
         header::CONTENT_LENGTH,
         HeaderValue::from(body_bytes.len() as u64),
@@ -206,8 +255,28 @@ pub async fn serve(
                 .unwrap_or_else(|_| HeaderValue::from_static("bytes 0-0/0")),
         );
     }
-
     (status, hdrs, Body::from(body_bytes)).into_response()
+}
+
+/// Duplex buffer for the streaming page path. Bounds the per-request memory the
+/// blocking reader can run ahead of a slow client to this size (vs. the whole
+/// page); a comic page is typically well under this, so the reader usually
+/// finishes and releases the zip lock without blocking on backpressure.
+const STREAM_BUF_BYTES: usize = 256 * 1024;
+
+/// 304 response carrying just the validators (no body), for a matched
+/// If-None-Match revalidation.
+fn not_modified(etag: &str) -> Response {
+    let mut hdrs = HeaderMap::new();
+    hdrs.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=3600"),
+    );
+    hdrs.insert(
+        header::ETAG,
+        HeaderValue::from_str(etag).unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
+    );
+    (StatusCode::NOT_MODIFIED, hdrs).into_response()
 }
 
 struct PageBytes {
