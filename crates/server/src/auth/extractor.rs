@@ -130,9 +130,14 @@ where
 /// Resolve an `app_…` Bearer token to its owning user. Bumps the row's
 /// `last_used_at` on success (best-effort, see `app_password::verify`).
 async fn resolve_app_password(app: &AppState, token: &str) -> Result<CurrentUser, AuthRejection> {
-    let resolved = super::app_password::verify(&app.db, token, app.secrets.pepper.as_ref())
-        .await
-        .ok_or(AuthRejection::Invalid)?;
+    let resolved = super::app_password::verify(
+        &app.db,
+        &app.app_password_cache,
+        token,
+        app.secrets.pepper.as_ref(),
+    )
+    .await
+    .ok_or(AuthRejection::Invalid)?;
     let row = UserEntity::find()
         .filter(user::Column::Id.eq(resolved.user_id))
         .one(&app.db)

@@ -35,6 +35,9 @@ pub struct Inner {
     pub secrets: Secrets,
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub zip_lru: ZipLru,
+    /// Caches `SHA-256(app-password) → row id` so repeat OPDS/Bearer auths skip
+    /// the argon2 scan (PERF-1). See [`crate::auth::app_password::verify`].
+    pub app_password_cache: crate::auth::app_password::AppPasswordCache,
     pub prometheus: PrometheusHandle,
     /// Process/runtime gauge sampler (`folio_process_*`). The `/metrics`
     /// handler calls `.collect()` per scrape before rendering.
@@ -119,6 +122,7 @@ impl AppState {
         email: Arc<dyn EmailSender>,
     ) -> Self {
         let zip_lru = ZipLru::new(cfg.zip_lru_capacity, cfg.archive_limits());
+        let app_password_cache = crate::auth::app_password::AppPasswordCache::new();
         let thumb_inline_parallel = cfg.thumb_inline_parallel.max(1);
         let thumb_inline_semaphore = Arc::new(Semaphore::new(thumb_inline_parallel));
         let archive_work_parallel = cfg.archive_work_parallel.max(1);
@@ -145,6 +149,7 @@ impl AppState {
             secrets,
             started_at: chrono::Utc::now(),
             zip_lru,
+            app_password_cache,
             prometheus,
             process_metrics,
             log_buffer,

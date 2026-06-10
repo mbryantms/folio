@@ -143,6 +143,27 @@ async fn issue_then_use_as_bearer_returns_owner() {
 }
 
 #[tokio::test]
+async fn repeated_bearer_use_resolves_via_cache() {
+    // PERF-1: the first use takes the argon2 scan path and populates the
+    // app-password cache; subsequent uses take the cache fast path. Both must
+    // resolve to the same owner. (Revocation-after-cache is covered by
+    // `revoked_password_rejects_bearer_auth`, which uses then revokes.)
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "cached@example.com").await;
+    let auth = Auth::from_response(&reg);
+
+    let body = body_json(create_password(&app, &auth, "kobo").await.into_body()).await;
+    let plaintext = body["plaintext"].as_str().unwrap().to_owned();
+
+    for _ in 0..3 {
+        let me = me_with_bearer(&app, &plaintext).await;
+        assert_eq!(me.status(), StatusCode::OK);
+        let me_body = body_json(me.into_body()).await;
+        assert_eq!(me_body["email"], "cached@example.com");
+    }
+}
+
+#[tokio::test]
 async fn list_returns_active_passwords_without_plaintext() {
     let app = TestApp::spawn().await;
     let reg = register(&app, "lister@example.com").await;
