@@ -133,61 +133,12 @@ pub async fn forward(
         .and_then(|h| h.to_str().ok())
         .map(String::from);
 
-    // Outbound header set. Strip hop-by-hop + Host + Content-Length;
-    // keep everything else (Cookie, Authorization, Accept-*, custom
-    // headers all flow through). Content-Length is dropped because
-    // reqwest will re-encode the streaming body with chunked transfer
-    // encoding — keeping the original Content-Length alongside chunked
-    // is invalid HTTP and many servers (Next included) reject it.
-    let mut outbound_headers = HeaderMap::new();
-    for (name, value) in parts.headers.iter() {
-        if is_hop_by_hop(name) || name == header::HOST || name == header::CONTENT_LENGTH {
-            continue;
-        }
-        outbound_headers.append(name.clone(), value.clone());
-    }
+    // Build the outbound header set: inbound minus hop-by-hop / Host /
+    // Content-Length / spoofable forwarding headers, with `X-Forwarded-*`
+    // re-injected from the authoritatively-resolved client IP (SEC-6).
+    let mut outbound_headers =
+        build_forwarded_headers(&parts.headers, client_ip, orig_host.as_deref());
 
-    // X-Forwarded-Proto: preserve if upstream proxy already set it
-    // (Cloudflare always does when terminating TLS); else default to
-    // "http" (we're being hit directly over plain HTTP in dev).
-    if !outbound_headers.contains_key("x-forwarded-proto") {
-        outbound_headers.insert(
-            HeaderName::from_static("x-forwarded-proto"),
-            HeaderValue::from_static("http"),
-        );
-    }
-    // X-Forwarded-Host: the client-facing host as the upstream chain
-    // saw it. The inbound `Host` header is the same value in nearly
-    // every deployment (Cloudflare preserves it), so reusing it
-    // avoids needing to plumb a separate `ConnectInfo`-derived host.
-    if !outbound_headers.contains_key("x-forwarded-host")
-        && let Some(host) = &orig_host
-        && let Ok(v) = HeaderValue::from_str(host)
-    {
-        outbound_headers.insert(HeaderName::from_static("x-forwarded-host"), v);
-    }
-    // X-Forwarded-For: if the caller supplied the resolved client IP
-    // (post-trusted-proxy walk), append it to the existing chain. The
-    // canonical XFF format is `client, proxy1, proxy2`; we add our
-    // immediate-sender entry to the right so downstream code that
-    // honors the first entry as "real client" stays correct.
-    if let Some(ip) = client_ip {
-        let existing = outbound_headers
-            .get_all("x-forwarded-for")
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let new_value = if existing.is_empty() {
-            ip.to_string()
-        } else {
-            format!("{existing}, {ip}")
-        };
-        outbound_headers.remove("x-forwarded-for");
-        if let Ok(v) = HeaderValue::from_str(&new_value) {
-            outbound_headers.insert(HeaderName::from_static("x-forwarded-for"), v);
-        }
-    }
     // Content-Security-Policy: forward the per-request CSP value
     // (built in `security_headers::set_headers` with the nonce slot
     // populated) to Next.js as a *request* header. Next's app-render
@@ -252,6 +203,64 @@ fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
 fn is_hop_by_hop(name: &HeaderName) -> bool {
     let n = name.as_str();
     HOP_BY_HOP.iter().any(|h| n.eq_ignore_ascii_case(h))
+}
+
+/// Construct the outbound header set for a proxied request.
+///
+/// Copies the inbound headers minus hop-by-hop, `Host`, `Content-Length`, and
+/// the client-supplied forwarding headers (`X-Forwarded-For`, `Forwarded`,
+/// `X-Real-IP`), then injects the `X-Forwarded-*` set. The forwarding headers
+/// are stripped-and-reset rather than appended-to so a client connecting
+/// directly (untrusted peer) cannot smuggle a spoofed chain to the upstream —
+/// `X-Forwarded-For` / `X-Real-IP` carry exactly the one client IP we resolved
+/// via the trusted-proxy walk (`xff::client_ip`), keeping the leftmost-entry
+/// "real client" convention non-spoofable (SEC-6).
+///
+/// `X-Forwarded-Proto` / `X-Forwarded-Host` are preserved if an upstream proxy
+/// already set them (the Cloudflare-terminating-TLS case) and otherwise
+/// defaulted. CSP injection is left to the caller (it depends on the per-request
+/// nonce value).
+fn build_forwarded_headers(
+    inbound: &HeaderMap,
+    client_ip: Option<IpAddr>,
+    orig_host: Option<&str>,
+) -> HeaderMap {
+    let mut out = HeaderMap::new();
+    for (name, value) in inbound.iter() {
+        if is_hop_by_hop(name)
+            || name == header::HOST
+            || name == header::CONTENT_LENGTH
+            || name == header::FORWARDED
+            || name.as_str() == "x-forwarded-for"
+            || name.as_str() == "x-real-ip"
+        {
+            continue;
+        }
+        out.append(name.clone(), value.clone());
+    }
+
+    if !out.contains_key("x-forwarded-proto") {
+        out.insert(
+            HeaderName::from_static("x-forwarded-proto"),
+            HeaderValue::from_static("http"),
+        );
+    }
+
+    if !out.contains_key("x-forwarded-host")
+        && let Some(host) = orig_host
+        && let Ok(v) = HeaderValue::from_str(host)
+    {
+        out.insert(HeaderName::from_static("x-forwarded-host"), v);
+    }
+
+    if let Some(ip) = client_ip
+        && let Ok(v) = HeaderValue::from_str(&ip.to_string())
+    {
+        out.insert(HeaderName::from_static("x-forwarded-for"), v.clone());
+        out.insert(HeaderName::from_static("x-real-ip"), v);
+    }
+
+    out
 }
 
 fn build_target_url(upstream: &str, inbound: &Uri) -> Option<String> {
@@ -497,6 +506,67 @@ mod tests {
         assert!(is_hop_by_hop(&HeaderName::from_static("upgrade")));
         assert!(!is_hop_by_hop(&HeaderName::from_static("cookie")));
         assert!(!is_hop_by_hop(&HeaderName::from_static("authorization")));
+    }
+
+    #[test]
+    fn forwarded_headers_strip_client_supplied_chain() {
+        // SEC-6: a direct client sends a spoofed XFF chain + X-Real-IP +
+        // Forwarded. The outbound set must drop all of them and carry only the
+        // single resolved client IP.
+        let mut inbound = HeaderMap::new();
+        inbound.insert(
+            HeaderName::from_static("x-forwarded-for"),
+            HeaderValue::from_static("1.2.3.4, 5.6.7.8"),
+        );
+        inbound.insert(
+            HeaderName::from_static("x-real-ip"),
+            HeaderValue::from_static("1.2.3.4"),
+        );
+        inbound.insert(header::FORWARDED, HeaderValue::from_static("for=1.2.3.4"));
+        inbound.insert(header::COOKIE, HeaderValue::from_static("session=abc"));
+
+        let resolved: IpAddr = "203.0.113.7".parse().unwrap();
+        let out = build_forwarded_headers(&inbound, Some(resolved), Some("folio.example"));
+
+        // Exactly one XFF entry, equal to the resolved IP — no spoofed hops.
+        let xff: Vec<_> = out.get_all("x-forwarded-for").iter().collect();
+        assert_eq!(xff.len(), 1);
+        assert_eq!(xff[0], "203.0.113.7");
+        assert_eq!(out.get("x-real-ip").unwrap(), "203.0.113.7");
+        // Inbound Forwarded is dropped entirely; Cookie still flows through.
+        assert!(out.get(header::FORWARDED).is_none());
+        assert_eq!(out.get(header::COOKIE).unwrap(), "session=abc");
+    }
+
+    #[test]
+    fn forwarded_headers_omit_xff_when_ip_unresolved() {
+        // With no resolved client IP, no XFF/X-Real-IP is emitted (and any
+        // inbound spoof was still stripped).
+        let mut inbound = HeaderMap::new();
+        inbound.insert(
+            HeaderName::from_static("x-forwarded-for"),
+            HeaderValue::from_static("9.9.9.9"),
+        );
+        let out = build_forwarded_headers(&inbound, None, None);
+        assert!(out.get("x-forwarded-for").is_none());
+        assert!(out.get("x-real-ip").is_none());
+    }
+
+    #[test]
+    fn forwarded_headers_default_proto_and_preserve_inbound() {
+        // X-Forwarded-Proto/Host are NOT in the strip set: an upstream proxy's
+        // values are preserved, and proto defaults to http when absent.
+        let mut inbound = HeaderMap::new();
+        inbound.insert(
+            HeaderName::from_static("x-forwarded-proto"),
+            HeaderValue::from_static("https"),
+        );
+        let out = build_forwarded_headers(&inbound, None, Some("folio.example"));
+        assert_eq!(out.get("x-forwarded-proto").unwrap(), "https");
+        assert_eq!(out.get("x-forwarded-host").unwrap(), "folio.example");
+
+        let out2 = build_forwarded_headers(&HeaderMap::new(), None, None);
+        assert_eq!(out2.get("x-forwarded-proto").unwrap(), "http");
     }
 
     #[test]

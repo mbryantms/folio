@@ -297,8 +297,8 @@ pub fn compute_archive_cover(
             .clone()
     };
     let bytes = a.read_entry_bytes(&entry_name)?;
-    let img =
-        image::load_from_memory(&bytes).map_err(|e| ArchiveCoverError::Decode(e.to_string()))?;
+    let img = crate::util::image_decode::decode_limited(&bytes)
+        .map_err(|e| ArchiveCoverError::Decode(e.to_string()))?;
     let hashes = all_hashes(&img);
     Ok(ArchiveCoverHashes {
         hashes,
@@ -480,10 +480,12 @@ pub async fn fetch_and_hash_cover(
     // Decoding can be CPU-intensive on large covers; punt to a
     // blocking task so the async runtime stays free.
     let bytes_for_blocking = fetched.bytes;
-    let img = tokio::task::spawn_blocking(move || image::load_from_memory(&bytes_for_blocking))
-        .await
-        .ok()?
-        .ok()?;
+    let img = tokio::task::spawn_blocking(move || {
+        crate::util::image_decode::decode_limited(&bytes_for_blocking)
+    })
+    .await
+    .ok()?
+    .ok()?;
     Some(phash(&img))
 }
 

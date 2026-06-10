@@ -722,7 +722,8 @@ fn transform_image(
 ) -> Result<(Vec<u8>, String), EditError> {
     use image::ImageEncoder;
     let fmt = image::guess_format(bytes).map_err(|e| EditError::Image(e.to_string()))?;
-    let img = image::load_from_memory(bytes).map_err(|e| EditError::Image(e.to_string()))?;
+    let img = crate::util::image_decode::decode_limited(bytes)
+        .map_err(|e| EditError::Image(e.to_string()))?;
     let rotated = match rot {
         90 => img.rotate90(),
         180 => img.rotate180(),

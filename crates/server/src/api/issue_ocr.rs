@@ -218,7 +218,11 @@ pub async fn serve(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    let decoded = match tokio::task::spawn_blocking(move || image::load_from_memory(&bytes)).await {
+    let decoded = match tokio::task::spawn_blocking(move || {
+        crate::util::image_decode::decode_limited(&bytes)
+    })
+    .await
+    {
         Ok(Ok(img)) => img,
         Ok(Err(e)) => {
             tracing::warn!(error = %e, "ocr: page decode failed");
