@@ -491,6 +491,19 @@ const SEARCH_LIMIT_PER_PROVIDER: u32 = 25;
 /// and a slow CDN shouldn't stall the whole search-ranking pass.
 const COVER_PHASH_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// Max concurrent cover fetches per search run (PERF-9). A run can produce ~100
+/// candidate-variant URLs; bounding the fan-out keeps the provider CDN + local
+/// decode pool from being hammered in one burst.
+const COVER_FETCH_CONCURRENCY: usize = 16;
+
+/// Shared `reqwest::Client` for cover fetches, built once so connection pooling
+/// is reused across search runs instead of discarded with a per-run client
+/// (PERF-9). `reqwest::Client` is `Arc` inside, so cloning is cheap.
+fn cover_http_client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new).clone()
+}
+
 /// Run a series search across `providers`, score with the matcher,
 /// rank, and finalize the run. Returns the ranked list (also
 /// persisted to `metadata_run_candidate`).
@@ -534,7 +547,7 @@ pub async fn run_series_search(
     let mut ranked = Vec::new();
     let mut surfaced_quota: Option<u64> = None;
     let mut last_error: Option<ProviderError> = None;
-    let http = reqwest::Client::new();
+    let http = cover_http_client();
     for p in providers {
         let q = SeriesQuery {
             name: facts.name.clone(),
@@ -664,7 +677,7 @@ pub async fn run_issue_search(
     let mut ranked = Vec::new();
     let mut surfaced_quota: Option<u64> = None;
     let mut last_error: Option<ProviderError> = None;
-    let http = reqwest::Client::new();
+    let http = cover_http_client();
     for p in providers {
         // If we already know the provider's series id (because the
         // series was previously matched), narrow the query — saves a
@@ -825,9 +838,9 @@ async fn fetch_phashes_per_candidate(
     http: &reqwest::Client,
     urls_per_candidate: &[Vec<Option<&str>>],
 ) -> Vec<Vec<Option<i64>>> {
-    use futures::future::join_all;
-    // Flatten into a single batch so all fetches run in one
-    // join_all (vs nested join_all, which serializes batches).
+    use futures::stream::StreamExt;
+    // Flatten into a single batch so all fetches share one bounded-concurrency
+    // stream (vs nested join_all, which serializes batches).
     let mut offsets: Vec<usize> = Vec::with_capacity(urls_per_candidate.len() + 1);
     offsets.push(0);
     let mut flat: Vec<Option<&str>> = Vec::new();
@@ -851,7 +864,14 @@ async fn fetch_phashes_per_candidate(
             }
         })
         .collect();
-    let flat_hashes: Vec<Option<i64>> = join_all(futures).await;
+    // Bound concurrency so a 25-candidate search (×4 variants ≈ 100 URLs) can't
+    // fire ~100 simultaneous fetches at the provider CDN + local decode pool
+    // (PERF-9). `buffered` (not `buffer_unordered`) preserves input order, which
+    // the window-slicing below relies on.
+    let flat_hashes: Vec<Option<i64>> = futures::stream::iter(futures)
+        .buffered(COVER_FETCH_CONCURRENCY)
+        .collect()
+        .await;
     // Slice the flat result back into per-candidate Vecs.
     let mut out: Vec<Vec<Option<i64>>> = Vec::with_capacity(urls_per_candidate.len());
     for w in offsets.windows(2) {

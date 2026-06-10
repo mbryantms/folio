@@ -52,7 +52,6 @@ use crate::state::AppState;
 use super::cookies::{
     self, csrf_cookie, new_refresh_token_raw, refresh_cookie, session_cookie, sha256_hex,
 };
-use super::jwt::JwtKeys;
 
 use entity::auth_session::ActiveModel as SessionAM;
 use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
@@ -817,10 +816,7 @@ pub async fn callback(
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
 
-    let keys = match JwtKeys::from_secret(&app.secrets.jwt_ed25519, &app.cfg().public_url) {
-        Ok(k) => k,
-        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
-    };
+    let keys = &app.jwt_keys;
     let access = match keys.issue_access(
         user_row.id,
         &user_row.role,

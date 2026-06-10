@@ -42,7 +42,6 @@ use super::cookies::{
     csrf_cookie, new_csrf_token, new_refresh_token_raw, refresh_cookie, session_cookie, sha256_hex,
 };
 use super::email_token::{self, TokenPurpose};
-use super::jwt::JwtKeys;
 use super::password;
 use super::preferences::{
     AccentColor, Density, FitMode, PageAnimation, ReadingDirection, Theme, ViewMode, opt_from_db,
@@ -1534,10 +1533,7 @@ fn finalize_session(
     format: ResponseFormat,
     redirect_to: Option<&str>,
 ) -> axum::response::Response {
-    let keys = match JwtKeys::from_secret(&app.secrets.jwt_ed25519, &app.cfg().public_url) {
-        Ok(k) => k,
-        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
-    };
+    let keys = &app.jwt_keys;
 
     let access_ttl = app.cfg().access_ttl();
     let refresh_ttl = app.cfg().refresh_ttl();

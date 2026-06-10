@@ -19,7 +19,6 @@ use crate::state::AppState;
 use entity::user::{self, Entity as UserEntity};
 
 use super::cookies::SESSION_COOKIE;
-use super::jwt::JwtKeys;
 
 #[derive(Clone, Debug)]
 pub struct CurrentUser {
@@ -96,9 +95,8 @@ where
             return resolve_app_password(&app, &token).await;
         }
 
-        let keys = JwtKeys::from_secret(&app.secrets.jwt_ed25519, &app.cfg().public_url)
-            .map_err(|_| AuthRejection::Internal)?;
-        let claims = keys
+        let claims = app
+            .jwt_keys
             .verify_access(&token)
             .map_err(|_| AuthRejection::Invalid)?;
         let user_id: Uuid = claims.sub.parse().map_err(|_| AuthRejection::Invalid)?;
