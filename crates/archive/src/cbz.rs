@@ -51,6 +51,10 @@ pub struct Cbz {
     /// [`recover_zip_bytes`] for what triggers the rewrite.
     archive: OpenedZip,
     entries: Vec<ArchiveEntry>,
+    /// Per-kept-entry physical layout captured at open, used by
+    /// [`Cbz::build_pread_index`] to locate Stored entries' bytes on disk for
+    /// lock-free reads (PERF-3). Aligned 1:1 with `entries`.
+    entry_layout: Vec<EntryLayout>,
     /// canonical (lowercased) name → entry index
     by_canonical: HashMap<String, usize>,
     /// `Some(tag)` when `open_zip_with_recovery` had to repair the file
@@ -63,6 +67,58 @@ pub struct Cbz {
     /// [`Cbz::entries_skipped`] so the scanner can emit a
     /// `SkippedArchiveEntries` health-issue. Empty in the happy path.
     skipped: Vec<SkippedEntry>,
+}
+
+/// Per-entry physical layout captured at open. Cheap (all fields come from the
+/// central directory, already read during `finish`). Consumed by
+/// [`Cbz::build_pread_index`].
+#[derive(Clone, Copy)]
+struct EntryLayout {
+    /// Zip ordinal — matches [`ArchiveEntry::index`].
+    ordinal: usize,
+    /// Byte offset of this entry's local file header in the file.
+    header_start: u64,
+    /// True iff the entry is `Stored` (uncompressed); only Stored entries can
+    /// be read straight from the file without a decompressor.
+    stored: bool,
+    /// Uncompressed length (== on-disk length for a Stored entry).
+    length: u64,
+}
+
+/// Absolute file offset + length of a `Stored` entry's bytes. A caller can read
+/// `[data_start, data_start + length)` from the file directly — no
+/// decompression — and it equals what the zip reader would yield.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoredExtent {
+    pub data_start: u64,
+    pub length: u64,
+}
+
+/// Immutable map (zip ordinal → on-disk extent) for the `Stored` entries of a
+/// File-backed archive, computed once at open (PERF-3). It lets the page server
+/// read uncompressed pages with a plain seek+read on its own file handle,
+/// concurrently and without serializing on the per-issue archive mutex. An
+/// entry absent from the map (Deflated, recovery-backed, or one whose local
+/// file header failed validation) means "use the normal locked read path".
+#[derive(Clone, Debug, Default)]
+pub struct PreadIndex {
+    extents: HashMap<usize, StoredExtent>,
+}
+
+impl PreadIndex {
+    /// The on-disk extent for the entry at zip ordinal `entry_index`, if it's a
+    /// validated `Stored` entry. `None` ⇒ the caller must use the locked path.
+    pub fn extent(&self, entry_index: usize) -> Option<StoredExtent> {
+        self.extents.get(&entry_index).copied()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.extents.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.extents.len()
+    }
 }
 
 /// Backing reader for the inner `ZipArchive`. Two flavors share Cbz so the
@@ -270,6 +326,7 @@ impl Cbz {
         }
 
         let mut entries: Vec<ArchiveEntry> = Vec::with_capacity(n);
+        let mut entry_layout: Vec<EntryLayout> = Vec::with_capacity(n);
         let mut by_canonical: HashMap<String, usize> = HashMap::with_capacity(n);
         let mut skipped: Vec<SkippedEntry> = Vec::new();
         let mut total_uncompressed: u64 = 0;
@@ -277,7 +334,7 @@ impl Cbz {
         for i in 0..n {
             // Pull just the raw-entry fields we need, dropping the borrow
             // so subsequent loop iterations can re-borrow the archive.
-            let (encrypted, name, unc, cmp, is_dir) = match &mut archive {
+            let (encrypted, name, unc, cmp, is_dir, header_start, stored) = match &mut archive {
                 OpenedZip::File(a) => {
                     let raw = a.by_index_raw(i).map_err(map_zip_err)?;
                     (
@@ -286,6 +343,8 @@ impl Cbz {
                         raw.size(),
                         raw.compressed_size(),
                         raw.is_dir(),
+                        raw.header_start(),
+                        raw.compression() == zip::CompressionMethod::Stored,
                     )
                 }
                 OpenedZip::Mem(a) => {
@@ -296,6 +355,8 @@ impl Cbz {
                         raw.size(),
                         raw.compressed_size(),
                         raw.is_dir(),
+                        raw.header_start(),
+                        raw.compression() == zip::CompressionMethod::Stored,
                     )
                 }
             };
@@ -361,6 +422,12 @@ impl Cbz {
                     uncompressed_size: unc,
                     compressed_size: cmp,
                 });
+                entry_layout.push(EntryLayout {
+                    ordinal: i,
+                    header_start,
+                    stored,
+                    length: unc,
+                });
                 by_canonical.insert(safe.canonical, idx);
                 continue;
             }
@@ -372,6 +439,12 @@ impl Cbz {
                 uncompressed_size: unc,
                 compressed_size: cmp,
             });
+            entry_layout.push(EntryLayout {
+                ordinal: i,
+                header_start,
+                stored,
+                length: unc,
+            });
             by_canonical.insert(safe.canonical, idx);
         }
 
@@ -380,10 +453,78 @@ impl Cbz {
             limits,
             archive,
             entries,
+            entry_layout,
             by_canonical,
             recovery,
             skipped,
         })
+    }
+
+    /// Build the lock-free [`PreadIndex`] for this archive's `Stored` entries
+    /// (PERF-3). For each Stored entry it reads the 30-byte local file header to
+    /// locate where the data begins (`header_start + 30 + name_len + extra_len`,
+    /// the standard ZIP layout), validates the LFH signature and that the extent
+    /// lies within the file, and records it. Anything that fails validation is
+    /// omitted, so the caller transparently falls back to the locked read path.
+    ///
+    /// Only the File-backed (happy-path) archive produces extents; the in-memory
+    /// recovery cursor has no stable on-disk file to read from, so it yields an
+    /// empty index. Reads each LFH once; the result is immutable and meant to be
+    /// cached for the life of the open archive.
+    pub fn build_pread_index(&self) -> PreadIndex {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let mut extents: HashMap<usize, StoredExtent> = HashMap::new();
+        if !matches!(self.archive, OpenedZip::File(_)) {
+            return PreadIndex { extents };
+        }
+        let Ok(mut file) = File::open(&self.path) else {
+            return PreadIndex { extents };
+        };
+        let Ok(meta) = file.metadata() else {
+            return PreadIndex { extents };
+        };
+        let file_len = meta.len();
+
+        for layout in &self.entry_layout {
+            if !layout.stored {
+                continue;
+            }
+            if file.seek(SeekFrom::Start(layout.header_start)).is_err() {
+                continue;
+            }
+            let mut lfh = [0u8; 30];
+            if file.read_exact(&mut lfh).is_err() {
+                continue;
+            }
+            // Local file header signature `PK\x03\x04`.
+            if lfh[0..4] != [0x50, 0x4b, 0x03, 0x04] {
+                continue;
+            }
+            let name_len = u16::from_le_bytes([lfh[26], lfh[27]]) as u64;
+            let extra_len = u16::from_le_bytes([lfh[28], lfh[29]]) as u64;
+            let Some(data_start) = layout
+                .header_start
+                .checked_add(30)
+                .and_then(|v| v.checked_add(name_len))
+                .and_then(|v| v.checked_add(extra_len))
+            else {
+                continue;
+            };
+            // The whole entry must lie within the file.
+            match data_start.checked_add(layout.length) {
+                Some(end) if end <= file_len => {}
+                _ => continue,
+            }
+            extents.insert(
+                layout.ordinal,
+                StoredExtent {
+                    data_start,
+                    length: layout.length,
+                },
+            );
+        }
+        PreadIndex { extents }
     }
 
     /// Dispatch `f` over an opened entry, hiding the inner reader type.
@@ -1065,6 +1206,75 @@ mod tests {
             0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
             0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
         ]
+    }
+
+    #[test]
+    fn pread_index_extents_match_locked_read_for_stored() {
+        // PERF-3: for a Stored archive, the bytes at the computed extent must
+        // equal BOTH the locked zip-reader read and the original payload —
+        // full entry and an arbitrary sub-range. A wrong offset would surface
+        // here as mismatched bytes.
+        let p0: Vec<u8> = (0..600u32).map(|i| (i % 251) as u8).collect();
+        let p1: Vec<u8> = (0..777u32).map(|i| ((i * 7 + 3) % 253) as u8).collect();
+        let tmp = build_cbz_with(&[("p0.png", &p0), ("p1.png", &p1)], true);
+        let mut cbz = Cbz::open(tmp.path(), ArchiveLimits::default()).expect("open");
+
+        let pages: Vec<ArchiveEntry> = cbz.pages().iter().map(|e| (*e).clone()).collect();
+        let index = cbz.build_pread_index();
+        assert_eq!(pages.len(), 2);
+        assert_eq!(index.len(), 2, "both stored pages indexed");
+
+        let mut raw = std::fs::File::open(tmp.path()).unwrap();
+        for entry in &pages {
+            let payload: &[u8] = if entry.name.ends_with("p0.png") {
+                &p0
+            } else {
+                &p1
+            };
+            let extent = index
+                .extent(entry.index)
+                .expect("stored entry has an extent");
+            assert_eq!(extent.length, payload.len() as u64);
+
+            use std::io::{Read, Seek, SeekFrom};
+            // Full entry: pread == locked == original.
+            raw.seek(SeekFrom::Start(extent.data_start)).unwrap();
+            let mut full = vec![0u8; extent.length as usize];
+            raw.read_exact(&mut full).unwrap();
+            assert_eq!(full, payload, "pread full != payload ({})", entry.name);
+            assert_eq!(
+                full,
+                cbz.read_entry_bytes(entry).unwrap(),
+                "pread != locked"
+            );
+
+            // Sub-range: pread == locked range == payload slice.
+            let (start, len) = (123u64, 200u64);
+            raw.seek(SeekFrom::Start(extent.data_start + start))
+                .unwrap();
+            let mut sub = vec![0u8; len as usize];
+            raw.read_exact(&mut sub).unwrap();
+            assert_eq!(
+                sub,
+                cbz.read_entry_range(entry, start, len).unwrap(),
+                "pread range != locked range"
+            );
+            assert_eq!(sub, payload[start as usize..(start + len) as usize]);
+        }
+    }
+
+    #[test]
+    fn pread_index_omits_deflated_entries() {
+        // Compressed entries can't be read straight off disk, so they must be
+        // absent from the index — the caller falls back to the locked path.
+        let p: Vec<u8> = vec![42u8; 4096];
+        let tmp = build_cbz_with(&[("c.png", &p)], false); // Deflated
+        let cbz = Cbz::open(tmp.path(), ArchiveLimits::default()).expect("open");
+        let index = cbz.build_pread_index();
+        assert!(index.is_empty(), "deflated entry must not be indexed");
+        for entry in cbz.pages() {
+            assert!(index.extent(entry.index).is_none());
+        }
     }
 
     // -----------------------------------------------------------------
