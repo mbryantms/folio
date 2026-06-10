@@ -235,6 +235,45 @@ async fn boot_sweep_clears_stale_in_flight_key() {
     assert_ne!(b3["scan_id"].as_str().unwrap(), first_scan_id);
 }
 
+#[tokio::test]
+async fn dead_letter_counts_reflect_the_dead_set() {
+    // OPS-3 follow-up: dead_letter_counts ZCARDs each queue's `{queue}:dead`
+    // ZSET via the storage's own config, so a permanently-failing job is
+    // visible instead of vanishing silently.
+    use redis::AsyncCommands;
+    let app = TestApp::spawn().await;
+    let jobs = &app.state().jobs;
+
+    // Fresh app: every queue reports zero dead jobs.
+    let before = jobs.dead_letter_counts().await.unwrap();
+    assert!(
+        before.iter().all(|(_, n)| *n == 0),
+        "no dead jobs on a fresh app, got {before:?}"
+    );
+
+    // Simulate apalis dead-lettering a scan job: ZADD to the exact key the
+    // counter reads (resolved from the same storage config), so the test is
+    // robust to the apalis namespace format.
+    let dead_key = jobs.scan_storage.get_config().dead_jobs_set();
+    let mut conn = jobs.redis.clone();
+    let _: () = conn.zadd(&dead_key, "job-abc", 1_i64).await.unwrap();
+
+    let after = jobs.dead_letter_counts().await.unwrap();
+    let scan_dead = after
+        .iter()
+        .find(|(q, _)| *q == "scan")
+        .map(|(_, n)| *n)
+        .unwrap();
+    assert_eq!(scan_dead, 1, "scan dead-letter count must reflect the ZSET");
+    // Other queues stay at zero — the count is per-queue, not global.
+    let series_dead = after
+        .iter()
+        .find(|(q, _)| *q == "scan_series")
+        .map(|(_, n)| *n)
+        .unwrap();
+    assert_eq!(series_dead, 0);
+}
+
 async fn post_scan_all(
     app: &TestApp,
     auth: &Authed,

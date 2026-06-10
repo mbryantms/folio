@@ -641,6 +641,80 @@ impl JobRuntime {
         }
         Ok(total)
     }
+
+    /// Count dead-lettered jobs per queue (OPS-3 follow-up). apalis moves a job
+    /// to its `{namespace}:dead` set after it exhausts its attempts; nothing
+    /// surfaced these before, so a permanently-failing job vanished silently.
+    ///
+    /// The dead set is a Redis ZSET, so each is counted with `ZCARD`. The key is
+    /// resolved from the storage's own `Config::dead_jobs_set()` rather than
+    /// hardcoded, so it stays correct across apalis versions (the dead key is
+    /// `{type_name}:dead` and the ZSET shape are unchanged from 0.7 through the
+    /// 1.0 release candidates). Returns `(queue_label, count)` for every queue.
+    pub async fn dead_letter_counts(&self) -> redis::RedisResult<Vec<(&'static str, i64)>> {
+        let keys: [(&'static str, String); 11] = [
+            ("scan", self.scan_storage.get_config().dead_jobs_set()),
+            (
+                "scan_series",
+                self.scan_series_storage.get_config().dead_jobs_set(),
+            ),
+            (
+                "post_scan_thumbs",
+                self.post_scan_thumbs_storage.get_config().dead_jobs_set(),
+            ),
+            (
+                "post_scan_search",
+                self.post_scan_search_storage.get_config().dead_jobs_set(),
+            ),
+            (
+                "post_scan_dictionary",
+                self.post_scan_dictionary_storage
+                    .get_config()
+                    .dead_jobs_set(),
+            ),
+            (
+                "metadata_search_series",
+                self.metadata_search_series_storage
+                    .get_config()
+                    .dead_jobs_set(),
+            ),
+            (
+                "metadata_search_issue",
+                self.metadata_search_issue_storage
+                    .get_config()
+                    .dead_jobs_set(),
+            ),
+            (
+                "metadata_apply_series",
+                self.metadata_apply_series_storage
+                    .get_config()
+                    .dead_jobs_set(),
+            ),
+            (
+                "metadata_apply_issue",
+                self.metadata_apply_issue_storage
+                    .get_config()
+                    .dead_jobs_set(),
+            ),
+            (
+                "rewrite_issue_sidecars",
+                self.rewrite_issue_sidecars_storage
+                    .get_config()
+                    .dead_jobs_set(),
+            ),
+            (
+                "archive_edit",
+                self.archive_edit_storage.get_config().dead_jobs_set(),
+            ),
+        ];
+        let mut conn = self.redis.clone();
+        let mut out = Vec::with_capacity(keys.len());
+        for (label, key) in keys {
+            let count: i64 = conn.zcard(&key).await?;
+            out.push((label, count));
+        }
+        Ok(out)
+    }
 }
 
 /// SCAN + DEL every key matching `pattern`. Cursor-based (never `KEYS`) so it

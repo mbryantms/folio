@@ -507,6 +507,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/queue/dead-letters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_queue_dead_letters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/saved-views": {
         parameters: {
             query?: never;
@@ -5305,6 +5321,22 @@ export interface components {
             /** Format: int64 */
             sessions: number;
         };
+        /** @description One queue's dead-letter count (OPS-3 follow-up). */
+        DeadLetterCount: {
+            /** Format: int64 */
+            count: number;
+            queue: string;
+        };
+        /**
+         * @description Per-queue counts of jobs apalis has given up on (moved to `{queue}:dead`
+         *     after exhausting attempts). `total > 0` is the operator's cue that work is
+         *     failing permanently and silently; the per-queue breakdown points at which.
+         */
+        DeadLetterView: {
+            queues: components["schemas"]["DeadLetterCount"][];
+            /** Format: int64 */
+            total: number;
+        };
         DeadStockEntry: {
             /** Format: int64 */
             issue_count: number;
@@ -9909,6 +9941,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueueClearResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_queue_dead_letters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeadLetterView"];
                 };
             };
             /** @description admin only */
