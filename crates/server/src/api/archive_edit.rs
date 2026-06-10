@@ -490,9 +490,9 @@ pub async fn restore(
     };
 
     let mut redis = app.jobs.redis.clone();
-    match mutex::try_claim(&mut redis, &row.id, mutex::EDIT_TTL_SECS).await {
-        Ok(true) => {}
-        Ok(false) => {
+    let token = match mutex::try_claim(&mut redis, &row.id, mutex::EDIT_TTL_SECS).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
             return error(
                 StatusCode::CONFLICT,
                 "archive.rewrite_in_progress",
@@ -503,7 +503,7 @@ pub async fn restore(
             tracing::error!(error = %e, "archive restore: mutex claim failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
-    }
+    };
 
     let target = std::path::PathBuf::from(&row.file_path);
     let restore_res =
@@ -511,7 +511,7 @@ pub async fn restore(
 
     // Always release the mutex regardless of outcome.
     let mut redis = app.jobs.redis.clone();
-    mutex::release(&mut redis, &row.id).await;
+    mutex::release(&mut redis, &row.id, &token).await;
 
     match restore_res {
         Ok(Ok(())) => {}

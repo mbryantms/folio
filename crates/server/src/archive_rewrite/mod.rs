@@ -37,6 +37,7 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+use uuid::Uuid;
 
 /// Result returned by [`rewrite_atomic`].
 #[derive(Debug, Clone)]
@@ -114,12 +115,8 @@ where
     let parent = target
         .parent()
         .ok_or_else(|| RewriteError::NoParent(target.to_path_buf()))?;
-    let tmp = temp_sibling(target);
-
-    // Always remove any orphan tmp before writing; defensive against the
-    // crash-mid-rename window (boot cleanup is the canonical reaper but
-    // doing it here too costs nothing).
-    let _ = fs::remove_file(&tmp);
+    let tmp = temp_staging(target);
+    claim_staging_path(&tmp)?;
 
     write_into(&tmp)?;
     fsync_file(&tmp)?;
@@ -140,12 +137,31 @@ where
     })
 }
 
-/// `<target>.tmp` in the same directory as `target`. The shared suffix
-/// is intentional so [`startup_cleanup`] can identify and remove orphans.
-pub fn temp_sibling(target: &Path) -> PathBuf {
+/// A fresh, unpredictable staging path for `target`: `<target>.<random>.tmp`
+/// in the same directory (so the final rename stays on one filesystem). The
+/// random component means an attacker who can write to the media directory
+/// can't pre-plant a symlink at the staging path to redirect the write
+/// out of the library root (SEC-8). The `.tmp` suffix is preserved so
+/// [`startup_cleanup`] still recognizes and reaps orphans.
+fn temp_staging(target: &Path) -> PathBuf {
     let mut s = target.as_os_str().to_os_string();
+    s.push(".");
+    s.push(Uuid::now_v7().simple().to_string());
     s.push(".tmp");
     PathBuf::from(s)
+}
+
+/// Atomically create the staging file with `O_EXCL` (`create_new`), so the
+/// write fails closed if anything already exists at the path — a pre-planted
+/// regular file or symlink can never be followed/truncated (SEC-8). The
+/// randomized name from [`temp_staging`] makes a pre-plant infeasible in the
+/// first place; this is the belt-and-suspenders that proves nothing was there.
+fn claim_staging_path(tmp: &Path) -> Result<(), RewriteError> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(tmp)?;
+    Ok(())
 }
 
 /// Backup-slot name for `target`: `<target>.bak` for slot 0,
@@ -237,8 +253,8 @@ where
     let parent = dst
         .parent()
         .ok_or_else(|| RewriteError::NoParent(dst.to_path_buf()))?;
-    let tmp = temp_sibling(dst);
-    let _ = fs::remove_file(&tmp);
+    let tmp = temp_staging(dst);
+    claim_staging_path(&tmp)?;
 
     write_into(&tmp)?;
     fsync_file(&tmp)?;
@@ -425,14 +441,12 @@ mod tests {
         });
         assert!(res.is_err());
 
-        // Original untouched, no .bak created, tmp cleaned up.
+        // Original untouched, no .bak created. Any staging orphan has a
+        // randomized name (temp_staging) and is reaped by startup_cleanup; we
+        // don't reconstruct it here.
         assert_eq!(fs::read(&target).unwrap(), b"v1-contents");
         let bak = target.with_extension("cbz.bak");
         assert!(!bak.exists());
-        let tmp = temp_sibling(&target);
-        // Tmp may exist if the closure wrote partial bytes before
-        // returning — that's the orphan boot-cleanup will reap.
-        let _ = tmp;
     }
 
     #[test]
@@ -498,6 +512,32 @@ mod tests {
         fs::write(&target, b"v1").unwrap();
         let res = rewrite_atomic(&target, 6, |_| Ok(()));
         assert!(matches!(res, Err(RewriteError::InvalidRetainCount(6))));
+    }
+
+    #[test]
+    fn temp_staging_is_randomized_and_tmp_suffixed() {
+        let target = Path::new("/lib/series/issue.cbz");
+        let a = temp_staging(target);
+        let b = temp_staging(target);
+        // Distinct each call (random component) and still under the same dir
+        // with a `.tmp` suffix so startup_cleanup reaps orphans.
+        assert_ne!(a, b);
+        for p in [&a, &b] {
+            assert!(p.to_str().unwrap().ends_with(".tmp"));
+            assert_eq!(p.parent(), target.parent());
+        }
+    }
+
+    #[test]
+    fn claim_staging_path_fails_closed_on_existing_file() {
+        let dir = TempDir::new().unwrap();
+        // Fresh path: claim succeeds and creates the file.
+        let fresh = dir.path().join("issue.cbz.fresh.tmp");
+        claim_staging_path(&fresh).unwrap();
+        assert!(fresh.exists());
+        // Pre-existing path (stand-in for a pre-planted file/symlink): O_EXCL
+        // makes the second claim fail rather than open/truncate it.
+        assert!(claim_staging_path(&fresh).is_err());
     }
 
     #[test]

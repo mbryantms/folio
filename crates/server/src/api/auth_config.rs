@@ -237,8 +237,16 @@ pub async fn probe_discovery(
         "{}/.well-known/openid-configuration",
         issuer.trim_end_matches('/')
     );
+    // Disable redirect following (matches the real OIDC discovery client in
+    // auth::oidc). A discovery endpoint should answer directly; following
+    // redirects would let a public issuer 3xx-bounce the server onto an
+    // internal target — the one SSRF amplifier the probe had over the
+    // admin-configured flow it mirrors (SEC-5). Internal issuers themselves are
+    // intentionally still allowed: self-hosters legitimately run their IdP on a
+    // LAN/loopback address, and an admin can already point the live flow there.
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(c) => c,

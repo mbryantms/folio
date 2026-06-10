@@ -222,12 +222,12 @@ impl ComicVineClient {
         let resp = req
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| ProviderError::Transport(redact_api_key(&e.to_string())))?;
         let status = resp.status();
         let body = resp
             .text()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| ProviderError::Transport(redact_api_key(&e.to_string())))?;
         if !status.is_success() {
             // CV occasionally returns non-200 for 5xx; surface those
             // distinctly. 4xx (other than 429) we still try to parse
@@ -955,6 +955,29 @@ impl MetadataProvider for ComicVineClient {
     }
 }
 
+/// Redact the `api_key` query value from a string before it reaches logs.
+///
+/// reqwest's error `Display` includes the full request URL, and CV auth is a
+/// query param (`?api_key=…`, CV accepts no header). Without this, a routine CV
+/// timeout or connection reset writes the operator's API key into `/admin/logs`
+/// and any OTLP export (SEC-4). Scans for the literal `api_key=` and replaces
+/// everything up to the next `&` (or end), so it's independent of the key's
+/// contents and handles repeated occurrences.
+fn redact_api_key(s: &str) -> String {
+    const MARKER: &str = "api_key=";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find(MARKER) {
+        let (head, tail) = rest.split_at(pos + MARKER.len());
+        out.push_str(head);
+        out.push_str("REDACTED");
+        let value_end = tail.find('&').unwrap_or(tail.len());
+        rest = &tail[value_end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 // CV /search responses are typed per-resource-key; the API returns
 // `{ results: { issue: [...], volume: [...] } }` when multiple
 // resources are requested OR `{ results: [...] }` for a single
@@ -982,6 +1005,31 @@ mod tests {
         assert!(parse_date(&Some("not-a-date".into())).is_none());
         assert!(parse_date(&None).is_none());
         assert!(parse_date(&Some("".into())).is_none());
+    }
+
+    #[test]
+    fn redact_api_key_strips_secret_from_error_strings() {
+        let secret = "0123456789abcdef0123456789abcdef01234567";
+        // Mid-URL with a trailing param.
+        let s = format!(
+            "error sending request for url (https://comicvine.example/api/issue/?api_key={secret}&format=json)"
+        );
+        let out = redact_api_key(&s);
+        assert!(!out.contains(secret), "key leaked: {out}");
+        assert!(out.contains("api_key=REDACTED"));
+        assert!(out.contains("&format=json"), "non-secret params preserved");
+
+        // Key at end of string (no trailing '&').
+        let s2 = format!("https://comicvine.example/?api_key={secret}");
+        let out2 = redact_api_key(&s2);
+        assert!(!out2.contains(secret));
+        assert!(out2.ends_with("api_key=REDACTED"));
+
+        // No key present — unchanged.
+        assert_eq!(
+            redact_api_key("plain transport error"),
+            "plain transport error"
+        );
     }
 
     #[test]
