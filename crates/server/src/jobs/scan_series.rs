@@ -98,16 +98,19 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
                 return Ok(());
             }
             Err(e) => {
+                // The scanner's finalize_run already recorded this failure
+                // (scan_runs.state='failed' + error, a Failed WS event, and a
+                // library_event), so return Ok rather than drive apalis's 5×
+                // retry of a scan whose failure is usually deterministic. Mirrors
+                // jobs::scan::handle. (OPS-3 follow-up.)
                 tracing::error!(
                     library_id = %job.library_id,
                     issue_id,
                     error = %e,
-                    "scan_issue narrow path failed",
+                    "scan_issue narrow path failed (recorded in scan_runs; not retried)",
                 );
                 release_scope(&state, &job).await;
-                return Err(Error::Failed(std::sync::Arc::new(Box::new(
-                    std::io::Error::other(e.to_string()),
-                ))));
+                return Ok(());
             }
         }
     }
@@ -187,17 +190,18 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
                 return Ok(());
             }
             Err(e) => {
+                // Failure already recorded by the scanner finalize (see the
+                // scan_issue branch above) — return Ok so apalis doesn't re-run
+                // the whole series scan 5×. (OPS-3 follow-up.)
                 tracing::error!(
                     library_id = %job.library_id,
                     series_id = %series_id,
                     folder = %folder.display(),
                     error = %e,
-                    "scan_series narrow path failed",
+                    "scan_series narrow path failed (recorded in scan_runs; not retried)",
                 );
                 release_scope(&state, &job).await;
-                return Err(Error::Failed(std::sync::Arc::new(Box::new(
-                    std::io::Error::other(e.to_string()),
-                ))));
+                return Ok(());
             }
         }
     }
