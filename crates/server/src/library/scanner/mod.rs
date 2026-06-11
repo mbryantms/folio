@@ -1822,11 +1822,25 @@ async fn process_planned_folder(
     let series_id = if let Some(series_id) = known_series_id {
         series_id
     } else {
-        let mut hint = process::peek_identity_hint(
-            &archives[0],
-            state.cfg().archive_limits(),
-            process::filename_opts(lib),
-        );
+        // Identity peek opens the first archive + decompresses its ComicVine /
+        // ComicInfo to infer series identity — blocking archive IO. Run it on a
+        // blocking thread under the shared archive-work semaphore so a slow /
+        // NFS-backed first scan with many new series can't stall the reactor
+        // threads (PERF-7).
+        let mut hint = {
+            let path = archives[0].clone();
+            let limits = state.cfg().archive_limits();
+            let opts = process::filename_opts(lib);
+            let _permit = state
+                .archive_work_semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .ok();
+            tokio::task::spawn_blocking(move || process::peek_identity_hint(&path, limits, opts))
+                .await
+                .map_err(|e| anyhow::anyhow!("identity peek task failed: {e}"))?
+        };
 
         // Folder-leaf `V<N>` fallback. Filename inference rejects
         // `V<year>` after the plausibility fix; the folder leaf is the

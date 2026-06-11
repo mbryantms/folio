@@ -83,17 +83,16 @@ pub async fn thumb(
     // Hot path: any file on disk (in any known format) → stream it. The
     // library may have switched format since the last regen, but reads are
     // format-agnostic so old thumbs keep serving until force-recreate.
-    if let Some(cached) = app.cached_thumb_path(&cache_key).await {
+    if let Some(cached) = app.cached_thumb_path(&cache_key) {
         if tokio::fs::try_exists(&cached).await.unwrap_or(false) {
             return serve_file(&cached, &headers, &row.id, page_index, variant).await;
         }
-        app.uncache_thumb_path(&cache_key).await;
+        app.uncache_thumb_path(&cache_key);
     }
     if let Some(existing) =
         thumbnails::find_existing_variant(&app.cfg().data_path, &row.id, variant, page_index)
     {
-        app.cache_thumb_path(cache_key.clone(), existing.clone())
-            .await;
+        app.cache_thumb_path(cache_key.clone(), existing.clone());
         return serve_file(&existing, &headers, &row.id, page_index, variant).await;
     }
 
@@ -194,7 +193,7 @@ pub async fn thumb(
         .await;
     }
 
-    app.cache_thumb_path(cache_key, path.clone()).await;
+    app.cache_thumb_path(cache_key, path.clone());
     serve_file(&path, &headers, &row.id, page_index, variant).await
 }
 

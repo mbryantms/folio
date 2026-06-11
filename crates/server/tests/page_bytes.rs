@@ -45,6 +45,59 @@ fn build_cbz(path: &std::path::Path, payload: &[u8]) {
     zw.finish().unwrap();
 }
 
+/// Build a multi-page CBZ, Stored (→ PERF-3 pread path) or Deflated (→ locked
+/// fallback path).
+fn build_cbz_pages(path: &std::path::Path, pages: &[(&str, &[u8])], stored: bool) {
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let method = if stored {
+        zip::CompressionMethod::Stored
+    } else {
+        zip::CompressionMethod::Deflated
+    };
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(method);
+    for (name, bytes) in pages {
+        zw.start_file(*name, opts).unwrap();
+        zw.write_all(bytes).unwrap();
+    }
+    zw.finish().unwrap();
+}
+
+/// A distinct, PNG-sniffable payload — starts with the PNG magic (so the
+/// content-type sniff passes) then a deterministic, seed-varied fill so a
+/// cross-wired offset surfaces as mismatched bytes.
+fn distinct_payload(len: usize, seed: u8) -> Vec<u8> {
+    let mut v = PNG_HEADER.to_vec();
+    let mut i: usize = 0;
+    while v.len() < len {
+        v.push(((i.wrapping_mul(31).wrapping_add(seed as usize)) % 251) as u8);
+        i += 1;
+    }
+    v
+}
+
+async fn get_page(
+    router: &axum::Router,
+    session: &str,
+    id: &str,
+    n: u32,
+    range: Option<&str>,
+) -> axum::response::Response {
+    let mut b = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/issues/{id}/pages/{n}"))
+        .header(header::COOKIE, format!("__Host-comic_session={session}"));
+    if let Some(r) = range {
+        b = b.header(header::RANGE, r);
+    }
+    router
+        .clone()
+        .oneshot(b.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
 async fn register_admin(app: &TestApp) -> String {
     let resp = app
         .router
@@ -290,6 +343,74 @@ async fn full_body_returns_200_with_sniffed_content_type() {
     assert!(cd.to_str().unwrap().contains("page-0.png"));
     let body = body_bytes(resp.into_body()).await;
     assert_eq!(body, payload);
+}
+
+#[tokio::test]
+async fn deflated_page_serves_correct_bytes_via_locked_path() {
+    // PERF-3: a Deflated entry isn't in the pread index, so it falls back to the
+    // locked decompression path. Full page + a Range must still be byte-correct.
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("deflated.cbz");
+    let payload = distinct_payload(900, 7);
+    build_cbz_pages(&cbz, &[("page-001.png", &payload)], false);
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+
+    let resp = get_page(&app.router, &session, &id, 0, None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_bytes(resp.into_body()).await, payload);
+
+    let resp = get_page(&app.router, &session, &id, 0, Some("bytes=100-199")).await;
+    assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(body_bytes(resp.into_body()).await, payload[100..200]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_reads_of_same_issue_are_byte_correct() {
+    // PERF-3: the pread path opens a private file handle per request, so many
+    // parallel reads of the same Stored issue must each return the right page's
+    // bytes — a shared-cursor or cross-wired-offset bug would surface as one
+    // page's bytes leaking into another's response.
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("multi.cbz");
+    let p0 = distinct_payload(500, 1);
+    let p1 = distinct_payload(811, 2);
+    let p2 = distinct_payload(637, 3);
+    build_cbz_pages(
+        &cbz,
+        &[("p0.png", &p0), ("p1.png", &p1), ("p2.png", &p2)],
+        true,
+    );
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+
+    let payloads = [p0, p1, p2];
+    let reqs = (0..30).map(|round| {
+        let page = round % 3;
+        let expected = &payloads[page];
+        let router = &app.router;
+        let session = session.as_str();
+        let id = id.as_str();
+        async move {
+            // Alternate full reads and ranges to stress both pread branches.
+            let resp = if round % 2 == 0 {
+                get_page(router, session, id, page as u32, None).await
+            } else {
+                get_page(router, session, id, page as u32, Some("bytes=50-149")).await
+            };
+            let body = body_bytes(resp.into_body()).await;
+            if round % 2 == 0 {
+                assert_eq!(&body, expected, "full page {page} round {round}");
+            } else {
+                assert_eq!(body, expected[50..150], "range page {page} round {round}");
+            }
+        }
+    });
+    futures::future::join_all(reqs).await;
 }
 
 #[tokio::test]

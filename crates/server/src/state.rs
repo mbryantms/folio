@@ -1,5 +1,6 @@
 //! Shared application state (`Arc<AppState>` cloned into every handler).
 
+use crate::auth::jwt::JwtKeys;
 use crate::config::Config;
 use crate::email::{Email, EmailSender, EmailStatus};
 use crate::jobs::JobRuntime;
@@ -8,13 +9,20 @@ use crate::library::zip_lru::ZipLru;
 use crate::observability::{LogReloadHandle, LogRingBuffer};
 use crate::secrets::Secrets;
 use arc_swap::ArcSwap;
+use lru::LruCache;
 use metrics_exporter_prometheus::PrometheusHandle;
 use sea_orm::DatabaseConnection;
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio_cron_scheduler::JobScheduler;
+
+/// Capacity of the thumbnail-path LRU. Each entry is a small string key → path;
+/// a few thousand covers the working set of an active browsing session while
+/// bounding memory regardless of library size.
+const THUMB_PATH_CACHE_CAP: usize = 4096;
 
 #[derive(Clone)]
 pub struct AppState(pub Arc<Inner>);
@@ -33,6 +41,12 @@ pub struct Inner {
     pub cfg_baseline: Arc<Config>,
     pub db: DatabaseConnection,
     pub secrets: Secrets,
+    /// JWT signer/verifier built once at boot from the Ed25519 secret +
+    /// public_url, rather than re-derived per request (PERF-9). `public_url` is
+    /// env/infra (not runtime-editable), so the boot value is stable for the
+    /// process. Used by the auth extractor (verify) and the sign-in / OIDC
+    /// callback (issue).
+    pub jwt_keys: Arc<JwtKeys>,
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub zip_lru: ZipLru,
     /// Caches `SHA-256(app-password) → row id` so repeat OPDS/Bearer auths skip
@@ -84,8 +98,12 @@ pub struct Inner {
     /// strip burst from pushing the same issue dozens of times.
     pub thumb_job_inflight: Arc<Mutex<HashSet<String>>>,
     /// Process-local cache from a thumbnail request key to the exact file that
-    /// satisfied it. This avoids extension probing on hot image requests.
-    pub thumb_path_cache: Arc<Mutex<HashMap<String, PathBuf>>>,
+    /// satisfied it, avoiding extension probing on hot image requests. Bounded
+    /// LRU (PERF-9): the previous unbounded `HashMap` grew one entry per
+    /// (issue, variant, page) ever served and was never evicted; a `std::sync`
+    /// mutex replaces the global async lock since the critical section is a
+    /// trivial map op held across no await.
+    pub thumb_path_cache: Arc<std::sync::Mutex<LruCache<String, PathBuf>>>,
     /// Global cap on blocking archive work shared by scans and thumbnail
     /// workers. Queue concurrency controls scheduling; this controls actual
     /// filesystem/archive pressure.
@@ -123,12 +141,21 @@ impl AppState {
     ) -> Self {
         let zip_lru = ZipLru::new(cfg.zip_lru_capacity, cfg.archive_limits());
         let app_password_cache = crate::auth::app_password::AppPasswordCache::new();
+        // Build the JWT keys once (PERF-9). from_secret is effectively
+        // infallible (byte wrapping + key construction); a failure here means a
+        // broken boot secret, so panicking at startup is correct.
+        let jwt_keys = Arc::new(
+            JwtKeys::from_secret(&secrets.jwt_ed25519, &cfg.public_url)
+                .expect("build JWT keys from boot secret + public_url"),
+        );
         let thumb_inline_parallel = cfg.thumb_inline_parallel.max(1);
         let thumb_inline_semaphore = Arc::new(Semaphore::new(thumb_inline_parallel));
         let archive_work_parallel = cfg.archive_work_parallel.max(1);
         let archive_work_semaphore = Arc::new(Semaphore::new(archive_work_parallel));
         let thumb_job_inflight = Arc::new(Mutex::new(HashSet::new()));
-        let thumb_path_cache = Arc::new(Mutex::new(HashMap::new()));
+        let thumb_path_cache = Arc::new(std::sync::Mutex::new(LruCache::new(
+            NonZeroUsize::new(THUMB_PATH_CACHE_CAP).expect("nonzero"),
+        )));
         let scheduler = Arc::new(Mutex::new(None));
         let library_scan_job_ids = Arc::new(Mutex::new(HashMap::new()));
         let initial_status = EmailStatus::from_sender(email.as_ref());
@@ -147,6 +174,7 @@ impl AppState {
             cfg_baseline: Arc::new(baseline),
             db,
             secrets,
+            jwt_keys,
             started_at: chrono::Utc::now(),
             zip_lru,
             app_password_cache,
@@ -251,16 +279,28 @@ impl AppState {
         self.thumb_job_inflight.lock().await.clone()
     }
 
-    pub async fn cached_thumb_path(&self, key: &str) -> Option<PathBuf> {
-        self.thumb_path_cache.lock().await.get(key).cloned()
+    pub fn cached_thumb_path(&self, key: &str) -> Option<PathBuf> {
+        // `LruCache::get` marks recency, so it needs &mut — the std Mutex gives
+        // it. No await is held across the lock.
+        self.thumb_path_cache
+            .lock()
+            .expect("thumb_path_cache poisoned")
+            .get(key)
+            .cloned()
     }
 
-    pub async fn cache_thumb_path(&self, key: String, path: PathBuf) {
-        self.thumb_path_cache.lock().await.insert(key, path);
+    pub fn cache_thumb_path(&self, key: String, path: PathBuf) {
+        self.thumb_path_cache
+            .lock()
+            .expect("thumb_path_cache poisoned")
+            .put(key, path);
     }
 
-    pub async fn uncache_thumb_path(&self, key: &str) {
-        self.thumb_path_cache.lock().await.remove(key);
+    pub fn uncache_thumb_path(&self, key: &str) {
+        self.thumb_path_cache
+            .lock()
+            .expect("thumb_path_cache poisoned")
+            .pop(key);
     }
 
     pub async fn set_scheduler(&self, scheduler: JobScheduler) {

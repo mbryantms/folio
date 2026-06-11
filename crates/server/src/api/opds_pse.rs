@@ -32,6 +32,7 @@ use axum::{
 use entity::{issue, library_user_access, user};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 use uuid::Uuid;
 
@@ -133,11 +134,11 @@ pub async fn stream(
     // than refactored into a shared helper because page_bytes also wires
     // up Cache-Control and If-Range against the `CurrentUser` etag, both
     // of which don't apply here verbatim.
-    let arc = match app
+    let (arc, pread) = match app
         .zip_lru
-        .get_or_open(&issue_row.id, std::path::Path::new(&issue_row.file_path))
+        .get_or_open_indexed(&issue_row.id, std::path::Path::new(&issue_row.file_path))
     {
-        Ok(a) => a,
+        Ok(pair) => pair,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %issue_row.id, "pse: zip_lru open failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "archive_unreadable");
@@ -172,6 +173,7 @@ pub async fn stream(
             mime,
             ext,
             entry_index: page_index,
+            zip_ordinal: entry.index,
         })
     })
     .await;
@@ -261,10 +263,37 @@ pub async fn stream(
             .unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
     );
 
-    // Full-page request (200, whole entry): stream so memory stays flat (PERF-2;
-    // PSE clients prefetch ~10 pages, so the old buffered path meant ~10×
-    // page-size resident). Range requests stay buffered — bounded by the
-    // requested length. Same split + lock-hold tradeoff as `page_bytes::serve`.
+    // PERF-3 — lock-free pread fast path for Stored entries (the common case).
+    // Streams the page's bytes straight from a private per-request file handle
+    // at a precomputed offset: no decompression, no archive mutex. Covers full
+    // (200) and Range (206) via `take(len)`. Deflated / recovery-backed entries
+    // (absent from the index) or any IO error fall through to the locked path.
+    // Byte equivalence with the locked read is proven in `archive::cbz` tests.
+    if let Some(extent) = pread.extent(meta.zip_ordinal)
+        && extent.length == meta.total
+        && let Ok(mut file) = tokio::fs::File::open(&issue_row.file_path).await
+        && file
+            .seek(std::io::SeekFrom::Start(extent.data_start + start))
+            .await
+            .is_ok()
+    {
+        hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
+        if status == StatusCode::PARTIAL_CONTENT {
+            let end = start + len - 1;
+            hdrs.insert(
+                header::CONTENT_RANGE,
+                HeaderValue::from_str(&format!("bytes {start}-{end}/{}", meta.total))
+                    .unwrap_or_else(|_| HeaderValue::from_static("bytes 0-0/0")),
+            );
+        }
+        let body = Body::from_stream(ReaderStream::new(file.take(len)));
+        return (status, hdrs, body).into_response();
+    }
+
+    // Locked fallback (Deflated / recovery / pread IO failure). Full-page
+    // request (200, whole entry): stream so memory stays flat (PERF-2; PSE
+    // clients prefetch ~10 pages, so the old buffered path meant ~10× page-size
+    // resident). Range requests stay buffered — bounded by the requested length.
     if status == StatusCode::OK && start == 0 && len == meta.total {
         hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(meta.total));
         let arc_for_read = arc.clone();
@@ -356,6 +385,9 @@ struct PageMeta {
     mime: &'static str,
     ext: &'static str,
     entry_index: usize,
+    /// Zip ordinal (`ArchiveEntry::index`) — key into the `PreadIndex` for the
+    /// lock-free Stored read path (PERF-3).
+    zip_ordinal: usize,
 }
 
 #[derive(Debug)]

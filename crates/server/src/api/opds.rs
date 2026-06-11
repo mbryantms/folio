@@ -1430,24 +1430,30 @@ pub(crate) async fn download(
         .unwrap_or_else(|| "comic.cbz".to_owned());
     let mime = mime_for(&row.file_path);
 
-    audit::record(
-        &app.db,
-        AuditEntry {
-            actor_id: user.id,
-            action: "opds.download",
-            target_type: Some("issue"),
-            target_id: Some(row.id.clone()),
-            payload: serde_json::json!({ "file_path": row.file_path }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
-        },
-    )
-    .await;
-
     let range = headers
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| parse_byte_range(v, total));
+
+    // Audit only the *initial* fetch — a full download or a range starting at
+    // byte 0 — not every continuation chunk (PERF-9). Segmented clients (Panels
+    // resume, KOReader) otherwise wrote one identical `opds.download` row per
+    // range request, amplifying the audit log and its write cost.
+    if matches!(range, None | Some(Ok((0, _)))) {
+        audit::record(
+            &app.db,
+            AuditEntry {
+                actor_id: user.id,
+                action: "opds.download",
+                target_type: Some("issue"),
+                target_id: Some(row.id.clone()),
+                payload: serde_json::json!({ "file_path": row.file_path }),
+                ip: ctx.ip_string(),
+                user_agent: ctx.user_agent.clone(),
+            },
+        )
+        .await;
+    }
 
     match range {
         Some(Ok((start, end))) => {

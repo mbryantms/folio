@@ -20,6 +20,7 @@ use axum::{
 };
 use entity::{issue, library_user_access};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::error;
@@ -61,11 +62,11 @@ pub async fn serve(
         return not_modified(&etag_value);
     }
 
-    let arc = match app
+    let (arc, pread) = match app
         .zip_lru
-        .get_or_open(&row.id, std::path::Path::new(&row.file_path))
+        .get_or_open_indexed(&row.id, std::path::Path::new(&row.file_path))
     {
-        Ok(a) => a,
+        Ok(pair) => pair,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "zip_lru open failed");
             return error(
@@ -101,6 +102,7 @@ pub async fn serve(
             .ok_or(PageError::NotFound)?;
         // Drop the borrow on `pages` (which borrows `cbz`) before reading.
         let total = entry.uncompressed_size;
+        let zip_ordinal = entry.index;
 
         // Sniff first 16 bytes (or whole entry, whichever is smaller).
         let head_len = total.min(16) as usize;
@@ -114,6 +116,7 @@ pub async fn serve(
 
         Ok(PageBytes {
             entry_index_in_pages: page_index,
+            zip_ordinal,
             total,
             mime,
             ext,
@@ -181,12 +184,43 @@ pub async fn serve(
             .unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
     );
 
-    // Full-page request (200, whole entry): stream the entry straight into the
-    // response body so memory stays flat regardless of page size — a 100 MB page
-    // no longer means a 100 MB per-request allocation (PERF-2). The per-issue zip
-    // mutex is held for the stream's duration; PERF-3 lifts that with a lock-free
-    // pread fast path. Range requests stay buffered below — already bounded by
-    // the client-requested length and rare on this path.
+    // PERF-3 — lock-free fast path for `Stored` (uncompressed) entries, the
+    // common case for comic CBZs (images are already compressed). The entry's
+    // bytes sit verbatim at a precomputed file offset, so we stream them from a
+    // private, per-request file handle with no decompression and *without* the
+    // per-issue archive mutex — concurrent reads of one issue no longer
+    // serialize, and a slow client holds no lock. Covers both the full-page
+    // (200) and Range (206) cases via `take(len)`. Any IO hiccup (or a
+    // Deflated / recovery-backed entry, which isn't in the index) falls through
+    // to the locked path below. The byte-for-byte equivalence with the locked
+    // read is proven in `archive::cbz` tests.
+    if let Some(extent) = pread.extent(info.zip_ordinal)
+        && extent.length == info.total
+        && let Ok(mut file) = tokio::fs::File::open(&row.file_path).await
+        && file
+            .seek(std::io::SeekFrom::Start(extent.data_start + start))
+            .await
+            .is_ok()
+    {
+        hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
+        if status == StatusCode::PARTIAL_CONTENT {
+            let end = start + len - 1;
+            hdrs.insert(
+                header::CONTENT_RANGE,
+                HeaderValue::from_str(&format!("bytes {start}-{end}/{}", info.total))
+                    .unwrap_or_else(|_| HeaderValue::from_static("bytes 0-0/0")),
+            );
+        }
+        let body = Body::from_stream(ReaderStream::new(file.take(len)));
+        return (status, hdrs, body).into_response();
+    }
+
+    // Locked fallback for Deflated / recovery-backed entries (or a pread IO
+    // failure). Full-page request (200, whole entry): stream the entry straight
+    // into the response so memory stays flat regardless of page size (PERF-2).
+    // The per-issue zip mutex is held for the stream's duration here; the pread
+    // path above avoids it for the common Stored case. Range requests stay
+    // buffered — already bounded by the client-requested length.
     if status == StatusCode::OK && start == 0 && len == info.total {
         hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(info.total));
         let arc_for_read = info.cbz_arc.clone();
@@ -281,6 +315,9 @@ fn not_modified(etag: &str) -> Response {
 
 struct PageBytes {
     entry_index_in_pages: usize,
+    /// Zip ordinal (`ArchiveEntry::index`) — the key into the `PreadIndex` for
+    /// the lock-free Stored read path (PERF-3).
+    zip_ordinal: usize,
     total: u64,
     mime: &'static str,
     ext: &'static str,
