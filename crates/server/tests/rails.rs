@@ -404,6 +404,14 @@ async fn seed_extra_issue(
 /// Seed an admin-owned CBL list with matched entries at sequential
 /// positions. Each tuple in `entries` is `(position, matched_issue_id)`.
 async fn seed_cbl_list(app: &TestApp, name: &str, entries: &[(i32, &str)]) -> Uuid {
+    let mixed: Vec<(i32, Option<&str>)> = entries.iter().map(|(p, id)| (*p, Some(*id))).collect();
+    seed_cbl_list_mixed(app, name, &mixed).await
+}
+
+/// Like [`seed_cbl_list`] but entries can be unmatched (`None`), with
+/// `match_status = 'missing'` — for exercising lists whose head entry
+/// has no local match.
+async fn seed_cbl_list_mixed(app: &TestApp, name: &str, entries: &[(i32, Option<&str>)]) -> Uuid {
     let db = Database::connect(&app.db_url).await.unwrap();
     let now = Utc::now().fixed_offset();
     let list_id = Uuid::now_v7();
@@ -436,6 +444,7 @@ async fn seed_cbl_list(app: &TestApp, name: &str, entries: &[(i32, &str)]) -> Uu
     .unwrap();
 
     for (pos, issue_id) in entries {
+        let matched = issue_id.is_some();
         cbl_entry::ActiveModel {
             id: Set(Uuid::now_v7()),
             cbl_list_id: Set(list_id),
@@ -448,13 +457,13 @@ async fn seed_cbl_list(app: &TestApp, name: &str, entries: &[(i32, &str)]) -> Uu
             cv_issue_id: Set(None),
             metron_series_id: Set(None),
             metron_issue_id: Set(None),
-            matched_issue_id: Set(Some((*issue_id).into())),
-            match_status: Set("matched".into()),
-            match_method: Set(Some("test".into())),
-            match_confidence: Set(Some(1.0)),
+            matched_issue_id: Set(issue_id.map(Into::into)),
+            match_status: Set(if matched { "matched" } else { "missing" }.into()),
+            match_method: Set(matched.then(|| "test".into())),
+            match_confidence: Set(matched.then_some(1.0)),
             ambiguous_candidates: Set(None),
             user_resolved_at: Set(None),
-            matched_at: Set(Some(now)),
+            matched_at: Set(matched.then_some(now)),
         }
         .insert(&db)
         .await
@@ -964,6 +973,7 @@ async fn on_deck_cbl_next_picks_lowest_unfinished_position() {
         &[(0, &issue1_id), (1, &issue2_id), (2, &issue3_id)],
     )
     .await;
+    seed_cbl_saved_view(&app, None, list_id, "Trilogy view").await;
 
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     // Finish entry 0 — so entry 1 is next.
@@ -979,6 +989,10 @@ async fn on_deck_cbl_next_picks_lowest_unfinished_position() {
     assert_eq!(cbl_card["cbl_list_name"], "Trilogy");
     assert_eq!(cbl_card["position"], 2, "1-based, so position 1 → 2");
     assert_eq!(cbl_card["issue"]["id"], issue2_id);
+    // The card's activity is the *frontier* timestamp (the finished
+    // prefix's MAX(updated_at)), not just any progress intersecting
+    // the list.
+    assert_eq!(cbl_card["last_activity"], t0.to_rfc3339());
 }
 
 #[tokio::test]
@@ -996,12 +1010,13 @@ async fn on_deck_excludes_in_progress_issue_surfacing_via_cbl() {
     let issue3_id = seed_extra_issue(&app, lib_id, series_id, 3.0, "od-inprog-3").await;
     grant_access(&app, user.user_id, lib_id).await;
 
-    let _list_id = seed_cbl_list(
+    let list_id = seed_cbl_list(
         &app,
         "InProgress",
         &[(0, &issue1_id), (1, &issue2_id), (2, &issue3_id)],
     )
     .await;
+    seed_cbl_saved_view(&app, None, list_id, "InProgress view").await;
 
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     // Finish entry 0, so entry 1 (issue2) becomes the CBL's next-unfinished…
@@ -1042,6 +1057,7 @@ async fn on_deck_cbl_wins_when_issue_overlaps_series_next() {
         &[(0, &issue1_id), (1, &issue2_id), (2, &_issue3_id)],
     )
     .await;
+    seed_cbl_saved_view(&app, None, list_id, "Overlap view").await;
 
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
@@ -1098,6 +1114,8 @@ async fn on_deck_dedups_same_issue_across_two_cbls() {
     // issue 1 is finished, both lists pick issue 2 as their next.
     let list_a = seed_cbl_list(&app, "List A", &[(0, &issue1_id), (1, &issue2_id)]).await;
     let list_b = seed_cbl_list(&app, "List B", &[(0, &issue1_id), (1, &issue2_id)]).await;
+    seed_cbl_saved_view(&app, None, list_a, "List A view").await;
+    seed_cbl_saved_view(&app, None, list_b, "List B view").await;
 
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
@@ -1135,7 +1153,8 @@ async fn on_deck_excludes_caught_up_cbls() {
     let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-done-2").await;
     grant_access(&app, user.user_id, lib_id).await;
 
-    let _list_id = seed_cbl_list(&app, "Done", &[(0, &issue1_id), (1, &issue2_id)]).await;
+    let list_id = seed_cbl_list(&app, "Done", &[(0, &issue1_id), (1, &issue2_id)]).await;
+    seed_cbl_saved_view(&app, None, list_id, "Done view").await;
 
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     // Finish both matched entries → CBL is caught up.
@@ -1261,7 +1280,11 @@ async fn on_deck_excludes_fully_unread_cbls() {
     grant_access(&app, user.user_id, lib_id).await;
     let _ = series_id;
 
-    let _list_id = seed_cbl_list(&app, "CBL Reset", &[(0, &issue1_id), (1, &_issue2_id)]).await;
+    // Wrapped in a saved view so the ghost guard isn't what hides it —
+    // this test is double-covered now (the meaningful-progress SQL
+    // filter AND the empty finished prefix both exclude the list).
+    let list_id = seed_cbl_list(&app, "CBL Reset", &[(0, &issue1_id), (1, &_issue2_id)]).await;
+    seed_cbl_saved_view(&app, None, list_id, "CBL Reset view").await;
 
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
@@ -1304,6 +1327,7 @@ async fn on_deck_series_with_cbl_yields_to_cbl_card_only() {
     // still surfaces in On Deck), and series 1 (unread, sort_number=1)
     // would otherwise also surface as SeriesNext.
     let list_id = seed_cbl_list(&app, "Owns Series", &[(0, &issue2_id), (1, &_issue3_id)]).await;
+    seed_cbl_saved_view(&app, None, list_id, "Owns Series view").await;
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue2_id, 19, true, t0).await;
 
@@ -1466,9 +1490,12 @@ async fn on_deck_cbl_next_carries_saved_view_id_when_one_exists() {
 }
 
 #[tokio::test]
-async fn on_deck_cbl_next_omits_saved_view_id_when_no_view_wraps_the_list() {
-    // No saved view → field is absent (serde-skipped). The reader
-    // still works, just without persistent CBL context.
+async fn on_deck_cbl_without_saved_view_is_not_a_candidate() {
+    // Ghost guard: a `cbl_lists` row with no saved-view wrapper (partial
+    // two-step import, or a wrapper-only delete of a system-owned list)
+    // must not surface a card — the user has no way to navigate to the
+    // list it advertises. Pre-guard this fixture emitted a CblNext with
+    // the `cbl_saved_view_id` field serde-skipped.
     let app = TestApp::spawn().await;
     let user = register(&app, "rail-od-cbl-no-sv@example.com").await;
     demote_to_user(&app, user.user_id).await;
@@ -1477,24 +1504,25 @@ async fn on_deck_cbl_next_omits_saved_view_id_when_no_view_wraps_the_list() {
     let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-cbl-no-sv-2").await;
     grant_access(&app, user.user_id, lib_id).await;
 
-    let list_id = seed_cbl_list(&app, "Bare", &[(0, &issue1_id), (1, &issue2_id)]).await;
-    let _ = list_id;
+    let _list_id = seed_cbl_list(&app, "Bare", &[(0, &issue1_id), (1, &issue2_id)]).await;
 
     let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
     write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
 
     let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
-    let cbl_card = body["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|i| i["kind"] == "cbl_next")
-        .expect("cbl_next card should exist");
+    let items = body["items"].as_array().unwrap();
     assert!(
-        cbl_card.get("cbl_saved_view_id").is_none() || cbl_card["cbl_saved_view_id"].is_null(),
-        "expected cbl_saved_view_id absent / null; got {:?}",
-        cbl_card.get("cbl_saved_view_id")
+        items.iter().all(|i| i["kind"] != "cbl_next"),
+        "wrapper-less CBL must not emit a card: {items:#?}",
     );
+    // …and a ghost list must not suppress the bare SeriesNext either:
+    // the series card for the same body of work takes its place.
+    let series_cards: Vec<_> = items
+        .iter()
+        .filter(|i| i["kind"] == "series_next")
+        .collect();
+    assert_eq!(series_cards.len(), 1, "SeriesNext replaces the ghost card");
+    assert_eq!(series_cards[0]["issue"]["id"], issue2_id);
 }
 
 #[tokio::test]
@@ -1530,4 +1558,291 @@ async fn on_deck_cbl_saved_view_tiebreak_prefers_user_owned() {
         user_sv.to_string(),
         "user-owned saved view must win the tiebreak over system-owned"
     );
+}
+
+// ───── Frontier candidacy: "actively reading" a CBL ─────
+//
+// A CBL qualifies for On Deck only when the user actually started it —
+// at least one matched entry strictly before the pick is finished (a
+// non-empty "finished prefix"). Reading an issue that merely happens to
+// sit deep inside a list (via a series read-through or a different CBL)
+// must not surface that list's entry 1 as "up next", must not bump a
+// stale list to the top, and must not un-dismiss a dismissed one.
+
+#[tokio::test]
+async fn on_deck_cbl_mid_list_read_only_is_not_a_candidate() {
+    // The reported bug: master reading orders intersect nearly
+    // everything, so finishing one mid-list issue in another context
+    // surfaced the list's entry 1. With frontier candidacy the list
+    // stays off the rail; the SeriesNext carries the suggestion instead.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-midlist@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-midlist").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-midlist-2").await;
+    let issue3_id = seed_extra_issue(&app, lib_id, series_id, 3.0, "od-midlist-3").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let list_id = seed_cbl_list(
+        &app,
+        "Master Order",
+        &[(0, &issue1_id), (1, &issue2_id), (2, &issue3_id)],
+    )
+    .await;
+    seed_cbl_saved_view(&app, None, list_id, "Master Order view").await;
+
+    // Finish ONLY the middle entry — entry 0 untouched, so the list was
+    // never started; pre-fix this emitted "Master Order · entry 1".
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue2_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+    assert!(
+        items.iter().all(|i| i["kind"] != "cbl_next"),
+        "never-started CBL must not emit a card: {items:#?}",
+    );
+    // Non-candidate lists don't suppress SeriesNext: the series card
+    // carries the suggestion (after-latest-finished pick → issue 3).
+    let series_cards: Vec<_> = items
+        .iter()
+        .filter(|i| i["kind"] == "series_next")
+        .collect();
+    assert_eq!(series_cards.len(), 1);
+    assert_eq!(series_cards[0]["issue"]["id"], issue3_id);
+}
+
+#[tokio::test]
+async fn on_deck_cbl_frontier_ranking_ignores_deep_cross_reads() {
+    // Ranking keys on frontier activity (MAX(updated_at) over the
+    // finished prefix), not any overlapping read — a deep cross-read
+    // must not bump a stale list above an actively-read one.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-frontier@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    // List 1 over series A; actively read (frontier = June).
+    let (lib_a, series_a, a1) = seed_one_issue(&app, "od-frontier-a").await;
+    let a2 = seed_extra_issue(&app, lib_a, series_a, 2.0, "od-frontier-a2").await;
+    grant_access(&app, user.user_id, lib_a).await;
+    let list1 = seed_cbl_list(&app, "Active List", &[(0, &a1), (1, &a2)]).await;
+    seed_cbl_saved_view(&app, None, list1, "Active List view").await;
+
+    // List 2 over series B + a deep tail entry in series C; frontier =
+    // January, deep cross-read = a year later.
+    let (lib_b, series_b, b1) = seed_one_issue(&app, "od-frontier-b").await;
+    let b2 = seed_extra_issue(&app, lib_b, series_b, 2.0, "od-frontier-b2").await;
+    grant_access(&app, user.user_id, lib_b).await;
+    let (lib_c, _series_c, c1) = seed_one_issue(&app, "od-frontier-c").await;
+    grant_access(&app, user.user_id, lib_c).await;
+    let list2 = seed_cbl_list(&app, "Stale List", &[(0, &b1), (1, &b2), (2, &c1)]).await;
+    seed_cbl_saved_view(&app, None, list2, "Stale List view").await;
+
+    let t_jan = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    let t_jun = chrono::DateTime::parse_from_rfc3339("2030-06-01T00:00:00Z").unwrap();
+    let t_deep = chrono::DateTime::parse_from_rfc3339("2031-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &b1, 19, true, t_jan).await;
+    write_progress(&app, user.user_id, &a1, 19, true, t_jun).await;
+    // Deep cross-read: position 2 of list 2, *after* its pick (b2).
+    write_progress(&app, user.user_id, &c1, 19, true, t_deep).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+    let cbl_cards: Vec<_> = items.iter().filter(|i| i["kind"] == "cbl_next").collect();
+    assert_eq!(cbl_cards.len(), 2, "both started lists surface: {items:#?}");
+    assert_eq!(
+        cbl_cards[0]["cbl_list_id"],
+        list1.to_string(),
+        "June frontier outranks January frontier despite list 2's 2031 cross-read",
+    );
+    assert_eq!(cbl_cards[1]["cbl_list_id"], list2.to_string());
+    assert_eq!(
+        cbl_cards[1]["last_activity"],
+        t_jan.to_rfc3339(),
+        "card activity is the frontier timestamp, not the deep read's",
+    );
+}
+
+#[tokio::test]
+async fn on_deck_cbl_dismissal_not_restored_by_deep_cross_read() {
+    // Dismissal auto-restore keys on frontier activity: only reading at
+    // the list's frontier brings it back, not a deep cross-read. (The
+    // deep read passes the SQL HAVING pre-filter — MAX over *all*
+    // progress — so this specifically exercises the loop-side check.)
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-dismiss-cbl@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_a, series_a, a1) = seed_one_issue(&app, "od-dismiss-cbl-a").await;
+    let a2 = seed_extra_issue(&app, lib_a, series_a, 2.0, "od-dismiss-cbl-a2").await;
+    grant_access(&app, user.user_id, lib_a).await;
+    let (lib_b, _series_b, b1) = seed_one_issue(&app, "od-dismiss-cbl-b").await;
+    grant_access(&app, user.user_id, lib_b).await;
+
+    let list_id = seed_cbl_list(&app, "Dismissed", &[(0, &a1), (1, &a2), (2, &b1)]).await;
+    seed_cbl_saved_view(&app, None, list_id, "Dismissed view").await;
+
+    // Past timestamp so the dismissal row (real-clock NOW) lands after it.
+    let t_old = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &a1, 19, true, t_old).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    assert!(
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "cbl_next"),
+        "baseline: card present before dismissal",
+    );
+
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/rail-dismissals",
+        Some(&user),
+        Some(json!({"target_kind": "cbl", "target_id": list_id.to_string()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Deep cross-read at position 2 — after the pick (a2 at position 1).
+    let t_deep = chrono::DateTime::parse_from_rfc3339("2031-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &b1, 19, true, t_deep).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    assert!(
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["kind"] != "cbl_next"),
+        "deep cross-read must not un-dismiss the list: {:#?}",
+        body["items"],
+    );
+
+    // Frontier activity (re-finish a1 with a fresher timestamp) restores.
+    let t_new = chrono::DateTime::parse_from_rfc3339("2032-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &a1, 19, true, t_new).await;
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    let cbl_cards: Vec<_> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["kind"] == "cbl_next")
+        .collect();
+    assert_eq!(cbl_cards.len(), 1, "frontier activity restores the card");
+    assert_eq!(cbl_cards[0]["cbl_list_id"], list_id.to_string());
+}
+
+#[tokio::test]
+async fn on_deck_cbl_unmatched_head_not_started_is_not_a_candidate() {
+    // Candidacy is "non-empty finished prefix", not "pick position > 1":
+    // with an unmatched entry at position 0, the first matched entry's
+    // 1-based badge is already 2, so a naive position check would wrongly
+    // qualify a never-started list.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-unmatched-cold@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-unmatched-cold").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-unmatched-cold-2").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let list_id = seed_cbl_list_mixed(
+        &app,
+        "Gappy Head",
+        &[(0, None), (1, Some(&issue1_id)), (2, Some(&issue2_id))],
+    )
+    .await;
+    seed_cbl_saved_view(&app, None, list_id, "Gappy Head view").await;
+
+    // Finish only the tail entry — nothing before the pick is finished.
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue2_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    assert!(
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["kind"] != "cbl_next"),
+        "empty finished prefix → not a candidate, even though the pick's badge is 2: {:#?}",
+        body["items"],
+    );
+}
+
+#[tokio::test]
+async fn on_deck_cbl_unmatched_head_started_surfaces_next() {
+    // Counterpart: finishing the first *matched* entry is starting the
+    // list, even when an unmatched entry sits at position 0.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-unmatched-warm@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "od-unmatched-warm").await;
+    let issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "od-unmatched-warm-2").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let list_id = seed_cbl_list_mixed(
+        &app,
+        "Gappy Started",
+        &[(0, None), (1, Some(&issue1_id)), (2, Some(&issue2_id))],
+    )
+    .await;
+    seed_cbl_saved_view(&app, None, list_id, "Gappy Started view").await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &issue1_id, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+    let cbl_card = items
+        .iter()
+        .find(|i| i["kind"] == "cbl_next")
+        .expect("started list must surface");
+    assert_eq!(cbl_card["cbl_list_id"], list_id.to_string());
+    assert_eq!(cbl_card["issue"]["id"], issue2_id);
+    assert_eq!(cbl_card["position"], 3, "raw position 2 → 1-based badge 3");
+}
+
+#[tokio::test]
+async fn on_deck_cbl_acl_invisible_finished_prefix_still_counts() {
+    // A finished prefix entry whose issue lives in a library the user
+    // can no longer see still counts toward candidacy and frontier
+    // activity — finished entries never reach the ACL check, consistent
+    // with the pick the user would get.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-acl-prefix@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    // Visible library holds the pick; hidden library holds the prefix.
+    let (lib_vis, _series_vis, visible_issue) = seed_one_issue(&app, "od-acl-vis").await;
+    grant_access(&app, user.user_id, lib_vis).await;
+    let (_lib_hidden, _series_hidden, hidden_issue) = seed_one_issue(&app, "od-acl-hidden").await;
+
+    let list_id = seed_cbl_list(
+        &app,
+        "Split Access",
+        &[(0, &hidden_issue), (1, &visible_issue)],
+    )
+    .await;
+    seed_cbl_saved_view(&app, None, list_id, "Split Access view").await;
+
+    // Finished before losing access (direct write bypasses the ACL path).
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    write_progress(&app, user.user_id, &hidden_issue, 19, true, t0).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    let items = body["items"].as_array().unwrap();
+    let cbl_cards: Vec<_> = items.iter().filter(|i| i["kind"] == "cbl_next").collect();
+    assert_eq!(
+        cbl_cards.len(),
+        1,
+        "invisible finished prefix still counts: {items:#?}"
+    );
+    assert_eq!(cbl_cards[0]["issue"]["id"], visible_issue);
+    assert_eq!(cbl_cards[0]["position"], 2);
+    assert_eq!(cbl_cards[0]["last_activity"], t0.to_rfc3339());
 }

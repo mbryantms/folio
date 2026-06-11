@@ -42,7 +42,7 @@ use common::TestApp;
 use entity::{
     cbl_entry, cbl_list,
     issue::ActiveModel as IssueAM,
-    library, library_user_access, progress_record,
+    library, library_user_access, progress_record, saved_view,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
 use sea_orm::{ActiveModelTrait, Database, Set};
@@ -398,7 +398,10 @@ async fn seed_library(
 }
 
 /// Seed `cbl_count` CBL lists, each holding 3 issues sampled from the
-/// seeded series.
+/// seeded series. Each list gets a system saved-view wrapper — On
+/// Deck's candidate query requires one (ghost guard), and without it
+/// the ≤N-queries budget would stop measuring the per-candidate pick
+/// path.
 async fn seed_cbls(app: &TestApp, series_with_issues: &[(Uuid, Vec<String>)], cbl_count: usize) {
     let db = Database::connect(&app.db_url).await.unwrap();
     let now = Utc::now().fixed_offset();
@@ -429,6 +432,30 @@ async fn seed_cbls(app: &TestApp, series_with_issues: &[(Uuid, Vec<String>)], cb
             created_at: Set(now),
             updated_at: Set(now),
             preserve_canonical_order: Set(false),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        saved_view::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            user_id: Set(None),
+            kind: Set("cbl".into()),
+            system_key: Set(None),
+            name: Set(format!("CBL {i} view")),
+            description: Set(None),
+            custom_year_start: Set(None),
+            custom_year_end: Set(None),
+            custom_tags: Set(vec![]),
+            match_mode: Set(None),
+            conditions: Set(None),
+            sort_field: Set(None),
+            sort_order: Set(None),
+            result_limit: Set(None),
+            cbl_list_id: Set(Some(list_id)),
+            auto_pin: Set(false),
+            preserve_canonical_order: Set(false),
+            created_at: Set(now),
+            updated_at: Set(now),
         }
         .insert(&db)
         .await

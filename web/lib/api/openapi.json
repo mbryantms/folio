@@ -15910,7 +15910,7 @@
                   "string",
                   "null"
                 ],
-                "description": "Saved-view id (kind=`cbl`) wrapping this CBL list, when the\ncaller can see one. Web threads it onto the reader URL as\n`?cbl=<id>` so the next-up resolver keeps picking from the\nlist across page turns. `None` when no saved view points at\nthis `cbl_list_id` for the caller — the reader still works,\njust without persistent CBL context.\n\nTiebreak when multiple saved views match: user-owned wins\nover system-owned (NULL `user_id`); within a tier, lowest\n`id` wins. Stable + cheap; the picker UI can pick a\ndifferent one later if needed."
+                "description": "Saved-view id (kind=`cbl`) wrapping this CBL list. Web\nthreads it onto the reader URL as `?cbl=<id>` so the next-up\nresolver keeps picking from the list across page turns.\nWrapper-less lists are no longer candidates (ghost guard),\nso cards always carry `Some` in practice; the field stays\n`Option` for wire-compat.\n\nTiebreak when multiple saved views match: user-owned wins\nover system-owned (NULL `user_id`); within a tier, lowest\n`id` wins. Stable + cheap; the picker UI can pick a\ndifferent one later if needed."
               },
               "issue": {
                 "$ref": "#/components/schemas/IssueSummaryView"

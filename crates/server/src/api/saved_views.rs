@@ -1131,10 +1131,11 @@ pub async fn delete_one(
         );
     }
     // For kind='cbl' the saved view is just a wrapper around a row in
-    // `cbl_lists`. OPDS feeds (`/opds/v1/lists`) and the On Deck rail
-    // both query `cbl_lists` directly, so deleting only the wrapper
-    // leaves an orphan list that keeps surfacing the "deleted" CBL.
-    // Delete the underlying list when the user owns it; the FK on
+    // `cbl_lists`. OPDS list feeds (`/opds/v1/lists`) query `cbl_lists`
+    // directly, so deleting only the wrapper would leave an orphan list
+    // still surfacing there (On Deck is safe either way — its candidate
+    // query requires a visible saved-view wrapper). Delete the
+    // underlying list when the user owns it; the FK on
     // `saved_views.cbl_list_id` cascades back to this row.
     if row.kind == KIND_CBL
         && let Some(list_id) = row.cbl_list_id
