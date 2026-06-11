@@ -207,6 +207,73 @@ async fn second_trigger_while_in_flight_is_coalesced() {
     assert_eq!(b2["state"], "coalesced");
 }
 
+#[tokio::test]
+async fn boot_sweep_clears_stale_in_flight_key() {
+    // OPS-2: a crash can leave `scan:in_flight:<lib>` set with no job to clear
+    // it, wedging the library — every later trigger coalesces into a phantom.
+    // The boot sweep clears those orphans; after it, a trigger claims a fresh
+    // scan instead of coalescing.
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let lib_id = create_library(&app, &auth).await;
+
+    // First trigger leaves the in_flight key set (no worker runs in TestApp).
+    let (_s1, b1) = post_scan(&app, &auth, &lib_id).await;
+    let first_scan_id = b1["scan_id"].as_str().unwrap().to_owned();
+    assert_eq!(b1["coalesced"], false);
+    // Confirm the wedge: a second trigger coalesces onto the stale key.
+    let (_s2, b2) = post_scan(&app, &auth, &lib_id).await;
+    assert_eq!(b2["coalesced"], true);
+
+    // Boot sweep clears the orphaned coalesce keys.
+    let removed = app.state().jobs.clear_stale_scan_keys().await.unwrap();
+    assert!(removed >= 1, "sweep should remove the stale in_flight key");
+
+    // Now a trigger claims a brand-new scan rather than coalescing.
+    let (_s3, b3) = post_scan(&app, &auth, &lib_id).await;
+    assert_eq!(b3["coalesced"], false, "sweep must un-wedge the library");
+    assert_ne!(b3["scan_id"].as_str().unwrap(), first_scan_id);
+}
+
+#[tokio::test]
+async fn dead_letter_counts_reflect_the_dead_set() {
+    // OPS-3 follow-up: dead_letter_counts ZCARDs each queue's `{queue}:dead`
+    // ZSET via the storage's own config, so a permanently-failing job is
+    // visible instead of vanishing silently.
+    use redis::AsyncCommands;
+    let app = TestApp::spawn().await;
+    let jobs = &app.state().jobs;
+
+    // Fresh app: every queue reports zero dead jobs.
+    let before = jobs.dead_letter_counts().await.unwrap();
+    assert!(
+        before.iter().all(|(_, n)| *n == 0),
+        "no dead jobs on a fresh app, got {before:?}"
+    );
+
+    // Simulate apalis dead-lettering a scan job: ZADD to the exact key the
+    // counter reads (resolved from the same storage config), so the test is
+    // robust to the apalis namespace format.
+    let dead_key = jobs.scan_storage.get_config().dead_jobs_set();
+    let mut conn = jobs.redis.clone();
+    let _: () = conn.zadd(&dead_key, "job-abc", 1_i64).await.unwrap();
+
+    let after = jobs.dead_letter_counts().await.unwrap();
+    let scan_dead = after
+        .iter()
+        .find(|(q, _)| *q == "scan")
+        .map(|(_, n)| *n)
+        .unwrap();
+    assert_eq!(scan_dead, 1, "scan dead-letter count must reflect the ZSET");
+    // Other queues stay at zero — the count is per-queue, not global.
+    let series_dead = after
+        .iter()
+        .find(|(q, _)| *q == "scan_series")
+        .map(|(_, n)| *n)
+        .unwrap();
+    assert_eq!(series_dead, 0);
+}
+
 async fn post_scan_all(
     app: &TestApp,
     auth: &Authed,

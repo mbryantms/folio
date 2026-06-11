@@ -246,10 +246,26 @@ pub async fn record_many(db: &DatabaseConnection, events: Vec<NewEvent>) {
         .into_iter()
         .map(NewEvent::into_active_model)
         .collect();
-    if let Err(e) = library_event::Entity::insert_many(models).exec(db).await {
-        tracing::error!(error = %e, count, "library_event bulk write failed");
+    // Chunk to stay well under Postgres's 65535 bind-parameter cap.
+    // `library_event` has 13 columns, so a single `insert_many` tops out near
+    // ~5040 rows — and a first scan of a large library emits ~1 event per added
+    // issue, so an unchunked write would fail wholesale and silently drop the
+    // entire scan manifest. 500 rows/statement (matching `HealthCollector`)
+    // keeps each statement far inside the cap (OPS-1).
+    for chunk in models.chunks(EVENT_INSERT_CHUNK) {
+        if let Err(e) = library_event::Entity::insert_many(chunk.to_vec())
+            .exec(db)
+            .await
+        {
+            tracing::error!(error = %e, count, "library_event bulk write failed");
+        }
     }
 }
+
+/// Rows per `insert_many` statement in [`record_many`] — bounded by the
+/// Postgres bind-parameter cap (see the comment there). Matches the
+/// `HealthCollector::finalize` chunk size.
+const EVENT_INSERT_CHUNK: usize = 500;
 
 /// Retention sweep for `library_events` (observability-split M4). A single
 /// scan can write thousands of itemized rows, so the table is bounded two

@@ -22,6 +22,7 @@ use server_macros::handler;
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(queue_depth))
+        .routes(routes!(dead_letters))
         .routes(routes!(clear_queue))
 }
 
@@ -35,6 +36,22 @@ pub struct QueueDepthView {
     /// Pending archive page-edit jobs (single + bulk; M7).
     pub archive_edit: i64,
     /// Sum across all queues — convenient for the topbar pill.
+    pub total: i64,
+}
+
+/// One queue's dead-letter count (OPS-3 follow-up).
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DeadLetterCount {
+    pub queue: String,
+    pub count: i64,
+}
+
+/// Per-queue counts of jobs apalis has given up on (moved to `{queue}:dead`
+/// after exhausting attempts). `total > 0` is the operator's cue that work is
+/// failing permanently and silently; the per-queue breakdown points at which.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DeadLetterView {
+    pub queues: Vec<DeadLetterCount>,
     pub total: i64,
 }
 
@@ -79,6 +96,38 @@ pub async fn queue_depth(
         Ok(view) => Json(view).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "queue_depth: redis len failed");
+            internal()
+        }
+    }
+}
+
+#[utoipa::path(
+    operation_id = "admin_queue_dead_letters",    get,
+    path = "/admin/queue/dead-letters",
+    responses(
+        (status = 200, body = DeadLetterView),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn dead_letters(
+    axum::extract::State(app): axum::extract::State<AppState>,
+    _admin: RequireAdmin,
+) -> impl IntoResponse {
+    match app.jobs.dead_letter_counts().await {
+        Ok(counts) => {
+            let total = counts.iter().map(|(_, n)| *n).sum();
+            let queues = counts
+                .into_iter()
+                .map(|(queue, count)| DeadLetterCount {
+                    queue: queue.to_owned(),
+                    count,
+                })
+                .collect();
+            Json(DeadLetterView { queues, total }).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "dead_letters: redis zcard failed");
             internal()
         }
     }

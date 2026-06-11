@@ -21,9 +21,14 @@ pub struct Job {
     pub force: bool,
 }
 
-/// Worker handler. Returning `Err` puts the job in apalis's failed-jobs set;
-/// the spec treats per-library failures as recoverable (§12.2) — we log and
-/// allow apalis to surface the error in `scan_runs.error`.
+/// Worker handler. A scan failure is recorded durably by the scanner's finalize
+/// (the `scan_runs` row's `state='failed'` + `error`, a `ScanEvent::Failed` WS
+/// event, and a `library_event` manifest row), so the handler returns `Ok` even
+/// on failure: returning `Err` would only drive apalis's immediate 5× retry of
+/// an expensive full-library scan, which rarely helps a deterministic failure
+/// (missing mount, bad config) at the millisecond timescale of those retries.
+/// The operator — or the next scheduled / file-watch trigger — re-runs it
+/// deliberately. (OPS-3 follow-up.)
 pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
     // Data<AppState> derefs to &AppState; clone the AppState to drop the Data wrapper.
     let state: AppState = (*state).clone();
@@ -65,15 +70,17 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
             Ok(())
         }
         Err(e) => {
+            // Failure already recorded by the scanner finalize (scan_runs row +
+            // WS event + manifest). Return Ok so apalis doesn't re-run the whole
+            // scan 5× immediately; the run is surfaced as `failed` and a fresh
+            // trigger re-runs it. (OPS-3 follow-up — see the fn doc.)
             tracing::error!(
                 library_id = %job.library_id,
                 scan_run_id = %job.scan_run_id,
                 error = %e,
-                "scan job failed",
+                "scan job failed (recorded in scan_runs; not retried by apalis)",
             );
-            Err(Error::Failed(std::sync::Arc::new(Box::new(
-                std::io::Error::other(e.to_string()),
-            ))))
+            Ok(())
         }
     }
 }

@@ -1303,6 +1303,26 @@
         }
       }
     },
+    "/api/admin/queue/dead-letters": {
+      "get": {
+        "operationId": "admin_queue_dead_letters",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeadLetterView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/saved-views": {
       "post": {
         "operationId": "saved_views_admin_create",
@@ -12570,6 +12590,43 @@
             "format": "int64"
           },
           "sessions": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DeadLetterCount": {
+        "type": "object",
+        "description": "One queue's dead-letter count (OPS-3 follow-up).",
+        "required": [
+          "queue",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "queue": {
+            "type": "string"
+          }
+        }
+      },
+      "DeadLetterView": {
+        "type": "object",
+        "description": "Per-queue counts of jobs apalis has given up on (moved to `{queue}:dead`\nafter exhausting attempts). `total > 0` is the operator's cue that work is\nfailing permanently and silently; the per-queue breakdown points at which.",
+        "required": [
+          "queues",
+          "total"
+        ],
+        "properties": {
+          "queues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeadLetterCount"
+            }
+          },
+          "total": {
             "type": "integer",
             "format": "int64"
           }

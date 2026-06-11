@@ -361,6 +361,18 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         }
     }
 
+    // Scan-coalescing key boot sweep (OPS-2): clear any `scan:{in_flight,
+    // scan_id,queued}:*` keys orphaned by a previous process crash so a library
+    // whose scan died between claiming the key and pushing the apalis job isn't
+    // wedged forever. Nothing is scanning yet at boot, so this is always safe.
+    match state.jobs.clear_stale_scan_keys().await {
+        Ok(n) if n > 0 => {
+            tracing::info!(removed = n, "scan boot sweep: cleared stale coalesce keys")
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "scan boot sweep failed"),
+    }
+
     // Shared shutdown token: HTTP server and apalis monitor both
     // observe cancellation, so a single SIGTERM drains both cleanly.
     // M4 of code-quality-cleanup-1.0 — before this, the apalis monitor
