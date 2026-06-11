@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.10.4](https://github.com/mbryantms/folio/compare/v0.10.3...v0.10.4) (2026-06-11)
+
+
+### Fixed
+
+* **rails:** gate On Deck CBL cards on saved-view wrapper + frontier activity ([#137](https://github.com/mbryantms/folio/issues/137)) ([b79c415](https://github.com/mbryantms/folio/commit/b79c4156d403e30553c98948d94179c4806aee51))
+
 ## [0.10.3](https://github.com/mbryantms/folio/compare/v0.10.2...v0.10.3) (2026-06-11)
 
 > [!IMPORTANT]
