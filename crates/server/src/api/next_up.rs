@@ -717,6 +717,25 @@ async fn pick_next_in_series_after(
     Ok(None)
 }
 
+/// Pick produced by [`scan_next_in_cbl`]: the lowest-position unfinished
+/// matched entry plus the activity timestamp of the finished prefix that
+/// precedes it.
+pub(crate) struct CblNextPick {
+    pub issue: issue::Model,
+    pub series_slug: String,
+    pub series_name: String,
+    /// 1-based position badge (`entry.position + 1`), matching the
+    /// historical tuple shape.
+    pub position: i32,
+    /// `MAX(progress.updated_at)` over matched entries strictly before
+    /// the pick whose progress is `finished = true`. `None` means the
+    /// user has finished nothing ahead of the pick — i.e. the list was
+    /// never actually started. Only meaningful when the scan starts at
+    /// the top (`start_after = None`); the On Deck rail is the sole
+    /// consumer.
+    pub prefix_last_activity: Option<chrono::DateTime<chrono::FixedOffset>>,
+}
+
 /// For a CBL list, find the lowest-position matched entry whose issue is
 /// not yet finished + is visible to the user (library ACL). When
 /// `start_after` is `Some(p)`, only entries with `position > p` are
@@ -730,6 +749,41 @@ pub(crate) async fn pick_next_in_cbl(
     acl: &access::VisibleLibraries,
     start_after: Option<i32>,
 ) -> Result<Option<(issue::Model, String, String, i32)>, Response> {
+    Ok(
+        scan_next_in_cbl(app, user_id, cbl_list_id, acl, start_after)
+            .await?
+            .map(|pick| {
+                (
+                    pick.issue,
+                    pick.series_slug,
+                    pick.series_name,
+                    pick.position,
+                )
+            }),
+    )
+}
+
+/// Frontier-aware variant for the On Deck rail: scans from the top of the
+/// list and also reports the finished-prefix activity so the rail can
+/// decide whether the user is *actively* reading the list (non-empty
+/// prefix) and rank it by frontier activity rather than any overlapping
+/// read.
+pub(crate) async fn pick_next_in_cbl_frontier(
+    app: &AppState,
+    user_id: Uuid,
+    cbl_list_id: Uuid,
+    acl: &access::VisibleLibraries,
+) -> Result<Option<CblNextPick>, Response> {
+    scan_next_in_cbl(app, user_id, cbl_list_id, acl, None).await
+}
+
+async fn scan_next_in_cbl(
+    app: &AppState,
+    user_id: Uuid,
+    cbl_list_id: Uuid,
+    acl: &access::VisibleLibraries,
+    start_after: Option<i32>,
+) -> Result<Option<CblNextPick>, Response> {
     let mut select = cbl_entry::Entity::find()
         .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
         .filter(cbl_entry::Column::MatchedIssueId.is_not_null());
@@ -781,6 +835,12 @@ pub(crate) async fn pick_next_in_cbl(
             .map(|p| (p.issue_id.clone(), p))
             .collect();
 
+    // Frontier tracking: max progress.updated_at over the finished
+    // entries walked past before the pick. Finished entries never reach
+    // the issue/ACL lookups below, so finished-but-ACL-invisible prefix
+    // entries still count toward the frontier — consistent with the pick
+    // the user would get.
+    let mut prefix_last_activity: Option<chrono::DateTime<chrono::FixedOffset>> = None;
     for entry in entries {
         let Some(issue_id) = entry.matched_issue_id.clone() else {
             continue;
@@ -790,6 +850,12 @@ pub(crate) async fn pick_next_in_cbl(
             .map(|p| p.finished)
             .unwrap_or(false);
         if finished {
+            if let Some(p) = progress_by_issue.get(&issue_id) {
+                prefix_last_activity = Some(match prefix_last_activity {
+                    Some(ts) => ts.max(p.updated_at),
+                    None => p.updated_at,
+                });
+            }
             continue;
         }
         let Ok(Some(issue_model)) = issue::Entity::find_by_id(issue_id).one(&app.db).await else {
@@ -805,12 +871,13 @@ pub(crate) async fn pick_next_in_cbl(
             Ok(Some(s)) => (s.slug, s.name),
             _ => continue,
         };
-        return Ok(Some((
-            issue_model,
+        return Ok(Some(CblNextPick {
+            issue: issue_model,
             series_slug,
             series_name,
-            entry.position + 1,
-        )));
+            position: entry.position + 1,
+            prefix_last_activity,
+        }));
     }
     Ok(None)
 }

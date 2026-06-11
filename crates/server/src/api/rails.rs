@@ -96,12 +96,12 @@ pub enum OnDeckCard {
         issue: IssueSummaryView,
         cbl_list_id: String,
         cbl_list_name: String,
-        /// Saved-view id (kind=`cbl`) wrapping this CBL list, when the
-        /// caller can see one. Web threads it onto the reader URL as
-        /// `?cbl=<id>` so the next-up resolver keeps picking from the
-        /// list across page turns. `None` when no saved view points at
-        /// this `cbl_list_id` for the caller — the reader still works,
-        /// just without persistent CBL context.
+        /// Saved-view id (kind=`cbl`) wrapping this CBL list. Web
+        /// threads it onto the reader URL as `?cbl=<id>` so the next-up
+        /// resolver keeps picking from the list across page turns.
+        /// Wrapper-less lists are no longer candidates (ghost guard),
+        /// so cards always carry `Some` in practice; the field stays
+        /// `Option` for wire-compat.
         ///
         /// Tiebreak when multiple saved views match: user-owned wins
         /// over system-owned (NULL `user_id`); within a tier, lowest
@@ -406,17 +406,32 @@ pub(crate) async fn compute_on_deck(
 
     // ───── cbl_next candidates ─────
     //
-    // CBLs where the user has any matched-issue progress + at least one
-    // matched entry that isn't yet finished. We pull the (cbl, last_activity,
-    // next_entry_issue_id) tuple in one query per list for clarity; the
-    // total candidate count is bounded by the user's actual CBL usage so
-    // the round-trip count is small in practice.
+    // CBLs the user is *actively* reading. The SQL below is a coarse
+    // superset pre-filter (any matched-issue progress + a saved-view
+    // wrapper visible to the caller); the authoritative candidacy checks
+    // live in the per-candidate loop:
+    //   - a saved view must wrap the list (ghost guard — wrapper-less
+    //     lists from partial imports or wrapper-only deletes must not
+    //     surface cards the user can't navigate to);
+    //   - the finished prefix must be non-empty (the user actually
+    //     started the list — without this, reading an issue that happens
+    //     to sit deep inside a master reading order, via a series or a
+    //     different CBL, would surface that list's entry 1 as "up next");
+    //   - ranking + dismissal auto-restore key on the *frontier*
+    //     activity (MAX(updated_at) over the finished prefix), so deep
+    //     cross-reads neither bump a stale list to the top nor
+    //     un-dismiss it.
+    // We pull the per-list pick in one scan per candidate; the total
+    // candidate count is bounded by the user's actual CBL usage so the
+    // round-trip count is small in practice.
     //
     // Pre-fetch the (cbl_list_id → saved_view_id) lookup for every
-    // saved view of kind='cbl' the caller can see. Lets each CblNext
-    // card carry the saved-view id so the web can thread `?cbl=` onto
-    // the reader URL. Tiebreak: user-owned saved view wins over
-    // system-owned (NULL user_id); within a tier, lowest id wins.
+    // saved view of kind='cbl' the caller can see. Doubles as the
+    // loop-side ghost guard (candidates absent from the map are
+    // skipped) and lets each CblNext card carry the saved-view id so
+    // the web can thread `?cbl=` onto the reader URL. Tiebreak:
+    // user-owned saved view wins over system-owned (NULL user_id);
+    // within a tier, lowest id wins.
     let cbl_saved_view_by_list_id: std::collections::HashMap<Uuid, Uuid> = {
         use entity::saved_view;
         use sea_orm::{Condition, QueryOrder};
@@ -458,7 +473,7 @@ pub(crate) async fn compute_on_deck(
     struct CblCandidate {
         cbl_list_id: Uuid,
         cbl_list_name: String,
-        last_activity: chrono::DateTime<chrono::FixedOffset>,
+        dismissed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     }
     let cbl_candidates: Vec<CblCandidate> =
         match CblCandidate::find_by_statement(Statement::from_sql_and_values(
@@ -470,9 +485,25 @@ pub(crate) async fn compute_on_deck(
             // surfacing in On Deck (asymmetric with the series-side
             // reset behaviour). With it, a fully-reset CBL drops off
             // the rail the same way a fully-reset series does.
+            //
+            // The saved-view EXISTS lives in SQL (not just the loop's
+            // map check) because LIMIT 40 runs here: a library with many
+            // wrapper-less lists would otherwise fill every slot with
+            // ghosts and starve the rail.
+            //
+            // The HAVING dismissal clause is a *conservative* pre-filter
+            // only: frontier activity ⊆ all activity, so MAX(all) ≤
+            // dismissed_at implies frontier ≤ dismissed_at and nothing
+            // the loop would keep is dropped here. The authoritative
+            // restore decision (frontier > dismissed_at) runs in the
+            // loop. MAX(p.updated_at) is likewise retained only as the
+            // LIMIT-ordering key; emitted cards rank by frontier
+            // activity. Residual cost: contaminated-but-started lists
+            // can still occupy pre-LIMIT slots — bounded by real usage;
+            // raise the LIMIT if it ever bites.
             r#"
                 SELECT cl.id AS cbl_list_id, cl.parsed_name AS cbl_list_name,
-                       MAX(p.updated_at) AS last_activity
+                       d.dismissed_at AS dismissed_at
                 FROM progress_records p
                 JOIN cbl_entries e ON e.matched_issue_id = p.issue_id
                 JOIN cbl_lists  cl ON cl.id = e.cbl_list_id
@@ -483,6 +514,12 @@ pub(crate) async fn compute_on_deck(
                 WHERE p.user_id = $1
                   AND (p.finished = true OR p.last_page > 0)
                   AND (cl.owner_user_id IS NULL OR cl.owner_user_id = $1)
+                  AND EXISTS (
+                      SELECT 1 FROM saved_views sv
+                      WHERE sv.kind = 'cbl'
+                        AND sv.cbl_list_id = cl.id
+                        AND (sv.user_id IS NULL OR sv.user_id = $1)
+                  )
                 GROUP BY cl.id, cl.parsed_name, d.dismissed_at
                 HAVING d.dismissed_at IS NULL OR MAX(p.updated_at) > d.dismissed_at
                 ORDER BY MAX(p.updated_at) DESC
@@ -527,32 +564,59 @@ pub(crate) async fn compute_on_deck(
     };
 
     for cand in &cbl_candidates {
-        let next =
-            match crate::api::next_up::pick_next_in_cbl(app, user_id, cand.cbl_list_id, acl, None)
-                .await
-            {
-                Ok(opt) => opt,
-                Err(resp) => return Err(resp),
-            };
-        let Some((issue_model, series_slug, series_name, position)) = next else {
+        // Ghost guard. The SQL EXISTS already filtered; this re-check
+        // keeps the map and the candidate query coherent across their
+        // race window and skips the pick's per-list queries for any
+        // stragglers. Emitted cards therefore always carry a saved-view
+        // id the caller can navigate to.
+        let Some(sv_id) = cbl_saved_view_by_list_id.get(&cand.cbl_list_id) else {
             continue;
         };
+        let next = match crate::api::next_up::pick_next_in_cbl_frontier(
+            app,
+            user_id,
+            cand.cbl_list_id,
+            acl,
+        )
+        .await
+        {
+            Ok(opt) => opt,
+            Err(resp) => return Err(resp),
+        };
+        let Some(pick) = next else {
+            continue;
+        };
+        // Frontier candidacy: a list with an empty finished prefix was
+        // never started by the user — any progress intersecting it came
+        // from reading the same issues in another context, and a card
+        // pointing at its entry 1 is pure noise. (Seam for a future
+        // explicit "track this list" opt-in: bypass this guard for
+        // tracked lists and fall back to the inclusion's created_at as
+        // the sort timestamp.)
+        let Some(frontier_ts) = pick.prefix_last_activity else {
+            continue;
+        };
+        // Dismissal auto-restore keys on frontier activity only — a deep
+        // cross-read must not un-dismiss the list. Strict '>' matches
+        // the SQL HAVING's semantics.
+        if let Some(dismissed_at) = cand.dismissed_at
+            && frontier_ts <= dismissed_at
+        {
+            continue;
+        }
         if let Some(series_ids) = cbl_series_ownership.get(&cand.cbl_list_id) {
             cbl_owned_series_ids.extend(series_ids.iter().copied());
         }
-        let cbl_saved_view_id = cbl_saved_view_by_list_id
-            .get(&cand.cbl_list_id)
-            .map(|id| id.to_string());
         items.push((
-            cand.last_activity,
+            frontier_ts,
             OnDeckCard::CblNext {
-                issue: IssueSummaryView::from_model(issue_model, &series_slug)
-                    .with_series_name(series_name),
+                issue: IssueSummaryView::from_model(pick.issue, &pick.series_slug)
+                    .with_series_name(pick.series_name),
                 cbl_list_id: cand.cbl_list_id.to_string(),
                 cbl_list_name: cand.cbl_list_name.clone(),
-                cbl_saved_view_id,
-                position,
-                last_activity: cand.last_activity.to_rfc3339(),
+                cbl_saved_view_id: Some(sv_id.to_string()),
+                position: pick.position,
+                last_activity: frontier_ts.to_rfc3339(),
             },
         ));
     }

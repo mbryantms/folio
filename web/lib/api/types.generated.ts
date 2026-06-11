@@ -6739,12 +6739,12 @@ export interface components {
             cbl_list_id: string;
             cbl_list_name: string;
             /**
-             * @description Saved-view id (kind=`cbl`) wrapping this CBL list, when the
-             *     caller can see one. Web threads it onto the reader URL as
-             *     `?cbl=<id>` so the next-up resolver keeps picking from the
-             *     list across page turns. `None` when no saved view points at
-             *     this `cbl_list_id` for the caller — the reader still works,
-             *     just without persistent CBL context.
+             * @description Saved-view id (kind=`cbl`) wrapping this CBL list. Web
+             *     threads it onto the reader URL as `?cbl=<id>` so the next-up
+             *     resolver keeps picking from the list across page turns.
+             *     Wrapper-less lists are no longer candidates (ghost guard),
+             *     so cards always carry `Some` in practice; the field stays
+             *     `Option` for wire-compat.
              *
              *     Tiebreak when multiple saved views match: user-owned wins
              *     over system-owned (NULL `user_id`); within a tier, lowest
