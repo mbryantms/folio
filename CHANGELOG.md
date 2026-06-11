@@ -13,6 +13,34 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.10.3](https://github.com/mbryantms/folio/compare/v0.10.2...v0.10.3) (2026-06-11)
+
+> [!IMPORTANT]
+> **Action required if you run Folio behind a reverse proxy.** As of this
+> release, `X-Forwarded-For` is honored **only** from hops listed in the new
+> `COMIC_TRUSTED_PROXIES` setting (a comma-separated list of CIDRs or bare IPs).
+> The default is empty, so until you set it Folio uses the **connecting peer's**
+> IP — meaning every request behind nginx / Caddy / Traefik will be attributed
+> to the proxy's address. Set `COMIC_TRUSTED_PROXIES` to your proxy's IP/CIDR to
+> restore real client IPs for rate-limiting buckets and audit-log entries. Direct
+> (non-proxied) deployments need no change. This closes a spoofing vector where a
+> client could forge `X-Forwarded-For` to evade per-IP rate limits or poison
+> audit IPs (#131).
+
+
+### Fixed
+
+* **deps:** update dependency react-hook-form to v7.78.0 ([#123](https://github.com/mbryantms/folio/issues/123)) ([5851c3e](https://github.com/mbryantms/folio/commit/5851c3e79821b383608a12f84e4d1635f952957e))
+* **jobs:** chunk scan-event writes, self-heal scan-coalescing keys, and surface dead-lettered jobs ([#133](https://github.com/mbryantms/folio/issues/133)) ([59e1ee4](https://github.com/mbryantms/folio/commit/59e1ee4b3582b17f2ceeaa0b4dd73c3eb5d8f917))
+* **jobs:** stop scan_series retry churn on recorded failures (OPS-3 tail) ([#135](https://github.com/mbryantms/folio/issues/135)) ([6e49eaf](https://github.com/mbryantms/folio/commit/6e49eaf013c8b81b6273267845a1cc1e7e1439cd))
+* **security:** trust X-Forwarded-For only from configured proxies, bound image decode, harden SSRF + archive-write paths ([#131](https://github.com/mbryantms/folio/issues/131)) ([1ab7b70](https://github.com/mbryantms/folio/commit/1ab7b709325c87837507a09dee36d8470adb9ff8))
+
+
+### Changed
+
+* cache app-password auth, stream page bytes, and honor conditional (304) requests ([#132](https://github.com/mbryantms/folio/issues/132)) ([0f4e772](https://github.com/mbryantms/folio/commit/0f4e772192ceea48c096f8fa72336dca72c02594))
+* serve uncompressed pages lock-free and trim read-path overhead ([#136](https://github.com/mbryantms/folio/issues/136)) ([b2166e0](https://github.com/mbryantms/folio/commit/b2166e08bcc8f2d1baecb3021a1f1bba1f3784be))
+
 ## [0.10.2](https://github.com/mbryantms/folio/compare/v0.10.1...v0.10.2) (2026-06-09)
 
 
