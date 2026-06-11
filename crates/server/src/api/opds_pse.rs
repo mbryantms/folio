@@ -32,6 +32,7 @@ use axum::{
 use entity::{issue, library_user_access, user};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
+use tokio_util::io::{ReaderStream, SyncIoBridge};
 use uuid::Uuid;
 
 use crate::audit::{self, AuditEntry};
@@ -114,6 +115,20 @@ pub async fn stream(
         }
     }
 
+    let page_index = n as usize;
+    // Content-derived ETag (PERF-4): fold in `content_hash` so a cached page is
+    // revalidated after an archive rewrite (`issue.id` is stable across them).
+    let hash = issue_row.content_hash.as_str();
+    let etag_value = format!("\"pse-{}-{}\"", &hash[..32.min(hash.len())], page_index);
+    // Conditional GET → 304 before opening the archive (PERF-4).
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|c| c.trim() == etag_value))
+    {
+        return not_modified(&etag_value);
+    }
+
     // Open + sniff. Mirrors `api::page_bytes::serve` — kept inline rather
     // than refactored into a shared helper because page_bytes also wires
     // up Cache-Control and If-Range against the `CurrentUser` etag, both
@@ -128,9 +143,6 @@ pub async fn stream(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "archive_unreadable");
         }
     };
-
-    let page_index = n as usize;
-    let etag_value = format!("\"pse-{}-{}\"", &issue_row.id[..32], page_index);
 
     let range_header = headers
         .get(header::RANGE)
@@ -188,32 +200,6 @@ pub async fn stream(
         }
     } else {
         (StatusCode::OK, 0, meta.total)
-    };
-
-    let arc_for_read = arc.clone();
-    let entry_idx = meta.entry_index;
-    let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let mut cbz = arc_for_read.lock().expect("cbz mutex");
-        let pages = cbz.pages();
-        let entry = pages
-            .get(entry_idx)
-            .copied()
-            .cloned()
-            .ok_or_else(|| "page disappeared".to_string())?;
-        cbz.read_entry_range(&entry, start, len)
-            .map_err(|e| e.to_string())
-    })
-    .await;
-    let body_bytes = match bytes {
-        Ok(Ok(b)) => b,
-        Ok(Err(e)) => {
-            tracing::warn!(error = %e, "pse: byte read failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "pse: byte task failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
-        }
     };
 
     // Audit only the first page (n == 0). One row stands in for "this
@@ -274,6 +260,64 @@ pub async fn stream(
         HeaderValue::from_str(&etag_value)
             .unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
     );
+
+    // Full-page request (200, whole entry): stream so memory stays flat (PERF-2;
+    // PSE clients prefetch ~10 pages, so the old buffered path meant ~10×
+    // page-size resident). Range requests stay buffered — bounded by the
+    // requested length. Same split + lock-hold tradeoff as `page_bytes::serve`.
+    if status == StatusCode::OK && start == 0 && len == meta.total {
+        hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(meta.total));
+        let arc_for_read = arc.clone();
+        let entry_idx = meta.entry_index;
+        let (writer, reader) = tokio::io::duplex(STREAM_BUF_BYTES);
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let mut sink = SyncIoBridge::new_with_handle(writer, handle);
+            let mut cbz = match arc_for_read.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let entry = {
+                let pages = cbz.pages();
+                match pages.get(entry_idx).copied().cloned() {
+                    Some(e) => e,
+                    None => return,
+                }
+            };
+            if let Err(e) = cbz.pipe_entry(&entry, &mut sink) {
+                tracing::warn!(error = %e, "pse: page stream failed mid-body");
+            }
+            let _ = std::io::Write::flush(&mut sink);
+            let _ = sink.shutdown();
+        });
+        return (status, hdrs, Body::from_stream(ReaderStream::new(reader))).into_response();
+    }
+
+    let arc_for_read = arc.clone();
+    let entry_idx = meta.entry_index;
+    let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let mut cbz = arc_for_read.lock().expect("cbz mutex");
+        let pages = cbz.pages();
+        let entry = pages
+            .get(entry_idx)
+            .copied()
+            .cloned()
+            .ok_or_else(|| "page disappeared".to_string())?;
+        cbz.read_entry_range(&entry, start, len)
+            .map_err(|e| e.to_string())
+    })
+    .await;
+    let body_bytes = match bytes {
+        Ok(Ok(b)) => b,
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "pse: byte read failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "pse: byte task failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+        }
+    };
     hdrs.insert(
         header::CONTENT_LENGTH,
         HeaderValue::from(body_bytes.len() as u64),
@@ -286,8 +330,25 @@ pub async fn stream(
                 .unwrap_or_else(|_| HeaderValue::from_static("bytes 0-0/0")),
         );
     }
-
     (status, hdrs, Body::from(body_bytes)).into_response()
+}
+
+/// Duplex buffer for the streaming page path (see `page_bytes::STREAM_BUF_BYTES`).
+const STREAM_BUF_BYTES: usize = 256 * 1024;
+
+/// 304 response carrying just the validators (no body) for a matched
+/// If-None-Match revalidation.
+fn not_modified(etag: &str) -> Response {
+    let mut hdrs = HeaderMap::new();
+    hdrs.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=1800"),
+    );
+    hdrs.insert(
+        header::ETAG,
+        HeaderValue::from_str(etag).unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
+    );
+    (StatusCode::NOT_MODIFIED, hdrs).into_response()
 }
 
 struct PageMeta {

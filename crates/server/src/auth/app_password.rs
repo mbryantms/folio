@@ -15,8 +15,12 @@
 //! losing audit history.
 
 use chrono::Utc;
+use lru::LruCache;
 use rand::Rng;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sha2::{Digest, Sha256};
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use entity::app_password::{self, ActiveModel as AppPasswordAM, Entity as AppPasswordEntity};
@@ -100,44 +104,156 @@ pub struct ResolvedAppPassword {
     pub scope: String,
 }
 
+/// Don't re-bump `last_used_at` more than once per this interval — every
+/// authenticated OPDS request would otherwise be a row UPDATE (PERF-1).
+const LAST_USED_DEBOUNCE_SECS: i64 = 60;
+
+/// Process-wide cache mapping `SHA-256(plaintext)` → the app-password row id,
+/// so a repeat Bearer/Basic auth skips the argon2 scan over every active token
+/// (PERF-1). argon2id verification is ~10-30 ms on x86 and 100-300 ms on a Pi,
+/// and the old path ran it once per active token per request on the async
+/// executor — the dominant OPDS hot-path cost.
+///
+/// Keyed by a hash of the token, never the plaintext, so secrets don't sit in a
+/// long-lived map. Entries are only ever written after a successful argon2
+/// match, so the cache can't be poisoned. Revocation stays immediate: a cache
+/// hit still re-reads the row by id and honors `revoked_at` + current `scope`.
+#[derive(Clone)]
+pub struct AppPasswordCache(Arc<Mutex<LruCache<[u8; 32], Uuid>>>);
+
+impl AppPasswordCache {
+    /// Bounded so a token-spray (many distinct bad tokens never reach the
+    /// cache anyway, but valid-then-revoked churn) can't grow it without limit.
+    /// 1024 live tokens is far beyond any self-host's real fleet.
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(LruCache::new(
+            NonZeroUsize::new(1024).expect("nonzero"),
+        ))))
+    }
+
+    fn get(&self, key: &[u8; 32]) -> Option<Uuid> {
+        self.0
+            .lock()
+            .expect("app-password cache poisoned")
+            .get(key)
+            .copied()
+    }
+
+    fn put(&self, key: [u8; 32], id: Uuid) {
+        self.0
+            .lock()
+            .expect("app-password cache poisoned")
+            .put(key, id);
+    }
+
+    fn invalidate(&self, key: &[u8; 32]) {
+        self.0.lock().expect("app-password cache poisoned").pop(key);
+    }
+}
+
+impl Default for AppPasswordCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn token_hash(plaintext: &str) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(plaintext.as_bytes());
+    h.finalize().into()
+}
+
 /// Resolve a plaintext app-password to its owning user + scope.
 /// Returns `None` for malformed prefix, missing user, or no matching
-/// active row. Updates `last_used_at` on success.
+/// active row. Updates `last_used_at` on success (debounced).
+///
+/// Fast path: a previously-verified token hits the `cache` and skips argon2 —
+/// but still re-reads its row so revocation and scope stay authoritative. Slow
+/// path: scan active rows and argon2 each, on a blocking thread so the per-row
+/// hashing never stalls the async runtime.
 pub async fn verify(
-    db: &sea_orm::DatabaseConnection,
+    db: &DatabaseConnection,
+    cache: &AppPasswordCache,
     plaintext: &str,
     pepper: &[u8],
 ) -> Option<ResolvedAppPassword> {
     if !looks_like_app_password(plaintext) {
         return None;
     }
-    // Scan only active rows. The partial index from the migration keeps
-    // this O(active-tokens) rather than O(all-tokens). In practice
-    // active-tokens ≤ a dozen per active user.
+    let key = token_hash(plaintext);
+
+    // Fast path: we've argon2-verified this exact token before. Re-read the row
+    // by id so `revoked_at` / `scope` stay authoritative — only the argon2 work
+    // is skipped, not the revocation check.
+    if let Some(id) = cache.get(&key) {
+        match AppPasswordEntity::find_by_id(id).one(db).await {
+            Ok(Some(row)) if row.revoked_at.is_none() => {
+                let resolved = ResolvedAppPassword {
+                    user_id: row.user_id,
+                    app_password_id: row.id,
+                    scope: row.scope.clone(),
+                };
+                touch_last_used(db, row).await;
+                return Some(resolved);
+            }
+            // Revoked or deleted — drop the stale entry. (A revoked token would
+            // also fail the scan below, so return None rather than re-scan.)
+            Ok(_) => {
+                cache.invalidate(&key);
+                return None;
+            }
+            // Transient DB error — leave the entry and fail this request.
+            Err(_) => return None,
+        }
+    }
+
+    // Slow path: scan active rows. The partial index keeps this O(active-tokens)
+    // rather than O(all-tokens); argon2 runs on a blocking thread.
     let rows = AppPasswordEntity::find()
         .filter(app_password::Column::RevokedAt.is_null())
         .all(db)
         .await
         .ok()?;
-    for row in rows {
-        if let Ok(true) = password::verify(&row.hash, plaintext, pepper) {
-            // Best-effort timestamp bump — failure here is non-fatal
-            // (lock contention, etc).
-            let now = Utc::now().fixed_offset();
-            let user_id = row.user_id;
-            let app_password_id = row.id;
-            let scope = row.scope.clone();
-            let mut am: AppPasswordAM = row.into();
-            am.last_used_at = Set(Some(now));
-            let _ = am.update(db).await;
-            return Some(ResolvedAppPassword {
-                user_id,
-                app_password_id,
-                scope,
-            });
-        }
+    let candidates: Vec<(Uuid, String)> = rows.iter().map(|r| (r.id, r.hash.clone())).collect();
+    let plaintext_owned = plaintext.to_owned();
+    let pepper_owned = pepper.to_vec();
+    let matched_id = tokio::task::spawn_blocking(move || {
+        candidates.into_iter().find_map(|(id, hash)| {
+            match password::verify(&hash, &plaintext_owned, &pepper_owned) {
+                Ok(true) => Some(id),
+                _ => None,
+            }
+        })
+    })
+    .await
+    .ok()??;
+
+    let row = rows.into_iter().find(|r| r.id == matched_id)?;
+    let resolved = ResolvedAppPassword {
+        user_id: row.user_id,
+        app_password_id: row.id,
+        scope: row.scope.clone(),
+    };
+    cache.put(key, row.id);
+    touch_last_used(db, row).await;
+    Some(resolved)
+}
+
+/// Best-effort `last_used_at` bump, debounced to at most once per
+/// [`LAST_USED_DEBOUNCE_SECS`] so a busy reader doesn't UPDATE the row on every
+/// request. Failure here is non-fatal (lock contention, etc).
+async fn touch_last_used(db: &DatabaseConnection, row: app_password::Model) {
+    let now = Utc::now();
+    let fresh = row
+        .last_used_at
+        .map(|t| (now - t.with_timezone(&Utc)).num_seconds() < LAST_USED_DEBOUNCE_SECS)
+        .unwrap_or(false);
+    if fresh {
+        return;
     }
-    None
+    let mut am: AppPasswordAM = row.into();
+    am.last_used_at = Set(Some(now.fixed_offset()));
+    let _ = am.update(db).await;
 }
 
 #[cfg(test)]
