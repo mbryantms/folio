@@ -15,6 +15,18 @@ this file starts at the first release that ships with a curated changelog.
 
 ## [0.10.3](https://github.com/mbryantms/folio/compare/v0.10.2...v0.10.3) (2026-06-11)
 
+> [!IMPORTANT]
+> **Action required if you run Folio behind a reverse proxy.** As of this
+> release, `X-Forwarded-For` is honored **only** from hops listed in the new
+> `COMIC_TRUSTED_PROXIES` setting (a comma-separated list of CIDRs or bare IPs).
+> The default is empty, so until you set it Folio uses the **connecting peer's**
+> IP — meaning every request behind nginx / Caddy / Traefik will be attributed
+> to the proxy's address. Set `COMIC_TRUSTED_PROXIES` to your proxy's IP/CIDR to
+> restore real client IPs for rate-limiting buckets and audit-log entries. Direct
+> (non-proxied) deployments need no change. This closes a spoofing vector where a
+> client could forge `X-Forwarded-For` to evade per-IP rate limits or poison
+> audit IPs (#131).
+
 
 ### Fixed
 
