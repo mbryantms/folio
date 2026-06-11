@@ -652,22 +652,25 @@ pub(crate) async fn apply_series_via_sidecar(
         // write this one archive — releases between iterations so
         // concurrent issue-scope edits aren't blocked for the whole
         // series fan-out.
-        let claimed = crate::archive_rewrite::mutex::try_claim(
+        let token = match crate::archive_rewrite::mutex::try_claim(
             &mut redis,
             &issue_row.id,
             crate::archive_rewrite::mutex::SIDECAR_TTL_SECS,
         )
         .await
-        .unwrap_or(false);
-        if !claimed {
-            skip_reasons.push(format!("{}: archive busy (mutex)", issue_row.id));
-            continue;
-        }
+        {
+            Ok(Some(t)) => t,
+            // Busy or Redis error — skip this issue, same as before.
+            Ok(None) | Err(_) => {
+                skip_reasons.push(format!("{}: archive busy (mutex)", issue_row.id));
+                continue;
+            }
+        };
 
         let result =
             crate::jobs::rewrite_sidecars::rewrite_one_issue(state, &issue_row.id, ci_xml, mi_xml)
                 .await;
-        crate::archive_rewrite::mutex::release(&mut redis, &issue_row.id).await;
+        crate::archive_rewrite::mutex::release(&mut redis, &issue_row.id, &token).await;
 
         match result {
             Ok(_) => composed_sidecars += 1,

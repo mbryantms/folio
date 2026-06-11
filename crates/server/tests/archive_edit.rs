@@ -373,11 +373,10 @@ async fn handle_serializes_on_held_mutex() {
 
     // Simulate an in-flight rewrite by pre-claiming the mutex.
     let mut redis = state.jobs.redis.clone();
-    assert!(
-        mutex::try_claim(&mut redis, &issue_id, mutex::EDIT_TTL_SECS)
-            .await
-            .unwrap()
-    );
+    let token = mutex::try_claim(&mut redis, &issue_id, mutex::EDIT_TTL_SECS)
+        .await
+        .unwrap()
+        .expect("mutex claim should succeed");
 
     // handle must observe the busy mutex and skip without touching bytes.
     handle(
@@ -393,7 +392,7 @@ async fn handle_serializes_on_held_mutex() {
     );
 
     // Release and retry — now it should rewrite.
-    mutex::release(&mut redis, &issue_id).await;
+    mutex::release(&mut redis, &issue_id, &token).await;
     handle(
         job(&issue_id, vec![PageOp::Remove { ordinal: 0 }]),
         Data::new(state.clone()),

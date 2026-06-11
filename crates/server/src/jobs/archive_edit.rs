@@ -276,21 +276,21 @@ pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), Er
     let state: AppState = (*state).clone();
 
     let mut redis = state.jobs.redis.clone();
-    let claimed = match mutex::try_claim(&mut redis, &job.issue_id, mutex::EDIT_TTL_SECS).await {
-        Ok(b) => b,
+    let token = match mutex::try_claim(&mut redis, &job.issue_id, mutex::EDIT_TTL_SECS).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            tracing::info!(issue_id = %job.issue_id, "archive edit: mutex busy; skipping");
+            return Ok(());
+        }
         Err(e) => {
             tracing::error!(issue_id = %job.issue_id, error = %e, "archive edit: mutex claim failed");
             return Ok(()); // soft-fail; operator can retry
         }
     };
-    if !claimed {
-        tracing::info!(issue_id = %job.issue_id, "archive edit: mutex busy; skipping");
-        return Ok(());
-    }
 
     let outcome = edit_one_issue(&state, &job).await;
     let mut redis = state.jobs.redis.clone();
-    mutex::release(&mut redis, &job.issue_id).await;
+    mutex::release(&mut redis, &job.issue_id, &token).await;
 
     audit_edit(&state, &job, &outcome).await;
 
@@ -722,7 +722,8 @@ fn transform_image(
 ) -> Result<(Vec<u8>, String), EditError> {
     use image::ImageEncoder;
     let fmt = image::guess_format(bytes).map_err(|e| EditError::Image(e.to_string()))?;
-    let img = image::load_from_memory(bytes).map_err(|e| EditError::Image(e.to_string()))?;
+    let img = crate::util::image_decode::decode_limited(bytes)
+        .map_err(|e| EditError::Image(e.to_string()))?;
     let rotated = match rot {
         90 => img.rotate90(),
         180 => img.rotate180(),

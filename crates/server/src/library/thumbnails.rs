@@ -630,7 +630,7 @@ fn decode_entry(
 /// holding the (non-Sync) archive handle.
 fn decode_bytes(bytes: &[u8]) -> Result<DynamicImage, ThumbError> {
     let _span = tracing::trace_span!("thumb.decode", bytes = bytes.len()).entered();
-    image::load_from_memory(bytes).map_err(|e| ThumbError::Decode(e.to_string()))
+    crate::util::image_decode::decode_limited(bytes).map_err(|e| ThumbError::Decode(e.to_string()))
 }
 
 /// SIMD-accelerated downscale using `fast_image_resize`. Input is converted

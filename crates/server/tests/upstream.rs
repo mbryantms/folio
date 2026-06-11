@@ -188,12 +188,23 @@ async fn injects_x_forwarded_host_from_inbound_host() {
 }
 
 #[tokio::test]
-async fn preserves_inbound_x_forwarded_for() {
+async fn strips_inbound_x_forwarded_for_when_unresolved() {
+    // SEC-6: a client-supplied XFF must never reach the upstream. With an
+    // anonymous forward (no resolved client IP), the inbound chain is dropped
+    // and no XFF is injected — the upstream sees none.
     let server = MockServer::start().await;
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(Some("sentinel".to_string())));
+    let observed_for_handler = observed.clone();
     Mock::given(method("GET"))
         .and(path("/x"))
-        .and(wm_header("x-forwarded-for", "203.0.113.5"))
-        .respond_with(ResponseTemplate::new(200))
+        .respond_with(move |req: &WmRequest| {
+            *observed_for_handler.lock().unwrap() = req
+                .headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from);
+            ResponseTemplate::new(200)
+        })
         .mount(&server)
         .await;
 
@@ -206,10 +217,13 @@ async fn preserves_inbound_x_forwarded_for() {
         .unwrap();
     let resp = forward_anon(&proxy_client(), &server.uri(), req, Duration::from_secs(5)).await;
     assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(observed.lock().unwrap().as_deref(), None);
 }
 
 #[tokio::test]
-async fn appends_client_ip_to_x_forwarded_for_chain() {
+async fn replaces_inbound_x_forwarded_for_with_resolved_ip() {
+    // SEC-6: the inbound (spoofable) chain is dropped and replaced by the single
+    // resolved client IP — never the `inbound, hop` append form.
     let server = MockServer::start().await;
     let observed = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     let observed_for_handler = observed.clone();
@@ -244,12 +258,8 @@ async fn appends_client_ip_to_x_forwarded_for_chain() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
-    // Inbound chain `203.0.113.5` + resolved client `198.51.100.7`
-    // should arrive as the canonical `original, hop` form.
-    assert_eq!(
-        observed.lock().unwrap().as_deref(),
-        Some("203.0.113.5, 198.51.100.7"),
-    );
+    // Only the resolved client survives — the spoofed `203.0.113.5` is gone.
+    assert_eq!(observed.lock().unwrap().as_deref(), Some("198.51.100.7"));
 }
 
 #[tokio::test]

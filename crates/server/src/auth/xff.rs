@@ -6,11 +6,19 @@
 //! skipped — those are our own reverse-proxies. The first hop that is *not*
 //! trusted is the real client.
 //!
-//! Without `COMIC_TRUSTED_PROXIES` set, every request appears to come from the
-//! reverse proxy. We fall back to the connection's peer address — which in
-//! that misconfigured case is the reverse proxy itself. Rate limits and audit
-//! IPs will then bucket all traffic into one address; operators must set the
-//! env var for a useful deploy.
+//! Forwarding headers are honored **only when the immediate TCP peer is itself
+//! a trusted proxy** (listed in `trusted_proxies`). A client connecting to us
+//! directly can set any `X-Forwarded-For` value it likes, so if we trusted the
+//! header unconditionally an attacker could spoof their IP and defeat every
+//! control that keys off the result — the per-route rate limiter, the
+//! failed-auth IP lockout, and the audit-log client IP. We therefore ignore the
+//! header and use the connection peer whenever the peer is not trusted.
+//!
+//! Without `COMIC_TRUSTED_PROXIES` set, the trusted set is empty, so the header
+//! is never honored and every request is attributed to its peer address. In a
+//! reverse-proxied deploy that means all traffic buckets into the proxy's
+//! address until the operator sets the env var to cover the front proxy — safe
+//! by default, useful once configured.
 
 use axum::http::HeaderMap;
 use ipnet::IpNet;
@@ -39,11 +47,22 @@ pub fn parse_trusted_proxies(raw: &str) -> Vec<IpNet> {
 
 /// Resolve the real client IP for this request.
 ///
-/// Walks `X-Forwarded-For` right-to-left. Returns the first IP that is *not*
-/// covered by any entry in `trusted`. If every hop is trusted (and there's at
-/// least one), returns the leftmost hop — the original client per the header
+/// Forwarding headers are honored only when `peer` (the immediate TCP peer) is
+/// covered by `trusted` — otherwise the caller is talking to us directly and any
+/// `X-Forwarded-For` it sent is attacker-controlled, so we return `peer`.
+///
+/// When the peer is trusted, walks `X-Forwarded-For` right-to-left and returns
+/// the first IP *not* covered by `trusted`. If every hop is trusted (and there's
+/// at least one), returns the leftmost hop — the original client per the header
 /// contract. If the header is missing or unparseable, returns `peer`.
 pub fn client_ip(headers: &HeaderMap, peer: IpAddr, trusted: &[IpNet]) -> IpAddr {
+    // Authenticate the hop we can: only walk the forwarding chain when the
+    // immediate sender is one of our own proxies. A direct (untrusted) peer
+    // cannot be allowed to dictate its own client IP.
+    if !trusted.iter().any(|net| net.contains(&peer)) {
+        return peer;
+    }
+
     let Some(raw) = headers
         .get(axum::http::header::FORWARDED.as_str())
         .or_else(|| headers.get("x-forwarded-for"))
@@ -99,8 +118,14 @@ mod tests {
         h
     }
 
+    /// A direct, untrusted client peer.
     fn peer() -> IpAddr {
-        "127.0.0.1".parse().unwrap()
+        "203.0.113.99".parse().unwrap()
+    }
+
+    /// A peer inside the `10.0.0.0/8` trusted set used by the walk tests.
+    fn trusted_peer() -> IpAddr {
+        "10.0.0.6".parse().unwrap()
     }
 
     #[test]
@@ -116,22 +141,29 @@ mod tests {
     }
 
     #[test]
-    fn single_untrusted_hop_returned() {
+    fn spoofed_xff_ignored_when_peer_untrusted() {
+        // The core SEC-1 guard: a client hitting us directly (peer not in the
+        // trusted set — here, empty) cannot dictate its IP via the header.
         let h = h(&[("x-forwarded-for", "203.0.113.5")]);
-        assert_eq!(
-            client_ip(&h, peer(), &[]),
-            "203.0.113.5".parse::<IpAddr>().unwrap()
-        );
+        assert_eq!(client_ip(&h, peer(), &[]), peer());
+    }
+
+    #[test]
+    fn spoofed_xff_ignored_even_with_trusted_set_when_peer_untrusted() {
+        // A trusted set is configured, but THIS peer isn't in it (direct hit).
+        // The header must still be ignored.
+        let trusted = parse_trusted_proxies("10.0.0.0/8");
+        let h = h(&[("x-forwarded-for", "8.8.8.8, 4.4.4.4, 10.0.0.5")]);
+        assert_eq!(client_ip(&h, peer(), &trusted), peer());
     }
 
     #[test]
     fn walks_right_to_left_through_trusted_proxies() {
         let trusted = parse_trusted_proxies("10.0.0.0/8");
-        // client → trusted lb → trusted ingress. We trust the last two; client
-        // is 203.0.113.5.
-        let h = h(&[("x-forwarded-for", "203.0.113.5, 10.0.0.5, 10.0.0.6")]);
+        // peer is our trusted ingress; chain is client → trusted lb → ingress.
+        let h = h(&[("x-forwarded-for", "203.0.113.5, 10.0.0.5")]);
         assert_eq!(
-            client_ip(&h, peer(), &trusted),
+            client_ip(&h, trusted_peer(), &trusted),
             "203.0.113.5".parse::<IpAddr>().unwrap()
         );
     }
@@ -141,36 +173,47 @@ mod tests {
         let trusted = parse_trusted_proxies("10.0.0.0/8");
         let h = h(&[("x-forwarded-for", "10.0.0.5, 10.0.0.6")]);
         assert_eq!(
-            client_ip(&h, peer(), &trusted),
+            client_ip(&h, trusted_peer(), &trusted),
             "10.0.0.5".parse::<IpAddr>().unwrap()
         );
     }
 
     #[test]
     fn untrusted_in_middle_returned() {
-        // Spoof attempt: client claims a private IP in the header. Without a
-        // trusted-proxies set we accept whatever's rightmost as the client —
-        // operators must set the env var.
+        // Peer is trusted, so we walk: rightmost trusted hop is skipped, the
+        // first untrusted hop from the right is the real client.
         let trusted = parse_trusted_proxies("10.0.0.0/8");
         let h = h(&[("x-forwarded-for", "8.8.8.8, 4.4.4.4, 10.0.0.5")]);
         assert_eq!(
-            client_ip(&h, peer(), &trusted),
+            client_ip(&h, trusted_peer(), &trusted),
             "4.4.4.4".parse::<IpAddr>().unwrap()
         );
     }
 
     #[test]
     fn malformed_falls_back_to_peer() {
+        // Peer trusted (past the gate); the header itself is unparseable.
+        let trusted = parse_trusted_proxies("10.0.0.0/8");
         let h = h(&[("x-forwarded-for", "not-an-ip, also-not")]);
-        assert_eq!(client_ip(&h, peer(), &[]), peer());
+        assert_eq!(client_ip(&h, trusted_peer(), &trusted), trusted_peer());
+    }
+
+    #[test]
+    fn forwarded_header_rejected_from_trusted_peer() {
+        // RFC 7239 `Forwarded:` is unsupported; even from a trusted peer we fall
+        // back to peer rather than misparse it.
+        let trusted = parse_trusted_proxies("10.0.0.0/8");
+        let h = h(&[("forwarded", "for=1.2.3.4")]);
+        assert_eq!(client_ip(&h, trusted_peer(), &trusted), trusted_peer());
     }
 
     #[test]
     fn ipv6_in_chain() {
         let trusted = parse_trusted_proxies("2001:db8::/32");
-        let h = h(&[("x-forwarded-for", "2001:4860:4860::8888, 2001:db8::1")]);
+        let peer = "2001:db8::1".parse::<IpAddr>().unwrap();
+        let h = h(&[("x-forwarded-for", "2001:4860:4860::8888, 2001:db8::2")]);
         assert_eq!(
-            client_ip(&h, peer(), &trusted),
+            client_ip(&h, peer, &trusted),
             "2001:4860:4860::8888".parse::<IpAddr>().unwrap()
         );
     }

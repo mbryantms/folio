@@ -18,12 +18,13 @@
 //!    push the connection to an internal IP literal between hops; this
 //!    catches that edge.
 //!
-//! The DNS-rebind window (host resolves public on lookup-1, private on
-//! lookup-2 during the actual connect) is acknowledged but not closed
-//! here. Closing it requires a custom `Connector` that pins to the
-//! pre-resolved address — useful follow-up; not blocking for v1.0.
+//! 3. **Address pinning (SEC-3)** — the DNS-rebind window (host resolves
+//!    public on the pre-flight lookup, private on the connect lookup) is
+//!    closed by pinning: [`fetch_public_bytes`] builds the per-hop client with
+//!    `reqwest::ClientBuilder::resolve(host, vetted_ip)`, so reqwest connects
+//!    to the exact address we vetted instead of re-resolving the hostname.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, LOCATION, USER_AGENT};
@@ -117,10 +118,6 @@ pub async fn fetch_public_bytes(
     max_redirects: usize,
     require_https: bool,
 ) -> Result<FetchedBytes, FetchBytesError> {
-    let client = reqwest::Client::builder()
-        .redirect(Policy::none())
-        .build()
-        .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
     let mut current = if require_https {
         validate_outbound_url(url)?
     } else {
@@ -128,7 +125,22 @@ pub async fn fetch_public_bytes(
     };
 
     for hop in 0..=max_redirects {
-        validate_and_resolve(&current, require_https).await?;
+        // Vet the host and capture the exact address we approved.
+        let pinned = validate_and_resolve(&current, require_https).await?;
+        let host = current
+            .host_str()
+            .ok_or(FetchBytesError::Ssrf(SsrfError::MissingHost))?;
+        // Pin the connection to that vetted address: reqwest connects to
+        // `pinned` instead of re-resolving `host`, so a rebinding DNS answer
+        // can't redirect the second lookup to a private IP (SEC-3). A fresh
+        // per-hop client keeps the override scoped to this one request; the
+        // path is low-volume (CBL import / cover fetch) so the lost connection
+        // pooling is irrelevant.
+        let client = reqwest::Client::builder()
+            .redirect(Policy::none())
+            .resolve(host, pinned)
+            .build()
+            .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
         let resp = tokio::time::timeout(
             timeout,
             client
@@ -194,51 +206,61 @@ pub async fn fetch_public_bytes(
     Err(FetchBytesError::TooManyRedirects(max_redirects))
 }
 
-async fn validate_and_resolve(url: &url::Url, require_https: bool) -> Result<(), SsrfError> {
+/// Syntactically validate `url`, resolve its host, and return the exact
+/// address the caller should pin the connection to. Fails if *any* resolved
+/// address is internal (a single tainted A/AAAA record rejects the request).
+async fn validate_and_resolve(
+    url: &url::Url,
+    require_https: bool,
+) -> Result<SocketAddr, SsrfError> {
     if require_https {
         validate_outbound_url(url.as_str())?;
     } else {
         validate_public_http_url(url.as_str())?;
     }
-    if let Some(host) = url.host_str() {
-        let port = url.port_or_known_default().unwrap_or(match url.scheme() {
-            "http" => 80,
-            _ => 443,
-        });
-        check_host_resolves_public(host, port).await?;
-    }
-    Ok(())
+    let host = url.host_str().ok_or(SsrfError::MissingHost)?;
+    let port = url.port_or_known_default().unwrap_or(match url.scheme() {
+        "http" => 80,
+        _ => 443,
+    });
+    let ip = resolve_pinned_addr(host, port).await?;
+    Ok(SocketAddr::new(ip, port))
 }
 
-/// Resolve `host` (with the URL's port, defaulting to 443 for https) and
-/// fail if *any* resolved address is in an internal range. Called after
-/// [`validate_outbound_url`] and before the actual fetch.
-pub async fn check_host_resolves_public(host: &str, port: u16) -> Result<(), SsrfError> {
-    // Short-circuit IP-literal hosts — `validate_outbound_url` already
-    // covered them, but the contract is that `check_host_resolves_public`
-    // is safe to call standalone, so re-do it here.
+/// Resolve `host`:`port` and return the first address, failing if *any*
+/// resolved address is internal. The returned IP is the one the fetch pins the
+/// connection to, so the request connects to exactly the vetted address rather
+/// than re-resolving (SEC-3). IP-literal hosts short-circuit (no DNS).
+async fn resolve_pinned_addr(host: &str, port: u16) -> Result<IpAddr, SsrfError> {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return if is_internal_ip(&ip) {
             Err(SsrfError::PrivateAddress(ip))
         } else {
-            Ok(())
+            Ok(ip)
         };
     }
-    let addrs = tokio::net::lookup_host((host, port))
+    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
         .await
-        .map_err(|e| SsrfError::Unresolvable(e.to_string()))?;
-    let mut count = 0usize;
-    for addr in addrs {
-        count += 1;
-        let ip = addr.ip();
-        if is_internal_ip(&ip) {
-            return Err(SsrfError::PrivateAddress(ip));
-        }
-    }
-    if count == 0 {
+        .map_err(|e| SsrfError::Unresolvable(e.to_string()))?
+        .collect();
+    if addrs.is_empty() {
         return Err(SsrfError::Unresolvable(format!("no addresses for {host}")));
     }
-    Ok(())
+    for addr in &addrs {
+        if is_internal_ip(&addr.ip()) {
+            return Err(SsrfError::PrivateAddress(addr.ip()));
+        }
+    }
+    Ok(addrs[0].ip())
+}
+
+/// Resolve `host` (with the URL's port, defaulting to 443 for https) and
+/// fail if *any* resolved address is in an internal range. A standalone guard
+/// for callers that fetch with their own client (e.g. the admin OIDC-discovery
+/// probe); the bytes-fetch path uses [`resolve_pinned_addr`] directly so it can
+/// pin the vetted address.
+pub async fn check_host_resolves_public(host: &str, port: u16) -> Result<(), SsrfError> {
+    resolve_pinned_addr(host, port).await.map(|_| ())
 }
 
 /// Build a redirect policy that limits hops to `max_hops` and rejects
@@ -420,6 +442,25 @@ mod tests {
             err,
             FetchBytesError::Ssrf(SsrfError::PrivateAddress(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn resolve_pinned_returns_public_literal() {
+        // IP-literal hosts short-circuit DNS and return the literal for pinning.
+        let ip = resolve_pinned_addr("8.8.8.8", 443).await.unwrap();
+        assert_eq!(ip, "8.8.8.8".parse::<IpAddr>().unwrap());
+    }
+
+    #[tokio::test]
+    async fn resolve_pinned_rejects_internal_resolution() {
+        // `localhost` resolves to loopback via the local resolver — the
+        // resolved address (not just an IP literal) must be gated before it can
+        // be pinned, which is the SEC-3 rebinding defense.
+        let err = resolve_pinned_addr("localhost", 443).await.unwrap_err();
+        assert!(
+            matches!(err, SsrfError::PrivateAddress(_)),
+            "expected PrivateAddress, got {err:?}"
+        );
     }
 
     #[test]

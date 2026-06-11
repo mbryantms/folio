@@ -98,8 +98,15 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
     let state: AppState = (*state).clone();
 
     let mut redis = state.jobs.redis.clone();
-    let claimed = match mutex::try_claim(&mut redis, &job.issue_id, mutex::SIDECAR_TTL_SECS).await {
-        Ok(b) => b,
+    let token = match mutex::try_claim(&mut redis, &job.issue_id, mutex::SIDECAR_TTL_SECS).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            tracing::info!(
+                issue_id = %job.issue_id,
+                "sidecar writeback: mutex busy; skipping (caller will re-enqueue if needed)",
+            );
+            return Ok(());
+        }
         Err(e) => {
             tracing::error!(
                 issue_id = %job.issue_id,
@@ -109,13 +116,6 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
             return Ok(()); // soft fail; caller can retry
         }
     };
-    if !claimed {
-        tracing::info!(
-            issue_id = %job.issue_id,
-            "sidecar writeback: mutex busy; skipping (caller will re-enqueue if needed)",
-        );
-        return Ok(());
-    }
 
     let outcome = rewrite_one_issue(
         &state,
@@ -125,7 +125,7 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
     )
     .await;
     let mut redis = state.jobs.redis.clone();
-    mutex::release(&mut redis, &job.issue_id).await;
+    mutex::release(&mut redis, &job.issue_id, &token).await;
 
     audit_writeback(&state, &job, &outcome).await;
 
