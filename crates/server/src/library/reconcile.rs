@@ -23,12 +23,25 @@ use entity::{
     library, series,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
-    sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
+    QuerySelect, Set, sea_query::Expr,
 };
 use std::collections::HashSet;
 use std::path::Path;
 use uuid::Uuid;
+
+/// The only `issue` columns the seen-reconcile pass reads. Selecting just these
+/// avoids materializing the heavy `pages` / `comic_info_raw` JSON for every
+/// issue of every scanned series — on a large library that was hundreds of MB
+/// of transient model data per scan (PERF-9).
+#[derive(Debug, FromQueryResult)]
+struct ReconcileIssue {
+    id: String,
+    file_path: String,
+    series_id: Uuid,
+    slug: String,
+    removed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+}
 
 use super::event_log::{Action, Category, EventCollector, Severity};
 use super::scanner::stats::ScanStats;
@@ -125,6 +138,15 @@ pub async fn reconcile_library_seen(
                 issue::Column::SeriesId
                     .is_in(scanned_series_ids.iter().copied().collect::<Vec<_>>()),
             )
+            .select_only()
+            .columns([
+                issue::Column::Id,
+                issue::Column::FilePath,
+                issue::Column::SeriesId,
+                issue::Column::Slug,
+                issue::Column::RemovedAt,
+            ])
+            .into_model::<ReconcileIssue>()
             .all(db)
             .await?;
         reconcile_issue_rows_seen(
@@ -291,6 +313,15 @@ pub async fn reconcile_series_seen(
 
     let issues = IssueEntity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
+        .select_only()
+        .columns([
+            issue::Column::Id,
+            issue::Column::FilePath,
+            issue::Column::SeriesId,
+            issue::Column::Slug,
+            issue::Column::RemovedAt,
+        ])
+        .into_model::<ReconcileIssue>()
         .all(db)
         .await?;
     reconcile_issue_rows_seen(
@@ -321,7 +352,7 @@ fn path_under_any(path: &str, folders: &HashSet<String>) -> bool {
 
 async fn reconcile_issue_rows_seen(
     db: &DatabaseConnection,
-    issues: Vec<issue::Model>,
+    issues: Vec<ReconcileIssue>,
     seen_paths: &HashSet<String>,
     scanned_folder_paths: &HashSet<String>,
     now: chrono::DateTime<chrono::FixedOffset>,

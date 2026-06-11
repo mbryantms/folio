@@ -121,6 +121,15 @@ const DETECTOR_NMS: f32 = 0.5;
 /// Use the gap between them to spot detector-bound vs recognizer-
 /// bound deployments.
 pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
+    // Cancellation (OCR-1 / PERF-9): a `spawn_blocking` task keeps running
+    // detached if this future is dropped (client disconnected / aborted). The
+    // drop guard flips this flag, and the blocking body checks it after the
+    // detector run — bailing before the expensive recognize step so the
+    // recognizer singleton is freed for the next request instead of being
+    // pinned for the full pipeline on work nobody is waiting for.
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _cancel_on_drop = CancelGuard(cancel.clone());
+
     let lang_label = match input.language {
         Language::Western => "western",
         Language::Manga => "manga",
@@ -154,8 +163,16 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
 
     let redis_for_put = input.redis.clone();
     let detect_key_for_put = detect_key.clone();
+    let cancel_for_task = cancel.clone();
     let (output, bboxes_to_cache) = tokio::task::spawn_blocking(move || {
-        run_blocking(detector, recognizer, input, lang_label, cached_bboxes)
+        run_blocking(
+            detector,
+            recognizer,
+            input,
+            lang_label,
+            cached_bboxes,
+            &cancel_for_task,
+        )
     })
     .await
     .map_err(|e| anyhow::anyhow!("ocr task panicked: {e}"))??;
@@ -169,6 +186,16 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
     Ok(output)
 }
 
+/// Sets its flag when dropped — used by [`run_ocr`] to signal the detached
+/// blocking task that the request was abandoned.
+struct CancelGuard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Blocking body of [`run_ocr`]: runs the detector (if not cached),
 /// picks the bbox overlapping the user's rect, crops, and recognizes.
 /// Returns `(output, bboxes_to_cache)` — `bboxes_to_cache` is `Some`
@@ -180,6 +207,7 @@ fn run_blocking(
     input: OcrInput,
     lang_label: &'static str,
     cached_bboxes: Option<Vec<CachedBbox>>,
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> anyhow::Result<(OcrOutput, Option<Vec<CachedBbox>>)> {
     let (page_w, page_h) = (input.page_image.width(), input.page_image.height());
     // Clamp the user's region into page bounds defensively — the
@@ -224,6 +252,14 @@ fn run_blocking(
         }
         (None, _) => (None, None),
     };
+
+    // The detector run above can take seconds; if the request was abandoned in
+    // the meantime, bail before recognize (which also holds the recognizer
+    // singleton's lock). The returned Err is discarded — the caller's future is
+    // already gone.
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(anyhow::anyhow!("ocr request cancelled before recognize"));
+    }
 
     // ─── Pick crop, recognize ────────────────────────────────────
     let (final_img, refined_bbox) = if let Some(r) = refined_page {
