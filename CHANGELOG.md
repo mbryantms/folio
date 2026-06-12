@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.10.5](https://github.com/mbryantms/folio/compare/v0.10.4...v0.10.5) (2026-06-12)
+
+
+### Fixed
+
+* **deps:** update nextjs monorepo to v16.2.9 ([#144](https://github.com/mbryantms/folio/issues/144)) ([1ac14f1](https://github.com/mbryantms/folio/commit/1ac14f1aebf8ebb544e0bd5b8e99bfaaa5a87e98))
+
 ## [0.10.4](https://github.com/mbryantms/folio/compare/v0.10.3...v0.10.4) (2026-06-11)
 
 
