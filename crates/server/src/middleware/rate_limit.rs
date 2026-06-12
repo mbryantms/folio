@@ -159,6 +159,21 @@ pub const OCR: Bucket = Bucket {
     burst: 60,
 };
 
+/// `GET /me/issues/{id}/pages/{page}/text-regions` — 15/min/IP +
+/// burst 10. A detect-cache miss is the most expensive single
+/// operation the server exposes: a full-page detector inference
+/// (~3 s on a fast CPU, ~50 s on constrained hosts) serialized
+/// through a process-wide mutex. Cache hits are a Redis round-trip,
+/// but the bucket has to protect the miss path — page-flipping in
+/// text mode could otherwise queue dozens of detector runs. The web
+/// client fetches each page's regions at most once per session
+/// (`staleTime: Infinity`), so real usage sits far under the limit.
+pub const OCR_DETECT: Bucket = Bucket {
+    name: "ocr.detect",
+    period: Duration::from_secs(4),
+    burst: 10,
+};
+
 // ───────── error handler ─────────
 
 fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<Body> {

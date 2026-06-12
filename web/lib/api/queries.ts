@@ -28,6 +28,7 @@ import type {
   MarkerSearchView,
   MarkerTagMatch,
   MarkerTagsView,
+  TextRegionsView,
   AdminOverviewView,
   AdminUserDetailView,
   AdminUserListView,
@@ -560,6 +561,10 @@ export const queryKeys = {
     ["markers", "list", filters] as const,
   /** Reader overlay's per-issue fetch (one round-trip, all kinds). */
   issueMarkers: (issueId: string) => ["markers", "issue", issueId] as const,
+  /** Detected speech-bubble outlines for one page (OCR rework 1.0).
+   *  Fetched when the reader enters text-capture mode. */
+  issuePageTextRegions: (issueId: string, page: number) =>
+    ["ocr", "text-regions", issueId, page] as const,
   /** Cheap COUNT — drives the Bookmarks sidebar badge. Cached 60s. */
   markerCount: ["markers", "count"] as const,
   /** Distinct tag rollup — drives the /bookmarks tag filter chips. */
@@ -1942,6 +1947,35 @@ export function useIssueMarkers(issueId: string) {
     queryKey: queryKeys.issueMarkers(issueId),
     queryFn: () => jsonFetch<IssueMarkersView>(`/me/issues/${issueId}/markers`),
     enabled: !!issueId,
+  });
+}
+
+/** Detected speech-bubble regions for one page, percent coords
+ *  (OCR rework 1.0). Drives the tappable bubble outlines the reader
+ *  shows in text-capture mode.
+ *
+ *  - `staleTime: Infinity` — the server caches detections per
+ *    content-hash; within a session a page's regions never change,
+ *    and each fetch warms the server-side cache that makes every
+ *    subsequent bubble OCR on the page recognize-only.
+ *  - `retry: false` — a cache miss costs a full detector inference
+ *    server-side (seconds, tens of seconds on weak hosts);
+ *    auto-retry would stack more runs onto a struggling box. The
+ *    overlay treats errors as "no outlines" and drag still works. */
+export function useIssuePageTextRegions(
+  issueId: string,
+  page: number,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: queryKeys.issuePageTextRegions(issueId, page),
+    queryFn: () =>
+      jsonFetch<TextRegionsView>(
+        `/me/issues/${issueId}/pages/${page}/text-regions`,
+      ),
+    staleTime: Infinity,
+    retry: false,
+    enabled: enabled && !!issueId,
   });
 }
 

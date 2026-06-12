@@ -299,6 +299,7 @@ async fn seed_library(
             removal_confirmed_at: Set(None),
             status_user_set_at: Set(None),
             reading_direction: Set(None),
+            text_language: Set(None),
             preserve_canonical_order: Set(false),
         }
         .insert(&db)

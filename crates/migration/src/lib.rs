@@ -92,6 +92,7 @@ mod m20270113_000001_scan_batch;
 mod m20270114_000001_sidecar_presence;
 mod m20270115_000001_metadata_batch;
 mod m20270116_000001_password_reset_uses;
+mod m20270117_000001_series_text_language;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -192,6 +193,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270114_000001_sidecar_presence::Migration),
             Box::new(m20270115_000001_metadata_batch::Migration),
             Box::new(m20270116_000001_password_reset_uses::Migration),
+            Box::new(m20270117_000001_series_text_language::Migration),
         ]
     }
 }

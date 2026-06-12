@@ -40,6 +40,17 @@ use crate::api::issue_ocr::OcrResponse;
 /// guesses.
 pub const CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
+/// Version byte folded into every result-cache key. Bump on any
+/// change that alters what the pipeline would produce for the same
+/// inputs: preprocessing (binarization, padding, DPI), PSM,
+/// Tesseract variables, postprocess rules or their consts, or
+/// response semantics. Old-version keys age out via [`CACHE_TTL`] —
+/// no flush job needed.
+///
+/// History: v2 = Otsu/polarity/padding preprocessing + postprocess
+/// cleanup (OCR rework 1.0); v1 = unversioned launch shape.
+pub const OCR_RESULT_VERSION: u32 = 2;
+
 /// Build the Redis key for one cache entry. Public so tests can
 /// pre-seed entries without going through the full handler path.
 ///
@@ -56,7 +67,7 @@ pub fn cache_key(
     region_hash: &str,
 ) -> String {
     let d = if detect { "d" } else { "r" };
-    format!("ocr:cache:{content_hash}:{page}:{lang}:{d}:{region_hash}")
+    format!("ocr:cache:v{OCR_RESULT_VERSION}:{content_hash}:{page}:{lang}:{d}:{region_hash}")
 }
 
 /// Stable 32-hex BLAKE3 of the integer-pixel rect. Keeping it
@@ -138,20 +149,36 @@ pub struct CachedBbox {
     pub class: u32,
 }
 
-/// Redis key for the per-page detector output cache.
-pub fn detect_cache_key(content_hash: &str, page: u32) -> String {
-    format!("ocr:detect:{content_hash}:{page}")
+/// Full per-page detector output: the bbox list plus the decoded
+/// page dimensions. The dims ride along so the text-regions endpoint
+/// can convert pixel bboxes to percent coordinates on a cache hit
+/// without re-decoding the page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedDetection {
+    pub page_w: u32,
+    pub page_h: u32,
+    pub bboxes: Vec<CachedBbox>,
 }
 
-/// Look up cached detector polygons for a page. `Some` on hit, `None`
+/// Version byte in the detect-cache key. v2 = payload grew page
+/// dimensions ([`CachedDetection`]); v1 stored a bare bbox array.
+/// Old-version keys age out via [`CACHE_TTL`].
+pub const OCR_DETECT_VERSION: u32 = 2;
+
+/// Redis key for the per-page detector output cache.
+pub fn detect_cache_key(content_hash: &str, page: u32) -> String {
+    format!("ocr:detect:v{OCR_DETECT_VERSION}:{content_hash}:{page}")
+}
+
+/// Look up cached detector output for a page. `Some` on hit, `None`
 /// on miss or Redis error (fail-open).
-pub async fn get_detect(redis: &ConnectionManager, key: &str) -> Option<Vec<CachedBbox>> {
+pub async fn get_detect(redis: &ConnectionManager, key: &str) -> Option<CachedDetection> {
     let mut conn = redis.clone();
     match conn.get::<_, Option<String>>(key).await {
-        Ok(Some(raw)) => match serde_json::from_str::<Vec<CachedBbox>>(&raw) {
-            Ok(bboxes) => {
+        Ok(Some(raw)) => match serde_json::from_str::<CachedDetection>(&raw) {
+            Ok(detection) => {
                 metrics::counter!("folio_ocr_detect_cache_hits_total").increment(1);
-                Some(bboxes)
+                Some(detection)
             }
             Err(e) => {
                 tracing::warn!(error = %e, key, "ocr detect cache: malformed payload; treating as miss");
@@ -169,10 +196,10 @@ pub async fn get_detect(redis: &ConnectionManager, key: &str) -> Option<Vec<Cach
     }
 }
 
-/// Store the detector's bbox list for a page. Failures are swallowed.
-pub async fn put_detect(redis: &ConnectionManager, key: &str, bboxes: &[CachedBbox]) {
+/// Store the detector's output for a page. Failures are swallowed.
+pub async fn put_detect(redis: &ConnectionManager, key: &str, detection: &CachedDetection) {
     let mut conn = redis.clone();
-    let payload = match serde_json::to_string(bboxes) {
+    let payload = match serde_json::to_string(detection) {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(error = %e, key, "ocr detect cache: serialize failed; skipping put");
@@ -207,7 +234,7 @@ mod tests {
         assert!(k.contains(":7:"));
         assert!(k.contains("western"));
         assert!(k.contains("rh1"));
-        assert!(k.starts_with("ocr:cache:"));
+        assert!(k.starts_with(&format!("ocr:cache:v{OCR_RESULT_VERSION}:")));
     }
 
     #[test]
@@ -222,23 +249,37 @@ mod tests {
         let k = detect_cache_key("hashA", 12);
         assert!(k.contains("hashA"));
         assert!(k.contains(":12"));
-        assert!(k.starts_with("ocr:detect:"));
+        assert!(k.starts_with(&format!("ocr:detect:v{OCR_DETECT_VERSION}:")));
     }
 
     #[test]
-    fn cached_bbox_roundtrips_through_json() {
-        let bbox = CachedBbox {
-            xmin: 10.0,
-            ymin: 20.0,
-            xmax: 100.0,
-            ymax: 80.0,
-            confidence: 0.91,
-            class: 0,
+    fn cached_detection_roundtrips_through_json() {
+        let detection = CachedDetection {
+            page_w: 1988,
+            page_h: 3056,
+            bboxes: vec![CachedBbox {
+                xmin: 10.0,
+                ymin: 20.0,
+                xmax: 100.0,
+                ymax: 80.0,
+                confidence: 0.91,
+                class: 0,
+            }],
         };
-        let json = serde_json::to_string(std::slice::from_ref(&bbox)).unwrap();
-        let back: Vec<CachedBbox> = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.len(), 1);
-        assert!((back[0].xmin - 10.0).abs() < 1e-6);
-        assert_eq!(back[0].class, 0);
+        let json = serde_json::to_string(&detection).unwrap();
+        let back: CachedDetection = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.page_w, 1988);
+        assert_eq!(back.bboxes.len(), 1);
+        assert!((back.bboxes[0].xmin - 10.0).abs() < 1e-6);
+        assert_eq!(back.bboxes[0].class, 0);
+    }
+
+    #[test]
+    fn v1_bare_array_payload_is_rejected() {
+        // Pre-v2 payloads were a bare bbox array; deserializing one
+        // into `CachedDetection` must fail so `get_detect` treats it
+        // as a miss rather than serving dimensionless data.
+        let v1 = r#"[{"xmin":1.0,"ymin":2.0,"xmax":3.0,"ymax":4.0,"confidence":0.9,"class":0}]"#;
+        assert!(serde_json::from_str::<CachedDetection>(v1).is_err());
     }
 }

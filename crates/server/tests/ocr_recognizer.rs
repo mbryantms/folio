@@ -67,8 +67,31 @@ async fn western_recognizes_a_blank_tile_without_panicking() {
     );
     assert!(
         out.words.is_none(),
-        "M2 doesn't populate per-word boxes yet"
+        "a blank tile must not yield word boxes"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires the build-time-compiled tesseract toolchain"]
+async fn western_word_boxes_stay_in_crop_bounds() {
+    let ocr = WesternOcr::shared()
+        .await
+        .expect("western init should succeed once tessdata is staged");
+    // Hand-synthesized glyphs are too brittle to assert recognized
+    // content here; real-text word coverage lives in the golden
+    // fixture suite (ocr_golden.rs). This pins the geometry
+    // contract: word boxes, when present, are mapped back out of
+    // the padded/upscaled space into crop coordinates.
+    let out = ocr
+        .recognize(&blank_tile(120, 60))
+        .expect("recognize should return Ok");
+    if let Some(words) = out.words {
+        for w in &words {
+            assert!((0.0..=1.0).contains(&w.confidence));
+            assert!(w.xmax >= w.xmin && w.ymax >= w.ymin);
+            assert!(w.xmax <= 120.0 && w.ymax <= 60.0);
+        }
+    }
 }
 
 #[tokio::test]
@@ -89,6 +112,6 @@ async fn manga_recognizes_a_blank_tile_without_panicking() {
     );
     assert!(
         out.words.is_none(),
-        "M2 doesn't populate per-word boxes yet"
+        "manga-ocr doesn't expose per-word boxes"
     );
 }

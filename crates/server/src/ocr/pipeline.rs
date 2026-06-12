@@ -17,6 +17,9 @@
 //!     largest; fall back to the user's rect verbatim if none
 //!     overlap.
 //!  4. Crop to that rect and hand the image to the selected recognizer.
+//!  5. Run the raw engine output through
+//!     [`postprocess::clean`](super::postprocess::clean) — junk-token
+//!     and confidence filtering live there, not in the recognizers.
 //!
 //! Detector inference + recognize run inside [`tokio::task::spawn_blocking`]
 //! so the reactor isn't stalled. The detector + recognizer singletons
@@ -27,9 +30,10 @@
 use image::DynamicImage;
 use redis::aio::ConnectionManager;
 
-use super::cache::{self, CachedBbox};
+use super::cache::{self, CachedBbox, CachedDetection};
 use super::detector::Detector;
-use super::recognizer::{Language, Recognition, Recognizer, manga::MangaOcr, western::WesternOcr};
+use super::postprocess::{self, Cleaned};
+use super::recognizer::{Language, Recognizer, manga::MangaOcr, western::WesternOcr};
 
 /// Pixel rectangle in page coordinates. All four fields are
 /// unsigned because callers must reject negatives at the API
@@ -90,7 +94,10 @@ pub struct OcrInput {
 
 #[derive(Debug)]
 pub struct OcrOutput {
-    pub recognition: Recognition,
+    /// Post-processed recognition. Word bboxes (when present) are in
+    /// **page**-pixel coordinates — the crop offset is already added
+    /// back so API consumers don't need the crop origin.
+    pub recognition: Cleaned,
     /// Detector's snap-to-bubble rectangle in page-pixel coordinates,
     /// `None` if no bbox overlapped the user's region above
     /// confidence threshold.
@@ -153,7 +160,7 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
     // When `detect` is off we skip the cache lookup + detector run
     // entirely. The blocking task receives `None` for both and falls
     // through to "OCR the user's rect verbatim".
-    let (detect_key, cached_bboxes) = if input.detect {
+    let (detect_key, cached_detection) = if input.detect {
         let key = cache::detect_cache_key(&input.content_hash, input.page);
         let cached = cache::get_detect(&input.redis, &key).await;
         (Some(key), cached)
@@ -164,21 +171,21 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
     let redis_for_put = input.redis.clone();
     let detect_key_for_put = detect_key.clone();
     let cancel_for_task = cancel.clone();
-    let (output, bboxes_to_cache) = tokio::task::spawn_blocking(move || {
+    let (output, detection_to_cache) = tokio::task::spawn_blocking(move || {
         run_blocking(
             detector,
             recognizer,
             input,
             lang_label,
-            cached_bboxes,
+            cached_detection,
             &cancel_for_task,
         )
     })
     .await
     .map_err(|e| anyhow::anyhow!("ocr task panicked: {e}"))??;
 
-    if let (Some(key), Some(bboxes)) = (detect_key_for_put, bboxes_to_cache) {
-        cache::put_detect(&redis_for_put, &key, &bboxes).await;
+    if let (Some(key), Some(detection)) = (detect_key_for_put, detection_to_cache) {
+        cache::put_detect(&redis_for_put, &key, &detection).await;
     }
 
     metrics::histogram!("folio_ocr_pipeline_seconds", "lang" => lang_label)
@@ -198,17 +205,17 @@ impl Drop for CancelGuard {
 
 /// Blocking body of [`run_ocr`]: runs the detector (if not cached),
 /// picks the bbox overlapping the user's rect, crops, and recognizes.
-/// Returns `(output, bboxes_to_cache)` — `bboxes_to_cache` is `Some`
-/// only when the detector ran inline (cache miss), telling the async
-/// caller to schedule a Redis PUT.
+/// Returns `(output, detection_to_cache)` — `detection_to_cache` is
+/// `Some` only when the detector ran inline (cache miss), telling
+/// the async caller to schedule a Redis PUT.
 fn run_blocking(
     detector: Option<&Detector>,
     recognizer: &dyn Recognizer,
     input: OcrInput,
     lang_label: &'static str,
-    cached_bboxes: Option<Vec<CachedBbox>>,
+    cached_detection: Option<CachedDetection>,
     cancel: &std::sync::atomic::AtomicBool,
-) -> anyhow::Result<(OcrOutput, Option<Vec<CachedBbox>>)> {
+) -> anyhow::Result<(OcrOutput, Option<CachedDetection>)> {
     let (page_w, page_h) = (input.page_image.width(), input.page_image.height());
     // Clamp the user's region into page bounds defensively — the
     // handler already validated this, but we don't want a panic in
@@ -227,28 +234,16 @@ fn run_blocking(
     // Three cases:
     //   - detect=false → no detector handle; skip directly to recognize
     //   - detect=true + cache hit → use cached bboxes
-    //   - detect=true + cache miss → run detector, return bboxes to cache
-    let (refined_page, bboxes_to_cache) = match (detector, cached_bboxes) {
-        (Some(_), Some(bboxes)) => (pick_bbox_page(&bboxes, &clamped, page_w, page_h), None),
+    //   - detect=true + cache miss → run detector, return output to cache
+    let (refined_page, detection_to_cache) = match (detector, cached_detection) {
+        (Some(_), Some(detection)) => (
+            pick_bbox_page(&detection.bboxes, &clamped, page_w, page_h),
+            None,
+        ),
         (Some(det), None) => {
-            let det_out = {
-                let mut d = det.lock()?;
-                d.inference(&input.page_image, DETECTOR_CONF, DETECTOR_NMS)?
-            };
-            let bboxes: Vec<CachedBbox> = det_out
-                .bboxes
-                .iter()
-                .map(|b| CachedBbox {
-                    xmin: b.xmin,
-                    ymin: b.ymin,
-                    xmax: b.xmax,
-                    ymax: b.ymax,
-                    confidence: b.confidence,
-                    class: b.class as u32,
-                })
-                .collect();
-            let picked = pick_bbox_page(&bboxes, &clamped, page_w, page_h);
-            (picked, Some(bboxes))
+            let detection = run_detector_blocking(det, &input.page_image)?;
+            let picked = pick_bbox_page(&detection.bboxes, &clamped, page_w, page_h);
+            (picked, Some(detection))
         }
         (None, _) => (None, None),
     };
@@ -278,13 +273,83 @@ fn run_blocking(
     metrics::histogram!("folio_ocr_recognize_seconds", "lang" => lang_label)
         .record(recognize_start.elapsed().as_secs_f64());
 
+    let mut cleaned = postprocess::clean(recognition, input.language);
+    // Word bboxes come back in crop coordinates; shift them into
+    // page space here, where the crop origin is still known.
+    if let Some(words) = cleaned.words.as_mut() {
+        let origin = refined_bbox.unwrap_or(clamped);
+        let (ox, oy) = (origin.x as f32, origin.y as f32);
+        for w in words {
+            w.xmin += ox;
+            w.xmax += ox;
+            w.ymin += oy;
+            w.ymax += oy;
+        }
+    }
+
     Ok((
         OcrOutput {
-            recognition,
+            recognition: cleaned,
             refined_bbox,
         },
-        bboxes_to_cache,
+        detection_to_cache,
     ))
+}
+
+/// Run one full-page detector inference. Blocking — call from
+/// inside `spawn_blocking`. The mutex serializes concurrent callers
+/// through the process-wide ONNX session.
+fn run_detector_blocking(
+    det: &Detector,
+    page_image: &DynamicImage,
+) -> anyhow::Result<CachedDetection> {
+    let det_out = {
+        let mut d = det.lock()?;
+        d.inference(page_image, DETECTOR_CONF, DETECTOR_NMS)?
+    };
+    Ok(CachedDetection {
+        page_w: page_image.width(),
+        page_h: page_image.height(),
+        bboxes: det_out
+            .bboxes
+            .iter()
+            .map(|b| CachedBbox {
+                xmin: b.xmin,
+                ymin: b.ymin,
+                xmax: b.xmax,
+                ymax: b.ymax,
+                confidence: b.confidence,
+                class: b.class as u32,
+            })
+            .collect(),
+    })
+}
+
+/// Full-page detection for the text-regions endpoint: run the
+/// detector over an owned page image and store the result under the
+/// page's detect-cache key — the same entry [`run_ocr`] reads, so a
+/// regions fetch makes every subsequent OCR on that page
+/// recognize-only.
+///
+/// Callers are expected to have checked [`cache::get_detect`] first;
+/// the lookup happening before this call is what lets the hit path
+/// skip the archive load + page decode entirely.
+pub async fn detect_and_cache_regions(
+    redis: ConnectionManager,
+    content_hash: &str,
+    page: u32,
+    page_image: DynamicImage,
+) -> anyhow::Result<CachedDetection> {
+    let detector = Detector::shared().await?;
+    let start = std::time::Instant::now();
+    let detection =
+        tokio::task::spawn_blocking(move || run_detector_blocking(detector, &page_image))
+            .await
+            .map_err(|e| anyhow::anyhow!("detect task panicked: {e}"))??;
+    metrics::histogram!("folio_ocr_detect_seconds").record(start.elapsed().as_secs_f64());
+    let key = cache::detect_cache_key(content_hash, page);
+    cache::put_detect(&redis, &key, &detection).await;
+    Ok(detection)
 }
 
 /// Pick the cached bbox with the largest intersection area against

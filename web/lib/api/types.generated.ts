@@ -2293,6 +2293,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/issues/{id}/pages/{page}/text-regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["issue_page_text_regions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/issues/{issue_id}/markers": {
         parameters: {
             query?: never;
@@ -6656,9 +6672,10 @@ export interface components {
              */
             detect?: boolean | null;
             /**
-             * @description `"western"` (default) or `"manga"`. Phase 2 will read
-             *     `series.text_language` as the default; for now the client
-             *     sends an explicit hint.
+             * @description `"western"` or `"manga"`. Omitted → the server resolves a
+             *     default: `series.text_language` if set, else `manga` when the
+             *     series reads right-to-left, else `western`. The response
+             *     echoes the resolved value in `lang`.
              */
             lang?: string | null;
             /**
@@ -6676,15 +6693,54 @@ export interface components {
         OcrResponse: {
             /**
              * Format: float
-             * @description Mean confidence in `[0.0, 1.0]`. Tesseract surfaces a real
-             *     per-page score; manga-ocr reports `1.0` (or `0.0` for an
-             *     empty result) since the greedy decoder doesn't expose
+             * @description Mean confidence in `[0.0, 1.0]` over the words kept by the
+             *     cleanup pass (Tesseract); manga-ocr reports `1.0` (or `0.0`
+             *     for an empty result) since the greedy decoder doesn't expose
              *     per-token probabilities.
              */
             confidence: number;
+            /**
+             * @description Recognizer the pipeline actually ran (`"western"` |
+             *     `"manga"`) — the request override or the server-side
+             *     resolution chain. `default` so result-cache payloads written
+             *     before this field existed still deserialize.
+             */
+            lang?: string;
+            /**
+             * @description Engine output before cleanup. Present only when cleanup
+             *     changed the text — a debugging aid, and the raw material for
+             *     golden-fixture authoring when users report junk output.
+             */
+            raw_text?: string | null;
             refined_bbox?: null | components["schemas"]["OcrRegion"];
-            /** @description Recognized text, trimmed. */
+            /**
+             * @description Recognized text after the postprocess cleanup pass
+             *     ([`crate::ocr::postprocess`]).
+             */
             text: string;
+            /**
+             * @description Per-word boxes in page-pixel coords, post-cleanup. `None`
+             *     when the engine doesn't expose word data (manga-ocr) or the
+             *     iterator yielded nothing.
+             */
+            words?: components["schemas"]["OcrWord"][] | null;
+        };
+        /** @description One recognized word: cleaned text + confidence + page-pixel box. */
+        OcrWord: {
+            /**
+             * Format: float
+             * @description `[0.0, 1.0]`, from Tesseract's per-word score.
+             */
+            confidence: number;
+            /** Format: int32 */
+            h: number;
+            text: string;
+            /** Format: int32 */
+            w: number;
+            /** Format: int32 */
+            x: number;
+            /** Format: int32 */
+            y: number;
         };
         OidcConfigView: {
             client_id?: string | null;
@@ -7875,6 +7931,12 @@ export interface components {
             summary?: string | null;
             tags?: string[];
             teams?: string[];
+            /**
+             * @description Per-series OCR language override. `"western"` / `"manga"` or
+             *     `None` meaning "Auto — infer from reading direction at OCR
+             *     time". Editable via `PATCH /series/{slug}`.
+             */
+            text_language?: string | null;
             /** Format: int32 */
             total_issues?: number | null;
             /**
@@ -8084,6 +8146,57 @@ export interface components {
             duration_ms: number;
             ok: boolean;
             quota: components["schemas"]["QuotaView"];
+        };
+        TextRegionView: {
+            /**
+             * Format: int32
+             * @description Detector class index (0 = text block, 1 = text line).
+             */
+            class: number;
+            /**
+             * Format: float
+             * @description Detector confidence, `[0.0, 1.0]`.
+             */
+            confidence: number;
+            /**
+             * Format: float
+             * @description Height, percent of page height (0–100).
+             */
+            h: number;
+            /**
+             * Format: float
+             * @description Width, percent of page width (0–100).
+             */
+            w: number;
+            /**
+             * Format: float
+             * @description Left edge, percent of page width (0–100).
+             */
+            x: number;
+            /**
+             * Format: float
+             * @description Top edge, percent of page height (0–100).
+             */
+            y: number;
+        };
+        /**
+         * @description Detected text regions for one page, in percent-of-page
+         *     coordinates (0–100 floats — the reader's native marker
+         *     representation, consumable by its SVG overlay without math).
+         */
+        TextRegionsView: {
+            /**
+             * Format: int32
+             * @description Decoded page height in pixels.
+             */
+            page_h: number;
+            /**
+             * Format: int32
+             * @description Decoded page width in pixels. Doubles as a `naturalSize`
+             *     fallback for clients that haven't measured the `<img>` yet.
+             */
+            page_w: number;
+            regions: components["schemas"]["TextRegionView"][];
         };
         /**
          * @description `system` | `dark` | `light` | `amber`.
@@ -8571,6 +8684,12 @@ export interface components {
              *     first issue's summary on read).
              */
             summary?: string | null;
+            /**
+             * @description Per-series OCR language override. `"western"` / `"manga"` or
+             *     `null` for "Auto — infer from reading direction". See OCR
+             *     rework 1.0.
+             */
+            text_language?: string | null;
         };
         UpdateSettingsReq: {
             [key: string]: unknown;
@@ -13396,6 +13515,51 @@ export interface operations {
                 content?: never;
             };
             /** @description ocr pipeline failure */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issue_page_text_regions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description issue UUID */
+                id: string;
+                /** @description 0-based page index */
+                page: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TextRegionsView"];
+                };
+            };
+            /** @description issue or page not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description page is not a decodable image */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description detector failure */
             500: {
                 headers: {
                     [name: string]: unknown;

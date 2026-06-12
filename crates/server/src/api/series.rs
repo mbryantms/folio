@@ -219,6 +219,11 @@ pub struct UpdateSeriesReq {
     /// `null` explicitly to clear. See `manga-and-bulk-metadata-1.0` M2.
     #[serde(default, deserialize_with = "deserialize_some_string")]
     pub reading_direction: Option<Option<String>>,
+    /// Per-series OCR language override. `"western"` / `"manga"` or
+    /// `null` for "Auto — infer from reading direction". See OCR
+    /// rework 1.0.
+    #[serde(default, deserialize_with = "deserialize_some_string")]
+    pub text_language: Option<Option<String>>,
 }
 
 fn deserialize_some_i64<'de, D>(d: D) -> Result<Option<Option<i64>>, D::Error>
@@ -312,6 +317,27 @@ pub async fn update_series(
         None
     };
 
+    // Same shape for the OCR-language override: `null` clears back to
+    // "Auto" (infer from reading direction at OCR time).
+    let normalized_text_lang = if let Some(v) = req.text_language.as_ref() {
+        match v.as_deref() {
+            None => Some(None),
+            Some(s) => {
+                let t = s.trim().to_ascii_lowercase();
+                if !matches!(t.as_str(), "western" | "manga") {
+                    return error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "validation.text_language",
+                        "text_language must be western, manga, or null",
+                    );
+                }
+                Some(Some(t))
+            }
+        }
+    } else {
+        None
+    };
+
     // Validate + slugify any admin-supplied slug.
     let new_slug = if let Some(input) = req.slug.as_deref() {
         let s = crate::slug::slugify_segment(input);
@@ -366,6 +392,9 @@ pub async fn update_series(
     }
     if let Some(v) = normalized_reading_dir.clone() {
         am.reading_direction = Set(v);
+    }
+    if let Some(v) = normalized_text_lang.clone() {
+        am.text_language = Set(v);
     }
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
     match am.update(&app.db).await {
@@ -456,6 +485,9 @@ pub async fn update_series(
             }
             if let Some(v) = normalized_reading_dir {
                 diff.insert("reading_direction".into(), serde_json::json!(v));
+            }
+            if let Some(v) = normalized_text_lang {
+                diff.insert("text_language".into(), serde_json::json!(v));
             }
             if !diff.is_empty() {
                 crate::audit::record(
@@ -576,6 +608,11 @@ pub struct SeriesView {
     /// declare manga.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reading_direction: Option<String>,
+    /// Per-series OCR language override. `"western"` / `"manga"` or
+    /// `None` meaning "Auto — infer from reading direction at OCR
+    /// time". Editable via `PATCH /series/{slug}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_language: Option<String>,
     /// Search-result excerpt with `<mark>…</mark>` tags around matched
     /// terms. Populated only on search-mode list responses; `None`
     /// everywhere else. The frontend renders this as HTML with a small
@@ -673,6 +710,7 @@ impl From<series::Model> for SeriesView {
             progress_summary: None,
             user_rating: None,
             reading_direction: m.reading_direction,
+            text_language: m.text_language,
             snippet: None,
             metadata_completeness: None,
             metadata_completeness_summary: None,

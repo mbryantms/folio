@@ -31,6 +31,7 @@ Default bindings — reader scope:
 | `b`     | Bookmark this page   | Toggles a page-0 marker on the current page   |
 | `n`     | Add note             | Opens the marker editor for a page note       |
 | `h`     | Start highlight      | Begins region selection                       |
+| `x`     | Capture text (OCR)   | Text mode: detected bubbles light up — tap one to OCR it, or drag a box |
 | `s`     | Favorite this page   | Toggles the star/favorite flag                |
 | `o`     | Show / hide markers  | Hides every overlay without deleting data     |
 | `]`     | Next bookmark        | Jumps to the next bookmark-kind marker        |

@@ -42,6 +42,7 @@ export type KeybindAction =
   | "bookmarkPage"
   | "addNote"
   | "startHighlight"
+  | "captureText"
   | "favoritePage"
   | "toggleMarkersHidden"
   | "nextBookmark"
@@ -68,6 +69,7 @@ export const READER_KEYBIND_ACTIONS: readonly KeybindAction[] = [
   "bookmarkPage",
   "addNote",
   "startHighlight",
+  "captureText",
   "favoritePage",
   "toggleMarkersHidden",
   "nextBookmark",
@@ -98,6 +100,7 @@ export const KEYBIND_SCOPES: Record<KeybindAction, KeybindScope> = {
   bookmarkPage: "reader",
   addNote: "reader",
   startHighlight: "reader",
+  captureText: "reader",
   favoritePage: "reader",
   toggleMarkersHidden: "reader",
   nextBookmark: "reader",
@@ -122,6 +125,7 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   bookmarkPage: "Bookmark this page",
   addNote: "Add note",
   startHighlight: "Start highlight",
+  captureText: "Capture text (OCR)",
   favoritePage: "Favorite this page",
   toggleMarkersHidden: "Show / hide markers",
   nextBookmark: "Next bookmark",
@@ -149,6 +153,9 @@ export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
   bookmarkPage: "b",
   addNote: "n",
   startHighlight: "h",
+  // `x` for text-extract — `t` is toggleChrome. Enters select-text
+  // mode: detected bubbles light up for tap-to-OCR, drag still works.
+  captureText: "x",
   // `s` for star — `f` is taken by `cycleFit`. Toggles the favorite
   // flag on the current page's bookmark, creating one if needed.
   favoritePage: "s",

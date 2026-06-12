@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Sparkles, Star, X } from "lucide-react";
+import { Copy, Sparkles, Star, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -68,6 +68,13 @@ export function MarkerEditor({
 
   const [body, setBody] = React.useState("");
   const [detectedText, setDetectedText] = React.useState<string | null>(null);
+  const [detectedConfidence, setDetectedConfidence] = React.useState<
+    number | null
+  >(null);
+  // OCR language override for the Detect/Re-detect button. Empty
+  // string = Auto (server resolves series text_language → reading
+  // direction → western).
+  const [ocrLang, setOcrLang] = React.useState("");
   const [ocrPending, setOcrPending] = React.useState(false);
   const [isFavorite, setIsFavorite] = React.useState(false);
   const [tags, setTags] = React.useState<string[]>([]);
@@ -83,6 +90,8 @@ export function MarkerEditor({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setBody(pendingMarker.body ?? "");
       setDetectedText(pendingMarker.selection?.text ?? null);
+      setDetectedConfidence(pendingMarker.selection?.ocr_confidence ?? null);
+      setOcrLang("");
       setIsFavorite(pendingMarker.is_favorite);
       setTags(pendingMarker.tags);
       setTagInput("");
@@ -153,6 +162,9 @@ export function MarkerEditor({
           ? {
               ...(pendingMarker.selection ?? {}),
               text: detectedText,
+              ...(detectedConfidence != null
+                ? { ocr_confidence: detectedConfidence }
+                : {}),
             }
           : (pendingMarker.selection ?? null);
 
@@ -246,18 +258,25 @@ export function MarkerEditor({
     setOcrPending(true);
     const toastId = toast.loading("Reading text…");
     try {
-      const ocr = await ocrCroppedRegion({
-        issueId,
-        pageIndex: pendingMarker.page_index,
-        region: pendingMarker.region,
-        naturalSize: natural,
-      });
+      const ocr = await ocrCroppedRegion(
+        {
+          issueId,
+          pageIndex: pendingMarker.page_index,
+          region: pendingMarker.region,
+          naturalSize: natural,
+        },
+        {
+          lang:
+            ocrLang === "western" || ocrLang === "manga" ? ocrLang : undefined,
+        },
+      );
       toast.dismiss(toastId);
       if (!ocr || !ocr.text.trim()) {
         toast.message("Couldn't read any text in that region.");
         return;
       }
       setDetectedText(ocr.text);
+      setDetectedConfidence(ocr.confidence);
       if (editingMarkerId) {
         update.mutate(
           {
@@ -288,6 +307,7 @@ export function MarkerEditor({
    *  immediately, preserving any non-text selection fields. */
   function handleClearText() {
     setDetectedText("");
+    setDetectedConfidence(null);
     if (editingMarkerId) {
       update.mutate(
         { selection: selectionWithoutText(pendingMarker?.selection) },
@@ -321,6 +341,27 @@ export function MarkerEditor({
   // can run it on a plain rect highlight after the fact, or re-run on
   // an existing highlight whose text needs a refresh.
   const canDetectText = !!pendingMarker.region;
+  // Manga-ocr reports a synthetic 1.0, so this hint effectively only
+  // fires for western recognitions — exactly the engine whose
+  // confidence is meaningful.
+  const lowConfidence =
+    !!selectionPreview &&
+    detectedConfidence != null &&
+    detectedConfidence < 0.6;
+
+  async function handleCopyText() {
+    if (!selectionPreview) return;
+    if (!navigator.clipboard) {
+      toast.error("Clipboard unavailable in this context.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(selectionPreview);
+      toast.success("Copied");
+    } catch {
+      toast.error("Couldn't copy to clipboard.");
+    }
+  }
 
   return (
     <Sheet
@@ -344,33 +385,61 @@ export function MarkerEditor({
                 <Label className="text-muted-foreground text-xs">
                   Detected text
                 </Label>
-                <button
-                  type="button"
-                  onClick={handleClearText}
-                  disabled={ocrPending || update.isPending}
-                  className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs disabled:opacity-50"
-                >
-                  <X className="h-3 w-3" />
-                  Clear
-                </button>
+                <span className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={handleCopyText}
+                    aria-label="Copy detected text"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={handleClearText}
+                    disabled={ocrPending || update.isPending}
+                    className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs disabled:opacity-50"
+                  >
+                    <X className="h-3 w-3" />
+                    Clear
+                  </button>
+                </span>
               </div>
               <div className="border-border/60 bg-muted/30 max-h-32 overflow-y-auto rounded-md border p-2 text-sm whitespace-pre-wrap">
                 {selectionPreview}
               </div>
+              {lowConfidence ? (
+                <p className="text-xs text-amber-600 dark:text-amber-500">
+                  Low confidence — text may be inaccurate.
+                </p>
+              ) : null}
             </div>
           ) : null}
           {canDetectText ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleDetectText}
-              disabled={ocrPending}
-              className="self-start"
-            >
-              <Sparkles className="mr-2 h-4 w-4" />
-              {selectionPreview ? "Re-detect text" : "Detect text (OCR)"}
-            </Button>
+            <div className="flex items-center gap-2 self-start">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleDetectText}
+                disabled={ocrPending}
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                {selectionPreview ? "Re-detect text" : "Detect text (OCR)"}
+              </Button>
+              <select
+                aria-label="OCR language"
+                value={ocrLang}
+                onChange={(e) => setOcrLang(e.target.value)}
+                className="border-input bg-background focus-visible:ring-ring h-8 rounded-md border px-2 text-xs shadow-sm focus-visible:ring-1 focus-visible:outline-none"
+              >
+                <option value="">Auto</option>
+                <option value="western">Western</option>
+                <option value="manga">Japanese</option>
+              </select>
+            </div>
           ) : null}
           <div className="space-y-1">
             <Label htmlFor="marker-body">

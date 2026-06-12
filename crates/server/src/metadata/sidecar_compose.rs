@@ -925,6 +925,7 @@ mod tests {
             removal_confirmed_at: None,
             status_user_set_at: None,
             reading_direction: None,
+            text_language: None,
             preserve_canonical_order: false,
         }
     }
