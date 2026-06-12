@@ -15,6 +15,7 @@
     { "type": "fix", "section": "Fixed" },
     { "type": "perf", "section": "Changed" },
     { "type": "revert", "section": "Fixed" },
+    { "type": "deps", "section": "Dependencies" },
     { "type": "chore", "hidden": true },
     { "type": "ci", "hidden": true },
     { "type": "docs", "hidden": true },

@@ -1,6 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":dependencyDashboard", ":semanticCommits"],
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(deps)",
+    ":semanticCommitScopeDisabled"
+  ],
   "timezone": "UTC",
   "schedule": ["before 6am on monday"],
   "prConcurrentLimit": 8,
