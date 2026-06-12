@@ -13,6 +13,14 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.11.0](https://github.com/mbryantms/folio/compare/v0.10.5...v0.11.0) (2026-06-12)
+
+
+### Added
+
+* **ocr:** recognition quality pipeline + bubble-aware tap-to-OCR ([#149](https://github.com/mbryantms/folio/issues/149)) ([39201e9](https://github.com/mbryantms/folio/commit/39201e99f1a431d04f6578a90dcb6dc7f2a0c511))
+* **reader:** add next-issue detail link to the end-of-issue card ([#150](https://github.com/mbryantms/folio/issues/150)) ([3a1f607](https://github.com/mbryantms/folio/commit/3a1f6078ce304de3a667ec904de916d6a2a22c98))
+
 ## [0.10.5](https://github.com/mbryantms/folio/compare/v0.10.4...v0.10.5) (2026-06-12)
 
 
