@@ -132,7 +132,7 @@ export function ReaderChrome({
         // and on iPads with rounded corners. Background still
         // extends to the very top edge so the chrome looks
         // continuous behind the status bar.
-        className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-neutral-800/80 bg-neutral-950/85 pl-[max(0.75rem,var(--safe-left))] pr-[max(0.75rem,var(--safe-right))] pt-[max(0.5rem,var(--safe-top))] pb-2 text-sm text-neutral-100 backdrop-blur transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:-translate-y-full motion-reduce:transition-none"
+        className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-neutral-800/80 bg-neutral-950/85 pt-[max(0.5rem,var(--safe-top))] pr-[max(0.75rem,var(--safe-right))] pb-2 pl-[max(0.75rem,var(--safe-left))] text-sm text-neutral-100 backdrop-blur transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:-translate-y-full motion-reduce:transition-none"
         aria-hidden={mounted && chromeVisible ? undefined : true}
       >
         <Tooltip>
@@ -487,8 +487,8 @@ function MarkerMenuButton({
             <Type className="mr-2 h-4 w-4" /> Highlight + capture text
           </span>
           <span className="text-muted-foreground ml-6 text-xs">
-            Runs OCR on the dragged region so the text shows up in search. Takes
-            a few seconds.
+            Tap a speech bubble, or drag a box. Runs OCR so the text shows up in
+            search.
           </span>
         </DropdownMenuItem>
         <DropdownMenuItem

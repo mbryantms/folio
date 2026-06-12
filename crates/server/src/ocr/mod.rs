@@ -10,6 +10,9 @@
 //!   the trait + a `Recognition` shape; M2 wires the impls.
 //! - [`pipeline`] — `detect → snap-to-polygon → crop → recognize`,
 //!   exposed via `POST /me/issues/{id}/ocr` (added in M3).
+//! - [`postprocess`] — pure-function cleanup of raw engine output
+//!   (confidence filtering, junk-token rules, whitespace shaping).
+//!   Runs inside the pipeline right after recognition.
 //!
 //! Models auto-download from Hugging Face on first use; cache lives
 //! at `${COMIC_DATA_DIR}/models/` (honors `HF_HOME`). The opt-in
@@ -19,4 +22,5 @@
 pub mod cache;
 pub mod detector;
 pub mod pipeline;
+pub mod postprocess;
 pub mod recognizer;

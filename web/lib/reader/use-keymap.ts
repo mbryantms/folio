@@ -59,6 +59,7 @@ export function useReaderKeymap(opts: {
   toggleMarkersHidden: () => void;
   beginAddNote: () => void;
   beginHighlight: () => void;
+  beginCaptureText: () => void;
   /** Called for `quitReader` when no end-card override fires. The
    *  caller decides router push, exit URL, etc. */
   onQuitReader: () => void;
@@ -90,6 +91,7 @@ export function useReaderKeymap(opts: {
     toggleMarkersHidden,
     beginAddNote,
     beginHighlight,
+    beginCaptureText,
     onQuitReader,
     onDismissEndCard,
   } = opts;
@@ -201,6 +203,9 @@ export function useReaderKeymap(opts: {
         case "startHighlight":
           beginHighlight();
           break;
+        case "captureText":
+          beginCaptureText();
+          break;
         case "favoritePage":
           toggleFavorite();
           break;
@@ -235,6 +240,7 @@ export function useReaderKeymap(opts: {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     beginAddNote,
+    beginCaptureText,
     beginHighlight,
     bindings,
     bookmarkPages,

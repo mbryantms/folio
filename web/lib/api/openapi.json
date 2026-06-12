@@ -5049,6 +5049,54 @@
         }
       }
     },
+    "/api/me/issues/{id}/pages/{page}/text-regions": {
+      "get": {
+        "operationId": "issue_page_text_regions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "issue UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "path",
+            "description": "0-based page index",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TextRegionsView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "issue or page not found"
+          },
+          "415": {
+            "description": "page is not a decodable image"
+          },
+          "500": {
+            "description": "detector failure"
+          }
+        }
+      }
+    },
     "/api/me/issues/{issue_id}/markers": {
       "get": {
         "operationId": "markers_list_for_issue",
@@ -15721,7 +15769,7 @@
               "string",
               "null"
             ],
-            "description": "`\"western\"` (default) or `\"manga\"`. Phase 2 will read\n`series.text_language` as the default; for now the client\nsends an explicit hint."
+            "description": "`\"western\"` or `\"manga\"`. Omitted → the server resolves a\ndefault: `series.text_language` if set, else `manga` when the\nseries reads right-to-left, else `western`. The response\nechoes the resolved value in `lang`."
           },
           "page": {
             "type": "integer",
@@ -15745,7 +15793,18 @@
           "confidence": {
             "type": "number",
             "format": "float",
-            "description": "Mean confidence in `[0.0, 1.0]`. Tesseract surfaces a real\nper-page score; manga-ocr reports `1.0` (or `0.0` for an\nempty result) since the greedy decoder doesn't expose\nper-token probabilities."
+            "description": "Mean confidence in `[0.0, 1.0]` over the words kept by the\ncleanup pass (Tesseract); manga-ocr reports `1.0` (or `0.0`\nfor an empty result) since the greedy decoder doesn't expose\nper-token probabilities."
+          },
+          "lang": {
+            "type": "string",
+            "description": "Recognizer the pipeline actually ran (`\"western\"` |\n`\"manga\"`) — the request override or the server-side\nresolution chain. `default` so result-cache payloads written\nbefore this field existed still deserialize."
+          },
+          "raw_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Engine output before cleanup. Present only when cleanup\nchanged the text — a debugging aid, and the raw material for\ngolden-fixture authoring when users report junk output."
           },
           "refined_bbox": {
             "oneOf": [
@@ -15760,7 +15819,59 @@
           },
           "text": {
             "type": "string",
-            "description": "Recognized text, trimmed."
+            "description": "Recognized text after the postprocess cleanup pass\n([`crate::ocr::postprocess`])."
+          },
+          "words": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/OcrWord"
+            },
+            "description": "Per-word boxes in page-pixel coords, post-cleanup. `None`\nwhen the engine doesn't expose word data (manga-ocr) or the\niterator yielded nothing."
+          }
+        }
+      },
+      "OcrWord": {
+        "type": "object",
+        "description": "One recognized word: cleaned text + confidence + page-pixel box.",
+        "required": [
+          "text",
+          "confidence",
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "properties": {
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "`[0.0, 1.0]`, from Tesseract's per-word score."
+          },
+          "h": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string"
+          },
+          "w": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "x": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "y": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -18686,6 +18797,13 @@
               "type": "string"
             }
           },
+          "text_language": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Per-series OCR language override. `\"western\"` / `\"manga\"` or\n`None` meaning \"Auto — infer from reading direction at OCR\ntime\". Editable via `PATCH /series/{slug}`."
+          },
           "total_issues": {
             "type": [
               "integer",
@@ -19099,6 +19217,79 @@
           },
           "quota": {
             "$ref": "#/components/schemas/QuotaView"
+          }
+        }
+      },
+      "TextRegionView": {
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h",
+          "confidence",
+          "class"
+        ],
+        "properties": {
+          "class": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Detector class index (0 = text block, 1 = text line).",
+            "minimum": 0
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "Detector confidence, `[0.0, 1.0]`."
+          },
+          "h": {
+            "type": "number",
+            "format": "float",
+            "description": "Height, percent of page height (0–100)."
+          },
+          "w": {
+            "type": "number",
+            "format": "float",
+            "description": "Width, percent of page width (0–100)."
+          },
+          "x": {
+            "type": "number",
+            "format": "float",
+            "description": "Left edge, percent of page width (0–100)."
+          },
+          "y": {
+            "type": "number",
+            "format": "float",
+            "description": "Top edge, percent of page height (0–100)."
+          }
+        }
+      },
+      "TextRegionsView": {
+        "type": "object",
+        "description": "Detected text regions for one page, in percent-of-page\ncoordinates (0–100 floats — the reader's native marker\nrepresentation, consumable by its SVG overlay without math).",
+        "required": [
+          "page_w",
+          "page_h",
+          "regions"
+        ],
+        "properties": {
+          "page_h": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Decoded page height in pixels.",
+            "minimum": 0
+          },
+          "page_w": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Decoded page width in pixels. Doubles as a `naturalSize`\nfallback for clients that haven't measured the `<img>` yet.",
+            "minimum": 0
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TextRegionView"
+            }
           }
         }
       },
@@ -20266,6 +20457,13 @@
               "null"
             ],
             "description": "Series-level summary. `null` clears (the API will fall back to the\nfirst issue's summary on read)."
+          },
+          "text_language": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Per-series OCR language override. `\"western\"` / `\"manga\"` or\n`null` for \"Auto — infer from reading direction\". See OCR\nrework 1.0."
           }
         }
       },

@@ -1,7 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { BookmarkCheck, MessageSquareText, Star, Trash2 } from "lucide-react";
+import {
+  BookmarkCheck,
+  Loader2,
+  MessageSquareText,
+  Star,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -10,7 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useIssueMarkers } from "@/lib/api/queries";
+import { useIssueMarkers, useIssuePageTextRegions } from "@/lib/api/queries";
 import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
@@ -20,9 +26,19 @@ import {
   type PendingMarker,
 } from "@/lib/reader/store";
 import { cn } from "@/lib/utils";
-import type { MarkerKind, MarkerRegion, MarkerView } from "@/lib/api/types";
+import type {
+  MarkerKind,
+  MarkerRegion,
+  MarkerView,
+  TextRegionView,
+} from "@/lib/api/types";
 
 import { ocrCroppedRegion, sha256CroppedRegion } from "./marker-selection";
+
+/** Pointer travel (percent of image size) below which a release
+ *  counts as a tap rather than a drag. ~0.8% of a 1000px-wide page
+ *  is 8px — forgiving enough for touch, far below any real drag. */
+const TAP_TRAVEL_MAX = 0.8;
 
 /** Per-kind colors for the SVG rect markers. Translucent fill + solid
  *  stroke so highlights remain readable over the page content
@@ -107,6 +123,50 @@ export function MarkerOverlay({
   const chromePinned = useReaderStore((s) => s.chromePinned);
   const chromeShowing = chromeVisible || chromePinned;
   const issueQuery = useIssueMarkers(issueId);
+
+  // Bubble outlines (OCR rework 1.0): when the reader enters
+  // text-capture mode, fetch the page's detected text regions and
+  // render them as tappable outlines. Progressive enhancement — the
+  // drag surface is live immediately; outlines appear when the
+  // detector responds (instant on a warm cache, seconds cold).
+  //
+  // The visibility gate matters: webtoon mode mounts an overlay per
+  // page, so without it entering text mode would fan out a detector
+  // run for every page in the issue. `currentPage` covers single +
+  // webtoon; double-page panes are `currentPage`'s group, which is
+  // always within ±1.
+  const currentPage = useReaderStore((s) => s.currentPage);
+  const viewMode = useReaderStore((s) => s.viewMode);
+  const pageVisible =
+    viewMode === "double"
+      ? Math.abs(pageIndex - currentPage) <= 1
+      : pageIndex === currentPage;
+  const regionsQuery = useIssuePageTextRegions(
+    issueId,
+    pageIndex,
+    markerMode === "select-text" && pageVisible,
+  );
+  const textRegions = React.useMemo(
+    () =>
+      markerMode === "select-text" ? (regionsQuery.data?.regions ?? []) : [],
+    [markerMode, regionsQuery.data],
+  );
+  // Bubble the user is hovering (pointer) and the one whose OCR is
+  // in flight after a tap. Outline rects are `pointer-events: none`
+  // — hit-testing happens in the SVG's own pointer handlers so the
+  // drag-capture path keeps exclusive ownership of pointer capture.
+  const [hoverRegion, setHoverRegion] = React.useState<TextRegionView | null>(
+    null,
+  );
+  const [busyRegion, setBusyRegion] = React.useState<TextRegionView | null>(
+    null,
+  );
+  React.useEffect(() => {
+    if (markerMode !== "select-text") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setHoverRegion(null);
+    }
+  }, [markerMode]);
 
   const pageMarkers = React.useMemo(
     () =>
@@ -296,11 +356,20 @@ export function MarkerOverlay({
   }
 
   function handlePointerMove(e: React.PointerEvent<SVGSVGElement>) {
-    if (!drag || !imgRef.current) return;
-    e.preventDefault();
+    if (!imgRef.current) return;
     const rect = imgRef.current.getBoundingClientRect();
     const x = clamp(((e.clientX - rect.left) / rect.width) * 100, 0, 100);
     const y = clamp(((e.clientY - rect.top) / rect.height) * 100, 0, 100);
+    if (!drag) {
+      // Idle hover in text mode: light up the bubble under the
+      // pointer. The rects can't take CSS :hover themselves (they're
+      // pointer-events: none so dragging stays unobstructed).
+      if (textRegions.length > 0) {
+        setHoverRegion(hitTestRegion(textRegions, x, y));
+      }
+      return;
+    }
+    e.preventDefault();
     setDrag((prev) => (prev ? { ...prev, currentX: x, currentY: y } : prev));
   }
 
@@ -308,8 +377,59 @@ export function MarkerOverlay({
     if (!drag) return;
     e.preventDefault();
     (e.target as SVGSVGElement).releasePointerCapture(e.pointerId);
-    const region = dragToRegion(drag, markerModeShape(markerMode));
+    const release = drag;
     setDrag(null);
+
+    // Tap-to-OCR: a near-zero drag that lands on a detected bubble
+    // OCRs that bubble. The region IS the detector's bbox, so the
+    // request runs recognizer-only (`detect: false`) and is fast.
+    const travel = Math.hypot(
+      release.currentX - release.startX,
+      release.currentY - release.startY,
+    );
+    if (travel < TAP_TRAVEL_MAX && textRegions.length > 0) {
+      const hit = hitTestRegion(
+        textRegions,
+        release.currentX,
+        release.currentY,
+      );
+      if (hit) {
+        const region: MarkerRegion = {
+          x: hit.x,
+          y: hit.y,
+          w: hit.w,
+          h: hit.h,
+          shape: "text",
+        };
+        // The regions payload carries the decoded page dims, so a
+        // tap works even before the <img> has reported naturalSize.
+        const size =
+          naturalSize ??
+          (regionsQuery.data
+            ? {
+                width: regionsQuery.data.page_w,
+                height: regionsQuery.data.page_h,
+              }
+            : null);
+        setBusyRegion(hit);
+        try {
+          const pending = await finalizePending(
+            "select-text",
+            pageIndex,
+            region,
+            issueId,
+            size,
+            { detect: false },
+          );
+          beginMarkerEdit(pending);
+        } finally {
+          setBusyRegion(null);
+        }
+        return;
+      }
+    }
+
+    const region = dragToRegion(release, markerModeShape(markerMode));
     if (!region) {
       setMarkerMode("idle");
       return;
@@ -320,6 +440,12 @@ export function MarkerOverlay({
       region,
       issueId,
       naturalSize,
+      {
+        // Snap-to-bubble on manual drags only when the page's
+        // detect cache is known-warm (the regions fetch succeeded) —
+        // never risk a cold detector run from the drag path.
+        detect: markerMode === "select-text" && regionsQuery.isSuccess,
+      },
     );
     beginMarkerEdit(pending);
   }
@@ -327,7 +453,9 @@ export function MarkerOverlay({
   const cursorClass =
     markerMode === "idle"
       ? "pointer-events-none"
-      : "cursor-crosshair pointer-events-auto";
+      : hoverRegion
+        ? "cursor-pointer pointer-events-auto"
+        : "cursor-crosshair pointer-events-auto";
 
   // SVG sits inside the wrapper but is sized/positioned to overlay the
   // rendered image exactly. Until the first measurement lands we
@@ -376,8 +504,26 @@ export function MarkerOverlay({
             }
           />
         ))}
+        {textRegions.map((region, i) => (
+          <TextRegionOutline
+            key={`text-region-${i}`}
+            region={region}
+            hovered={region === hoverRegion}
+            busy={region === busyRegion}
+          />
+        ))}
         {drag ? <DragPreview drag={drag} mode={markerMode} /> : null}
       </svg>
+
+      {markerMode === "select-text" && pageVisible && regionsQuery.isLoading ? (
+        // Non-blocking detection progress: drag-to-select works the
+        // whole time, the pill just explains why outlines haven't
+        // appeared yet (a cold detector run takes seconds).
+        <div className="bg-background/85 text-muted-foreground pointer-events-none absolute top-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1 text-xs shadow-md backdrop-blur">
+          <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+          Finding text regions…
+        </div>
+      ) : null}
 
       {pagePins.length > 0 ? (
         <div
@@ -444,6 +590,27 @@ function markerModeShape(mode: MarkerMode): MarkerRegion["shape"] {
   }
 }
 
+/** Smallest detected region containing the point, or `null`. The
+ *  smallest-wins rule disambiguates nested detections (the detector
+ *  emits both block- and line-level boxes that can overlap). */
+function hitTestRegion(
+  regions: readonly TextRegionView[],
+  x: number,
+  y: number,
+): TextRegionView | null {
+  let best: TextRegionView | null = null;
+  let bestArea = Infinity;
+  for (const r of regions) {
+    if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
+    const area = r.w * r.h;
+    if (area < bestArea) {
+      bestArea = area;
+      best = r;
+    }
+  }
+  return best;
+}
+
 /** Branch on selection mode to populate `selection` from the cropped
  *  pixels. Falls back to plain rect when OCR / hashing isn't
  *  available. OCR runs synchronously here (worst-case 2-4 seconds)
@@ -454,6 +621,7 @@ async function finalizePending(
   region: MarkerRegion,
   issueId: string,
   naturalSize: { width: number; height: number } | null,
+  opts: { detect?: boolean } = {},
 ): Promise<PendingMarker> {
   const base: PendingMarker = {
     kind: "highlight",
@@ -468,16 +636,33 @@ async function finalizePending(
   if (mode === "select-text" && naturalSize) {
     const ocrToast = toast.loading("Reading text…");
     try {
-      const ocr = await ocrCroppedRegion({
-        issueId,
-        pageIndex,
-        region,
-        naturalSize,
-      });
+      const ocr = await ocrCroppedRegion(
+        {
+          issueId,
+          pageIndex,
+          region,
+          naturalSize,
+        },
+        { detect: opts.detect },
+      );
       toast.dismiss(ocrToast);
       if (ocr && ocr.text.trim()) {
+        // Snap the new marker to the detector's bubble outline when
+        // one came back — the saved region hugs the bubble instead
+        // of the rough drag. New pending markers only; re-detect on
+        // an existing marker never rewrites stored geometry.
+        const snapped = ocr.refinedBbox
+          ? {
+              x: clamp((ocr.refinedBbox.x / naturalSize.width) * 100, 0, 100),
+              y: clamp((ocr.refinedBbox.y / naturalSize.height) * 100, 0, 100),
+              w: clamp((ocr.refinedBbox.w / naturalSize.width) * 100, 0, 100),
+              h: clamp((ocr.refinedBbox.h / naturalSize.height) * 100, 0, 100),
+              shape: region.shape,
+            }
+          : region;
         return {
           ...base,
+          region: snapped,
           selection: { text: ocr.text, ocr_confidence: ocr.confidence },
         };
       }
@@ -610,6 +795,41 @@ function PagePin({
         </div>
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+/** Detected-bubble outline shown in text-capture mode. Subtle at
+ *  rest (the artwork stays readable), brightened + lightly filled on
+ *  hover, pulsing while its OCR is in flight. `pointer-events: none`
+ *  throughout — the parent SVG owns all pointer handling so the
+ *  drag path is never obstructed. Reuses the select-text drag
+ *  preview's blue so the affordances read as one family. */
+function TextRegionOutline({
+  region,
+  hovered,
+  busy,
+}: {
+  region: TextRegionView;
+  hovered: boolean;
+  busy: boolean;
+}) {
+  const active = hovered || busy;
+  return (
+    <rect
+      x={region.x}
+      y={region.y}
+      width={region.w}
+      height={region.h}
+      fill={active ? "rgba(59, 130, 246, 0.10)" : "transparent"}
+      stroke="rgb(59, 130, 246)"
+      strokeOpacity={active ? 1 : 0.55}
+      strokeWidth={active ? 2 : 1.5}
+      vectorEffect="non-scaling-stroke"
+      strokeLinejoin="miter"
+      strokeDasharray="4 3"
+      pointerEvents="none"
+      className={busy ? "animate-pulse" : undefined}
+    />
   );
 }
 

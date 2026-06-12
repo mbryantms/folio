@@ -37,6 +37,15 @@ const READING_DIRECTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "ttb", label: "Vertical (webtoon)" },
 ];
 
+/** OCR language override at the series level. Empty string = "Auto"
+ *  (= NULL on the row; the OCR handler infers manga from an `rtl`
+ *  reading direction at request time). OCR rework 1.0. */
+const TEXT_LANGUAGE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Auto (infer from direction)" },
+  { value: "western", label: "Western (Latin script)" },
+  { value: "manga", label: "Japanese (manga)" },
+];
+
 /**
  * Series Edit drawer — companion to the per-issue Edit drawer. Surfaces the
  * series-wide fields (status, summary, reading direction). Provider IDs
@@ -83,6 +92,7 @@ export function SeriesEditDrawer({
 type FormState = {
   status: string;
   reading_direction: string;
+  text_language: string;
   summary: string;
 };
 
@@ -90,6 +100,7 @@ function initialState(s: SeriesView): FormState {
   return {
     status: s.status?.toLowerCase() ?? "continuing",
     reading_direction: s.reading_direction ?? "",
+    text_language: s.text_language ?? "",
     summary: s.summary ?? "",
   };
 }
@@ -164,6 +175,14 @@ function EditForm({
                 value={form.reading_direction}
                 onChange={(v) => set("reading_direction", v)}
                 options={READING_DIRECTION_OPTIONS}
+              />
+            </Field>
+            <Field label="Text language (OCR)" htmlFor="se-text-language">
+              <NativeSelect
+                id="se-text-language"
+                value={form.text_language}
+                onChange={(v) => set("text_language", v)}
+                options={TEXT_LANGUAGE_OPTIONS}
               />
             </Field>
           </Section>
@@ -293,6 +312,12 @@ function buildBody(prev: SeriesView, form: FormState): UpdateSeriesReq {
   const prevDir = prev.reading_direction ?? "";
   if (form.reading_direction !== prevDir) {
     body.reading_direction = emptyToNull(form.reading_direction);
+  }
+
+  // OCR text language: same empty-string-means-Auto round-trip.
+  const prevLang = prev.text_language ?? "";
+  if (form.text_language !== prevLang) {
+    body.text_language = emptyToNull(form.text_language);
   }
 
   // Summary: prefer current series-level value (which the API may have

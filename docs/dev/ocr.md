@@ -1,12 +1,13 @@
 # OCR pipeline
 
 Server-side text recognition for reader markers (text-detection-1.0
-plan). Replaces the pre-M6 tesseract.js-in-the-browser path with a
-detector + recognizer pipeline that ships with the Rust binary.
+plan, reworked by OCR rework 1.0). Replaces the pre-M6
+tesseract.js-in-the-browser path with a detector + recognizer +
+postprocess pipeline that ships with the Rust binary.
 
-## Endpoint
+## Endpoints
 
-`POST /me/issues/{id}/ocr`
+### `POST /me/issues/{id}/ocr`
 
 ```json
 // Request
@@ -20,39 +21,73 @@ detector + recognizer pipeline that ships with the Rust binary.
 {
   "text": "POW!",
   "confidence": 0.91,
-  "refined_bbox": { "x": 248, "y": 302, "w": 106, "h": 76 }
+  "refined_bbox": { "x": 248, "y": 302, "w": 106, "h": 76 },
+  "lang": "western",
+  "raw_text": "~POW!|",
+  "words": [{ "text": "POW!", "confidence": 0.93, "x": 252, "y": 305, "w": 90, "h": 60 }]
 }
 ```
 
 - `region` is integer-pixel against the decoded page, not the
   archive's claimed dimensions — the handler decodes the page and
   uses the actual `(width, height)` for the bounds check.
-- `lang` is `"western"` (default) or `"manga"`. Phase 2 will read
-  `series.text_language`.
+- `lang` is `"western"` or `"manga"`. **Omitted → server-resolved**:
+  `series.text_language` if set, else `manga` when
+  `series.reading_direction == "rtl"`, else `western`. The response
+  echoes the resolved value in `lang`, and the resolved value feeds
+  the cache key.
 - `detect` is the **snap-to-bubble opt-in** (v0.3.26). When `true`
   the pipeline runs `comic-text-detector` over the page to refine
   the user's rect to the tightest bubble polygon. When `false` or
   omitted (the default) the recognizer runs on the user's rect
   verbatim. The detector's first call on a fresh page costs ~50 s
   on a typical CPU-bound container; subsequent calls on the same
-  page hit the polygon cache (~200 ms). Default-off keeps every
-  call fast at the cost of slightly worse region tightness; the
-  reader UI exposes a toggle for users on fast servers.
+  page hit the polygon cache (~200 ms). The reader sends
+  `detect: true` from the drag path only when the page's
+  text-regions fetch already warmed the cache.
 - `refined_bbox` is the detector's snap-to-bubble rect. `None`
   when `detect: false`, when no bbox overlapped the user's region,
   or when no detector was run.
+- `raw_text` is the engine output before the postprocess cleanup;
+  present only when cleanup changed the text. Use it to author
+  golden fixtures from user reports.
+- `words` is the per-word breakdown (page-pixel boxes, post-cleanup)
+  — western only; manga-ocr exposes no word data.
+
+### `GET /me/issues/{id}/pages/{page}/text-regions`
+
+Full-page detector output in **percent** coordinates — drives the
+reader's tappable bubble outlines in text-capture mode.
+
+```json
+// Response (200)
+{
+  "page_w": 1988,
+  "page_h": 3056,
+  "regions": [
+    { "x": 12.4, "y": 8.1, "w": 14.2, "h": 9.7, "confidence": 0.93, "class": 0 }
+  ]
+}
+```
+
+Shares the per-page detect cache with the OCR POST: one regions
+fetch makes every subsequent bubble OCR on that page
+recognize-only (~200 ms–2 s). Cache hit = Redis round-trip, no
+archive touch; miss = page decode + detector inference (seconds to
+tens of seconds — see the `OMP_NUM_THREADS` section), which is why
+the endpoint sits on its own stricter rate bucket.
 
 Error codes (envelope `{ "error": { "code", "message" } }`):
 
 | Status | code | When |
 |---|---|---|
-| 400 | `invalid_region` | `w`/`h` is 0 OR rect extends outside the decoded page |
-| 400 | `invalid_lang` | `lang` not in `western`/`manga` |
+| 422 | `invalid_region` | `w`/`h` is 0 OR rect extends outside the decoded page (POST only) |
+| 422 | `invalid_lang` | `lang` not in `western`/`manga` (POST only) |
 | 401 / 403 | (CSRF / auth) | Standard CSRF + session guards |
 | 404 | `not_found` | Issue missing or user lacks library access |
 | 404 | `not_found` | `page` index out of range for the archive |
 | 415 | `decode_failed` | Page entry isn't a decodable image |
-| 429 | `rate_limited` | OCR bucket (60/min/IP, burst 60) tripped |
+| 429 | `rate_limited` | `ocr` bucket (60/min/IP, burst 60) on the POST; `ocr.detect` (15/min/IP, burst 10) on the GET |
 | 500 | `archive_unreadable` | `zip_lru.get_or_open` failed |
 | 500 | `ocr_failed` | Detector or recognizer threw |
 
@@ -80,25 +115,61 @@ crop (or fall back to the user's rect if no hit)
 recognizer (Western: Tesseract LSTM ; Manga: manga-ocr)
    │
    ▼
+postprocess (junk-token + confidence cleanup)
+   │
+   ▼
 Redis cache PUT + 200
 ```
+
+### Western preprocessing (inside the recognizer)
+
+Each crop goes through: grayscale → 3× Lanczos3 upscale → **Otsu**
+binarization (midpoint fallback on near-uniform crops) →
+**polarity detection** (majority-black border ring ⇒ white-on-black
+caption ⇒ invert) → **24 px white border pad** (Tesseract
+mis-segments glyphs touching the canvas edge) → PSM 6 + pinned
+300 DPI. `tessedit_char_blacklist` is deliberately not used: the
+LSTM *substitutes* blacklisted chars instead of omitting them.
+
+### Postprocess
+
+[`crates/server/src/ocr/postprocess.rs`](../../crates/server/src/ocr/postprocess.rs)
+is the single deterministic cleanup pass — this is what keeps
+bubble borders/tails/halftone dots from coming back as stray
+`| ~ ' _` symbols. Western rules in order: per-word confidence
+drop (W1) → hyphenated line-break join (W2) → symbol-only token
+drop sparing expressive punctuation like `!?`/`...` (W3) → edge
+junk strip (W4) → per-char allowlist (W5) → whitespace collapse
+(W6) → empty-out guard (W7) → confidence recompute over kept words
+(W8). The manga path only strips control/zero-width/replacement
+chars — Japanese punctuation is all legitimate output.
+
+Thresholds/charsets are documented consts in that file (matcher-
+style: consts + tests now, settings-registry promotion only on
+operator demand). **Changing anything in preprocessing or
+postprocess requires bumping `OCR_RESULT_VERSION`** in `cache.rs`.
 
 Code map:
 
 - [`crates/server/src/api/issue_ocr.rs`](../../crates/server/src/api/issue_ocr.rs)
-  — request shape, ACL, decode, cache plumbing.
+  — request shapes, ACL, decode, cache plumbing, lang resolution,
+  text-regions endpoint.
 - [`crates/server/src/ocr/pipeline.rs`](../../crates/server/src/ocr/pipeline.rs)
-  — `detect → snap → crop → recognize`, all inside one
-  `spawn_blocking` so the reactor isn't stalled.
+  — `detect → snap → crop → recognize → clean`, all inside one
+  `spawn_blocking` so the reactor isn't stalled; also
+  `detect_and_cache_regions` for the text-regions endpoint.
 - [`crates/server/src/ocr/detector.rs`](../../crates/server/src/ocr/detector.rs)
   — `comic-text-detector` singleton (`tokio::sync::OnceCell` +
   `std::sync::Mutex<ComicTextDetector>`).
 - [`crates/server/src/ocr/recognizer/western.rs`](../../crates/server/src/ocr/recognizer/western.rs)
-  — Tesseract via `tesseract-rs`, English-only (`tessdata_best/eng`).
+  — Tesseract via `tesseract-rs`, English-only (`tessdata_best/eng`),
+  preprocessing + per-word `ResultIterator` walk.
 - [`crates/server/src/ocr/recognizer/manga.rs`](../../crates/server/src/ocr/recognizer/manga.rs)
   — `manga-ocr` (encoder + decoder + vocab ONNX, greedy decode).
+- [`crates/server/src/ocr/postprocess.rs`](../../crates/server/src/ocr/postprocess.rs)
+  — pure-function cleanup rules (see above).
 - [`crates/server/src/ocr/cache.rs`](../../crates/server/src/ocr/cache.rs)
-  — Redis-backed result cache.
+  — Redis-backed result + detect caches, version consts.
 - [`crates/server/src/api/admin_ocr.rs`](../../crates/server/src/api/admin_ocr.rs)
   — `GET /admin/ocr/models` reflection-on-disk endpoint.
 
@@ -110,9 +181,12 @@ Two Redis-backed layers, both fail-open on every operation.
 
 Stores the final recognized text per region.
 
-**Key**: `ocr:cache:{content_hash}:{page}:{lang}:{d|r}:{region_hash}` —
+**Key**: `ocr:cache:v{N}:{content_hash}:{page}:{lang}:{d|r}:{region_hash}` —
 the `{d|r}` byte is `d` when run with the detector enabled, `r` for
-recognizer-only.
+recognizer-only. `v{N}` is `OCR_RESULT_VERSION` — bump it on any
+change that alters what the pipeline would produce for the same
+inputs (preprocessing, PSM, Tesseract variables, postprocess rules,
+response semantics); old keys age out via TTL, no flush needed.
 
 - `content_hash` (the issue's mutable BLAKE3 of on-disk bytes, not
   the stable `issue.id`) makes invalidation automatic — a rescan
@@ -135,10 +209,14 @@ detector is by far the heaviest part of the pipeline (~3 s on a fast
 CPU, much more on constrained hosts) — caching its output is what
 makes "OCR every bubble on this page" feasible.
 
-**Key**: `ocr:detect:{content_hash}:{page}`
+**Key**: `ocr:detect:v{N}:{content_hash}:{page}` (`N` =
+`OCR_DETECT_VERSION`)
 
-**Value**: JSON array of `{xmin, ymin, xmax, ymax, confidence, class}`
-in page-pixel coordinates.
+**Value**: `{page_w, page_h, bboxes: [{xmin, ymin, xmax, ymax,
+confidence, class}]}` in page-pixel coordinates. The page dims ride
+along so the text-regions endpoint can convert to percent on a
+cache hit without re-decoding the page (the v1 payload was a bare
+bbox array; v1 entries deserialize-fail and read as misses).
 
 Flow per OCR call:
 
@@ -190,14 +268,22 @@ Operator override: set `OMP_NUM_THREADS=N` in compose / env-file to
 pin the count. Lower it if the OCR endpoint is starving other
 workers; raise it if you have idle cores.
 
-## Rate limit
+## Rate limits
 
-Per-IP token bucket via `tower_governor`. Bucket: `OCR` =
-60 tokens / minute, burst 60. Lives in
-[`crates/server/src/middleware/rate_limit.rs`](../../crates/server/src/middleware/rate_limit.rs).
-Reader users won't notice — the bucket caps a runaway script, not
-manual bubble exploration. Denied requests increment
-`folio_rate_limit_denied_total{bucket="ocr"}`.
+Per-IP token buckets via `tower_governor`, in
+[`crates/server/src/middleware/rate_limit.rs`](../../crates/server/src/middleware/rate_limit.rs):
+
+- `OCR` (POST) = 60/min, burst 60. Reader users won't notice — the
+  bucket caps a runaway script, not manual bubble exploration
+  (bubble taps are recognize-only and cheap).
+- `OCR_DETECT` (text-regions GET) = ~15/min, burst 10. A
+  detect-cache miss is the most expensive single operation the
+  server exposes (full-page inference through a process-wide
+  mutex); the client's `staleTime: Infinity` keeps real usage far
+  under the limit.
+
+Denied requests increment
+`folio_rate_limit_denied_total{bucket="ocr"|"ocr.detect"}`.
 
 ## Telemetry
 
@@ -207,7 +293,8 @@ manual bubble exploration. Denied requests increment
 | `folio_ocr_cache_misses_total` | counter | — | Pair with hits for hit-rate |
 | `folio_ocr_pipeline_seconds` | histogram | `lang` | Wall time, detector + recognize (recorded only on success path) |
 | `folio_ocr_recognize_seconds` | histogram | `lang` | Recognize-only — diff with `pipeline_seconds` exposes detector cost |
-| `folio_rate_limit_denied_total{bucket="ocr"}` | counter | `bucket` | OCR bucket denials |
+| `folio_ocr_detect_seconds` | histogram | — | Detector-only inference via the text-regions endpoint |
+| `folio_rate_limit_denied_total{bucket="ocr"}` | counter | `bucket` | OCR bucket denials (also `bucket="ocr.detect"`) |
 
 All visible at `/metrics`. Operator dashboards reading these should
 key on `lang` to spot manga-OCR-bound vs western-OCR-bound boxes.
@@ -271,17 +358,38 @@ a few hundred MB the first time you run an OCR test.
 
 ## Web client
 
+Text-capture mode (keybind `x`, or the chrome's "Highlight +
+capture text") is **bubble-aware**: entering the mode fires the
+text-regions query (`useIssuePageTextRegions`, `staleTime:
+Infinity`, `retry: false`) and `MarkerOverlay` renders the detected
+bubbles as dashed outlines. Tapping a bubble OCRs it directly
+(recognize-only — the region already is the detector's bbox);
+dragging a rectangle still works as the fallback for missed
+regions, and sends `detect: true` only when the regions fetch
+succeeded (cache warm ⇒ snap is cheap). While the detector runs, a
+non-blocking "Finding text regions…" pill shows — the drag surface
+is live the whole time. On 429/error/empty the outlines just don't
+appear.
+
 [`web/app/[locale]/read/[seriesSlug]/[issueSlug]/marker-selection.ts`](../../web/app/%5Blocale%5D/read/%5BseriesSlug%5D/%5BissueSlug%5D/marker-selection.ts)
-owns `ocrCroppedRegion(...)`. The function:
+owns `ocrCroppedRegion(input, opts)`. The function:
 
 1. Maps `MarkerRegion` (0–100% floats) to integer pixel rect
    against `naturalSize`, clamping for rounding overshoot.
-2. POSTs via `apiFetch` with the user's CSRF token.
-3. Returns `{ text, confidence } | null`. `null` covers every
-   not-the-happy-path: non-2xx, network error, malformed JSON, or
-   empty text. The caller (`MarkerEditor` /
+2. POSTs via `apiFetch` with the user's CSRF token. `opts.lang`
+   and `opts.detect` are forwarded only when set — the server
+   resolves the language default.
+3. Returns `{ text, confidence, refinedBbox } | null`. `null`
+   covers every not-the-happy-path: non-2xx, network error,
+   malformed JSON, or empty text. The caller (`MarkerEditor` /
    `MarkerOverlay`) treats `null` as "couldn't read text" and falls
-   back to a plain highlight.
+   back to a plain highlight. When `refinedBbox` comes back on a
+   new highlight, the pending marker's region snaps to it.
+
+The marker editor shows a copy-to-clipboard button, a
+low-confidence hint (< 0.6 — effectively western-only since
+manga-ocr reports a synthetic 1.0), and an Auto/Western/Japanese
+select for the Re-detect button.
 
 The image-hash path (`sha256CroppedRegion`) is unchanged — it still
 crops + hashes in the browser because the server has no equivalent
@@ -302,12 +410,20 @@ endpoint.
 - Web client fetch shape + fallback paths:
   [`web/tests/reader/marker-selection.test.ts`](../../web/tests/reader/marker-selection.test.ts).
 
-## Future work (Phase 2+)
+## Future work
 
-- `series.text_language` column + per-library default. Replaces the
-  hard-coded `lang: "western"` in the client.
 - PaddleOCR swap behind the existing `Recognizer` trait — better
   Western quality than `tessdata_best`.
-- Page-level text-region indexing (apalis job): pre-detect on scan
-  so the reader can hover-to-highlight bubbles without re-running
-  the detector.
+- Detector segmentation-mask blanking: `comic-text-detector`
+  exposes a per-page text mask we currently discard; using it to
+  blank non-text pixels needs mask caching alongside the bboxes.
+- manga-ocr real confidence: upstream PR to expose mean token
+  probability from the decoder logits (today it's a synthetic
+  1.0/0.0).
+- Full-page "read all bubbles" — deferred until reading-order
+  inference (RTL panel flow) is solved; tap-to-OCR makes each
+  bubble one click meanwhile.
+- Background pre-detection at scan time (`issue_text_region`
+  table) — deferred; the on-demand + content_hash-keyed Redis
+  cache already gives invalidation-on-rescan and warm-cache
+  interactivity after one fetch.

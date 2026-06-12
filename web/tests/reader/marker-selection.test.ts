@@ -54,14 +54,18 @@ afterEach(() => {
 });
 
 describe("ocrCroppedRegion — server-side OCR", () => {
-  it("POSTs pixel region + lang to /me/issues/{id}/ocr", async () => {
+  it("POSTs pixel region to /me/issues/{id}/ocr", async () => {
     mockedFetch.mockResolvedValueOnce(
       jsonResponse(200, { text: "POW!", confidence: 0.91 }),
     );
 
     const result = await ocrCroppedRegion(input());
 
-    expect(result).toEqual({ text: "POW!", confidence: 0.91 });
+    expect(result).toEqual({
+      text: "POW!",
+      confidence: 0.91,
+      refinedBbox: null,
+    });
     expect(mockedFetch).toHaveBeenCalledOnce();
     const [path, init] = mockedFetch.mock.calls[0]!;
     expect(path).toBe("/me/issues/abc-issue/ocr");
@@ -75,12 +79,43 @@ describe("ocrCroppedRegion — server-side OCR", () => {
     const body = JSON.parse(init?.body as string) as {
       page: number;
       region: { x: number; y: number; w: number; h: number };
-      lang: string;
+      lang?: string;
+      detect?: boolean;
     };
     expect(body.page).toBe(2);
-    expect(body.lang).toBe("western");
+    // No lang/detect by default — the server resolves the language
+    // (series text_language → reading_direction → western) and the
+    // detector only runs when the caller knows the cache is warm.
+    expect(body.lang).toBeUndefined();
+    expect(body.detect).toBeUndefined();
     // 25% of 1000 = 250; 30% = 300; 10% = 100; 8% = 80.
     expect(body.region).toEqual({ x: 250, y: 300, w: 100, h: 80 });
+  });
+
+  it("forwards lang + detect options when set", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, { text: "すごい", confidence: 1 }),
+    );
+    await ocrCroppedRegion(input(), { lang: "manga", detect: true });
+    const [, init] = mockedFetch.mock.calls[0]!;
+    const body = JSON.parse(init?.body as string) as {
+      lang?: string;
+      detect?: boolean;
+    };
+    expect(body.lang).toBe("manga");
+    expect(body.detect).toBe(true);
+  });
+
+  it("passes through the server's refined_bbox", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, {
+        text: "SNAPPED",
+        confidence: 0.8,
+        refined_bbox: { x: 120, y: 240, w: 300, h: 180 },
+      }),
+    );
+    const result = await ocrCroppedRegion(input(), { detect: true });
+    expect(result?.refinedBbox).toEqual({ x: 120, y: 240, w: 300, h: 180 });
   });
 
   it("trims response text", async () => {

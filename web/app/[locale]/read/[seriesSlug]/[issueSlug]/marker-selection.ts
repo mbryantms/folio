@@ -71,11 +71,32 @@ function regionToPixels(
   return { x, y, w, h };
 }
 
+/** Per-call knobs for [`ocrCroppedRegion`]. */
+export type OcrOptions = {
+  /** Recognizer override. Omitted → the server resolves a default
+   *  (series `text_language`, falling back to western). */
+  lang?: "western" | "manga";
+  /** Run the server-side bubble detector and snap the region to the
+   *  tightest enclosing bubble. Only set this when the page's
+   *  detect cache is known-warm (a text-regions fetch succeeded) —
+   *  a cold detector run can take tens of seconds on weak hosts. */
+  detect?: boolean;
+};
+
+export type OcrResult = {
+  text: string;
+  confidence: number;
+  /** Detector's snap-to-bubble rect in page pixels; `null` when the
+   *  detector didn't run or nothing overlapped the region. */
+  refinedBbox: { x: number; y: number; w: number; h: number } | null;
+};
+
 /** Run server-side OCR over the cropped region. The pipeline runs
  *  `comic-text-detector` → snap-to-bubble → Tesseract LSTM (or
- *  manga-ocr for `lang: "manga"`); results are cached server-side
- *  keyed by `(content_hash, page, lang, region_hash)` so a re-OCR
- *  on the same region is a Redis round-trip.
+ *  manga-ocr for `lang: "manga"`) → a junk-stripping postprocess
+ *  pass; results are cached server-side keyed by
+ *  `(content_hash, page, lang, region_hash)` so a re-OCR on the
+ *  same region is a Redis round-trip.
  *
  *  Returns `null` when the server failed (non-2xx, network error)
  *  or recognized no text. The caller (`MarkerEditor` /
@@ -89,7 +110,8 @@ function regionToPixels(
  *  server pairs a real bubble detector with `tessdata_best`. */
 export async function ocrCroppedRegion(
   input: CropInput,
-): Promise<{ text: string; confidence: number } | null> {
+  opts: OcrOptions = {},
+): Promise<OcrResult | null> {
   // Unlike pre-M6 — no canvas / DOM touch any more, so no SSR
   // guard. The file is `"use client"` for the other helpers; the
   // function itself is safe to call from any context that has
@@ -108,7 +130,8 @@ export async function ocrCroppedRegion(
       body: JSON.stringify({
         page: input.pageIndex,
         region,
-        lang: "western",
+        ...(opts.lang ? { lang: opts.lang } : {}),
+        ...(opts.detect ? { detect: true } : {}),
       }),
     });
   } catch (err) {
@@ -129,9 +152,13 @@ export async function ocrCroppedRegion(
     console.warn(`markers: server OCR failed (${res.status}): ${detail}`);
     return null;
   }
-  let payload: { text?: string; confidence?: number };
+  let payload: {
+    text?: string;
+    confidence?: number;
+    refined_bbox?: { x: number; y: number; w: number; h: number } | null;
+  };
   try {
-    payload = (await res.json()) as { text?: string; confidence?: number };
+    payload = (await res.json()) as typeof payload;
   } catch (err) {
     console.warn("markers: server OCR returned malformed JSON", err);
     return null;
@@ -139,7 +166,7 @@ export async function ocrCroppedRegion(
   const text = (payload.text ?? "").trim();
   if (!text) return null;
   const confidence = Number(payload.confidence ?? 0);
-  return { text, confidence };
+  return { text, confidence, refinedBbox: payload.refined_bbox ?? null };
 }
 
 /** Compute a SHA-256 over the cropped pixel bytes. Used for the

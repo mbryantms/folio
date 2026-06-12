@@ -223,6 +223,7 @@ async fn seed_one_issue(app: &TestApp, slug_prefix: &str) -> (Uuid, Uuid, String
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        text_language: Set(None),
         preserve_canonical_order: Set(false),
     }
     .insert(&db)
@@ -647,6 +648,7 @@ async fn next_up_caught_up_populates_fallback_suggestion_when_user_has_on_deck()
             removal_confirmed_at: Set(None),
             status_user_set_at: Set(None),
             reading_direction: Set(None),
+            text_language: Set(None),
             preserve_canonical_order: Set(false),
         }
         .insert(&db)

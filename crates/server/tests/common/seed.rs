@@ -218,6 +218,7 @@ impl<'a> SeriesSeed<'a> {
             removal_confirmed_at: Set(None),
             status_user_set_at: Set(None),
             reading_direction: Set(self.reading_direction),
+            text_language: Set(None),
             preserve_canonical_order: Set(self.preserve_canonical_order),
         }
         .insert(db)

@@ -39,6 +39,10 @@ pub struct Word {
     pub ymin: f32,
     pub xmax: f32,
     pub ymax: f32,
+    /// 0-based index of the textline the word sits on, in reading
+    /// order. Lets the postprocess stage join hyphenated line
+    /// breaks without re-deriving geometry from the bboxes.
+    pub line_index: u32,
 }
 
 /// Language hint coming in on `POST /me/issues/{id}/ocr`. Defaults

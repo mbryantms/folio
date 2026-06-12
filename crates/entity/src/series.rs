@@ -124,6 +124,13 @@ pub struct Model {
     /// values are sticky and never overwritten.
     #[sea_orm(nullable)]
     pub reading_direction: Option<String>,
+    /// Per-series OCR language override (OCR rework 1.0).
+    /// `"western"` / `"manga"` or `NULL` meaning "Auto — infer from
+    /// `reading_direction` (`rtl` ⇒ manga) at OCR time". A per-request
+    /// `lang` override on `POST /me/issues/{id}/ocr` still wins above
+    /// this layer.
+    #[sea_orm(nullable)]
+    pub text_language: Option<String>,
     /// When true, `/opds/v1/series/{id}` and `/opds/v2/series/{id}`
     /// render in strict `sort_number ASC` order regardless of the
     /// caller's progress. Default false — feeds auto-reorder the

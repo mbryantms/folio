@@ -233,6 +233,7 @@ async fn seed_issue(app: &TestApp, file_path: &str) -> (Uuid, String) {
         removal_confirmed_at: Set(None),
         status_user_set_at: Set(None),
         reading_direction: Set(None),
+        text_language: Set(None),
         preserve_canonical_order: Set(false),
     }
     .insert(&db)
@@ -802,16 +803,20 @@ async fn detect_cache_hit_skips_detector_for_different_region() {
     build_cbz(&cbz, "page-001.png", &png_bytes(200, 200));
     let (_lib, issue_id) = seed_issue(&app, cbz.to_str().unwrap()).await;
 
-    // Pre-seed the detect cache with one bbox at (50, 50, 100, 100).
+    // Pre-seed the detect cache with one bbox at (50, 50, 100, 100),
+    // in the v2 `CachedDetection` shape (page dims + bbox list).
     let detect_key = server::ocr::cache::detect_cache_key(&issue_id, 0);
-    let bboxes = serde_json::json!([{
-        "xmin": 50.0_f64, "ymin": 50.0_f64,
-        "xmax": 150.0_f64, "ymax": 150.0_f64,
-        "confidence": 0.9_f64, "class": 0_u32,
-    }])
+    let detection = serde_json::json!({
+        "page_w": 200_u32, "page_h": 200_u32,
+        "bboxes": [{
+            "xmin": 50.0_f64, "ymin": 50.0_f64,
+            "xmax": 150.0_f64, "ymax": 150.0_f64,
+            "confidence": 0.9_f64, "class": 0_u32,
+        }],
+    })
     .to_string();
     let mut redis = app.state().jobs.redis.clone();
-    let _: () = redis.set_ex(&detect_key, bboxes, 60).await.unwrap();
+    let _: () = redis.set_ex(&detect_key, detection, 60).await.unwrap();
 
     // Call A: user region overlaps the seeded bbox. Post-v0.3.26 we
     // must opt into the detector explicitly — without `detect: true`
@@ -865,6 +870,122 @@ async fn detect_cache_hit_skips_detector_for_different_region() {
         StatusCode::OK,
         "second OCR on cached-detect page should succeed: {body_b}",
     );
+}
+
+// ─── OCR rework 1.0: text-regions endpoint ───────────────────────
+
+async fn get_text_regions(
+    app: &TestApp,
+    issue_id: &str,
+    page: u32,
+    auth: Option<&Authed>,
+) -> (StatusCode, serde_json::Value) {
+    let uri = format!("/api/me/issues/{issue_id}/pages/{page}/text-regions");
+    let mut builder = Request::builder().method(Method::GET).uri(uri);
+    if let Some(a) = auth {
+        builder = builder.header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                a.session, a.csrf
+            ),
+        );
+    }
+    let resp = app
+        .router
+        .clone()
+        .oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn text_regions_requires_auth() {
+    let app = TestApp::spawn().await;
+    let (_lib, issue_id) = seed_issue(&app, "/nonexistent/regions-auth.cbz").await;
+    let (status, _) = get_text_regions(&app, &issue_id, 0, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn text_regions_unknown_issue_is_404() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "regions-404@example.com").await;
+    let (status, body) = get_text_regions(&app, &Uuid::new_v4().to_string(), 0, Some(&admin)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], "not_found");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn text_regions_cache_hit_converts_to_percent_without_archive() {
+    // Pre-seed the detect cache; the issue's file_path points at
+    // nowhere, so a 200 proves the hit path never touched the
+    // archive — and the payload pins the px→percent conversion.
+    use redis::AsyncCommands;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "regions-hit@example.com").await;
+    let (_lib, issue_id) = seed_issue(&app, "/nonexistent/regions-hit.cbz").await;
+
+    let detect_key = server::ocr::cache::detect_cache_key(&issue_id, 3);
+    let detection = serde_json::json!({
+        "page_w": 1000_u32, "page_h": 2000_u32,
+        "bboxes": [
+            {
+                "xmin": 100.0_f64, "ymin": 400.0_f64,
+                "xmax": 350.0_f64, "ymax": 600.0_f64,
+                "confidence": 0.9_f64, "class": 0_u32,
+            },
+            {
+                // Collapsed after clamping → must be filtered out.
+                "xmin": 1200.0_f64, "ymin": 100.0_f64,
+                "xmax": 1300.0_f64, "ymax": 200.0_f64,
+                "confidence": 0.8_f64, "class": 1_u32,
+            },
+        ],
+    })
+    .to_string();
+    let mut redis = app.state().jobs.redis.clone();
+    let _: () = redis.set_ex(&detect_key, detection, 60).await.unwrap();
+
+    let (status, body) = get_text_regions(&app, &issue_id, 3, Some(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["page_w"], 1000);
+    assert_eq!(body["page_h"], 2000);
+    let regions = body["regions"].as_array().unwrap();
+    assert_eq!(regions.len(), 1, "off-page bbox must be dropped: {body}");
+    let r = &regions[0];
+    assert!((r["x"].as_f64().unwrap() - 10.0).abs() < 1e-4);
+    assert!((r["y"].as_f64().unwrap() - 20.0).abs() < 1e-4);
+    assert!((r["w"].as_f64().unwrap() - 25.0).abs() < 1e-4);
+    assert!((r["h"].as_f64().unwrap() - 10.0).abs() < 1e-4);
+    assert_eq!(r["class"], 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn text_regions_treats_v1_payload_as_miss() {
+    // A bare bbox array (the pre-v2 payload shape) under the v2 key
+    // must deserialize-fail and fall through to the archive load —
+    // which 500s here because the file path is bogus. That proves
+    // the malformed entry wasn't served.
+    use redis::AsyncCommands;
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "regions-v1@example.com").await;
+    let (_lib, issue_id) = seed_issue(&app, "/nonexistent/regions-v1.cbz").await;
+
+    let detect_key = server::ocr::cache::detect_cache_key(&issue_id, 0);
+    let v1 = serde_json::json!([{
+        "xmin": 1.0_f64, "ymin": 2.0_f64, "xmax": 3.0_f64, "ymax": 4.0_f64,
+        "confidence": 0.9_f64, "class": 0_u32,
+    }])
+    .to_string();
+    let mut redis = app.state().jobs.redis.clone();
+    let _: () = redis.set_ex(&detect_key, v1, 60).await.unwrap();
+
+    let (status, body) = get_text_regions(&app, &issue_id, 0, Some(&admin)).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["error"]["code"], "archive_unreadable");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

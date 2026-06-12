@@ -538,6 +538,9 @@ export function Reader({
   const beginHighlight = useCallback(() => {
     setMarkerMode("select-rect");
   }, [setMarkerMode]);
+  const beginCaptureText = useCallback(() => {
+    setMarkerMode("select-text");
+  }, [setMarkerMode]);
 
   // `toggleMarkersHidden` from the store flips visibility silently;
   // the keymap wants a toast confirming the new state (the visual
@@ -579,6 +582,7 @@ export function Reader({
     toggleMarkersHidden: toggleMarkersHiddenWithToast,
     beginAddNote,
     beginHighlight,
+    beginCaptureText,
     onQuitReader: handleQuitReader,
     onDismissEndCard: dismissEndCard,
   });

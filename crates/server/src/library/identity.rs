@@ -243,6 +243,7 @@ pub async fn resolve_or_create(
             // LTR). New rows ship with NULL = "Auto"; M3's scanner
             // heuristic and admin edits via PATCH may pin a value.
             reading_direction: Set(None),
+            text_language: Set(None),
             // Default: feeds auto-reorder up-next to position 0.
             // Curators flip this on per series for strict numbered order.
             preserve_canonical_order: Set(false),
