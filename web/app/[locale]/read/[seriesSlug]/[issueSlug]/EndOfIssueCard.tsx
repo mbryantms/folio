@@ -20,7 +20,7 @@ import { Cover } from "@/components/Cover";
 import { Button } from "@/components/ui/button";
 import type { Direction } from "@/lib/reader/detect";
 import type { NextUpView, OnDeckCard } from "@/lib/api/types";
-import { readerUrl } from "@/lib/urls";
+import { issueUrl, readerUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
 export function EndOfIssueCard({
@@ -203,15 +203,32 @@ export function EndOfIssueCard({
             >
               Read
             </Button>
-            {/* Secondary path back to the issue the reader is currently
-                on (its detail page) — same destination the chrome's exit
-                button uses. Lets the user leave to the current issue
-                without first committing to the next one. */}
-            <Button asChild variant="outline" className="w-full">
-              <Link href={exitUrl} onClick={onDismiss}>
-                Back to this issue
-              </Link>
-            </Button>
+            {/* Detail-page escape hatches: a matched outline pair for
+                the issue just finished (the chrome-exit destination)
+                and the resolver's pick, so the user can inspect either
+                issue page instead of committing to keep reading. The
+                label sits centered inside a hairline divider (the
+                auth-form "or continue with" treatment) so it reads as
+                a structural separator, not a stray caption. */}
+            <div className="flex items-center gap-2">
+              <div className="bg-border h-px flex-1" aria-hidden="true" />
+              <span className="text-muted-foreground text-xs">
+                Go to issue page
+              </span>
+              <div className="bg-border h-px flex-1" aria-hidden="true" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button asChild variant="outline">
+                <Link href={exitUrl} onClick={onDismiss}>
+                  This issue
+                </Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href={issueUrl(target)} onClick={onDismiss}>
+                  Next issue
+                </Link>
+              </Button>
+            </div>
           </>
         ) : (
           <>

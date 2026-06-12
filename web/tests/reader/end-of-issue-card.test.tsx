@@ -66,10 +66,13 @@ describe("<EndOfIssueCard>", () => {
     expect(html).toMatch(/Eight Is Enough/);
     // Primary CTA labeled "Read".
     expect(html).toMatch(/Read/);
-    // Secondary CTA: a link back to the current issue's detail page
-    // (the exitUrl), so the reader can leave without advancing.
-    expect(html).toMatch(/Back to this issue/);
+    // Secondary CTAs: a matched pair of issue-page links — the current
+    // issue's detail page (the exitUrl) and the next issue's detail
+    // page, so the reader can leave to either without advancing.
+    expect(html).toMatch(/This issue/);
     expect(html).toMatch(/href="\/series\/x\/issues\/y"/);
+    expect(html).toMatch(/Next issue/);
+    expect(html).toMatch(/href="\/series\/invincible\/issues\/issue-2"/);
     // Close affordance for "stay here" semantics.
     expect(html).toMatch(/aria-label="Close"/);
     // The up-next body does NOT render Exit reader / Browse buttons —
