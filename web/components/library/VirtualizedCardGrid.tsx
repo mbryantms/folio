@@ -11,6 +11,7 @@ import {
   estimateRowHeight,
   rowItemRange,
 } from "@/lib/library/grid-window";
+import { useGridScrollRestore } from "@/lib/library/use-grid-scroll-restore";
 import { useContainerWidth } from "@/lib/use-container-width";
 
 /**
@@ -39,6 +40,7 @@ export function VirtualizedCardGrid({
   isFetchingNextPage,
   fetchNextPage,
   renderCard,
+  enableScrollRestore = false,
 }: {
   items: ReadonlyArray<{ id: string }>;
   cardSize: number;
@@ -49,6 +51,8 @@ export function VirtualizedCardGrid({
   isFetchingNextPage: boolean;
   fetchNextPage: () => void;
   renderCard: (item: { id: string }) => React.ReactNode;
+  /** Persist + restore window scroll across back-nav (audit B15). */
+  enableScrollRestore?: boolean;
 }) {
   const [containerRef, containerWidth] = useContainerWidth<HTMLDivElement>();
   const columnsPerRow = computeColumnsPerRow(containerWidth, cardSize);
@@ -97,6 +101,17 @@ export function VirtualizedCardGrid({
       fetchNextPage();
     }
   }, [hasNextPage, isFetchingNextPage, lastRow, rowCount, fetchNextPage]);
+
+  // Save + restore window scroll across back-nav (audit B15). `rowCount`
+  // is the growth signal that drives the restore's page-in loop.
+  useGridScrollRestore({
+    enabled: enableScrollRestore,
+    getTotalSize: () => virtualizer.getTotalSize(),
+    growthSignal: rowCount,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  });
 
   // Until the first width measurement we can't pick a column count;
   // render a same-shaped auto-fill skeleton so there's no flash and the

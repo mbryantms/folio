@@ -501,6 +501,7 @@ export function LibraryGridView({
           hasNextPage={!!query.hasNextPage}
           isFetchingNextPage={query.isFetchingNextPage}
           fetchNextPage={() => void query.fetchNextPage()}
+          enableScrollRestore
           renderCard={(item) =>
             isSeriesMode ? (
               <SeriesCard
