@@ -39,6 +39,7 @@ import {
 } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
+import { useContainerWidth } from "@/lib/use-container-width";
 import { useSelection } from "@/lib/selection/use-selection";
 import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
@@ -553,30 +554,6 @@ function packIntoRows<T extends { id: string; aspect: number }>(
     commit(current, false);
   }
   return rows;
-}
-
-/** Snapshot the container's content-box width and keep it in sync via
- *  ResizeObserver. Used by `RowPackedSection` to feed the layout
- *  algorithm. Returns `0` until the first layout pass — callers should
- *  short-circuit rendering during that interval to avoid a flash. */
-function useContainerWidth<E extends HTMLElement>(): [
-  React.RefObject<E | null>,
-  number,
-] {
-  const ref = React.useRef<E | null>(null);
-  const [width, setWidth] = React.useState(0);
-  React.useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (typeof w === "number") setWidth(w);
-    });
-    ro.observe(el);
-    setWidth(el.clientWidth);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width];
 }
 
 /** Render one series's markers as a justified row-packed grid where
