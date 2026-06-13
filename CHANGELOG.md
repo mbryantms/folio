@@ -13,6 +13,48 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.12.0](https://github.com/mbryantms/folio/compare/v0.11.0...v0.12.0) (2026-06-13)
+
+
+### Added
+
+* **bookmarks:** multi-select, flat sort, and total count (B11) ([#173](https://github.com/mbryantms/folio/issues/173)) ([79c0c1c](https://github.com/mbryantms/folio/commit/79c0c1c60c1b69a9b2bc2a4d408a47c49132aa49))
+* **library:** grid filter URL state + read-status filter (B1/B2) ([#168](https://github.com/mbryantms/folio/issues/168)) ([38702c2](https://github.com/mbryantms/folio/commit/38702c2f803f498cb3871706a4aa66315061a33e))
+* **library:** multi-select on the library grid (B3, E9) ([#172](https://github.com/mbryantms/folio/issues/172)) ([339277e](https://github.com/mbryantms/folio/commit/339277e0bab2b728e5ce6ccc2f6ee28f1ca90ef0))
+* **library:** persistent cover kebab + one-time hint on touch (B16) ([#175](https://github.com/mbryantms/folio/issues/175)) ([1da13ac](https://github.com/mbryantms/folio/commit/1da13ac2efaaa00d37a2e7e171ce8ebfa0b3835f))
+* **library:** window-virtualize the grid + scroll restore (G1, B15) ([#177](https://github.com/mbryantms/folio/issues/177)) ([59e7671](https://github.com/mbryantms/folio/commit/59e76715962cbfaea9c2c82ab87034751983cb3f))
+* **library:** window-virtualize the IssuesPanel main run (G1) ([#178](https://github.com/mbryantms/folio/issues/178)) ([607af59](https://github.com/mbryantms/folio/commit/607af59cf6b1453e18c283d2a579ba5bbfcf2bb3))
+* **reader:** keyboard/SR-reachable region markers (E4) ([#188](https://github.com/mbryantms/folio/issues/188)) ([b887417](https://github.com/mbryantms/folio/commit/b8874172cad02e5beb9f189b83898dcf0ed27175))
+* **reader:** layer Escape — collapse chrome/strip before exiting (E6) ([#187](https://github.com/mbryantms/folio/issues/187)) ([04335bb](https://github.com/mbryantms/folio/commit/04335bb0e0b56a7f313a990f8421bfd495425b9d))
+* **reader:** lazy marker editor + active-mode pill (C7, bundle ratchet) ([#183](https://github.com/mbryantms/folio/issues/183)) ([068573b](https://github.com/mbryantms/folio/commit/068573b5221fc8c1d79658101f2e87bca7ba4502))
+* **reader:** marker editor dirty-guard (C7) ([#184](https://github.com/mbryantms/folio/issues/184)) ([f4c1ec8](https://github.com/mbryantms/folio/commit/f4c1ec8388f3854cce6170d264c54700cf1172cb))
+* **reader:** one-time first-run orientation overlay (C5) ([#185](https://github.com/mbryantms/folio/issues/185)) ([72f48e5](https://github.com/mbryantms/folio/commit/72f48e51e322f028460ee83730bf86dffe8dab65))
+* **reader:** page-load error+retry, page-nav keys, hide iOS fullscreen (C3, C13, C11) ([#182](https://github.com/mbryantms/folio/issues/182)) ([c5c91db](https://github.com/mbryantms/folio/commit/c5c91db0d11d2d50fc59f7c00f7f2523d510da6d))
+* **reader:** persist brightness & sepia across reloads (E4) ([#186](https://github.com/mbryantms/folio/issues/186)) ([0a6039e](https://github.com/mbryantms/folio/commit/0a6039ea068857ae513a1a0159d467dab0c27c1b))
+* **reader:** transform zoom + drag-to-pan via +/-/0 keybinds (C9, part 1) ([#180](https://github.com/mbryantms/folio/issues/180)) ([d242e79](https://github.com/mbryantms/folio/commit/d242e796e7d66dc583aa2764c35a1792c5ae7b8d))
+* **reader:** unify the gesture-claim layer — overflow pan + double-tap zoom (C4, C9) ([#181](https://github.com/mbryantms/folio/issues/181)) ([d365a00](https://github.com/mbryantms/folio/commit/d365a00d154b166b8b0d30d3ebeeb070e81d03c2))
+* **reader:** webtoon rescue — windowing, end footer, progress integrity (C1b/C2/C12) ([#179](https://github.com/mbryantms/folio/issues/179)) ([ca5a907](https://github.com/mbryantms/folio/commit/ca5a9070fe2e66a9d8ab2f8413e78330976c94cd))
+* **search:** multi-select on series + issue result grids (B3) ([#174](https://github.com/mbryantms/folio/issues/174)) ([4915653](https://github.com/mbryantms/folio/commit/49156539f412d77650a49b29ea86cf92d422d07b))
+* **search:** rebuild the ⌘K modal on cmdk (E2) ([#170](https://github.com/mbryantms/folio/issues/170)) ([ac77fd6](https://github.com/mbryantms/folio/commit/ac77fd6f8c898be219c7a5a8f9fb091c968c34cd))
+* **search:** retire legacy /?q= SearchView, redirect to /search (E2) ([#171](https://github.com/mbryantms/folio/issues/171)) ([017a662](https://github.com/mbryantms/folio/commit/017a662ac94f8413626e9e33dd4c0b799bdd0978))
+* **server:** error-envelope field-level validation details ([#163](https://github.com/mbryantms/folio/issues/163)) ([a5d838c](https://github.com/mbryantms/folio/commit/a5d838c2e51b68d246696706d1961466ba9c4abd))
+* **server:** health-issue un-dismiss endpoint ([#161](https://github.com/mbryantms/folio/issues/161)) ([843b200](https://github.com/mbryantms/folio/commit/843b20002835fba6ac0fcdd03fc5b67481df6491))
+* **server:** issue_id filter on GET /progress ([#159](https://github.com/mbryantms/folio/issues/159)) ([b118dfe](https://github.com/mbryantms/folio/commit/b118dfee4f51b4ef84a51ccf7518b93f400d347f))
+* **server:** markers bulk-delete endpoint ([#160](https://github.com/mbryantms/folio/issues/160)) ([f3d852f](https://github.com/mbryantms/folio/commit/f3d852f9a9a5cb09200558b5c38571fd61898f60))
+* **ui:** semantic status tokens + sweep (F1/F2) ([#167](https://github.com/mbryantms/folio/issues/167)) ([08da1ee](https://github.com/mbryantms/folio/commit/08da1ee0620c75f305e2fd1fe0545d591b09222f))
+* **web:** enable React Compiler ([#162](https://github.com/mbryantms/folio/issues/162)) ([3d7af8a](https://github.com/mbryantms/folio/commit/3d7af8a9749f69816fae31ed3db82ee872b2b2f6))
+
+
+### Fixed
+
+* **admin:** health filters, settings reset, cancelled scans, stale copy ([#153](https://github.com/mbryantms/folio/issues/153)) ([066f87e](https://github.com/mbryantms/folio/commit/066f87e42968f7a0d780335cf7e37b22fa27f949))
+* **deps:** bump esbuild to 0.28.1 (GHSA-gv7w-rqvm-qjhr) ([#164](https://github.com/mbryantms/folio/issues/164)) ([942bf47](https://github.com/mbryantms/folio/commit/942bf47d94f223b456e4fcd3f628855afbb9cd71))
+* **reader:** keyboard tab order, progress integrity, error boundary ([#154](https://github.com/mbryantms/folio/issues/154)) ([1953a8d](https://github.com/mbryantms/folio/commit/1953a8d2bdf78ccd59e43a49e278282d689fef50))
+* **server:** nonce next-themes bootstrap instead of CSP hash allowlist ([#158](https://github.com/mbryantms/folio/issues/158)) ([a2325f4](https://github.com/mbryantms/folio/commit/a2325f49ca781938b6a4f8808f59b7c78a83b79d))
+* **ui:** Select toggles to Cancel; theme the bookmarks toggles ([#176](https://github.com/mbryantms/folio/issues/176)) ([e376c3f](https://github.com/mbryantms/folio/commit/e376c3f51951bd83176bdce01f9e1ac6b37520c6))
+* **web:** a11y + first-run quick wins, dead code ([#157](https://github.com/mbryantms/folio/issues/157)) ([d036714](https://github.com/mbryantms/folio/commit/d0367145f5b421a07c58be404c4a161bc374e087))
+* **web:** query retry policy, SSR waterfalls, grid render hygiene ([#155](https://github.com/mbryantms/folio/issues/155)) ([58d55d1](https://github.com/mbryantms/folio/commit/58d55d1584a0b5e66dde43009eba3333d2095b78))
+
 ## [0.11.0](https://github.com/mbryantms/folio/compare/v0.10.5...v0.11.0) (2026-06-12)
 
 
