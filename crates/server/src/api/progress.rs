@@ -134,6 +134,11 @@ pub(crate) fn resolve_is_backfill(next_finished: bool, req_backfill: bool) -> bo
 pub struct ListQuery {
     /// RFC 3339 timestamp; only rows updated strictly after this are returned.
     pub since: Option<String>,
+    /// When present, return only the caller's record for this issue
+    /// (zero or one row). The SSR issue/reader pages need exactly one
+    /// record; without this they fetch the user's entire progress
+    /// history to `.find()` it (audit G2).
+    pub issue_id: Option<String>,
 }
 
 pub async fn upsert(
@@ -250,6 +255,12 @@ pub async fn list(
     let mut query = ProgressEntity::find()
         .filter(progress_record::Column::UserId.eq(user.id))
         .order_by_asc(progress_record::Column::UpdatedAt);
+    if let Some(issue_id) = q.issue_id.as_deref() {
+        // No ACL walk needed: the UserId filter above already scopes
+        // to the caller's own records, and a progress row's existence
+        // for an issue the user once read is theirs to see.
+        query = query.filter(progress_record::Column::IssueId.eq(issue_id));
+    }
     if let Some(since) = q.since.as_deref() {
         match chrono::DateTime::parse_from_rfc3339(since) {
             Ok(ts) => {
