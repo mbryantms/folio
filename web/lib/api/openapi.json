@@ -3656,6 +3656,40 @@
         }
       }
     },
+    "/api/libraries/{slug}/health-issues/{issue_id}/undismiss": {
+      "post": {
+        "operationId": "health_issues_undismiss",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "un-dismissed"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
     "/api/libraries/{slug}/metadata-drift/flush": {
       "post": {
         "summary": "`POST /libraries/{slug}/metadata-drift/flush` — admin-only.",

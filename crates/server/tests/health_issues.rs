@@ -845,3 +845,101 @@ async fn admin_cross_library_health_cursor_paginates() {
         "page 1 and page 2 must not share ids",
     );
 }
+
+/// `POST .../undismiss` clears dismissed_at so the row reappears in
+/// the default list, and writes its own audit action. D1 follow-up:
+/// dismiss used to be silently irreversible.
+#[tokio::test]
+async fn undismiss_restores_issue_and_audits() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    let foo = tmp.path().join("Series Undis (2024)");
+    std::fs::create_dir_all(&foo).unwrap();
+    write_cbz(&foo.join("Undis 001.cbz"), 1);
+    write_cbz(&tmp.path().join("orphan.cbz"), 2);
+
+    let lib_id = create_library(&app, tmp.path(), false).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issues = HealthEntity::find().all(&state.db).await.unwrap();
+    let target = issues
+        .iter()
+        .find(|i| i.kind == "FileAtRoot")
+        .expect("FileAtRoot row");
+    let issue_id = target.id;
+
+    let post = |verb: &'static str| {
+        let uri = format!("/api/libraries/{lib_id}/health-issues/{issue_id}/{verb}");
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(
+                header::COOKIE,
+                format!(
+                    "__Host-comic_session={}; __Host-comic_csrf={}",
+                    auth.session, auth.csrf
+                ),
+            )
+            .header("X-CSRF-Token", &auth.csrf)
+            .body(Body::empty())
+            .unwrap();
+        app.router.clone().oneshot(req)
+    };
+
+    let resp = post("dismiss").await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Hidden while dismissed.
+    let body = list_health(&app, &auth, lib_id, "").await;
+    assert!(
+        !body
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["kind"] == "FileAtRoot"),
+        "dismissed row must be hidden: {body}",
+    );
+
+    let resp = post("undismiss").await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Back in the default list with dismissed_at cleared.
+    let body = list_health(&app, &auth, lib_id, "").await;
+    let restored = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["kind"] == "FileAtRoot")
+        .expect("undismissed row is visible again");
+    assert!(restored["dismissed_at"].is_null());
+
+    // Idempotent on a never/no-longer-dismissed row.
+    let resp = post("undismiss").await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Both actions left audit rows.
+    use sea_orm::{ColumnTrait, QueryFilter};
+    let actions: Vec<String> = entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::TargetId.eq(issue_id.to_string()))
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.action)
+        .collect();
+    assert!(
+        actions
+            .iter()
+            .any(|a| a == "admin.library.health_issue.dismiss"),
+        "dismiss audit row present: {actions:?}",
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|a| a == "admin.library.health_issue.undismiss"),
+        "undismiss audit row present: {actions:?}",
+    );
+}
