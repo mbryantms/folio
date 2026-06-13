@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
@@ -21,7 +22,7 @@ import { cn } from "@/lib/utils";
 import type { IssueSummaryView } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
 
-export function IssueCard({
+function IssueCardImpl({
   issue,
   className,
   extraActions,
@@ -256,6 +257,12 @@ export function IssueCard({
     </>
   );
 }
+
+/** Memoized: grid/rail surfaces mount hundreds of these at once and
+ *  their props are referentially stable (cache rows + literals), so
+ *  parent state churn — search keystrokes, selection toggles,
+ *  sentinel observer resets — no longer reconciles every card. */
+export const IssueCard = memo(IssueCardImpl);
 
 export function IssueCardSkeleton({ className }: { className?: string }) {
   return (

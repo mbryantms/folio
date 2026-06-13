@@ -277,14 +277,18 @@ export function IssuesPanel({
   };
 
   // Auto-fetch the next page when the sentinel scrolls into view.
+  // Depend on the three fields, not the whole result object — TanStack
+  // returns a fresh object identity per render, so `[query]` tore the
+  // observer down and rebuilt it on every state change.
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          if (query.hasNextPage && !query.isFetchingNextPage) {
-            void query.fetchNextPage();
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
           }
         }
       },
@@ -292,7 +296,7 @@ export function IssuesPanel({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [query]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   // Esc exits select mode entirely; Cmd/Ctrl+A selects every loaded
   // card. Both gated on `selectMode` so other handlers stay free

@@ -1,7 +1,14 @@
 "use client";
 
+import { usePathname } from "next/navigation";
+
 import { useScanEvents } from "@/lib/api/scan-events";
 import { useMe } from "@/lib/api/queries";
+
+/** Routes that are anonymous by construction — probing /auth/me from
+ *  them just sprays 401s + a doomed refresh attempt into the console
+ *  before the user has even typed a password. */
+const AUTH_ROUTES = ["/sign-in", "/forgot-password", "/reset-password"];
 
 /**
  * Headless WebSocket subscriber that runs on every page (mounted from the
@@ -16,8 +23,10 @@ import { useMe } from "@/lib/api/queries";
  * status pill) does not produce duplicate notifications.
  */
 export function ScanResultListener() {
-  const me = useMe();
-  const enabled = me.data?.role === "admin";
+  const pathname = usePathname();
+  const onAuthSurface = AUTH_ROUTES.some((p) => pathname?.startsWith(p));
+  const me = useMe({ enabled: !onAuthSurface });
+  const enabled = !onAuthSurface && me.data?.role === "admin";
   return enabled ? <Subscriber /> : null;
 }
 

@@ -73,14 +73,16 @@ export default async function SeriesPage({
   let firstIssuePage: IssueListView;
   let resume: SeriesResumeView;
   try {
-    series = await apiGet<SeriesView>(`/series/${slug}`);
+    // All three depend only on the slug — fetch concurrently instead
+    // of stacking three sequential round-trips onto TTFB.
     // A bounded issue preview feeds "Read from beginning" and the activity
-    // heatmap. The primary resume CTA comes from the server endpoint below so
+    // heatmap. The primary resume CTA comes from the server endpoint so
     // long series are not capped to this preview page.
-    firstIssuePage = await apiGet<IssueListView>(
-      `/series/${slug}/issues?limit=200`,
-    );
-    resume = await apiGet<SeriesResumeView>(`/series/${slug}/resume`);
+    [series, firstIssuePage, resume] = await Promise.all([
+      apiGet<SeriesView>(`/series/${slug}`),
+      apiGet<IssueListView>(`/series/${slug}/issues?limit=200`),
+      apiGet<SeriesResumeView>(`/series/${slug}/resume`),
+    ]);
   } catch (e) {
     if (e instanceof ApiError) {
       if (e.status === 401) redirect(`/sign-in`);

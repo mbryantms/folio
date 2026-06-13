@@ -87,6 +87,20 @@ export function LibraryGridToolbar({
   cardSizeStep: number;
   cardSizeDefault: number;
 }) {
+  // The live input string is local to the toolbar; `q` from the
+  // filters hook is the *debounced* value. Keeping the raw keystrokes
+  // here means typing re-renders this small toolbar, not the whole
+  // grid of mounted cards. `lastSent` distinguishes our own debounced
+  // echo (ignore — clobbering the input would drop trailing spaces
+  // mid-typing) from external changes like Clear filters (sync).
+  const [searchInput, setSearchInput] = React.useState(q);
+  const lastSent = React.useRef(q);
+  React.useEffect(() => {
+    if (q !== lastSent.current) {
+      setSearchInput(q);
+      lastSent.current = q;
+    }
+  }, [q]);
   return (
     <div className="mb-6 flex flex-wrap items-center gap-2">
       {/* Mode toggle: two side-by-side buttons that match the rest
@@ -118,8 +132,13 @@ export function LibraryGridToolbar({
       <Input
         type="search"
         placeholder={mode === "series" ? "Search series…" : "Search issues…"}
-        value={q}
-        onChange={(e) => onQ(e.target.value)}
+        value={searchInput}
+        onChange={(e) => {
+          const next = e.target.value;
+          setSearchInput(next);
+          lastSent.current = next.trim();
+          onQ(next);
+        }}
         className="h-9 w-72"
       />
       {mode === "series" ? (

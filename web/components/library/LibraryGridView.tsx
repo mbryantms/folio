@@ -144,16 +144,20 @@ export function LibraryGridView({
   const items = mode === "series" ? seriesItems : issueItems;
 
   // Auto-fetch the next page when the sentinel scrolls into view —
-  // mirrors `IssuesPanel` so the cadence feels familiar.
+  // mirrors `IssuesPanel` so the cadence feels familiar. Depend on
+  // the three fields, not the whole result object: TanStack returns a
+  // fresh object identity every render, so `[query]` tore down and
+  // recreated the observer on every keystroke/state change.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          if (query.hasNextPage && !query.isFetchingNextPage) {
-            void query.fetchNextPage();
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
           }
         }
       },
@@ -161,7 +165,7 @@ export function LibraryGridView({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [query]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const gridStyle: React.CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,

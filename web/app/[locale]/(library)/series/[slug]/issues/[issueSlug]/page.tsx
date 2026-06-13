@@ -97,73 +97,44 @@ export default async function IssuePage({
     }
     throw e;
   }
-  // Best-effort series lookup for breadcrumb + status badge.
-  let series: SeriesView | null = null;
-  try {
-    series = await apiGet<SeriesView>(`/series/${seriesSlug}`);
-  } catch {
-    /* fallthrough */
-  }
-
-  // Best-effort progress fetch — drives the dynamic read CTA label.
-  // 4xx (e.g. unauthenticated) just means "no record yet, show Read".
-  let issueProgress: ProgressLike | null = null;
-  try {
-    const delta = await apiGet<{ records: ProgressLike[] }>(`/progress`);
-    issueProgress = delta.records.find((r) => r.issue_id === issue.id) ?? null;
-  } catch {
-    /* no progress yet */
-  }
-
-  // Issue-scoped reading stats — drives the inline "Last read" fact
-  // line, the prominent activity strip above the tabs, and gates the
-  // dedicated Activity tab. One server fetch hydrates all three so
-  // the page never has to wait on a client roundtrip to know whether
-  // there's anything to show.
-  let activityStats: ReadingStatsView | null = null;
-  try {
-    activityStats = await apiGet<ReadingStatsView>(
-      `/me/reading-stats?range=all&issue_id=${encodeURIComponent(issue.id)}`,
-    );
-  } catch {
-    /* leave null — page degrades to the no-activity layout */
-  }
+  // Six best-effort fetches, all independent once `issue` is in hand —
+  // run them concurrently. They used to await in series, stacking six
+  // round-trips of pure latency onto TTFB (≈500ms at 80ms RTT for
+  // remote/PWA readers). Each fails soft to its empty value:
+  //  - series: breadcrumb + status badge
+  //  - progress: dynamic read-CTA label ("no record yet" on 4xx)
+  //  - reading stats: "Last read" line + activity strip + Activity tab
+  //  - next 5 / prev 1 issues: the filmstrip rail
+  //  - external ids: provider rows on the Metadata tab
+  const [series, issueProgress, activityStats, nextIssues, prevIssue, issueExternalIds] =
+    await Promise.all([
+      apiGet<SeriesView>(`/series/${seriesSlug}`).catch(() => null),
+      apiGet<{ records: ProgressLike[] }>(`/progress`)
+        .then(
+          (delta) =>
+            delta.records.find((r) => r.issue_id === issue.id) ?? null,
+        )
+        .catch(() => null),
+      apiGet<ReadingStatsView>(
+        `/me/reading-stats?range=all&issue_id=${encodeURIComponent(issue.id)}`,
+      ).catch(() => null),
+      apiGet<NextInSeriesView>(
+        `/series/${seriesSlug}/issues/${issueSlug}/next?limit=5`,
+      )
+        .then((next) => next.items)
+        .catch(() => [] as IssueSummaryView[]),
+      apiGet<PrevInSeriesView>(
+        `/series/${seriesSlug}/issues/${issueSlug}/prev`,
+      )
+        .then((prev) => prev.item ?? null)
+        .catch(() => null),
+      apiGet<ExternalIdsListResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
+      )
+        .then((externalIds) => externalIds.rows)
+        .catch(() => [] as ExternalIdRow[]),
+    ]);
   const hasActivity = (activityStats?.totals.sessions ?? 0) > 0;
-
-  // Next 5 issues in the series, ordered by sort_number. Best-effort —
-  // a transient failure simply hides the section.
-  let nextIssues: IssueSummaryView[] = [];
-  try {
-    const next = await apiGet<NextInSeriesView>(
-      `/series/${seriesSlug}/issues/${issueSlug}/next?limit=5`,
-    );
-    nextIssues = next.items;
-  } catch {
-    /* hide section on failure */
-  }
-
-  // The single issue immediately before this one (filmstrip context to the
-  // left of the next-up rail). Best-effort — null when this is the first
-  // issue, or on transient failure.
-  let prevIssue: IssueSummaryView | null = null;
-  try {
-    const prev = await apiGet<PrevInSeriesView>(
-      `/series/${seriesSlug}/issues/${issueSlug}/prev`,
-    );
-    prevIssue = prev.item ?? null;
-  } catch {
-    /* leave null */
-  }
-
-  let issueExternalIds: ExternalIdRow[] = [];
-  try {
-    const externalIds = await apiGet<ExternalIdsListResp>(
-      `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
-    );
-    issueExternalIds = externalIds.rows;
-  } catch {
-    /* keep Web visible if provider rows cannot be loaded */
-  }
 
   const readState: ReadState = readStateFor(issue, issueProgress);
   const readLabel = readButtonLabel(readState);

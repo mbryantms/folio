@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { memo, useState } from "react";
 
 import { Cover } from "@/components/Cover";
 import {
@@ -40,7 +40,7 @@ const sizeClasses: Record<Size, { wrap: string; title: string; meta: string }> =
     },
   };
 
-export function SeriesCard({
+function SeriesCardImpl({
   series,
   size = "md",
   href,
@@ -262,6 +262,12 @@ export function SeriesCard({
     </>
   );
 }
+
+/** Memoized: grid/rail surfaces mount hundreds of these at once and
+ *  their props are referentially stable (cache rows + literals), so
+ *  parent state churn — search keystrokes, selection toggles,
+ *  sentinel observer resets — no longer reconciles every card. */
+export const SeriesCard = memo(SeriesCardImpl);
 
 export function SeriesCardSkeleton({ size = "md" }: { size?: Size }) {
   const c = sizeClasses[size];

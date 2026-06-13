@@ -130,15 +130,19 @@ export function MarkersList() {
 
   // IntersectionObserver sentinel for infinite scroll. Same rootMargin
   // as `IssuesPanel` / `CblViewDetail` so behavior stays consistent.
+  // Depend on the three fields, not the whole result object — TanStack
+  // returns a fresh object identity per render, so `[query]` tore the
+  // observer down and rebuilt it on every state change.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          if (query.hasNextPage && !query.isFetchingNextPage) {
-            void query.fetchNextPage();
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
           }
         }
       },
@@ -146,7 +150,7 @@ export function MarkersList() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [query]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   function toggleTag(tag: string) {
     setSelectedTags((prev) =>
