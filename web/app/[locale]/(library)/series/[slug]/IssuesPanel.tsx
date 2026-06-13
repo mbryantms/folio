@@ -348,6 +348,7 @@ export function IssuesPanel({
         <div className="flex flex-wrap items-center gap-2">
           <Input
             type="search"
+            aria-label="Search issues in this series"
             placeholder="Search issues…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -583,7 +584,7 @@ export function IssuesPanel({
         className={cn("h-12", query.hasNextPage ? "" : "hidden")}
       />
       {query.isFetchingNextPage && (
-        <p className="text-muted-foreground mt-2 text-center text-xs">
+        <p role="status" className="text-muted-foreground mt-2 text-center text-xs">
           Loading more…
         </p>
       )}

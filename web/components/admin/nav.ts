@@ -43,8 +43,6 @@ export type NavItem = {
   href: string;
   label: string;
   icon: IconName;
-  /** Marks pages that are placeholders shipped in M1 — drop this when M2–M6 fill them in. */
-  placeholder?: boolean;
   /** Render a live count pill (e.g. unmatched-series total for the Metadata entry). */
   dynamicBadge?: DynamicBadge;
   /**

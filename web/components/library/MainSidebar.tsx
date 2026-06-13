@@ -154,12 +154,18 @@ export function MainSidebar({
                     // "All Libraries" and "Home" both point at "/", so pick the
                     // active row off the query param: present → match a per-library
                     // entry, absent → match plain Home/All Libraries.
+                    // Keyed on the server's kind/ref_id, NOT the display
+                    // label — labels are user-renamable and will localize;
+                    // an earlier label-keyed version broke highlighting the
+                    // moment either happened.
+                    const isBuiltin = (key: string) =>
+                      item.kind === "builtin" && item.refId === key;
                     let active = false;
                     if (itemSearch) {
                       // per-library entry
                       active =
                         pathname === itemPath && activeLibrary === itemSearch;
-                    } else if (item.label === "All Libraries") {
+                    } else if (isBuiltin("all_libraries")) {
                       active =
                         pathname === itemPath &&
                         activeLibrary != null &&
@@ -167,7 +173,7 @@ export function MainSidebar({
                       // "All Libraries" lights up only when a library is selected
                       // (treat it as "you're inside the libraries section"). The
                       // "Home" item handles the no-filter case.
-                    } else if (item.label === "Home") {
+                    } else if (isBuiltin("home")) {
                       active = pathname === itemPath && activeLibrary == null;
                     } else {
                       active =
@@ -177,14 +183,12 @@ export function MainSidebar({
                     }
                     // Bookmarks gets a count badge sourced from
                     // useMarkerCount when the user opts in. Hidden when
-                    // collapsed (icon-only), when 0 (avoid a "0" chip on
-                    // fresh accounts), and when the placeholder pill is
-                    // showing (soon-tag wins).
+                    // collapsed (icon-only) and when 0 (avoid a "0" chip
+                    // on fresh accounts).
                     const badge =
                       showMarkerCount &&
                       !collapsed &&
-                      !item.placeholder &&
-                      item.label === "Bookmarks" &&
+                      isBuiltin("bookmarks") &&
                       markerCount.data &&
                       markerCount.data.total > 0
                         ? markerCount.data.total > 99
@@ -210,11 +214,7 @@ export function MainSidebar({
                         {!collapsed && (
                           <span className="truncate">{item.label}</span>
                         )}
-                        {!collapsed && item.placeholder ? (
-                          <span className="text-muted-foreground/60 ml-auto text-[10px] tracking-wider uppercase">
-                            soon
-                          </span>
-                        ) : badge ? (
+                        {badge ? (
                           <span
                             className="bg-muted text-muted-foreground ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums"
                             aria-label={`${markerCount.data?.total} markers`}
@@ -231,11 +231,6 @@ export function MainSidebar({
                             <TooltipTrigger asChild>{link}</TooltipTrigger>
                             <TooltipContent side="right" sideOffset={8}>
                               {item.label}
-                              {item.placeholder ? (
-                                <span className="text-muted-foreground ml-2 text-[10px] tracking-wider uppercase">
-                                  soon
-                                </span>
-                              ) : null}
                             </TooltipContent>
                           </Tooltip>
                         ) : (

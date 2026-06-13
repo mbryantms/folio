@@ -290,7 +290,7 @@ export function MarkersList() {
             className={query.hasNextPage ? "h-12" : "hidden"}
           />
           {query.isFetchingNextPage ? (
-            <p className="text-muted-foreground text-center text-xs">
+            <p role="status" className="text-muted-foreground text-center text-xs">
               Loading more markers…
             </p>
           ) : null}
@@ -788,7 +788,8 @@ function EmptyState({ hasFilter }: { hasFilter: boolean }) {
           <kbd className="bg-muted rounded px-1 font-mono text-xs">n</kbd> to
           add a note, or{" "}
           <kbd className="bg-muted rounded px-1 font-mono text-xs">h</kbd> to
-          start a highlight.
+          start a highlight — or use the bookmark, star, and marker
+          buttons in the reader&apos;s top toolbar.
         </>
       )}
     </div>

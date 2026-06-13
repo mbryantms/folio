@@ -6,6 +6,7 @@ import { Library as LibraryIcon } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/admin/EmptyState";
+import { NewLibraryDialog } from "@/components/admin/library/NewLibraryDialog";
 import { useLibraryList } from "@/lib/api/queries";
 
 export function LibraryList() {
@@ -33,6 +34,9 @@ export function LibraryList() {
         icon={LibraryIcon}
         title="No libraries yet"
         description="Create one to point Folio at a folder on disk."
+        // CTA inside the empty state itself — the page-header button
+        // alone left the first-run path undiscovered (audit A1).
+        action={<NewLibraryDialog />}
       />
     );
   }
