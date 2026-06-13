@@ -15,6 +15,7 @@ import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { LibraryGridToolbar } from "@/components/library/LibraryGridToolbar";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
+import { ISSUE_TEXT_H, SERIES_TEXT_H } from "@/lib/library/grid-window";
 import type { FilterBuilderState } from "@/components/filters/filter-builder";
 import type {
   LibraryGridInitialFilters,
@@ -46,14 +47,6 @@ const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 160;
 const CARD_SIZE_STORAGE_KEY = "folio.libraryGrid.cardSize";
-
-// Approximate height (px) of the card text block below the cover, used
-// only as the virtualizer's initial row-height estimate (the real row
-// height is measured per row, so these don't need to be exact). Series:
-// title line + meta line + card gap/padding. Issues: number + title +
-// finished badge row run a touch taller.
-const SERIES_TEXT_H = 56;
-const ISSUE_TEXT_H = 64;
 
 /** Library grid: paginated series listing with metadata-driven
  *  filters in a right-side Sheet drawer. Default sort is alphabetical

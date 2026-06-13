@@ -13,6 +13,17 @@
 export const GRID_GAP_PX = 16;
 
 /**
+ * Approximate height (px) of a card's text block below the cover, per
+ * card type. Used ONLY as the virtualizer's initial row-height estimate
+ * — `measureElement` corrects the real height after first paint, so
+ * these don't need to be exact, just close enough to avoid a visible
+ * first-paint jump. Series = title line + meta line; issue cards run a
+ * touch taller (number line + title + finished-state row).
+ */
+export const SERIES_TEXT_H = 56;
+export const ISSUE_TEXT_H = 64;
+
+/**
  * How many columns the `auto-fill minmax(cardSize, 1fr)` grid yields at
  * a given container width. Inverts the CSS formula: each column needs at
  * least `cardSize`, columns are separated by `gap`, and there's one
