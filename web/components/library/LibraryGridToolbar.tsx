@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { BookmarkPlus, Filter, X } from "lucide-react";
+import { BookmarkPlus, Filter, ListChecks, X } from "lucide-react";
 
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import type { LibraryGridMode } from "@/components/library/library-grid-filters";
@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { IssueSort, SeriesSort, SortOrder } from "@/lib/api/types";
+import { cn } from "@/lib/utils";
 
 const SERIES_SORT_LABELS: Record<SeriesSort, string> = {
   name: "Name",
@@ -63,6 +64,10 @@ export function LibraryGridToolbar({
   cardSizeMax,
   cardSizeStep,
   cardSizeDefault,
+  canSelect,
+  selectMode,
+  onEnterSelect,
+  selectButtonRef,
 }: {
   mode: LibraryGridMode;
   onMode: (m: LibraryGridMode) => void;
@@ -86,6 +91,14 @@ export function LibraryGridToolbar({
   cardSizeMax: number;
   cardSizeStep: number;
   cardSizeDefault: number;
+  /** True once the grid has at least one loaded card to act on. */
+  canSelect: boolean;
+  /** Whether the grid is currently in multi-select mode. */
+  selectMode: boolean;
+  /** Enter multi-select mode (surfaces the SelectionToolbar). */
+  onEnterSelect: () => void;
+  /** Forwarded so the grid can restore focus here on select-mode exit. */
+  selectButtonRef?: React.Ref<HTMLButtonElement>;
 }) {
   // The live input string is local to the toolbar; `q` from the
   // filters hook is the *debounced* value. Keeping the raw keystrokes
@@ -230,7 +243,27 @@ export function LibraryGridToolbar({
         </Button>
       ) : null}
 
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-2">
+        {canSelect ? (
+          <Button
+            ref={selectButtonRef}
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onEnterSelect}
+            aria-label="Enter select mode"
+            aria-hidden={selectMode}
+            tabIndex={selectMode ? -1 : 0}
+            disabled={selectMode}
+            className={cn(
+              "h-9 transition-opacity duration-150",
+              selectMode && "pointer-events-none invisible opacity-0",
+            )}
+          >
+            <ListChecks className="mr-1.5 h-4 w-4" />
+            Select
+          </Button>
+        ) : null}
         <CardSizeOptions
           cardSize={cardSize}
           onCardSize={onCardSize}

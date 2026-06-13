@@ -12,9 +12,11 @@ import { cn } from "@/lib/utils";
  *
  *   - **Select mode off, desktop:** hidden by default, revealed on
  *     hover (`group-hover:opacity-100`). The checkbox renders as a
- *     `<button role="checkbox">` and tapping it enters select mode
- *     while selecting this card. Mobile devices don't have hover
- *     and don't reveal anything in this state.
+ *     focusable `<span role="checkbox" tabIndex={0}>` (NOT a real
+ *     `<button>` — that would be interactive content nested inside the
+ *     parent `<Link>`'s anchor, which is invalid HTML) and tapping it
+ *     enters select mode while selecting this card. Mobile devices
+ *     don't have hover and don't reveal anything in this state.
  *   - **Select mode on:** always visible, regardless of pointer
  *     type. The parent card itself is a `<button>` whose tap
  *     toggles selection, so this checkbox renders as a decorative
@@ -77,13 +79,19 @@ export function SelectionCheckbox({
     );
   }
 
-  // Out of select mode the parent is a `<Link>` (anchor). The
-  // checkbox is the way to ENTER select mode — keep it as a
-  // semantic button so keyboard users can Tab to it.
+  // Out of select mode the parent is a `<Link>` (anchor). The checkbox
+  // is the way to ENTER select mode — it must be keyboard-focusable, but
+  // a real `<button>` here is interactive content nested inside the
+  // anchor's interactive content (invalid HTML; React 19 hydration
+  // warning). Render a `role="checkbox"` span with `tabIndex={0}`
+  // instead — an ARIA role isn't HTML-interactive content, so it's a
+  // valid descendant of `<a>`, while still exposing checkbox semantics
+  // and keyboard activation to assistive tech (audit E9, matching the
+  // sibling overlays' `role`-span pattern).
   return (
-    <button
-      type="button"
+    <span
       role="checkbox"
+      tabIndex={0}
       aria-checked={isSelected}
       aria-label={isSelected ? `Deselect ${label}` : `Select ${label}`}
       onClick={(ev) => {
@@ -100,11 +108,11 @@ export function SelectionCheckbox({
       }}
       className={cn(
         visualClasses,
-        "focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none",
+        "cursor-pointer focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none",
         "pointer-events-none scale-95 opacity-0 group-hover:pointer-events-auto group-hover:scale-100 group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:scale-100 focus-visible:opacity-100",
       )}
     >
       {isSelected && <Check className="h-4 w-4" />}
-    </button>
+    </span>
   );
 }

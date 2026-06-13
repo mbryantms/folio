@@ -1,12 +1,19 @@
 "use client";
 
 import * as React from "react";
+import { Check, Circle, FolderPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { ActiveChips } from "@/components/library/ActiveChips";
+import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
+import {
+  BulkMarkReadDialog,
+  BULK_BACKFILL_PROMPT_THRESHOLD,
+} from "@/components/library/BulkMarkReadDialog";
 import { FilterSheet } from "@/components/library/FilterSheet";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { LibraryGridToolbar } from "@/components/library/LibraryGridToolbar";
+import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import type { FilterBuilderState } from "@/components/filters/filter-builder";
 import type {
   LibraryGridInitialFilters,
@@ -21,10 +28,16 @@ import {
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import {
+  useBulkMarkProgress,
+  useBulkMarkSeriesProgress,
+} from "@/lib/api/mutations";
+import {
   useIssuesCrossListInfinite,
   useSeriesListInfinite,
 } from "@/lib/api/queries";
 import { useLibraryGridFilters } from "@/lib/library/use-grid-filters";
+import { shouldSkipHotkey } from "@/lib/reader/keybinds";
+import { useSelection } from "@/lib/selection/use-selection";
 import { cn } from "@/lib/utils";
 
 const CARD_SIZE_MIN = 120;
@@ -146,6 +159,112 @@ export function LibraryGridView({
   const query = mode === "series" ? seriesQuery : issueQuery;
   const items = mode === "series" ? seriesItems : issueItems;
 
+  // Multi-select (audit B3): the grid is where users actually browse,
+  // so "filter all 2019 one-shots → mark read" has to work here. One
+  // `useSelection` over the active mode's items; switching modes swaps
+  // `items` (different first id) which auto-clears the set, and we exit
+  // select mode on the switch so the toolbar doesn't linger empty.
+  // "Select all matching" is intentionally absent — it needs a
+  // cross-list server bulk endpoint (audit B17, deferred); only the
+  // loaded set is actionable here, same as the saved-view surfaces.
+  const isSeriesMode = mode === "series";
+  // `items` is a union of two homogeneous arrays (series-mode vs
+  // issue-mode); both element types carry `id`, so pin the selection's
+  // type param to the shared `{ id }` shape rather than the union.
+  const selection = useSelection<{ id: string }>(items);
+  const bulkMarkIssues = useBulkMarkProgress();
+  const bulkMarkSeries = useBulkMarkSeriesProgress();
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [markReadOpen, setMarkReadOpen] = React.useState(false);
+  const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
+  const wasSelectModeRef = React.useRef(false);
+  const isMarkPending = bulkMarkIssues.isPending || bulkMarkSeries.isPending;
+
+  const handleMode = React.useCallback(
+    (m: LibraryGridMode) => {
+      selection.exit();
+      setMode(m);
+    },
+    [selection, setMode],
+  );
+
+  // Actually write the progress. `submitMarkRead` runs after the
+  // backfill prompt (mark-read at scale); mark-unread skips the prompt.
+  const submitMarkRead = React.useCallback(
+    (backfill: boolean) => {
+      const ids = Array.from(selection.selected);
+      if (ids.length === 0) return;
+      const onSuccess = () => {
+        selection.exit();
+        setMarkReadOpen(false);
+      };
+      if (isSeriesMode) {
+        bulkMarkSeries.mutate(
+          { series_ids: ids, finished: true, backfill },
+          { onSuccess },
+        );
+      } else {
+        bulkMarkIssues.mutate(
+          { issue_ids: ids, finished: true, backfill },
+          { onSuccess },
+        );
+      }
+    },
+    [isSeriesMode, bulkMarkSeries, bulkMarkIssues, selection],
+  );
+
+  const runBulk = React.useCallback(
+    (finished: boolean) => {
+      const ids = Array.from(selection.selected);
+      if (ids.length === 0) return;
+      // Mark-read at scale (≥ threshold) is overwhelmingly catalog
+      // maintenance — prompt before backfilling the reading log. In
+      // series mode each selected series fans out to many issues
+      // server-side, so the series count is gated at the same number.
+      if (finished && ids.length >= BULK_BACKFILL_PROMPT_THRESHOLD) {
+        setMarkReadOpen(true);
+        return;
+      }
+      const onSuccess = () => selection.exit();
+      if (isSeriesMode) {
+        bulkMarkSeries.mutate({ series_ids: ids, finished }, { onSuccess });
+      } else {
+        bulkMarkIssues.mutate({ issue_ids: ids, finished }, { onSuccess });
+      }
+    },
+    [isSeriesMode, bulkMarkSeries, bulkMarkIssues, selection],
+  );
+
+  const selectedTargets = Array.from(selection.selected).map((id) => ({
+    entry_kind: isSeriesMode ? ("series" as const) : ("issue" as const),
+    ref_id: id,
+  }));
+
+  // Esc exits select mode; Cmd/Ctrl+A selects every loaded card.
+  // Dormant while focus is in a form field (search input, etc.).
+  React.useEffect(() => {
+    if (!selection.selectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (shouldSkipHotkey(e)) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        selection.exit();
+      } else if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        selection.selectAll();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection]);
+  // Restore focus to the Select trigger after leaving select mode.
+  React.useEffect(() => {
+    if (wasSelectModeRef.current && !selection.selectMode) {
+      selectButtonRef.current?.focus();
+    }
+    wasSelectModeRef.current = selection.selectMode;
+  }, [selection.selectMode]);
+
   // Auto-fetch the next page when the sentinel scrolls into view —
   // mirrors `IssuesPanel` so the cadence feels familiar. Depend on
   // the three fields, not the whole result object: TanStack returns a
@@ -234,7 +353,7 @@ export function LibraryGridView({
 
       <LibraryGridToolbar
         mode={mode}
-        onMode={setMode}
+        onMode={handleMode}
         q={q}
         onQ={setQ}
         trimmedQ={trimmedQ}
@@ -255,6 +374,60 @@ export function LibraryGridView({
         cardSizeMax={CARD_SIZE_MAX}
         cardSizeStep={CARD_SIZE_STEP}
         cardSizeDefault={CARD_SIZE_DEFAULT}
+        canSelect={items.length > 0}
+        selectMode={selection.selectMode}
+        onEnterSelect={() => selection.enter()}
+        selectButtonRef={selectButtonRef}
+      />
+
+      <SelectionToolbar
+        open={selection.selectMode}
+        count={selection.count}
+        total={items.length}
+        primary={[
+          {
+            id: "mark-read",
+            label: "Mark read",
+            icon: Check,
+            onClick: () => runBulk(true),
+            disabled: isMarkPending || selection.count === 0,
+          },
+          {
+            id: "mark-unread",
+            label: "Mark unread",
+            icon: Circle,
+            onClick: () => runBulk(false),
+            disabled: isMarkPending || selection.count === 0,
+          },
+        ]}
+        overflow={[
+          {
+            id: "add-to-collection",
+            label: "Add to collection…",
+            icon: FolderPlus,
+            onClick: () => setPickerOpen(true),
+            disabled: selection.count === 0,
+          },
+        ]}
+        onDone={() => selection.exit()}
+        onClear={() => selection.clear()}
+        onSelectAll={() => selection.selectAll()}
+        isPending={isMarkPending}
+      />
+      <BulkAddToCollectionDialog
+        open={pickerOpen}
+        onOpenChange={(next) => {
+          setPickerOpen(next);
+          if (!next) selection.exit();
+        }}
+        targets={selectedTargets}
+      />
+      <BulkMarkReadDialog
+        open={markReadOpen}
+        onOpenChange={setMarkReadOpen}
+        count={selection.count}
+        onConfirm={submitMarkRead}
+        isPending={isMarkPending}
       />
 
       {facetCount > 0 ? (
@@ -333,7 +506,20 @@ export function LibraryGridView({
         <ul role="list" className="grid gap-4" style={gridStyle}>
           {seriesItems.map((s) => (
             <li key={s.id}>
-              <SeriesCard series={s} size="md" />
+              <SeriesCard
+                series={s}
+                size="md"
+                selectMode={
+                  selection.selectMode
+                    ? {
+                        isActive: true,
+                        isSelected: selection.isSelected(s.id),
+                        onToggle: (ev) => selection.toggle(s.id, ev),
+                      }
+                    : undefined
+                }
+                onEnterSelectMode={(id) => selection.toggle(id)}
+              />
             </li>
           ))}
         </ul>
@@ -341,7 +527,19 @@ export function LibraryGridView({
         <ul role="list" className="grid gap-4" style={gridStyle}>
           {issueItems.map((i) => (
             <li key={i.id}>
-              <IssueCard issue={i} />
+              <IssueCard
+                issue={i}
+                selectMode={
+                  selection.selectMode
+                    ? {
+                        isActive: true,
+                        isSelected: selection.isSelected(i.id),
+                        onToggle: (ev) => selection.toggle(i.id, ev),
+                      }
+                    : undefined
+                }
+                onEnterSelectMode={(id) => selection.toggle(id)}
+              />
             </li>
           ))}
         </ul>
