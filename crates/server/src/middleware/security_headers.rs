@@ -91,17 +91,19 @@ pub fn build_csp(template: &CspTemplate, nonce: Option<&str>) -> HeaderValue {
             // if it's listed. In dev we still bolt on `'unsafe-eval'`
             // for React Refresh.
             //
-            // `'sha256-CZ6sxw5J…'` whitelists one specific inline
-            // script Next.js emits without a nonce (observed in prod;
-            // content is stable across requests). Hash-based, so if
-            // Next ever changes that script content the entry stops
-            // matching and the block re-surfaces — visible regression
-            // rather than silent accumulation. The bulk of inline
-            // scripts (flight payload pushes etc.) get nonces via
-            // `getScriptNonceFromHeader` parsing our request CSP.
-            format!(
-                "'nonce-{n}' 'strict-dynamic' 'sha256-CZ6sxw5J9fnBmFLteUj3ajNhEVqMElLD+l/3BBNAhys='{unsafe_eval}"
-            )
+            // No hash allowlist. Every inline script is nonced: Next
+            // stamps its framework-emitted scripts (flight payload
+            // pushes etc.) via `getScriptNonceFromHeader` parsing our
+            // request CSP, and the one userland inline script —
+            // next-themes' no-flash bootstrap — gets the nonce passed
+            // through `<ThemeProvider nonce>` in `web/app/layout.tsx`.
+            // The previous `'sha256-CZ6sxw5J…'` entry was that same
+            // bootstrap script under an older theme config; its body
+            // serializes the per-user `defaultTheme` cookie value, so
+            // a content hash silently stops matching whenever the
+            // theme config (or a user's cookie) changes. Don't add
+            // hashes back — nonce the script at its render site.
+            format!("'nonce-{n}' 'strict-dynamic'{unsafe_eval}")
         }
         // No nonce wired (test-only path or any future caller that
         // bypasses `set_nonce`). Match v0.2.1 hotfix posture.
