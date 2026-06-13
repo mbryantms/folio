@@ -38,6 +38,7 @@ import type {
   CreateLibraryReq,
   CreateMarkerReq,
   CreateSavedViewReq,
+  MarkerBulkDeleteResp,
   MarkerView,
   DeleteLibraryResp,
   EditRequest,
@@ -1896,6 +1897,34 @@ export function useDeleteMarkerById(
       ...(opts?.silent ? {} : { successMessage: "Removed" }),
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: ["markers", "issue", issueId] });
+        qc.invalidateQueries({ queryKey: ["markers", "list"] });
+        qc.invalidateQueries({ queryKey: ["markers", "count"] });
+        qc.invalidateQueries({ queryKey: ["markers", "tags"] });
+      },
+    },
+  );
+}
+
+/** Bulk-delete markers by id for the /bookmarks multi-select flow
+ *  (audit B11). Input is the selected id list; the server caps at 500,
+ *  dedups, and silently skips ids that aren't the caller's. Returns
+ *  `{ deleted, not_found }`.
+ *
+ *  No `successMessage` — like the single delete, the call site composes
+ *  its own toast with an Undo action (the marker-delete exception to the
+ *  AlertDialog-confirm rule; see docs/dev/notifications-audit.md §F-8).
+ *  Same invalidation set as `useDeleteMarker` minus the per-issue key
+ *  (a bulk selection spans many issues). */
+export function useBulkDeleteMarkers() {
+  const qc = useQueryClient();
+  return useApiMutation<MarkerBulkDeleteResp, string[]>(
+    (markerIds) => ({
+      path: "/me/markers/bulk-delete",
+      method: "POST",
+      body: { marker_ids: markerIds },
+    }),
+    {
+      onSuccess: () => {
         qc.invalidateQueries({ queryKey: ["markers", "list"] });
         qc.invalidateQueries({ queryKey: ["markers", "count"] });
         qc.invalidateQueries({ queryKey: ["markers", "tags"] });

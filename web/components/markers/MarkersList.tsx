@@ -6,9 +6,11 @@ import { useRouter } from "next/navigation";
 import {
   Bookmark as BookmarkIcon,
   Highlighter,
+  ListChecks,
   Search as SearchIcon,
   Star,
   StickyNote,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -18,17 +20,27 @@ import {
 } from "@/components/CoverMenuButton";
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
+import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { PageHeader } from "@/components/admin/PageHeader";
+import { Button } from "@/components/ui/button";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Input } from "@/components/ui/input";
-import { useMarkersInfinite, useMarkerTags } from "@/lib/api/queries";
 import {
+  useMarkerCount,
+  useMarkersInfinite,
+  useMarkerTags,
+} from "@/lib/api/queries";
+import {
+  useBulkDeleteMarkers,
   useCreateMarker,
   useDeleteMarker,
   useUpdateMarker,
 } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
+import { shouldSkipHotkey } from "@/lib/reader/keybinds";
+import { useSelection } from "@/lib/selection/use-selection";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type {
   MarkerKind,
@@ -128,6 +140,73 @@ export function MarkersList() {
   const hasFilterOrSearch =
     filter !== "all" || debouncedSearch.length > 0 || selectedTags.length > 0;
 
+  // --- Layout + multi-select (audit B11) ---
+  // Grouped-by-series (default) ⇄ flat newest-first. The server already
+  // returns markers newest-updated first, so "flat" just renders the
+  // loaded order without the per-series grouping pass.
+  const [layout, setLayout] = React.useState<"grouped" | "flat">("grouped");
+  const selection = useSelection(items);
+  const bulkDelete = useBulkDeleteMarkers();
+  const createMarker = useCreateMarker();
+  // Header total — global (the list endpoint carries no per-filter
+  // count), so it reads as "you've saved N markers" regardless of the
+  // active chips.
+  const markerCount = useMarkerCount();
+  const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
+  const wasSelectModeRef = React.useRef(false);
+
+  const runBulkDelete = React.useCallback(() => {
+    const ids = Array.from(selection.selected);
+    if (ids.length === 0) return;
+    // Snapshot the selected rows BEFORE the delete invalidates the
+    // cache, so Undo can recreate them from stable values. Marker
+    // deletes are the AlertDialog-confirm exception — they use an Undo
+    // toast instead (CLAUDE.md notifications convention).
+    const snapshots = items.filter((m) => selection.isSelected(m.id));
+    bulkDelete.mutate(ids, {
+      onSuccess: (resp) => {
+        selection.exit();
+        const n = resp?.deleted ?? ids.length;
+        toast.success(`Deleted ${n} marker${n === 1 ? "" : "s"}`, {
+          duration: UNDO_TOAST_DURATION_MS,
+          action: {
+            label: "Undo",
+            onClick: () => {
+              for (const m of snapshots) {
+                createMarker.mutate(markerToCreateReq(m));
+              }
+            },
+          },
+        });
+      },
+    });
+  }, [bulkDelete, createMarker, items, selection]);
+
+  // Esc exits select mode; Cmd/Ctrl+A selects every loaded card.
+  // Dormant while focus is in a form field (the search input).
+  React.useEffect(() => {
+    if (!selection.selectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (shouldSkipHotkey(e)) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        selection.exit();
+      } else if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        selection.selectAll();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection]);
+  // Restore focus to the Select trigger after leaving select mode.
+  React.useEffect(() => {
+    if (wasSelectModeRef.current && !selection.selectMode) {
+      selectButtonRef.current?.focus();
+    }
+    wasSelectModeRef.current = selection.selectMode;
+  }, [selection.selectMode]);
+
   // IntersectionObserver sentinel for infinite scroll. Same rootMargin
   // as `IssuesPanel` / `CblViewDetail` so behavior stays consistent.
   // Depend on the three fields, not the whole result object — TanStack
@@ -162,7 +241,11 @@ export function MarkersList() {
     <div className="space-y-6">
       <PageHeader
         title="Bookmarks"
-        description="Every page bookmark, note, favorite, and highlight you’ve saved across your library."
+        description={
+          markerCount.data
+            ? `${markerCount.data.total} saved across your library — every page bookmark, note, favorite, and highlight.`
+            : "Every page bookmark, note, favorite, and highlight you’ve saved across your library."
+        }
         actions={
           <>
             <div className="relative w-full max-w-xs">
@@ -179,6 +262,27 @@ export function MarkersList() {
                 className="pl-8"
               />
             </div>
+            {items.length > 0 ? (
+              <Button
+                ref={selectButtonRef}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => selection.enter()}
+                aria-label="Enter select mode"
+                aria-hidden={selection.selectMode}
+                tabIndex={selection.selectMode ? -1 : 0}
+                disabled={selection.selectMode}
+                className={cn(
+                  "transition-opacity duration-150",
+                  selection.selectMode &&
+                    "pointer-events-none invisible opacity-0",
+                )}
+              >
+                <ListChecks className="mr-1.5 h-4 w-4" />
+                Select
+              </Button>
+            ) : null}
             <CardSizeOptions
               cardSize={cardSize}
               onCardSize={setCardSize}
@@ -191,6 +295,26 @@ export function MarkersList() {
             />
           </>
         }
+      />
+
+      <SelectionToolbar
+        open={selection.selectMode}
+        count={selection.count}
+        total={items.length}
+        primary={[
+          {
+            id: "delete",
+            label: "Delete",
+            icon: Trash2,
+            onClick: runBulkDelete,
+            disabled: bulkDelete.isPending || selection.count === 0,
+            destructive: true,
+          },
+        ]}
+        onDone={() => selection.exit()}
+        onClear={() => selection.clear()}
+        onSelectAll={() => selection.selectAll()}
+        isPending={bulkDelete.isPending}
       />
 
       <div className="flex flex-wrap items-center gap-2">
@@ -209,6 +333,35 @@ export function MarkersList() {
             >
               {opt.label}
             </FilterPill>
+          ))}
+        </div>
+        {/* Grouped-by-series ⇄ flat newest-first (audit B11). */}
+        <div
+          role="radiogroup"
+          aria-label="Marker layout"
+          className="ml-auto inline-flex items-center gap-0.5 rounded-md border p-0.5"
+        >
+          {(
+            [
+              { value: "grouped", label: "By series" },
+              { value: "flat", label: "Newest" },
+            ] as const
+          ).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              role="radio"
+              aria-checked={layout === opt.value}
+              onClick={() => setLayout(opt.value)}
+              className={cn(
+                "rounded px-2 py-0.5 text-xs transition-colors",
+                layout === opt.value
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:bg-accent/40",
+              )}
+            >
+              {opt.label}
+            </button>
           ))}
         </div>
       </div>
@@ -280,14 +433,26 @@ export function MarkersList() {
         <EmptyState hasFilter={hasFilterOrSearch} />
       ) : (
         <div className="space-y-8">
-          {groups.map((group) => (
-            <section key={group.key} className="space-y-3">
-              <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                {group.label}
-              </h2>
-              <RowPackedSection items={group.items} cardSize={cardSize} />
-            </section>
-          ))}
+          {layout === "grouped" ? (
+            groups.map((group) => (
+              <section key={group.key} className="space-y-3">
+                <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                  {group.label}
+                </h2>
+                <RowPackedSection
+                  items={group.items}
+                  cardSize={cardSize}
+                  selection={selection}
+                />
+              </section>
+            ))
+          ) : (
+            <RowPackedSection
+              items={items}
+              cardSize={cardSize}
+              selection={selection}
+            />
+          )}
           <div
             ref={sentinelRef}
             aria-hidden
@@ -429,12 +594,22 @@ function useContainerWidth<E extends HTMLElement>(): [
  *  card width tracks the highlighted region's aspect ratio. Wide
  *  panel selections produce wide tiles; narrow vertical strips
  *  produce tall narrow tiles. */
+/** The slice of `useSelection` the card grid needs. Kept structural so
+ *  callers can pass the hook return directly. */
+type CardSelection = {
+  selectMode: boolean;
+  isSelected: (id: string) => boolean;
+  toggle: (id: string, ev?: React.MouseEvent) => void;
+};
+
 function RowPackedSection({
   items,
   cardSize,
+  selection,
 }: {
   items: ReadonlyArray<MarkerView>;
   cardSize: number;
+  selection?: CardSelection;
 }) {
   const [ref, containerWidth] = useContainerWidth<HTMLDivElement>();
   // The cardSize slider represents the user's preferred card *width*.
@@ -486,6 +661,19 @@ function RowPackedSection({
                 <MarkerCard
                   marker={slot.ref.marker}
                   thumbHeight={slot.height}
+                  selectMode={
+                    selection?.selectMode
+                      ? {
+                          isActive: true,
+                          isSelected: selection.isSelected(slot.ref.marker.id),
+                          onToggle: (ev) =>
+                            selection.toggle(slot.ref.marker.id, ev),
+                        }
+                      : undefined
+                  }
+                  onEnterSelectMode={
+                    selection ? (id) => selection.toggle(id) : undefined
+                  }
                 />
               </div>
             ))}
@@ -603,10 +791,21 @@ function MarkerThumbnail({
 function MarkerCard({
   marker,
   thumbHeight,
+  selectMode,
+  onEnterSelectMode,
 }: {
   marker: MarkerView;
   thumbHeight: number;
+  /** When active, the whole card is a selection toggle (audit B11). */
+  selectMode?: {
+    isActive: boolean;
+    isSelected: boolean;
+    onToggle: (ev?: React.MouseEvent) => void;
+  };
+  /** Long-press / menu "Select" entry point into select mode. */
+  onEnterSelectMode?: (id: string) => void;
 }) {
+  const inSelect = selectMode?.isActive ?? false;
   const del = useDeleteMarker(marker.id, marker.issue_id, { silent: true });
   const create = useCreateMarker();
   const update = useUpdateMarker(marker.id, marker.issue_id);
@@ -625,7 +824,16 @@ function MarkerCard({
   const hasRegion = !!marker.region;
 
   const actions: CoverMenuAction[] = React.useMemo(() => {
-    const list: CoverMenuAction[] = [
+    const list: CoverMenuAction[] = [];
+    // Touch / long-press path into multi-select (no hover affordance on
+    // coarse pointers). Mirrors the grid cards' "Select" entry.
+    if (onEnterSelectMode) {
+      list.push({
+        label: "Select",
+        onSelect: () => onEnterSelectMode(marker.id),
+      });
+    }
+    list.push(
       {
         label: "Jump to page",
         onSelect: () => {
@@ -644,7 +852,7 @@ function MarkerCard({
         onSelect: () => update.mutate({ is_favorite: !marker.is_favorite }),
         disabled: update.isPending,
       },
-    ];
+    );
     if (hasRegion && marker.region) {
       const region = marker.region;
       list.push(
@@ -684,7 +892,16 @@ function MarkerCard({
       disabled: del.isPending,
     });
     return list;
-  }, [create, del, hasRegion, jumpHref, marker, router, update]);
+  }, [
+    create,
+    del,
+    hasRegion,
+    jumpHref,
+    marker,
+    onEnterSelectMode,
+    router,
+    update,
+  ]);
 
   const longPress = useCoverLongPressActions({
     primary: jumpHref
@@ -698,21 +915,36 @@ function MarkerCard({
   });
 
   const cardBody = (
-    <div className="relative" {...longPress.wrapperProps}>
+    <div
+      className="relative"
+      {...(inSelect ? {} : longPress.wrapperProps)}
+    >
       {/* Thumbnail height comes from the row-packed layout above;
        *  width is `100%` of the parent slot, which itself was sized
        *  to `aspect × height`. So the wrapper ends up an exact tile
        *  with no letterboxing. */}
       <MarkerThumbnail marker={marker} height={thumbHeight} />
-      <span
-        className={cn(
-          "absolute top-2 left-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase",
-          kindMeta.badge,
-        )}
-      >
-        <KindIcon className="h-3 w-3" aria-hidden="true" />
-        {kindMeta.shortLabel}
-      </span>
+      {selectMode?.isActive ? (
+        // In select mode the checkbox takes the top-left slot the kind
+        // badge usually owns; the whole card is the toggle (parent
+        // button), so this is a decorative span.
+        <SelectionCheckbox
+          isSelected={selectMode.isSelected}
+          selectMode
+          onToggle={selectMode.onToggle}
+          label={`${kindMeta.shortLabel} · page ${marker.page_index + 1}`}
+        />
+      ) : (
+        <span
+          className={cn(
+            "absolute top-2 left-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase",
+            kindMeta.badge,
+          )}
+        >
+          <KindIcon className="h-3 w-3" aria-hidden="true" />
+          {kindMeta.shortLabel}
+        </span>
+      )}
       {marker.is_favorite ? (
         <span
           aria-label="Favorite"
@@ -722,17 +954,39 @@ function MarkerCard({
           <Star className="h-3 w-3 fill-current" aria-hidden="true" />
         </span>
       ) : null}
-      <CoverMenuButton
-        label={`Actions for ${kindMeta.shortLabel} on page ${marker.page_index + 1}`}
-        actions={actions}
-      />
-      {longPress.sheet}
+      {/* No per-card menu / long-press while selecting — the card click
+          toggles selection instead. */}
+      {!inSelect ? (
+        <>
+          <CoverMenuButton
+            label={`Actions for ${kindMeta.shortLabel} on page ${marker.page_index + 1}`}
+            actions={actions}
+          />
+          {longPress.sheet}
+        </>
+      ) : null}
     </div>
   );
 
   return (
     <div className="group flex h-full flex-col gap-2 rounded-md p-1">
-      {jumpHref ? (
+      {selectMode?.isActive ? (
+        <button
+          type="button"
+          onClick={(ev) => {
+            ev.preventDefault();
+            selectMode.onToggle(ev);
+          }}
+          aria-pressed={selectMode.isSelected}
+          aria-label={`${selectMode.isSelected ? "Deselect" : "Select"} ${kindMeta.shortLabel} on page ${marker.page_index + 1}`}
+          className={cn(
+            "focus-visible:ring-ring block rounded-md text-left focus-visible:ring-2 focus-visible:outline-none",
+            selectMode.isSelected && "ring-primary ring-2",
+          )}
+        >
+          {cardBody}
+        </button>
+      ) : jumpHref ? (
         <Link
           href={jumpHref}
           className="focus-visible:ring-ring rounded-md focus-visible:ring-2 focus-visible:outline-none"
