@@ -11,12 +11,22 @@
  * feature weight from marker mode, multi-page rails, and saved
  * views that landed after the spec.
  *
- * The gate is set 8% above the current measurement (`170 KB`) so it
- * fires on regressions, not on the current state. The intent is to
- * **ratchet this back down to the spec target in 1.0.x** once we've
+ * The gate fires on regressions, not on the current state. The intent
+ * is to **ratchet this back down to the spec target** once we've
  * lazy-loaded the marker editor / saved-view picker — both of which
  * are only used on a subset of reader sessions yet ship in the
- * initial bundle today.
+ * initial bundle today (chunk 2.5 of the frontend-audit plan).
+ *
+ * React Compiler bump (2026-06-13, chunk 1.0b): enabling the compiler
+ * (`reactCompiler: true` in next.config.ts) adds ~25 KB of per-component
+ * memoization-cache code to this route, taking the measured size from
+ * ~168 KB to ~193 KB. The compiler is a net win — every component is
+ * auto-memoized, so render hygiene stops regressing per-site — so the
+ * ceiling was raised 170 → 195 KB to absorb it. This is deliberately a
+ * one-way concession on the ceiling, NOT the target: BUDGET_TARGET_KB
+ * stays at 150 and chunk 2.5's reader diet (webtoon windowing,
+ * dynamic() MarkerEditor, lazy OCR) is expected to claw the compiler's
+ * 25 KB back and let the ceiling ratchet down again.
  *
  * Bundler note: production builds use Turbopack (Next 16 default).
  * The PWA service worker is compiled in a separate post-`next build`
@@ -46,9 +56,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = resolve(__dirname, "..");
 const ROUTE_DIR = "[locale]/read/[seriesSlug]/[issueSlug]";
 const ROUTE_LABEL = "/[locale]/read/[seriesSlug]/[issueSlug]";
-/** Gate ceiling — regressions above this fail CI. Track BUDGET_TARGET_KB
- *  for the spec number; bring them back together in 1.0.x. */
-const BUDGET_KB = 170;
+/** Gate ceiling — regressions above this fail CI. Raised 170 → 195 to
+ *  absorb the React Compiler's ~25 KB memoization-cache overhead
+ *  (chunk 1.0b; see header). Track BUDGET_TARGET_KB for the spec
+ *  number; chunk 2.5's reader diet ratchets this back down. */
+const BUDGET_KB = 195;
 /** §18.1 spec target. Documented separately so the spec number stays
  *  visible in build logs even while BUDGET_KB is temporarily relaxed. */
 const BUDGET_TARGET_KB = 150;
