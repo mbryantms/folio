@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDurationMs, formatTotalHours } from "@/lib/activity";
 import { useAdminUserReadingStats } from "@/lib/api/queries";
 import type { ReadingStatsRange, ReadingStatsView } from "@/lib/api/types";
+import { statusTone } from "@/lib/ui/status-tone";
 
 const PerDayBarChart = dynamic(
   () =>
@@ -38,7 +39,7 @@ export function UserReadingStats({ userId }: { userId: string }) {
 
   return (
     <div className="space-y-5">
-      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200/80">
+      <div className={`rounded-md border p-3 text-xs ${statusTone("warning")}`}>
         Viewing another user&rsquo;s reading activity is audit-logged. Each load
         of this tab writes an{" "}
         <code className="font-mono">admin.user.activity.view</code> entry.

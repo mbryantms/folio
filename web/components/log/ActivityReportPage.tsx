@@ -28,6 +28,7 @@ import { useReadingLogInfinite, useReadingStats } from "@/lib/api/queries";
 import { formatTotalHours } from "@/lib/activity";
 import { formatRelativeDate } from "@/lib/format";
 import { issueUrl, seriesUrl } from "@/lib/urls";
+import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import type {
   ReadingLogEventKind,
@@ -50,10 +51,10 @@ const KIND_ICON: Record<ReadingLogEventKind, typeof Check> = {
   marker_created: MessageSquare,
 };
 const KIND_TINT: Record<ReadingLogEventKind, string> = {
-  issue_finished: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  issue_finished: statusTone("success"),
   series_finished: "bg-primary/15 text-primary",
-  session_completed: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  marker_created: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  session_completed: statusTone("info"),
+  marker_created: statusTone("warning"),
 };
 
 function rangeToFrom(range: ReadingStatsRange): string | undefined {

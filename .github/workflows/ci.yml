@@ -190,6 +190,10 @@ jobs:
         run: pnpm --filter web run lint
       - if: env.WEB == 'true'
         run: pnpm --filter web run typecheck
+      # Status-color contrast gate (audit F1/F2): no bare light-shade
+      # status text without a dark: fallback (invisible on light themes).
+      - if: env.WEB == 'true'
+        run: pnpm --filter web run check-status-colors
       - if: env.WEB == 'true'
         run: pnpm --filter web run test
       # Build once so the bundle-budget script reads a real `.next/`

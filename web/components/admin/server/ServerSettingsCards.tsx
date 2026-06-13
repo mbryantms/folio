@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useUpdateSettings } from "@/lib/api/mutations";
 import { useAdminSettings } from "@/lib/api/queries";
+import { statusToneText } from "@/lib/ui/status-tone";
 
 /** Hardening + diagnostics cards on /admin/server. M4 of the
  *  runtime-config-admin plan. The Tokens (JWT TTLs) card lives under
@@ -224,9 +225,9 @@ function HardeningCard({ initial }: { initial: boolean }) {
 function RestartHint() {
   return (
     <p className="text-muted-foreground text-xs">
-      <span className="text-amber-300">Restart required</span> — values are read
-      at boot to size the worker pool / cache. Save now to pre-load for the next
-      restart.
+      <span className={statusToneText("warning")}>Restart required</span> —
+      values are read at boot to size the worker pool / cache. Save now to
+      pre-load for the next restart.
     </p>
   );
 }

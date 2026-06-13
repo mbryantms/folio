@@ -61,6 +61,7 @@ import {
   formatRelativeDate,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { statusTone } from "@/lib/ui/status-tone";
 import {
   type ProgressLike,
   type ReadState,
@@ -106,34 +107,37 @@ export default async function IssuePage({
   //  - reading stats: "Last read" line + activity strip + Activity tab
   //  - next 5 / prev 1 issues: the filmstrip rail
   //  - external ids: provider rows on the Metadata tab
-  const [series, issueProgress, activityStats, nextIssues, prevIssue, issueExternalIds] =
-    await Promise.all([
-      apiGet<SeriesView>(`/series/${seriesSlug}`).catch(() => null),
-      apiGet<{ records: ProgressLike[] }>(`/progress`)
-        .then(
-          (delta) =>
-            delta.records.find((r) => r.issue_id === issue.id) ?? null,
-        )
-        .catch(() => null),
-      apiGet<ReadingStatsView>(
-        `/me/reading-stats?range=all&issue_id=${encodeURIComponent(issue.id)}`,
-      ).catch(() => null),
-      apiGet<NextInSeriesView>(
-        `/series/${seriesSlug}/issues/${issueSlug}/next?limit=5`,
+  const [
+    series,
+    issueProgress,
+    activityStats,
+    nextIssues,
+    prevIssue,
+    issueExternalIds,
+  ] = await Promise.all([
+    apiGet<SeriesView>(`/series/${seriesSlug}`).catch(() => null),
+    apiGet<{ records: ProgressLike[] }>(`/progress`)
+      .then(
+        (delta) => delta.records.find((r) => r.issue_id === issue.id) ?? null,
       )
-        .then((next) => next.items)
-        .catch(() => [] as IssueSummaryView[]),
-      apiGet<PrevInSeriesView>(
-        `/series/${seriesSlug}/issues/${issueSlug}/prev`,
-      )
-        .then((prev) => prev.item ?? null)
-        .catch(() => null),
-      apiGet<ExternalIdsListResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
-      )
-        .then((externalIds) => externalIds.rows)
-        .catch(() => [] as ExternalIdRow[]),
-    ]);
+      .catch(() => null),
+    apiGet<ReadingStatsView>(
+      `/me/reading-stats?range=all&issue_id=${encodeURIComponent(issue.id)}`,
+    ).catch(() => null),
+    apiGet<NextInSeriesView>(
+      `/series/${seriesSlug}/issues/${issueSlug}/next?limit=5`,
+    )
+      .then((next) => next.items)
+      .catch(() => [] as IssueSummaryView[]),
+    apiGet<PrevInSeriesView>(`/series/${seriesSlug}/issues/${issueSlug}/prev`)
+      .then((prev) => prev.item ?? null)
+      .catch(() => null),
+    apiGet<ExternalIdsListResp>(
+      `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
+    )
+      .then((externalIds) => externalIds.rows)
+      .catch(() => [] as ExternalIdRow[]),
+  ]);
   const hasActivity = (activityStats?.totals.sessions ?? 0) > 0;
 
   const readState: ReadState = readStateFor(issue, issueProgress);
@@ -323,7 +327,7 @@ export default async function IssuePage({
                     variant="outline"
                     className={
                       issue.metadata_completeness.tier === "needs_metadata"
-                        ? "border-amber-500/60 text-amber-600 dark:text-amber-400"
+                        ? statusTone("warning")
                         : undefined
                     }
                     title={

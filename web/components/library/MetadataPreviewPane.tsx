@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { DiffResp, ScalarDiffRow } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 
 export type MetadataPreviewPaneProps = {
   data: DiffResp | undefined;
@@ -103,7 +104,7 @@ function decisionBadge(decision: string) {
       return (
         <Badge
           variant="default"
-          className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-400"
+          className={cn(statusTone("success"), "hover:bg-success/10")}
         >
           Will fill
         </Badge>
@@ -112,17 +113,14 @@ function decisionBadge(decision: string) {
       return (
         <Badge
           variant="default"
-          className="bg-amber-500/15 text-amber-700 hover:bg-amber-500/15 dark:text-amber-400"
+          className={cn(statusTone("warning"), "hover:bg-warning/10")}
         >
           Will replace
         </Badge>
       );
     case "blocked_by_user":
       return (
-        <Badge
-          variant="outline"
-          className="border-red-500/40 text-red-600 dark:text-red-400"
-        >
+        <Badge variant="outline" className={statusTone("error")}>
           User-set
         </Badge>
       );
@@ -237,7 +235,12 @@ export function MetadataPreviewPane({
     <TooltipProvider delayDuration={200}>
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3 text-xs">
-          <Button variant="ghost" size="sm" onClick={onBack} disabled={isApplying}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBack}
+            disabled={isApplying}
+          >
             <ChevronLeft className="mr-1.5 h-4 w-4" /> Back
           </Button>
           <div className="text-muted-foreground flex flex-col items-end gap-0.5">
@@ -247,7 +250,7 @@ export function MetadataPreviewPane({
                 : `${changesCount} change${changesCount === 1 ? "" : "s"} pending.`}
             </p>
             {suppressedPinsCount > 0 && (
-              <p className="text-amber-700 dark:text-amber-400">
+              <p className={statusToneText("warning")}>
                 {suppressedPinsCount} of your edit
                 {suppressedPinsCount === 1 ? "" : "s"} will be preserved.
               </p>
@@ -274,7 +277,7 @@ export function MetadataPreviewPane({
                     key={row.field}
                     className={cn(
                       "flex items-start gap-3 py-3",
-                      row.decision === "blocked_by_user" && "bg-red-500/5",
+                      row.decision === "blocked_by_user" && "bg-destructive/5",
                     )}
                   >
                     <Checkbox
@@ -298,11 +301,13 @@ export function MetadataPreviewPane({
                         {decisionBadge(row.decision)}
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className="text-muted-foreground/70 cursor-help text-[10px] uppercase tracking-wider">
+                            <span className="text-muted-foreground/70 cursor-help text-[10px] tracking-wider uppercase">
                               provenance
                             </span>
                           </TooltipTrigger>
-                          <TooltipContent side="top">{provenance}</TooltipContent>
+                          <TooltipContent side="top">
+                            {provenance}
+                          </TooltipContent>
                         </Tooltip>
                         {row.decision === "blocked_by_user" && onRevertPin && (
                           <Button
@@ -327,13 +332,15 @@ export function MetadataPreviewPane({
                         )}
                       </div>
                       <div className="text-muted-foreground grid grid-cols-1 gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr]">
-                        <span className="text-muted-foreground/80 uppercase tracking-wider text-[10px]">
+                        <span className="text-muted-foreground/80 text-[10px] tracking-wider uppercase">
                           Current
                         </span>
                         <span className="truncate">
-                          {row.current_value ?? <em className="opacity-70">empty</em>}
+                          {row.current_value ?? (
+                            <em className="opacity-70">empty</em>
+                          )}
                         </span>
-                        <span className="text-muted-foreground/80 uppercase tracking-wider text-[10px]">
+                        <span className="text-muted-foreground/80 text-[10px] tracking-wider uppercase">
                           Proposed
                         </span>
                         <span className="truncate">
@@ -350,8 +357,8 @@ export function MetadataPreviewPane({
 
             {/* External-IDs new (no conflict, just additions) */}
             {newIdsCount > 0 && (
-              <section className="border-border/40 rounded border p-3 space-y-2">
-                <h4 className="text-xs font-semibold uppercase tracking-wider">
+              <section className="border-border/40 space-y-2 rounded border p-3">
+                <h4 className="text-xs font-semibold tracking-wider uppercase">
                   New external IDs ({newIdsCount})
                 </h4>
                 <ul className="text-muted-foreground space-y-1 text-xs">
@@ -370,13 +377,18 @@ export function MetadataPreviewPane({
 
             {/* External-IDs conflicts (require explicit Use theirs) */}
             {conflictsCount > 0 && (
-              <section className="rounded border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+              <section className="border-warning/40 bg-warning/5 space-y-2 rounded border p-3">
+                <h4
+                  className={cn(
+                    "text-xs font-semibold tracking-wider uppercase",
+                    statusToneText("warning"),
+                  )}
+                >
                   External-ID conflicts ({conflictsCount})
                 </h4>
                 <p className="text-muted-foreground text-[11px]">
-                  Your value disagrees with the candidate&rsquo;s. Pick which
-                  to keep per source.
+                  Your value disagrees with the candidate&rsquo;s. Pick which to
+                  keep per source.
                 </p>
                 <ul className="space-y-2">
                   {data.external_id_conflicts.map((c) => {
@@ -387,7 +399,9 @@ export function MetadataPreviewPane({
                         className="flex flex-wrap items-center justify-between gap-2 text-xs"
                       >
                         <div>
-                          <span className="font-mono uppercase">{c.source}</span>
+                          <span className="font-mono uppercase">
+                            {c.source}
+                          </span>
                           <span className="text-muted-foreground">
                             {" "}
                             · yours: {c.current_external_id} · theirs:{" "}
@@ -436,7 +450,9 @@ export function MetadataPreviewPane({
           </Button>
           <Button
             onClick={onApply}
-            disabled={isApplying || (selectedFields.size === 0 && newIdsCount === 0)}
+            disabled={
+              isApplying || (selectedFields.size === 0 && newIdsCount === 0)
+            }
             size="sm"
           >
             {isApplying ? (

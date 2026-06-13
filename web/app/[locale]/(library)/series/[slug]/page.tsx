@@ -49,6 +49,7 @@ import {
 } from "@/lib/format";
 import { collectionStatus } from "@/lib/series-status";
 import { type ReadState, readButtonLabel } from "@/lib/reading-state";
+import { statusTone } from "@/lib/ui/status-tone";
 
 import { readerUrl } from "@/lib/urls";
 
@@ -804,7 +805,7 @@ function CollectionBadge({ series }: { series: SeriesView }) {
   return state === "complete" ? (
     <Badge
       variant="secondary"
-      className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+      className={statusTone("success")}
       title={tooltip}
     >
       Complete
@@ -812,7 +813,7 @@ function CollectionBadge({ series }: { series: SeriesView }) {
   ) : (
     <Badge
       variant="secondary"
-      className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+      className={statusTone("warning")}
       title={tooltip}
     >
       Incomplete

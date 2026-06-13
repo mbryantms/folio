@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAdminLogs, useLibraryList } from "@/lib/api/queries";
 import type { LogEntryView, LogLevel } from "@/lib/api/types";
+import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 const LEVELS: ReadonlyArray<{ value: LogLevel | "all"; label: string }> = [
@@ -206,7 +207,10 @@ function LogRow({
           {entry.error_code ? (
             <Badge
               variant="outline"
-              className="mr-1.5 border-red-500/40 align-middle font-mono text-[10px] text-red-400"
+              className={cn(
+                "mr-1.5 align-middle font-mono text-[10px]",
+                statusTone("error"),
+              )}
             >
               {entry.error_code}
             </Badge>
@@ -246,9 +250,9 @@ function LevelChip({ level }: { level: string }) {
 }
 
 const LEVEL_TONE: Record<string, string> = {
-  error: "border-red-500/40 text-red-400",
-  warn: "border-amber-500/40 text-amber-400",
-  info: "border-sky-500/40 text-sky-400",
+  error: statusTone("error"),
+  warn: statusTone("warning"),
+  info: statusTone("info"),
   debug: "border-border text-muted-foreground",
   trace: "border-border text-muted-foreground/70",
 };

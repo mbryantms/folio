@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useTestMetadataProvider } from "@/lib/api/mutations";
 import { useAdminMetadataProviders } from "@/lib/api/queries";
 import type { ProviderView } from "@/lib/api/types";
+import { statusToneText } from "@/lib/ui/status-tone";
 
 import { ProviderConfigForm } from "./ProviderConfigForm";
 
@@ -36,9 +37,9 @@ export function ProvidersTab() {
         <ProviderCard key={p.id} provider={p} />
       ))}
       <p className="text-muted-foreground text-xs">
-        Cache TTLs, the auto-apply threshold, and other operational tuning
-        live in the <span className="font-medium">Settings</span> tab above.
-        The cards here own the credentials + enable toggles.
+        Cache TTLs, the auto-apply threshold, and other operational tuning live
+        in the <span className="font-medium">Settings</span> tab above. The
+        cards here own the credentials + enable toggles.
       </p>
     </div>
   );
@@ -110,7 +111,7 @@ function ProviderCard({ provider }: { provider: ProviderView }) {
           </div>
         )}
         {!test.error && lastResult === true && (
-          <div className="text-xs text-emerald-700 dark:text-emerald-300">
+          <div className={`text-xs ${statusToneText("success")}`}>
             <CheckCircle2 className="mr-1 inline h-3 w-3" /> Live —{" "}
             {test.data?.duration_ms}ms round-trip.
           </div>

@@ -24,6 +24,7 @@ import type {
   OcrModelView,
   ServerInfoView,
 } from "@/lib/api/types";
+import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 export function ServerInfoClient() {
@@ -107,9 +108,8 @@ function OcrModelRow({ model }: { model: OcrModelView }) {
         <Badge
           variant="outline"
           className={cn(
-            state.kind === "ready" && "border-emerald-500/40 text-emerald-400",
-            state.kind === "downloading" &&
-              "border-amber-500/40 text-amber-300",
+            state.kind === "ready" && statusTone("success"),
+            state.kind === "downloading" && statusTone("warning"),
             state.kind === "missing" &&
               "border-muted-foreground/30 text-muted-foreground",
           )}
@@ -210,8 +210,13 @@ function BuildCard({ data }: { data: ServerInfoView }) {
           )}
         </dl>
         {newer && latest.data && (
-          <div className="border-border/60 mt-4 flex items-center justify-between gap-3 rounded-md border border-dashed bg-amber-500/5 px-3 py-2 text-sm">
-            <span className="inline-flex items-center gap-1.5 text-amber-300">
+          <div className="border-border/60 bg-warning/10 mt-4 flex items-center justify-between gap-3 rounded-md border border-dashed px-3 py-2 text-sm">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5",
+                statusToneText("warning"),
+              )}
+            >
               <Sparkles className="h-3.5 w-3.5" aria-hidden />
               {latest.data.tag} available
             </span>
@@ -473,11 +478,7 @@ function Pill({
       </span>
       <Badge
         variant="outline"
-        className={
-          ok
-            ? "border-emerald-500/40 text-emerald-400"
-            : "border-red-500/40 text-red-400"
-        }
+        className={ok ? statusTone("success") : statusTone("error")}
       >
         {ok ? "OK" : "Down"}
       </Badge>

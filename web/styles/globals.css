@@ -36,6 +36,19 @@
   --destructive: 0 70% 50%;
   --destructive-foreground: 210 20% 98%;
 
+  /* Semantic status tokens (F1). success/warning/info pair with their
+   * `-foreground` (text on the solid color); error reuses `--destructive`.
+   * `--rating` is the gold star tint, kept distinct from `--warning`'s
+   * orange. Tuned for WCAG AA per theme; consume via `statusTone()` in
+   * `lib/ui/status-tone.ts`, never hardcoded `text-emerald-400` etc. */
+  --success: 152 55% 48%;
+  --success-foreground: 152 40% 10%;
+  --warning: 40 92% 55%;
+  --warning-foreground: 38 40% 10%;
+  --info: 210 90% 62%;
+  --info-foreground: 210 40% 10%;
+  --rating: 42 95% 58%;
+
   --border: 217 14% 18%;
   --input: 217 14% 18%;
   --ring: 38 92% 55%;
@@ -70,6 +83,14 @@
   --accent-foreground: 26 30% 10%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 210 20% 98%;
+  /* Status tokens darkened for AA contrast on white. */
+  --success: 152 60% 33%;
+  --success-foreground: 0 0% 100%;
+  --warning: 32 90% 38%;
+  --warning-foreground: 0 0% 100%;
+  --info: 214 84% 45%;
+  --info-foreground: 0 0% 100%;
+  --rating: 38 92% 42%;
   --border: 214 32% 91%;
   --input: 214 32% 91%;
   --ring: 38 92% 50%;
@@ -100,6 +121,14 @@
   --accent-foreground: 38 35% 96%;
   --destructive: 0 60% 45%;
   --destructive-foreground: 38 35% 96%;
+  /* Status tokens warm-shifted + darkened for AA on cream paper. */
+  --success: 150 45% 30%;
+  --success-foreground: 38 35% 96%;
+  --warning: 30 78% 36%;
+  --warning-foreground: 38 35% 96%;
+  --info: 214 65% 40%;
+  --info-foreground: 38 35% 96%;
+  --rating: 35 80% 40%;
   --border: 32 20% 80%;
   --input: 32 20% 80%;
   --ring: 28 70% 38%;
@@ -212,6 +241,13 @@
   --color-accent-foreground: hsl(var(--accent-foreground));
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-info: hsl(var(--info));
+  --color-info-foreground: hsl(var(--info-foreground));
+  --color-rating: hsl(var(--rating));
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));

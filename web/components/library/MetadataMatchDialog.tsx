@@ -931,7 +931,7 @@ function MatchOutcomeBanner({
 
   if (outcome.kind === "single_good") {
     return (
-      <div className="my-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
+      <div className="border-success/30 bg-success/5 my-2 rounded-md border p-3">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
             <p className="text-sm font-medium">
@@ -979,7 +979,7 @@ function MatchOutcomeBanner({
 
   if (outcome.kind === "single_bad_cover") {
     return (
-      <div className="my-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+      <div className="border-warning/30 bg-warning/5 my-2 rounded-md border p-3">
         <p className="text-sm font-medium">
           One plausible match — cover doesn&rsquo;t match{altBadge}
         </p>

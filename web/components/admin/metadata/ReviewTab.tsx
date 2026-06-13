@@ -44,6 +44,11 @@ import {
   useMetadataBatch,
   useMetadataBatches,
 } from "@/lib/api/queries";
+import {
+  statusTone,
+  statusToneText,
+  statusToneDot,
+} from "@/lib/ui/status-tone";
 import type { BatchChildRow } from "@/lib/api/types";
 
 /** Resolve a child row to the Fetch-metadata dialog scope. The dialog probes +
@@ -194,7 +199,7 @@ function BatchReview({
           <span>{a.no_match} no match</span>
           <span>{a.applied} applied</span>
           {a.awaiting_quota > 0 && (
-            <span className="text-amber-600 dark:text-amber-400">
+            <span className={statusToneText("warning")}>
               {a.awaiting_quota} awaiting quota
               {data.resume_eta &&
                 ` · resumes ${new Date(data.resume_eta).toLocaleTimeString()}`}
@@ -203,7 +208,7 @@ function BatchReview({
           {a.in_flight > 0 && <span>{a.in_flight} searching…</span>}
         </div>
         {data.exceeds_budget && (
-          <p className="text-xs text-amber-600 dark:text-amber-400">
+          <p className={`text-xs ${statusToneText("warning")}`}>
             This batch exceeds the provider&rsquo;s daily budget — items beyond
             it park and auto-resume when the window frees.
           </p>
@@ -300,8 +305,7 @@ function NeedsReviewSection({
   const unapplied = rows.filter((c) => !c.applied);
   const targetCount =
     scopeMode === "selected" ? selected.size : unapplied.length;
-  const runIds =
-    scopeMode === "selected" ? Array.from(selected) : undefined;
+  const runIds = scopeMode === "selected" ? Array.from(selected) : undefined;
   const busy = apply.isPending;
   const disabled = busy || targetCount === 0;
 
@@ -378,7 +382,10 @@ function NeedsReviewSection({
       <AlertDialog open={confirmReplace} onOpenChange={setConfirmReplace}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Replace metadata for {targetCount} item{targetCount === 1 ? "" : "s"}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Replace metadata for {targetCount} item
+              {targetCount === 1 ? "" : "s"}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
               This overwrites existing non-pinned fields and the primary cover
               with the most-complete merge across providers. Fields you pinned
@@ -438,7 +445,9 @@ function ChildList({
         const trailing = (
           <div className="flex items-center gap-2">
             <ToneDot tone={tone} />
-            {scope && <ChevronRight className="text-muted-foreground h-4 w-4" />}
+            {scope && (
+              <ChevronRight className="text-muted-foreground h-4 w-4" />
+            )}
           </div>
         );
 
@@ -449,10 +458,7 @@ function ChildList({
         if (selectable) {
           const checkable = !c.applied;
           return (
-            <li
-              key={c.run_id}
-              className="flex items-center gap-3 px-3 py-2"
-            >
+            <li key={c.run_id} className="flex items-center gap-3 px-3 py-2">
               <Checkbox
                 checked={selectedIds?.has(c.run_id) ?? false}
                 disabled={!checkable}
@@ -507,9 +513,9 @@ function ChildList({
 function ToneDot({ tone }: { tone: "strong" | "review" | "none" }) {
   const cls =
     tone === "strong"
-      ? "bg-emerald-500"
+      ? statusToneDot("success")
       : tone === "review"
-        ? "bg-amber-500"
+        ? statusToneDot("warning")
         : "bg-muted-foreground/40";
   return <span className={`inline-block h-2.5 w-2.5 rounded-full ${cls}`} />;
 }
@@ -517,30 +523,21 @@ function ToneDot({ tone }: { tone: "strong" | "review" | "none" }) {
 function StatusBadge({ status }: { status: string }) {
   if (status === "completed") {
     return (
-      <Badge
-        variant="outline"
-        className="border-emerald-500/60 text-emerald-600 dark:text-emerald-400"
-      >
+      <Badge variant="outline" className={statusTone("success")}>
         <CheckCircle2 className="mr-1 h-3 w-3" /> Completed
       </Badge>
     );
   }
   if (status === "awaiting_quota") {
     return (
-      <Badge
-        variant="outline"
-        className="border-amber-500/60 text-amber-600 dark:text-amber-400"
-      >
+      <Badge variant="outline" className={statusTone("warning")}>
         <AlertCircle className="mr-1 h-3 w-3" /> Awaiting quota
       </Badge>
     );
   }
   if (status === "partial_failed") {
     return (
-      <Badge
-        variant="outline"
-        className="border-red-500/60 text-red-600 dark:text-red-400"
-      >
+      <Badge variant="outline" className={statusTone("error")}>
         Partial
       </Badge>
     );

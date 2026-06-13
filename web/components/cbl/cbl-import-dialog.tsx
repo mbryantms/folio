@@ -40,6 +40,7 @@ import {
   uploadCblFile,
 } from "@/lib/api/mutations";
 import type { CblListView, CatalogEntryView } from "@/lib/api/types";
+import { statusToneText } from "@/lib/ui/status-tone";
 
 const REFRESH_OPTIONS: { value: string; label: string }[] = [
   { value: "manual", label: "Manual only" },
@@ -889,11 +890,11 @@ function Stat({
 }) {
   const toneClass =
     tone === "ok"
-      ? "text-emerald-600 dark:text-emerald-400"
+      ? statusToneText("success")
       : tone === "warn"
-        ? "text-amber-600 dark:text-amber-400"
+        ? statusToneText("warning")
         : tone === "bad"
-          ? "text-rose-600 dark:text-rose-400"
+          ? statusToneText("error")
           : "";
   return (
     <div>

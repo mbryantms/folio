@@ -44,6 +44,7 @@ import {
   useDeleteExternalIdSeries,
 } from "@/lib/api/mutations";
 import { useExternalIdsIssue, useExternalIdsSeries } from "@/lib/api/queries";
+import { statusTone } from "@/lib/ui/status-tone";
 import type { ExternalIdRow } from "@/lib/api/types";
 
 const SOURCES: Array<{ value: string; label: string }> = [
@@ -188,7 +189,9 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{r.source_label}</span>
                     {r.set_by === "user" && (
-                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-xs ${statusTone("warning")}`}
+                      >
                         User-set
                       </span>
                     )}

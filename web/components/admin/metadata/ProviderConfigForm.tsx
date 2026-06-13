@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useUpdateSettings } from "@/lib/api/mutations";
 import { useAdminSettings } from "@/lib/api/queries";
+import { statusToneText } from "@/lib/ui/status-tone";
 
 /** Sentinel the server returns for secret values that have been set
  *  (the plaintext is never sent to the client). */
@@ -45,7 +46,11 @@ type CredentialFields =
       enabled: boolean;
     };
 
-export function ProviderConfigForm({ provider }: { provider: "comicvine" | "metron" }) {
+export function ProviderConfigForm({
+  provider,
+}: {
+  provider: "comicvine" | "metron";
+}) {
   const settings = useAdminSettings();
   const update = useUpdateSettings();
   const [savedFlash, setSavedFlash] = React.useState(false);
@@ -207,7 +212,9 @@ function ProviderForm({
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={
-              initial.apiKeyAlreadySet ? "(saved — type to replace)" : "Paste your ComicVine API key"
+              initial.apiKeyAlreadySet
+                ? "(saved — type to replace)"
+                : "Paste your ComicVine API key"
             }
           />
         </div>
@@ -251,11 +258,13 @@ function ProviderForm({
             checked={enabled}
             onCheckedChange={setEnabled}
           />
-          <span>Enable {provider === "comicvine" ? "ComicVine" : "Metron"}</span>
+          <span>
+            Enable {provider === "comicvine" ? "ComicVine" : "Metron"}
+          </span>
         </Label>
         <div className="flex items-center gap-2">
           {savedFlash && (
-            <span className="text-xs text-emerald-700 dark:text-emerald-300">
+            <span className={`text-xs ${statusToneText("success")}`}>
               <CheckCircle2 className="mr-1 inline h-3 w-3" /> Saved
             </span>
           )}

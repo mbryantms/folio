@@ -25,6 +25,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { statusToneText } from "@/lib/ui/status-tone";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -104,7 +105,9 @@ export function ForgotPasswordForm({
     return (
       <Card>
         <CardHeader className="space-y-2 text-center">
-          <CheckCircle2 className="mx-auto size-8 text-emerald-400" />
+          <CheckCircle2
+            className={`mx-auto size-8 ${statusToneText("success")}`}
+          />
           <CardTitle className="text-xl">Check your email</CardTitle>
           <CardDescription>
             {submittedEmail ? (

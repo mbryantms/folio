@@ -18,7 +18,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "openapi:gen": "openapi-typescript lib/api/openapi.json -o lib/api/types.generated.ts",
-    "check-bundle-size": "node scripts/check-bundle-size.mjs"
+    "check-bundle-size": "node scripts/check-bundle-size.mjs",
+    "check-status-colors": "node scripts/check-status-colors.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

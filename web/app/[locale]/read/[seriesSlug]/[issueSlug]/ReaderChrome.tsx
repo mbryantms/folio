@@ -19,6 +19,7 @@ import {
 import { useReaderStore } from "@/lib/reader/store";
 import type { Direction } from "@/lib/reader/detect";
 import { useFullscreen } from "@/lib/reader/fullscreen";
+import { statusTone } from "@/lib/ui/status-tone";
 import { useIssueMarkers } from "@/lib/api/queries";
 import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
@@ -175,7 +176,7 @@ export function ReaderChrome({
 
         {incognito && (
           <span
-            className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[11px] font-medium tracking-wider text-amber-200 uppercase"
+            className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium tracking-wider uppercase ${statusTone("warning")}`}
             aria-label="Reading in incognito mode — progress and activity will not be saved"
           >
             <EyeOff className="h-3 w-3" />

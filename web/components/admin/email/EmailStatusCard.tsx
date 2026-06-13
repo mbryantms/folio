@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSendTestEmail } from "@/lib/api/mutations";
 import type { EmailStatusView } from "@/lib/api/types";
+import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 
 export function EmailStatusCard({
   status,
@@ -29,17 +30,11 @@ export function EmailStatusCard({
         <div>
           <Label>SMTP</Label>
           {status?.configured ? (
-            <Badge
-              variant="secondary"
-              className="bg-emerald-500/15 text-emerald-300"
-            >
+            <Badge variant="secondary" className={statusTone("success")}>
               Configured
             </Badge>
           ) : (
-            <Badge
-              variant="outline"
-              className="border-amber-500/50 text-amber-300"
-            >
+            <Badge variant="outline" className={statusTone("warning")}>
               Not wired
             </Badge>
           )}
@@ -67,7 +62,9 @@ export function EmailStatusCard({
             </div>
 
             {status.last_error && (
-              <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/5 p-2 text-xs text-red-300">
+              <div
+                className={`flex items-start gap-2 rounded-md border p-2 text-xs ${statusTone("error")}`}
+              >
                 <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span className="font-mono">{status.last_error}</span>
               </div>
@@ -89,7 +86,7 @@ export function EmailStatusCard({
           </p>
         )}
         {test.data?.delivered && (
-          <p className="text-xs text-emerald-300">
+          <p className={`text-xs ${statusToneText("success")}`}>
             Delivered to {test.data.to} in {test.data.duration_ms} ms.
           </p>
         )}
@@ -115,13 +112,13 @@ function ResultBadge({ ok }: { ok: boolean | null }) {
     );
   if (ok)
     return (
-      <Badge variant="secondary" className="bg-emerald-500/15 text-emerald-300">
+      <Badge variant="secondary" className={statusTone("success")}>
         <Check className="mr-1 h-3 w-3" />
         Delivered
       </Badge>
     );
   return (
-    <Badge variant="secondary" className="bg-red-500/15 text-red-300">
+    <Badge variant="secondary" className={statusTone("error")}>
       <X className="mr-1 h-3 w-3" />
       Failed
     </Badge>

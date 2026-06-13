@@ -12,6 +12,7 @@
  */
 
 import { useAdminMetadataDashboard } from "@/lib/api/queries";
+import { statusTone } from "@/lib/ui/status-tone";
 
 export function MetadataUnmatchedBadge({
   collapsed = false,
@@ -26,7 +27,7 @@ export function MetadataUnmatchedBadge({
     return (
       <span
         aria-label={`${count} unmatched series`}
-        className="bg-amber-500/15 text-amber-700 dark:text-amber-400 absolute -top-1 -right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold leading-none"
+        className={`${statusTone("warning")} absolute -top-1 -right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] leading-none font-semibold`}
       >
         {compact}
       </span>
@@ -35,7 +36,7 @@ export function MetadataUnmatchedBadge({
   return (
     <span
       aria-label={`${count} unmatched series`}
-      className="bg-amber-500/15 text-amber-700 dark:text-amber-400 ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-none"
+      className={`${statusTone("warning")} ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none font-semibold`}
     >
       {compact}
     </span>

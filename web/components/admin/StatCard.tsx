@@ -1,4 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 export function StatCard({
@@ -29,8 +30,8 @@ export function StatCard({
             <span
               className={cn(
                 "border-border rounded-full border px-2 py-0.5",
-                trend.direction === "up" && "text-emerald-400",
-                trend.direction === "down" && "text-red-400",
+                trend.direction === "up" && statusToneText("success"),
+                trend.direction === "down" && statusToneText("error"),
               )}
             >
               {trend.delta}

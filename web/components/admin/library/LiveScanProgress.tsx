@@ -49,6 +49,11 @@ import {
 } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
 import type { HealthIssueView, ScanEvent, ScanRunView } from "@/lib/api/types";
+import {
+  statusTone,
+  statusToneDot,
+  statusToneText,
+} from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import { ScanModeMenu } from "./ScanModeMenu";
 
@@ -295,7 +300,7 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
       : state.progress;
   const determinate = Boolean(
     state.status === "completed" ||
-      (progress && progress.unit !== "planning" && progress.total > 0),
+    (progress && progress.unit !== "planning" && progress.total > 0),
   );
   const pct = determinate
     ? state.status === "completed" && !progress
@@ -312,9 +317,9 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
   const thumbnailsEnabled = thumbnailSettings.data?.enabled ?? true;
   const coversPending = Boolean(
     thumbnailsEnabled &&
-      thumbnailData &&
-      thumbnailData.total > 0 &&
-      thumbnailData.cover_generated < thumbnailData.total,
+    thumbnailData &&
+    thumbnailData.total > 0 &&
+    thumbnailData.cover_generated < thumbnailData.total,
   );
   const thumbnailQueueActive = (thumbnailData?.in_flight ?? 0) > 0;
   const displayStatus: Status =
@@ -351,7 +356,9 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
             <span
               className={cn(
                 "h-2 w-2 rounded-full",
-                wsStatus === "open" ? "bg-emerald-400" : "bg-yellow-500",
+                wsStatus === "open"
+                  ? statusToneDot("success")
+                  : statusToneDot("warning"),
               )}
             />
             WebSocket {wsStatus}
@@ -1302,7 +1309,7 @@ function SeverityBadge({
       className={cn(
         "rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
         tone === "error" && "border-destructive/40 text-destructive",
-        tone === "warning" && "border-amber-700/40 text-amber-500",
+        tone === "warning" && statusToneText("warning"),
         tone === "info" && "border-border text-muted-foreground",
       )}
     >
@@ -1344,7 +1351,7 @@ function ThumbEventDot({ type }: { type: ScanEvent["type"] }) {
       ? "bg-primary"
       : type === "thumbs.failed"
         ? "bg-destructive"
-        : "bg-amber-500";
+        : statusToneDot("warning");
   return <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", tone)} />;
 }
 
@@ -1357,11 +1364,14 @@ function ThumbKindBadge({ event }: { event: ScanEvent }) {
       variant="secondary"
       className={cn(
         "shrink-0 rounded-md px-1.5 py-0 text-[10px] uppercase",
+        // Categorical (Both/Page/Cover) — not a status, so it keeps a
+        // distinct hue rather than a statusTone, but pairs a darker
+        // light-theme shade so the label stays legible on light/amber.
         isBoth
-          ? "text-amber-300"
+          ? "text-amber-700 dark:text-amber-300"
           : isPage
-            ? "text-sky-300"
-            : "text-emerald-300",
+            ? "text-sky-700 dark:text-sky-300"
+            : "text-emerald-700 dark:text-emerald-300",
       )}
     >
       {isBoth ? "Both" : isPage ? "Page" : "Cover"}
@@ -1399,17 +1409,17 @@ function StatusPill({ status }: { status: Status }) {
     switch (status) {
       case "running":
       case "thumbnailing":
-        return "border-emerald-700/60 bg-emerald-950/40 text-emerald-200";
+        return statusTone("success");
       case "queued":
-        return "border-amber-700/60 bg-amber-950/40 text-amber-200";
+        return statusTone("warning");
       case "completed":
-        return "border-emerald-700/60 bg-emerald-950/40 text-emerald-200";
+        return statusTone("success");
       case "failed":
-        return "border-destructive/60 bg-destructive/10 text-destructive";
+        return statusTone("error");
       // Cancelled is operator-initiated, not an error — neutral tone.
       case "cancelled":
       default:
-        return "border-border bg-muted/40 text-muted-foreground";
+        return statusTone("neutral");
     }
   })();
   const Icon = (() => {

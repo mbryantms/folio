@@ -25,6 +25,7 @@ import type { CollectionIssueEntry } from "@/lib/api/types";
 import { ISSUE_GRID_CELL_RADIUS, ISSUE_GRID_COLS } from "@/lib/issue-grid";
 import { metadataFieldLabels } from "@/lib/metadata-fields";
 import { cn } from "@/lib/utils";
+import { statusTone, statusToneDot } from "@/lib/ui/status-tone";
 import { issueUrl } from "@/lib/urls";
 
 type ChipStatus = "missing" | "needs_metadata" | "partial" | "complete";
@@ -39,10 +40,8 @@ const STATUS_CLASSES: Record<ChipStatus, string> = {
   missing: "border border-dashed border-border text-muted-foreground/70",
   needs_metadata:
     "bg-destructive/15 text-destructive ring-1 ring-destructive/30",
-  partial:
-    "bg-amber-500/15 text-amber-600 ring-1 ring-amber-500/30 dark:text-amber-400",
-  complete:
-    "bg-emerald-500/15 text-emerald-700 ring-1 ring-emerald-500/30 dark:text-emerald-400",
+  partial: "bg-warning/15 text-warning ring-1 ring-warning/30",
+  complete: "bg-success/15 text-success ring-1 ring-success/30",
 };
 
 const STATUS_LABELS: Record<ChipStatus, string> = {
@@ -139,10 +138,10 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
         <StackedBar
           total={denom}
           segments={[
-            { value: completeCount, className: "bg-emerald-500" },
+            { value: completeCount, className: statusToneDot("success") },
             {
               value: Math.max(ownedCount - completeCount, 0),
-              className: "bg-amber-500",
+              className: statusToneDot("warning"),
             },
           ]}
         />
@@ -160,7 +159,7 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
             label="Metadata complete"
             value={completeCount}
             total={ownedCount}
-            barClassName="bg-emerald-500"
+            barClassName={statusToneDot("success")}
           />
         </div>
       </section>
@@ -442,7 +441,12 @@ function ClearButton({ onClear }: { onClear: () => void }) {
 function StatePill({ state }: { state: string }) {
   if (state === "complete") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
+          statusTone("success"),
+        )}
+      >
         <CheckCircle2 className="h-3.5 w-3.5" />
         Complete
       </span>
@@ -450,7 +454,12 @@ function StatePill({ state }: { state: string }) {
   }
   if (state === "incomplete") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-600 dark:text-amber-400">
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
+          statusTone("warning"),
+        )}
+      >
         <AlertCircle className="h-3.5 w-3.5" />
         Incomplete
       </span>

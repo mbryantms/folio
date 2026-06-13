@@ -28,6 +28,7 @@ import { useIssueMetadataOverview } from "@/lib/api/queries";
 import { formatRelativeDate } from "@/lib/format";
 import { metadataFieldLabel, metadataFieldLabels } from "@/lib/metadata-fields";
 import { cn } from "@/lib/utils";
+import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 
 export function IssueMetadataTab({
   seriesSlug,
@@ -219,7 +220,12 @@ function MetaCard({
 function TierPill({ tier }: { tier: string }) {
   if (tier === "complete") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
+          statusTone("success"),
+        )}
+      >
         <CheckCircle2 className="h-3.5 w-3.5" />
         Complete
       </span>
@@ -227,14 +233,24 @@ function TierPill({ tier }: { tier: string }) {
   }
   if (tier === "partial") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-600 dark:text-amber-400">
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
+          statusTone("warning"),
+        )}
+      >
         <AlertCircle className="h-3.5 w-3.5" />
         Partial
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-medium text-red-600 dark:text-red-400">
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
+        statusTone("error"),
+      )}
+    >
       <AlertCircle className="h-3.5 w-3.5" />
       Needs metadata
     </span>
@@ -246,7 +262,7 @@ function TierPill({ tier }: { tier: string }) {
 function SourceFileRow({ label, state }: { label: string; state: string }) {
   const icon =
     state === "present" ? (
-      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+      <CheckCircle2 className={cn("h-4 w-4", statusToneText("success"))} />
     ) : state === "unknown" ? (
       <HelpCircle className="text-muted-foreground/50 h-4 w-4" />
     ) : (

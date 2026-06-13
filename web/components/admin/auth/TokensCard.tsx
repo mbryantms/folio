@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUpdateSettings } from "@/lib/api/mutations";
+import { statusToneText } from "@/lib/ui/status-tone";
 
 const DURATION_RE = /^\d+[smhd]$/;
 
@@ -57,7 +58,7 @@ export function TokensCard({
               placeholder="24h"
             />
             {accessBad && (
-              <p className="text-xs text-red-400">
+              <p className={`text-xs ${statusToneText("error")}`}>
                 Use a duration like <code>15m</code>, <code>24h</code>, or{" "}
                 <code>30d</code>.
               </p>
@@ -75,7 +76,7 @@ export function TokensCard({
               placeholder="30d"
             />
             {refreshBad && (
-              <p className="text-xs text-red-400">
+              <p className={`text-xs ${statusToneText("error")}`}>
                 Use a duration like <code>15m</code>, <code>24h</code>, or{" "}
                 <code>30d</code>.
               </p>

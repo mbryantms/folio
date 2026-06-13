@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sparklinePoints } from "@/lib/activity";
+import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import {
   useAdminLatestScanPerLibrary,
@@ -181,10 +182,10 @@ function SeverityRow({
 }) {
   const tone =
     variant === "error"
-      ? "text-red-400"
+      ? statusToneText("error")
       : variant === "warning"
-        ? "text-amber-400"
-        : "text-blue-400";
+        ? statusToneText("warning")
+        : statusToneText("info");
   // Each severity row is a deep link into the findings page with the
   // matching filter pre-applied — turns the dashboard's summary
   // numbers into a one-click drill-in instead of stranding the
@@ -262,7 +263,8 @@ function ScansCard({
         )}
         {mostRecent ? (
           <p className="text-muted-foreground text-xs">
-            Last scan: <span className="text-foreground">{mostRecent.library_name}</span> ·{" "}
+            Last scan:{" "}
+            <span className="text-foreground">{mostRecent.library_name}</span> ·{" "}
             {formatRelative(mostRecent.started_at)}
           </p>
         ) : null}
@@ -637,11 +639,7 @@ function Pill({
       </span>
       <Badge
         variant="outline"
-        className={
-          ok
-            ? "border-emerald-500/40 text-emerald-400"
-            : "border-red-500/40 text-red-400"
-        }
+        className={ok ? statusTone("success") : statusTone("error")}
       >
         {ok ? "OK" : "Down"}
       </Badge>

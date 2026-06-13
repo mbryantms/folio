@@ -31,6 +31,7 @@ import { useReadingLogInfinite } from "@/lib/api/queries";
 import { formatDurationMs } from "@/lib/activity";
 import { formatRelativeDate } from "@/lib/format";
 import { issueUrl, seriesUrl } from "@/lib/urls";
+import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import type {
   ReadingLogEventKind,
@@ -62,10 +63,10 @@ const KIND_LABEL: Record<ReadingLogEventKind, string> = {
 };
 
 const KIND_TINT: Record<ReadingLogEventKind, string> = {
-  issue_finished: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  issue_finished: statusTone("success"),
   series_finished: "bg-primary/15 text-primary",
-  session_completed: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  marker_created: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  session_completed: statusTone("info"),
+  marker_created: statusTone("warning"),
 };
 
 function rangeToFrom(range: ReadingStatsRange): string | undefined {
@@ -418,16 +419,12 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
   // because the event is derived from MAX(finished_at); there's no
   // single row to flag.
   const menu =
-    event.kind === "series_finished" ? null : (
-      <RowKebab event={event} />
-    );
+    event.kind === "series_finished" ? null : <RowKebab event={event} />;
 
   return (
     <div className="group/event-row relative">
       {navHref ? <Link href={navHref}>{inner}</Link> : inner}
-      {menu ? (
-        <div className="absolute top-1.5 right-1.5">{menu}</div>
-      ) : null}
+      {menu ? <div className="absolute top-1.5 right-1.5">{menu}</div> : null}
     </div>
   );
 }
