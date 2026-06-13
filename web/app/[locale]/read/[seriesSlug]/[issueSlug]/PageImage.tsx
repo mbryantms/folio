@@ -1,7 +1,10 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Loader2, RotateCw } from "lucide-react";
+
+/** Show the "still loading…" hint after this long in flight (audit C3). */
+const SLOW_HINT_MS = 8000;
 
 /**
  * Page image with a centered spinner while the bytes are in flight. The
@@ -55,20 +58,57 @@ export function PageImage({
    *  decode shifted layout. */
   dimensions?: { width: number; height: number };
 }) {
-  const [loaded, setLoaded] = useState(false);
+  // Load lifecycle (audit C3): loading → loaded | error. A failed load
+  // auto-retries once silently (transient blips), then surfaces a
+  // tap-to-retry state; a slow load shows a "still loading…" hint.
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
+  const [retry, setRetry] = useState(0);
+  const [slow, setSlow] = useState(false);
+  const autoRetried = useRef(false);
   const internalImgRef = useRef<HTMLImageElement>(null);
   const imgRef = externalImgRef ?? internalImgRef;
+  const loaded = status === "loaded";
+
+  // Cache-busted src so a retry actually re-fetches the failed bytes.
+  const effectiveSrc =
+    retry > 0 ? `${src}${src.includes("?") ? "&" : "?"}r=${retry}` : src;
 
   useLayoutEffect(() => {
     const el = imgRef.current;
     if (el && el.complete && el.naturalWidth > 0) {
-      setLoaded(true);
+      setStatus("loaded");
       onNaturalSize?.(el.naturalWidth, el.naturalHeight);
     }
     // `onNaturalSize` identity changes are tolerated — we only emit
     // once per image regardless, and a stale closure won't mis-report.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Surface a "still loading…" hint while genuinely in flight; reset on
+  // each (re)try.
+  useEffect(() => {
+    if (status !== "loading") return;
+    const t = setTimeout(() => setSlow(true), SLOW_HINT_MS);
+    return () => clearTimeout(t);
+  }, [status, retry]);
+
+  const handleError = () => {
+    if (!autoRetried.current) {
+      autoRetried.current = true;
+      setSlow(false);
+      setRetry((n) => n + 1);
+      return;
+    }
+    setStatus("error");
+  };
+  const handleRetry = () => {
+    autoRetried.current = false;
+    setSlow(false);
+    setStatus("loading");
+    setRetry((n) => n + 1);
+  };
 
   return (
     // `flex w-full justify-center` so the wrapper is a real, viewport-width
@@ -78,28 +118,46 @@ export function PageImage({
     // justify-center keeps a narrower image (original or height mode)
     // centered horizontally inside the row.
     <span className="relative flex w-full justify-center">
-      {!loaded ? (
-        <Loader2
-          aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 left-1/2 size-8 -translate-x-1/2 -translate-y-1/2 animate-spin text-neutral-600"
-        />
+      {status === "loading" ? (
+        <span className="pointer-events-none absolute top-1/2 left-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 text-neutral-500">
+          <Loader2 aria-hidden="true" className="size-8 animate-spin" />
+          {slow ? (
+            <span role="status" className="text-xs">
+              Still loading…
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+      {status === "error" ? (
+        // Failed after the silent auto-retry — offer a manual retry
+        // rather than leaving a broken-image glyph (audit C3). The button
+        // is the actionable target; the whole region is also clickable.
+        <button
+          type="button"
+          onClick={handleRetry}
+          className="text-muted-foreground hover:text-foreground absolute top-1/2 left-1/2 flex min-h-11 -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 rounded-md px-4 py-3 text-sm"
+        >
+          <RotateCw aria-hidden="true" className="size-6" />
+          <span>Couldn&apos;t load this page. Tap to retry.</span>
+        </button>
       ) : null}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         ref={imgRef}
-        src={src}
+        src={effectiveSrc}
         alt={alt}
         loading={loading}
         fetchPriority={fetchPriority}
         decoding="async"
         onLoad={(e) => {
-          setLoaded(true);
+          setSlow(false);
+          setStatus("loaded");
           const img = e.currentTarget;
           if (img.naturalWidth > 0) {
             onNaturalSize?.(img.naturalWidth, img.naturalHeight);
           }
         }}
-        onError={() => setLoaded(true)}
+        onError={handleError}
         // v0.3.44 entrance polish: fresh-load images fade in over
         // 150ms so the spinner-to-image transition has visual
         // continuity instead of a hard swap. Cached/already-decoded

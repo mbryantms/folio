@@ -123,9 +123,23 @@ export function useReaderKeymap(opts: {
     const onKey = (e: KeyboardEvent) => {
       if (shouldSkipHotkey(e)) return;
       if (markerActive) return;
+      // Space advances; Shift+Space goes back (audit C13). PageDown/Up
+      // mirror Space/Shift+Space for users on full keyboards. All resolve
+      // in reading order via the direction-aware onNext/onPrev.
       if (e.key === " ") {
         e.preventDefault();
+        if (e.shiftKey) onPrev();
+        else onNext();
+        return;
+      }
+      if (e.key === "PageDown") {
+        e.preventDefault();
         onNext();
+        return;
+      }
+      if (e.key === "PageUp") {
+        e.preventDefault();
+        onPrev();
         return;
       }
       const noChord = !e.metaKey && !e.ctrlKey && !e.altKey;
