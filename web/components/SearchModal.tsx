@@ -299,8 +299,9 @@ function SearchHints() {
   );
 }
 
-/** Recent-search chips (empty-input state). The remove control is a
- *  44×44 touch target (audit E6) wrapping a smaller visual glyph. */
+/** Recent-search chips (empty-input state). Compact pills — the remove
+ *  control is sized to the chip rather than a 44px touch box that
+ *  ballooned the whole row. */
 function RecentsSection({
   recents,
   onPick,
@@ -330,11 +331,11 @@ function RecentsSection({
       <ul className="flex flex-wrap gap-1.5 px-3 pb-3">
         {recents.map((q) => (
           <li key={q}>
-            <span className="bg-muted/60 hover:bg-muted text-foreground border-border inline-flex items-center rounded-full border pl-3 text-xs transition-colors">
+            <span className="bg-muted/60 hover:bg-muted text-foreground border-border inline-flex items-center rounded-full border py-0.5 pr-0.5 pl-3 text-xs transition-colors">
               <button
                 type="button"
                 onClick={() => onPick(q)}
-                className="py-1.5 focus-visible:outline-none"
+                className="py-1 focus-visible:outline-none"
                 aria-label={`Search again for ${q}`}
               >
                 {q}
@@ -343,7 +344,7 @@ function RecentsSection({
                 type="button"
                 onClick={() => onRemove(q)}
                 aria-label={`Remove ${q} from recents`}
-                className="text-muted-foreground hover:text-foreground inline-flex size-11 items-center justify-center rounded-full"
+                className="text-muted-foreground hover:text-foreground hover:bg-background/70 ml-1 inline-flex size-6 items-center justify-center rounded-full transition-colors"
               >
                 <X className="size-3" aria-hidden="true" />
               </button>
