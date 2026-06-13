@@ -377,6 +377,7 @@ export function LibraryGridView({
         canSelect={items.length > 0}
         selectMode={selection.selectMode}
         onEnterSelect={() => selection.enter()}
+        onExitSelect={() => selection.exit()}
         selectButtonRef={selectButtonRef}
       />
 

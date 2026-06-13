@@ -1,13 +1,7 @@
 "use client";
 
 import * as React from "react";
-import {
-  BookOpenCheck,
-  BookOpen,
-  FolderPlus,
-  ListChecks,
-  Sparkles,
-} from "lucide-react";
+import { BookOpenCheck, BookOpen, FolderPlus, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -21,6 +15,7 @@ import {
   SeriesCard,
   SeriesCardSkeleton,
 } from "@/components/library/SeriesCard";
+import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
@@ -209,25 +204,13 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
               step={CARD_SIZE_STEP}
               defaultSize={CARD_SIZE_DEFAULT}
             />
-            {items.length > 0 && (
-              <Button
+            {(items.length > 0 || selection.selectMode) && (
+              <SelectModeButton
                 ref={selectButtonRef}
-                variant="outline"
-                size="sm"
-                onClick={() => selection.enter()}
-                aria-label="Enter select mode"
-                aria-hidden={selection.selectMode}
-                tabIndex={selection.selectMode ? -1 : 0}
-                disabled={selection.selectMode}
-                className={
-                  selection.selectMode
-                    ? "pointer-events-none invisible opacity-0 transition-opacity duration-150"
-                    : "transition-opacity duration-150"
-                }
-              >
-                <ListChecks className="mr-1.5 h-4 w-4" />
-                Select
-              </Button>
+                active={selection.selectMode}
+                onEnter={() => selection.enter()}
+                onExit={() => selection.exit()}
+              />
             )}
           </>
         }

@@ -10,7 +10,6 @@ import {
   Download,
   EyeOff,
   FileCog,
-  ListChecks,
   Loader2,
   RefreshCw,
   Search as SearchIcon,
@@ -26,6 +25,7 @@ import {
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
@@ -56,7 +56,6 @@ import {
   useCreateSavedViewBatch,
   useRefreshCblList,
 } from "@/lib/api/mutations";
-import { cn } from "@/lib/utils";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
@@ -432,27 +431,16 @@ function CblViewDetailInner({
               step={CARD_SIZE_STEP}
               defaultSize={CARD_SIZE_DEFAULT}
             />
-            {loadedEntries.length > 0 && (
-              <Button
+            {(loadedEntries.length > 0 || selection.selectMode) && (
+              <SelectModeButton
                 ref={selectButtonRef}
-                variant="outline"
-                size="sm"
-                onClick={() => selection.enter()}
-                aria-label="Enter select mode"
-                aria-hidden={selection.selectMode}
-                tabIndex={selection.selectMode ? -1 : 0}
-                disabled={selection.selectMode}
-                className={cn(
-                  // Toolbar convention: h-9 to align with the
-                  // adjacent `<Input>` + CardSizeOptions trigger.
-                  "h-9 transition-opacity duration-150",
-                  selection.selectMode &&
-                    "pointer-events-none invisible opacity-0",
-                )}
-              >
-                <ListChecks className="mr-1.5 h-4 w-4" />
-                Select
-              </Button>
+                active={selection.selectMode}
+                onEnter={() => selection.enter()}
+                onExit={() => selection.exit()}
+                // Toolbar convention: h-9 to align with the adjacent
+                // `<Input>` + CardSizeOptions trigger.
+                className="h-9"
+              />
             )}
           </>
         }

@@ -7,7 +7,6 @@ import {
   Circle,
   Filter,
   FolderPlus,
-  ListChecks,
   Loader2,
   Search,
   User,
@@ -32,6 +31,7 @@ import {
 } from "@/components/library/BulkMarkReadDialog";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { IssueCard } from "@/components/library/IssueCard";
+import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { useCardSize } from "@/components/library/use-card-size";
@@ -833,25 +833,12 @@ function SelectableResultGrid({
         <p className="text-muted-foreground text-xs">
           Showing {items.length} of {total} {label}
         </p>
-        <Button
+        <SelectModeButton
           ref={selectButtonRef}
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => selection.enter()}
-          aria-label="Enter select mode"
-          aria-hidden={selection.selectMode}
-          tabIndex={selection.selectMode ? -1 : 0}
-          disabled={selection.selectMode}
-          className={
-            selection.selectMode
-              ? "pointer-events-none invisible opacity-0 transition-opacity duration-150"
-              : "transition-opacity duration-150"
-          }
-        >
-          <ListChecks className="mr-1.5 h-4 w-4" />
-          Select
-        </Button>
+          active={selection.selectMode}
+          onEnter={() => selection.enter()}
+          onExit={() => selection.exit()}
+        />
       </div>
 
       <SelectionToolbar
