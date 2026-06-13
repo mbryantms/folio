@@ -3,8 +3,16 @@
 import { ArrowRight, BookOpen, ChevronRight, Clock, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -21,11 +29,7 @@ import {
   rankSearchActions,
   type SearchAction,
 } from "@/lib/search/actions-registry";
-import {
-  SEARCH_CATEGORIES,
-  flattenGroups,
-  type SearchHit,
-} from "@/lib/search/types";
+import { SEARCH_CATEGORIES, type SearchHit } from "@/lib/search/types";
 import { cn } from "@/lib/utils";
 
 const MAX_PER_CATEGORY = 5;
@@ -35,10 +39,14 @@ const QUERY_DEBOUNCE_MS = 200;
  * Global search dialog — opened from anywhere via the `openSearch` keybind
  * or the layout's search button; closes on Escape or backdrop click.
  *
- * Hits are grouped by category (`SEARCH_CATEGORIES`). The footer links to
- * the dedicated `/search` page for the full results across every
- * category — useful for browsing past the per-category cap or filtering
- * by category. `Mod+Enter` from the input jumps straight to that page.
+ * Built on `cmdk` (audit E2): cmdk owns the listbox/option roles,
+ * `aria-activedescendant`, and the arrow/enter keyboard model, so we no
+ * longer hand-roll a highlight index. Results are server-driven
+ * (`useGlobalSearch`), so `shouldFilter={false}` disables cmdk's own
+ * substring filter — it only does selection + a11y, not matching.
+ *
+ * A `>` prefix flips into command mode (action registry only). The footer
+ * links to the dedicated `/search` page; `Mod+Enter` jumps there.
  */
 export function SearchModal({
   open,
@@ -51,52 +59,48 @@ export function SearchModal({
   const me = useMe();
   const [raw, setRaw] = useState("");
   const [debounced, setDebounced] = useState("");
-  const [highlighted, setHighlighted] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
   const recents = useRecentSearches();
 
-  // `>` prefix on the input flips the modal into pure command mode —
-  // content categories disappear and only the action registry is
-  // searched. The "needle" is the input with the prefix stripped, so
-  // typing `> lib` matches actions whose label/keywords start with
-  // "lib" (e.g. "Manage libraries").
   const { needle: rawForActions, commandMode } = parseCommandPrefix(raw);
 
-  // Debounce the query; 200ms keeps the UI snappy without firing on each
-  // keystroke. Command mode skips the debounce — action filtering is
-  // entirely client-side and feels nicer when it responds keystroke-
-  // by-keystroke.
+  // Debounce the content query (200ms). Command mode skips it — action
+  // filtering is client-side and feels nicer keystroke-by-keystroke.
   useEffect(() => {
     const t = setTimeout(() => setDebounced(raw.trim()), QUERY_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [raw]);
-  // Strip the prefix from the content query too so a partial `>` typed
-  // mid-search doesn't accidentally feed `>library` to the backend.
   const contentQuery = commandMode ? "" : debounced;
 
   const { enabled, isLoading, groups, total } = useGlobalSearch(contentQuery, {
     perCategory: MAX_PER_CATEGORY,
   });
 
-  // Resolve actions on every keystroke. Role-gating uses `useMe()` —
-  // non-admin users never see admin entries even via direct keyword
-  // match. Capped at SEARCH_ACTIONS_CAP so the actions section
-  // doesn't dominate the modal alongside content hits.
-  const actions = useMemo<readonly SearchAction[]>(() => {
-    const ranked = rankSearchActions(rawForActions, me.data?.role);
-    return ranked.slice(0, SEARCH_ACTIONS_CAP);
-  }, [rawForActions, me.data?.role]);
+  // Role-gated actions, recomputed per keystroke. Non-admins never see
+  // admin destinations even via direct keyword match.
+  const actions = useMemo<readonly SearchAction[]>(
+    () =>
+      rankSearchActions(rawForActions, me.data?.role).slice(
+        0,
+        SEARCH_ACTIONS_CAP,
+      ),
+    [rawForActions, me.data?.role],
+  );
 
-  // Flat list of visible hits in display order. Actions sit on top so
-  // the keyboard cursor lands there first — a `>`-mode user gets the
-  // top action highlighted; a free-text user sees actions but can
-  // arrow past them into content hits without losing context.
-  const contentFlat = flattenGroups(groups, MAX_PER_CATEGORY);
-  const flat: ReadonlyArray<SearchHit | SearchAction> = commandMode
-    ? actions
-    : [...actions, ...contentFlat];
-  const safeHighlighted =
-    flat.length === 0 ? 0 : Math.min(highlighted, flat.length - 1);
+  const contentSections = commandMode
+    ? []
+    : SEARCH_CATEGORIES.map((def) => ({
+        def,
+        hits: groups[def.key].slice(0, MAX_PER_CATEGORY),
+      })).filter((s) => s.hits.length > 0);
+
+  const hasItems =
+    actions.length > 0 || contentSections.some((s) => s.hits.length > 0);
+  // Empty-input states: recents chips (if any) or a short hint. Shown
+  // only when there's nothing to search yet (not enabled, not command
+  // mode) — once the user types, cmdk's list takes over.
+  const showRecents = !commandMode && !enabled && recents.recents.length > 0;
+  const showHint = !commandMode && !enabled && recents.recents.length === 0;
+
   const fullSearchHref = enabled
     ? `/search?q=${encodeURIComponent(contentQuery)}`
     : "/search";
@@ -105,287 +109,140 @@ export function SearchModal({
     if (!next) {
       setRaw("");
       setDebounced("");
-      setHighlighted(0);
     }
     onOpenChange(next);
   }
 
-  function isAction(row: SearchHit | SearchAction): row is SearchAction {
-    // Action rows carry `group` + `icon` directly; content `SearchHit`s
-    // have `kind` + `title`. The discriminator is `group` because every
-    // action in the registry sets it and no `SearchHit` does.
-    return "group" in row;
-  }
-
-  function commitRow(row: SearchHit | SearchAction | undefined) {
-    if (!row) return;
-    handleOpenChange(false);
-    if (isAction(row)) {
-      router.push(row.href);
-      return;
-    }
-    // Content hits get recent-search bookkeeping; actions don't (a
-    // chord like `>auth` isn't a query worth replaying).
+  function commitHit(hit: SearchHit) {
     if (contentQuery) recents.add(contentQuery);
-    router.push(row.href);
+    handleOpenChange(false);
+    router.push(hit.href);
   }
-
+  function commitAction(action: SearchAction) {
+    handleOpenChange(false);
+    router.push(action.href);
+  }
   function commitFullSearch() {
     if (contentQuery) recents.add(contentQuery);
     handleOpenChange(false);
     router.push(fullSearchHref);
   }
 
-  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "ArrowDown") {
+  // cmdk owns Enter for the highlighted item. We intercept two cases at
+  // the input (stopping propagation so cmdk doesn't also act): Mod+Enter
+  // → full search, and plain Enter with no quick hits → full search.
+  function onInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Enter") return;
+    if (!commandMode && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      setHighlighted(Math.min(flat.length - 1, safeHighlighted + 1));
-    } else if (e.key === "ArrowUp") {
+      e.stopPropagation();
+      commitFullSearch();
+    } else if (!commandMode && enabled && !hasItems) {
       e.preventDefault();
-      setHighlighted(Math.max(0, safeHighlighted - 1));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      // Mod+Enter jumps to the full search page so power users can leave
-      // the modal without hunting for the footer. Command mode skips
-      // the full-search escape since there's no content query to send.
-      if (!commandMode && (e.metaKey || e.ctrlKey)) {
-        commitFullSearch();
-      } else if (flat.length > 0) {
-        commitRow(flat[safeHighlighted]);
-      } else if (!commandMode && enabled) {
-        // No quick hits but the user pressed Enter — interpret it as
-        // "take me to full search."
-        commitFullSearch();
-      }
+      e.stopPropagation();
+      commitFullSearch();
     }
   }
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
-        className="top-[10%] flex max-h-[80vh] max-w-xl translate-y-0 flex-col gap-0 overflow-hidden p-0"
-        onOpenAutoFocus={(e) => {
-          e.preventDefault();
-          inputRef.current?.focus();
-        }}
-      >
+      <DialogContent className="top-[10%] flex max-h-[80vh] max-w-xl translate-y-0 flex-col gap-0 overflow-hidden p-0">
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">
           Quick search across your library. Press Enter to open the highlighted
           result, or Mod+Enter to jump to the full results page.
         </DialogDescription>
-        <div className="border-border shrink-0 border-b">
-          <input
-            ref={inputRef}
-            type="search"
+        {/* `shouldFilter={false}`: results are server-filtered; cmdk only
+            does selection + ARIA. `loop` wraps arrow nav at the ends. */}
+        <Command
+          shouldFilter={false}
+          loop
+          className="flex min-h-0 flex-1 flex-col gap-0 bg-transparent"
+        >
+          <CommandInput
+            autoFocus
             value={raw}
-            onChange={(e) => setRaw(e.target.value)}
-            onKeyDown={onKeyDown}
+            onValueChange={setRaw}
+            onKeyDown={onInputKeyDown}
             placeholder={
               commandMode
                 ? "Jump to settings, admin pages, sections…"
                 : "Search series, issues, people…  Type > for commands"
             }
             aria-label="Search the library"
-            className="placeholder:text-muted-foreground w-full bg-transparent px-4 py-3 text-sm focus:outline-none"
           />
-        </div>
-        <ResultsBody
-          enabled={enabled}
-          loading={isLoading && total === 0}
-          flat={flat}
-          actions={actions}
-          actionsOffset={0}
-          contentOffset={commandMode ? 0 : actions.length}
-          commandMode={commandMode}
-          highlighted={safeHighlighted}
-          onHover={setHighlighted}
-          onSelect={(idx) => commitRow(flat[idx])}
-          query={contentQuery}
-          groups={groups}
-          recents={recents.recents}
-          onPickRecent={(q) => {
-            setRaw(q);
-            setDebounced(q);
-            inputRef.current?.focus();
-          }}
-          onRemoveRecent={recents.remove}
-          onClearRecents={recents.clear}
-        />
-        <SearchFooter
-          enabled={enabled}
-          query={debounced}
-          total={total}
-          href={fullSearchHref}
-          onNavigate={commitFullSearch}
-        />
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ResultsBody({
-  enabled,
-  loading,
-  flat,
-  actions,
-  actionsOffset,
-  contentOffset,
-  commandMode,
-  highlighted,
-  onHover,
-  onSelect,
-  query,
-  groups,
-  recents,
-  onPickRecent,
-  onRemoveRecent,
-  onClearRecents,
-}: {
-  enabled: boolean;
-  loading: boolean;
-  flat: ReadonlyArray<SearchHit | SearchAction>;
-  actions: readonly SearchAction[];
-  actionsOffset: number;
-  contentOffset: number;
-  commandMode: boolean;
-  highlighted: number;
-  onHover: (idx: number) => void;
-  onSelect: (idx: number) => void;
-  query: string;
-  groups: ReturnType<typeof useGlobalSearch>["groups"];
-  recents: readonly string[];
-  onPickRecent: (q: string) => void;
-  onRemoveRecent: (q: string) => void;
-  onClearRecents: () => void;
-}) {
-  // Empty-state path: content search not enabled (input under 2 chars
-  // AND not in command mode) and no actions either. Command mode with
-  // an empty input still surfaces the full action registry so a power
-  // user can just type `>` and arrow-pick.
-  if (!enabled && !commandMode && actions.length === 0) {
-    return (
-      <EmptyStateBody
-        recents={recents}
-        onPickRecent={onPickRecent}
-        onRemoveRecent={onRemoveRecent}
-        onClearRecents={onClearRecents}
-      />
-    );
-  }
-  if (loading && actions.length === 0) {
-    return (
-      <p className="text-muted-foreground px-4 py-6 text-center text-xs">
-        Searching…
-      </p>
-    );
-  }
-  if (flat.length === 0) {
-    return (
-      <p className="text-muted-foreground px-4 py-6 text-center text-xs">
-        {commandMode ? "No commands match." : `No matches for “${query}”.`}
-      </p>
-    );
-  }
-  // Pre-compute the (category → starting flat index) map so the JSX
-  // doesn't mutate a counter during render. `sections` walks the
-  // canonical category order, dropping empty groups and recording where
-  // each visible category begins inside the flattened list.
-  const sections = commandMode
-    ? []
-    : SEARCH_CATEGORIES.reduce<
-        Array<{
-          def: (typeof SEARCH_CATEGORIES)[number];
-          hits: SearchHit[];
-          fromIdx: number;
-        }>
-      >((acc, def) => {
-        const hits = groups[def.key].slice(0, MAX_PER_CATEGORY);
-        if (hits.length === 0) return acc;
-        const fromIdx =
-          contentOffset + acc.reduce((n, s) => n + s.hits.length, 0);
-        acc.push({ def, hits, fromIdx });
-        return acc;
-      }, []);
-
-  return (
-    <div
-      role="listbox"
-      aria-label="Search results"
-      className="min-h-0 flex-1 overflow-y-auto py-1"
-    >
-      {actions.length > 0 ? (
-        <section key="actions" className="py-1">
-          <h3 className="text-muted-foreground px-3 pb-1 text-[11px] font-semibold tracking-wide uppercase">
-            {commandMode ? "Commands" : "Jump to…"}
-          </h3>
-          <ul>
-            {actions.map((action, i) => {
-              const idx = actionsOffset + i;
-              const Icon = action.icon;
-              return (
-                <li key={action.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={idx === highlighted}
-                    onMouseEnter={() => onHover(idx)}
-                    onClick={() => onSelect(idx)}
-                    className={cn(
-                      "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
-                      idx === highlighted
-                        ? "bg-accent text-accent-foreground"
-                        : "text-foreground",
-                    )}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="border-border bg-muted text-muted-foreground inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border"
-                    >
-                      <Icon className="size-4" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">
-                        {action.label}
-                      </span>
-                      <span className="block truncate text-xs opacity-70">
-                        {action.group}
-                      </span>
-                    </span>
-                    <ChevronRight
-                      className="size-3.5 opacity-50"
-                      aria-hidden="true"
-                    />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ) : null}
-      {sections.map(({ def, hits, fromIdx }) => {
-        return (
-          <section key={def.key} className="py-1">
-            <h3 className="text-muted-foreground px-3 pb-1 text-[11px] font-semibold tracking-wide uppercase">
-              {def.labelPlural}
-            </h3>
-            <ul>
-              {hits.map((hit, i) => {
-                const idx = fromIdx + i;
-                return (
-                  <li key={hit.id}>
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={idx === highlighted}
-                      onMouseEnter={() => onHover(idx)}
-                      onClick={() => onSelect(idx)}
-                      className={cn(
-                        "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
-                        idx === highlighted
-                          ? "bg-accent text-accent-foreground"
-                          : "text-foreground",
-                      )}
+          {showHint ? (
+            <SearchHints />
+          ) : showRecents ? (
+            <RecentsSection
+              recents={recents.recents}
+              onPick={(q) => {
+                setRaw(q);
+                setDebounced(q);
+              }}
+              onRemove={recents.remove}
+              onClear={recents.clear}
+            />
+          ) : (
+            <CommandList className="min-h-0 flex-1">
+              {isLoading && !hasItems ? (
+                <p
+                  role="status"
+                  className="text-muted-foreground px-4 py-6 text-center text-xs"
+                >
+                  Searching…
+                </p>
+              ) : null}
+              {/* cmdk auto-hides Empty while any item is mounted. */}
+              <CommandEmpty>
+                {commandMode
+                  ? "No commands match."
+                  : isLoading
+                    ? "Searching…"
+                    : `No matches for “${contentQuery}”.`}
+              </CommandEmpty>
+              {actions.length > 0 ? (
+                <CommandGroup heading={commandMode ? "Commands" : "Jump to…"}>
+                  {actions.map((action) => {
+                    const Icon = action.icon;
+                    return (
+                      <CommandItem
+                        key={action.id}
+                        value={`action:${action.id}`}
+                        onSelect={() => commitAction(action)}
+                        className="gap-3 px-3 py-2"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="border-border bg-muted text-muted-foreground inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border"
+                        >
+                          <Icon className="size-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">
+                            {action.label}
+                          </span>
+                          <span className="block truncate text-xs opacity-70">
+                            {action.group}
+                          </span>
+                        </span>
+                        <ChevronRight
+                          className="size-3.5 opacity-50"
+                          aria-hidden="true"
+                        />
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              ) : null}
+              {contentSections.map(({ def, hits }) => (
+                <CommandGroup key={def.key} heading={def.labelPlural}>
+                  {hits.map((hit) => (
+                    <CommandItem
+                      key={hit.id}
+                      value={`${def.key}:${hit.id}`}
+                      onSelect={() => commitHit(hit)}
+                      className="gap-3 px-3 py-2"
                     >
                       <Thumb hit={hit} />
                       <span className="min-w-0 flex-1">
@@ -393,15 +250,9 @@ function ResultsBody({
                           {hit.title}
                         </span>
                         {hit.snippet ? (
-                          // Snippet wins over the static subtitle when
-                          // the backend produced a `ts_headline` excerpt
-                          // — the `<mark>` highlights inside tell the
-                          // user *why* this row matched, which is
-                          // higher signal than the publisher / year
-                          // metadata in the static subtitle.
-                          // Sanitised via `renderSearchSnippet` so the
-                          // only HTML we forward is the `<mark>`
-                          // allowlist; everything else is escaped.
+                          // `<mark>`-highlighted excerpt (sanitised) wins
+                          // over the static subtitle — it shows *why* the
+                          // row matched.
                           <span
                             className="block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:bg-amber-500/30 [&_mark]:px-0.5 [&_mark]:text-current"
                             dangerouslySetInnerHTML={{
@@ -409,65 +260,58 @@ function ResultsBody({
                             }}
                           />
                         ) : hit.subtitle ? (
-                          // Static subtitle fallback. Inherits the
-                          // button's text color (`text-foreground` or
-                          // `text-accent-foreground` when the row is
-                          // highlighted) at reduced opacity — using
-                          // `text-muted-foreground` here would make
-                          // the gray subtitle unreadable against the
-                          // amber accent background.
                           <span className="block truncate text-xs opacity-70">
                             {hit.subtitle}
                           </span>
                         ) : null}
                       </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        );
-      })}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              ))}
+            </CommandList>
+          )}
+          <SearchFooter
+            enabled={enabled}
+            query={debounced}
+            total={total}
+            href={fullSearchHref}
+            onNavigate={commitFullSearch}
+          />
+        </Command>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Short "type to search" prompt + key hints, shown when the input is
+ *  empty and there are no recents. */
+function SearchHints() {
+  return (
+    <div className="text-muted-foreground space-y-2 px-4 py-6 text-center text-xs">
+      <p>Type at least 2 characters to search.</p>
+      <p>
+        <KbdGlyph>↵</KbdGlyph> opens the highlighted hit ·{" "}
+        <KbdGlyph>⌘</KbdGlyph>
+        <KbdGlyph>↵</KbdGlyph> shows full results
+      </p>
     </div>
   );
 }
 
-/** Empty-state body shown when the input is empty (or < 2 chars). When
- *  the user has recent searches, surfaces them as clickable chips with
- *  inline remove + a clear-all action. Otherwise falls through to a
- *  minimal "type to search" prompt + a short tips line. */
-function EmptyStateBody({
+/** Recent-search chips (empty-input state). The remove control is a
+ *  44×44 touch target (audit E6) wrapping a smaller visual glyph. */
+function RecentsSection({
   recents,
-  onPickRecent,
-  onRemoveRecent,
-  onClearRecents,
+  onPick,
+  onRemove,
+  onClear,
 }: {
   recents: readonly string[];
-  onPickRecent: (q: string) => void;
-  onRemoveRecent: (q: string) => void;
-  onClearRecents: () => void;
+  onPick: (q: string) => void;
+  onRemove: (q: string) => void;
+  onClear: () => void;
 }) {
-  if (recents.length === 0) {
-    return (
-      <div className="text-muted-foreground space-y-2 px-4 py-6 text-center text-xs">
-        <p>Type at least 2 characters to search.</p>
-        <p>
-          <kbd className="bg-muted text-foreground border-border mx-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
-            ↵
-          </kbd>
-          opens the highlighted hit ·{" "}
-          <kbd className="bg-muted text-foreground border-border mx-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
-            ⌘
-          </kbd>
-          <kbd className="bg-muted text-foreground border-border mx-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
-            ↵
-          </kbd>
-          shows full results
-        </p>
-      </div>
-    );
-  }
   return (
     <div className="min-h-0 flex-1 overflow-y-auto py-2">
       <div className="flex items-center justify-between px-3 pb-1">
@@ -477,7 +321,7 @@ function EmptyStateBody({
         </h3>
         <button
           type="button"
-          onClick={onClearRecents}
+          onClick={onClear}
           className="text-muted-foreground hover:text-foreground text-[11px] font-medium"
         >
           Clear all
@@ -486,28 +330,36 @@ function EmptyStateBody({
       <ul className="flex flex-wrap gap-1.5 px-3 pb-3">
         {recents.map((q) => (
           <li key={q}>
-            <span className="bg-muted/60 hover:bg-muted text-foreground border-border inline-flex items-center gap-1 rounded-full border py-0.5 pr-1 pl-3 text-xs transition-colors">
+            <span className="bg-muted/60 hover:bg-muted text-foreground border-border inline-flex items-center rounded-full border pl-3 text-xs transition-colors">
               <button
                 type="button"
-                onClick={() => onPickRecent(q)}
-                className="focus-visible:outline-none"
+                onClick={() => onPick(q)}
+                className="py-1.5 focus-visible:outline-none"
                 aria-label={`Search again for ${q}`}
               >
                 {q}
               </button>
               <button
                 type="button"
-                onClick={() => onRemoveRecent(q)}
+                onClick={() => onRemove(q)}
                 aria-label={`Remove ${q} from recents`}
-                className="text-muted-foreground hover:text-foreground inline-flex size-4 items-center justify-center rounded-full"
+                className="text-muted-foreground hover:text-foreground inline-flex size-11 items-center justify-center rounded-full"
               >
-                <X className="size-2.5" aria-hidden="true" />
+                <X className="size-3" aria-hidden="true" />
               </button>
             </span>
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+function KbdGlyph({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="bg-muted text-foreground border-border mx-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
+      {children}
+    </kbd>
   );
 }
 
@@ -573,10 +425,6 @@ function SearchFooter({
   href: string;
   onNavigate: () => void;
 }) {
-  // Drop `truncate` here on purpose: it was clipping the kbd glyph chips
-  // (especially `⌘ ↵`) whenever the modal was narrower than its content.
-  // The shortcut hints hide on narrow viewports so the top-results link
-  // always remains visible without competing for space.
   return (
     <div className="border-border text-muted-foreground flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t px-3 py-2 text-xs">
       <div className="hidden items-center gap-3 sm:flex">
@@ -594,8 +442,6 @@ function SearchFooter({
       <Link
         href={href}
         onClick={(e) => {
-          // Imperative push so the modal closes synchronously and we
-          // don't lose state between unmount and the next page paint.
           e.preventDefault();
           onNavigate();
         }}
@@ -610,9 +456,6 @@ function SearchFooter({
   );
 }
 
-/** Single key-hint chip — `<kbd>` glyphs in inline-flex so multi-key
- *  combos like `⌘ ↵` line up at a stable height regardless of which
- *  glyphs the user's font supplies. */
 function ShortcutHint({
   keys,
   label,
