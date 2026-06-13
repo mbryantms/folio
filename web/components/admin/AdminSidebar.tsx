@@ -98,11 +98,6 @@ export function AdminSidebar({
                       {!collapsed && (
                         <span className="truncate">{item.label}</span>
                       )}
-                      {!collapsed && item.placeholder ? (
-                        <span className="text-muted-foreground/60 ml-auto text-[10px] tracking-wider uppercase">
-                          soon
-                        </span>
-                      ) : null}
                       {item.dynamicBadge ? (
                         <DynamicBadgeFor
                           kind={item.dynamicBadge}
@@ -118,11 +113,6 @@ export function AdminSidebar({
                           <TooltipTrigger asChild>{link}</TooltipTrigger>
                           <TooltipContent side="right" sideOffset={8}>
                             {item.label}
-                            {item.placeholder ? (
-                              <span className="text-muted-foreground ml-2 text-[10px] tracking-wider uppercase">
-                                soon
-                              </span>
-                            ) : null}
                           </TooltipContent>
                         </Tooltip>
                       ) : (

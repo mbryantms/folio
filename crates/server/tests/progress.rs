@@ -1054,3 +1054,95 @@ async fn per_issue_reader_write_always_clears_backfill() {
         "reader writes always clear the backfill flag",
     );
 }
+
+async fn get_progress(
+    app: &TestApp,
+    auth: &Authed,
+    query: &str,
+) -> (StatusCode, serde_json::Value) {
+    let uri = if query.is_empty() {
+        "/api/progress".to_owned()
+    } else {
+        format!("/api/progress?{query}")
+    };
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_with_issue_id_returns_only_that_record() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "issue-filter@example.com").await;
+    let issue_a = seed_issue(&app).await;
+    let issue_b = seed_issue(&app).await;
+
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_a, "page": 3}),
+    )
+    .await;
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_b, "page": 7}),
+    )
+    .await;
+
+    // Unfiltered list carries both (the legacy shape).
+    let (status, body) = get_progress(&app, &auth, "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["records"].as_array().unwrap().len(), 2);
+
+    // issue_id narrows to exactly the one row, same envelope shape.
+    let (status, body) = get_progress(&app, &auth, &format!("issue_id={issue_a}")).await;
+    assert_eq!(status, StatusCode::OK);
+    let records = body["records"].as_array().unwrap();
+    assert_eq!(records.len(), 1, "filtered list has exactly one record");
+    assert_eq!(records[0]["issue_id"], serde_json::json!(issue_a));
+    assert_eq!(records[0]["page"], serde_json::json!(3));
+
+    // Unknown issue id → empty list, not an error (SSR callers treat
+    // missing progress as "unread").
+    let (status, body) = get_progress(&app, &auth, "issue_id=does-not-exist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["records"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_issue_id_filter_is_scoped_to_the_caller() {
+    let app = TestApp::spawn().await;
+    // First registrant is auto-admin and can see every library, so the
+    // visibility filter under test here is the records' UserId scope.
+    let owner = register(&app, "owner@example.com").await;
+    let other = register(&app, "other@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    post_progress(
+        &app,
+        &owner,
+        serde_json::json!({"issue_id": issue_id, "page": 9}),
+    )
+    .await;
+
+    let (status, body) = get_progress(&app, &other, &format!("issue_id={issue_id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["records"].as_array().unwrap().len(),
+        0,
+        "another user's record must not leak through the issue_id filter",
+    );
+}

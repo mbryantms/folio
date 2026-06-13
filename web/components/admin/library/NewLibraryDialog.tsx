@@ -46,7 +46,10 @@ const schema = z.object({
     .regex(/^[a-z]{2,3}$/i, "Use a 2–3 letter ISO code")
     .default("eng"),
   default_reading_direction: z.enum(["ltr", "rtl"]).default("ltr"),
-  scan_now: z.boolean().default(false),
+  // Default ON: a created-but-never-scanned library renders an empty
+  // grid with no hint why — the single biggest first-run trap. Users
+  // who want a dry setup can still untick it.
+  scan_now: z.boolean().default(true),
   generate_page_thumbs_on_scan: z.boolean().default(false),
 });
 
@@ -62,7 +65,7 @@ export function NewLibraryDialog() {
       root_path: "",
       default_language: "eng",
       default_reading_direction: "ltr",
-      scan_now: false,
+      scan_now: true,
       generate_page_thumbs_on_scan: false,
     },
   });

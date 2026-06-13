@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { GlobalHotkeys } from "@/components/GlobalHotkeys";
 import { SearchModalProvider } from "@/lib/search/use-search-modal";
 import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
@@ -142,6 +142,18 @@ export default async function RootLayout({
   const density = isDensity(densityCookie) ? densityCookie : "comfortable";
   const dataTheme = resolvedDataTheme(theme);
 
+  // Per-request CSP nonce for next-themes' inline no-flash script. The
+  // Rust origin forwards its `Content-Security-Policy` header on the
+  // proxy hop (upstream/mod.rs::forward); Next nonces its own framework
+  // scripts from it automatically, but userland inline scripts —
+  // next-themes' theme bootstrap is our only one — need the nonce
+  // passed explicitly. A hash allowlist can't work here: the script
+  // body serializes `defaultTheme`, which varies per user cookie.
+  // Absent header (e.g. hitting :3000 directly) ⇒ no nonce attr, which
+  // is fine — there's no CSP being enforced on that path either.
+  const csp = (await headers()).get("content-security-policy");
+  const nonce = /'nonce-([A-Za-z0-9+/_=-]+)'/.exec(csp ?? "")?.[1];
+
   return (
     <html
       lang={locale}
@@ -152,7 +164,7 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <body className="bg-background text-foreground min-h-full antialiased">
-        <ThemeProvider defaultTheme={theme}>
+        <ThemeProvider defaultTheme={theme} nonce={nonce}>
           <NextIntlClientProvider messages={messages}>
             <QueryProvider>
               <SearchModalProvider>

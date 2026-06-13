@@ -8,7 +8,12 @@ import { cn } from "@/lib/utils";
  * shape (rounded-full, compact) and the coloring — primary-accent tint
  * when active, muted otherwise — so every filter row matches. Forwards
  * all `<button>` props, so callers attach their own `onClick`,
- * `aria-pressed` / `aria-selected` / `role`, `disabled`, etc.
+ * `disabled`, etc.
+ *
+ * `aria-pressed` is emitted from `active` by default — no call site
+ * ever attached it by hand, so toggle state was color-only for AT
+ * (WCAG 4.1.2). Callers using pills as a radio row can override via
+ * the props spread (`role="radio"` + `aria-checked`).
  *
  * `count` renders an optional trailing tally (tag chips, status counts)
  * with active-aware coloring. Labels render in their natural case; pass
@@ -33,6 +38,7 @@ export function FilterPill({
     <button
       type={type ?? "button"}
       data-active={active || undefined}
+      aria-pressed={active}
       className={cn(
         "focus-visible:ring-ring inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-none",
         active

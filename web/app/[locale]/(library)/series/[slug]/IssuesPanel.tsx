@@ -277,14 +277,18 @@ export function IssuesPanel({
   };
 
   // Auto-fetch the next page when the sentinel scrolls into view.
+  // Depend on the three fields, not the whole result object — TanStack
+  // returns a fresh object identity per render, so `[query]` tore the
+  // observer down and rebuilt it on every state change.
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          if (query.hasNextPage && !query.isFetchingNextPage) {
-            void query.fetchNextPage();
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
           }
         }
       },
@@ -292,7 +296,7 @@ export function IssuesPanel({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [query]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   // Esc exits select mode entirely; Cmd/Ctrl+A selects every loaded
   // card. Both gated on `selectMode` so other handlers stay free
@@ -348,6 +352,7 @@ export function IssuesPanel({
         <div className="flex flex-wrap items-center gap-2">
           <Input
             type="search"
+            aria-label="Search issues in this series"
             placeholder="Search issues…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -583,7 +588,7 @@ export function IssuesPanel({
         className={cn("h-12", query.hasNextPage ? "" : "hidden")}
       />
       {query.isFetchingNextPage && (
-        <p className="text-muted-foreground mt-2 text-center text-xs">
+        <p role="status" className="text-muted-foreground mt-2 text-center text-xs">
           Loading more…
         </p>
       )}

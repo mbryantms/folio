@@ -22,7 +22,13 @@ export type MainNavItem = {
   href: string;
   label: string;
   icon: MainNavIconKey;
-  placeholder?: boolean;
+  /** Server entry kind (`builtin` / `library` / `view` / `page`).
+   *  Active-state logic keys off this + `refId` instead of the
+   *  display label — labels are user-renamable and will localize. */
+  kind?: string;
+  /** Server `ref_id` — registry key for builtins (`home`,
+   *  `all_libraries`, …), entity UUID otherwise. */
+  refId?: string;
   /** Multi-page rails M6: present for `kind="page"` entries; carries
    *  the `user_page.id` so the sidebar's DnD reorder can call
    *  `POST /me/pages/reorder` without re-resolving slugs. */
@@ -100,6 +106,8 @@ export function mainNav(
       href: `${localePrefix}${entry.href}`,
       label: entry.label,
       icon: entry.icon as MainNavIconKey,
+      kind: entry.kind,
+      refId: entry.ref_id,
       pageId: entry.kind === "page" ? entry.ref_id : undefined,
     });
   }

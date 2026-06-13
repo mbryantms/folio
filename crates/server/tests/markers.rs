@@ -1316,3 +1316,106 @@ async fn update_selection_null_clears_detected_text() {
         "selection should be cleared by `selection: null`, got: {cleared:#?}",
     );
 }
+
+/// `POST /me/markers/bulk-delete` — multi-select delete for /bookmarks.
+/// Owned ids delete; other users' ids and unknown ids count as
+/// not_found without failing the batch; other users' rows survive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_delete_scopes_to_owner_and_counts_not_found() {
+    let app = TestApp::spawn().await;
+    let alice = register(&app, "alice-bulk-del@example.com").await;
+    promote_to_admin(&app, alice.user_id).await;
+    let bob = register(&app, "bob-bulk-del@example.com").await;
+    promote_to_admin(&app, bob.user_id).await;
+    let (_lib, _series, issue_id) = seed_issue(&app, "bulk-del-lib").await;
+
+    let mut alice_ids = Vec::new();
+    for page in 0..3 {
+        let (_, m) = http(
+            &app,
+            Method::POST,
+            "/api/me/markers",
+            Some(&alice),
+            Some(serde_json::json!({
+                "issue_id": issue_id,
+                "page_index": page,
+                "kind": "bookmark",
+            })),
+        )
+        .await;
+        alice_ids.push(m["id"].as_str().unwrap().to_owned());
+    }
+    let (_, bob_marker) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers",
+        Some(&bob),
+        Some(serde_json::json!({
+            "issue_id": issue_id,
+            "page_index": 0,
+            "kind": "bookmark",
+        })),
+    )
+    .await;
+    let bob_id = bob_marker["id"].as_str().unwrap().to_owned();
+
+    // Two of alice's, bob's, and a never-existed id in one batch.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers/bulk-delete",
+        Some(&alice),
+        Some(serde_json::json!({
+            "marker_ids": [alice_ids[0], alice_ids[1], bob_id, Uuid::now_v7()],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deleted"], 2, "only alice's two rows delete");
+    assert_eq!(body["not_found"], 2, "bob's id + unknown id are not_found");
+
+    // Alice keeps her third marker; bob's survived the mixed batch.
+    let (_, count) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers/count",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(count["total"], 1);
+    let (_, count) = http(&app, Method::GET, "/api/me/markers/count", Some(&bob), None).await;
+    assert_eq!(count["total"], 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_delete_validates_cap_and_allows_empty() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cap-bulk-del@example.com").await;
+
+    // Empty list is a cheap 200 with zero counts.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers/bulk-delete",
+        Some(&auth),
+        Some(serde_json::json!({"marker_ids": []})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deleted"], 0);
+    assert_eq!(body["not_found"], 0);
+
+    // 501 ids breaches the garde cap → 422 canonical envelope.
+    let ids: Vec<String> = (0..501).map(|_| Uuid::now_v7().to_string()).collect();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/markers/bulk-delete",
+        Some(&auth),
+        Some(serde_json::json!({"marker_ids": ids})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "validation");
+}

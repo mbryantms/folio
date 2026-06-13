@@ -19,6 +19,7 @@ import {
   SeriesCardSkeleton,
 } from "@/components/library/SeriesCard";
 import { useCardSize } from "@/components/library/use-card-size";
+import { Button } from "@/components/ui/button";
 import {
   useIssuesCrossListInfinite,
   useSeriesListInfinite,
@@ -144,16 +145,20 @@ export function LibraryGridView({
   const items = mode === "series" ? seriesItems : issueItems;
 
   // Auto-fetch the next page when the sentinel scrolls into view —
-  // mirrors `IssuesPanel` so the cadence feels familiar.
+  // mirrors `IssuesPanel` so the cadence feels familiar. Depend on
+  // the three fields, not the whole result object: TanStack returns a
+  // fresh object identity every render, so `[query]` tore down and
+  // recreated the observer on every keystroke/state change.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          if (query.hasNextPage && !query.isFetchingNextPage) {
-            void query.fetchNextPage();
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
           }
         }
       },
@@ -161,7 +166,7 @@ export function LibraryGridView({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [query]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const gridStyle: React.CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
@@ -314,7 +319,12 @@ export function LibraryGridView({
       {query.isLoading ? (
         <GridSkeleton mode={mode} style={gridStyle} />
       ) : items.length === 0 ? (
-        <EmptyState mode={mode} facetCount={facetCount} hasQuery={!!trimmedQ} />
+        <EmptyState
+          mode={mode}
+          facetCount={facetCount}
+          hasQuery={!!trimmedQ}
+          onClearFacets={clearFacets}
+        />
       ) : mode === "series" ? (
         <ul role="list" className="grid gap-4" style={gridStyle}>
           {seriesItems.map((s) => (
@@ -339,7 +349,7 @@ export function LibraryGridView({
         className={cn("h-12", query.hasNextPage ? "" : "hidden")}
       />
       {query.isFetchingNextPage ? (
-        <p className="text-muted-foreground mt-2 text-center text-xs">
+        <p role="status" className="text-muted-foreground mt-2 text-center text-xs">
           Loading more…
         </p>
       ) : null}
@@ -415,10 +425,12 @@ function EmptyState({
   mode,
   facetCount,
   hasQuery,
+  onClearFacets,
 }: {
   mode: LibraryGridMode;
   facetCount: number;
   hasQuery: boolean;
+  onClearFacets: () => void;
 }) {
   const noun = mode === "series" ? "series" : "issues";
   let message: string;
@@ -432,8 +444,15 @@ function EmptyState({
     message = `This library has no ${noun} yet.`;
   }
   return (
-    <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
-      {message}
+    <div className="border-border/60 text-muted-foreground space-y-3 rounded-lg border border-dashed p-8 text-center text-sm">
+      <p>{message}</p>
+      {/* One-click recovery instead of hunting active chips in the
+          toolbar/sheet (audit A12/A20). */}
+      {facetCount > 0 ? (
+        <Button type="button" variant="outline" size="sm" onClick={onClearFacets}>
+          Clear filters
+        </Button>
+      ) : null}
     </div>
   );
 }

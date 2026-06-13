@@ -130,15 +130,19 @@ export function MarkersList() {
 
   // IntersectionObserver sentinel for infinite scroll. Same rootMargin
   // as `IssuesPanel` / `CblViewDetail` so behavior stays consistent.
+  // Depend on the three fields, not the whole result object — TanStack
+  // returns a fresh object identity per render, so `[query]` tore the
+  // observer down and rebuilt it on every state change.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          if (query.hasNextPage && !query.isFetchingNextPage) {
-            void query.fetchNextPage();
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
           }
         }
       },
@@ -146,7 +150,7 @@ export function MarkersList() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [query]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   function toggleTag(tag: string) {
     setSelectedTags((prev) =>
@@ -290,7 +294,7 @@ export function MarkersList() {
             className={query.hasNextPage ? "h-12" : "hidden"}
           />
           {query.isFetchingNextPage ? (
-            <p className="text-muted-foreground text-center text-xs">
+            <p role="status" className="text-muted-foreground text-center text-xs">
               Loading more markers…
             </p>
           ) : null}
@@ -788,7 +792,8 @@ function EmptyState({ hasFilter }: { hasFilter: boolean }) {
           <kbd className="bg-muted rounded px-1 font-mono text-xs">n</kbd> to
           add a note, or{" "}
           <kbd className="bg-muted rounded px-1 font-mono text-xs">h</kbd> to
-          start a highlight.
+          start a highlight — or use the bookmark, star, and marker
+          buttons in the reader&apos;s top toolbar.
         </>
       )}
     </div>

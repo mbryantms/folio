@@ -173,6 +173,7 @@ export function UserTable() {
             <Search className="text-muted-foreground absolute top-1/2 left-2 size-3.5 -translate-y-1/2" />
             <Input
               type="search"
+              aria-label="Search users by email or name"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search email or name…"

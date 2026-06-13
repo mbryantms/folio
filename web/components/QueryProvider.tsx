@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { HttpError } from "@/lib/api/queries";
+
 export function QueryProvider({ children }: { children: React.ReactNode }) {
   const [client] = useState(
     () =>
@@ -12,6 +14,15 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
           queries: {
             staleTime: 30_000,
             refetchOnWindowFocus: false,
+            // TanStack's default (retry: 3) re-ran deterministic 4xx
+            // failures — a 403 admin query meant four requests and
+            // ~3.5s of exponential backoff before the error surfaced.
+            // Retry once, and only for transport errors / 5xx.
+            retry: (failureCount, error) => {
+              if (failureCount >= 1) return false;
+              if (error instanceof HttpError) return error.status >= 500;
+              return true;
+            },
           },
         },
       }),
@@ -37,8 +48,16 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
         id: "network-status",
         duration: 3000,
       });
-      // Re-fetch active queries that may have failed while offline.
-      client.invalidateQueries();
+      // Resurrect only the queries that actually failed while
+      // offline. A blanket invalidateQueries() refetched every active
+      // query on each offline→online flap — a self-inflicted
+      // thundering herd on exactly the flaky connections that flap
+      // the most. TanStack's default refetchOnReconnect already
+      // covers stale-on-reconnect for the rest.
+      client.invalidateQueries({
+        refetchType: "active",
+        predicate: (q) => q.state.status === "error",
+      });
     };
 
     // If the page loads while already offline, surface the toast

@@ -35,8 +35,23 @@ export function useLibraryGridFilters(
   const [mode, setMode] = React.useState<LibraryGridMode>(
     init.mode ?? "series",
   );
-  const [q, setQ] = React.useState("");
+  // Only the *debounced* query lives here. The raw per-keystroke value
+  // is the toolbar's local state — when it lived in this hook, every
+  // keystroke re-rendered the hook's consumer (LibraryGridView) and
+  // therefore every mounted card; the 200ms debounce protected the
+  // network but not the render.
   const [debouncedQ, setDebouncedQ] = React.useState("");
+  const qTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setQ = React.useCallback((next: string) => {
+    if (qTimer.current) clearTimeout(qTimer.current);
+    qTimer.current = setTimeout(() => setDebouncedQ(next.trim()), 200);
+  }, []);
+  React.useEffect(
+    () => () => {
+      if (qTimer.current) clearTimeout(qTimer.current);
+    },
+    [],
+  );
   // Sort state is mode-scoped: switching modes should not carry an
   // invalid sort across (e.g. `user_rating` is issue-only). We store
   // both as one union and validate before passing to the query.
@@ -74,11 +89,6 @@ export function useLibraryGridFilters(
   const [ratingRange, setRatingRange] = React.useState<[number, number] | null>(
     init.ratingRange ?? null,
   );
-
-  React.useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(q.trim()), 200);
-    return () => clearTimeout(t);
-  }, [q]);
 
   const trimmedQ = debouncedQ;
 
@@ -164,10 +174,11 @@ export function useLibraryGridFilters(
   }
 
   return {
-    // Mode + search + sort
+    // Mode + search + sort. `q` is the debounced value — the live
+    // input string is the toolbar's own state (see note at the top).
     mode,
     setMode,
-    q,
+    q: debouncedQ,
     setQ,
     trimmedQ,
     seriesSort,
