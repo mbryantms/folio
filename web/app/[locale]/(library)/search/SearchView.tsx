@@ -2,8 +2,12 @@
 
 import {
   ArrowLeft,
+  Check,
   ChevronRight,
+  Circle,
   Filter,
+  FolderPlus,
+  ListChecks,
   Loader2,
   Search,
   User,
@@ -11,20 +15,34 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import {
+  useCallback,
   useEffect,
+  useRef,
   useState,
   type ComponentType,
   type CSSProperties,
   type ReactNode,
 } from "react";
 
+import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import {
+  BulkMarkReadDialog,
+  BULK_BACKFILL_PROMPT_THRESHOLD,
+} from "@/components/library/BulkMarkReadDialog";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { IssueCard } from "@/components/library/IssueCard";
+import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  useBulkMarkProgress,
+  useBulkMarkSeriesProgress,
+} from "@/lib/api/mutations";
+import { shouldSkipHotkey } from "@/lib/reader/keybinds";
+import { useSelection } from "@/lib/selection/use-selection";
 import {
   Select,
   SelectContent,
@@ -578,10 +596,12 @@ function SeriesCategoryGrid({
   }
   return (
     <div className="space-y-4">
-      <p className="text-muted-foreground text-xs">
-        Showing {series.length} of {total} series
-      </p>
-      <SeriesGrid series={series} gridStyle={gridStyle} />
+      <SelectableResultGrid
+        kind="series"
+        items={series}
+        total={total}
+        gridStyle={gridStyle}
+      />
       <LoadMoreButton
         hasNextPage={!!results.hasNextPage}
         isFetching={results.isFetchingNextPage}
@@ -617,10 +637,12 @@ function IssuesCategoryGrid({
   }
   return (
     <div className="space-y-4">
-      <p className="text-muted-foreground text-xs">
-        Showing {issues.length} of {total} issues
-      </p>
-      <IssuesGrid issues={issues} gridStyle={gridStyle} />
+      <SelectableResultGrid
+        kind="issue"
+        items={issues}
+        total={total}
+        gridStyle={gridStyle}
+      />
       <LoadMoreButton
         hasNextPage={!!results.hasNextPage}
         isFetching={results.isFetchingNextPage}
@@ -696,18 +718,239 @@ function MarkerGrid({
   );
 }
 
+/** The slice of `useSelection` the result grids need — kept structural
+ *  (and matching the hook's `toggle` signature) so the hook return
+ *  passes straight through. */
+type CardSelection = {
+  selectMode: boolean;
+  isSelected: (id: string) => boolean;
+  toggle: (id: string, ev?: { shiftKey?: boolean }) => void;
+};
+
+/** Multi-select wrapper shared by the series + issues search result
+ *  grids (audit B3). Owns the selection state, the SelectionToolbar, and
+ *  the bulk dialogs, and renders the right card grid for `kind`. Like the
+ *  library grid it offers "Select all loaded" but NOT "select all
+ *  matching" — that needs a cross-list server bulk endpoint (audit B17,
+ *  deferred). */
+function SelectableResultGrid({
+  kind,
+  items,
+  total,
+  gridStyle,
+}: {
+  kind: "series" | "issue";
+  items: SeriesView[] | IssueSummaryView[];
+  total: number;
+  gridStyle: CSSProperties;
+}) {
+  const isSeries = kind === "series";
+  const selection = useSelection<{ id: string }>(items);
+  const bulkMarkSeries = useBulkMarkSeriesProgress();
+  const bulkMarkIssues = useBulkMarkProgress();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [markReadOpen, setMarkReadOpen] = useState(false);
+  const selectButtonRef = useRef<HTMLButtonElement | null>(null);
+  const wasSelectModeRef = useRef(false);
+  const isPending = isSeries
+    ? bulkMarkSeries.isPending
+    : bulkMarkIssues.isPending;
+
+  const submitMarkRead = useCallback(
+    (backfill: boolean) => {
+      const ids = Array.from(selection.selected);
+      if (ids.length === 0) return;
+      const onSuccess = () => {
+        selection.exit();
+        setMarkReadOpen(false);
+      };
+      if (isSeries) {
+        bulkMarkSeries.mutate(
+          { series_ids: ids, finished: true, backfill },
+          { onSuccess },
+        );
+      } else {
+        bulkMarkIssues.mutate(
+          { issue_ids: ids, finished: true, backfill },
+          { onSuccess },
+        );
+      }
+    },
+    [isSeries, bulkMarkSeries, bulkMarkIssues, selection],
+  );
+
+  const runBulk = useCallback(
+    (finished: boolean) => {
+      const ids = Array.from(selection.selected);
+      if (ids.length === 0) return;
+      if (finished && ids.length >= BULK_BACKFILL_PROMPT_THRESHOLD) {
+        setMarkReadOpen(true);
+        return;
+      }
+      const onSuccess = () => selection.exit();
+      if (isSeries) {
+        bulkMarkSeries.mutate({ series_ids: ids, finished }, { onSuccess });
+      } else {
+        bulkMarkIssues.mutate({ issue_ids: ids, finished }, { onSuccess });
+      }
+    },
+    [isSeries, bulkMarkSeries, bulkMarkIssues, selection],
+  );
+
+  const selectedTargets = Array.from(selection.selected).map((id) => ({
+    entry_kind: isSeries ? ("series" as const) : ("issue" as const),
+    ref_id: id,
+  }));
+
+  // Esc exits; Cmd/Ctrl+A selects all loaded. Dormant in form fields.
+  useEffect(() => {
+    if (!selection.selectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (shouldSkipHotkey(e)) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        selection.exit();
+      } else if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        selection.selectAll();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection]);
+  useEffect(() => {
+    if (wasSelectModeRef.current && !selection.selectMode) {
+      selectButtonRef.current?.focus();
+    }
+    wasSelectModeRef.current = selection.selectMode;
+  }, [selection.selectMode]);
+
+  const label = isSeries ? "series" : "issues";
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-muted-foreground text-xs">
+          Showing {items.length} of {total} {label}
+        </p>
+        <Button
+          ref={selectButtonRef}
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => selection.enter()}
+          aria-label="Enter select mode"
+          aria-hidden={selection.selectMode}
+          tabIndex={selection.selectMode ? -1 : 0}
+          disabled={selection.selectMode}
+          className={
+            selection.selectMode
+              ? "pointer-events-none invisible opacity-0 transition-opacity duration-150"
+              : "transition-opacity duration-150"
+          }
+        >
+          <ListChecks className="mr-1.5 h-4 w-4" />
+          Select
+        </Button>
+      </div>
+
+      <SelectionToolbar
+        open={selection.selectMode}
+        count={selection.count}
+        total={items.length}
+        primary={[
+          {
+            id: "mark-read",
+            label: "Mark read",
+            icon: Check,
+            onClick: () => runBulk(true),
+            disabled: isPending || selection.count === 0,
+          },
+          {
+            id: "mark-unread",
+            label: "Mark unread",
+            icon: Circle,
+            onClick: () => runBulk(false),
+            disabled: isPending || selection.count === 0,
+          },
+        ]}
+        overflow={[
+          {
+            id: "add-to-collection",
+            label: "Add to collection…",
+            icon: FolderPlus,
+            onClick: () => setPickerOpen(true),
+            disabled: selection.count === 0,
+          },
+        ]}
+        onDone={() => selection.exit()}
+        onClear={() => selection.clear()}
+        onSelectAll={() => selection.selectAll()}
+        isPending={isPending}
+      />
+
+      {isSeries ? (
+        <SeriesGrid
+          series={items as SeriesView[]}
+          gridStyle={gridStyle}
+          selection={selection}
+        />
+      ) : (
+        <IssuesGrid
+          issues={items as IssueSummaryView[]}
+          gridStyle={gridStyle}
+          selection={selection}
+        />
+      )}
+
+      <BulkAddToCollectionDialog
+        open={pickerOpen}
+        onOpenChange={(next) => {
+          setPickerOpen(next);
+          if (!next) selection.exit();
+        }}
+        targets={selectedTargets}
+      />
+      <BulkMarkReadDialog
+        open={markReadOpen}
+        onOpenChange={setMarkReadOpen}
+        count={selection.count}
+        onConfirm={submitMarkRead}
+        isPending={isPending}
+      />
+    </>
+  );
+}
+
 function SeriesGrid({
   series,
   gridStyle,
+  selection,
 }: {
   series: ReadonlyArray<SeriesView>;
   gridStyle: CSSProperties;
+  selection?: CardSelection;
 }) {
   return (
     <ul role="list" className="grid gap-4" style={gridStyle}>
       {series.map((s) => (
         <li key={s.id}>
-          <SeriesCard series={s} size="md" />
+          <SeriesCard
+            series={s}
+            size="md"
+            selectMode={
+              selection?.selectMode
+                ? {
+                    isActive: true,
+                    isSelected: selection.isSelected(s.id),
+                    onToggle: (ev) => selection.toggle(s.id, ev),
+                  }
+                : undefined
+            }
+            onEnterSelectMode={
+              selection ? (id) => selection.toggle(id) : undefined
+            }
+          />
         </li>
       ))}
     </ul>
@@ -717,15 +960,31 @@ function SeriesGrid({
 function IssuesGrid({
   issues,
   gridStyle,
+  selection,
 }: {
   issues: ReadonlyArray<IssueSummaryView>;
   gridStyle: CSSProperties;
+  selection?: CardSelection;
 }) {
   return (
     <ul role="list" className="grid gap-4" style={gridStyle}>
       {issues.map((i) => (
         <li key={i.id}>
-          <IssueCard issue={i} />
+          <IssueCard
+            issue={i}
+            selectMode={
+              selection?.selectMode
+                ? {
+                    isActive: true,
+                    isSelected: selection.isSelected(i.id),
+                    onToggle: (ev) => selection.toggle(i.id, ev),
+                  }
+                : undefined
+            }
+            onEnterSelectMode={
+              selection ? (id) => selection.toggle(id) : undefined
+            }
+          />
         </li>
       ))}
     </ul>
