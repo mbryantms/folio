@@ -26,19 +26,39 @@ export type ApiMutationInput = {
 };
 
 /**
+ * One field-scoped validation failure from a 422 response's
+ * `error.details` array. Mirrors the Rust `shared::error::FieldError`
+ * wire shape. `field` is the dotted path (e.g. `"port"`, `"smtp.host"`);
+ * an empty string means a whole-body/form-level error.
+ *
+ * Frontend-only type (the OpenAPI surface doesn't schematise the error
+ * envelope), so it lives here rather than in the generated types.
+ */
+export type ApiFieldError = { field: string; message: string };
+
+/**
  * Structured error thrown by `apiMutate`. Carries the HTTP status (or
  * `"network"` when the request never reached the server) so callers
  * can branch on transience. `useApiMutation`'s `onError` reads
  * `.transient` to decide whether to attach a Retry action to the
- * error toast.
+ * error toast. On a 422 it also carries `fields` — the per-field
+ * validation messages, which `applyServerErrors` binds onto a form.
  */
 export class ApiMutationError extends Error {
   readonly status: number | "network";
+  /** Field-level validation failures from `error.details` (422 only;
+   *  empty otherwise). */
+  readonly fields: ApiFieldError[];
 
-  constructor(message: string, status: number | "network") {
+  constructor(
+    message: string,
+    status: number | "network",
+    fields: ApiFieldError[] = [],
+  ) {
     super(message);
     this.name = "ApiMutationError";
     this.status = status;
+    this.fields = fields;
   }
 
   /**
@@ -89,12 +109,23 @@ export async function apiMutate<T>({
   }
   if (!res.ok) {
     let detail = "";
+    let fields: ApiFieldError[] = [];
     try {
-      detail = (await res.json()).error?.message ?? `${res.status}`;
+      const errBody = (await res.json()).error;
+      detail = errBody?.message ?? `${res.status}`;
+      if (Array.isArray(errBody?.details)) {
+        fields = errBody.details.filter(
+          (d: unknown): d is ApiFieldError =>
+            typeof d === "object" &&
+            d !== null &&
+            typeof (d as ApiFieldError).field === "string" &&
+            typeof (d as ApiFieldError).message === "string",
+        );
+      }
     } catch {
       detail = `${res.status}`;
     }
-    throw new ApiMutationError(detail, res.status);
+    throw new ApiMutationError(detail, res.status, fields);
   }
   if (res.status === 204) return null;
   const text = await res.text();

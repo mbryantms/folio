@@ -115,8 +115,8 @@ Default admin (first registered user becomes admin):
   [crates/server/src/upstream/mod.rs](crates/server/src/upstream/mod.rs)
   and the plan at `~/.claude/plans/rust-public-origin-1.0.md`.
 - **Error envelope** (audit-remediation M3): every server error is
-  `{"error": {"code": "...", "message": "..."}}`. The **only**
-  construction site is
+  `{"error": {"code": "...", "message": "...", "details"?: ...}}`. The
+  **only** construction site is
   [`api::error(status, code, message)`](crates/server/src/api/mod.rs)
   in `crates/server/src/api/mod.rs`. Every handler returns errors
   through that helper (directly or via a per-module thin alias that
@@ -129,6 +129,21 @@ Default admin (first registered user becomes admin):
   long-term replacement for the stringly-typed `code` arg; M3's
   `api::respond(status, ApiErrorCode, msg)` is the typed entrypoint
   for new code.
+  - **Field-level details (1.3)**: validation (422) responses carry
+    `error.details` as a `[{field, message}]` list
+    (`shared::error::FieldError`) so a client form can bind each
+    message to its input. The single construction site is
+    [`api::respond_with_field_errors`](crates/server/src/api/mod.rs),
+    which `Validated<T>` and any handler running garde manually
+    (`extractors::from_garde`) route through — don't populate
+    `details` by hand for validation. The human `message` stays a
+    complete summary so non-form callers lose nothing; empty field
+    lists leave `details` unset (wire shape identical to a plain
+    error). Web side: `apiMutate` parses it onto
+    `ApiMutationError.fields`, and
+    [`applyServerErrors(setError, err)`](web/lib/api/form-errors.ts)
+    binds them onto a react-hook-form instance (adopted by the long
+    admin forms in chunk 2.8).
 - **Admin guard** (audit-remediation M1 + M2): admin-only handlers take
   `RequireAdmin` (or `RequireAdmin(actor)` when the handler also needs
   the actor id for audit-logging). The extractor lives at

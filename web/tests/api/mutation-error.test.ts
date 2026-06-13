@@ -175,4 +175,121 @@ describe("apiMutate error path", () => {
     const result = await apiMutate({ path: "/anything", method: "DELETE" });
     expect(result).toBeNull();
   });
+
+  it("parses error.details into the typed fields list on a 422", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(422, {
+        error: {
+          code: "validation",
+          message: "port: must be 1-65535; host: required",
+          details: [
+            { field: "port", message: "must be 1-65535" },
+            { field: "host", message: "required" },
+          ],
+        },
+      }),
+    );
+    let caught: unknown;
+    try {
+      await apiMutate({ path: "/admin/email", method: "PATCH", body: {} });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiMutationError);
+    const err = caught as ApiMutationError;
+    expect(err.fields).toEqual([
+      { field: "port", message: "must be 1-65535" },
+      { field: "host", message: "required" },
+    ]);
+  });
+
+  it("leaves fields empty when the envelope has no details", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(400, {
+        error: { code: "validation", message: "Name is required" },
+      }),
+    );
+    let caught: unknown;
+    try {
+      await apiMutate({ path: "/me/collections", method: "POST", body: {} });
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as ApiMutationError).fields).toEqual([]);
+  });
+
+  it("drops malformed detail entries rather than trusting them", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(422, {
+        error: {
+          code: "validation",
+          message: "bad",
+          details: [
+            { field: "ok", message: "fine" },
+            { field: 123, message: "wrong-type" },
+            "not-an-object",
+            { message: "no field" },
+          ],
+        },
+      }),
+    );
+    let caught: unknown;
+    try {
+      await apiMutate({ path: "/x", method: "POST", body: {} });
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as ApiMutationError).fields).toEqual([
+      { field: "ok", message: "fine" },
+    ]);
+  });
+});
+
+describe("applyServerErrors", () => {
+  it("calls setError per field error and returns true", async () => {
+    const { applyServerErrors } = await import("@/lib/api/form-errors");
+    const setError = vi.fn();
+    const err = new ApiMutationError("bad", 422, [
+      { field: "port", message: "must be 1-65535" },
+      { field: "host", message: "required" },
+    ]);
+    const applied = applyServerErrors(setError, err);
+    expect(applied).toBe(true);
+    expect(setError).toHaveBeenCalledWith("port", {
+      type: "server",
+      message: "must be 1-65535",
+    });
+    expect(setError).toHaveBeenCalledWith("host", {
+      type: "server",
+      message: "required",
+    });
+  });
+
+  it("routes empty-path and unknown fields to the form root", async () => {
+    const { applyServerErrors } = await import("@/lib/api/form-errors");
+    const setError = vi.fn();
+    const err = new ApiMutationError("bad", 422, [
+      { field: "", message: "whole-body rule failed" },
+      { field: "stranger", message: "not on this form" },
+    ]);
+    applyServerErrors(setError, err, ["port", "host"]);
+    expect(setError).toHaveBeenCalledWith("root.serverError", {
+      type: "server",
+      message: "whole-body rule failed",
+    });
+    expect(setError).toHaveBeenCalledWith("root.serverError", {
+      type: "server",
+      message: "stranger: not on this form",
+    });
+  });
+
+  it("returns false and does nothing for non-422 errors", async () => {
+    const { applyServerErrors } = await import("@/lib/api/form-errors");
+    const setError = vi.fn();
+    expect(applyServerErrors(setError, new ApiMutationError("x", 500))).toBe(
+      false,
+    );
+    expect(applyServerErrors(setError, new Error("plain"))).toBe(false);
+    expect(setError).not.toHaveBeenCalled();
+  });
 });

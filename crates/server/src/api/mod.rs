@@ -62,7 +62,7 @@ pub mod ws_scan_events;
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use shared::error::{ApiError, ApiErrorCode};
+use shared::error::{ApiError, ApiErrorCode, FieldError};
 
 /// Build an error response from a typed [`ApiErrorCode`] + free-form message.
 ///
@@ -77,6 +77,27 @@ pub(crate) fn respond(
     let message = message.into();
     log_api_error(status, code.as_str(), &message);
     (status, Json(ApiError::new(code, message))).into_response()
+}
+
+/// [`respond`] plus the field-error list carried in `error.details`
+/// (`[{"field", "message"}]`). The single construction site for the
+/// field-level validation envelope — `Validated<T>` and any handler
+/// running garde manually route through here so the shape stays
+/// uniform. `message` should remain a complete human summary; the
+/// list is additive context for inline form binding.
+pub(crate) fn respond_with_field_errors(
+    status: StatusCode,
+    code: ApiErrorCode,
+    message: impl Into<String>,
+    fields: Vec<FieldError>,
+) -> Response {
+    let message = message.into();
+    log_api_error(status, code.as_str(), &message);
+    (
+        status,
+        Json(ApiError::with_field_errors(code, message, fields)),
+    )
+        .into_response()
 }
 
 /// Drop every API error into the ring buffer carrying its `error_code` +
