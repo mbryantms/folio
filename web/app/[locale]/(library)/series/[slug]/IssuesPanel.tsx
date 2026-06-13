@@ -12,7 +12,6 @@ import {
   Circle,
   FileCog,
   FolderPlus,
-  ListChecks,
   Pencil,
   Sparkles,
 } from "lucide-react";
@@ -27,6 +26,7 @@ import {
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { EditMetadataDialog } from "@/components/library/EditMetadataDialog";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
+import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Input } from "@/components/ui/input";
@@ -396,23 +396,12 @@ export function IssuesPanel({
             step={CARD_SIZE_STEP}
             defaultSize={CARD_SIZE_DEFAULT}
           />
-          <Button
+          <SelectModeButton
             ref={selectButtonRef}
-            variant="outline"
-            size="sm"
-            onClick={() => selection.enter()}
-            aria-label="Enter select mode"
-            aria-hidden={selection.selectMode}
-            tabIndex={selection.selectMode ? -1 : 0}
-            disabled={selection.selectMode}
-            className={cn(
-              "transition-opacity duration-150",
-              selection.selectMode && "pointer-events-none invisible opacity-0",
-            )}
-          >
-            <ListChecks className="mr-1.5 h-4 w-4" />
-            Select
-          </Button>
+            active={selection.selectMode}
+            onEnter={() => selection.enter()}
+            onExit={() => selection.exit()}
+          />
         </div>
       </div>
 

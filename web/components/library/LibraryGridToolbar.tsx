@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { BookmarkPlus, Filter, ListChecks, X } from "lucide-react";
+import { BookmarkPlus, Filter, X } from "lucide-react";
 
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import type { LibraryGridMode } from "@/components/library/library-grid-filters";
+import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { IssueSort, SeriesSort, SortOrder } from "@/lib/api/types";
-import { cn } from "@/lib/utils";
 
 const SERIES_SORT_LABELS: Record<SeriesSort, string> = {
   name: "Name",
@@ -67,6 +67,7 @@ export function LibraryGridToolbar({
   canSelect,
   selectMode,
   onEnterSelect,
+  onExitSelect,
   selectButtonRef,
 }: {
   mode: LibraryGridMode;
@@ -97,6 +98,8 @@ export function LibraryGridToolbar({
   selectMode: boolean;
   /** Enter multi-select mode (surfaces the SelectionToolbar). */
   onEnterSelect: () => void;
+  /** Exit multi-select mode (the button toggles to Cancel while active). */
+  onExitSelect: () => void;
   /** Forwarded so the grid can restore focus here on select-mode exit. */
   selectButtonRef?: React.Ref<HTMLButtonElement>;
 }) {
@@ -244,25 +247,14 @@ export function LibraryGridToolbar({
       ) : null}
 
       <div className="ml-auto flex items-center gap-2">
-        {canSelect ? (
-          <Button
+        {canSelect || selectMode ? (
+          <SelectModeButton
             ref={selectButtonRef}
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onEnterSelect}
-            aria-label="Enter select mode"
-            aria-hidden={selectMode}
-            tabIndex={selectMode ? -1 : 0}
-            disabled={selectMode}
-            className={cn(
-              "h-9 transition-opacity duration-150",
-              selectMode && "pointer-events-none invisible opacity-0",
-            )}
-          >
-            <ListChecks className="mr-1.5 h-4 w-4" />
-            Select
-          </Button>
+            active={selectMode}
+            onEnter={onEnterSelect}
+            onExit={onExitSelect}
+            className="h-9"
+          />
         ) : null}
         <CardSizeOptions
           cardSize={cardSize}

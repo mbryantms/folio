@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import {
   Bookmark as BookmarkIcon,
   Highlighter,
-  ListChecks,
   Search as SearchIcon,
   Star,
   StickyNote,
@@ -24,7 +23,7 @@ import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { PageHeader } from "@/components/admin/PageHeader";
-import { Button } from "@/components/ui/button";
+import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Input } from "@/components/ui/input";
 import {
@@ -262,26 +261,13 @@ export function MarkersList() {
                 className="pl-8"
               />
             </div>
-            {items.length > 0 ? (
-              <Button
+            {items.length > 0 || selection.selectMode ? (
+              <SelectModeButton
                 ref={selectButtonRef}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => selection.enter()}
-                aria-label="Enter select mode"
-                aria-hidden={selection.selectMode}
-                tabIndex={selection.selectMode ? -1 : 0}
-                disabled={selection.selectMode}
-                className={cn(
-                  "transition-opacity duration-150",
-                  selection.selectMode &&
-                    "pointer-events-none invisible opacity-0",
-                )}
-              >
-                <ListChecks className="mr-1.5 h-4 w-4" />
-                Select
-              </Button>
+                active={selection.selectMode}
+                onEnter={() => selection.enter()}
+                onExit={() => selection.exit()}
+              />
             ) : null}
             <CardSizeOptions
               cardSize={cardSize}
@@ -339,7 +325,7 @@ export function MarkersList() {
         <div
           role="radiogroup"
           aria-label="Marker layout"
-          className="ml-auto inline-flex items-center gap-0.5 rounded-md border p-0.5"
+          className="bg-muted ml-auto inline-flex items-center gap-0.5 rounded-md p-0.5"
         >
           {(
             [
@@ -356,8 +342,8 @@ export function MarkersList() {
               className={cn(
                 "rounded px-2 py-0.5 text-xs transition-colors",
                 layout === opt.value
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-accent/40",
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {opt.label}
@@ -388,7 +374,7 @@ export function MarkersList() {
             <div
               role="radiogroup"
               aria-label="Tag match mode"
-              className="ml-1 inline-flex items-center gap-0.5 rounded-md border p-0.5"
+              className="bg-muted ml-1 inline-flex items-center gap-0.5 rounded-md p-0.5"
             >
               {(["all", "any"] as const).map((mode) => (
                 <button
@@ -400,8 +386,8 @@ export function MarkersList() {
                   className={cn(
                     "rounded px-2 py-0.5 text-xs transition-colors",
                     tagMatch === mode
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:bg-accent/40",
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   Match {mode}

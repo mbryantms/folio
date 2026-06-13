@@ -25,7 +25,6 @@ import {
   FileCog,
   FolderPlus,
   GripVertical,
-  ListChecks,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -33,6 +32,7 @@ import { toast } from "sonner";
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import { BulkArchiveEditDialog } from "@/components/library/BulkArchiveEditDialog";
 import { IssueCard } from "@/components/library/IssueCard";
+import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { Badge } from "@/components/ui/badge";
@@ -308,25 +308,13 @@ export function CollectionViewDetail({
               step={CARD_SIZE_STEP}
               defaultSize={CARD_SIZE_DEFAULT}
             />
-            {orderedEntries.length > 0 && (
-              <Button
+            {(orderedEntries.length > 0 || selection.selectMode) && (
+              <SelectModeButton
                 ref={selectButtonRef}
-                variant="outline"
-                size="sm"
-                onClick={() => selection.enter()}
-                aria-label="Enter select mode"
-                aria-hidden={selection.selectMode}
-                tabIndex={selection.selectMode ? -1 : 0}
-                disabled={selection.selectMode}
-                className={cn(
-                  "transition-opacity duration-150",
-                  selection.selectMode &&
-                    "pointer-events-none invisible opacity-0",
-                )}
-              >
-                <ListChecks className="mr-1.5 h-4 w-4" />
-                Select
-              </Button>
+                active={selection.selectMode}
+                onEnter={() => selection.enter()}
+                onExit={() => selection.exit()}
+              />
             )}
           </>
         }
