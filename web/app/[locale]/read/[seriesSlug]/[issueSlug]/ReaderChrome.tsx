@@ -94,10 +94,16 @@ export function ReaderChrome({
   const setChromeVisible = useReaderStore((s) => s.setChromeVisible);
   const setChromePinned = useReaderStore((s) => s.setChromePinned);
 
+  // Keyboard focus inside the header pins auto-hide the same way an
+  // open popover does — otherwise the 4s idle timer could collapse
+  // the chrome (and `inert` it) while a chrome button held focus,
+  // stranding keyboard users on an invisible control.
+  const [headerFocused, setHeaderFocused] = useState(false);
+
   useChromeAutoHide({
     enabled: chromeAutoHide,
     visible: chromeVisible,
-    pinned: chromePinned,
+    pinned: chromePinned || headerFocused,
     setVisible: setChromeVisible,
   });
 
@@ -134,6 +140,16 @@ export function ReaderChrome({
         // continuous behind the status bar.
         className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-neutral-800/80 bg-neutral-950/85 pt-[max(0.5rem,var(--safe-top))] pr-[max(0.75rem,var(--safe-right))] pb-2 pl-[max(0.75rem,var(--safe-left))] text-sm text-neutral-100 backdrop-blur transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:-translate-y-full motion-reduce:transition-none"
         aria-hidden={mounted && chromeVisible ? undefined : true}
+        // `inert` removes the hidden chrome's buttons from the tab
+        // order — aria-hidden alone left 6+ focusable ghost controls
+        // behind the translate (WCAG 4.1.2).
+        inert={mounted && chromeVisible ? undefined : true}
+        onFocusCapture={() => setHeaderFocused(true)}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+            setHeaderFocused(false);
+          }
+        }}
       >
         <Tooltip>
           <TooltipTrigger asChild>

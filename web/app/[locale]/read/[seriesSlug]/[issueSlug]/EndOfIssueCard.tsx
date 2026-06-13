@@ -72,11 +72,23 @@ export function EndOfIssueCard({
 
   // Focus the primary CTA on open so keyboard users can hit Enter to
   // continue without an extra Tab. requestAnimationFrame so the focus
-  // happens after the slide-in animation starts.
+  // happens after the slide-in animation starts. On dismiss, focus
+  // returns to whatever held it before the card opened — without the
+  // restore, an Esc-dismiss stranded keyboard users at document.body.
   const primaryButtonRef = useRef<HTMLButtonElement>(null);
   const primaryLinkRef = useRef<HTMLAnchorElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      const previous = restoreFocusRef.current;
+      restoreFocusRef.current = null;
+      if (previous && previous.isConnected) previous.focus();
+      return;
+    }
+    restoreFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     const id = requestAnimationFrame(() => {
       if (source !== "none" && target) {
         primaryButtonRef.current?.focus();
@@ -95,6 +107,9 @@ export function EndOfIssueCard({
       aria-modal="false"
       aria-label="End of issue"
       aria-hidden={!open}
+      // The card is always mounted (CSS slide animation) — `inert`
+      // keeps its links/buttons out of the tab order while closed.
+      inert={open ? undefined : true}
       className={cn(
         // Floating card — vertically centered, small horizontal gap from
         // the screen edge so the page-turn arrows / chrome remain

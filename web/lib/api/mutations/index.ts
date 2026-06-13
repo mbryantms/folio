@@ -1880,6 +1880,30 @@ export function useDeleteMarker(
   );
 }
 
+/** Delete a marker whose id arrives at `mutate()` time. For hot
+ *  paths like the reader's `b`/`s` toggles, where the fixed-id
+ *  [`useDeleteMarker`] forced re-deriving a hook per page turn and
+ *  minted mutations bound to `""` whenever no marker existed on the
+ *  current page. Same invalidation set. */
+export function useDeleteMarkerById(
+  issueId: string,
+  opts?: { silent?: boolean },
+) {
+  const qc = useQueryClient();
+  return useApiMutation<unknown, string>(
+    (id) => ({ path: `/me/markers/${id}`, method: "DELETE" }),
+    {
+      ...(opts?.silent ? {} : { successMessage: "Removed" }),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["markers", "issue", issueId] });
+        qc.invalidateQueries({ queryKey: ["markers", "list"] });
+        qc.invalidateQueries({ queryKey: ["markers", "count"] });
+        qc.invalidateQueries({ queryKey: ["markers", "tags"] });
+      },
+    },
+  );
+}
+
 /** Apply a full reorder of entries in one transaction. The server
  *  rejects partial reorders — every current entry id must be present.
  *
