@@ -46,7 +46,22 @@ import {
   type PageTransitionResult,
 } from "@/lib/reader/use-page-transition";
 
-import { MarkerEditor } from "./MarkerEditor";
+import dynamic from "next/dynamic";
+
+// Lazy-load the marker editor (Sheet + form + its deps) so its bytes
+// leave the reader's first-load JS — it's only needed once the user
+// actually starts a marker edit (audit 2.5 bundle ratchet). `ssr: false`
+// because it's interactive client UI gated on a store flag.
+const MarkerEditor = dynamic(
+  () => import("./MarkerEditor").then((m) => m.MarkerEditor),
+  { ssr: false },
+);
+// Active-marker-mode indicator + touch cancel (audit C7); lazy since it's
+// only shown while a marker mode is active.
+const MarkerModePill = dynamic(
+  () => import("./MarkerModePill").then((m) => m.MarkerModePill),
+  { ssr: false },
+);
 import { MarkerOverlay } from "./MarkerOverlay";
 import { PageStrip } from "./PageStrip";
 import { PageImage } from "./PageImage";
@@ -144,6 +159,13 @@ export function Reader({
   const setMarkerMode = useReaderStore((s) => s.setMarkerMode);
   const markerModeForKeybinds = useReaderStore((s) => s.markerMode);
   const pendingMarkerForKeybinds = useReaderStore((s) => s.pendingMarker);
+  // Mount the lazy marker editor once a marker edit first opens, then keep
+  // it mounted so the Sheet's close animation plays and re-opens are
+  // instant ("adjust state during render" recipe — no effect).
+  const [markerEditorMounted, setMarkerEditorMounted] = useState(false);
+  if (pendingMarkerForKeybinds !== null && !markerEditorMounted) {
+    setMarkerEditorMounted(true);
+  }
 
   // Per-issue marker fetch — drives the overlay, the page-strip dots,
   // and the bookmark toggle's "is this page already bookmarked?"
@@ -968,7 +990,15 @@ export function Reader({
         direction={direction}
         pages={pages}
       />
-      <MarkerEditor issueId={issueId} pageNaturalSize={pageNaturalSize} />
+      {markerEditorMounted ? (
+        <MarkerEditor issueId={issueId} pageNaturalSize={pageNaturalSize} />
+      ) : null}
+      {markerModeForKeybinds !== "idle" ? (
+        <MarkerModePill
+          mode={markerModeForKeybinds}
+          onCancel={() => setMarkerMode("idle")}
+        />
+      ) : null}
       <EndOfIssueCard
         open={showEndCard}
         data={nextUp.data}
