@@ -51,7 +51,9 @@ type PersistedSlice =
   | "viewMode"
   | "direction"
   | "coverSolo"
-  | "markersHidden";
+  | "markersHidden"
+  | "brightness"
+  | "sepia";
 
 const storageKey = (slice: PersistedSlice, seriesId: string | null) =>
   `reader:${slice}:${seriesId ?? "_default"}`;
@@ -63,6 +65,8 @@ const isViewMode = (v: unknown): v is ViewMode =>
 const isDirection = (v: unknown): v is Direction => v === "ltr" || v === "rtl";
 const isBoolFlag = (v: unknown): v is "true" | "false" =>
   v === "true" || v === "false";
+const isNumericString = (v: unknown): v is string =>
+  typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v));
 
 function load<T>(
   slice: PersistedSlice,
@@ -96,6 +100,28 @@ export const loadCoverSolo = (seriesId: string | null): boolean | null => {
 export const loadMarkersHidden = (): boolean => {
   const raw = load("markersHidden", null, isBoolFlag);
   return raw === "true";
+};
+
+// Vision-adjustment bounds, shared by the setters and the loaders so a
+// persisted value can never re-hydrate outside the slider's range.
+const BRIGHTNESS_MIN = 0.5;
+const BRIGHTNESS_MAX = 1.5;
+const clampBrightness = (v: number) =>
+  Math.max(BRIGHTNESS_MIN, Math.min(BRIGHTNESS_MAX, v));
+const clampSepia = (v: number) => Math.max(0, Math.min(1, v));
+
+/** Brightness/sepia persist globally (not per-series): they're an
+ *  eye-comfort setting about the viewer's screen and room, not the
+ *  content, so they carry across the whole library — same reasoning as
+ *  {@link loadMarkersHidden}. Null when unset so the user default /
+ *  built-in fallback still applies. */
+export const loadBrightness = (): number | null => {
+  const raw = load("brightness", null, isNumericString);
+  return raw === null ? null : clampBrightness(Number(raw));
+};
+export const loadSepia = (): number | null => {
+  const raw = load("sepia", null, isNumericString);
+  return raw === null ? null : clampSepia(Number(raw));
 };
 
 export interface ReaderState {
@@ -256,13 +282,17 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   togglePageStrip: () => set({ pageStripVisible: !get().pageStripVisible }),
 
   // Brightness 0.5–1.5 keeps the slider sane (no pure black, no flooded
-  // whites). Sepia 0–1 matches the CSS function's input domain.
+  // whites). Sepia 0–1 matches the CSS function's input domain. Both
+  // persist globally so the comfort setting survives reloads and issue
+  // switches (resolved back in `init`).
   setBrightness: (v: number) => {
-    const clamped = Math.max(0.5, Math.min(1.5, v));
+    const clamped = clampBrightness(v);
+    save("brightness", null, String(clamped));
     set({ brightness: clamped });
   },
   setSepia: (v: number) => {
-    const clamped = Math.max(0, Math.min(1, v));
+    const clamped = clampSepia(v);
+    save("sepia", null, String(clamped));
     set({ sepia: clamped });
   },
   setCoverSolo: (v: boolean) => {
@@ -323,10 +353,12 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       chromeAutoHide: get().chromeAutoHide,
       chromePinned: false,
       pageStripVisible: initialPageStripVisible ?? false,
-      // Carry forward per-tab vision adjustments — they're a viewing-comfort
-      // setting, not a per-issue choice. Reset only on full reload.
-      brightness: get().brightness,
-      sepia: get().sepia,
+      // Vision adjustments are a viewing-comfort setting, not a per-issue
+      // choice. Persisted globally, so re-hydrate from localStorage on
+      // every issue switch / reload (falling back to the live value, then
+      // the built-in default).
+      brightness: loadBrightness() ?? get().brightness,
+      sepia: loadSepia() ?? get().sepia,
       // Resolution order: per-series localStorage > user default (from
       // MeView) > built-in fallback (true).
       coverSolo: loadCoverSolo(seriesId) ?? initialCoverSolo ?? true,
