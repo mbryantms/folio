@@ -12,8 +12,20 @@ import {
   useScanRuns,
 } from "@/lib/api/queries";
 import { useTriggerScan } from "@/lib/api/mutations";
+import { validateCron } from "@/lib/api/cron";
 import { cn } from "@/lib/utils";
 import { ScanModeMenu } from "./ScanModeMenu";
+
+/** Render the cron schedule as the actual next run time — the raw
+ *  cron string ("0 3 * * *") made admins parse cron in their heads on
+ *  the at-a-glance status card. Falls back to the raw string when the
+ *  stored value doesn't parse. */
+function nextScheduledScan(cron: string | null | undefined): string {
+  if (!cron) return "not scheduled";
+  const parsed = validateCron(cron);
+  if (!parsed.ok || parsed.nextRuns.length === 0) return cron;
+  return parsed.nextRuns[0]!.toLocaleString();
+}
 
 export function LibraryOverview({ id }: { id: string }) {
   const lib = useLibrary(id);
@@ -104,7 +116,7 @@ export function LibraryOverview({ id }: { id: string }) {
           />
           <StatusMetric
             label="Next scheduled scan"
-            value={lib.data.scan_schedule_cron ?? "not scheduled"}
+            value={nextScheduledScan(lib.data.scan_schedule_cron)}
           />
           <StatusMetric
             label="Soft-delete window"

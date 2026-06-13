@@ -58,7 +58,8 @@ type Status =
   | "running"
   | "thumbnailing"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 type ProgressEvent = Extract<ScanEvent, { type: "scan.progress" }>;
 type HealthItem = {
   kind: string;
@@ -1033,10 +1034,9 @@ function statusFromRun(run?: ScanRunView): Status {
   if (run.state === "queued") return "queued";
   if (run.state === "complete" || run.state === "completed") return "completed";
   if (run.state === "failed") return "failed";
-  // Cancelled runs land here when an admin hit the manual cancel
-  // endpoint. UI-wise we treat them as a terminal failed state so
-  // the run drops out of "active" and the topbar pill clears.
-  if (run.state === "cancelled") return "failed";
+  // Operator-initiated cancels are a distinct terminal state — a red
+  // FAILED pill for a deliberate action trains admins to ignore red.
+  if (run.state === "cancelled") return "cancelled";
   return "idle";
 }
 
@@ -1194,6 +1194,7 @@ function eventKey(evt: ScanEvent): string {
 
 function phaseLabel(phase: string | undefined, status: Status): string {
   if (status === "failed") return "Failed";
+  if (status === "cancelled") return "Cancelled";
   if (status === "thumbnailing") return "Generating thumbnails";
   if (status === "completed" || phase === "complete") return "Complete";
   switch (phase) {
@@ -1219,6 +1220,7 @@ function scanLabel(status: Status): string {
   if (status === "thumbnailing") return "Generating thumbnails";
   if (status === "completed") return "Last scan completed";
   if (status === "failed") return "Last scan failed";
+  if (status === "cancelled") return "Last scan cancelled";
   if (status === "queued") return "Scan queued";
   return "Idle";
 }
@@ -1404,6 +1406,8 @@ function StatusPill({ status }: { status: Status }) {
         return "border-emerald-700/60 bg-emerald-950/40 text-emerald-200";
       case "failed":
         return "border-destructive/60 bg-destructive/10 text-destructive";
+      // Cancelled is operator-initiated, not an error — neutral tone.
+      case "cancelled":
       default:
         return "border-border bg-muted/40 text-muted-foreground";
     }

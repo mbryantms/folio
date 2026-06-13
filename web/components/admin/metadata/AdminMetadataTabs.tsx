@@ -1,20 +1,15 @@
 "use client";
 
 /**
- * Tab shell for `/admin/metadata`. Four tabs:
+ * Tab shell for `/admin/metadata`. Five tabs:
  *   - Dashboard — counts + quota gauges (M6)
  *   - Providers — per-provider test buttons + credential forms (M6)
+ *   - Review — bulk-fetch result queue, deep-linkable via `?batch=`
  *   - Runs — paginated metadata_run history with detail drilldown (M6)
  *   - Settings — weekly-refresh toggle + cron + staleness (M7 follow-up)
  *
- * (The Review-queue tab was removed — it was dismiss-only with no path to
- * apply; medium/low candidates are visible in Runs and acted on via the
- * per-entity Fetch-metadata dialog.)
- *
- * The Settings tab landed 2026-05-26 after the M7 cron + bulk-refresh
- * endpoint shipped without a UI surface — Folio has no generic
- * `/admin/settings` page, so per-feature settings need their own
- * forms.
+ * Folio has no generic `/admin/settings` page, so per-feature settings
+ * need their own forms (the Settings tab here).
  */
 
 import dynamic from "next/dynamic";

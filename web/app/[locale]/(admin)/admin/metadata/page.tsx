@@ -6,7 +6,7 @@ export default function AdminMetadataPage() {
     <>
       <PageHeader
         title="Metadata"
-        description="ComicVine + Metron provider health, auto-synced series, and per-run history. Settings live under /admin/settings (filter: metadata.*)."
+        description="ComicVine + Metron provider health, auto-synced series, and per-run history. Operational settings live in the Settings tab below."
       />
       <AdminMetadataTabs />
     </>

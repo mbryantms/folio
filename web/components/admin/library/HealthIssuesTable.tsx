@@ -26,10 +26,13 @@ import {
   useTriggerDeepValidate,
 } from "@/lib/api/mutations";
 import type { HealthIssueView } from "@/lib/api/types";
+import {
+  HEALTH_SEVERITIES,
+  type HealthSeverityFilter,
+} from "@/components/admin/severity";
 import { cn } from "@/lib/utils";
 
 type Filter = "open" | "resolved" | "dismissed" | "all";
-type Severity = "all" | "info" | "warn" | "error";
 
 function severityVariant(s: string): "secondary" | "destructive" {
   return s === "error" ? "destructive" : "secondary";
@@ -83,7 +86,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
   const dismiss = useDismissHealthIssue(libraryId);
   const deepValidate = useTriggerDeepValidate(libraryId);
   const [filter, setFilter] = React.useState<Filter>("open");
-  const [severity, setSeverity] = React.useState<Severity>("all");
+  const [severity, setSeverity] = React.useState<HealthSeverityFilter>("all");
   const [focusedKind, setFocusedKind] = React.useState<string | null>(null);
   const [hiddenKinds, setHiddenKinds] = React.useState<Set<string>>(
     () => new Set(),
@@ -272,7 +275,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
           </FilterPill>
         ))}
         <span className="text-muted-foreground ml-2 text-xs">Severity:</span>
-        {(["all", "info", "warn", "error"] as Severity[]).map((s) => (
+        {(["all", ...HEALTH_SEVERITIES] as HealthSeverityFilter[]).map((s) => (
           <FilterPill
             key={s}
             active={severity === s}
