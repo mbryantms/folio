@@ -14,6 +14,7 @@ import { FilterSheet } from "@/components/library/FilterSheet";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { LibraryGridToolbar } from "@/components/library/LibraryGridToolbar";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
 import type { FilterBuilderState } from "@/components/filters/filter-builder";
 import type {
   LibraryGridInitialFilters,
@@ -39,13 +40,20 @@ import { useLibraryGridFilters } from "@/lib/library/use-grid-filters";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
-import { cn } from "@/lib/utils";
 
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 160;
 const CARD_SIZE_STORAGE_KEY = "folio.libraryGrid.cardSize";
+
+// Approximate height (px) of the card text block below the cover, used
+// only as the virtualizer's initial row-height estimate (the real row
+// height is measured per row, so these don't need to be exact). Series:
+// title line + meta line + card gap/padding. Issues: number + title +
+// finished badge row run a touch taller.
+const SERIES_TEXT_H = 56;
+const ISSUE_TEXT_H = 64;
 
 /** Library grid: paginated series listing with metadata-driven
  *  filters in a right-side Sheet drawer. Default sort is alphabetical
@@ -268,30 +276,9 @@ export function LibraryGridView({
     wasSelectModeRef.current = selection.selectMode;
   }, [selection.selectMode]);
 
-  // Auto-fetch the next page when the sentinel scrolls into view —
-  // mirrors `IssuesPanel` so the cadence feels familiar. Depend on
-  // the three fields, not the whole result object: TanStack returns a
-  // fresh object identity every render, so `[query]` tore down and
-  // recreated the observer on every keystroke/state change.
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
-  React.useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          if (hasNextPage && !isFetchingNextPage) {
-            void fetchNextPage();
-          }
-        }
-      },
-      { rootMargin: "400px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-
+  // Infinite fetch is driven from inside `VirtualizedCardGrid` (last
+  // virtual row nearing the loaded end) — the windowed DOM makes a
+  // bottom IntersectionObserver sentinel unreliable.
   const gridStyle: React.CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   };
@@ -506,62 +493,49 @@ export function LibraryGridView({
           hasQuery={!!trimmedQ}
           onClearFacets={clearFacets}
         />
-      ) : mode === "series" ? (
-        <ul role="list" className="grid gap-4" style={gridStyle}>
-          {seriesItems.map((s) => (
-            <li key={s.id}>
+      ) : (
+        <VirtualizedCardGrid
+          items={items}
+          cardSize={cardSize}
+          estimateTextHeight={isSeriesMode ? SERIES_TEXT_H : ISSUE_TEXT_H}
+          hasNextPage={!!query.hasNextPage}
+          isFetchingNextPage={query.isFetchingNextPage}
+          fetchNextPage={() => void query.fetchNextPage()}
+          enableScrollRestore
+          renderCard={(item) =>
+            isSeriesMode ? (
               <SeriesCard
-                series={s}
+                series={item as (typeof seriesItems)[number]}
                 size="md"
                 selectMode={
                   selection.selectMode
                     ? {
                         isActive: true,
-                        isSelected: selection.isSelected(s.id),
-                        onToggle: (ev) => selection.toggle(s.id, ev),
+                        isSelected: selection.isSelected(item.id),
+                        onToggle: (ev) => selection.toggle(item.id, ev),
                       }
                     : undefined
                 }
                 onEnterSelectMode={(id) => selection.toggle(id)}
               />
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <ul role="list" className="grid gap-4" style={gridStyle}>
-          {issueItems.map((i) => (
-            <li key={i.id}>
+            ) : (
               <IssueCard
-                issue={i}
+                issue={item as (typeof issueItems)[number]}
                 selectMode={
                   selection.selectMode
                     ? {
                         isActive: true,
-                        isSelected: selection.isSelected(i.id),
-                        onToggle: (ev) => selection.toggle(i.id, ev),
+                        isSelected: selection.isSelected(item.id),
+                        onToggle: (ev) => selection.toggle(item.id, ev),
                       }
                     : undefined
                 }
                 onEnterSelectMode={(id) => selection.toggle(id)}
               />
-            </li>
-          ))}
-        </ul>
+            )
+          }
+        />
       )}
-
-      <div
-        ref={sentinelRef}
-        aria-hidden
-        className={cn("h-12", query.hasNextPage ? "" : "hidden")}
-      />
-      {query.isFetchingNextPage ? (
-        <p
-          role="status"
-          className="text-muted-foreground mt-2 text-center text-xs"
-        >
-          Loading more…
-        </p>
-      ) : null}
 
       <FilterSheet
         open={filterOpen}

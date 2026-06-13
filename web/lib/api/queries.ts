@@ -1187,6 +1187,11 @@ export function useSeriesListInfinite(
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: options.enabled ?? true,
+    // Keep loaded pages cached longer than the 5-min default so a
+    // browse → open → back round-trip restores the full windowed grid
+    // (and its scroll position) from cache instead of refetching page 1
+    // and collapsing the content height (audit B15 / G1).
+    gcTime: 30 * 60_000,
   });
 }
 
@@ -1208,6 +1213,9 @@ export function useIssuesCrossListInfinite(
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: options.enabled ?? true,
+    // See `useSeriesListInfinite` — keep pages cached for back-nav grid
+    // + scroll restoration (audit B15 / G1).
+    gcTime: 30 * 60_000,
   });
 }
 
