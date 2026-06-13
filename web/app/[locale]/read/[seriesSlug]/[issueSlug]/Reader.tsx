@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useReaderStore, type FitMode } from "@/lib/reader/store";
@@ -27,8 +27,13 @@ import { readerUrl } from "@/lib/urls";
 import { useCreateMarker, useDeleteMarkerById } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
-import type { PageInfo } from "@/lib/api/types";
+import type { NextUpView, PageInfo } from "@/lib/api/types";
+import {
+  computeWebtoonWindow,
+  placeholderAspectRatio,
+} from "@/lib/reader/webtoon-window";
 import { EndOfIssueCard } from "./EndOfIssueCard";
+import { WebtoonEndFooter } from "./WebtoonEndFooter";
 import {
   usePageTransition,
   type PageTransitionResult,
@@ -607,6 +612,10 @@ export function Reader({
     currentPage,
     totalPages,
     incognito: suppressWrites,
+    // Webtoon scroll-tracking drives `currentPage` both ways; persist a
+    // monotonic high-water page so a scroll-up can't regress progress
+    // (audit risk #5). Single/double keep raw writes — jumps are intent.
+    monotonic: viewMode === "webtoon",
   });
 
   // M6a — capture the reading session (idempotent 30s heartbeat + final
@@ -800,6 +809,10 @@ export function Reader({
             pages={pages}
             fitClass={fitClass}
             onChromeZone={toggleChrome}
+            nextUpData={nextUp.data}
+            nextUpLoading={nextUp.isLoading}
+            onReadNext={continueFromEndCard}
+            exitUrl={exitUrl}
           />
         ) : viewMode === "double" ? (
           <DoublePageView
@@ -1078,6 +1091,10 @@ function WebtoonView({
   pages,
   fitClass,
   onChromeZone,
+  nextUpData,
+  nextUpLoading,
+  onReadNext,
+  exitUrl,
 }: {
   issueId: string;
   totalPages: number;
@@ -1092,6 +1109,11 @@ function WebtoonView({
    *  this, touch users in webtoon had no way to bring back the
    *  auto-hidden chrome short of pressing the `c` keybind. */
   onChromeZone: () => void;
+  /** Next-up resolver data for the inline end-of-chapter footer (C2). */
+  nextUpData: NextUpView | undefined;
+  nextUpLoading: boolean;
+  onReadNext: () => void;
+  exitUrl: string;
 }) {
   const markerMode = useReaderStore((s) => s.markerMode);
   const currentPage = useReaderStore((s) => s.currentPage);
@@ -1178,21 +1200,51 @@ function WebtoonView({
     });
   }, [currentPage]);
 
+  // Window rendering to ±N pages around the current one (audit C1b).
+  // Every page keeps a stable `data-page-idx` wrapper mounted (so the
+  // IntersectionObserver above never loses an element and the observed
+  // set never churns); only the heavy body — `<PageImage>` +
+  // `<MarkerOverlay>` — mounts inside the window. Off-window slots are
+  // sized placeholders (same `fitClass` + the page's aspect-ratio) so the
+  // scroll height is exact: resume lands right and the placeholder→image
+  // swap doesn't shift layout.
+  const mountWindow = computeWebtoonWindow(currentPage, totalPages);
+
   return (
     <main
       ref={containerRef}
       className="flex min-h-screen flex-col items-center pt-(--safe-top) pb-(--safe-bottom)"
     >
-      {Array.from({ length: totalPages }, (_, i) => (
-        <WebtoonPage
-          key={`${issueId}-${i}`}
-          issueId={issueId}
-          pageIndex={i}
-          pageInfo={pages[i]}
-          fitClass={fitClass}
-          eager={i < 3}
-        />
-      ))}
+      {Array.from({ length: totalPages }, (_, i) => {
+        const within = i >= mountWindow.start && i <= mountWindow.end;
+        return (
+          <div key={`${issueId}-${i}`} data-page-idx={i} className="relative">
+            {within ? (
+              <WebtoonPage
+                issueId={issueId}
+                pageIndex={i}
+                pageInfo={pages[i]}
+                fitClass={fitClass}
+                eager={i < 3 || Math.abs(i - currentPage) <= 1}
+              />
+            ) : (
+              <span className="flex w-full justify-center">
+                <span
+                  aria-hidden="true"
+                  className={`block ${fitClass}`}
+                  style={{ aspectRatio: placeholderAspectRatio(pages[i]) }}
+                />
+              </span>
+            )}
+          </div>
+        );
+      })}
+      <WebtoonEndFooter
+        data={nextUpData}
+        isLoading={nextUpLoading}
+        onReadNext={onReadNext}
+        exitUrl={exitUrl}
+      />
       {markerMode === "idle" ? (
         // Chrome-toggle tap region for webtoon. `<TapZones>` in
         // single/double covers the page with three columns
@@ -1233,7 +1285,7 @@ function WebtoonView({
  *  didn't show and the highlight keybind / chrome menu silently did
  *  nothing because there was no overlay to drag on.
  */
-function WebtoonPage({
+const WebtoonPage = memo(function WebtoonPage({
   issueId,
   pageIndex,
   pageInfo,
@@ -1259,15 +1311,12 @@ function WebtoonPage({
     pageInfo?.image_width && pageInfo?.image_height
       ? { width: pageInfo.image_width, height: pageInfo.image_height }
       : undefined;
+  // No own wrapper: the parent `WebtoonView` renders the stable
+  // `data-page-idx` `relative` slot (so the observer never loses it
+  // across the windowing swap), which also serves as `<MarkerOverlay>`'s
+  // positioned ancestor.
   return (
-    <div
-      data-page-idx={pageIndex}
-      // `relative` so the overlay's `position: absolute` resolves to
-      // this wrapper rather than the scrolling `<main>`. The overlay
-      // walks up from its own SVG to find this positioned ancestor
-      // and uses its bounding box to align with the image.
-      className="relative"
-    >
+    <>
       <PageImage
         src={`/issues/${issueId}/pages/${pageIndex}`}
         alt={`Page ${pageIndex + 1}`}
@@ -1283,9 +1332,9 @@ function WebtoonPage({
         imgRef={imgRef}
         naturalSize={naturalSize}
       />
-    </div>
+    </>
   );
-}
+});
 
 /** Pointer-only navigation zones. The whole surface is `aria-hidden`
  *  AND its buttons are `tabIndex={-1}`: focusable descendants inside

@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
 import { invalidateRails } from "@/lib/api/mutations";
 import { queryKeys } from "@/lib/api/queries";
+import { nextPersistedProgressPage } from "@/lib/reader/webtoon-window";
 
 const PROGRESS_DEBOUNCE_MS = 300;
 
@@ -49,22 +50,45 @@ export function useReaderProgressWrite(opts: {
   currentPage: number;
   totalPages: number;
   incognito: boolean;
+  /**
+   * Webtoon-only (audit risk #5): persist a monotonic high-water page so
+   * the scroll observer dragging `currentPage` backward (a scroll-up, or
+   * the interim sweep of a programmatic jump) can't regress the saved
+   * page. Off for single/double, where a PageStrip/keyboard jump-back is
+   * an *intentional* resume change that should persist as-is.
+   */
+  monotonic?: boolean;
 }): void {
-  const { issueId, currentPage, totalPages, incognito } = opts;
+  const { issueId, currentPage, totalPages, incognito, monotonic = false } =
+    opts;
   const qc = useQueryClient();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The body the debounce timer would send, kept in a ref so the
   // pagehide flush can post it even though the timer hasn't fired.
   const pendingBody = useRef<Record<string, unknown> | null>(null);
+  // High-water mark for the monotonic guard. Seeded from the first
+  // (resumed) page; reset when the issue changes.
+  const highWater = useRef(currentPage);
+  useEffect(() => {
+    highWater.current = currentPage;
+    // Only reset on issue change — seeding the new issue's resume page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issueId]);
 
   useEffect(() => {
     if (!issueId) return;
     if (incognito) return;
     if (timer.current) clearTimeout(timer.current);
     const onLastPage = currentPage >= totalPages - 1;
+    // `finished` stays keyed on the REAL current page — only assert it
+    // when genuinely on the last page, never off the high-water mark.
+    const page = monotonic
+      ? nextPersistedProgressPage(highWater.current, currentPage)
+      : currentPage;
+    if (monotonic) highWater.current = page;
     const body: Record<string, unknown> = {
       issue_id: issueId,
-      page: currentPage,
+      page,
     };
     if (onLastPage) body.finished = true;
     pendingBody.current = body;
@@ -94,7 +118,7 @@ export function useReaderProgressWrite(opts: {
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [currentPage, incognito, issueId, qc, totalPages]);
+  }, [currentPage, incognito, issueId, monotonic, qc, totalPages]);
 
   // Flush the in-flight debounce on tab close / app switch. keepalive
   // survives the unload and carries the CSRF header. Idempotent with
