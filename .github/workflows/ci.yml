@@ -190,6 +190,10 @@ jobs:
         run: pnpm --filter web run lint
       - if: env.WEB == 'true'
         run: pnpm --filter web run typecheck
+      # Registry gate (audit H1a): query definitions must use the
+      # queryKeys registry, never an inline tuple literal.
+      - if: env.WEB == 'true'
+        run: pnpm --filter web run check-query-keys
       # Status-color contrast gate (audit F1/F2): no bare light-shade
       # status text without a dark: fallback (invisible on light themes).
       - if: env.WEB == 'true'
