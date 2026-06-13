@@ -27,6 +27,7 @@ export function PageImage({
   fetchPriority,
   onNaturalSize,
   imgRef: externalImgRef,
+  dimensions,
 }: {
   src: string;
   alt: string;
@@ -41,6 +42,18 @@ export function PageImage({
    *  flex wrapper. Critical at fit=height where the image is narrower
    *  than the row container and centered inside it. */
   imgRef?: React.RefObject<HTMLImageElement | null>;
+  /** Server-known intrinsic page dimensions. Rendered as the img's
+   *  `width`/`height` attributes so the browser reserves layout
+   *  height before the bytes arrive (the attributes only feed the
+   *  aspect ratio — the fit classes still control rendered size, and
+   *  the intrinsic ratio takes over on load, so a wrong hint can't
+   *  distort the image). Webtoon mode passes this so a 200-page
+   *  chapter doesn't mount as 200 zero-height images — which
+   *  defeated `loading="lazy"` (everything sat inside the lazy
+   *  margin), broke resume-scroll positioning, and let the
+   *  most-visible-page observer persist regressed progress while
+   *  decode shifted layout. */
+  dimensions?: { width: number; height: number };
 }) {
   const [loaded, setLoaded] = useState(false);
   const internalImgRef = useRef<HTMLImageElement>(null);
@@ -94,6 +107,8 @@ export function PageImage({
         // useLayoutEffect above, so they paint at full opacity on
         // the first frame (no flash). `motion-reduce` honors
         // `prefers-reduced-motion`.
+        width={dimensions?.width}
+        height={dimensions?.height}
         className={`block ${fitClass} transition-opacity duration-150 ease-out motion-reduce:transition-none ${
           loaded ? "opacity-100" : "opacity-0"
         }`}

@@ -266,6 +266,10 @@ export function PageStrip({
         aria-label="Page navigator"
         data-state={mounted && visible ? "open" : "closed"}
         aria-hidden={mounted && visible ? undefined : true}
+        // `inert` while closed: the strip holds up to `totalPages`
+        // thumbnail buttons — without it, a 200-page issue put ~200
+        // invisible tab stops behind the translate (WCAG 4.1.2).
+        inert={mounted && visible ? undefined : true}
         className="fixed inset-x-0 bottom-0 z-20 transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:translate-y-full motion-reduce:transition-none"
       >
         {/* Background bar — only as tall as a non-active thumb. The active

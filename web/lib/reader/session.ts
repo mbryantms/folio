@@ -16,10 +16,13 @@
  *   aggregator. We do NOT remove the existing progress writer — sessions
  *   are coarse (30s heartbeat) while progress is fine-grained (300ms
  *   debounce per page turn) and they answer different questions.
- * - sendBeacon final flush: CSRF middleware doesn't support custom headers
- *   on sendBeacon, so the final close is best-effort. The server's
- *   dangling-session sweeper closes any session whose `last_heartbeat_at`
- *   is > 5 min stale.
+ * - Final flush uses `fetch(..., { keepalive: true })`: keepalive
+ *   survives the unload AND carries the CSRF header, which sendBeacon
+ *   couldn't. (The old sendBeacon also posted to the bare
+ *   `/me/reading-sessions` path — the API mounts under `/api/`, so it
+ *   404'd into the Next fallback and never once succeeded.) The
+ *   server's dangling-session sweeper remains the backstop for any
+ *   session whose `last_heartbeat_at` goes > 5 min stale.
  * - Strict mode: we generate `client_session_id` once per mount and store
  *   it in a ref. The unique constraint on the server makes any
  *   double-submit during dev-mode double-mount idempotent.
@@ -31,7 +34,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 
-import { apiFetch } from "@/lib/api/auth-refresh";
+import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const TICK_INTERVAL_MS = 1_000;
@@ -258,20 +261,28 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
     flushedRef.current = true;
     const payload = buildPayload(true);
     if (!payload) return;
-    // Best-effort: try sendBeacon (CSRF will reject; that's expected — the
-    // dangling-session sweeper finishes the row server-side). We still
-    // attempt the regular fetch which has CSRF — typically that succeeds
-    // before the tab dies on desktop. Pass `qc` so the activity/stats
-    // surfaces get marked stale when the regular-fetch path completes.
-    // The sendBeacon path commits server-side but has no JS continuation
-    // (tab is unloading); on the next mount of an activity/stats page,
-    // the now-stale cache refetches and picks up the row anyway.
+    // Two writes, both idempotent via the (user_id, client_session_id)
+    // unique index:
+    //  - `postSession` (apiFetch) has the refresh-and-retry path and the
+    //    cache invalidation continuation — it wins when the JS context
+    //    survives (client-side nav, unmount).
+    //  - The keepalive fetch survives tab close / app switch on mobile,
+    //    where apiFetch is routinely killed mid-flight. keepalive
+    //    carries headers, so CSRF works (unlike the old sendBeacon).
     void postSession(payload, { invalidateActivityOn: qc });
-    if (typeof navigator !== "undefined" && navigator.sendBeacon) {
-      const blob = new Blob([JSON.stringify(payload)], {
-        type: "application/json",
+    if (typeof fetch !== "undefined") {
+      const csrf = getCsrfToken();
+      void fetch("/api/me/reading-sessions", {
+        method: "POST",
+        keepalive: true,
+        headers: {
+          "Content-Type": "application/json",
+          ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+        },
+        body: JSON.stringify(payload),
+      }).catch(() => {
+        // Unload races are expected; the sweeper is the backstop.
       });
-      navigator.sendBeacon("/me/reading-sessions", blob);
     }
   }, [buildPayload, minActiveMs, minPages, qc]);
 
@@ -279,7 +290,16 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
     if (!trackingEnabled) return;
     const onPageHide = () => finalize();
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") finalize();
+      if (document.visibilityState === "hidden") {
+        finalize();
+      } else {
+        // Coming back: the user app-switched (mobile) or tab-switched,
+        // and reading continues. Re-arm so the *real* exit posts a
+        // final payload too — finalize() was previously one-shot, so a
+        // single tab-switch permanently disarmed the flush while
+        // heartbeats kept running.
+        flushedRef.current = false;
+      }
     };
     window.addEventListener("pagehide", onPageHide);
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -339,12 +359,6 @@ function clamp(n: number, lo: number, hi: number): number {
   if (n < lo) return lo;
   if (n > hi) return hi;
   return n;
-}
-
-function getCsrfToken(): string | null {
-  if (typeof document === "undefined") return null;
-  const m = document.cookie.match(/(?:^|;\s*)__Host-comic_csrf=([^;]+)/);
-  return m ? decodeURIComponent(m[1]!) : null;
 }
 
 async function postSession(

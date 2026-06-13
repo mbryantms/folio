@@ -24,7 +24,7 @@ import { useReaderSwipe } from "@/lib/reader/use-swipe";
 import { useReaderKeymap } from "@/lib/reader/use-keymap";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
 import { readerUrl } from "@/lib/urls";
-import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations";
+import { useCreateMarker, useDeleteMarkerById } from "@/lib/api/mutations";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { PageInfo } from "@/lib/api/types";
@@ -284,25 +284,17 @@ export function Reader({
       ),
     [issueMarkers.data, currentPage],
   );
-  // The delete mutation hook needs an id at construction time; mint
-  // it only when there's something to delete. `silent: true` so the
-  // keybind-specific toast below ("Removed bookmark on page X") is the
-  // only success signal — without it, the hook's generic "Removed"
-  // would fire alongside, double-toasting one click.
-  const deleteExistingBookmark = useDeleteMarker(
-    existingPageBookmark?.id ?? "",
-    issueId,
-    { silent: true },
-  );
-  const deleteFavoriteMarker = useDeleteMarker(
-    existingPageFavorite?.id ?? "",
-    issueId,
-    { silent: true },
-  );
+  // One by-id delete mutation serves both toggles — the id arrives at
+  // mutate() time, so there's no per-page-turn hook re-derivation and
+  // no mutation ever bound to "". `silent: true` so the keybind-
+  // specific toast below ("Removed bookmark on page X") is the only
+  // success signal — without it, the hook's generic "Removed" would
+  // fire alongside, double-toasting one click.
+  const deleteMarkerById = useDeleteMarkerById(issueId, { silent: true });
   const toggleBookmark = useCallback(() => {
     if (existingPageBookmark) {
       const snapshot = existingPageBookmark;
-      deleteExistingBookmark.mutate(undefined, {
+      deleteMarkerById.mutate(snapshot.id, {
         onSuccess: () =>
           toast.success(`Removed bookmark on page ${currentPage + 1}`, {
             duration: UNDO_TOAST_DURATION_MS,
@@ -326,7 +318,7 @@ export function Reader({
     );
   }, [
     existingPageBookmark,
-    deleteExistingBookmark,
+    deleteMarkerById,
     createMarker,
     issueId,
     currentPage,
@@ -338,7 +330,7 @@ export function Reader({
   const toggleFavorite = useCallback(() => {
     if (existingPageFavorite) {
       const snapshot = existingPageFavorite;
-      deleteFavoriteMarker.mutate(undefined, {
+      deleteMarkerById.mutate(snapshot.id, {
         onSuccess: () =>
           toast.success(`Unstarred page ${currentPage + 1}`, {
             duration: UNDO_TOAST_DURATION_MS,
@@ -362,7 +354,7 @@ export function Reader({
     );
   }, [
     existingPageFavorite,
-    deleteFavoriteMarker,
+    deleteMarkerById,
     createMarker,
     issueId,
     currentPage,
@@ -805,6 +797,7 @@ export function Reader({
           <WebtoonView
             issueId={issueId}
             totalPages={totalPages}
+            pages={pages}
             fitClass={fitClass}
             onChromeZone={toggleChrome}
           />
@@ -1082,11 +1075,15 @@ function DoublePagePane({
 function WebtoonView({
   issueId,
   totalPages,
+  pages,
   fitClass,
   onChromeZone,
 }: {
   issueId: string;
   totalPages: number;
+  /** Server-known page dims — used to reserve each page's layout
+   *  height (`aspect-ratio`) before the bytes arrive. */
+  pages: PageInfo[];
   fitClass: string;
   /** Called when the user taps to toggle the reader chrome. Mirrors
    *  the middle-tap behavior of `<TapZones>` in single / double
@@ -1191,6 +1188,7 @@ function WebtoonView({
           key={`${issueId}-${i}`}
           issueId={issueId}
           pageIndex={i}
+          pageInfo={pages[i]}
           fitClass={fitClass}
           eager={i < 3}
         />
@@ -1212,6 +1210,11 @@ function WebtoonView({
         // access to the SVG overlays.
         <button
           type="button"
+          // Pointer-only like <TapZones> — a full-viewport invisible
+          // button as the page's first tab stop (with no focus ring)
+          // was a keyboard trap; `t` toggles chrome for keyboards.
+          tabIndex={-1}
+          aria-hidden="true"
           aria-label="Toggle controls"
           onClick={onChromeZone}
           className="pointer-events-auto fixed inset-0 z-10 cursor-pointer touch-pan-y bg-transparent"
@@ -1233,11 +1236,13 @@ function WebtoonView({
 function WebtoonPage({
   issueId,
   pageIndex,
+  pageInfo,
   fitClass,
   eager,
 }: {
   issueId: string;
   pageIndex: number;
+  pageInfo?: PageInfo;
   fitClass: string;
   eager: boolean;
 }) {
@@ -1246,6 +1251,14 @@ function WebtoonPage({
     width: number;
     height: number;
   } | null>(null);
+  // Reserve height before load via the img width/height attributes
+  // (exact — the intrinsic ratio takes over on decode, so no shift
+  // and no distortion risk). Pages without server-known dims keep
+  // today's behavior; the scanner records dims for the common case.
+  const dimensions =
+    pageInfo?.image_width && pageInfo?.image_height
+      ? { width: pageInfo.image_width, height: pageInfo.image_height }
+      : undefined;
   return (
     <div
       data-page-idx={pageIndex}
@@ -1262,6 +1275,7 @@ function WebtoonPage({
         loading={eager ? "eager" : "lazy"}
         imgRef={imgRef}
         onNaturalSize={(w, h) => setNaturalSize({ width: w, height: h })}
+        dimensions={dimensions}
       />
       <MarkerOverlay
         issueId={issueId}
@@ -1273,6 +1287,11 @@ function WebtoonPage({
   );
 }
 
+/** Pointer-only navigation zones. The whole surface is `aria-hidden`
+ *  AND its buttons are `tabIndex={-1}`: focusable descendants inside
+ *  an aria-hidden subtree are an outright ARIA violation, and
+ *  keyboard users already page via the arrow-key keymap — three
+ *  invisible full-height tab stops helped nobody. */
 function TapZones({
   onLeft,
   onRight,
@@ -1286,13 +1305,20 @@ function TapZones({
     <div className="absolute inset-0 z-10 grid grid-cols-3" aria-hidden="true">
       <button
         type="button"
+        tabIndex={-1}
         className="cursor-w-resize"
         onClick={onLeft}
         aria-label="Left zone"
       />
-      <button type="button" onClick={onChrome} aria-label="Toggle controls" />
       <button
         type="button"
+        tabIndex={-1}
+        onClick={onChrome}
+        aria-label="Toggle controls"
+      />
+      <button
+        type="button"
+        tabIndex={-1}
         className="cursor-e-resize"
         onClick={onRight}
         aria-label="Right zone"

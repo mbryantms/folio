@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { apiFetch } from "@/lib/api/auth-refresh";
+import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
 import { invalidateRails } from "@/lib/api/mutations";
 import { queryKeys } from "@/lib/api/queries";
 
@@ -24,6 +24,14 @@ const PROGRESS_DEBOUNCE_MS = 300;
  * tracker is also gated separately by `activityTrackingEnabled` in
  * `useReadingSession`.
  *
+ * Robustness (frontend-audit C10):
+ * - The CSRF token is read inside the write callback, not snapshotted
+ *   at mount — a token rotation mid-session (long read across a
+ *   re-auth) used to 403 every subsequent write, silently, forever.
+ * - A `pagehide` listener flushes the pending debounced write with
+ *   `fetch(keepalive)` so the final page flip before closing the tab
+ *   isn't dropped ("stopped on page 18, resumed at 17").
+ *
  * Cache invalidation: after each successful write we mark the
  * shared `useUserProgress` query stale + invalidate every cached
  * rail/detail-page surface that consumes it. Without this, finishing
@@ -44,28 +52,30 @@ export function useReaderProgressWrite(opts: {
 }): void {
   const { issueId, currentPage, totalPages, incognito } = opts;
   const qc = useQueryClient();
-  const csrfToken = useMemo(() => {
-    if (typeof document === "undefined") return "";
-    const m = document.cookie.match(/(?:^|;\s*)(?:__Host-)?comic_csrf=([^;]+)/);
-    return m ? decodeURIComponent(m[1]!) : "";
-  }, []);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The body the debounce timer would send, kept in a ref so the
+  // pagehide flush can post it even though the timer hasn't fired.
+  const pendingBody = useRef<Record<string, unknown> | null>(null);
+
   useEffect(() => {
     if (!issueId) return;
     if (incognito) return;
     if (timer.current) clearTimeout(timer.current);
+    const onLastPage = currentPage >= totalPages - 1;
+    const body: Record<string, unknown> = {
+      issue_id: issueId,
+      page: currentPage,
+    };
+    if (onLastPage) body.finished = true;
+    pendingBody.current = body;
     timer.current = setTimeout(() => {
-      const onLastPage = currentPage >= totalPages - 1;
-      const body: Record<string, unknown> = {
-        issue_id: issueId,
-        page: currentPage,
-      };
-      if (onLastPage) body.finished = true;
+      pendingBody.current = null;
+      const csrf = getCsrfToken();
       void apiFetch("/progress", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+          ...(csrf ? { "X-CSRF-Token": csrf } : {}),
         },
         body: JSON.stringify(body),
       })
@@ -84,5 +94,31 @@ export function useReaderProgressWrite(opts: {
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [csrfToken, currentPage, incognito, issueId, qc, totalPages]);
+  }, [currentPage, incognito, issueId, qc, totalPages]);
+
+  // Flush the in-flight debounce on tab close / app switch. keepalive
+  // survives the unload and carries the CSRF header. Idempotent with
+  // the timer path — the server upserts by (user, issue).
+  useEffect(() => {
+    if (incognito) return;
+    const flush = () => {
+      const body = pendingBody.current;
+      if (!body) return;
+      pendingBody.current = null;
+      const csrf = getCsrfToken();
+      void fetch("/api/progress", {
+        method: "POST",
+        keepalive: true,
+        headers: {
+          "Content-Type": "application/json",
+          ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+        },
+        body: JSON.stringify(body),
+      }).catch(() => {
+        /* unload race — next session's write self-heals */
+      });
+    };
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, [incognito]);
 }

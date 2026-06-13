@@ -103,18 +103,26 @@ export default async function ReadPage({
   const mePromise = apiGet<MeView>("/auth/me").catch(() => null);
   const [delta, me] = await Promise.all([progressPromise, mePromise]);
 
+  // page_count from ComicInfo isn't always trustworthy; if the reader walks
+  // off the end we clamp client-side. 1 is the sane fallback so the reader
+  // still mounts and the user gets an error if page 0 is also missing.
+  const totalPages = Math.max(1, issue.page_count ?? 1);
+
   let initialPage = 0;
   if (explicitPage !== null) {
     initialPage = explicitPage;
   } else if (delta) {
     const mine = delta.records.find((r) => r.issue_id === issue.id);
-    if (mine) initialPage = mine.page;
+    // A finished issue parked on its last page is a dead-end open —
+    // the next tap would just pop the end-of-issue card. Re-reads
+    // start from the cover instead (Komga behavior). Mid-issue
+    // finished records (bookmark jumps with sticky `finished`) still
+    // resume where the reader left off.
+    if (mine) {
+      const parkedAtEnd = mine.finished && mine.page >= totalPages - 1;
+      initialPage = parkedAtEnd ? 0 : mine.page;
+    }
   }
-
-  // page_count from ComicInfo isn't always trustworthy; if the reader walks
-  // off the end we clamp client-side. 1 is the sane fallback so the reader
-  // still mounts and the user gets an error if page 0 is also missing.
-  const totalPages = Math.max(1, issue.page_count ?? 1);
 
   // Series + library reading-direction layers of the resolution chain
   // (see `manga-and-bulk-metadata-1.0`). Both surfaced on
