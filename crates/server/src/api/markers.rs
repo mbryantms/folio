@@ -42,6 +42,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use crate::api::extractors::Validated;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
@@ -96,6 +97,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(tags_index))
         .routes(routes!(update))
         .routes(routes!(delete_one))
+        .routes(routes!(bulk_delete))
         .routes(routes!(list_for_issue))
 }
 
@@ -1286,4 +1288,86 @@ pub async fn delete_one(
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// Body for `POST /me/markers/bulk-delete` — multi-select bulk delete
+/// for the /bookmarks surface. Sister to `POST /me/progress/bulk`:
+/// same 500-id cap, same dedup, same "missing and not-yours are both
+/// `not_found`" posture (the caller doesn't get to distinguish a row
+/// that never existed from one belonging to another user).
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct BulkDeleteReq {
+    #[garde(length(max = 500))]
+    pub marker_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkDeleteResp {
+    /// Markers actually deleted (owned by the caller and present).
+    pub deleted: u32,
+    /// Ids that didn't resolve to a deletable row — never existed,
+    /// already deleted, or owned by someone else.
+    pub not_found: u32,
+}
+
+#[utoipa::path(
+    operation_id = "markers_bulk_delete",    post,
+    path = "/me/markers/bulk-delete",
+    request_body = BulkDeleteReq,
+    responses(
+        (status = 200, body = BulkDeleteResp),
+        (status = 422, description = "validation"),
+    )
+)]
+#[handler]
+pub async fn bulk_delete(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Validated(req): Validated<BulkDeleteReq>,
+) -> impl IntoResponse {
+    // Empty list is a 200 with zero counts — clients compute their
+    // selection dynamically and shouldn't special-case it.
+    if req.marker_ids.is_empty() {
+        return (
+            StatusCode::OK,
+            Json(BulkDeleteResp {
+                deleted: 0,
+                not_found: 0,
+            }),
+        )
+            .into_response();
+    }
+    let mut seen = std::collections::HashSet::with_capacity(req.marker_ids.len());
+    let ids: Vec<Uuid> = req
+        .marker_ids
+        .into_iter()
+        .filter(|id| seen.insert(*id))
+        .collect();
+    let requested = ids.len() as u64;
+
+    // Single statement: the UserId filter doubles as the ownership
+    // check, so a mixed batch silently skips other users' rows
+    // instead of failing the whole request. No audit log — markers
+    // are user-personal data (see module docs).
+    let result = match marker::Entity::delete_many()
+        .filter(marker::Column::Id.is_in(ids))
+        .filter(marker::Column::UserId.eq(user.id))
+        .exec(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "markers: bulk delete failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(BulkDeleteResp {
+            deleted: result.rows_affected as u32,
+            not_found: (requested - result.rows_affected) as u32,
+        }),
+    )
+        .into_response()
 }

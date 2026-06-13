@@ -2405,6 +2405,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/markers/bulk-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["markers_bulk_delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/markers/count": {
         parameters: {
             query?: never;
@@ -4292,6 +4308,29 @@ export interface components {
             count: number;
             /** @enum {string} */
             kind: "remove_last";
+        };
+        /**
+         * @description Body for `POST /me/markers/bulk-delete` — multi-select bulk delete
+         *     for the /bookmarks surface. Sister to `POST /me/progress/bulk`:
+         *     same 500-id cap, same dedup, same "missing and not-yours are both
+         *     `not_found`" posture (the caller doesn't get to distinguish a row
+         *     that never existed from one belonging to another user).
+         */
+        BulkDeleteReq: {
+            marker_ids: string[];
+        };
+        BulkDeleteResp: {
+            /**
+             * Format: int32
+             * @description Markers actually deleted (owned by the caller and present).
+             */
+            deleted: number;
+            /**
+             * Format: int32
+             * @description Ids that didn't resolve to a deletable row — never existed,
+             *     already deleted, or owned by someone else.
+             */
+            not_found: number;
         };
         BulkEditRequest: {
             /**
@@ -13800,6 +13839,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MarkerView"];
                 };
+            };
+        };
+    };
+    markers_bulk_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkDeleteReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkDeleteResp"];
+                };
+            };
+            /** @description validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

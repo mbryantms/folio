@@ -266,6 +266,8 @@ export type MarkerListView = {
   next_cursor?: string | null;
 };
 export type MarkerCountView = Schemas["MarkerCountView"];
+export type MarkerBulkDeleteReq = Schemas["BulkDeleteReq"];
+export type MarkerBulkDeleteResp = Schemas["BulkDeleteResp"];
 export type MarkerSearchHit = {
   id: string;
   kind: MarkerKind;
