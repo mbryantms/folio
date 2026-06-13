@@ -41,15 +41,16 @@ export default async function HomePage({
       () => [] as LibraryView[],
     );
     const initialFilters = parseLibraryGridFilters(params);
-    // Force a remount when the URL filter signature changes — the
-    // grid's filter state is local once mounted, so a chip click that
-    // navigates to a different filter URL would otherwise reuse the
-    // prior component instance and ignore the new initial values.
-    const filterKey = filterSignature(params);
+    // Key on the library only — NOT the filter signature. The grid now
+    // syncs facets ↔ URL itself (audit B2, `useLibraryGridFilters`):
+    // it applies external chip deep-links onto its own state and writes
+    // its own changes back, so it must NOT remount when its own URL
+    // write-back lands. A library switch (`all` ↔ a uuid) still changes
+    // the key and remounts, giving the new library a fresh grid.
     if (libraryParam === "all") {
       return (
         <LibraryGridView
-          key={`all|${filterKey}`}
+          key="all"
           libraryId={null}
           libraryName="All Libraries"
           libraryCount={libraries.length}
@@ -60,7 +61,7 @@ export default async function HomePage({
     const lib = libraries.find((l) => l.id === libraryParam);
     return (
       <LibraryGridView
-        key={`${libraryParam}|${filterKey}`}
+        key={libraryParam}
         libraryId={libraryParam}
         libraryName={lib?.name ?? "Library"}
         initialFilters={initialFilters}
@@ -102,18 +103,6 @@ export default async function HomePage({
       />
     </>
   );
-}
-
-/** Stable string key over the filter-relevant query params. Excludes
- *  `library` (used in the prefix) and `q` (search has its own page).
- *  Sorting the entries makes the key insensitive to URL ordering, so
- *  `?genres=a&tags=b` and `?tags=b&genres=a` produce the same key. */
-function filterSignature(params: LibraryHomeSearchParams): string {
-  return Object.entries(params)
-    .filter(([k, v]) => k !== "library" && k !== "q" && v !== undefined)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join("&");
 }
 
 async function SearchView({

@@ -16,6 +16,7 @@ import { MultiSelectEditor } from "@/components/filters/value-editors/MultiSelec
 import type { OptionsEndpoint } from "@/components/filters/field-registry";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FilterPill } from "@/components/ui/filter-pill";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PopoverPortalContainer } from "@/components/ui/popover";
@@ -48,6 +49,14 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "hiatus", label: "Hiatus" },
 ];
 
+/** Per-user read-state pills (series mode). Values match the server's
+ *  `read_status` param + the saved-views three-state rollup. */
+const READ_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "unread", label: "Unread" },
+  { value: "in_progress", label: "Reading" },
+  { value: "read", label: "Read" },
+];
+
 /**
  * Right-side sheet drawer holding the metadata-driven filter facets:
  * status / year range / my-rating slider / multi-selects for
@@ -62,6 +71,8 @@ export function FilterSheet({
   libraryId,
   status,
   onStatus,
+  readStatus,
+  onReadStatus,
   yearFrom,
   yearTo,
   onYearFrom,
@@ -95,6 +106,8 @@ export function FilterSheet({
   libraryId: string | null;
   status: string;
   onStatus: (v: string) => void;
+  readStatus: string[];
+  onReadStatus: (v: string[]) => void;
   yearFrom: string;
   yearTo: string;
   onYearFrom: (v: string) => void;
@@ -140,7 +153,7 @@ export function FilterSheet({
         side="right"
         className="flex w-full flex-col gap-0 overflow-visible p-0 sm:max-w-md"
       >
-        <SheetHeader className="border-border/60 flex-row items-center justify-between border-b pb-4 pl-6 pt-[max(1rem,var(--safe-top))] pr-[max(3rem,calc(var(--safe-right)+2rem))]">
+        <SheetHeader className="border-border/60 flex-row items-center justify-between border-b pt-[max(1rem,var(--safe-top))] pr-[max(3rem,calc(var(--safe-right)+2rem))] pb-4 pl-6">
           <div>
             <SheetTitle>Filters</SheetTitle>
             <SheetDescription>
@@ -180,6 +193,31 @@ export function FilterSheet({
                     ))}
                   </SelectContent>
                 </Select>
+              </Section>
+            ) : null}
+            {/* Read status is a per-series rollup — series mode only. */}
+            {mode === "series" ? (
+              <Section title="Read status">
+                <div className="flex flex-wrap gap-2">
+                  {READ_STATUS_OPTIONS.map((o) => {
+                    const active = readStatus.includes(o.value);
+                    return (
+                      <FilterPill
+                        key={o.value}
+                        active={active}
+                        onClick={() =>
+                          onReadStatus(
+                            active
+                              ? readStatus.filter((v) => v !== o.value)
+                              : [...readStatus, o.value],
+                          )
+                        }
+                      >
+                        {o.label}
+                      </FilterPill>
+                    );
+                  })}
+                </div>
               </Section>
             ) : null}
             <Section title="Year">
@@ -386,3 +424,4 @@ function Section({
  * matching status labels without duplicating the option table.
  */
 export const LIBRARY_GRID_STATUS_OPTIONS = STATUS_OPTIONS;
+export const LIBRARY_GRID_READ_STATUS_OPTIONS = READ_STATUS_OPTIONS;

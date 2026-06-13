@@ -79,6 +79,8 @@ export function LibraryGridView({
     setOrder,
     status,
     setStatus,
+    readStatus,
+    setReadStatus,
     yearFrom,
     setYearFrom,
     yearTo,
@@ -209,9 +211,7 @@ export function LibraryGridView({
       today,
     );
     for (const facet of result.droppedFacets) {
-      toast.warning(
-        `${facet} filter can't be saved to a view yet — skipped`,
-      );
+      toast.warning(`${facet} filter can't be saved to a view yet — skipped`);
     }
     setSaveViewSeed(result.state);
     setSaveViewOpen(true);
@@ -260,6 +260,7 @@ export function LibraryGridView({
       {facetCount > 0 ? (
         <ActiveChips
           status={status}
+          readStatus={readStatus}
           yearFrom={yearFrom}
           yearTo={yearTo}
           ratingRange={ratingRange}
@@ -274,6 +275,9 @@ export function LibraryGridView({
           teams={teams}
           locations={locations}
           onClearStatus={() => setStatus("any")}
+          onRemoveReadStatus={(v) =>
+            setReadStatus(readStatus.filter((x) => x !== v))
+          }
           onClearYear={() => {
             setYearFrom("");
             setYearTo("");
@@ -349,7 +353,10 @@ export function LibraryGridView({
         className={cn("h-12", query.hasNextPage ? "" : "hidden")}
       />
       {query.isFetchingNextPage ? (
-        <p role="status" className="text-muted-foreground mt-2 text-center text-xs">
+        <p
+          role="status"
+          className="text-muted-foreground mt-2 text-center text-xs"
+        >
           Loading more…
         </p>
       ) : null}
@@ -361,6 +368,8 @@ export function LibraryGridView({
         libraryId={libraryId}
         status={status}
         onStatus={setStatus}
+        readStatus={readStatus}
+        onReadStatus={setReadStatus}
         yearFrom={yearFrom}
         yearTo={yearTo}
         onYearFrom={setYearFrom}
@@ -449,7 +458,12 @@ function EmptyState({
       {/* One-click recovery instead of hunting active chips in the
           toolbar/sheet (audit A12/A20). */}
       {facetCount > 0 ? (
-        <Button type="button" variant="outline" size="sm" onClick={onClearFacets}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onClearFacets}
+        >
           Clear filters
         </Button>
       ) : null}

@@ -1115,9 +1115,17 @@ pub struct ListSeriesQuery {
     pub user_rating_min: Option<f64>,
     #[serde(default)]
     pub user_rating_max: Option<f64>,
+    /// CSV of the caller's per-series read state — any of `unread`,
+    /// `in_progress`, `read`. Matches the three-state rollup the saved-
+    /// views engine computes over `user_series_progress` (a never-touched
+    /// series reads as `unread`). Multiple values OR together; selecting
+    /// all three (or none valid) is a no-op.
+    #[serde(default)]
+    pub read_status: Option<String>,
 }
 
 const VALID_STATUSES: &[&str] = &["continuing", "ended", "cancelled", "hiatus"];
+const READ_STATUSES: &[&str] = &["unread", "in_progress", "read"];
 
 pub(crate) fn split_csv(raw: &str) -> Vec<String> {
     raw.split(',')
@@ -1238,6 +1246,13 @@ fn validate_list_series_query_params(q: &ListSeriesQuery) -> Result<(), &'static
         if !(0.0..=5.0).contains(&min) || !(0.0..=5.0).contains(&max) || min > max {
             return Err("user_rating bounds must be 0..=5 with min <= max");
         }
+    }
+    if let Some(raw) = q.read_status.as_deref()
+        && split_csv(raw)
+            .iter()
+            .any(|s| !READ_STATUSES.contains(&s.as_str()))
+    {
+        return Err("read_status must be unread, in_progress, or read");
     }
     Ok(())
 }
@@ -1425,6 +1440,48 @@ fn apply_series_user_rating_filter(
     select
 }
 
+/// Per-user read-status filter (`read_status` CSV). Correlated subquery
+/// over the `user_series_progress` view, reproducing the saved-views
+/// engine's three-state CASE rollup verbatim so the grid filter and a
+/// `read_status` saved view agree to the row. A LEFT-JOIN miss (no
+/// progress for the series) COALESCEs to `unread`. Selecting all three
+/// states (or none valid) is a no-op — every series matches.
+fn apply_series_read_status_filter(
+    mut select: sea_orm::Select<series::Entity>,
+    q: &ListSeriesQuery,
+    user_id: Uuid,
+) -> sea_orm::Select<series::Entity> {
+    let Some(raw) = q.read_status.as_deref() else {
+        return select;
+    };
+    let statuses: Vec<String> = split_csv(raw)
+        .into_iter()
+        .filter(|s| READ_STATUSES.contains(&s.as_str()))
+        .collect();
+    if statuses.is_empty() || statuses.len() == READ_STATUSES.len() {
+        return select;
+    }
+    // `$2..$N` placeholders for the validated status list ($1 is the user).
+    let placeholders = (0..statuses.len())
+        .map(|i| format!("${}", i + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "COALESCE((SELECT CASE \
+            WHEN usp.total_count = 0 THEN 'unread' \
+            WHEN usp.finished_count >= usp.total_count THEN 'read' \
+            ELSE 'in_progress' END \
+          FROM user_series_progress usp \
+          WHERE usp.user_id = $1 AND usp.series_id = series.id), 'unread') \
+         IN ({placeholders})"
+    );
+    let mut values: Vec<Value> = Vec::with_capacity(statuses.len() + 1);
+    values.push(Value::from(user_id));
+    values.extend(statuses.into_iter().map(Value::from));
+    select = select.filter(Expr::cust_with_values(&sql, values));
+    select
+}
+
 /// Decode the opaque cursor and dispatch to the per-sort
 /// `apply_*_cursor` helper. Static `Err` keeps the `Result` variant
 /// small (clippy::result_large_err); caller maps to 400 `validation`.
@@ -1603,6 +1660,7 @@ pub async fn list(
     select = apply_series_credit_role_filters(select, &q);
     select = apply_series_cast_setting_filters(select, &q);
     select = apply_series_user_rating_filter(select, &q, user.id);
+    select = apply_series_read_status_filter(select, &q, user.id);
 
     let limit = clamp_limit(q.limit);
     let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());

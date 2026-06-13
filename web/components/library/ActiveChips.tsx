@@ -7,7 +7,10 @@ import {
   type CreditKey,
   type CreditState,
 } from "@/components/library/library-grid-filters";
-import { LIBRARY_GRID_STATUS_OPTIONS } from "@/components/library/FilterSheet";
+import {
+  LIBRARY_GRID_READ_STATUS_OPTIONS,
+  LIBRARY_GRID_STATUS_OPTIONS,
+} from "@/components/library/FilterSheet";
 import { Badge } from "@/components/ui/badge";
 
 /**
@@ -18,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
  */
 export function ActiveChips({
   status,
+  readStatus,
   yearFrom,
   yearTo,
   ratingRange,
@@ -32,6 +36,7 @@ export function ActiveChips({
   teams,
   locations,
   onClearStatus,
+  onRemoveReadStatus,
   onClearYear,
   onClearRating,
   onRemovePublisher,
@@ -46,6 +51,7 @@ export function ActiveChips({
   onRemoveLocation,
 }: {
   status: string;
+  readStatus: string[];
   yearFrom: string;
   yearTo: string;
   ratingRange: [number, number] | null;
@@ -60,6 +66,7 @@ export function ActiveChips({
   teams: string[];
   locations: string[];
   onClearStatus: () => void;
+  onRemoveReadStatus: (v: string) => void;
   onClearYear: () => void;
   onClearRating: () => void;
   onRemovePublisher: (v: string) => void;
@@ -81,6 +88,13 @@ export function ActiveChips({
           onRemove={onClearStatus}
         />
       ) : null}
+      {readStatus.map((v) => (
+        <Chip
+          key={`read-${v}`}
+          label={`Read: ${labelFor(LIBRARY_GRID_READ_STATUS_OPTIONS, v)}`}
+          onRemove={() => onRemoveReadStatus(v)}
+        />
+      ))}
       {yearFrom || yearTo ? (
         <Chip
           label={`Year: ${yearFrom || "…"}–${yearTo || "…"}`}
