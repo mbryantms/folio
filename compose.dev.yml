@@ -3,7 +3,11 @@
 
 services:
   postgres:
-    image: postgres:18-alpine
+    # Pinned back to 17: the existing dev data volume was initialized
+    # under PG17 and the 18-alpine image (bumped in #85) changes the
+    # data-directory layout — recreating the container against the old
+    # volume crash-loops. Moving to 18 needs a pg_upgrade pass first.
+    image: postgres:17-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: comic
