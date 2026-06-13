@@ -45,9 +45,7 @@ import {
 } from "@/lib/reader/zoom";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
 import { readerUrl } from "@/lib/urls";
-import { useCreateMarker, useDeleteMarkerById } from "@/lib/api/mutations";
-import { markerToCreateReq } from "@/lib/markers/recreate";
-import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { usePageMarkerToggle } from "@/lib/markers/use-page-marker-toggle";
 import type { NextUpView, PageInfo } from "@/lib/api/types";
 import {
   computeWebtoonWindow,
@@ -212,7 +210,6 @@ export function Reader({
   // and the bookmark toggle's "is this page already bookmarked?"
   // lookup. One round-trip, shared via TanStack Query cache.
   const issueMarkers = useIssueMarkers(issueId);
-  const createMarker = useCreateMarker();
   // Prefetch the "what's next?" target on mount so the `Shift+N` keybind
   // (and the M4 end-of-issue card) can navigate without waiting on a
   // round-trip. The hook handles the CBL > series > none resolution
@@ -340,100 +337,29 @@ export function Reader({
   // Bookmark-toggle helper: looks up an existing page-level bookmark
   // for `currentPage` and creates/deletes accordingly. Used by the
   // `b` keybind so it mirrors the chrome's bookmark button.
-  const existingPageBookmark = useMemo(
+  // `b` / `s` keybinds — share one toggle hook with the chrome's
+  // BookmarkToggleButton / FavoriteToggleButton (kills the duplicated
+  // find-existing → create/delete-with-Undo logic, audit G9). The
+  // page-specific toast copy stays here so the keybind path keeps its
+  // exact wording ("Bookmarked page N" / "Removed bookmark on page N").
+  const bookmarkToggle = usePageMarkerToggle(issueId, currentPage, "bookmark");
+  const favoriteToggle = usePageMarkerToggle(issueId, currentPage, "favorite");
+  const toggleBookmark = useCallback(
     () =>
-      (issueMarkers.data?.items ?? []).find(
-        (m) =>
-          m.kind === "bookmark" && m.page_index === currentPage && !m.region,
-      ),
-    [issueMarkers.data, currentPage],
+      bookmarkToggle.toggle({
+        created: `Bookmarked page ${currentPage + 1}`,
+        removed: `Removed bookmark on page ${currentPage + 1}`,
+      }),
+    [bookmarkToggle, currentPage],
   );
-  // v0.3.44: favorites are their own kind, fully decoupled from
-  // bookmarks. The `s` keybind toggles a `kind='favorite'` row at
-  // the current page in lockstep with `FavoriteToggleButton`.
-  const existingPageFavorite = useMemo(
+  const toggleFavorite = useCallback(
     () =>
-      (issueMarkers.data?.items ?? []).find(
-        (m) =>
-          m.kind === "favorite" && m.page_index === currentPage && !m.region,
-      ),
-    [issueMarkers.data, currentPage],
+      favoriteToggle.toggle({
+        created: `Starred page ${currentPage + 1}`,
+        removed: `Unstarred page ${currentPage + 1}`,
+      }),
+    [favoriteToggle, currentPage],
   );
-  // One by-id delete mutation serves both toggles — the id arrives at
-  // mutate() time, so there's no per-page-turn hook re-derivation and
-  // no mutation ever bound to "". `silent: true` so the keybind-
-  // specific toast below ("Removed bookmark on page X") is the only
-  // success signal — without it, the hook's generic "Removed" would
-  // fire alongside, double-toasting one click.
-  const deleteMarkerById = useDeleteMarkerById(issueId, { silent: true });
-  const toggleBookmark = useCallback(() => {
-    if (existingPageBookmark) {
-      const snapshot = existingPageBookmark;
-      deleteMarkerById.mutate(snapshot.id, {
-        onSuccess: () =>
-          toast.success(`Removed bookmark on page ${currentPage + 1}`, {
-            duration: UNDO_TOAST_DURATION_MS,
-            action: {
-              label: "Undo",
-              onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
-            },
-          }),
-      });
-      return;
-    }
-    createMarker.mutate(
-      {
-        issue_id: issueId,
-        page_index: currentPage,
-        kind: "bookmark",
-      },
-      {
-        onSuccess: () => toast.success(`Bookmarked page ${currentPage + 1}`),
-      },
-    );
-  }, [
-    existingPageBookmark,
-    deleteMarkerById,
-    createMarker,
-    issueId,
-    currentPage,
-  ]);
-  // `s` keybind — mirrors FavoriteToggleButton in the chrome.
-  // v0.3.44: favorites are their own kind now; toggling creates or
-  // deletes a `kind='favorite'` row at the current page. No more
-  // is_favorite flag dance, no more bookmark side-effects.
-  const toggleFavorite = useCallback(() => {
-    if (existingPageFavorite) {
-      const snapshot = existingPageFavorite;
-      deleteMarkerById.mutate(snapshot.id, {
-        onSuccess: () =>
-          toast.success(`Unstarred page ${currentPage + 1}`, {
-            duration: UNDO_TOAST_DURATION_MS,
-            action: {
-              label: "Undo",
-              onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
-            },
-          }),
-      });
-      return;
-    }
-    createMarker.mutate(
-      {
-        issue_id: issueId,
-        page_index: currentPage,
-        kind: "favorite",
-      },
-      {
-        onSuccess: () => toast.success(`Starred page ${currentPage + 1}`),
-      },
-    );
-  }, [
-    existingPageFavorite,
-    deleteMarkerById,
-    createMarker,
-    issueId,
-    currentPage,
-  ]);
 
   const initialDirection = useMemo<Direction>(
     () =>
