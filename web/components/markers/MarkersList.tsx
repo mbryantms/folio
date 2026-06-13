@@ -41,6 +41,7 @@ import {
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
+import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type {
   MarkerKind,
@@ -89,6 +90,8 @@ const CARD_SIZE_STORAGE_KEY = "folio.bookmarks.cardSize";
  *  to the reader at the right page; inline kebab handles delete (full
  *  edit lives in the reader to reuse the marker editor sheet). */
 export function MarkersList() {
+  // One-time touch hint for the now-persistent cover kebab (audit B16).
+  useCoarsePointerActionsHint();
   const [filter, setFilter] = React.useState<KindFilter>("all");
   const [rawSearch, setRawSearch] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
