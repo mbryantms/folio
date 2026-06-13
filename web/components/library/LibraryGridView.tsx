@@ -38,6 +38,7 @@ import {
 import { useLibraryGridFilters } from "@/lib/library/use-grid-filters";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
+import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 
 const CARD_SIZE_MIN = 120;
@@ -77,6 +78,8 @@ export function LibraryGridView({
   libraryCount?: number;
   initialFilters?: LibraryGridInitialFilters;
 }) {
+  // One-time touch hint for the now-persistent cover kebab (audit B16).
+  useCoarsePointerActionsHint();
   const filters = useLibraryGridFilters(libraryId, initialFilters);
   const {
     mode,

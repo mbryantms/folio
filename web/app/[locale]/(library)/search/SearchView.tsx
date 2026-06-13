@@ -43,6 +43,7 @@ import {
 } from "@/lib/api/mutations";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
+import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
 import {
   Select,
   SelectContent,
@@ -123,6 +124,8 @@ export function SearchView({
    *  series category. Null when no filter params were on the URL. */
   initialFilters?: SeriesSearchFilterState;
 }) {
+  // One-time touch hint for the now-persistent cover kebab (audit B16).
+  useCoarsePointerActionsHint();
   const [raw, setRaw] = useState(initialQuery);
   const [debounced, setDebounced] = useState(initialQuery.trim());
   const [filters, setFilters] = useState<SeriesSearchFilterState>(
