@@ -3,11 +3,11 @@
 /**
  * `<ProvidersTab>` — /admin/metadata `?tab=providers` (M6).
  *
- * Per-provider connectivity + quota + "Test" button. The actual
- * credential / enabled-toggle inputs live on `/admin/settings` (the
- * unified settings page that surfaces every `metadata.*` key); this
- * tab links to that surface with a deep-link hash so the operator
- * doesn't have to drill.
+ * Per-provider connectivity + quota + "Test" button, with the
+ * credential / enabled-toggle form inline on each card
+ * (`ProviderConfigForm`). Operational tuning (cache TTLs, auto-apply
+ * threshold, refresh cron) lives one tab over on `?tab=settings` —
+ * there is no generic /admin/settings page.
  */
 
 import { CheckCircle2, ExternalLink, Loader2, XCircle } from "lucide-react";
@@ -36,10 +36,9 @@ export function ProvidersTab() {
         <ProviderCard key={p.id} provider={p} />
       ))}
       <p className="text-muted-foreground text-xs">
-        Cache TTLs, auto-apply threshold, and other operational tuning
-        live on the generic Server settings page (search for{" "}
-        <code>metadata.*</code>). The cards above own the credentials
-        + enable toggles.
+        Cache TTLs, the auto-apply threshold, and other operational tuning
+        live in the <span className="font-medium">Settings</span> tab above.
+        The cards here own the credentials + enable toggles.
       </p>
     </div>
   );
@@ -72,7 +71,10 @@ function ProviderCard({ provider }: { provider: ProviderView }) {
           size="sm"
           variant="outline"
           onClick={onTest}
-          disabled={test.isPending || !provider.enabled}
+          // Testable once a credential exists — the natural setup order
+          // is paste key → Test → enable, so gating on `enabled` forced
+          // admins to enable a possibly-broken credential first.
+          disabled={test.isPending || !provider.configured}
         >
           {test.isPending ? (
             <>

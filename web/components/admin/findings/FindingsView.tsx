@@ -28,8 +28,10 @@ import {
 } from "@/lib/api/queries";
 import type { CrossLibHealthIssueView } from "@/lib/api/types";
 
+import type { HealthSeverityFilter } from "@/components/admin/severity";
+
 type Tab = "activity" | "health" | "scans";
-type Severity = "all" | "error" | "warning" | "info";
+type Severity = HealthSeverityFilter;
 
 /**
  * Cross-library findings page. Two rails in one shell:

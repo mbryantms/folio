@@ -27,7 +27,7 @@ import {
   useUpdateLibrary,
   useUpdateThumbnailsSettings,
 } from "@/lib/api/mutations";
-import type { ThumbnailFormat } from "@/lib/api/types";
+import type { LibraryView, ThumbnailFormat } from "@/lib/api/types";
 import { validateCron } from "@/lib/api/cron";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +80,31 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>;
 
+/** Map the server row onto the form's value shape. Single source for
+ *  both the hydrate effect and the Reset button — Reset once carried
+ *  its own 9-of-15-field copy, so resetting silently blanked the
+ *  omitted fields (auto-apply, filename heuristics, JPEG quality,
+ *  publisher blacklist) and a follow-up Save would persist the loss. */
+function formValuesFromLibrary(lib: LibraryView): z.input<typeof schema> {
+  return {
+    ignore_globs: lib.ignore_globs,
+    scan_schedule_cron: lib.scan_schedule_cron ?? "",
+    report_missing_comicinfo: lib.report_missing_comicinfo,
+    soft_delete_days: lib.soft_delete_days,
+    generate_page_thumbs_on_scan: lib.generate_page_thumbs_on_scan,
+    allow_archive_writeback: lib.allow_archive_writeback,
+    metadata_writeback_enabled: lib.metadata_writeback_enabled,
+    auto_convert_cbr_on_scan: lib.auto_convert_cbr_on_scan,
+    archive_backup_retain_count: lib.archive_backup_retain_count,
+    archive_backup_retain_days: lib.archive_backup_retain_days,
+    archive_writeback_jpeg_quality: lib.archive_writeback_jpeg_quality,
+    metadata_publisher_blacklist: lib.metadata_publisher_blacklist ?? [],
+    filename_ignore_leading_numbers: lib.filename_ignore_leading_numbers,
+    filename_assume_issue_one: lib.filename_assume_issue_one,
+    metadata_auto_apply_strong_matches: lib.metadata_auto_apply_strong_matches,
+  };
+}
+
 export function LibrarySettingsForm({ id }: { id: string }) {
   const lib = useLibrary(id);
   const thumbnailSettings = useThumbnailsSettings(id);
@@ -108,26 +133,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
 
   useEffect(() => {
     if (lib.data) {
-      form.reset({
-        ignore_globs: lib.data.ignore_globs,
-        scan_schedule_cron: lib.data.scan_schedule_cron ?? "",
-        report_missing_comicinfo: lib.data.report_missing_comicinfo,
-        soft_delete_days: lib.data.soft_delete_days,
-        generate_page_thumbs_on_scan: lib.data.generate_page_thumbs_on_scan,
-        allow_archive_writeback: lib.data.allow_archive_writeback,
-        metadata_writeback_enabled: lib.data.metadata_writeback_enabled,
-        auto_convert_cbr_on_scan: lib.data.auto_convert_cbr_on_scan,
-        archive_backup_retain_count: lib.data.archive_backup_retain_count,
-        archive_backup_retain_days: lib.data.archive_backup_retain_days,
-        archive_writeback_jpeg_quality: lib.data.archive_writeback_jpeg_quality,
-        metadata_publisher_blacklist:
-          lib.data.metadata_publisher_blacklist ?? [],
-        filename_ignore_leading_numbers:
-          lib.data.filename_ignore_leading_numbers,
-        filename_assume_issue_one: lib.data.filename_assume_issue_one,
-        metadata_auto_apply_strong_matches:
-          lib.data.metadata_auto_apply_strong_matches,
-      });
+      form.reset(formValuesFromLibrary(lib.data));
     }
   }, [lib.data, form]);
 
@@ -626,22 +632,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
             type="button"
             variant="outline"
             disabled={update.isPending}
-            onClick={() =>
-              lib.data &&
-              form.reset({
-                ignore_globs: lib.data.ignore_globs,
-                scan_schedule_cron: lib.data.scan_schedule_cron ?? "",
-                report_missing_comicinfo: lib.data.report_missing_comicinfo,
-                soft_delete_days: lib.data.soft_delete_days,
-                generate_page_thumbs_on_scan:
-                  lib.data.generate_page_thumbs_on_scan,
-                allow_archive_writeback: lib.data.allow_archive_writeback,
-                metadata_writeback_enabled: lib.data.metadata_writeback_enabled,
-                archive_backup_retain_count:
-                  lib.data.archive_backup_retain_count,
-                archive_backup_retain_days: lib.data.archive_backup_retain_days,
-              })
-            }
+            onClick={() => lib.data && form.reset(formValuesFromLibrary(lib.data))}
           >
             Reset
           </Button>

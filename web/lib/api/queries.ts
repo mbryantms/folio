@@ -715,8 +715,14 @@ export function useLibrary(id: string) {
 export function useHealthIssues(libraryId: string) {
   return useQuery({
     queryKey: queryKeys.health(libraryId),
+    // Include resolved + dismissed rows: the table filters client-side
+    // via its open/resolved/dismissed pills and needs all three
+    // populations for the pill counts. The server defaults BOTH flags
+    // to false, which left two of the four pills permanently empty.
     queryFn: () =>
-      jsonFetch<HealthIssueView[]>(`/libraries/${libraryId}/health-issues`),
+      jsonFetch<HealthIssueView[]>(
+        `/libraries/${libraryId}/health-issues?include_resolved=true&include_dismissed=true`,
+      ),
     enabled: !!libraryId,
   });
 }
