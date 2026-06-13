@@ -7,10 +7,18 @@ type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "dark" } = useTheme();
+  // Sonner's union is light|dark|system; the app also ships an
+  // "amber" theme (light-surfaced). Casting it through made Sonner's
+  // internal defaults (icons, close button) fall back unpredictably —
+  // map it to its light base instead.
+  const sonnerTheme: ToasterProps["theme"] =
+    theme === "light" || theme === "dark" || theme === "system"
+      ? theme
+      : "light";
 
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={sonnerTheme}
       // All Sonner props below are pinned to current defaults rather
       // than left implicit. The point isn't to change behavior — it's
       // to make a sonner upgrade safe (no silent default-shift) and to

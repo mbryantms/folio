@@ -223,7 +223,7 @@ export function SearchView({
             are live.
           </p>
         )}
-        <div className="border-border bg-card flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm">
+        <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2">
           <Search
             aria-hidden="true"
             className="text-muted-foreground size-4 shrink-0"

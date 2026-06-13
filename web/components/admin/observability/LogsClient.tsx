@@ -87,6 +87,7 @@ export function LogsClient() {
           />
           <Input
             type="search"
+            aria-label="Filter logs by message, target, or field"
             placeholder="Filter by message, target, or field…"
             value={q}
             onChange={(e) => setQ(e.currentTarget.value)}

@@ -7,6 +7,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { CheckCircle2, Inbox, LogIn, Mail } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -105,7 +106,11 @@ export function SignInClient({
   return (
     <CenteredCard>
       <CardHeader className="space-y-2 text-center">
-        <CardTitle className="text-2xl">Sign in to Folio</CardTitle>
+        {/* Real <h1> inside the (div-based) CardTitle so the page has a
+            heading outline for AT; preflight makes h1 inherit styling. */}
+        <CardTitle className="text-2xl">
+          <h1>Sign in to Folio</h1>
+        </CardTitle>
         <CardDescription>Your self-hosted comic library.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -407,6 +412,24 @@ function RegisterForm({
         const msg = await readErrorMessage(res);
         setError(msg);
         return;
+      }
+      // The first registered account is silently promoted to admin
+      // server-side — nothing in the UI ever said so, leaving new
+      // installs unaware they hold the keys (or that a library must be
+      // created under Admin → Libraries). One-time app-state notice;
+      // toast.info per the notification conventions (the auth FORMS
+      // stay banner-based — this fires after success, on the way out).
+      try {
+        const body = (await res.json()) as { user?: { role?: string } };
+        if (body.user?.role === "admin") {
+          toast.info(
+            "You're the first user, so this account has admin access. " +
+              "Create a library under Admin → Libraries to get started.",
+            { duration: 10_000 },
+          );
+        }
+      } catch {
+        /* body shape is best-effort — never block the redirect */
       }
       router.push(next ?? "/");
       router.refresh();

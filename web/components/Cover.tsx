@@ -19,8 +19,11 @@ import { useCoverPriority } from "@/components/library/cover-priority";
  * keeps the layout stable for issues with no cover (encrypted, malformed,
  * or thumbnail not yet generated).
  */
+// Theme tokens, not hardcoded neutrals: the old neutral-600-on-
+// neutral-900 fallback text measured ≈2.3:1 (WCAG 1.4.3 wants 4.5:1)
+// and painted a near-black tile on the light/amber themes.
 const BOX =
-  "aspect-[2/3] bg-neutral-900 rounded-md border border-neutral-800 overflow-hidden";
+  "aspect-[2/3] bg-muted rounded-md border border-border overflow-hidden";
 
 export function Cover({
   src,
@@ -72,7 +75,7 @@ export function Cover({
     <div
       role="img"
       aria-label={alt}
-      className={`${BOX} grid place-items-center text-neutral-600 ${className ?? ""}`}
+      className={`${BOX} text-muted-foreground grid place-items-center ${className ?? ""}`}
     >
       <span className="px-2 text-center text-xs tracking-widest uppercase">
         {fallback ?? "—"}

@@ -354,10 +354,11 @@ function CatalogList({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="border-input flex items-center gap-2 rounded-md border px-3">
+      <div className="border-input focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 focus-within:ring-2">
         <Search className="text-muted-foreground h-4 w-4" />
         <input
           type="text"
+          aria-label="Search CBL files by name or path"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by name or path…"
