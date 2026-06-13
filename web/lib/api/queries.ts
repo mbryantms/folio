@@ -2162,7 +2162,9 @@ export function useAdminMetadataDashboard() {
     queryKey: queryKeys.adminMetadataDashboard,
     queryFn: () => jsonFetch<DashboardResp>(`/admin/metadata/dashboard`),
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    // No `refetchInterval`: the scan-events WS invalidates this on every
+    // `metadata.applied` (and `lagged` recovery), so the 60s poll was
+    // redundant (audit G5 / G8).
   });
 }
 
@@ -2171,7 +2173,7 @@ export function useAdminMetadataMatchQuality() {
     queryKey: queryKeys.adminMetadataMatchQuality,
     queryFn: () => jsonFetch<MatchQualityResp>(`/admin/metadata/match-quality`),
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    // No `refetchInterval`: invalidated by the metadata.applied WS event.
   });
 }
 
