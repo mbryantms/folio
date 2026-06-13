@@ -443,3 +443,143 @@ async fn batch_fetch_keys_by_series_id() {
 // Hush the unused-imports lint when adding rows directly via SeaORM.
 #[allow(unused_imports)]
 use progress_record as _progress;
+
+// ── read-status filter on GET /api/series (library-filters B1) ──
+
+/// Register a user and return `(id, session_cookie, csrf_cookie)` so the
+/// test can make authenticated requests. The first registrant is admin
+/// (sees every library), which is what the read-status query needs.
+async fn register_authed(app: &TestApp, email: &str) -> (Uuid, String, String) {
+    let body = format!(r#"{{"email":"{email}","password":"correctly-horse-battery"}}"#);
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let cookies: Vec<String> = resp
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .collect();
+    let extract = |prefix: &str| -> String {
+        cookies
+            .iter()
+            .find(|c| c.starts_with(prefix))
+            .map(|c| {
+                c.split(';')
+                    .next()
+                    .unwrap()
+                    .trim_start_matches(prefix)
+                    .to_owned()
+            })
+            .expect(prefix)
+    };
+    let session = extract("__Host-comic_session=");
+    let csrf = extract("__Host-comic_csrf=");
+    // Read the id from the same register response body (carries `user.id`).
+    let json = body_json(resp.into_body()).await;
+    let id = Uuid::parse_str(json["user"]["id"].as_str().unwrap()).unwrap();
+    (id, session, csrf)
+}
+
+async fn finish_issue(app: &TestApp, user_id: Uuid, issue_id: &str) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    ProgressAM {
+        user_id: Set(user_id),
+        issue_id: Set(issue_id.to_owned()),
+        last_page: Set(0),
+        percent: Set(100.0),
+        finished: Set(true),
+        finished_at: Set(Some(now)),
+        updated_at: Set(now),
+        device: Set(None),
+        is_backfill: Set(false),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+}
+
+async fn series_names(app: &TestApp, session: &str, query: &str) -> (StatusCode, Vec<String>) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/api/series?{query}"))
+                .header(header::COOKIE, format!("__Host-comic_session={session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let json = body_json(resp.into_body()).await;
+    let names = json["items"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|v| v["name"].as_str().unwrap_or("").to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    (status, names)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_list_read_status_filter_partitions_by_progress() {
+    let app = TestApp::spawn().await;
+    let (user, session, _csrf) = register_authed(&app, "reader@example.com").await;
+
+    // Three series, each 2 active issues, in three read states.
+    let (_lu, _su, u_issues) = seed_series_with_issues(&app, "Unread", 2).await;
+    let (_lr, _sr, r_issues) = seed_series_with_issues(&app, "Read", 2).await;
+    let (_lp, _sp, p_issues) = seed_series_with_issues(&app, "Partial", 2).await;
+    let _ = u_issues; // left untouched → unread
+    finish_issue(&app, user, &r_issues[0]).await;
+    finish_issue(&app, user, &r_issues[1]).await; // both finished → read
+    finish_issue(&app, user, &p_issues[0]).await; // one finished → in_progress
+
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+
+    let (st, names) = series_names(&app, &session, "read_status=unread").await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(names, vec!["Series Unread"]);
+
+    let (_st, names) = series_names(&app, &session, "read_status=read").await;
+    assert_eq!(names, vec!["Series Read"]);
+
+    let (_st, names) = series_names(&app, &session, "read_status=in_progress").await;
+    assert_eq!(names, vec!["Series Partial"]);
+
+    // CSV ORs the states.
+    let (_st, names) = series_names(&app, &session, "read_status=unread,read").await;
+    assert_eq!(
+        sorted(names),
+        vec!["Series Read".to_owned(), "Series Unread".to_owned()]
+    );
+
+    // All three selected → no-op (every series matches).
+    let (_st, names) = series_names(&app, &session, "read_status=unread,in_progress,read").await;
+    assert_eq!(names.len(), 3);
+
+    // Invalid value → 422.
+    let (st, _names) = series_names(&app, &session, "read_status=bogus").await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+}

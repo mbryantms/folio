@@ -173,6 +173,10 @@ export type SeriesListFilters = {
    *  either bound is set. */
   user_rating_min?: number;
   user_rating_max?: number;
+  /** CSV of the caller's per-series read state — any of `unread`,
+   *  `in_progress`, `read` (OR-combined). Matches the saved-views
+   *  three-state rollup; a never-touched series reads as `unread`. */
+  read_status?: string;
 };
 
 export type IssueListFilters = {

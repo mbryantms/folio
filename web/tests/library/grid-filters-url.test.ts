@@ -24,6 +24,7 @@ function baseState(
     library: "all",
     mode: "series",
     status: undefined,
+    readStatus: [],
     yearFrom: undefined,
     yearTo: undefined,
     publishers: [],
@@ -75,6 +76,7 @@ describe("serializeLibraryGridFilters", () => {
     const state = baseState({
       mode: "issues",
       status: "ended",
+      readStatus: ["unread", "in_progress"],
       yearFrom: "1990",
       yearTo: "2005",
       publishers: ["Image", "Marvel"],
@@ -94,6 +96,7 @@ describe("serializeLibraryGridFilters", () => {
     expect(parsed).toMatchObject({
       mode: "issues",
       status: "ended",
+      readStatus: ["unread", "in_progress"],
       yearFrom: "1990",
       yearTo: "2005",
       publishers: ["Image", "Marvel"],

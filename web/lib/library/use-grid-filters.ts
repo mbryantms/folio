@@ -114,6 +114,11 @@ export function useLibraryGridFilters(
   // (a fresh search still defaults to relevance).
   const [sortExplicit, setSortExplicit] = React.useState(false);
   const [status, setStatus] = React.useState<string>(init.status ?? "any");
+  // Per-user read state (series mode only): CSV subset of
+  // unread/in_progress/read; multiple values OR together.
+  const [readStatus, setReadStatus] = React.useState<string[]>(
+    init.readStatus ?? [],
+  );
   const [yearFrom, setYearFrom] = React.useState<string>(init.yearFrom ?? "");
   const [yearTo, setYearTo] = React.useState<string>(init.yearTo ?? "");
   const [publishers, setPublishers] = React.useState<string[]>(
@@ -241,6 +246,8 @@ export function useLibraryGridFilters(
     ...sharedFilters,
     sort: trimmedQ && !sortExplicit ? undefined : seriesSort,
     status: status === "any" ? undefined : status,
+    // read_status is a per-series rollup — series mode only.
+    read_status: csvOrUndef(readStatus),
   };
   const issueFilters: IssuesCrossListFilters = {
     ...sharedFilters,
@@ -252,6 +259,7 @@ export function useLibraryGridFilters(
     library: libraryParam,
     mode,
     status,
+    readStatus,
     yearFrom,
     yearTo,
     publishers,
@@ -325,6 +333,7 @@ export function useLibraryGridFilters(
     applyParsedToState(parseLibraryGridFilters(raw) ?? {}, {
       setModeState,
       setStatus,
+      setReadStatus,
       setYearFrom,
       setYearTo,
       setPublishers,
@@ -349,6 +358,7 @@ export function useLibraryGridFilters(
   );
   const facetCount =
     (status !== "any" ? 1 : 0) +
+    readStatus.length +
     (yearFrom || yearTo ? 1 : 0) +
     (ratingRange ? 1 : 0) +
     publishers.length +
@@ -364,6 +374,7 @@ export function useLibraryGridFilters(
 
   function clearFacets() {
     setStatus("any");
+    setReadStatus([]);
     setYearFrom("");
     setYearTo("");
     setRatingRange(null);
@@ -400,6 +411,8 @@ export function useLibraryGridFilters(
     // Facets (state + setters)
     status,
     setStatus,
+    readStatus,
+    setReadStatus,
     yearFrom,
     setYearFrom,
     yearTo,
@@ -451,6 +464,7 @@ function urlStateFromParsed(
     library,
     mode: p.mode ?? fallbackMode,
     status: p.status,
+    readStatus: p.readStatus ?? [],
     yearFrom: p.yearFrom,
     yearTo: p.yearTo,
     publishers: p.publishers ?? [],
@@ -470,6 +484,7 @@ function urlStateFromParsed(
 type FacetSetters = {
   setModeState: (m: LibraryGridMode) => void;
   setStatus: (v: string) => void;
+  setReadStatus: (v: string[]) => void;
   setYearFrom: (v: string) => void;
   setYearTo: (v: string) => void;
   setPublishers: (v: string[]) => void;
@@ -494,6 +509,7 @@ function applyParsedToState(
 ): void {
   if (p.mode) s.setModeState(p.mode);
   s.setStatus(p.status ?? "any");
+  s.setReadStatus(p.readStatus ?? []);
   s.setYearFrom(p.yearFrom ?? "");
   s.setYearTo(p.yearTo ?? "");
   s.setPublishers(p.publishers ?? []);

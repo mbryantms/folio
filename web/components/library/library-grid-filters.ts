@@ -48,6 +48,9 @@ export type LibraryGridMode = "series" | "issues";
 export type LibraryGridInitialFilters = {
   mode?: LibraryGridMode;
   status?: string;
+  /** Per-user read state — CSV subset of `unread,in_progress,read`
+   *  (series mode only). */
+  readStatus?: string[];
   yearFrom?: string;
   yearTo?: string;
   publishers?: string[];
@@ -109,6 +112,7 @@ export function parseLibraryGridFilters(
   const out: LibraryGridInitialFilters = {
     mode,
     status: raw.status && raw.status !== "any" ? raw.status : undefined,
+    readStatus: csv("read_status"),
     yearFrom: raw.year_from || undefined,
     yearTo: raw.year_to || undefined,
     publishers: csv("publisher"),
@@ -137,6 +141,7 @@ export type LibraryGridUrlState = {
   library: string;
   mode: LibraryGridMode;
   status?: string;
+  readStatus: string[];
   yearFrom?: string;
   yearTo?: string;
   publishers: string[];
@@ -168,6 +173,8 @@ export function serializeLibraryGridFilters(
   // so the grid's toolbar search stays local state.
   if (state.mode === "issues") sp.set("mode", "issues");
   if (state.status && state.status !== "any") sp.set("status", state.status);
+  if (state.readStatus.length)
+    sp.set("read_status", state.readStatus.join(","));
   if (state.yearFrom?.trim()) sp.set("year_from", state.yearFrom.trim());
   if (state.yearTo?.trim()) sp.set("year_to", state.yearTo.trim());
   const csv = (key: string, values: string[]) => {
