@@ -1,14 +1,11 @@
+import { redirect } from "next/navigation";
+
 import { LibraryGridView } from "@/components/library/LibraryGridView";
 import { parseLibraryGridFilters } from "@/components/library/library-grid-filters";
-import { SeriesCard } from "@/components/library/SeriesCard";
 import { ScrollToTopOnMount } from "@/components/ScrollToTopOnMount";
 import { PageRails } from "@/components/saved-views/PageRails";
-import { apiGet, ApiError } from "@/lib/api/fetch";
-import type {
-  LibraryView,
-  PageListView,
-  SeriesListView,
-} from "@/lib/api/types";
+import { apiGet } from "@/lib/api/fetch";
+import type { LibraryView, PageListView } from "@/lib/api/types";
 
 /** App-Router resolves `searchParams` to this shape; the library grid
  *  funnels every filter dimension through the URL (chip deep-links,
@@ -25,13 +22,14 @@ export default async function HomePage({
   const query = (params.q ?? "").trim();
   const libraryParam = (params.library ?? "").trim();
 
-  // Search keeps its existing flat-grid view — saved-view rails are
-  // about discovery; search is about finding a thing right now.
+  // Legacy `/?q=` retired (audit E2 / 1.6): the home route's old
+  // series-only search is superseded by the dedicated multi-category
+  // `/search` page — the single search surface after the cmdk
+  // consolidation. The grid's in-grid toolbar search keeps its query in
+  // local state and never emits `?q=`, so this redirect only fires for an
+  // external or bookmarked `/?q=` link.
   if (query) {
-    const libraries = await apiGet<LibraryView[]>("/libraries").catch(
-      () => [] as LibraryView[],
-    );
-    return <SearchView query={query} libraries={libraries} />;
+    redirect(`/search?q=${encodeURIComponent(query)}`);
   }
 
   // `?library=all` and `?library=<uuid>` both render the metadata
@@ -103,57 +101,4 @@ export default async function HomePage({
       />
     </>
   );
-}
-
-async function SearchView({
-  query,
-  libraries,
-}: {
-  query: string;
-  libraries: LibraryView[] | null;
-}) {
-  const result = await fetchSeries(
-    `/series?q=${encodeURIComponent(query)}&limit=100`,
-  );
-  const items = result?.items ?? [];
-
-  return (
-    <>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Search</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          {libraries?.length ?? 0}{" "}
-          {libraries?.length === 1 ? "library" : "libraries"} · {items.length}{" "}
-          {items.length === 1 ? "match" : "matches"} for{" "}
-          <span className="text-foreground font-medium">
-            &ldquo;{query}&rdquo;
-          </span>
-        </p>
-      </div>
-      {items.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          No series matched <code className="text-foreground">{query}</code>.
-        </p>
-      ) : (
-        <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {items.map((s) => (
-            <li key={s.id}>
-              <SeriesCard series={s} size="md" />
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
-  );
-}
-
-// Hide individual rail failures behind an empty result so one library
-// hiccup doesn't blank the whole search page.
-async function fetchSeries(path: string): Promise<SeriesListView | null> {
-  try {
-    return await apiGet<SeriesListView>(path);
-  } catch (e) {
-    if (e instanceof ApiError) return null;
-    throw e;
-  }
 }
