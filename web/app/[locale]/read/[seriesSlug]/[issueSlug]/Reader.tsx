@@ -20,9 +20,15 @@ import {
 } from "@/lib/reader/spreads";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
-import { useReaderSwipe } from "@/lib/reader/use-swipe";
+import { useReaderGestures } from "@/lib/reader/use-swipe";
 import { useReaderKeymap } from "@/lib/reader/use-keymap";
-import { clampPan, nextZoomStep } from "@/lib/reader/zoom";
+import {
+  DOUBLE_TAP_MS,
+  DOUBLE_TAP_ZOOM,
+  clampPan,
+  nextZoomStep,
+  zoomOriginPercent,
+} from "@/lib/reader/zoom";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
 import { readerUrl } from "@/lib/urls";
 import { useCreateMarker, useDeleteMarkerById } from "@/lib/api/mutations";
@@ -563,37 +569,86 @@ export function Reader({
   const [zoom, setZoom] = useState<{
     scale: number;
     offset: { x: number; y: number };
-  }>({ scale: 1, offset: { x: 0, y: 0 } });
+    origin: { x: number; y: number };
+  }>({ scale: 1, offset: { x: 0, y: 0 }, origin: { x: 50, y: 50 } });
+  // Overflow (audit C4): a fit=height/original page rendered wider/taller
+  // than the viewport. Reported up from SinglePageView; makes a drag pan
+  // the page (rather than turn it) so the cropped sides are reachable.
+  const [overflowing, setOverflowing] = useState(false);
+  // Kept fresh for the gesture callbacks (which close over stale state).
+  const zoomRef = useRef(zoom);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+  // Rendered content vs visible-box sizes for clamping the pan — owned
+  // by SinglePageView (it has the img + wrapper refs), read here.
+  const panMetricsRef = useRef<{
+    content: { w: number; h: number };
+    container: { w: number; h: number };
+  }>({ content: { w: 0, h: 0 }, container: { w: 0, h: 0 } });
+  const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const RECENTER = { offset: { x: 0, y: 0 }, origin: { x: 50, y: 50 } };
   const zoomIn = useCallback(
-    () =>
-      setZoom((z) => ({
-        scale: nextZoomStep(z.scale, "in"),
-        offset: { x: 0, y: 0 },
-      })),
+    () => setZoom((z) => ({ scale: nextZoomStep(z.scale, "in"), ...RECENTER })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
   const zoomOut = useCallback(
-    () =>
-      setZoom((z) => ({
-        scale: nextZoomStep(z.scale, "out"),
-        offset: { x: 0, y: 0 },
-      })),
+    () => setZoom((z) => ({ scale: nextZoomStep(z.scale, "out"), ...RECENTER })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
   const zoomReset = useCallback(
-    () => setZoom({ scale: 1, offset: { x: 0, y: 0 } }),
+    () => setZoom({ scale: 1, ...RECENTER }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
-  // Reset transient zoom when the page / fit / view / marker-mode key
+  // Double-tap / double-click toggles 1× ↔ 2× at the tapped point.
+  const zoomToggleAt = useCallback(
+    (rectX: number, rectY: number, rect: { w: number; h: number }) => {
+      setZoom((z) =>
+        z.scale > 1
+          ? { scale: 1, ...RECENTER }
+          : {
+              scale: DOUBLE_TAP_ZOOM,
+              offset: { x: 0, y: 0 },
+              origin: zoomOriginPercent(rectX, rectY, rect),
+            },
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // Pan (C4/C9). The gesture hook forwards drag movement here so panning
+  // works *through* the TapZones overlay: drags bubble up to the gesture
+  // container while taps stay with the zones.
+  const panActive =
+    (zoom.scale > 1 || overflowing) && markerModeForKeybinds === "idle";
+  const onPanStart = useCallback(() => {
+    panStartRef.current = zoomRef.current.offset;
+  }, []);
+  const onPan = useCallback((dx: number, dy: number) => {
+    const { content, container } = panMetricsRef.current;
+    const next = clampPan(
+      { x: panStartRef.current.x + dx, y: panStartRef.current.y + dy },
+      content,
+      container,
+    );
+    setZoom((z) => ({ ...z, offset: next }));
+  }, []);
+
+  // Reset transient zoom/pan when the page / fit / view / marker-mode key
   // changes — React's "adjust state during render" recipe (no effect, no
-  // extra paint). Resetting on marker-mode entry also sidesteps the
+  // extra paint). The marker-mode reset also sidesteps the
   // CSS-transform-vs-offset-positioned-overlay desync while drawing.
   const zoomResetKey = `${currentPage}|${fitMode}|${viewMode}|${markerModeForKeybinds}`;
   const [zoomKey, setZoomKey] = useState(zoomResetKey);
   if (zoomKey !== zoomResetKey) {
     setZoomKey(zoomResetKey);
     if (zoom.scale !== 1 || zoom.offset.x !== 0 || zoom.offset.y !== 0) {
-      setZoom({ scale: 1, offset: { x: 0, y: 0 } });
+      setZoom({ scale: 1, ...RECENTER });
     }
   }
 
@@ -763,18 +818,20 @@ export function Reader({
   // drag in highlight mode was being interpreted as a page-flip
   // swipe. Switching off the gesture entirely is cleaner than
   // racing `stopPropagation` on the native handlers.
-  useReaderSwipe({
+  useReaderGestures({
     target: gestureRef,
     enabled:
-      markerModeForKeybinds === "idle" &&
-      pendingMarkerForKeybinds === null &&
-      // While transform-zoomed the horizontal drag pans the page
-      // (handled in SinglePageView), so the swipe-to-turn is off.
-      zoom.scale === 1,
+      markerModeForKeybinds === "idle" && pendingMarkerForKeybinds === null,
     viewMode,
     direction,
     onNext: goNext,
     onPrev: goPrev,
+    // When zoomed or a page overflows the viewport, the drag pans the
+    // page (the gesture container receives the drag even though the
+    // TapZones overlay is the pointer target); otherwise it turns pages.
+    panActive,
+    onPanStart,
+    onPan,
   });
 
   return (
@@ -792,7 +849,13 @@ export function Reader({
       // anchored around the (vertically-centered) collapsed placeholder,
       // landing the viewport mid-page. Off, our explicit scroll-to-top
       // stays put and new pages always start at the top.
-      style={{ touchAction: "pan-y pinch-zoom", overflowAnchor: "none" }}
+      // While panning (zoom/overflow) the JS gesture owns the drag, so
+      // drop native pan/scroll to "none"; otherwise keep native vertical
+      // scroll + pinch-zoom and leave the horizontal axis for swipe.
+      style={{
+        touchAction: panActive ? "none" : "pan-y pinch-zoom",
+        overflowAnchor: "none",
+      }}
       // Reader surface token (see globals.css `--reader-bg`): the
       // route-level loading skeleton consumes the same token so the
       // fallback never flashes white before the reader paints.
@@ -890,7 +953,10 @@ export function Reader({
             pageNaturalSize={pageNaturalSize}
             transition={pageTransition}
             zoom={zoom}
-            onPan={(offset) => setZoom((z) => ({ ...z, offset }))}
+            overflowing={overflowing}
+            onOverflowChange={setOverflowing}
+            panMetricsRef={panMetricsRef}
+            onZoomToggle={zoomToggleAt}
           />
         )}
       </div>
@@ -927,7 +993,10 @@ function SinglePageView({
   pageNaturalSize,
   transition,
   zoom,
-  onPan,
+  overflowing,
+  onOverflowChange,
+  panMetricsRef,
+  onZoomToggle,
 }: {
   issueId: string;
   currentPage: number;
@@ -940,68 +1009,68 @@ function SinglePageView({
     Map<number, { width: number; height: number }>
   >;
   transition: PageTransitionResult;
-  /** Transform zoom (audit C9): scale + pan offset (px, screen space). */
-  zoom: { scale: number; offset: { x: number; y: number } };
-  onPan: (offset: { x: number; y: number }) => void;
+  /** Transform zoom + pan (audit C4/C9). Pan offset is screen-px. */
+  zoom: {
+    scale: number;
+    offset: { x: number; y: number };
+    origin: { x: number; y: number };
+  };
+  /** Whether the rendered page overflows the viewport (drives pan). */
+  overflowing: boolean;
+  onOverflowChange: (overflowing: boolean) => void;
+  /** Reader-owned clamp metrics; populated here from the live refs. */
+  panMetricsRef: React.RefObject<{
+    content: { w: number; h: number };
+    container: { w: number; h: number };
+  }>;
+  /** Double-tap / double-click toggle, with the tap point + page rect. */
+  onZoomToggle: (
+    rectX: number,
+    rectY: number,
+    rect: { w: number; h: number },
+  ) => void;
 }) {
   const markerMode = useReaderStore((s) => s.markerMode);
-  const zoomed = zoom.scale > 1;
-  // Drag-to-pan while zoomed. Pointer-based + clamped to the page edges
-  // so the scaled page can't be dragged off-screen. Only in idle marker
-  // mode (zoom resets when a marker mode is entered, so this is belt-and-
-  // suspenders) so it never competes with the highlight-rect drag.
-  const pageWrapRef = useRef<HTMLDivElement>(null);
-  const panStart = useRef<{
-    pointerX: number;
-    pointerY: number;
-    offX: number;
-    offY: number;
-  } | null>(null);
-  const onPanPointerDown = (e: React.PointerEvent) => {
-    if (!zoomed || markerMode !== "idle") return;
-    panStart.current = {
-      pointerX: e.clientX,
-      pointerY: e.clientY,
-      offX: zoom.offset.x,
-      offY: zoom.offset.y,
-    };
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-  };
-  const onPanPointerMove = (e: React.PointerEvent) => {
-    const start = panStart.current;
-    if (!start) return;
-    const el = pageWrapRef.current;
-    const bounds = el
-      ? { w: el.offsetWidth, h: el.offsetHeight }
-      : { w: 0, h: 0 };
-    onPan(
-      clampPan(
-        {
-          x: start.offX + (e.clientX - start.pointerX),
-          y: start.offY + (e.clientY - start.pointerY),
-        },
-        zoom.scale,
-        bounds,
-      ),
-    );
-  };
-  const onPanPointerUp = (e: React.PointerEvent) => {
-    panStart.current = null;
-    e.currentTarget.releasePointerCapture?.(e.pointerId);
-  };
-  const natural = pageNaturalSize.current?.get(currentPage) ?? null;
+  const panActive = (zoom.scale > 1 || overflowing) && markerMode === "idle";
   // The wrapper is a block-level <div> rather than the previous
   // `inline-block` <span> so it has no inline-baseline descender that
   // could leave the overlay's `absolute inset-0` covering a slightly
-  // taller area than the rendered img. SVG percent coords + pointer
-  // math both anchor here, so visual rect placement matches the user's
-  // drag exactly.
-  // Track the rendered image element separately from the wrapper so
-  // the marker overlay can align to the actual image bounds. At
-  // fit=height the wrapper is full-width but the image is centered
-  // and narrower — without this ref the overlay would cover (and
-  // capture pointer coords from) the empty band on each side.
+  // taller area than the rendered img.
+  const pageWrapRef = useRef<HTMLDivElement>(null);
+  // Track the rendered image separately so the overlay aligns to the
+  // actual image bounds (at fit=height the wrapper is full-width but the
+  // image is centered and narrower).
   const imgRef = useRef<HTMLImageElement>(null);
+
+  // Measure rendered image vs wrapper: (a) report horizontal/vertical
+  // overflow up so the gesture layer pans (C4), and (b) keep the
+  // pan-clamp metrics fresh (content = scaled wrapper when zoomed, else
+  // the rendered image; container = the visible wrapper box).
+  useEffect(() => {
+    const wrap = pageWrapRef.current;
+    if (!wrap) return;
+    const measure = () => {
+      const img = imgRef.current;
+      const cw = wrap.clientWidth;
+      const ch = wrap.clientHeight;
+      const iw = img?.offsetWidth ?? cw;
+      const ih = img?.offsetHeight ?? ch;
+      panMetricsRef.current = {
+        content:
+          zoom.scale > 1
+            ? { w: cw * zoom.scale, h: ch * zoom.scale }
+            : { w: iw, h: ih },
+        container: { w: cw, h: ch },
+      };
+      onOverflowChange(iw > cw + 1 || ih > ch + 1);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    if (imgRef.current) ro.observe(imgRef.current);
+    return () => ro.disconnect();
+  }, [currentPage, fitClass, zoom.scale, onOverflowChange, panMetricsRef]);
+  const natural = pageNaturalSize.current?.get(currentPage) ?? null;
   return (
     <main className="relative grid min-h-screen place-items-center pt-(--safe-top) pb-(--safe-bottom)">
       <div
@@ -1039,29 +1108,26 @@ function SinglePageView({
           ref={pageWrapRef}
           className={transition.enterAnimClass ?? undefined}
           key={`enter-${currentPage}`}
-          // Transform zoom (C9). `translate` first (screen px) then
-          // `scale`, so the pan offset is in screen space and matches the
-          // clamp bounds. PageImage + MarkerOverlay scale together inside
-          // this wrapper so they stay visually locked. `touch-action:
-          // none` while zoomed hands the drag to the JS panner instead of
-          // native scroll. `transition: none` so panning tracks the
-          // pointer 1:1 (the page-turn anim class only matters at 1×).
+          // Transform zoom + pan (C4/C9). `translate` first (screen px)
+          // then `scale`, so the offset is in screen space and matches
+          // the clamp bounds. PageImage + MarkerOverlay transform together
+          // (visually locked). The pan/double-tap themselves are handled
+          // by the gesture hook + TapZones (which sit above this wrapper
+          // and so actually receive the pointers); this element only
+          // *renders* the resulting transform. `transition: none` so a
+          // pan tracks the pointer 1:1 (the page-turn anim class only
+          // matters at 1×).
           style={
-            zoomed
+            panActive
               ? {
                   transform: `translate(${zoom.offset.x}px, ${zoom.offset.y}px) scale(${zoom.scale})`,
-                  transformOrigin: "center center",
-                  touchAction: "none",
+                  transformOrigin: `${zoom.origin.x}% ${zoom.origin.y}%`,
                   transition: "none",
-                  cursor: "grab",
                   willChange: "transform",
+                  cursor: zoom.scale > 1 ? "grab" : undefined,
                 }
               : undefined
           }
-          onPointerDown={onPanPointerDown}
-          onPointerMove={onPanPointerMove}
-          onPointerUp={onPanPointerUp}
-          onPointerCancel={onPanPointerUp}
         >
           <PageImage
             key={`${issueId}-${currentPage}`}
@@ -1085,6 +1151,14 @@ function SinglePageView({
           onLeft={onLeftZone}
           onRight={onRightZone}
           onChrome={onChromeZone}
+          // Double-tap / double-click the center zone toggles zoom at the
+          // tapped point (single-page only). The zones receive the taps;
+          // the page wrapper beneath them never would.
+          onCenterDoubleTap={(cx, cy) => {
+            const r = pageWrapRef.current?.getBoundingClientRect();
+            if (!r) return;
+            onZoomToggle(cx - r.left, cy - r.top, { w: r.width, h: r.height });
+          }}
         />
       ) : null}
     </main>
@@ -1470,11 +1544,37 @@ function TapZones({
   onLeft,
   onRight,
   onChrome,
+  onCenterDoubleTap,
 }: {
   onLeft: () => void;
   onRight: () => void;
   onChrome: () => void;
+  /** When set (single-page only), the center zone distinguishes a single
+   *  tap (chrome toggle, debounced) from a double tap (zoom at point). */
+  onCenterDoubleTap?: (clientX: number, clientY: number) => void;
 }) {
+  // Single/double-click arbitration for the center zone: a single tap
+  // fires `onChrome` after a short delay; a second tap inside the window
+  // cancels it and fires `onCenterDoubleTap` instead. Without the delay,
+  // a double-tap-to-zoom would also toggle the chrome on its first click.
+  const centerTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCenterClick = (e: React.MouseEvent) => {
+    if (!onCenterDoubleTap) {
+      onChrome();
+      return;
+    }
+    if (centerTapTimer.current) {
+      // Second click → double tap: cancel the pending chrome toggle, zoom.
+      clearTimeout(centerTapTimer.current);
+      centerTapTimer.current = null;
+      onCenterDoubleTap(e.clientX, e.clientY);
+      return;
+    }
+    centerTapTimer.current = setTimeout(() => {
+      centerTapTimer.current = null;
+      onChrome();
+    }, DOUBLE_TAP_MS);
+  };
   return (
     <div className="absolute inset-0 z-10 grid grid-cols-3" aria-hidden="true">
       <button
@@ -1487,7 +1587,7 @@ function TapZones({
       <button
         type="button"
         tabIndex={-1}
-        onClick={onChrome}
+        onClick={onCenterClick}
         aria-label="Toggle controls"
       />
       <button

@@ -5,31 +5,64 @@ import type { Direction, ViewMode } from "@/lib/reader/detect";
 const SWIPE_THRESHOLD_PX = 30;
 
 /**
- * Horizontal swipe-to-flip on the reader pane. Webtoon mode opts out
- * (vertical scroll is the native interaction). Pinch-zoomed viewports
- * also opt out so single-finger panning doesn't accidentally turn the
- * page out from under the reader.
+ * The reader's single drag-gesture claim layer (audit C4 + C9). One
+ * `useGesture` on the reader pane — two instances would race each other's
+ * native listeners, the exact ordering bug the `enabled` gate guards.
  *
- * `enabled` is the caller's gate — `false` while the user is mid-
- * highlight or has a pending marker editor open, since
- * `@use-gesture/react` attaches native pointer listeners BEFORE
- * React's synthetic handlers on the SVG overlay, so a horizontal drag
- * in highlight mode was previously being interpreted as a page-flip.
- * Switching off the gesture entirely is cleaner than racing
- * `stopPropagation` on the native handlers.
+ * The gesture is attached to the outer reader container, so drags bubble
+ * up to it even though the `TapZones` overlay (`z-10`) is the pointer
+ * target — which is why the pan must live HERE and not on a wrapper
+ * beneath the zones (a wrapper never receives the drag).
+ *
+ * Two modes, chosen by `panActive`:
+ *  - **pan** (zoomed, or a fit=height/original page overflowing the
+ *    viewport): the drag pans the page via `onPan` (both axes); no
+ *    page-turn. Page-turn is still reachable by tapping the `TapZones`.
+ *  - **page-turn** (default): a horizontal drag past the threshold flips
+ *    the page. Webtoon opts out (vertical scroll is native); a
+ *    pinch-zoomed visual viewport opts out so a single-finger pan
+ *    doesn't turn the page out from under the reader.
+ *
+ * `enabled` is the caller's gate — `false` while mid-highlight / pending
+ * marker editor (the SVG overlay's native listeners would otherwise read
+ * a horizontal drag as a page-flip).
  */
-export function useReaderSwipe(opts: {
+export function useReaderGestures(opts: {
   target: RefObject<HTMLDivElement | null>;
   enabled: boolean;
   viewMode: ViewMode;
   direction: Direction;
   onNext: () => void;
   onPrev: () => void;
+  /** When true the drag pans the page instead of turning it. */
+  panActive: boolean;
+  /** Drag start while panning — caller snapshots the current offset. */
+  onPanStart: () => void;
+  /** Movement (px, from drag start) while panning. */
+  onPan: (dx: number, dy: number) => void;
 }): void {
-  const { target, enabled, viewMode, direction, onNext, onPrev } = opts;
+  const {
+    target,
+    enabled,
+    viewMode,
+    direction,
+    onNext,
+    onPrev,
+    panActive,
+    onPanStart,
+    onPan,
+  } = opts;
   useGesture(
     {
+      onDragStart: () => {
+        if (panActive) onPanStart();
+      },
+      onDrag: ({ movement: [mx, my] }) => {
+        if (panActive) onPan(mx, my);
+      },
       onDragEnd: ({ movement: [mx], cancel }) => {
+        // Panning consumed the drag; the offset is already applied.
+        if (panActive) return;
         if (viewMode === "webtoon") {
           cancel();
           return;
@@ -48,7 +81,9 @@ export function useReaderSwipe(opts: {
     {
       target,
       drag: {
-        axis: "x",
+        // Lock to the horizontal axis for page-turn (so native vertical
+        // scroll is preserved); free both axes while panning.
+        axis: panActive ? undefined : "x",
         filterTaps: true,
         threshold: 10,
         enabled,

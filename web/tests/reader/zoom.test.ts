@@ -36,26 +36,30 @@ describe("nextZoomStep", () => {
 });
 
 describe("clampPan", () => {
-  it("pins to center at scale 1", () => {
-    expect(clampPan({ x: 100, y: 100 }, 1, { w: 400, h: 600 })).toEqual({
-      x: 0,
-      y: 0,
-    });
+  it("pins to center when content fits the container", () => {
+    expect(
+      clampPan({ x: 100, y: 100 }, { w: 400, h: 600 }, { w: 400, h: 600 }),
+    ).toEqual({ x: 0, y: 0 });
   });
 
-  it("clamps within the (scale-1)*dim/2 envelope", () => {
-    // scale 2, w 400 → maxX 200; h 600 → maxY 300.
-    expect(clampPan({ x: 500, y: -500 }, 2, { w: 400, h: 600 })).toEqual({
-      x: 200,
-      y: -300,
-    });
+  it("clamps within the (content-container)/2 envelope (zoom 2×)", () => {
+    // content 800×1200 in a 400×600 box → maxX 200, maxY 300.
+    expect(
+      clampPan({ x: 500, y: -500 }, { w: 800, h: 1200 }, { w: 400, h: 600 }),
+    ).toEqual({ x: 200, y: -300 });
+  });
+
+  it("allows horizontal pan but pins vertical for an overflowing fit=height page", () => {
+    // Wide page (1000) in a 400 box, same height → pan X up to 300, Y pinned.
+    expect(
+      clampPan({ x: 999, y: 50 }, { w: 1000, h: 600 }, { w: 400, h: 600 }),
+    ).toEqual({ x: 300, y: 0 });
   });
 
   it("leaves in-bounds offsets untouched", () => {
-    expect(clampPan({ x: 50, y: -40 }, 2, { w: 400, h: 600 })).toEqual({
-      x: 50,
-      y: -40,
-    });
+    expect(
+      clampPan({ x: 50, y: -40 }, { w: 800, h: 1200 }, { w: 400, h: 600 }),
+    ).toEqual({ x: 50, y: -40 });
   });
 });
 

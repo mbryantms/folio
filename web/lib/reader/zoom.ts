@@ -27,19 +27,21 @@ export function nextZoomStep(current: number, dir: "in" | "out"): number {
 }
 
 /**
- * Clamp a pan offset (px) so a `scale`d page can't be dragged past its
- * own edges into empty space. At scale `s` the page is `s×` the
- * container, so each axis can travel at most `(s-1) * dimension / 2`
- * from center before an edge would pull inside the viewport.
+ * Clamp a pan offset (px) so the rendered content can't be dragged past
+ * its own edges into empty space. Generalized over `content` (the
+ * rendered size: container×scale when zoomed, or the natural image size
+ * when a fit=height/original page overflows the viewport at 1×) vs
+ * `container` (the visible box): each axis can travel at most
+ * `(content - container) / 2` from center. Axes where content ≤
+ * container are pinned to 0.
  */
 export function clampPan(
   offset: { x: number; y: number },
-  scale: number,
-  bounds: { w: number; h: number },
+  content: { w: number; h: number },
+  container: { w: number; h: number },
 ): { x: number; y: number } {
-  if (scale <= 1) return { x: 0, y: 0 };
-  const maxX = ((scale - 1) * bounds.w) / 2;
-  const maxY = ((scale - 1) * bounds.h) / 2;
+  const maxX = Math.max(0, (content.w - container.w) / 2);
+  const maxY = Math.max(0, (content.h - container.h) / 2);
   return {
     x: Math.max(-maxX, Math.min(maxX, offset.x)),
     y: Math.max(-maxY, Math.min(maxY, offset.y)),
