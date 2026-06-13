@@ -10,6 +10,12 @@ const config: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+  // React Compiler (audit G4, chunk 1.0b). Auto-memoizes components and
+  // hooks at build time so render hygiene stops regressing per-site —
+  // Wave-0 chunk 0.3 added the hottest React.memo wrappers by hand; the
+  // compiler makes the rest free. Babel-based (babel-plugin-react-compiler),
+  // applied on both the webpack dev path and the Turbopack prod build.
+  reactCompiler: true,
   // Allow LAN-origin requests at dev. Next 16 dev's asset cross-origin
   // checks reject anything that isn't a localhost variant by default; without
   // this list, browsing to e.g. http://192.168.1.x:3000 succeeds for SSR but
