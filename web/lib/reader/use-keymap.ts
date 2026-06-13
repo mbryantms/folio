@@ -53,6 +53,9 @@ export function useReaderKeymap(opts: {
   toggleChrome: () => void;
   cycleFitMode: () => void;
   cycleViewMode: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  zoomReset: () => void;
   togglePageStrip: () => void;
   toggleBookmark: () => void;
   toggleFavorite: () => void;
@@ -85,6 +88,9 @@ export function useReaderKeymap(opts: {
     toggleChrome,
     cycleFitMode,
     cycleViewMode,
+    zoomIn,
+    zoomOut,
+    zoomReset,
     togglePageStrip,
     toggleBookmark,
     toggleFavorite,
@@ -184,6 +190,15 @@ export function useReaderKeymap(opts: {
         case "cycleViewMode":
           cycleViewMode();
           break;
+        case "zoomIn":
+          zoomIn();
+          break;
+        case "zoomOut":
+          zoomOut();
+          break;
+        case "zoomReset":
+          zoomReset();
+          break;
         case "togglePageStrip":
           togglePageStrip();
           break;
@@ -265,5 +280,8 @@ export function useReaderKeymap(opts: {
     togglePageStrip,
     totalPages,
     viewMode,
+    zoomIn,
+    zoomOut,
+    zoomReset,
   ]);
 }

@@ -22,6 +22,7 @@ import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
 import { useReaderSwipe } from "@/lib/reader/use-swipe";
 import { useReaderKeymap } from "@/lib/reader/use-keymap";
+import { clampPan, nextZoomStep } from "@/lib/reader/zoom";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
 import { readerUrl } from "@/lib/urls";
 import { useCreateMarker, useDeleteMarkerById } from "@/lib/api/mutations";
@@ -554,6 +555,48 @@ export function Reader({
   // Esc-then-exit two-step. Marker-mode active state suppresses
   // page-nav so a highlight drag isn't interrupted; the marker
   // overlay's capture-phase handler still owns Esc in that mode.
+  // Transform zoom (audit C9). Single-page only; transient per-page
+  // (resets on page / fit / view / marker-mode change — the last so a
+  // CSS transform never desyncs the offset-positioned MarkerOverlay
+  // while drawing). `+`/`-` walk a discrete ladder and re-center; the
+  // drag-to-pan in `SinglePageView` clamps the offset to the page edges.
+  const [zoom, setZoom] = useState<{
+    scale: number;
+    offset: { x: number; y: number };
+  }>({ scale: 1, offset: { x: 0, y: 0 } });
+  const zoomIn = useCallback(
+    () =>
+      setZoom((z) => ({
+        scale: nextZoomStep(z.scale, "in"),
+        offset: { x: 0, y: 0 },
+      })),
+    [],
+  );
+  const zoomOut = useCallback(
+    () =>
+      setZoom((z) => ({
+        scale: nextZoomStep(z.scale, "out"),
+        offset: { x: 0, y: 0 },
+      })),
+    [],
+  );
+  const zoomReset = useCallback(
+    () => setZoom({ scale: 1, offset: { x: 0, y: 0 } }),
+    [],
+  );
+  // Reset transient zoom when the page / fit / view / marker-mode key
+  // changes — React's "adjust state during render" recipe (no effect, no
+  // extra paint). Resetting on marker-mode entry also sidesteps the
+  // CSS-transform-vs-offset-positioned-overlay desync while drawing.
+  const zoomResetKey = `${currentPage}|${fitMode}|${viewMode}|${markerModeForKeybinds}`;
+  const [zoomKey, setZoomKey] = useState(zoomResetKey);
+  if (zoomKey !== zoomResetKey) {
+    setZoomKey(zoomResetKey);
+    if (zoom.scale !== 1 || zoom.offset.x !== 0 || zoom.offset.y !== 0) {
+      setZoom({ scale: 1, offset: { x: 0, y: 0 } });
+    }
+  }
+
   useReaderKeymap({
     bindings,
     viewMode,
@@ -573,6 +616,9 @@ export function Reader({
     toggleChrome,
     cycleFitMode,
     cycleViewMode,
+    zoomIn,
+    zoomOut,
+    zoomReset,
     togglePageStrip,
     toggleBookmark,
     toggleFavorite,
@@ -720,7 +766,11 @@ export function Reader({
   useReaderSwipe({
     target: gestureRef,
     enabled:
-      markerModeForKeybinds === "idle" && pendingMarkerForKeybinds === null,
+      markerModeForKeybinds === "idle" &&
+      pendingMarkerForKeybinds === null &&
+      // While transform-zoomed the horizontal drag pans the page
+      // (handled in SinglePageView), so the swipe-to-turn is off.
+      zoom.scale === 1,
     viewMode,
     direction,
     onNext: goNext,
@@ -839,6 +889,8 @@ export function Reader({
             onNaturalSize={handleNaturalSize}
             pageNaturalSize={pageNaturalSize}
             transition={pageTransition}
+            zoom={zoom}
+            onPan={(offset) => setZoom((z) => ({ ...z, offset }))}
           />
         )}
       </div>
@@ -874,6 +926,8 @@ function SinglePageView({
   onNaturalSize,
   pageNaturalSize,
   transition,
+  zoom,
+  onPan,
 }: {
   issueId: string;
   currentPage: number;
@@ -886,8 +940,55 @@ function SinglePageView({
     Map<number, { width: number; height: number }>
   >;
   transition: PageTransitionResult;
+  /** Transform zoom (audit C9): scale + pan offset (px, screen space). */
+  zoom: { scale: number; offset: { x: number; y: number } };
+  onPan: (offset: { x: number; y: number }) => void;
 }) {
   const markerMode = useReaderStore((s) => s.markerMode);
+  const zoomed = zoom.scale > 1;
+  // Drag-to-pan while zoomed. Pointer-based + clamped to the page edges
+  // so the scaled page can't be dragged off-screen. Only in idle marker
+  // mode (zoom resets when a marker mode is entered, so this is belt-and-
+  // suspenders) so it never competes with the highlight-rect drag.
+  const pageWrapRef = useRef<HTMLDivElement>(null);
+  const panStart = useRef<{
+    pointerX: number;
+    pointerY: number;
+    offX: number;
+    offY: number;
+  } | null>(null);
+  const onPanPointerDown = (e: React.PointerEvent) => {
+    if (!zoomed || markerMode !== "idle") return;
+    panStart.current = {
+      pointerX: e.clientX,
+      pointerY: e.clientY,
+      offX: zoom.offset.x,
+      offY: zoom.offset.y,
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onPanPointerMove = (e: React.PointerEvent) => {
+    const start = panStart.current;
+    if (!start) return;
+    const el = pageWrapRef.current;
+    const bounds = el
+      ? { w: el.offsetWidth, h: el.offsetHeight }
+      : { w: 0, h: 0 };
+    onPan(
+      clampPan(
+        {
+          x: start.offX + (e.clientX - start.pointerX),
+          y: start.offY + (e.clientY - start.pointerY),
+        },
+        zoom.scale,
+        bounds,
+      ),
+    );
+  };
+  const onPanPointerUp = (e: React.PointerEvent) => {
+    panStart.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+  };
   const natural = pageNaturalSize.current?.get(currentPage) ?? null;
   // The wrapper is a block-level <div> rather than the previous
   // `inline-block` <span> so it has no inline-baseline descender that
@@ -935,8 +1036,32 @@ function SinglePageView({
           </div>
         )}
         <div
+          ref={pageWrapRef}
           className={transition.enterAnimClass ?? undefined}
           key={`enter-${currentPage}`}
+          // Transform zoom (C9). `translate` first (screen px) then
+          // `scale`, so the pan offset is in screen space and matches the
+          // clamp bounds. PageImage + MarkerOverlay scale together inside
+          // this wrapper so they stay visually locked. `touch-action:
+          // none` while zoomed hands the drag to the JS panner instead of
+          // native scroll. `transition: none` so panning tracks the
+          // pointer 1:1 (the page-turn anim class only matters at 1×).
+          style={
+            zoomed
+              ? {
+                  transform: `translate(${zoom.offset.x}px, ${zoom.offset.y}px) scale(${zoom.scale})`,
+                  transformOrigin: "center center",
+                  touchAction: "none",
+                  transition: "none",
+                  cursor: "grab",
+                  willChange: "transform",
+                }
+              : undefined
+          }
+          onPointerDown={onPanPointerDown}
+          onPointerMove={onPanPointerMove}
+          onPointerUp={onPanPointerUp}
+          onPointerCancel={onPanPointerUp}
         >
           <PageImage
             key={`${issueId}-${currentPage}`}
