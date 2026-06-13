@@ -190,6 +190,10 @@ jobs:
         run: pnpm --filter web run lint
       - if: env.WEB == 'true'
         run: pnpm --filter web run typecheck
+      # Registry gate (audit H1a): query definitions must use the
+      # queryKeys registry, never an inline tuple literal.
+      - if: env.WEB == 'true'
+        run: pnpm --filter web run check-query-keys
       - if: env.WEB == 'true'
         run: pnpm --filter web run test
       # Build once so the bundle-budget script reads a real `.next/`
