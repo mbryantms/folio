@@ -1,6 +1,14 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useReaderStore, type FitMode } from "@/lib/reader/store";
@@ -11,6 +19,12 @@ import {
   type ViewMode,
 } from "@/lib/reader/detect";
 import { resolveKeybinds } from "@/lib/reader/keybinds";
+import {
+  hasSeenReaderFirstRun,
+  markReaderFirstRunSeen,
+  readerFirstRunServerSnapshot,
+  subscribeReaderFirstRun,
+} from "@/lib/reader/first-run";
 import { useReadingSession } from "@/lib/reader/session";
 import {
   computeSpreadGroups,
@@ -60,6 +74,13 @@ const MarkerEditor = dynamic(
 // only shown while a marker mode is active.
 const MarkerModePill = dynamic(
   () => import("./MarkerModePill").then((m) => m.MarkerModePill),
+  { ssr: false },
+);
+// One-time reader orientation overlay (audit C5); lazy + only mounted for
+// genuine first-run users, so its bytes never touch the steady-state
+// first-load JS budget.
+const ReaderFirstRunOverlay = dynamic(
+  () => import("./ReaderFirstRunOverlay").then((m) => m.ReaderFirstRunOverlay),
   { ssr: false },
 );
 import { MarkerOverlay } from "./MarkerOverlay";
@@ -166,6 +187,23 @@ export function Reader({
   if (pendingMarkerForKeybinds !== null && !markerEditorMounted) {
     setMarkerEditorMounted(true);
   }
+
+  // First-run orientation overlay (audit C5). Read the localStorage flag
+  // via useSyncExternalStore so it's SSR-safe (server snapshot = "seen",
+  // no hydration flash, no setState-in-effect). Dismissal marks the
+  // global flag and flips local state so it disappears immediately and
+  // never returns.
+  const firstRunSeen = useSyncExternalStore(
+    subscribeReaderFirstRun,
+    hasSeenReaderFirstRun,
+    readerFirstRunServerSnapshot,
+  );
+  const [firstRunDismissed, setFirstRunDismissed] = useState(false);
+  const showFirstRun = !firstRunSeen && !firstRunDismissed;
+  const dismissFirstRun = useCallback(() => {
+    markReaderFirstRunSeen();
+    setFirstRunDismissed(true);
+  }, []);
 
   // Per-issue marker fetch — drives the overlay, the page-strip dots,
   // and the bookmark toggle's "is this page already bookmarked?"
@@ -997,6 +1035,12 @@ export function Reader({
         <MarkerModePill
           mode={markerModeForKeybinds}
           onCancel={() => setMarkerMode("idle")}
+        />
+      ) : null}
+      {showFirstRun ? (
+        <ReaderFirstRunOverlay
+          direction={direction}
+          onDismiss={dismissFirstRun}
         />
       ) : null}
       <EndOfIssueCard
