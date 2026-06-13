@@ -36,6 +36,9 @@ export type KeybindAction =
   | "toggleChrome"
   | "cycleFit"
   | "cycleViewMode"
+  | "zoomIn"
+  | "zoomOut"
+  | "zoomReset"
   | "togglePageStrip"
   | "quitReader"
   // markers
@@ -64,6 +67,9 @@ export const READER_KEYBIND_ACTIONS: readonly KeybindAction[] = [
   "toggleChrome",
   "cycleFit",
   "cycleViewMode",
+  "zoomIn",
+  "zoomOut",
+  "zoomReset",
   "togglePageStrip",
   "quitReader",
   "bookmarkPage",
@@ -95,6 +101,9 @@ export const KEYBIND_SCOPES: Record<KeybindAction, KeybindScope> = {
   toggleChrome: "reader",
   cycleFit: "reader",
   cycleViewMode: "reader",
+  zoomIn: "reader",
+  zoomOut: "reader",
+  zoomReset: "reader",
   togglePageStrip: "reader",
   quitReader: "reader",
   bookmarkPage: "reader",
@@ -120,6 +129,9 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   toggleChrome: "Toggle controls",
   cycleFit: "Cycle fit mode",
   cycleViewMode: "Cycle view mode",
+  zoomIn: "Zoom in",
+  zoomOut: "Zoom out",
+  zoomReset: "Reset zoom",
   togglePageStrip: "Toggle page strip",
   quitReader: "Exit reader",
   bookmarkPage: "Bookmark this page",
@@ -148,6 +160,11 @@ export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
   toggleChrome: "t",
   cycleFit: "f",
   cycleViewMode: "d",
+  // `+` / `-` / `0` for transform zoom (audit C9). `+` is special-cased
+  // by the chord parser; `-` and `0` are bare single keys.
+  zoomIn: "+",
+  zoomOut: "-",
+  zoomReset: "0",
   togglePageStrip: "m",
   quitReader: "Escape",
   bookmarkPage: "b",
