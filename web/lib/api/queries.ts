@@ -673,11 +673,16 @@ export async function jsonFetch<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function useMe() {
+export function useMe({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.me,
     queryFn: () => jsonFetch<MeView>("/auth/me"),
     staleTime: 60_000,
+    // `enabled: false` lets always-mounted callers (root-layout
+    // listeners) skip the probe on surfaces that are anonymous by
+    // construction — an unauthed /auth/me triggers the refresh dance
+    // and used to spray ~8 doomed 401/403s across the sign-in page.
+    enabled,
   });
 }
 
