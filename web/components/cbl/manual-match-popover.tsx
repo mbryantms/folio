@@ -12,7 +12,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { apiFetch } from "@/lib/api/auth-refresh";
-import { useLibraryList } from "@/lib/api/queries";
+import { queryKeys, useLibraryList } from "@/lib/api/queries";
 import { useClearMatchEntry, useManualMatchEntry } from "@/lib/api/mutations";
 import type {
   CblEntryView,
@@ -279,7 +279,7 @@ function IssueStep({
 function useSeriesSearch(q: string) {
   const trimmed = q.trim();
   return useQuery({
-    queryKey: ["series", "manual-match-search", trimmed],
+    queryKey: queryKeys.seriesManualMatchSearch(trimmed),
     queryFn: async () => {
       const sp = new URLSearchParams({ limit: "20", q: trimmed });
       const res = await apiFetch(`/series?${sp.toString()}`);
@@ -294,7 +294,7 @@ function useSeriesSearch(q: string) {
 function useSeriesIssuesPage(seriesSlug: string, q: string) {
   const trimmed = q.trim();
   return useQuery({
-    queryKey: ["series", "manual-match-issues", seriesSlug, trimmed],
+    queryKey: queryKeys.seriesManualMatchIssues(seriesSlug, trimmed),
     queryFn: async () => {
       const sp = new URLSearchParams({ limit: "60" });
       if (trimmed) sp.set("q", trimmed);
