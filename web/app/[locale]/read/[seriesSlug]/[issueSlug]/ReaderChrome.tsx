@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -20,11 +20,7 @@ import { useReaderStore } from "@/lib/reader/store";
 import type { Direction } from "@/lib/reader/detect";
 import { useFullscreen } from "@/lib/reader/fullscreen";
 import { statusTone } from "@/lib/ui/status-tone";
-import { useIssueMarkers } from "@/lib/api/queries";
-import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations";
-import { markerToCreateReq } from "@/lib/markers/recreate";
-import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
-import { toast } from "sonner";
+import { usePageMarkerToggle } from "@/lib/markers/use-page-marker-toggle";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -321,46 +317,17 @@ function BookmarkToggleButton({
   issueId: string;
   pageIndex: number;
 }) {
-  const markers = useIssueMarkers(issueId);
-  const existing = useMemo(
-    () =>
-      (markers.data?.items ?? []).find(
-        (m) => m.kind === "bookmark" && m.page_index === pageIndex && !m.region,
-      ),
-    [markers.data, pageIndex],
+  // Shared toggle hook (also drives the `b` keybind in Reader.tsx).
+  const { existing, toggle } = usePageMarkerToggle(
+    issueId,
+    pageIndex,
+    "bookmark",
   );
-  const create = useCreateMarker();
-  // The delete hook is keyed on a marker id; only mint it when we
-  // actually have one to delete.
-  const del = useDeleteMarker(existing?.id ?? "", issueId, { silent: true });
-
-  const onClick = () => {
-    if (existing) {
-      const snapshot = existing;
-      del.mutate(undefined, {
-        onSuccess: () =>
-          toast.success("Bookmark removed", {
-            duration: UNDO_TOAST_DURATION_MS,
-            action: {
-              label: "Undo",
-              onClick: () => create.mutate(markerToCreateReq(snapshot)),
-            },
-          }),
-      });
-      return;
-    }
-    create.mutate({
-      issue_id: issueId,
-      page_index: pageIndex,
-      kind: "bookmark",
-    });
-  };
-
   return (
     <ChromeIconButton
       label={existing ? "Remove bookmark" : "Bookmark this page"}
       icon={existing ? <BookmarkCheck /> : <Bookmark />}
-      onClick={onClick}
+      onClick={() => toggle({ removed: "Bookmark removed" })}
       active={!!existing}
     />
   );
@@ -380,45 +347,18 @@ function FavoriteToggleButton({
   issueId: string;
   pageIndex: number;
 }) {
-  const markers = useIssueMarkers(issueId);
-  const existing = useMemo(
-    () =>
-      (markers.data?.items ?? []).find(
-        (m) => m.kind === "favorite" && m.page_index === pageIndex && !m.region,
-      ),
-    [markers.data, pageIndex],
+  // Shared toggle hook (also drives the `s` keybind in Reader.tsx).
+  const { existing, toggle } = usePageMarkerToggle(
+    issueId,
+    pageIndex,
+    "favorite",
   );
-  const create = useCreateMarker();
-  const del = useDeleteMarker(existing?.id ?? "", issueId, { silent: true });
-
-  const onClick = () => {
-    if (existing) {
-      const snapshot = existing;
-      del.mutate(undefined, {
-        onSuccess: () =>
-          toast.success("Star removed", {
-            duration: UNDO_TOAST_DURATION_MS,
-            action: {
-              label: "Undo",
-              onClick: () => create.mutate(markerToCreateReq(snapshot)),
-            },
-          }),
-      });
-      return;
-    }
-    create.mutate({
-      issue_id: issueId,
-      page_index: pageIndex,
-      kind: "favorite",
-    });
-  };
-
   const starred = !!existing;
   return (
     <ChromeIconButton
       label={starred ? "Unstar this page" : "Favorite this page"}
       icon={<Star className={starred ? "fill-current" : undefined} />}
-      onClick={onClick}
+      onClick={() => toggle({ removed: "Star removed" })}
       active={starred}
     />
   );
