@@ -183,6 +183,22 @@ export function MarkerOverlay({
     : pageMarkers.filter((m) => m.region);
   const pagePins = markersHidden ? [] : pageMarkers.filter((m) => !m.region);
 
+  // Open the editor on an existing marker, preserving its region (so the
+  // SVG rect and the keyboard-focusable proxy below share one path).
+  const editExistingMarker = (marker: MarkerView) =>
+    beginMarkerEdit(
+      {
+        kind: marker.kind,
+        page_index: marker.page_index,
+        region: marker.region ?? null,
+        selection: marker.selection ?? null,
+        body: marker.body ?? "",
+        is_favorite: marker.is_favorite,
+        tags: marker.tags,
+      },
+      marker.id,
+    );
+
   const [drag, setDrag] = React.useState<DragState | null>(null);
   // Track the image's position + size within the wrapper so the SVG
   // overlay aligns with the rendered image (not the wider flex
@@ -488,20 +504,7 @@ export function MarkerOverlay({
             key={marker.id}
             marker={marker}
             interactive={!enabled}
-            onEdit={() =>
-              beginMarkerEdit(
-                {
-                  kind: marker.kind,
-                  page_index: marker.page_index,
-                  region: marker.region ?? null,
-                  selection: marker.selection ?? null,
-                  body: marker.body ?? "",
-                  is_favorite: marker.is_favorite,
-                  tags: marker.tags,
-                },
-                marker.id,
-              )
-            }
+            onEdit={() => editExistingMarker(marker)}
           />
         ))}
         {textRegions.map((region, i) => (
@@ -514,6 +517,40 @@ export function MarkerOverlay({
         ))}
         {drag ? <DragPreview drag={drag} mode={markerMode} /> : null}
       </svg>
+
+      {/* Keyboard / screen-reader proxies for region markers (audit E4).
+          The rects above live in an `aria-hidden` SVG and are only
+          reachable with a pointer; these transparent buttons overlay each
+          region so Tab/Enter reaches it and opens the editor (which owns
+          the Delete affordance). Rendered only at rest — during a drag-
+          select the SVG owns all pointer input, so the proxies stand
+          down to avoid intercepting the new-marker drag. */}
+      {!enabled && regionMarkers.length > 0 ? (
+        <div
+          className="pointer-events-none absolute"
+          style={{ position: "absolute", ...svgPositionStyle }}
+        >
+          {regionMarkers.map((marker) => {
+            const r = marker.region;
+            if (!r) return null;
+            return (
+              <button
+                key={marker.id}
+                type="button"
+                onClick={() => editExistingMarker(marker)}
+                aria-label={regionMarkerLabel(marker)}
+                className="pointer-events-auto absolute cursor-pointer rounded-sm focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1 focus-visible:outline-none"
+                style={{
+                  left: `${r.x}%`,
+                  top: `${r.y}%`,
+                  width: `${r.w}%`,
+                  height: `${r.h}%`,
+                }}
+              />
+            );
+          })}
+        </div>
+      ) : null}
 
       {markerMode === "select-text" && pageVisible && regionsQuery.isLoading ? (
         // Non-blocking detection progress: drag-to-select works the
@@ -557,6 +594,14 @@ export function MarkerOverlay({
       ) : null}
     </TooltipProvider>
   );
+}
+
+/** Screen-reader label for a region marker's focusable proxy. Leads with
+ *  the kind so the announcement is useful even when the note is empty. */
+function regionMarkerLabel(marker: MarkerView): string {
+  const kind = marker.kind.charAt(0).toUpperCase() + marker.kind.slice(1);
+  const body = marker.body?.trim();
+  return body ? `${kind}: ${body}` : `${kind} region`;
 }
 
 type DragState = {
