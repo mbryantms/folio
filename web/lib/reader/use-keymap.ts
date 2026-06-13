@@ -43,6 +43,10 @@ export function useReaderKeymap(opts: {
   markerActive: boolean;
   /** When true, Esc dismisses the end-card and *does not* exit. */
   showEndCard: boolean;
+  /** When true, the chrome and/or page strip is showing, so Esc
+   *  collapses them (via {@link onCollapseChrome}) instead of exiting —
+   *  Esc backs out one layer at a time. */
+  chromeOrStripVisible: boolean;
   /** Precomputed sorted page indices of bookmark markers. */
   bookmarkPages: readonly number[];
   setPage: (p: number) => void;
@@ -69,6 +73,9 @@ export function useReaderKeymap(opts: {
   /** Called for `quitReader` while `showEndCard` is true. The hook
    *  itself does not own end-card visibility state. */
   onDismissEndCard: () => void;
+  /** Collapse chrome + page strip. Called for `quitReader` while
+   *  `chromeOrStripVisible` is true, before any exit. */
+  onCollapseChrome: () => void;
 }): void {
   const {
     bindings,
@@ -79,6 +86,7 @@ export function useReaderKeymap(opts: {
     currentPage,
     markerActive,
     showEndCard,
+    chromeOrStripVisible,
     bookmarkPages,
     setPage,
     onNext,
@@ -100,6 +108,7 @@ export function useReaderKeymap(opts: {
     beginCaptureText,
     onQuitReader,
     onDismissEndCard,
+    onCollapseChrome,
   } = opts;
   // `g g` leader state. Bare `g` arms; a second `g` within
   // GG_LEADER_MS fires firstPage. Ref so the listener can mutate
@@ -217,8 +226,16 @@ export function useReaderKeymap(opts: {
           togglePageStrip();
           break;
         case "quitReader":
+          // Esc backs out one layer at a time: end-card → open chrome /
+          // strip → exit the reader. (Marker mode and the pending-marker
+          // editor are consumed earlier by the overlay's capture-phase
+          // handler, so they never reach here.)
           if (showEndCard) {
             onDismissEndCard();
+            break;
+          }
+          if (chromeOrStripVisible) {
+            onCollapseChrome();
             break;
           }
           onQuitReader();
@@ -273,12 +290,14 @@ export function useReaderKeymap(opts: {
     beginHighlight,
     bindings,
     bookmarkPages,
+    chromeOrStripVisible,
     currentPage,
     cycleFitMode,
     cycleViewMode,
     direction,
     groups,
     markerActive,
+    onCollapseChrome,
     onDismissEndCard,
     onNext,
     onNextIssue,

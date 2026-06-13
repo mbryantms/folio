@@ -175,6 +175,9 @@ export function Reader({
   const cycleViewMode = useReaderStore((s) => s.cycleViewMode);
   const toggleChrome = useReaderStore((s) => s.toggleChrome);
   const togglePageStrip = useReaderStore((s) => s.togglePageStrip);
+  const chromeVisible = useReaderStore((s) => s.chromeVisible);
+  const pageStripVisible = useReaderStore((s) => s.pageStripVisible);
+  const setChromeVisible = useReaderStore((s) => s.setChromeVisible);
   const toggleMarkersHidden = useReaderStore((s) => s.toggleMarkersHidden);
   const beginMarkerEdit = useReaderStore((s) => s.beginMarkerEdit);
   const setMarkerMode = useReaderStore((s) => s.setMarkerMode);
@@ -722,6 +725,7 @@ export function Reader({
     markerActive:
       markerModeForKeybinds !== "idle" || pendingMarkerForKeybinds !== null,
     showEndCard,
+    chromeOrStripVisible: chromeVisible || pageStripVisible,
     bookmarkPages,
     setPage,
     onNext: goNext,
@@ -743,6 +747,7 @@ export function Reader({
     beginCaptureText,
     onQuitReader: handleQuitReader,
     onDismissEndCard: dismissEndCard,
+    onCollapseChrome: () => setChromeVisible(false),
   });
 
   // Peek mode: when on, both the progress write and the session
