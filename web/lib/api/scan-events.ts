@@ -10,6 +10,80 @@ import type { ScanEvent } from "./types";
 
 type Status = "connecting" | "open" | "closed";
 
+/** How long to coalesce invalidations before flushing them as one batch
+ *  (audit G5). A scan or bulk-metadata apply emits a storm of events; a
+ *  fixed window means at most one `invalidateQueries` sweep per window
+ *  instead of one per event. Fixed (not resetting) so a long-running
+ *  storm still flushes periodically rather than starving until it ends. */
+const INVALIDATION_FLUSH_MS = 1500;
+
+/**
+ * Map a scan-event to the query-key prefixes it should invalidate. Pure
+ * + exported so the routing is unit-testable (the table-driven test
+ * enumerates every event type → expected scopes, and the exhaustive
+ * switch fails the build if a new `ScanEvent` variant is added without a
+ * mapping — audit risk #3).
+ *
+ * Library-keyed events scope to that library's caches; the broad
+ * `["series"]` / `["issues"]` prefixes stay broad on purpose — the
+ * series/issue caches are slug-keyed while events are id-keyed, so a
+ * narrower scope would miss an open detail/issues page. `lagged` (the WS
+ * dropped events) triggers a broad recovery sweep over everything the
+ * socket normally drives — this is what lets the WS-redundant polls go.
+ */
+export function invalidationsForEvent(
+  evt: ScanEvent,
+): readonly (readonly unknown[])[] {
+  switch (evt.type) {
+    case "scan.started":
+    case "scan.failed":
+      return [queryKeys.scanRunsAll(evt.library_id)];
+    case "scan.completed":
+      return [
+        queryKeys.scanRunsAll(evt.library_id),
+        queryKeys.library(evt.library_id),
+        queryKeys.health(evt.library_id),
+        queryKeys.removed(evt.library_id),
+        ["series"],
+      ];
+    case "scan.health_issue":
+      return [queryKeys.health(evt.library_id)];
+    case "scan.series_updated":
+      // Previously unhandled — a per-series scan change never refreshed
+      // its row. Series caches are slug-keyed, so invalidate broadly.
+      return [["series"]];
+    case "thumbs.started":
+    case "thumbs.completed":
+    case "thumbs.failed":
+      return [queryKeys.thumbnailsStatus(evt.library_id), queryKeys.queueDepth];
+    case "metadata.applied":
+      // DB-direct apply: refresh issue/series caches + the admin metadata
+      // dashboards (whose 60s poll is dropped now this covers them).
+      return [
+        ["issues"],
+        ["series"],
+        queryKeys.adminMetadataDashboard,
+        queryKeys.adminMetadataMatchQuality,
+      ];
+    case "lagged":
+      // We missed events — recover by sweeping every WS-driven cache.
+      return [["libraries"], ["admin"], ["series"], ["issues"]];
+    case "scan.progress":
+      // Live progress is consumed from the events buffer, not the cache.
+      return [];
+    default:
+      return assertNever(evt);
+  }
+}
+
+function assertNever(evt: never): readonly (readonly unknown[])[] {
+  // A new ScanEvent variant reached here without a mapping. Don't throw
+  // (a stray event shouldn't crash the reader); the `never` type makes
+  // it a compile error, which is the real guard.
+  void evt;
+  return [];
+}
+
 /**
  * Module-level dedupe so multiple `useScanEvents` instances in the same tab
  * (admin shell + library overview + a per-library detail page) don't each
@@ -99,6 +173,32 @@ export function useScanEvents(opts?: {
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
+    // ── Coalesced invalidation (audit G5) ──
+    // Collect query-key prefixes from the event stream and flush them as
+    // one deduped batch per `INVALIDATION_FLUSH_MS` window, instead of
+    // firing `invalidateQueries` per event (a scan / bulk apply storms
+    // them). `pending` maps a JSON-stringified key → the key itself, for
+    // dedup.
+    const pending = new Map<string, readonly unknown[]>();
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushInvalidations = () => {
+      flushTimer = null;
+      if (pending.size === 0) return;
+      const keys = [...pending.values()];
+      pending.clear();
+      for (const key of keys) {
+        qc.invalidateQueries({ queryKey: key });
+      }
+    };
+    const enqueueInvalidations = (keys: readonly (readonly unknown[])[]) => {
+      for (const key of keys) pending.set(JSON.stringify(key), key);
+      // Fixed window: schedule once; don't reset, so a long storm still
+      // flushes every window rather than starving until it stops.
+      if (flushTimer === null && pending.size > 0) {
+        flushTimer = setTimeout(flushInvalidations, INVALIDATION_FLUSH_MS);
+      }
+    };
+
     if (typeof window === "undefined") return;
     // In prod the Rust binary serves both the HTML and the WS endpoint at
     // the same origin. In dev the page is on Next dev (:3000); Next's
@@ -162,70 +262,31 @@ export function useScanEvents(opts?: {
           const next = [...buf, evt];
           return next.length > maxBuffer ? next.slice(-maxBuffer) : next;
         });
-        // Cache invalidation routing.
+        // Cache invalidation: coalesced (see enqueueInvalidations). Toasts
+        // stay immediate — a 1.5s-deferred "scan failed" would feel broken.
+        enqueueInvalidations(invalidationsForEvent(evt));
         switch (evt.type) {
           case "scan.completed":
-            qc.invalidateQueries({
-              queryKey: queryKeys.scanRunsAll(evt.library_id),
-            });
-            qc.invalidateQueries({
-              queryKey: queryKeys.library(evt.library_id),
-            });
-            qc.invalidateQueries({
-              queryKey: queryKeys.health(evt.library_id),
-            });
-            qc.invalidateQueries({
-              queryKey: queryKeys.removed(evt.library_id),
-            });
-            // Also nudge series / issue listings — a per-series or per-issue
-            // scan changes the row underneath an open page, and `router.refresh()`
-            // alone won't pick up timestamps in TanStack Query caches.
-            qc.invalidateQueries({ queryKey: ["series"], exact: false });
             if (toastCompletions && rememberScanToast(evt.scan_id)) {
               toast.success(formatCompletionMessage(evt));
             }
             break;
           case "scan.failed":
-            qc.invalidateQueries({
-              queryKey: queryKeys.scanRunsAll(evt.library_id),
-            });
             if (toastErrors && rememberScanToast(evt.scan_id)) {
               toast.error(`Scan failed: ${evt.error}`);
             }
             break;
           case "scan.health_issue":
-            qc.invalidateQueries({
-              queryKey: queryKeys.health(evt.library_id),
-            });
             if (toastErrors && evt.severity === "error") {
               toast.error(
                 `Health issue: ${evt.kind}${evt.path ? ` — ${evt.path}` : ""}`,
               );
             }
             break;
-          case "scan.started":
-            qc.invalidateQueries({
-              queryKey: queryKeys.scanRunsAll(evt.library_id),
-            });
-            break;
-          case "thumbs.started":
-          case "thumbs.completed":
           case "thumbs.failed":
-            // Re-poll thumbnail status and queue depth as soon as worker
-            // activity starts, then again as each job finishes.
-            qc.invalidateQueries({
-              queryKey: queryKeys.thumbnailsStatus(evt.library_id),
-            });
-            qc.invalidateQueries({ queryKey: queryKeys.queueDepth });
-            if (toastErrors && evt.type === "thumbs.failed") {
+            if (toastErrors) {
               toast.error(`Thumbnail job failed: ${evt.error}`);
             }
-            break;
-          case "metadata.applied":
-            // A DB-direct apply landed; nudge the issue/series-keyed
-            // caches so any open page (covers gallery, details) refetches.
-            qc.invalidateQueries({ queryKey: ["issues"], exact: false });
-            qc.invalidateQueries({ queryKey: ["series"], exact: false });
             break;
           default:
             break;
@@ -237,6 +298,10 @@ export function useScanEvents(opts?: {
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      // Flush any pending invalidations so a queued refresh isn't lost
+      // when the subscriber unmounts mid-window.
+      if (flushTimer) clearTimeout(flushTimer);
+      flushInvalidations();
       socket?.close();
     };
   }, [libraryId, maxBuffer, qc, toastErrors, toastCompletions]);
