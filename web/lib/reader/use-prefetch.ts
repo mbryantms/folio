@@ -25,7 +25,10 @@ const MAX_RETAINED = 16;
  * the first frame, so `PageImage` skips its spinner/fade entirely.
  *
  * Double-page walks by spread group (don't waste a request on the back of
- * a pair we just rendered); single + webtoon walk by page index.
+ * a pair we just rendered); single walks by page index. **Webtoon mode
+ * skips this entirely** (audit C12): its continuous-scroll layout already
+ * mounts a window of real `<img>`s that the browser lazy-loads, so
+ * prefetching double-decodes pages whose elements are already in the DOM.
  */
 export function useReaderPrefetch(opts: {
   issueId: string;
@@ -52,6 +55,10 @@ export function useReaderPrefetch(opts: {
   const active = useRef(0);
 
   useEffect(() => {
+    // Webtoon relies on the browser lazy-loading its mounted page window
+    // (audit C12) — prefetching here just double-decodes. Call the hook
+    // unconditionally (rules of hooks); skip the work inside the effect.
+    if (viewMode === "webtoon") return;
     const url = (p: number) => `/issues/${issueId}/pages/${p}`;
 
     const pump = () => {
