@@ -33,7 +33,6 @@ import type {
   TextRegionView,
 } from "@/lib/api/types";
 
-import { ocrCroppedRegion, sha256CroppedRegion } from "./marker-selection";
 
 /** Pointer travel (percent of image size) below which a release
  *  counts as a tap rather than a drag. ~0.8% of a 1000px-wide page
@@ -681,6 +680,10 @@ async function finalizePending(
   if (mode === "select-text" && naturalSize) {
     const ocrToast = toast.loading("Reading text…");
     try {
+      // Lazy-load the canvas-crop + OCR path (audit G6) — only users who
+      // actually capture text pull these bytes; they stay out of the
+      // reader's first-load JS.
+      const { ocrCroppedRegion } = await import("./marker-selection");
       const ocr = await ocrCroppedRegion(
         {
           issueId,
@@ -723,6 +726,7 @@ async function finalizePending(
 
   if (mode === "select-image" && naturalSize) {
     try {
+      const { sha256CroppedRegion } = await import("./marker-selection");
       const hash = await sha256CroppedRegion({
         issueId,
         pageIndex,
