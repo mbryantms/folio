@@ -64,8 +64,10 @@ describe("serializeLibraryGridFilters", () => {
     ).not.toContain("mode=");
   });
 
-  it("never serializes in-grid search (q stays local, collides with SearchView)", () => {
+  it("never serializes in-grid search (q stays local; ?q= now redirects to /search)", () => {
     // q isn't part of LibraryGridUrlState — guard that no stray q leaks.
+    // A leaked `?q=` would trip HomePage's redirect to the dedicated
+    // /search page (audit E2 / 1.6) and yank the user off the grid.
     const qs = serializeLibraryGridFilters(
       baseState({ genres: ["Horror"], publishers: ["Image"] }),
     );
