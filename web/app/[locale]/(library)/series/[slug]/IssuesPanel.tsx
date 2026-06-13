@@ -28,6 +28,7 @@ import { EditMetadataDialog } from "@/components/library/EditMetadataDialog";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Input } from "@/components/ui/input";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
@@ -48,6 +49,7 @@ import {
   useBulkMarkSeriesMatchingProgress,
 } from "@/lib/api/mutations";
 import { useMe, useSeriesIssuesInfinite } from "@/lib/api/queries";
+import { ISSUE_TEXT_H } from "@/lib/library/grid-window";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -55,6 +57,11 @@ import {
   SpecialsExtrasSection,
   splitMainAndSpecials,
 } from "./SpecialsExtrasSection";
+
+/** Stable no-op for the windowed main-run grid: fetch is driven by the
+ *  sentinel below (which also handles the empty-main-run edge), so the
+ *  virtualizer windows only and never fetches. */
+const NOOP = () => {};
 
 /** Per-series listing only supports a subset of `IssueSort` — the
  *  cross-library discovery sorts (`year`, `page_count`, `user_rating`)
@@ -539,9 +546,21 @@ export function IssuesPanel({
             : "No main-run issues yet — see Specials & Extras below."}
         </p>
       ) : (
-        <ul role="list" className="grid gap-4" style={gridStyle}>
-          {mainRunItems.map((iss) => (
-            <li key={iss.id}>
+        // Window-virtualize the main run (audit G1, parity with the
+        // library grid). Fetch stays on the sentinel below — it covers
+        // the edge where a loaded page is all specials and `mainRun` is
+        // momentarily empty — so this grid only windows (hasNextPage
+        // false). `splitMainAndSpecials` order is preserved.
+        <VirtualizedCardGrid
+          items={mainRunItems}
+          cardSize={cardSize}
+          estimateTextHeight={ISSUE_TEXT_H}
+          hasNextPage={false}
+          isFetchingNextPage={false}
+          fetchNextPage={NOOP}
+          renderCard={(item) => {
+            const iss = item as (typeof mainRunItems)[number];
+            return (
               <IssueCard
                 issue={iss}
                 selectMode={
@@ -566,9 +585,9 @@ export function IssuesPanel({
                   selection.toggle(id);
                 }}
               />
-            </li>
-          ))}
-        </ul>
+            );
+          }}
+        />
       )}
 
       <div
