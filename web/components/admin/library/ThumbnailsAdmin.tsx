@@ -27,6 +27,7 @@ import {
   useUpdateThumbnailsSettings,
 } from "@/lib/api/mutations";
 import { useScanEvents } from "@/lib/api/scan-events";
+import { statusTone, statusToneDot } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import type { ScanEvent, ThumbnailFormat } from "@/lib/api/types";
 
@@ -316,7 +317,7 @@ export function ThumbnailsAdmin({ libraryId }: { libraryId: string }) {
               className={cn(
                 "flex min-h-32 flex-col justify-between rounded-md border p-4",
                 queueActive
-                  ? "border-amber-800/40 bg-amber-950/20"
+                  ? statusTone("warning")
                   : "border-border bg-background/50",
               )}
             >
@@ -333,7 +334,7 @@ export function ThumbnailsAdmin({ libraryId }: { libraryId: string }) {
                   className={cn(
                     "rounded-full border px-2 py-0.5 text-xs font-semibold tabular-nums",
                     queueActive
-                      ? "border-amber-800/40 bg-amber-950/30 text-amber-300"
+                      ? statusTone("warning")
                       : "border-border text-muted-foreground",
                   )}
                 >
@@ -359,7 +360,10 @@ export function ThumbnailsAdmin({ libraryId }: { libraryId: string }) {
                   aria-label="Page-map thumbnail readiness"
                 >
                   <div
-                    className="h-full bg-amber-500 transition-[width] duration-500"
+                    className={cn(
+                      "h-full transition-[width] duration-500",
+                      statusToneDot("warning"),
+                    )}
                     style={{ width: `${pagePercent}%` }}
                   />
                 </div>

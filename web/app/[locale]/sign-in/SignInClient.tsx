@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { statusTone } from "@/lib/ui/status-tone";
 import type { PublicAuthConfigView } from "@/lib/api/types";
 
 const loginSchema = z.object({
@@ -261,10 +262,10 @@ function Banner({
 }) {
   const toneClass =
     tone === "success"
-      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+      ? statusTone("success")
       : tone === "info"
-        ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
-        : "border-destructive/40 bg-destructive/10 text-destructive";
+        ? statusTone("info")
+        : statusTone("error");
   return (
     <div
       role={tone === "error" ? "alert" : "status"}

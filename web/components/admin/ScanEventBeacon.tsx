@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { useClearQueue } from "@/lib/api/mutations";
 import { useScanEvents } from "@/lib/api/scan-events";
 import { useLibraryList, useQueueDepth } from "@/lib/api/queries";
+import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 /**
@@ -40,9 +41,9 @@ export function ScanEventBeacon() {
   const [confirmClear, setConfirmClear] = useState(false);
   const tone =
     status === "open"
-      ? "border-emerald-800/50 bg-emerald-950/40 text-emerald-300"
+      ? statusTone("success")
       : status === "connecting"
-        ? "border-amber-800/40 bg-amber-950/30 text-amber-300"
+        ? statusTone("warning")
         : "border-border text-muted-foreground";
 
   const total = queue.data?.total ?? 0;
@@ -61,17 +62,17 @@ export function ScanEventBeacon() {
     total === 0
       ? "border-border text-muted-foreground"
       : total < 25
-        ? "border-amber-800/40 bg-amber-950/30 text-amber-300"
-        : "border-orange-800/50 bg-orange-950/40 text-orange-300";
+        ? statusTone("warning")
+        : statusTone("warning");
 
   return (
     <div className="flex items-center gap-2">
       {total > 0 ? (
-        <div className="inline-flex overflow-hidden rounded-full border border-amber-800/40">
+        <div className="border-warning/30 inline-flex overflow-hidden rounded-full border">
           <Link
             href={liveScanHref}
             className={cn(
-              "inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase transition-colors hover:bg-amber-900/30 hover:text-amber-100",
+              "hover:bg-warning/10 hover:text-warning inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase transition-colors",
               queueTone,
             )}
             aria-label={`Job queue: ${total} pending. Open live scan.`}
@@ -87,7 +88,7 @@ export function ScanEventBeacon() {
           <button
             type="button"
             className={cn(
-              "inline-flex items-center border-l border-amber-800/40 px-1.5 py-0.5 text-amber-300 transition-colors hover:bg-amber-900/30 hover:text-amber-100 disabled:opacity-50",
+              "border-warning/30 text-warning hover:bg-warning/10 hover:text-warning inline-flex items-center border-l px-1.5 py-0.5 transition-colors disabled:opacity-50",
               clearQueue.isPending && "cursor-wait",
             )}
             aria-label="Clear all pending background queues"

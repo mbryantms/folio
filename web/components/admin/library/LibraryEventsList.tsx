@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLibraryEventsInfinite } from "@/lib/api/queries";
 import type { LibraryEventView } from "@/lib/api/types";
+import { statusToneDot } from "@/lib/ui/status-tone";
 
 const CATEGORIES = [
   "issue",
@@ -138,7 +139,7 @@ function Chip({
 
 const SEV_DOT: Record<string, string> = {
   info: "bg-muted-foreground/50",
-  warning: "bg-amber-400",
+  warning: statusToneDot("warning"),
   error: "bg-destructive",
 };
 

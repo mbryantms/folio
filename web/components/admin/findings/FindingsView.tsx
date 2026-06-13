@@ -27,6 +27,7 @@ import {
   useLibraryList,
 } from "@/lib/api/queries";
 import type { CrossLibHealthIssueView } from "@/lib/api/types";
+import { statusToneText } from "@/lib/ui/status-tone";
 
 import type { HealthSeverityFilter } from "@/components/admin/severity";
 
@@ -357,10 +358,14 @@ function SeverityIcon({ severity }: { severity: string }) {
   if (severity === "error")
     return <XCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />;
   if (severity === "warning")
-    // amber-400 matches the warning tone the dashboard's
-    // `SeverityRow` already uses ([DashboardClient.tsx]). Single
+    // Shares the warning tone the dashboard's `SeverityRow` already
+    // uses ([DashboardClient.tsx]) via `statusToneText`. Single
     // palette across the admin shell, no per-page drift.
-    return <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />;
+    return (
+      <AlertTriangle
+        className={`mt-0.5 h-4 w-4 shrink-0 ${statusToneText("warning")}`}
+      />
+    );
   return <Info className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0" />;
 }
 

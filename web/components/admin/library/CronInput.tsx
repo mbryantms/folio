@@ -4,6 +4,7 @@ import { CheckCircle2, AlertCircle, Clock } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { validateCron } from "@/lib/api/cron";
+import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 export function CronInput({
@@ -31,9 +32,9 @@ export function CronInput({
         className={cn(
           "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
           validation.ok && !empty
-            ? "border-emerald-900/40 bg-emerald-950/20 text-emerald-200"
+            ? statusTone("success")
             : !validation.ok
-              ? "border-destructive/40 bg-destructive/10 text-destructive"
+              ? statusTone("error")
               : "border-border bg-muted/30 text-muted-foreground",
         )}
       >

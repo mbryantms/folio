@@ -17,6 +17,7 @@ import { SegmentedControl } from "@/components/settings/SegmentedControl";
 import { Switch } from "@/components/ui/switch";
 import { useProbeOidcDiscovery, useUpdateSettings } from "@/lib/api/mutations";
 import type { OidcDiscoverResp } from "@/lib/api/types";
+import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 
 export type AuthConfigInitial = {
   mode: "local" | "oidc" | "both";
@@ -270,10 +271,12 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
               </div>
             </div>
 
-            <div className="flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+            <div
+              className={`flex items-center justify-between rounded-md border p-3 ${statusTone("warning")}`}
+            >
               <div>
                 <Label className="text-sm">Trust unverified email</Label>
-                <p className="text-xs text-amber-200/80">
+                <p className={`text-xs ${statusToneText("warning")}`}>
                   When ON, accept the `email` claim even if{" "}
                   <code>email_verified</code> is false. Materially weakens
                   email-claim trust; only enable if your IdP doesn&rsquo;t emit
@@ -302,12 +305,14 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
               </div>
             )}
 
-            <div className="flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+            <div
+              className={`flex items-center justify-between rounded-md border p-3 ${statusTone("warning")}`}
+            >
               <div>
                 <Label className="text-sm">
                   Auto-link local accounts by verified email
                 </Label>
-                <p className="text-xs text-amber-200/80">
+                <p className={`text-xs ${statusToneText("warning")}`}>
                   When ON, a first OIDC sign-in whose verified email matches an
                   existing password account links the OIDC identity onto that
                   account instead of failing with <code>auth.email_in_use</code>
@@ -341,7 +346,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
 
       <div className="flex items-center justify-end gap-3">
         {oidcEnabled && oidcIncomplete && (
-          <span className="text-xs text-amber-300">
+          <span className={`text-xs ${statusToneText("warning")}`}>
             OIDC fields incomplete — save will be rejected by the server.
           </span>
         )}
@@ -392,7 +397,9 @@ function DiscoverResult({
   const d = result.data;
   return (
     <Collapsible className="text-xs">
-      <CollapsibleTrigger className="cursor-pointer text-emerald-300">
+      <CollapsibleTrigger
+        className={`cursor-pointer ${statusToneText("success")}`}
+      >
         Discovered — {countEndpoints(d)} endpoint(s)
       </CollapsibleTrigger>
       <CollapsibleContent>

@@ -20,6 +20,7 @@ import { jsonFetch } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";
 import type { SeriesResumeView, SeriesView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { statusToneDot, statusToneSolid } from "@/lib/ui/status-tone";
 import { formatPublicationStatus } from "@/lib/format";
 import { collectionStatus } from "@/lib/series-status";
 import { seriesUrl } from "@/lib/urls";
@@ -306,7 +307,9 @@ function CollectionDot({ series }: { series: SeriesView }) {
       aria-label={tooltip}
       className={cn(
         "absolute bottom-2 left-2 h-2.5 w-2.5 rounded-full ring-1 ring-black/10 dark:ring-white/10",
-        state === "complete" ? "bg-emerald-500" : "bg-amber-500",
+        state === "complete"
+          ? statusToneDot("success")
+          : statusToneDot("warning"),
       )}
     />
   );
@@ -327,7 +330,10 @@ function MetaNeedsBadge({ series }: { series: SeriesView }) {
     <span
       title={label}
       aria-label={label}
-      className="absolute top-2 left-2 inline-flex items-center rounded-md bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white ring-1 ring-black/10 dark:ring-white/10"
+      className={cn(
+        "absolute top-2 left-2 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-black/10 dark:ring-white/10",
+        statusToneSolid("warning"),
+      )}
     >
       meta
     </span>

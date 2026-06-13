@@ -11,6 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
 import { useScanBatch, useScanBatches } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
+import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import type {
   ScanBatchDetailView,
@@ -289,7 +290,11 @@ function Stat({
 
 function RowIcon({ state }: { state: string }) {
   if (state === "complete")
-    return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />;
+    return (
+      <CheckCircle2
+        className={cn("h-4 w-4 shrink-0", statusToneText("success"))}
+      />
+    );
   if (state === "failed" || state === "cancelled")
     return <XCircle className="text-destructive h-4 w-4 shrink-0" />;
   if (state === "running")
@@ -302,10 +307,10 @@ function RowIcon({ state }: { state: string }) {
 // per-library rows — so a finished batch reads as "done", not as the amber
 // brand-accent (which signals attention).
 const BATCH_TONE: Record<string, string> = {
-  complete: "border-emerald-500/40 text-emerald-400",
-  running: "border-sky-500/40 text-sky-400",
-  partial_failed: "border-amber-500/40 text-amber-400",
-  failed: "border-red-500/40 text-red-400",
+  complete: statusTone("success"),
+  running: statusTone("info"),
+  partial_failed: statusTone("warning"),
+  failed: statusTone("error"),
 };
 
 function BatchStateBadge({ state }: { state: ScanBatchView["state"] }) {

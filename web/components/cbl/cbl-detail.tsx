@@ -43,6 +43,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import {
   useCblList,
   useCblListEntriesInfinite,
@@ -193,7 +194,7 @@ export function CblInfoRow({ list }: { list: CblDetailView }) {
     <div className="flex flex-wrap items-center gap-2 text-sm">
       {sourceBadge}
       {list.parsed_matchers_present ? (
-        <Badge variant="outline" className="border-amber-500 text-amber-600">
+        <Badge variant="outline" className={statusTone("warning")}>
           <AlertTriangle className="mr-1 h-3 w-3" />
           Matcher rules in source — not evaluated
         </Badge>
@@ -238,11 +239,11 @@ function Stat({
 }) {
   const toneClass =
     tone === "ok"
-      ? "text-emerald-600 dark:text-emerald-400"
+      ? statusToneText("success")
       : tone === "warn"
-        ? "text-amber-600 dark:text-amber-400"
+        ? statusToneText("warning")
         : tone === "bad"
-          ? "text-rose-600 dark:text-rose-400"
+          ? statusToneText("error")
           : "";
   return (
     <div>
@@ -257,10 +258,7 @@ function Stat({
 function StatusBadge({ status }: { status: CblMatchStatus }) {
   if (status === "matched") {
     return (
-      <Badge
-        variant="secondary"
-        className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-      >
+      <Badge variant="secondary" className={statusTone("success")}>
         <CheckCircle2 className="mr-1 h-3 w-3" />
         Matched
       </Badge>
@@ -268,10 +266,7 @@ function StatusBadge({ status }: { status: CblMatchStatus }) {
   }
   if (status === "manual") {
     return (
-      <Badge
-        variant="secondary"
-        className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-      >
+      <Badge variant="secondary" className={statusTone("success")}>
         <Check className="mr-1 h-3 w-3" />
         Manual
       </Badge>
@@ -279,20 +274,14 @@ function StatusBadge({ status }: { status: CblMatchStatus }) {
   }
   if (status === "ambiguous") {
     return (
-      <Badge
-        variant="secondary"
-        className="bg-amber-500/10 text-amber-700 dark:text-amber-400"
-      >
+      <Badge variant="secondary" className={statusTone("warning")}>
         <HelpCircle className="mr-1 h-3 w-3" />
         Ambiguous
       </Badge>
     );
   }
   return (
-    <Badge
-      variant="secondary"
-      className="bg-rose-500/10 text-rose-700 dark:text-rose-400"
-    >
+    <Badge variant="secondary" className={statusTone("error")}>
       <X className="mr-1 h-3 w-3" />
       Missing
     </Badge>
@@ -433,7 +422,9 @@ function ReadingOrderTab({
                       {entry.year ?? "—"}
                     </div>
                     <div>
-                      <StatusBadge status={entry.match_status as CblMatchStatus} />
+                      <StatusBadge
+                        status={entry.match_status as CblMatchStatus}
+                      />
                     </div>
                     <div className="text-right">
                       <ManualMatchPopover

@@ -11,6 +11,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useIssueHealth } from "@/lib/api/queries";
+import { statusTone } from "@/lib/ui/status-tone";
 
 /**
  * Tranche B of recovery-visibility: a compact badge that renders
@@ -62,10 +63,7 @@ function PartialBadge({ rows }: { rows: HealthRow[] }) {
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Badge
-            variant="outline"
-            className="border-amber-400/60 bg-amber-400/10 text-amber-700 dark:text-amber-200"
-          >
+          <Badge variant="outline" className={statusTone("warning")}>
             <AlertTriangle aria-hidden="true" className="mr-1 h-3 w-3" />
             Partial
           </Badge>

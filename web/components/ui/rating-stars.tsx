@@ -119,7 +119,7 @@ export function RatingStars({
               className={cn(
                 "absolute inset-0 transition-colors",
                 dim.star,
-                isFull || isHalf ? "text-amber-400" : "text-transparent",
+                isFull || isHalf ? "text-rating" : "text-transparent",
               )}
               fill="currentColor"
               style={

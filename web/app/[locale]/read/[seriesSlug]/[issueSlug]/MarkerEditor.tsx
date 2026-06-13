@@ -24,6 +24,7 @@ import {
 } from "@/lib/api/mutations";
 import type { MarkerSelection } from "@/lib/api/types";
 import { useReaderStore } from "@/lib/reader/store";
+import { statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 import { ocrCroppedRegion } from "./marker-selection";
@@ -411,7 +412,7 @@ export function MarkerEditor({
                 {selectionPreview}
               </div>
               {lowConfidence ? (
-                <p className="text-xs text-amber-600 dark:text-amber-500">
+                <p className={`text-xs ${statusToneText("warning")}`}>
                   Low confidence — text may be inaccurate.
                 </p>
               ) : null}
