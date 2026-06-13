@@ -16,10 +16,22 @@ import { useCallback, useSyncExternalStore } from "react";
  * isn't allowed to enter fullscreen, and there's nothing useful to surface
  * to the user.
  */
-export function useFullscreen(): { isFullscreen: boolean; toggle: () => void } {
+export function useFullscreen(): {
+  isFullscreen: boolean;
+  /** False where element fullscreen is unavailable (iPhone Safari has no
+   *  `Element.requestFullscreen`) — callers hide the button so it doesn't
+   *  silently no-op (audit C11). SSR-safe: false on the server. */
+  supported: boolean;
+  toggle: () => void;
+} {
   const isFullscreen = useSyncExternalStore(
     subscribeFullscreen,
     getFullscreenSnapshot,
+    getServerSnapshot,
+  );
+  const supported = useSyncExternalStore(
+    noopSubscribe,
+    getFullscreenSupported,
     getServerSnapshot,
   );
   const toggle = useCallback(() => {
@@ -32,13 +44,26 @@ export function useFullscreen(): { isFullscreen: boolean; toggle: () => void } {
         .catch(() => undefined);
     }
   }, []);
-  return { isFullscreen, toggle };
+  return { isFullscreen, supported, toggle };
 }
 
 function subscribeFullscreen(cb: () => void): () => void {
   if (typeof document === "undefined") return () => undefined;
   document.addEventListener("fullscreenchange", cb);
   return () => document.removeEventListener("fullscreenchange", cb);
+}
+
+/** Capability never changes at runtime, so the store has nothing to
+ *  subscribe to. */
+function noopSubscribe(): () => void {
+  return () => undefined;
+}
+
+function getFullscreenSupported(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    typeof document.documentElement.requestFullscreen === "function"
+  );
 }
 
 function getFullscreenSnapshot(): boolean {

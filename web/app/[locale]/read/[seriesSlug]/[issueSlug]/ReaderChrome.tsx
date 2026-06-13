@@ -599,7 +599,11 @@ function SettingsButton({
 }
 
 function FullscreenButton() {
-  const { isFullscreen, toggle } = useFullscreen();
+  const { isFullscreen, supported, toggle } = useFullscreen();
+  // Hide where element fullscreen isn't available (iPhone Safari) — the
+  // button used to render and silently no-op (audit C11). A2HS is the
+  // platform path to a chrome-free reader there.
+  if (!supported) return null;
   return (
     <ChromeIconButton
       label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
