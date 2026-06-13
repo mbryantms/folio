@@ -16,8 +16,8 @@ use axum::{
 };
 use serde::de::DeserializeOwned;
 
-use super::respond;
-use shared::error::ApiErrorCode;
+use super::{respond, respond_with_field_errors};
+use shared::error::{ApiErrorCode, FieldError};
 
 /// Run `T::validate` after JSON deserialisation; reject with 422 on
 /// validation failure, 400 on malformed JSON.
@@ -48,29 +48,39 @@ where
     }
 }
 
-/// Render a `garde::Report` as a single-line 422 response. Each error
-/// is `path: message`, joined with `; `. Use this from handlers that
-/// need to run validation manually (e.g. with a per-request context)
-/// rather than letting [`Validated`] do it implicitly.
+/// Render a `garde::Report` as a 422 response. The human `message` is
+/// every error as `path: message` joined with `; ` (a complete summary
+/// on its own); `error.details` carries the same errors as a
+/// [`FieldError`] list so a client form can bind each message to its
+/// input. Use this from handlers that need to run validation manually
+/// (e.g. with a per-request context) rather than letting [`Validated`]
+/// do it implicitly.
 pub fn from_garde(report: &garde::Report) -> Response {
     let mut parts: Vec<String> = Vec::new();
+    let mut fields: Vec<FieldError> = Vec::new();
     for (path, error) in report.iter() {
         let path_str = path.to_string();
+        let message = error.to_string();
         if path_str.is_empty() {
-            parts.push(error.to_string());
+            parts.push(message.clone());
         } else {
-            parts.push(format!("{path_str}: {error}"));
+            parts.push(format!("{path_str}: {message}"));
         }
+        fields.push(FieldError {
+            field: path_str,
+            message,
+        });
     }
     let message = if parts.is_empty() {
         "validation failed".to_owned()
     } else {
         parts.join("; ")
     };
-    respond(
+    respond_with_field_errors(
         StatusCode::UNPROCESSABLE_ENTITY,
         ApiErrorCode::Validation,
         message,
+        fields,
     )
 }
 
@@ -145,6 +155,27 @@ mod tests {
         // Both rules should be reported, joined with `; `.
         assert!(msg.contains("name:"), "missing name path in {msg}");
         assert!(msg.contains("age:"), "missing age path in {msg}");
+
+        // error.details carries the same failures as a [{field, message}]
+        // list so a client form can bind each message to its input.
+        let details = json["error"]["details"]
+            .as_array()
+            .expect("details is an array");
+        let fields: Vec<&str> = details
+            .iter()
+            .map(|d| d["field"].as_str().unwrap())
+            .collect();
+        assert!(
+            fields.contains(&"name"),
+            "details missing name: {details:?}"
+        );
+        assert!(fields.contains(&"age"), "details missing age: {details:?}");
+        for d in details {
+            assert!(
+                d["message"].as_str().is_some_and(|m| !m.is_empty()),
+                "each detail has a non-empty message: {d:?}"
+            );
+        }
     }
 
     #[tokio::test]

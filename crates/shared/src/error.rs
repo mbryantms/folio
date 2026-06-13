@@ -19,8 +19,27 @@ pub struct ApiError {
 pub struct ApiErrorBody {
     pub code: String,
     pub message: String,
+    /// Optional structured detail. For **validation** errors (422) this
+    /// is the lint-enforced field-error list — a JSON array of
+    /// [`FieldError`] (`[{"field": "...", "message": "..."}]`) so a
+    /// client form can bind each message to its input. Other error
+    /// kinds may use it for endpoint-specific structured context. The
+    /// human-readable `message` always stays a complete summary on its
+    /// own, so a client that ignores `details` loses nothing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<Value>,
+}
+
+/// One field-scoped validation failure. The wire shape of a single
+/// entry in `ApiErrorBody.details` for 422 responses.
+///
+/// `field` is the dotted path garde emits (e.g. `"port"`, `"smtp.host"`,
+/// `"items[2].name"`); top-level/whole-body errors use an empty string.
+/// `message` is the human-readable rule violation.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FieldError {
+    pub field: String,
+    pub message: String,
 }
 
 impl ApiError {
@@ -35,13 +54,36 @@ impl ApiError {
         }
     }
 
-    /// As [`Self::new`] but attaches structured details for the client.
+    /// As [`Self::new`] but attaches free-form structured details.
     pub fn with_details(code: ApiErrorCode, message: impl Into<String>, details: Value) -> Self {
         Self {
             error: ApiErrorBody {
                 code: code.as_str().to_owned(),
                 message: message.into(),
                 details: Some(details),
+            },
+        }
+    }
+
+    /// As [`Self::new`] but attaches the field-error list used by 422
+    /// validation responses. Serialises `fields` into `details` as
+    /// `[{"field", "message"}]`. Empty `fields` leaves `details` unset
+    /// so the wire shape stays identical to a plain error.
+    pub fn with_field_errors(
+        code: ApiErrorCode,
+        message: impl Into<String>,
+        fields: Vec<FieldError>,
+    ) -> Self {
+        let details = if fields.is_empty() {
+            None
+        } else {
+            serde_json::to_value(&fields).ok()
+        };
+        Self {
+            error: ApiErrorBody {
+                code: code.as_str().to_owned(),
+                message: message.into(),
+                details,
             },
         }
     }
@@ -225,6 +267,40 @@ mod tests {
         );
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains(r#""details":{"field":"name"}"#));
+    }
+
+    #[test]
+    fn field_errors_serialize_as_a_list_of_field_message_pairs() {
+        let err = ApiError::with_field_errors(
+            ApiErrorCode::Validation,
+            "port: must be 1-65535; host: required",
+            vec![
+                FieldError {
+                    field: "port".to_owned(),
+                    message: "must be 1-65535".to_owned(),
+                },
+                FieldError {
+                    field: "host".to_owned(),
+                    message: "required".to_owned(),
+                },
+            ],
+        );
+        let json: Value = serde_json::to_value(&err).unwrap();
+        let details = json["error"]["details"].as_array().unwrap();
+        assert_eq!(details.len(), 2);
+        assert_eq!(details[0]["field"], "port");
+        assert_eq!(details[0]["message"], "must be 1-65535");
+        assert_eq!(details[1]["field"], "host");
+    }
+
+    #[test]
+    fn empty_field_errors_leave_details_unset() {
+        // Wire shape must stay byte-identical to a plain error when there
+        // are no field-scoped failures — a client that branches on the
+        // presence of `details` shouldn't see an empty array.
+        let err = ApiError::with_field_errors(ApiErrorCode::Validation, "nope", vec![]);
+        let json = serde_json::to_string(&err).unwrap();
+        assert_eq!(json, r#"{"error":{"code":"validation","message":"nope"}}"#);
     }
 
     #[test]
