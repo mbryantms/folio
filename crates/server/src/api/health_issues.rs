@@ -1,4 +1,5 @@
-//! `GET /libraries/{id}/health-issues` and `POST .../{issue_id}/dismiss`.
+//! `GET /libraries/{id}/health-issues` and `POST .../{issue_id}/dismiss`
+//! (+ `/undismiss`).
 //!
 //! Library Scanner v1, Milestone 5 — surfaces the structured catalog populated
 //! by [`crate::library::health::HealthCollector`] (spec §10).
@@ -35,6 +36,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(admin_list))
         .routes(routes!(backup_storage))
         .routes(routes!(dismiss))
+        .routes(routes!(undismiss))
         .routes(routes!(flush_metadata_drift))
 }
 
@@ -508,6 +510,65 @@ pub async fn dismiss(
         ctx = &ctx,
         actor = actor.id,
         action = "admin.library.health_issue.dismiss",
+        target = ("library_health_issue", issue_uuid.to_string()),
+        payload = serde_json::json!({"library_id": lib_uuid.to_string(), "kind": kind}),
+    );
+
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[utoipa::path(
+    operation_id = "health_issues_undismiss",    post,
+    path = "/libraries/{slug}/health-issues/{issue_id}/undismiss",
+    params(
+        ("slug" = String, Path,),
+        ("issue_id" = String, Path,),
+    ),
+    responses(
+        (status = 204, description = "un-dismissed"),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "issue not found"),
+    )
+)]
+#[handler]
+pub async fn undismiss(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath((lib_slug, issue_id)): AxPath<(String, String)>,
+) -> impl IntoResponse {
+    let lib = match crate::api::libraries::find_by_slug(&app.db, &lib_slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    let lib_uuid = lib.id;
+    let Ok(issue_uuid) = Uuid::parse_str(&issue_id) else {
+        return error(StatusCode::BAD_REQUEST, "validation", "invalid issue id");
+    };
+    let Ok(Some(row)) = library_health_issue::Entity::find_by_id(issue_uuid)
+        .filter(library_health_issue::Column::LibraryId.eq(lib_uuid))
+        .one(&app.db)
+        .await
+    else {
+        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    };
+
+    // Idempotent: un-dismissing a row that was never dismissed is a
+    // no-op 204 rather than an error — the admin UI's pill state can
+    // lag the server after a concurrent edit.
+    let kind = row.kind.clone();
+    let mut am: library_health_issue::ActiveModel = row.into();
+    am.dismissed_at = Set(None);
+    if let Err(e) = am.update(&app.db).await {
+        tracing::error!(error = %e, "undismiss health issue failed");
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
+
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.library.health_issue.undismiss",
         target = ("library_health_issue", issue_uuid.to_string()),
         payload = serde_json::json!({"library_id": lib_uuid.to_string(), "kind": kind}),
     );

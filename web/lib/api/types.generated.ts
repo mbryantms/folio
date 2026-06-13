@@ -1638,6 +1638,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/libraries/{slug}/health-issues/{issue_id}/undismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["health_issues_undismiss"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/libraries/{slug}/metadata-drift/flush": {
         parameters: {
             query?: never;
@@ -12293,6 +12309,41 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description dismissed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    health_issues_undismiss: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description un-dismissed */
             204: {
                 headers: {
                     [name: string]: unknown;
