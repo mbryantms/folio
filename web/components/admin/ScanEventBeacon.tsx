@@ -87,8 +87,11 @@ export function ScanEventBeacon() {
           </Link>
           <button
             type="button"
+            // Wider tap area than the original 12px icon box, kept in
+            // proportion to the compact topbar pill (a literal 44px target
+            // would break the pill — see the search-pill / kebab feedback).
             className={cn(
-              "border-warning/30 text-warning hover:bg-warning/10 hover:text-warning inline-flex items-center border-l px-1.5 py-0.5 transition-colors disabled:opacity-50",
+              "border-warning/30 text-warning hover:bg-warning/10 hover:text-warning inline-flex items-center justify-center border-l px-2.5 py-1 transition-colors disabled:opacity-50",
               clearQueue.isPending && "cursor-wait",
             )}
             aria-label="Clear all pending background queues"
@@ -96,7 +99,7 @@ export function ScanEventBeacon() {
             disabled={clearQueue.isPending}
             onClick={() => setConfirmClear(true)}
           >
-            <Trash2 className="h-3 w-3" />
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
       ) : null}

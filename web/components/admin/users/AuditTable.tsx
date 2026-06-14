@@ -218,7 +218,7 @@ export function AuditTable({ pinnedActorId }: AuditTableProps) {
           data={data?.items ?? []}
           emptyMessage="No audit entries match these filters."
           renderExpanded={(row) => (
-            <pre className="bg-background/60 overflow-x-auto rounded p-3 font-mono text-[11px] leading-relaxed">
+            <pre className="bg-background/60 max-w-full rounded p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap wrap-anywhere">
               {JSON.stringify(row.original.payload ?? {}, null, 2)}
             </pre>
           )}
