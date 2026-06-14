@@ -251,7 +251,12 @@ export function MarkersList() {
         }
         actions={
           <>
-            <div className="relative w-full max-w-xs">
+            {/* `w-full` only below `sm` — there it stacks above the
+                buttons; from `sm` up it's a fixed width so the Select +
+                card-size controls share the row instead of wrapping
+                underneath (was `w-full max-w-xs`, which claimed the whole
+                actions row at every width). */}
+            <div className="relative w-full sm:w-64">
               <SearchIcon
                 className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2"
                 aria-hidden="true"
