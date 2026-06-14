@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Menu,
   MousePointerClick,
+  MoveHorizontal,
   ZoomIn,
 } from "lucide-react";
 
@@ -82,7 +83,7 @@ export function ReaderFirstRunOverlay({
           Reading, at a glance
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          Tap the page to get around. Here&apos;s the gist.
+          Tap or swipe to get around. Here&apos;s the gist.
         </p>
 
         {/* Direction-aware tap-zone diagram. */}
@@ -108,11 +109,18 @@ export function ReaderFirstRunOverlay({
         <ul className="mt-5 space-y-2 text-sm">
           <li className="flex items-center gap-3">
             <MousePointerClick className="text-muted-foreground size-4 shrink-0" />
-            <span>Tap the edges to turn pages, the center for controls.</span>
+            <span>
+              Tap the left or right edge to turn pages, the center for
+              controls.
+            </span>
+          </li>
+          <li className="flex items-center gap-3">
+            <MoveHorizontal className="text-muted-foreground size-4 shrink-0" />
+            <span>Swipe left or right to flip between pages.</span>
           </li>
           <li className="flex items-center gap-3">
             <ZoomIn className="text-muted-foreground size-4 shrink-0" />
-            <span>Double-tap to zoom; drag to pan when zoomed in.</span>
+            <span>Double-tap to zoom; drag to pan while zoomed in.</span>
           </li>
         </ul>
 
