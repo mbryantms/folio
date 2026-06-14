@@ -332,7 +332,7 @@ export function MarkersList() {
         </div>
         {/* Grouped-by-series ⇄ flat newest-first (audit B11). */}
         <div
-          role="radiogroup"
+          role="group"
           aria-label="Marker layout"
           className="bg-muted ml-auto inline-flex items-center gap-0.5 rounded-md p-0.5"
         >
@@ -345,8 +345,7 @@ export function MarkersList() {
             <button
               key={opt.value}
               type="button"
-              role="radio"
-              aria-checked={layout === opt.value}
+              aria-pressed={layout === opt.value}
               onClick={() => setLayout(opt.value)}
               className={cn(
                 "rounded px-2 py-0.5 text-xs transition-colors",
@@ -381,7 +380,7 @@ export function MarkersList() {
           </div>
           {selectedTags.length > 1 ? (
             <div
-              role="radiogroup"
+              role="group"
               aria-label="Tag match mode"
               className="bg-muted ml-1 inline-flex items-center gap-0.5 rounded-md p-0.5"
             >
@@ -389,8 +388,7 @@ export function MarkersList() {
                 <button
                   key={mode}
                   type="button"
-                  role="radio"
-                  aria-checked={tagMatch === mode}
+                  aria-pressed={tagMatch === mode}
                   onClick={() => setTagMatch(mode)}
                   className={cn(
                     "rounded px-2 py-0.5 text-xs transition-colors",

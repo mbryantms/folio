@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { SegmentedControl } from "@/components/settings/SegmentedControl";
 import { Badge } from "@/components/ui/badge";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -99,18 +100,19 @@ export function LogsClient() {
               with the scope already applied. */}
           <label className="text-muted-foreground flex items-center gap-1.5 text-xs uppercase">
             Library
-            <select
+            <NativeSelect
+              size="sm"
               value={libraryId}
-              onChange={(e) => setLibraryParam(e.target.value)}
-              className="border-border bg-background h-9 rounded-md border px-2 text-xs normal-case"
-            >
-              <option value="all">All libraries</option>
-              {(libraries ?? []).map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
+              onChange={setLibraryParam}
+              className="normal-case"
+              options={[
+                { value: "all", label: "All libraries" },
+                ...(libraries ?? []).map((l) => ({
+                  value: l.id,
+                  label: l.name,
+                })),
+              ]}
+            />
           </label>
         </div>
         <div className="flex items-center gap-2">
