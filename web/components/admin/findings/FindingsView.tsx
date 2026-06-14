@@ -18,6 +18,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
 import { useDismissHealthIssue } from "@/lib/api/mutations";
@@ -406,29 +414,27 @@ function ScanRunsRail({
     <div className="space-y-3">
       <Card>
         <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead className="text-muted-foreground text-xs uppercase">
-              <tr>
-                <th className="border-border border-b p-3 text-left">State</th>
-                <th className="border-border border-b p-3 text-left">
-                  Library
-                </th>
-                <th className="border-border border-b p-3 text-left">Kind</th>
-                <th className="border-border border-b p-3 text-left">
-                  Started
-                </th>
-                <th className="border-border border-b p-3 text-left">Ended</th>
-                <th className="border-border border-b p-3 text-left">Error</th>
-                <th className="border-border border-b p-3 text-left"></th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>State</TableHead>
+                <TableHead>Library</TableHead>
+                <TableHead>Kind</TableHead>
+                <TableHead>Started</TableHead>
+                <TableHead>Ended</TableHead>
+                <TableHead>Error</TableHead>
+                <TableHead>
+                  <span className="sr-only">Logs</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((row) => (
-                <tr key={row.id} className="hover:bg-muted/40">
-                  <td className="border-border border-b p-3">
+                <TableRow key={row.id}>
+                  <TableCell>
                     <StateBadge state={row.state} />
-                  </td>
-                  <td className="border-border border-b p-3">
+                  </TableCell>
+                  <TableCell>
                     {row.library_slug ? (
                       <Link
                         href={`/admin/libraries/${row.library_slug}/history`}
@@ -439,23 +445,23 @@ function ScanRunsRail({
                     ) : (
                       row.library_name
                     )}
-                  </td>
-                  <td className="border-border border-b p-3 font-mono text-xs">
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
                     {row.kind}
                     {row.series_name ? ` · ${row.series_name}` : ""}
-                  </td>
-                  <td className="border-border text-muted-foreground border-b p-3 text-xs">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">
                     {new Date(row.started_at).toLocaleString()}
-                  </td>
-                  <td className="border-border text-muted-foreground border-b p-3 text-xs">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-xs">
                     {row.ended_at
                       ? new Date(row.ended_at).toLocaleString()
                       : "—"}
-                  </td>
-                  <td className="border-border border-b p-3 text-xs wrap-anywhere">
+                  </TableCell>
+                  <TableCell className="text-xs wrap-anywhere">
                     {row.error ?? ""}
-                  </td>
-                  <td className="border-border border-b p-3 text-xs">
+                  </TableCell>
+                  <TableCell className="text-xs">
                     {/* Cross-link into the live log tail scoped to
                       this scan's library. The Logs page picks up
                       `?library_id=` from the URL on mount. */}
@@ -466,11 +472,11 @@ function ScanRunsRail({
                       <ScrollText className="h-3.5 w-3.5" aria-hidden="true" />
                       Logs
                     </Link>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
       {hasNextPage ? (
