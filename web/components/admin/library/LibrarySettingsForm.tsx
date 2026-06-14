@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TagInput } from "./TagInput";
 import { CronInput } from "./CronInput";
 import { useLibrary, useThumbnailsSettings } from "@/lib/api/queries";
+import { useUnsavedChangesGuard } from "@/lib/ui/use-unsaved-changes-guard";
 import {
   useUpdateLibrary,
   useUpdateThumbnailsSettings,
@@ -136,6 +137,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       form.reset(formValuesFromLibrary(lib.data));
     }
   }, [lib.data, form]);
+  useUnsavedChangesGuard(form.formState.isDirty);
 
   if (lib.isLoading) return <Skeleton className="h-72 w-full" />;
   if (lib.error || !lib.data) {

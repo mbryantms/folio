@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useUpdateSettings } from "@/lib/api/mutations";
+import { useUnsavedChangesGuard } from "@/lib/ui/use-unsaved-changes-guard";
 
 import type { SmtpInitial } from "./EmailAdminClient";
 
@@ -59,6 +60,7 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
       from: initial.from,
     },
   });
+  useUnsavedChangesGuard(form.formState.isDirty);
 
   async function onSubmit(values: FormValues) {
     // The submit button binds to `formState.isDirty` so the no-op path

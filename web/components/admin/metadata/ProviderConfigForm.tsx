@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useUpdateSettings } from "@/lib/api/mutations";
 import { useAdminSettings } from "@/lib/api/queries";
+import { useUnsavedChangesGuard } from "@/lib/ui/use-unsaved-changes-guard";
 import { statusToneText } from "@/lib/ui/status-tone";
 
 /** Sentinel the server returns for secret values that have been set
@@ -195,6 +196,7 @@ function ProviderForm({
     password,
     enabled,
   });
+  useUnsavedChangesGuard(dirty);
 
   return (
     <form
