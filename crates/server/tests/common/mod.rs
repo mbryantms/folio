@@ -60,6 +60,19 @@ pub struct TestApp {
     /// its many key consumers (apalis, ws-tickets, in-flight dedup) would need
     /// invasive per-test namespacing.
     pub _redis: ContainerAsync<Redis>,
+    /// Shared-Postgres coordinates + this test's clone DB name, so `Drop` can
+    /// drop the clone (see [`drop_test_db`]).
+    pg_host: String,
+    pg_port: u16,
+    db_name: String,
+}
+
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        // Drop the clone DB so databases + their lingering connections don't
+        // accumulate on the shared server across a binary's tests.
+        drop_test_db(self.pg_host.clone(), self.pg_port, self.db_name.clone());
+    }
 }
 
 impl TestApp {
@@ -224,10 +237,12 @@ async fn admin_conn(host: &str, port: u16) -> sea_orm::DatabaseConnection {
 }
 
 /// Clone a fresh, already-migrated database off [`TEMPLATE_DB`] for one test.
-/// Returns its connection URL. The clone is done on a fresh connection bound to
-/// the calling test's runtime (see [`shared_pg`] for why a shared pool can't be
-/// reused across tests). The database is dropped implicitly when the shared
-/// container dies at process exit.
+/// Returns the new database NAME (the caller builds the URL). The clone is done
+/// on a fresh connection bound to the calling test's runtime (see [`shared_pg`]
+/// for why a shared pool can't be reused across tests). The database is dropped
+/// in [`TestApp`]'s `Drop` — see [`drop_test_db`] — so neither databases nor
+/// their lingering backend connections accumulate on the shared server within a
+/// binary (which would otherwise exhaust `max_connections` on a big test file).
 async fn clone_test_db(pg: &SharedPg) -> String {
     let db_name = format!("t_{}", Uuid::now_v7().simple());
     let admin = admin_conn(&pg.host, pg.port).await;
@@ -238,7 +253,40 @@ async fn clone_test_db(pg: &SharedPg) -> String {
         .await
         .expect("clone test db from template");
     admin.close().await.ok();
-    format!("postgres://comic:comic@{}:{}/{}", pg.host, pg.port, db_name)
+    db_name
+}
+
+/// Drop a per-test clone database, terminating any backends still attached
+/// (`WITH (FORCE)`, Postgres 13+) so connections don't pile up on the shared
+/// server. Runs on its own current-thread runtime in a dedicated OS thread so
+/// it works from `Drop` regardless of any ambient runtime's state.
+fn drop_test_db(host: String, port: u16, db_name: String) {
+    let _ = std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        rt.block_on(async {
+            // Fallible (no `.expect`): a connect hiccup during teardown should
+            // leak the clone DB, not panic + spam backtraces.
+            let url = format!("postgres://comic:comic@{host}:{port}/comic_reader_test");
+            let mut opts = ConnectOptions::new(url);
+            opts.max_connections(1)
+                .min_connections(0)
+                .sqlx_logging(false);
+            if let Ok(admin) = Database::connect(opts).await {
+                let _ = admin
+                    .execute_unprepared(&format!(
+                        "DROP DATABASE IF EXISTS \"{db_name}\" WITH (FORCE)"
+                    ))
+                    .await;
+                let _ = admin.close().await;
+            }
+        });
+    })
+    .join();
 }
 
 /// Knobs flipped per test variant. Keeps `spawn_inner` from growing a
@@ -412,7 +460,8 @@ impl TestApp {
         // Clone a fresh, pre-migrated database off the shared per-process
         // container instead of booting a container + running 93 migrations.
         let pg = shared_pg().await;
-        let db_url = clone_test_db(pg).await;
+        let db_name = clone_test_db(pg).await;
+        let db_url = format!("postgres://comic:comic@{}:{}/{}", pg.host, pg.port, db_name);
 
         // Cap the per-test pool: every test now shares one server's connection
         // budget, so don't let each open the sea-orm default fan-out. 8 is
@@ -566,6 +615,9 @@ impl TestApp {
             email,
             _data_dir: data_dir,
             _redis: redis,
+            pg_host: pg.host.clone(),
+            pg_port: pg.port,
+            db_name,
         }
     }
 }
