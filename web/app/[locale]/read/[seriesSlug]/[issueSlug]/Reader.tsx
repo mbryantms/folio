@@ -1137,6 +1137,7 @@ function SinglePageView({
           <PageImage
             key={`${issueId}-${currentPage}`}
             src={`/issues/${issueId}/pages/${currentPage}`}
+            thumbSrc={`/issues/${issueId}/pages/${currentPage}/thumb?variant=strip`}
             alt={`Page ${currentPage + 1}`}
             fitClass={fitClass}
             fetchPriority="high"
@@ -1273,6 +1274,7 @@ function DoublePagePane({
     <div className={`relative align-top ${paneClass}`}>
       <PageImage
         src={`/issues/${issueId}/pages/${page}`}
+        thumbSrc={`/issues/${issueId}/pages/${page}/thumb?variant=strip`}
         alt={`Page ${page + 1}`}
         fitClass={fitClass}
         fetchPriority="high"
@@ -1523,6 +1525,7 @@ const WebtoonPage = memo(function WebtoonPage({
     <>
       <PageImage
         src={`/issues/${issueId}/pages/${pageIndex}`}
+        thumbSrc={`/issues/${issueId}/pages/${pageIndex}/thumb?variant=strip`}
         alt={`Page ${pageIndex + 1}`}
         fitClass={fitClass}
         loading={eager ? "eager" : "lazy"}

@@ -31,6 +31,7 @@ export function PageImage({
   onNaturalSize,
   imgRef: externalImgRef,
   dimensions,
+  thumbSrc,
 }: {
   src: string;
   alt: string;
@@ -57,6 +58,13 @@ export function PageImage({
    *  most-visible-page observer persist regressed progress while
    *  decode shifted layout. */
   dimensions?: { width: number; height: number };
+  /** Low-res page thumbnail (the page-strip variant — already warm in
+   *  cache for nearby pages) shown blurred underneath while the full
+   *  page decodes (audit C3 blur-up). Decorative: it shares the grid
+   *  cell with the real image, so the loaded thumb also reserves the
+   *  cell's height before the full bytes arrive. Omitted → plain
+   *  spinner placeholder, as before. */
+  thumbSrc?: string;
 }) {
   // Load lifecycle (audit C3): loading → loaded | error. A failed load
   // auto-retries once silently (transient blips), then surfaces a
@@ -111,15 +119,16 @@ export function PageImage({
   };
 
   return (
-    // `flex w-full justify-center` so the wrapper is a real, viewport-width
-    // container instead of an `inline-block` that sizes to the img — that
-    // would make `w-full` on the img collapse to its natural width and
-    // break "fit width" / "fit height" / "original" entirely. The flex +
-    // justify-center keeps a narrower image (original or height mode)
-    // centered horizontally inside the row.
-    <span className="relative flex w-full justify-center">
-      {status === "loading" ? (
-        <span className="pointer-events-none absolute top-1/2 left-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 text-neutral-500">
+    // `grid w-full place-items-center` is a real, viewport-width container
+    // (not an `inline-block` that sizes to the img — which would collapse
+    // `w-full` and break the fit modes), and the single implicit cell lets
+    // the blur-up thumb and the full image **stack** (`[&>img]:[grid-area:1/1]`)
+    // and stay centered. Stacking is what makes the loaded thumb reserve
+    // the cell's height while the full image (often 0-height until decode
+    // at fit-width) catches up — no layout shift, no white gap.
+    <span className="relative grid w-full place-items-center [&>img]:[grid-area:1/1]">
+      {status === "loading" && (!thumbSrc || slow) ? (
+        <span className="pointer-events-none absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 text-neutral-500">
           <Loader2 aria-hidden="true" className="size-8 animate-spin" />
           {slow ? (
             <span role="status" className="text-xs">
@@ -135,11 +144,27 @@ export function PageImage({
         <button
           type="button"
           onClick={handleRetry}
-          className="text-muted-foreground hover:text-foreground absolute top-1/2 left-1/2 flex min-h-11 -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 rounded-md px-4 py-3 text-sm"
+          className="text-muted-foreground hover:text-foreground absolute top-1/2 left-1/2 z-10 flex min-h-11 -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 rounded-md px-4 py-3 text-sm"
         >
           <RotateCw aria-hidden="true" className="size-6" />
           <span>Couldn&apos;t load this page. Tap to retry.</span>
         </button>
+      ) : null}
+      {thumbSrc ? (
+        // Blur-up placeholder: same grid cell + `fitClass` as the real
+        // image, so it sizes identically and reserves height. `scale-105`
+        // bleeds the soft edges past the frame; fades out as the full
+        // image fades in. Decorative, so `aria-hidden` + empty alt.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={thumbSrc}
+          alt=""
+          aria-hidden="true"
+          decoding="async"
+          className={`block ${fitClass} scale-105 blur-xl transition-opacity duration-300 ease-out motion-reduce:transition-none ${
+            loaded ? "opacity-0" : "opacity-100"
+          }`}
+        />
       ) : null}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
