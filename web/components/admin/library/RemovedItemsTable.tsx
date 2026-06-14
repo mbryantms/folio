@@ -28,25 +28,25 @@ import { useRemovedItems } from "@/lib/api/queries";
 import { useConfirmIssueRemoval, useRestoreIssue } from "@/lib/api/mutations";
 import type { RemovedIssueView } from "@/lib/api/types";
 
-type LocalAction = { issueId: string; kind: "restore" | "confirm" };
+type HideAction = { type: "hide" | "rollback"; issueId: string };
 
 export function RemovedItemsTable({ libraryId }: { libraryId: string }) {
   const { data, isLoading, error } = useRemovedItems(libraryId);
   const restore = useRestoreIssue(libraryId);
   const confirmRemoval = useConfirmIssueRemoval(libraryId);
 
-  // Optimistic hide list — items the user just acted on. They get hidden
-  // immediately; the query invalidation removes them from `data` shortly.
-  const [optimistic, applyOptimistic] = React.useReducer(
-    (acc: LocalAction[], action: LocalAction): LocalAction[] => [
-      ...acc,
-      action,
-    ],
-    [],
-  );
-  const hidden = React.useMemo(
-    () => new Set(optimistic.map((o) => o.issueId)),
-    [optimistic],
+  // Optimistic hide set — items the user just acted on are hidden
+  // immediately; the query invalidation drops them from `data` shortly.
+  // On mutation failure we roll the item back into view (D7) so a failed
+  // restore/confirm doesn't make the row silently vanish.
+  const [hidden, dispatch] = React.useReducer(
+    (acc: Set<string>, action: HideAction): Set<string> => {
+      const next = new Set(acc);
+      if (action.type === "hide") next.add(action.issueId);
+      else next.delete(action.issueId);
+      return next;
+    },
+    new Set<string>(),
   );
 
   const visibleIssues = (data?.issues ?? []).filter((i) => !hidden.has(i.id));
@@ -86,12 +86,24 @@ export function RemovedItemsTable({ libraryId }: { libraryId: string }) {
                     key={issue.id}
                     issue={issue}
                     onRestore={() => {
-                      applyOptimistic({ issueId: issue.id, kind: "restore" });
-                      restore.mutate({ issueId: issue.id });
+                      dispatch({ type: "hide", issueId: issue.id });
+                      restore.mutate(
+                        { issueId: issue.id },
+                        {
+                          onError: () =>
+                            dispatch({ type: "rollback", issueId: issue.id }),
+                        },
+                      );
                     }}
                     onConfirm={() => {
-                      applyOptimistic({ issueId: issue.id, kind: "confirm" });
-                      confirmRemoval.mutate({ issueId: issue.id });
+                      dispatch({ type: "hide", issueId: issue.id });
+                      confirmRemoval.mutate(
+                        { issueId: issue.id },
+                        {
+                          onError: () =>
+                            dispatch({ type: "rollback", issueId: issue.id }),
+                        },
+                      );
                     }}
                   />
                 ))}

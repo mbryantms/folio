@@ -191,7 +191,12 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
                 e.stopPropagation();
                 dismiss.mutate({ issueId: row.original.id });
               }}
-              disabled={dismiss.isPending}
+              // Per-row pending (D7): only the row being dismissed is
+              // disabled, not every Dismiss button.
+              disabled={
+                dismiss.isPending &&
+                dismiss.variables?.issueId === row.original.id
+              }
             >
               Dismiss
             </Button>
