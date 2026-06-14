@@ -8,10 +8,15 @@ import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 export function CronInput({
+  id,
   value,
   onChange,
   placeholder = "0 */6 * * *",
 }: {
+  /** Optional id for the inner input so a sibling `<Label htmlFor>` can
+   *  bind to it (shadcn `<FormControl>` wires this itself, but plain-form
+   *  callers like the metadata settings tab need it). */
+  id?: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -22,6 +27,7 @@ export function CronInput({
   return (
     <div className="space-y-2">
       <Input
+        id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}

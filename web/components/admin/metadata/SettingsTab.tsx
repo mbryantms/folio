@@ -16,15 +16,18 @@
  * on every cron fire).
  */
 
-import { Loader2 } from "lucide-react";
+import { Loader2, RotateCw } from "lucide-react";
 import * as React from "react";
 
+import { CronInput } from "@/components/admin/library/CronInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useUpdateSettings } from "@/lib/api/mutations";
 import { useAdminSettings } from "@/lib/api/queries";
+import { statusTone } from "@/lib/ui/status-tone";
+import { cn } from "@/lib/utils";
 
 type RefreshSettings = {
   enabled: boolean;
@@ -194,21 +197,30 @@ function SettingsForm({
 
         <div className="grid gap-1.5">
           <Label htmlFor="weekly-cron">Cron expression</Label>
-          <Input
+          <CronInput
             id="weekly-cron"
-            type="text"
             value={cron}
-            onChange={(e) => setCron(e.target.value)}
+            onChange={setCron}
             placeholder="0 0 4 * * 0"
-            className="font-mono text-sm"
           />
           <p className="text-muted-foreground text-[11px]">
             6-field format (sec min hour day month weekday). Default
             <code className="mx-1">0 0 4 * * 0</code>= Sunday 04:00 UTC.
-            <strong className="ml-1">Changes to the cron string take
-            effect on the next server restart;</strong> the enable
-            toggle above is live.
           </p>
+          {cron.trim() !== initial.cron ? (
+            <p
+              className={cn(
+                "flex items-start gap-2 rounded-md border px-3 py-2 text-[11px]",
+                statusTone("warning"),
+              )}
+            >
+              <RotateCw className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                Schedule changes take effect on the next server restart. The
+                enable toggle above applies live.
+              </span>
+            </p>
+          ) : null}
         </div>
 
         <div className="grid gap-1.5">
