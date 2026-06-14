@@ -452,6 +452,12 @@ export function useIssueMetadataOverview(
  * Library scan history. `kind` filters by trigger: `'library' | 'series' |
  * 'issue'`, or omitted for all. Server caps at 500 rows; default is 50.
  */
+/**
+ * First page of a library's scan runs as a flat array — for summary
+ * consumers (overview card, live-scan progress) that only read the most
+ * recent run (`data[0]`). The endpoint is now cursor-paginated; the full
+ * scrollable history uses {@link useScanRunsInfinite}.
+ */
 export function useScanRuns(
   libraryId: string,
   opts?: { kind?: "library" | "series" | "issue" | "all" },
@@ -461,7 +467,37 @@ export function useScanRuns(
   return useQuery({
     queryKey: queryKeys.scanRuns(libraryId, kind ?? "all"),
     queryFn: () =>
-      jsonFetch<ScanRunView[]>(`/libraries/${libraryId}/scan-runs${qs}`),
+      jsonFetch<{ items: ScanRunView[]; next_cursor: string | null }>(
+        `/libraries/${libraryId}/scan-runs${qs}`,
+      ).then((p) => p.items),
+    enabled: !!libraryId,
+  });
+}
+
+/**
+ * Cursor-paginated scan history for a single library — backs the
+ * `ScanRunsTable` with a Load-more button (audit D5). Mirrors the
+ * cross-library `useAdminScanRunsInfinite` shape.
+ */
+export function useScanRunsInfinite(
+  libraryId: string,
+  opts?: { kind?: "library" | "series" | "issue" | "all"; limit?: number },
+) {
+  const kind = opts?.kind && opts.kind !== "all" ? opts.kind : undefined;
+  return useInfiniteQuery({
+    queryKey: queryKeys.scanRunsInfinite(libraryId, kind ?? "all"),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams();
+      if (kind) params.set("kind", kind);
+      if (opts?.limit) params.set("limit", String(opts.limit));
+      if (pageParam) params.set("cursor", pageParam);
+      const qs = params.toString();
+      return jsonFetch<{ items: ScanRunView[]; next_cursor: string | null }>(
+        `/libraries/${libraryId}/scan-runs${qs ? `?${qs}` : ""}`,
+      );
+    },
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
     enabled: !!libraryId,
   });
 }

@@ -3910,6 +3910,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3918,10 +3926,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ScanRunView"
-                  }
+                  "$ref": "#/components/schemas/CursorPage_ScanRunView"
                 }
               }
             }
@@ -8984,6 +8989,15 @@
               "null"
             ],
             "description": "Opaque cursor for the next page. `None` when the result is exhausted."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Total rows matching the active filters. Populated only on the first\npage (no `cursor`) so the UI can show a count without paying for it\non every page; `None` on subsequent pages.",
+            "minimum": 0
           }
         }
       },
@@ -12604,6 +12618,98 @@
                   "type": "string",
                   "description": "`running` | `complete` | `partial_failed` | `failed`."
                 }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_ScanRunView": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "state",
+                "started_at",
+                "stats",
+                "kind"
+              ],
+              "properties": {
+                "ended_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "issue_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Originating issue id for `issue` kinds. `null` otherwise."
+                },
+                "issue_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Joined issue label shaped as `{series} #{number}` (or `{series} —\n{title}` when there's no number). `null` when the issue row was\nsince deleted, or when this scan isn't issue-kinded."
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "`library` | `series` | `issue` — drives the History tab filter chips."
+                },
+                "series_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Target series id for `series` / `issue` kinds. `null` on library scans."
+                },
+                "series_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Joined `series.name` so the table can render a target label without\nchasing one extra request per row. `null` when the series row was\nsince deleted (orphan scan_runs)."
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "stats": {}
               }
             }
           },

@@ -70,6 +70,11 @@ pub struct AdminUserListView {
     pub items: Vec<AdminUserView>,
     /// Opaque cursor for the next page. `None` when the result is exhausted.
     pub next_cursor: Option<String>,
+    /// Total rows matching the active filters. Populated only on the first
+    /// page (no `cursor`) so the UI can show a count without paying for it
+    /// on every page; `None` on subsequent pages.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -182,31 +187,56 @@ pub async fn list(
 ) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
-    let mut query = user::Entity::find().order_by_asc(user::Column::Id);
+    // Validate the cursor up front so a bad value 400s rather than silently
+    // restarting the list.
+    let after = match q.cursor.as_deref() {
+        Some(c) => match parse_cursor(c) {
+            Ok(id) => Some(id),
+            Err(_) => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
+        },
+        None => None,
+    };
 
-    if let Some(cursor) = q.cursor.as_deref() {
-        let Ok(after) = parse_cursor(cursor) else {
-            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
-        };
-        query = query.filter(user::Column::Id.gt(after));
-    }
-    // Enum-typed query params (audit-remediation M9.4) — serde
-    // rejects bad values at deserialize time.
+    // Base query carrying just the filters (no cursor / order / limit), so
+    // the same predicate can drive the first-page total count.
+    // Enum-typed query params (audit-remediation M9.4) — serde rejects bad
+    // values at deserialize time.
+    let mut filtered = user::Entity::find();
     if let Some(role) = q.role {
-        query = query.filter(user::Column::Role.eq(role.as_db_str()));
+        filtered = filtered.filter(user::Column::Role.eq(role.as_db_str()));
     }
     if let Some(state) = q.state {
-        query = query.filter(user::Column::State.eq(state.as_db_str()));
+        filtered = filtered.filter(user::Column::State.eq(state.as_db_str()));
     }
     if let Some(needle) = q.q.as_deref()
         && !needle.trim().is_empty()
     {
         let pattern = format!("%{}%", needle.trim().to_lowercase());
-        query = query.filter(
+        filtered = filtered.filter(
             user::Column::Email
                 .like(pattern.clone())
                 .or(user::Column::DisplayName.like(pattern)),
         );
+    }
+
+    // Total matching the active filters — first page only (cursor absent),
+    // so the UI shows "N users" without re-counting on every page. Soft-fail:
+    // a count error drops the total rather than failing the whole list.
+    let total = if after.is_none() {
+        match filtered.clone().count(&app.db).await {
+            Ok(c) => Some(c),
+            Err(e) => {
+                tracing::error!(error = %e, "count users failed; omitting total");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut query = filtered.order_by_asc(user::Column::Id);
+    if let Some(after) = after {
+        query = query.filter(user::Column::Id.gt(after));
     }
 
     // Fetch limit+1 so we know whether another page exists.
@@ -238,7 +268,12 @@ pub async fn list(
         .map(|m| AdminUserView::from_model(m, &counts))
         .collect();
 
-    Json(AdminUserListView { items, next_cursor }).into_response()
+    Json(AdminUserListView {
+        items,
+        next_cursor,
+        total,
+    })
+    .into_response()
 }
 
 #[utoipa::path(

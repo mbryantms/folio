@@ -99,6 +99,9 @@ pub struct ListQuery {
     /// a silent empty list.
     #[serde(default)]
     pub kind: Option<String>,
+    /// Opaque pagination cursor (a prior page's `next_cursor`).
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 #[utoipa::path(
@@ -108,9 +111,10 @@ pub struct ListQuery {
         ("slug" = String, Path,),
         ("limit" = Option<u64>, Query,),
         ("kind" = Option<String>, Query,),
+        ("cursor" = Option<String>, Query,),
     ),
     responses(
-        (status = 200, body = Vec<ScanRunView>),
+        (status = 200, body = CursorPage<ScanRunView>),
         (status = 400, description = "invalid kind filter"),
         (status = 403, description = "admin only"),
         (status = 404, description = "library not found"),
@@ -128,7 +132,7 @@ pub async fn list(
         Err(resp) => return resp,
     };
     let uuid = lib.id;
-    let limit = q.limit.unwrap_or(50).min(500);
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
     let kind_filter = match q.kind.as_deref() {
         None | Some("") | Some("all") => None,
@@ -142,21 +146,61 @@ pub async fn list(
         }
     };
 
+    // Decode the keyset cursor — (started_at, id) of the last row of the
+    // previous page. A malformed cursor 400s rather than silently restart.
+    let cursor = match q.cursor.as_deref() {
+        Some(c) => match decode_cursor::<(DateTime<FixedOffset>, Uuid)>(c) {
+            Ok(v) => Some(v),
+            Err(_) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "validation.cursor",
+                    "invalid cursor",
+                );
+            }
+        },
+        None => None,
+    };
+
     let mut query = scan_run::Entity::find()
         .filter(scan_run::Column::LibraryId.eq(uuid))
+        // Tie-break on id so the keyset is total even when two runs share a
+        // started_at; over-fetch one row to detect a further page.
         .order_by_desc(scan_run::Column::StartedAt)
-        .limit(limit);
+        .order_by_desc(scan_run::Column::Id)
+        .limit(limit + 1);
     if let Some(kind) = kind_filter.as_deref() {
         query = query.filter(scan_run::Column::Kind.eq(kind));
     }
+    if let Some((c_at, c_id)) = cursor {
+        query = query.filter(
+            Condition::any()
+                .add(scan_run::Column::StartedAt.lt(c_at))
+                .add(
+                    Condition::all()
+                        .add(scan_run::Column::StartedAt.eq(c_at))
+                        .add(scan_run::Column::Id.lt(c_id)),
+                ),
+        );
+    }
 
-    let rows = match query.all(&app.db).await {
+    let mut rows = match query.all(&app.db).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "list scan_runs failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+
+    // The over-fetched (limit+1)-th row signals there's another page; its
+    // predecessor (the last kept row) becomes the next cursor.
+    let next_cursor = if rows.len() as u64 > limit {
+        rows.get((limit - 1) as usize)
+            .and_then(|r| encode_cursor(&(r.started_at, r.id)).ok())
+    } else {
+        None
+    };
+    rows.truncate(limit as usize);
 
     // Batch-resolve series names so the table doesn't fan out one query per
     // row. Skip the lookup entirely when no rows actually reference a series.
@@ -205,12 +249,11 @@ pub async fn list(
         issue_labels.insert(id, label);
     }
 
-    Json(
-        rows.into_iter()
-            .map(|m| ScanRunView::from_model(m, &series_names, &issue_labels))
-            .collect::<Vec<_>>(),
-    )
-    .into_response()
+    let items: Vec<ScanRunView> = rows
+        .into_iter()
+        .map(|m| ScanRunView::from_model(m, &series_names, &issue_labels))
+        .collect();
+    Json(CursorPage::paginated(items, next_cursor, None)).into_response()
 }
 
 /// Cross-library scan-run row. Adds library context fields so the

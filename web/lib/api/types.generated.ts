@@ -3868,6 +3868,13 @@ export interface components {
             items: components["schemas"]["AdminUserView"][];
             /** @description Opaque cursor for the next page. `None` when the result is exhausted. */
             next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Total rows matching the active filters. Populated only on the first
+             *     page (no `cursor`) so the UI can show a count without paying for it
+             *     on every page; `None` on subsequent pages.
+             */
+            total?: number | null;
         };
         AdminUserStatsRow: {
             /** Format: int64 */
@@ -5327,6 +5334,41 @@ export interface components {
                 started_at: string;
                 /** @description `running` | `complete` | `partial_failed` | `failed`. */
                 state: string;
+            }[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
+        CursorPage_ScanRunView: {
+            items: {
+                ended_at?: string | null;
+                error?: string | null;
+                id: string;
+                /** @description Originating issue id for `issue` kinds. `null` otherwise. */
+                issue_id?: string | null;
+                /**
+                 * @description Joined issue label shaped as `{series} #{number}` (or `{series} —
+                 *     {title}` when there's no number). `null` when the issue row was
+                 *     since deleted, or when this scan isn't issue-kinded.
+                 */
+                issue_label?: string | null;
+                /** @description `library` | `series` | `issue` — drives the History tab filter chips. */
+                kind: string;
+                /** @description Target series id for `series` / `issue` kinds. `null` on library scans. */
+                series_id?: string | null;
+                /**
+                 * @description Joined `series.name` so the table can render a target label without
+                 *     chasing one extra request per row. `null` when the series row was
+                 *     since deleted (orphan scan_runs).
+                 */
+                series_name?: string | null;
+                started_at: string;
+                state: string;
+                stats: unknown;
             }[];
             next_cursor?: string | null;
             /** Format: int64 */
@@ -12611,6 +12653,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 kind?: string;
+                cursor?: string;
             };
             header?: never;
             path: {
@@ -12625,7 +12668,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScanRunView"][];
+                    "application/json": components["schemas"]["CursorPage_ScanRunView"];
                 };
             };
             /** @description invalid kind filter */

@@ -183,6 +183,14 @@ export function UserTable() {
         </div>
       </div>
 
+      {/* Total matching the active filters — server sends it on the first
+          page (D9). */}
+      {data?.total != null ? (
+        <p className="text-muted-foreground text-xs">
+          {data.total.toLocaleString()} {data.total === 1 ? "user" : "users"}
+        </p>
+      ) : null}
+
       {isLoading ? (
         <Skeleton className="h-64 w-full" />
       ) : error ? (
