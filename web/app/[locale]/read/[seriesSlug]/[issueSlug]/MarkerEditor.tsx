@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { useCopyToClipboard } from "@/components/ui/copy-button";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -477,16 +478,17 @@ export function MarkerEditor({
                 <Sparkles className="mr-2 h-4 w-4" />
                 {selectionPreview ? "Re-detect text" : "Detect text (OCR)"}
               </Button>
-              <select
+              <NativeSelect
+                size="sm"
                 aria-label="OCR language"
                 value={ocrLang}
-                onChange={(e) => setOcrLang(e.target.value)}
-                className="border-input bg-background focus-visible:ring-ring h-8 rounded-md border px-2 text-xs shadow-sm focus-visible:ring-1 focus-visible:outline-none"
-              >
-                <option value="">Auto</option>
-                <option value="western">Western</option>
-                <option value="manga">Japanese</option>
-              </select>
+                onChange={setOcrLang}
+                options={[
+                  { value: "", label: "Auto" },
+                  { value: "western", label: "Western" },
+                  { value: "manga", label: "Japanese" },
+                ]}
+              />
             </div>
           ) : null}
           <div className="space-y-1">

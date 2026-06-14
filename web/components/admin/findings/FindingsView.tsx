@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/ui/filter-pill";
@@ -228,18 +229,15 @@ function LibraryFilter({
       <span className="text-muted-foreground mr-1 text-xs uppercase">
         Library
       </span>
-      <select
+      <NativeSelect
+        size="sm"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="border-border bg-background rounded-md border px-2 py-1 text-xs"
-      >
-        <option value="all">All libraries</option>
-        {libraries.map((l) => (
-          <option key={l.id} value={l.id}>
-            {l.name}
-          </option>
-        ))}
-      </select>
+        onChange={onChange}
+        options={[
+          { value: "all", label: "All libraries" },
+          ...libraries.map((l) => ({ value: l.id, label: l.name })),
+        ]}
+      />
     </div>
   );
 }

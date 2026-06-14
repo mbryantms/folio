@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Label } from "@/components/ui/label";
 import {
   Sheet,
@@ -1020,33 +1021,6 @@ function Row({ children }: { children: React.ReactNode }) {
 function Row3({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">{children}</div>
-  );
-}
-
-function NativeSelect({
-  id,
-  value,
-  onChange,
-  options,
-}: {
-  id: string;
-  value: string;
-  onChange: (next: string) => void;
-  options: Array<{ value: string; label: string }>;
-}) {
-  return (
-    <select
-      id={id}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="border-input bg-background focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
   );
 }
 
