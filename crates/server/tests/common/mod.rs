@@ -95,69 +95,120 @@ struct SharedPg {
 
 static SHARED_PG: tokio::sync::OnceCell<SharedPg> = tokio::sync::OnceCell::const_new();
 
+#[expect(
+    clippy::print_stderr,
+    reason = "fatal harness error before logging exists"
+)]
 async fn shared_pg() -> &'static SharedPg {
     SHARED_PG
         .get_or_init(|| async {
-            // Pin to 18-alpine; the testcontainers-modules default of 11-alpine
-            // predates STORED generated columns (Postgres 12+) used by the
-            // search migration, and the prod compose stack is on 18 anyway.
-            // Every per-test clone now shares this server's connection budget,
-            // so raise max_connections; durability is pointless for ephemeral
-            // test data, and turning it off speeds migrations + writes.
-            let container = Postgres::default()
-                .with_db_name("comic_reader_test")
-                .with_user("comic")
-                .with_password("comic")
-                .with_tag("18-alpine")
-                .with_cmd([
-                    "postgres",
-                    "-c",
-                    "max_connections=500",
-                    "-c",
-                    "fsync=off",
-                    "-c",
-                    "synchronous_commit=off",
-                    "-c",
-                    "full_page_writes=off",
-                ])
-                .start()
-                .await
-                .expect("postgres start");
-            let host = container.get_host().await.expect("pg host").to_string();
-            let port = container.get_host_port_ipv4(5432).await.expect("pg port");
-
-            // Build the migrated template once. Both connections here live on
-            // (and are closed within) this OnceCell init — do NOT keep a
-            // long-lived pool in the static: each `#[tokio::test]` runs on its
-            // own tokio runtime, and an sqlx pool's background tasks die with
-            // the runtime that created it, so a later test would hang acquiring
-            // from it. Per-test DDL gets a fresh connection in `clone_test_db`.
-            let admin = admin_conn(&host, port).await;
-            // Postgres refuses to clone a template that has live connections, so
-            // migrate it on a dedicated connection and close that before any
-            // test clones it.
-            admin
-                .execute_unprepared(&format!("CREATE DATABASE {TEMPLATE_DB}"))
-                .await
-                .expect("create template db");
-            let tmpl_url = format!("postgres://comic:comic@{host}:{port}/{TEMPLATE_DB}");
-            let tmpl = Database::connect(&tmpl_url)
-                .await
-                .expect("connect template");
-            use migration::MigratorTrait;
-            migration::Migrator::up(&tmpl, None)
-                .await
-                .expect("migrate template");
-            tmpl.close().await.expect("close template connection");
-            admin.close().await.expect("close admin connection");
-
-            SharedPg {
-                _container: container,
-                host,
-                port,
+            // A failure here must NOT bubble as a panic: tokio's `OnceCell`
+            // re-runs the init closure after a panic, so every test in the
+            // binary would retry the whole container-boot + migration — storming
+            // the log and piling up containers (which is how this first shipped
+            // and took down CI). Fail the process hard, once, with a readable
+            // message instead.
+            match build_shared_pg().await {
+                Ok(pg) => pg,
+                Err(e) => {
+                    eprintln!("FATAL: shared test Postgres init failed: {e}");
+                    std::process::exit(1);
+                }
             }
         })
         .await
+}
+
+/// Boot the per-process Postgres container and build the migrated template.
+/// Fallible so [`shared_pg`] can fail fast instead of panic-and-retry.
+async fn build_shared_pg() -> Result<SharedPg, String> {
+    // Pin to 18-alpine; the testcontainers-modules default of 11-alpine predates
+    // STORED generated columns (Postgres 12+) used by the search migration, and
+    // the prod compose stack is on 18 anyway. Raise max_connections (every
+    // per-test clone shares this one server) and drop durability — pointless for
+    // ephemeral test data, and it speeds migrations + writes.
+    let build = || {
+        Postgres::default()
+            .with_db_name("comic_reader_test")
+            .with_user("comic")
+            .with_password("comic")
+            .with_tag("18-alpine")
+            .with_cmd([
+                "postgres",
+                "-c",
+                "max_connections=200",
+                "-c",
+                "fsync=off",
+                "-c",
+                "synchronous_commit=off",
+                "-c",
+                "full_page_writes=off",
+            ])
+    };
+    // Container start is the step most likely to flake on a loaded CI runner;
+    // retry a few times before giving up.
+    let mut container = None;
+    let mut last_err = String::from("no attempts");
+    for attempt in 1..=3 {
+        match build().start().await {
+            Ok(c) => {
+                container = Some(c);
+                break;
+            }
+            Err(e) => {
+                last_err = format!("postgres start (attempt {attempt}/3): {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }
+    }
+    let container = container.ok_or(last_err)?;
+    let host = container
+        .get_host()
+        .await
+        .map_err(|e| format!("pg host: {e}"))?
+        .to_string();
+    let port = container
+        .get_host_port_ipv4(5432)
+        .await
+        .map_err(|e| format!("pg port: {e}"))?;
+
+    // Build the migrated template once. Both connections live on (and close
+    // within) this init — do NOT keep a long-lived pool in the static: each
+    // `#[tokio::test]` runs on its own tokio runtime, and an sqlx pool's
+    // background tasks die with the runtime that created it, so a later test
+    // would hang acquiring from it. Per-test DDL gets a fresh connection in
+    // `clone_test_db`.
+    let admin = admin_conn(&host, port).await;
+    admin
+        .execute_unprepared(&format!("CREATE DATABASE {TEMPLATE_DB}"))
+        .await
+        .map_err(|e| format!("create template db: {e}"))?;
+    // sqlx_logging off: one migration's worth of SQL logging per binary (×130)
+    // is pure noise, and libtest dumps captured output on failure — keep it
+    // small so a real error stays legible.
+    let tmpl_url = format!("postgres://comic:comic@{host}:{port}/{TEMPLATE_DB}");
+    let mut tmpl_opts = ConnectOptions::new(tmpl_url);
+    tmpl_opts.sqlx_logging(false);
+    let tmpl = Database::connect(tmpl_opts)
+        .await
+        .map_err(|e| format!("connect template: {e}"))?;
+    use migration::MigratorTrait;
+    migration::Migrator::up(&tmpl, None)
+        .await
+        .map_err(|e| format!("migrate template: {e}"))?;
+    tmpl.close()
+        .await
+        .map_err(|e| format!("close template: {e}"))?;
+    admin
+        .close()
+        .await
+        .map_err(|e| format!("close admin: {e}"))?;
+
+    Ok(SharedPg {
+        _container: container,
+        host,
+        port,
+    })
 }
 
 /// A single-connection, short-lived pool on the maintenance database, for
