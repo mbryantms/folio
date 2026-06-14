@@ -19,6 +19,7 @@ import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { apiMutate } from "@/lib/api/mutations";
 import {
   useBulkMarkSeriesProgress,
@@ -284,7 +285,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
       {isInitialLoading ? (
         <SeriesGridSkeleton style={gridStyle} />
       ) : items.length === 0 ? (
-        <EmptyState />
+        <EmptyState size="sm" description="Nothing matches this view yet. Tweak the conditions to broaden the search." />
       ) : (
         <ul role="list" className="grid gap-4" style={gridStyle}>
           {items.map((s) => (
@@ -355,13 +356,5 @@ function SeriesGridSkeleton({ style }: { style: React.CSSProperties }) {
         </li>
       ))}
     </ul>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
-      Nothing matches this view yet. Tweak the conditions to broaden the search.
-    </div>
   );
 }

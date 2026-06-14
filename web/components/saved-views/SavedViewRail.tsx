@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 
 import { CblStatsPills } from "@/components/cbl/CblStatsPills";
+import { EmptyState } from "@/components/ui/empty-state";
 import { CblWindowCard } from "@/components/cbl/CblWindowCard";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {
@@ -482,9 +483,5 @@ function CollectionRailBody({
 }
 
 function RailEmptyState({ message }: { message: string }) {
-  return (
-    <div className="border-border/60 text-muted-foreground rounded-md border border-dashed px-4 py-6 text-sm">
-      {message}
-    </div>
-  );
+  return <EmptyState size="rail" description={message} />;
 }

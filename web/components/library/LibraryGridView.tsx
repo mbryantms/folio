@@ -29,6 +29,7 @@ import {
 } from "@/components/library/SeriesCard";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   useBulkMarkProgress,
   useBulkMarkSeriesProgress,
@@ -480,7 +481,7 @@ export function LibraryGridView({
       {query.isLoading ? (
         <GridSkeleton mode={mode} style={gridStyle} />
       ) : items.length === 0 ? (
-        <EmptyState
+        <GridEmptyState
           mode={mode}
           facetCount={facetCount}
           hasQuery={!!trimmedQ}
@@ -599,7 +600,7 @@ function GridSkeleton({
   );
 }
 
-function EmptyState({
+function GridEmptyState({
   mode,
   facetCount,
   hasQuery,
@@ -622,20 +623,23 @@ function EmptyState({
     message = `This library has no ${noun} yet.`;
   }
   return (
-    <div className="border-border/60 text-muted-foreground space-y-3 rounded-lg border border-dashed p-8 text-center text-sm">
-      <p>{message}</p>
-      {/* One-click recovery instead of hunting active chips in the
-          toolbar/sheet (audit A12/A20). */}
-      {facetCount > 0 ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onClearFacets}
-        >
-          Clear filters
-        </Button>
-      ) : null}
-    </div>
+    <EmptyState
+      size="sm"
+      description={message}
+      // One-click recovery instead of hunting active chips in the
+      // toolbar/sheet (audit A12/A20).
+      action={
+        facetCount > 0 ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onClearFacets}
+          >
+            Clear filters
+          </Button>
+        ) : undefined
+      }
+    />
   );
 }

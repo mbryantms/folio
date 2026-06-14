@@ -5,7 +5,7 @@ import { Library as LibraryIcon } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EmptyState } from "@/components/admin/EmptyState";
+import { EmptyState } from "@/components/ui/empty-state";
 import { NewLibraryDialog } from "@/components/admin/library/NewLibraryDialog";
 import { useLibraryList } from "@/lib/api/queries";
 
