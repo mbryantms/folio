@@ -25,7 +25,7 @@ export function SegmentedControl<T extends string>({
 }) {
   return (
     <div
-      role="radiogroup"
+      role="group"
       aria-label={ariaLabel}
       // `max-w-full` + `overflow-x-auto` keep a long option set (e.g. the
       // per-series ranking dimensions: Writers…Cover artists + Genres + Tags)
@@ -40,8 +40,7 @@ export function SegmentedControl<T extends string>({
         return (
           <button
             key={opt.value}
-            role="radio"
-            aria-checked={active}
+            aria-pressed={active}
             type="button"
             disabled={disabled}
             onClick={() => onChange(opt.value)}

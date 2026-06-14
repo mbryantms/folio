@@ -706,7 +706,7 @@ function ThumbnailSettingsCard({
         <div className="space-y-2">
           <p className="text-foreground text-sm font-medium">Image format</p>
           <div
-            role="radiogroup"
+            role="group"
             aria-label="Thumbnail image format"
             className="grid gap-2 sm:grid-cols-3"
           >
@@ -716,8 +716,7 @@ function ThumbnailSettingsCard({
                 <button
                   key={option.value}
                   type="button"
-                  role="radio"
-                  aria-checked={active}
+                  aria-pressed={active}
                   disabled={disabled || !enabled}
                   onClick={() => {
                     if (format !== option.value) onFormatChange(option.value);

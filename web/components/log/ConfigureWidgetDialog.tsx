@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
+import { FilterPill } from "@/components/ui/filter-pill";
 import {
   Dialog,
   DialogContent,
@@ -29,7 +30,6 @@ import type {
   ReadingLogEventKind,
   ReadingStatsRange,
 } from "@/lib/api/types";
-import { cn } from "@/lib/utils";
 
 import { WIDGET_REGISTRY } from "./widgets";
 import type {
@@ -511,25 +511,15 @@ function ChipMulti<T extends { value: string; label: string }>({
         ) : null}
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {options.map((o) => {
-          const active = value.includes(o.value);
-          return (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => toggle(o.value)}
-              aria-pressed={active}
-              className={cn(
-                "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                active
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "border-border text-muted-foreground hover:bg-muted/50",
-              )}
-            >
-              {o.label}
-            </button>
-          );
-        })}
+        {options.map((o) => (
+          <FilterPill
+            key={o.value}
+            active={value.includes(o.value)}
+            onClick={() => toggle(o.value)}
+          >
+            {o.label}
+          </FilterPill>
+        ))}
       </div>
     </div>
   );
