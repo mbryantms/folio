@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.13.1](https://github.com/mbryantms/folio/compare/v0.13.0...v0.13.1) (2026-06-14)
+
+
+### Fixed
+
+* **admin:** hide the users pager on a single page (D9) ([#196](https://github.com/mbryantms/folio/issues/196)) ([35d29d4](https://github.com/mbryantms/folio/commit/35d29d4dde715563f60cf95da80c836c963b3ee2))
+* **admin:** keyboard-accessible data-table row expander (E8) ([#195](https://github.com/mbryantms/folio/issues/195)) ([049f368](https://github.com/mbryantms/folio/commit/049f3682c6288ee13f04cb049d6706f4928842b5))
+* **bookmarks:** keep search + Select + card-size on one row ([#201](https://github.com/mbryantms/folio/issues/201)) ([e71fa74](https://github.com/mbryantms/folio/commit/e71fa74f35b4a19c36d62023da68f9da827d87c5))
+* **mobile:** hide the cover kebab on touch; long-press opens the sheet ([#198](https://github.com/mbryantms/folio/issues/198)) ([dbc7c2f](https://github.com/mbryantms/folio/commit/dbc7c2f5d42d31a5cf75c09010535aba8803fc6b))
+* **reader:** mention swipe-to-turn in the first-run overlay (C5) ([#200](https://github.com/mbryantms/folio/issues/200)) ([cea2b7e](https://github.com/mbryantms/folio/commit/cea2b7ee3aaae3ea3ca6f1e20db7074e7640f206))
+* **ui:** portal tooltips so they aren't trapped under page content ([#199](https://github.com/mbryantms/folio/issues/199)) ([7b12266](https://github.com/mbryantms/folio/commit/7b12266667c4f06b9d98ffa30cf4622df4d12610))
+
 ## [0.13.0](https://github.com/mbryantms/folio/compare/v0.12.0...v0.13.0) (2026-06-14)
 
 
