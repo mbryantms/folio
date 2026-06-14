@@ -5,6 +5,7 @@ import { Copy, Sparkles, Star, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { useCopyToClipboard } from "@/components/ui/copy-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -61,6 +62,7 @@ export function MarkerEditor({
     return () => setChromePinned(false);
   }, [open, setChromePinned]);
 
+  const { copy: copyText } = useCopyToClipboard();
   const create = useCreateMarker();
   const update = useUpdateMarker(editingMarkerId ?? "", issueId);
   const del = useDeleteMarker(editingMarkerId ?? "", issueId, {
@@ -402,14 +404,9 @@ export function MarkerEditor({
 
   async function handleCopyText() {
     if (!selectionPreview) return;
-    if (!navigator.clipboard) {
-      toast.error("Clipboard unavailable in this context.");
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(selectionPreview);
+    if (await copyText(selectionPreview)) {
       toast.success("Copied");
-    } catch {
+    } else {
       toast.error("Couldn't copy to clipboard.");
     }
   }
