@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import { Copy, Check, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/copy-button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -223,7 +225,7 @@ function OpdsConnectionInfo() {
             <Label className="text-muted-foreground text-xs tracking-wide uppercase">
               OPDS catalog URL
             </Label>
-            <CopyableUrl value={feedUrl} />
+            <CopyableValue value={feedUrl} />
           </div>
           <p className="text-muted-foreground text-xs">
             Bearer auth also works:{" "}
@@ -246,7 +248,7 @@ function OpdsConnectionInfo() {
             <Label className="text-muted-foreground text-xs tracking-wide uppercase">
               KOSync custom server URL
             </Label>
-            <CopyableUrl value={koreaderBase} />
+            <CopyableValue value={koreaderBase} />
             <p className="text-muted-foreground text-xs">
               Paste this into{" "}
               <span className="font-medium">Settings → Progress sync</span> →{" "}
@@ -326,33 +328,31 @@ function getOriginServerSnapshot(): string {
   return "";
 }
 
-function CopyableUrl({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
-  }
+/** Read-only value (URL / token / header) with a Copy button. `multiline`
+ *  wraps long values instead of truncating. */
+function CopyableValue({
+  value,
+  multiline = false,
+}: {
+  value: string;
+  multiline?: boolean;
+}) {
   return (
-    <div className="border-border bg-background flex items-center gap-2 rounded-md border p-2">
-      <code className="text-foreground flex-1 truncate font-mono text-xs">
+    <div
+      className={cn(
+        "border-border bg-background flex gap-2 rounded-md border p-2",
+        multiline ? "items-start" : "items-center",
+      )}
+    >
+      <code
+        className={cn(
+          "text-foreground flex-1 font-mono text-xs",
+          multiline ? "break-all" : "truncate",
+        )}
+      >
         {value}
       </code>
-      <Button type="button" variant="outline" size="sm" onClick={copy}>
-        {copied ? (
-          <>
-            <Check className="size-3.5" /> Copied
-          </>
-        ) : (
-          <>
-            <Copy className="size-3.5" /> Copy
-          </>
-        )}
-      </Button>
+      <CopyButton value={value} label="Copy" className="shrink-0" />
     </div>
   );
 }
@@ -470,7 +470,7 @@ function IssuedDialog({
             <Label className="text-muted-foreground text-xs tracking-wide uppercase">
               Token
             </Label>
-            <CopyableValue value={issued?.plaintext ?? ""} />
+            <CopyableValue value={issued?.plaintext ?? ""} multiline />
           </div>
 
           {basicHeader && (
@@ -478,7 +478,7 @@ function IssuedDialog({
               <Label className="text-muted-foreground text-xs tracking-wide uppercase">
                 Basic authorization header
               </Label>
-              <CopyableValue value={basicHeader} />
+              <CopyableValue value={basicHeader} multiline />
               <p className="text-muted-foreground text-xs">
                 Paste this into a client&rsquo;s custom-header field when the
                 client&rsquo;s username/password inputs don&rsquo;t propagate to
@@ -515,39 +515,3 @@ function computeBasicHeader(email: string, token: string): string | null {
   }
 }
 
-function CopyableValue({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
-  }
-  return (
-    <div className="border-border bg-background flex items-start gap-2 rounded-md border p-2">
-      <code className="text-foreground flex-1 font-mono text-xs break-all">
-        {value}
-      </code>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={copy}
-        className="shrink-0"
-      >
-        {copied ? (
-          <>
-            <Check className="size-3.5" /> Copied
-          </>
-        ) : (
-          <>
-            <Copy className="size-3.5" /> Copy
-          </>
-        )}
-      </Button>
-    </div>
-  );
-}
