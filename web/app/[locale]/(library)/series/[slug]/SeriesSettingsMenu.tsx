@@ -4,6 +4,7 @@ import {
   BookmarkPlus,
   CheckCircle2,
   Circle,
+  EyeOff,
   Folder,
   Image as ImageIcon,
   Images,
@@ -11,7 +12,7 @@ import {
   Pencil,
   RefreshCw,
   RotateCcw,
-  Settings2,
+  Settings,
   Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -66,6 +67,7 @@ export function SeriesSettingsMenu({
   seriesName,
   libraryId,
   firstIssue,
+  readIncognitoHref,
   onEdit,
   onForceRecreatePageMap,
 }: {
@@ -75,6 +77,10 @@ export function SeriesSettingsMenu({
   libraryId: string;
   /** Lowest-sorted active issue for the "Read from beginning" item. */
   firstIssue: Pick<IssueSummaryView, "slug" | "series_slug"> | null;
+  /** Reader URL for the up-next unread issue with incognito enabled —
+   *  same target as the primary Read button, `+incognito=1`. `null` when
+   *  the series has nothing to resume. */
+  readIncognitoHref: string | null;
   /** Called when the user picks "Edit series" — the parent owns the
    *  edit-drawer state because the menu auto-closes on item select. */
   onEdit?: () => void;
@@ -190,6 +196,11 @@ export function SeriesSettingsMenu({
     // page 0, even when the user is mid-way through a different issue.
     router.push(`${readerUrl(firstIssue)}?from=start`);
   };
+  // Same target as the primary Read button (the up-next unread issue), but
+  // with incognito on so the read isn't tracked.
+  const readIncognito = () => {
+    if (readIncognitoHref) router.push(readIncognitoHref);
+  };
 
   const busy =
     progress.isPending ||
@@ -202,27 +213,32 @@ export function SeriesSettingsMenu({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          {/* Responsive trigger — mirrors `IssueSettingsMenu`. Mobile
-              is icon-only 48 × 48 so it sits flush next to the
-              primary `Read` button on the hero row; sm+ keeps the
-              labeled outline button in the stacked sidebar layout. */}
+          {/* Compact gear that sits flush to the right of the primary
+              `Read` button — the Read CTA is the focus, so actions stay a
+              small icon (mirrors `IssueSettingsMenu`). Square, matching the
+              Read button's height at each breakpoint. */}
           <Button
             variant="outline"
             disabled={busy}
             aria-label="Series actions"
-            className="grid h-12 w-12 place-items-center p-0 sm:flex sm:h-10 sm:w-full sm:px-3"
+            className="h-12 w-12 shrink-0 place-items-center p-0 sm:h-10 sm:w-10"
           >
             {busy ? (
-              <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Settings2 className="h-4 w-4 sm:mr-2" />
+              <Settings className="h-4 w-4" />
             )}
-            <span className="hidden sm:inline">Actions</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-60">
           <DropdownMenuLabel>Reading</DropdownMenuLabel>
           <DropdownMenuGroup>
+            {readIncognitoHref && (
+              <DropdownMenuItem onSelect={readIncognito}>
+                <EyeOff className="mr-2 h-4 w-4" />
+                Read incognito
+              </DropdownMenuItem>
+            )}
             {firstIssue && (
               <DropdownMenuItem onSelect={readFromStart}>
                 <RotateCcw className="mr-2 h-4 w-4" />

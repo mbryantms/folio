@@ -231,28 +231,18 @@ export default async function IssuePage({
               fallback={issue.state === "active" ? "Cover" : issue.state}
             />
           </div>
-          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm sm:flex-col lg:mx-0 lg:max-w-72">
+          {/* Read CTA + a small gear for actions, always side by side —
+              the Read button is the focus, so actions stay a compact icon
+              to its right. h-12 mobile / h-10 sm+ matches the gear. */}
+          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
             {issue.state === "active" ? (
-              // h-12 on mobile so the button matches the Actions
-              // kebab's 48 × 48 footprint exactly; sm+ falls back to
-              // h-10 (Actions menu trigger uses sm:h-10 too, so the
-              // stacked CTAs stay flush in the sidebar).
-              //
-              // `sm:flex-none` cancels mobile's `flex-1` once the
-              // container flips to `sm:flex-col` — otherwise
-              // flex-grow stretches the button vertically along the
-              // column's main axis and visually overrides sm:h-10.
-              <Button
-                asChild
-                size="lg"
-                className="h-12 flex-1 sm:h-10 sm:w-full sm:flex-none"
-              >
+              <Button asChild size="lg" className="h-12 flex-1 sm:h-10">
                 <Link href={readerUrl(issue, { cbl: cblSavedViewId })}>
                   {readLabel}
                 </Link>
               </Button>
             ) : (
-              <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-auto sm:flex-none sm:py-2">
+              <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-10">
                 Cannot read — issue state: {issue.state}
               </p>
             )}
