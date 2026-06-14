@@ -10,7 +10,7 @@ import {
   type Row,
   useReactTable,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, ChevronsUpDown } from "lucide-react";
 
 import {
   Table,
@@ -38,6 +38,11 @@ export function DataTable<TData, TValue>({
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  // Stable prefix for `aria-controls` wiring between an expander button and
+  // the detail row it discloses.
+  const tableId = React.useId();
+  // The expander adds a leading column, so empty/detail rows must span it too.
+  const totalCols = columns.length + (renderExpanded ? 1 : 0);
   // TanStack Table returns non-memoizable functions; React Compiler skips.
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -55,6 +60,11 @@ export function DataTable<TData, TValue>({
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
+              {renderExpanded ? (
+                <TableHead className="w-9">
+                  <span className="sr-only">Expand row</span>
+                </TableHead>
+              ) : null}
               {headerGroup.headers.map((header) => {
                 const canSort = header.column.getCanSort();
                 const sortState = header.column.getIsSorted();
@@ -108,21 +118,44 @@ export function DataTable<TData, TValue>({
           {table.getRowModel().rows?.length ? (
             table.getRowModel().rows.map((row) => {
               const isOpen = !!expanded[row.id];
+              const detailId = `${tableId}-detail-${row.id}`;
+              const toggle = () =>
+                setExpanded((prev) => ({ ...prev, [row.id]: !prev[row.id] }));
               return (
                 <React.Fragment key={row.id}>
                   <TableRow
                     data-state={row.getIsSelected() ? "selected" : undefined}
-                    onClick={
-                      renderExpanded
-                        ? () =>
-                            setExpanded((prev) => ({
-                              ...prev,
-                              [row.id]: !prev[row.id],
-                            }))
-                        : undefined
-                    }
+                    // Whole-row click stays a mouse affordance; the
+                    // keyboard / screen-reader path is the real button in
+                    // the leading cell below (audit E8).
+                    onClick={renderExpanded ? toggle : undefined}
                     className={renderExpanded ? "cursor-pointer" : undefined}
                   >
+                    {renderExpanded ? (
+                      <TableCell className="w-9 align-middle">
+                        <button
+                          type="button"
+                          // Stop the bubble so the row's onClick doesn't
+                          // also fire and cancel this toggle.
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggle();
+                          }}
+                          aria-expanded={isOpen}
+                          aria-controls={isOpen ? detailId : undefined}
+                          aria-label={isOpen ? "Collapse row" : "Expand row"}
+                          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex size-7 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:outline-none"
+                        >
+                          <ChevronRight
+                            aria-hidden="true"
+                            className={cn(
+                              "size-4 transition-transform",
+                              isOpen && "rotate-90",
+                            )}
+                          />
+                        </button>
+                      </TableCell>
+                    ) : null}
                     {row.getVisibleCells().map((cell) => (
                       <TableCell key={cell.id}>
                         {flexRender(
@@ -133,11 +166,8 @@ export function DataTable<TData, TValue>({
                     ))}
                   </TableRow>
                   {renderExpanded && isOpen ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={columns.length}
-                        className="bg-muted/30"
-                      >
+                    <TableRow id={detailId}>
+                      <TableCell colSpan={totalCols} className="bg-muted/30">
                         {renderExpanded(row)}
                       </TableCell>
                     </TableRow>
@@ -148,7 +178,7 @@ export function DataTable<TData, TValue>({
           ) : (
             <TableRow>
               <TableCell
-                colSpan={columns.length}
+                colSpan={totalCols}
                 className="text-muted-foreground h-24 text-center"
               >
                 {emptyMessage}
