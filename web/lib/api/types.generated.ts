@@ -5841,6 +5841,32 @@ export interface components {
             /** Format: int64 */
             warning: number;
         };
+        /**
+         * @description First-page-only aggregate counts for the table's filter pills. The status
+         *     counts are library-wide (independent of the selected severity/kind) so the
+         *     pills stay stable as you drill in; the kind facets are scoped to the current
+         *     status+severity.
+         */
+        HealthIssueCounts: {
+            /** Format: int64 */
+            dismissed: number;
+            kinds: components["schemas"]["HealthIssueKindFacet"][];
+            /** Format: int64 */
+            open: number;
+            /** Format: int64 */
+            resolved: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /**
+         * @description One kind-facet tally within the current status+severity scope (drives the
+         *     per-kind filter pills).
+         */
+        HealthIssueKindFacet: {
+            /** Format: int64 */
+            count: number;
+            kind: string;
+        };
         HealthIssueView: {
             dismissed_at?: string | null;
             fingerprint: string;
@@ -5852,6 +5878,15 @@ export interface components {
             resolved_at?: string | null;
             scan_id?: string | null;
             severity: string;
+        };
+        /**
+         * @description Paginated per-library health-issue page. `counts` is populated only on the
+         *     first page (cursor absent), mirroring the `CursorPage::total` convention.
+         */
+        HealthIssuesPage: {
+            counts?: null | components["schemas"]["HealthIssueCounts"];
+            items: components["schemas"]["HealthIssueView"][];
+            next_cursor?: string | null;
         };
         /**
          * @description Body for `POST /me/reading-log/hide` and `/unhide`. Identifies a
@@ -12344,7 +12379,13 @@ export interface operations {
     };
     health_issues_list: {
         parameters: {
-            query?: never;
+            query?: {
+                status?: string;
+                severity?: string;
+                kind?: string;
+                limit?: number;
+                cursor?: string;
+            };
             header?: never;
             path: {
                 slug: string;
@@ -12358,7 +12399,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthIssueView"][];
+                    "application/json": components["schemas"]["HealthIssuesPage"];
                 };
             };
             /** @description admin only */
@@ -12370,6 +12411,13 @@ export interface operations {
             };
             /** @description library not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid filter value */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

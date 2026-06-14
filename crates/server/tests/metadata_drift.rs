@@ -112,7 +112,12 @@ async fn list_health(app: &TestApp, auth: &Authed, lib_slug: &str) -> serde_json
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    body_json(resp.into_body()).await
+    // The per-library list is paginated now (`{items, next_cursor, counts}`);
+    // these tests assert against the row array.
+    let body = body_json(resp.into_body()).await;
+    body.get("items")
+        .cloned()
+        .expect("items array in health-issues response")
 }
 
 async fn plant_user_pin(app: &TestApp, issue_id: &str, field: &str) {

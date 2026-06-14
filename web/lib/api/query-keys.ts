@@ -33,7 +33,15 @@ export const queryKeys = {
   me: ["auth", "me"] as const,
   libraries: ["libraries"] as const,
   library: (id: string) => ["libraries", id] as const,
+  /** Prefix for every per-library health query — invalidating this matches
+   *  both the single-page summary and the table's infinite query. */
   health: (libraryId: string) => ["libraries", libraryId, "health"] as const,
+  /** Paginated/faceted health table. Status/severity/kind are server params,
+   *  so each combination is its own infinite query. */
+  healthInfinite: (
+    libraryId: string,
+    filters: { status: string; severity: string; kind: string | null },
+  ) => ["libraries", libraryId, "health", "infinite", filters] as const,
   backupStorage: (libraryId: string) =>
     ["libraries", libraryId, "backup-storage"] as const,
   archivePageCount: (issueId: string) =>

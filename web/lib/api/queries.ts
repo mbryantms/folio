@@ -61,6 +61,7 @@ import type {
   ScanBatchDetailView,
   LibraryEventView,
   HealthIssueView,
+  HealthIssuesPage,
   MetadataOverviewView,
   NextUpView,
   PageCountResponse,
@@ -369,17 +370,56 @@ export function useLibrary(id: string) {
   });
 }
 
+/**
+ * Single first-page health summary for the lightweight consumers (library
+ * overview stat card, live-scan seed). Returns the full envelope: `items` is a
+ * recent sample across all statuses, `counts` carries the library-wide
+ * open/resolved/dismissed tallies. The paginated/faceted table uses
+ * {@link useHealthIssuesInfinite} instead.
+ */
 export function useHealthIssues(libraryId: string) {
   return useQuery({
     queryKey: queryKeys.health(libraryId),
-    // Include resolved + dismissed rows: the table filters client-side
-    // via its open/resolved/dismissed pills and needs all three
-    // populations for the pill counts. The server defaults BOTH flags
-    // to false, which left two of the four pills permanently empty.
     queryFn: () =>
-      jsonFetch<HealthIssueView[]>(
-        `/libraries/${libraryId}/health-issues?include_resolved=true&include_dismissed=true`,
+      jsonFetch<HealthIssuesPage>(
+        `/libraries/${libraryId}/health-issues?status=all&limit=50`,
       ),
+    enabled: !!libraryId,
+  });
+}
+
+/** `getNextPageParam` for {@link useHealthIssuesInfinite}. Exported + tested so
+ *  a refactor can't swallow `next_cursor` and silently truncate the table —
+ *  see web/tests/api/health-issues-next-page.test.ts. */
+export function healthIssuesNextPage(
+  page: HealthIssuesPage,
+): string | undefined {
+  return page.next_cursor ?? undefined;
+}
+
+/**
+ * Paginated + server-faceted per-library health-issue table. Status, severity,
+ * and kind are server query params (never client `.filter()` over a truncated
+ * page); the first page carries a `counts` summary that drives the filter pills.
+ */
+export function useHealthIssuesInfinite(
+  libraryId: string,
+  filters: { status: string; severity: string; kind: string | null },
+) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.healthInfinite(libraryId, filters),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams();
+      params.set("status", filters.status);
+      if (filters.severity !== "all") params.set("severity", filters.severity);
+      if (filters.kind) params.set("kind", filters.kind);
+      if (pageParam) params.set("cursor", pageParam);
+      return jsonFetch<HealthIssuesPage>(
+        `/libraries/${libraryId}/health-issues?${params.toString()}`,
+      );
+    },
+    getNextPageParam: healthIssuesNextPage,
     enabled: !!libraryId,
   });
 }

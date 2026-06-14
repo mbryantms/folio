@@ -256,11 +256,12 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
   }, [events]);
 
   React.useEffect(() => {
-    if (!state.scanId || !healthIssues.data?.length) return;
+    const rows = healthIssues.data?.items;
+    if (!state.scanId || !rows?.length) return;
     dispatch({
       type: "healthRows",
       scanId: state.scanId,
-      rows: healthIssues.data,
+      rows,
     });
   }, [healthIssues.data, state.scanId]);
 

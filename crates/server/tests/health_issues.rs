@@ -133,7 +133,13 @@ async fn create_library(app: &TestApp, root: &Path, report_missing: bool) -> Uui
     id
 }
 
-async fn list_health(app: &TestApp, auth: &Authed, lib_id: Uuid, query: &str) -> serde_json::Value {
+/// Full paginated envelope (`{items, next_cursor, counts}`).
+async fn list_health_page(
+    app: &TestApp,
+    auth: &Authed,
+    lib_id: Uuid,
+    query: &str,
+) -> serde_json::Value {
     let resp = app
         .router
         .clone()
@@ -152,6 +158,15 @@ async fn list_health(app: &TestApp, auth: &Authed, lib_id: Uuid, query: &str) ->
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     body_json(resp.into_body()).await
+}
+
+/// Just the `items` array — keeps the legacy assertions (which treated the
+/// response as a bare array) working against the paginated envelope.
+async fn list_health(app: &TestApp, auth: &Authed, lib_id: Uuid, query: &str) -> serde_json::Value {
+    let body = list_health_page(app, auth, lib_id, query).await;
+    body.get("items")
+        .cloned()
+        .expect("items array in health-issues response")
 }
 
 #[tokio::test]
@@ -202,8 +217,8 @@ async fn layout_violations_persist_and_auto_resolve() {
         "EmptyFolder should auto-resolve: {body2}",
     );
 
-    // include_resolved=true brings them back.
-    let body3 = list_health(&app, &auth, lib_id, "include_resolved=true").await;
+    // status=all brings the resolved rows back.
+    let body3 = list_health(&app, &auth, lib_id, "status=all").await;
     let issues3 = body3.as_array().unwrap();
     let resolved: Vec<&serde_json::Value> = issues3
         .iter()
@@ -342,8 +357,8 @@ async fn dismiss_hides_issue() {
         .collect();
     assert!(!kinds.contains("FileAtRoot"));
 
-    // include_dismissed=true brings it back.
-    let body2 = list_health(&app, &auth, lib_id, "include_dismissed=true").await;
+    // status=all brings the dismissed row back.
+    let body2 = list_health(&app, &auth, lib_id, "status=all").await;
     let dismissed = body2
         .as_array()
         .unwrap()
@@ -942,4 +957,178 @@ async fn undismiss_restores_issue_and_audits() {
             .any(|a| a == "admin.library.health_issue.undismiss"),
         "undismiss audit row present: {actions:?}",
     );
+}
+
+/// frontend-audit 2.7 (D5 health half): the per-library list is cursor-paginated
+/// with a first-page counts summary. Walk every page asserting no cap, no
+/// duplicates, and that the summary matches the walked set — the regression
+/// guard against re-introducing the filter-over-truncated-array bug.
+#[tokio::test]
+async fn per_library_health_paginates_with_first_page_counts() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    // 5 stray files at root → 5 FileAtRoot rows, plus one valid series.
+    for i in 1..=5u32 {
+        write_cbz(&tmp.path().join(format!("orphan-{i}.cbz")), i);
+    }
+    let foo = tmp.path().join("Series Foo (2020)");
+    std::fs::create_dir_all(&foo).unwrap();
+    write_cbz(&foo.join("Foo 001.cbz"), 100);
+
+    let lib_id = create_library(&app, tmp.path(), false).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    // Page 1: hits the limit, carries a cursor + the counts summary.
+    let p1 = list_health_page(&app, &auth, lib_id, "status=open&limit=2").await;
+    let p1_items = p1["items"].as_array().unwrap();
+    assert_eq!(p1_items.len(), 2, "page 1 hits the limit: {p1}");
+    assert_eq!(
+        p1["counts"]["open"].as_u64().unwrap(),
+        5,
+        "5 open FileAtRoot rows: {p1}",
+    );
+    let facet = p1["counts"]["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == "FileAtRoot")
+        .expect("FileAtRoot kind facet present");
+    assert_eq!(facet["count"].as_u64().unwrap(), 5);
+
+    // Walk every remaining page; no dupes, no cap, counts only on page 1.
+    let mut seen: std::collections::HashSet<String> = p1_items
+        .iter()
+        .map(|v| v["id"].as_str().unwrap().to_owned())
+        .collect();
+    let mut cursor = p1["next_cursor"]
+        .as_str()
+        .expect("more rows → cursor")
+        .to_owned();
+    loop {
+        let p = list_health_page(
+            &app,
+            &auth,
+            lib_id,
+            &format!(
+                "status=open&limit=2&cursor={}",
+                urlencoding::encode(&cursor)
+            ),
+        )
+        .await;
+        assert!(
+            p["counts"].is_null(),
+            "counts must appear only on the first page: {p}",
+        );
+        for it in p["items"].as_array().unwrap() {
+            let id = it["id"].as_str().unwrap().to_owned();
+            assert!(seen.insert(id), "no duplicate rows across pages: {p}");
+        }
+        match p["next_cursor"].as_str() {
+            Some(c) => cursor = c.to_owned(),
+            None => break,
+        }
+    }
+    assert_eq!(seen.len(), 5, "walked exactly the 5 open rows — no cap");
+}
+
+/// Status filters move server-side (open/resolved/dismissed/all) and bad filter
+/// values 422 rather than silently returning an empty list.
+#[tokio::test]
+async fn per_library_health_status_filter_and_validation() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    let foo = tmp.path().join("Series St (2024)");
+    std::fs::create_dir_all(&foo).unwrap();
+    write_cbz(&foo.join("St 001.cbz"), 1);
+    write_cbz(&tmp.path().join("orphan-a.cbz"), 2);
+    write_cbz(&tmp.path().join("orphan-b.cbz"), 3);
+
+    let lib_id = create_library(&app, tmp.path(), false).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    // Dismiss one of the two FileAtRoot rows.
+    let target = HealthEntity::find()
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|i| i.kind == "FileAtRoot")
+        .expect("FileAtRoot row");
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!(
+                    "/api/libraries/{lib_id}/health-issues/{}/dismiss",
+                    target.id
+                ))
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        auth.session, auth.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", &auth.csrf)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // status=open → one row left; counts independent of the selected status.
+    let open = list_health_page(&app, &auth, lib_id, "status=open").await;
+    assert_eq!(open["items"].as_array().unwrap().len(), 1);
+    assert_eq!(open["counts"]["open"].as_u64().unwrap(), 1);
+    assert_eq!(open["counts"]["dismissed"].as_u64().unwrap(), 1);
+
+    // status=dismissed → only the dismissed row.
+    let dismissed = list_health_page(&app, &auth, lib_id, "status=dismissed").await;
+    let d_items = dismissed["items"].as_array().unwrap();
+    assert_eq!(d_items.len(), 1);
+    assert!(d_items[0]["dismissed_at"].is_string());
+
+    // status=all → both FileAtRoot rows.
+    let all = list_health_page(&app, &auth, lib_id, "status=all").await;
+    let kinds = all["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["kind"] == "FileAtRoot")
+        .count();
+    assert_eq!(kinds, 2, "status=all surfaces both rows: {all}");
+
+    // Bad status / severity → 422 (not a silent empty list).
+    for q in ["status=bogus", "severity=loud"] {
+        let resp = app
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/api/libraries/{lib_id}/health-issues?{q}"))
+                    .header(
+                        header::COOKIE,
+                        format!("__Host-comic_session={}", auth.session),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{q} should 422",
+        );
+    }
 }

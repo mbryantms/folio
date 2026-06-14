@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, EyeOff } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { BackupStorageCard } from "@/components/admin/library/BackupStorageCard";
 import {
@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useHealthIssues } from "@/lib/api/queries";
+import { useHealthIssuesInfinite } from "@/lib/api/queries";
 import {
   useDismissHealthIssue,
   useTriggerDeepValidate,
@@ -30,9 +30,16 @@ import {
   HEALTH_SEVERITIES,
   type HealthSeverityFilter,
 } from "@/components/admin/severity";
-import { cn } from "@/lib/utils";
 
-type Filter = "open" | "resolved" | "dismissed" | "all";
+type StatusFilter = "open" | "resolved" | "dismissed" | "all";
+
+const STATUSES: StatusFilter[] = ["open", "resolved", "dismissed", "all"];
+
+/** Synthetic rows (e.g. the metadata-drift summary) carry a `synth:` id and
+ *  have no dismiss/resolve verbs — the server rejects mutations against them. */
+function isSynthetic(id: string): boolean {
+  return id.startsWith("synth:");
+}
 
 function severityVariant(s: string): "secondary" | "destructive" {
   return s === "error" ? "destructive" : "secondary";
@@ -82,73 +89,36 @@ function payloadSummary(kind: string, p: unknown): string {
 }
 
 export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
-  const { data, isLoading, error } = useHealthIssues(libraryId);
-  const dismiss = useDismissHealthIssue(libraryId);
-  const deepValidate = useTriggerDeepValidate(libraryId);
-  const [filter, setFilter] = React.useState<Filter>("open");
+  const [status, setStatus] = React.useState<StatusFilter>("open");
   const [severity, setSeverity] = React.useState<HealthSeverityFilter>("all");
-  const [focusedKind, setFocusedKind] = React.useState<string | null>(null);
-  const [hiddenKinds, setHiddenKinds] = React.useState<Set<string>>(
-    () => new Set(),
-  );
+  const [kind, setKind] = React.useState<string | null>(null);
   const [confirmDeepValidate, setConfirmDeepValidate] = React.useState(false);
 
-  const baseFiltered = React.useMemo(() => {
-    if (!data) return [];
-    return data.filter((row) => {
-      const isResolved = !!row.resolved_at;
-      const isDismissed = !!row.dismissed_at;
-      const isOpen = !isResolved && !isDismissed;
-      if (filter === "open" && !isOpen) return false;
-      if (filter === "resolved" && !isResolved) return false;
-      if (filter === "dismissed" && !isDismissed) return false;
-      if (severity !== "all" && row.severity !== severity) return false;
-      return true;
-    });
-  }, [data, filter, severity]);
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useHealthIssuesInfinite(libraryId, { status, severity, kind });
+  const dismiss = useDismissHealthIssue(libraryId);
+  const deepValidate = useTriggerDeepValidate(libraryId);
 
-  const kindCounts = React.useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const row of baseFiltered) {
-      counts.set(row.kind, (counts.get(row.kind) ?? 0) + 1);
-    }
-    return Array.from(counts.entries())
-      .map(([kind, count]) => ({ kind, count }))
-      .sort((a, b) => a.kind.localeCompare(b.kind));
-  }, [baseFiltered]);
-
-  const activeFocusedKind =
-    focusedKind && kindCounts.some((k) => k.kind === focusedKind)
-      ? focusedKind
-      : null;
-
-  const filtered = React.useMemo(
-    () =>
-      baseFiltered.filter((row) => {
-        if (hiddenKinds.has(row.kind)) return false;
-        if (activeFocusedKind && row.kind !== activeFocusedKind) return false;
-        return true;
-      }),
-    [activeFocusedKind, baseFiltered, hiddenKinds],
+  const items = React.useMemo(
+    () => data?.pages.flatMap((p) => p.items) ?? [],
+    [data],
   );
-
-  const toggleKindHidden = React.useCallback((kind: string) => {
-    setFocusedKind((current) => (current === kind ? null : current));
-    setHiddenKinds((current) => {
-      const next = new Set(current);
-      if (next.has(kind)) {
-        next.delete(kind);
-      } else {
-        next.add(kind);
-      }
-      return next;
-    });
-  }, []);
-
-  const showAllKinds = React.useCallback(() => {
-    setFocusedKind(null);
-    setHiddenKinds(new Set());
-  }, []);
+  // Counts come from the first page only (server-computed summary). Status
+  // tallies are library-wide; kind facets are scoped to status + severity.
+  const counts = data?.pages[0]?.counts;
+  const statusCounts: Record<StatusFilter, number> = {
+    open: counts?.open ?? 0,
+    resolved: counts?.resolved ?? 0,
+    dismissed: counts?.dismissed ?? 0,
+    all: counts?.total ?? 0,
+  };
+  const kindFacets = counts?.kinds ?? [];
 
   const columns = React.useMemo<ColumnDef<HealthIssueView>[]>(
     () => [
@@ -175,7 +145,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
         id: "summary",
         header: "Summary",
         cell: ({ row }) => (
-          <span className="text-muted-foreground block text-xs leading-relaxed [overflow-wrap:anywhere] whitespace-normal">
+          <span className="text-muted-foreground block text-xs leading-relaxed whitespace-normal wrap-anywhere">
             {payloadSummary(row.original.kind, row.original.payload)}
           </span>
         ),
@@ -202,6 +172,8 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
         id: "actions",
         header: "",
         cell: ({ row }) => {
+          // Synthetic rows have no dismiss verb.
+          if (isSynthetic(row.original.id)) return null;
           const isOpen =
             !row.original.resolved_at && !row.original.dismissed_at;
           if (!isOpen) {
@@ -230,17 +202,10 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
     [dismiss],
   );
 
-  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (isLoading && !data) return <Skeleton className="h-64 w-full" />;
   if (error) {
     return <p className="text-destructive text-sm">{error.message}</p>;
   }
-
-  const counts = {
-    open: data?.filter((d) => !d.resolved_at && !d.dismissed_at).length ?? 0,
-    resolved: data?.filter((d) => !!d.resolved_at).length ?? 0,
-    dismissed: data?.filter((d) => !!d.dismissed_at).length ?? 0,
-    all: data?.length ?? 0,
-  };
 
   return (
     <div className="space-y-4">
@@ -263,15 +228,15 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
         </Button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {(["open", "resolved", "dismissed", "all"] as Filter[]).map((f) => (
+        {STATUSES.map((s) => (
           <FilterPill
-            key={f}
-            active={filter === f}
-            onClick={() => setFilter(f)}
-            count={counts[f]}
+            key={s}
+            active={status === s}
+            onClick={() => setStatus(s)}
+            count={statusCounts[s]}
             className="capitalize"
           >
-            {f}
+            {s}
           </FilterPill>
         ))}
         <span className="text-muted-foreground ml-2 text-xs">Severity:</span>
@@ -288,60 +253,48 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-muted-foreground text-xs">Kind:</span>
-        <FilterPill
-          active={!activeFocusedKind && hiddenKinds.size === 0}
-          onClick={showAllKinds}
-        >
+        <FilterPill active={kind === null} onClick={() => setKind(null)}>
           All kinds
         </FilterPill>
-        {kindCounts.map(({ kind, count }) => {
-          const hidden = hiddenKinds.has(kind);
-          const focused = activeFocusedKind === kind && !hidden;
-          return (
-            <span
-              key={kind}
-              className={cn(
-                "inline-flex overflow-hidden rounded-full border text-[11px] transition-colors",
-                focused
-                  ? "border-primary bg-primary/10 text-primary"
-                  : hidden
-                    ? "border-border bg-muted/40 text-muted-foreground"
-                    : "border-border text-muted-foreground",
-              )}
-            >
-              <button
-                type="button"
-                disabled={hidden}
-                onClick={() => setFocusedKind(focused ? null : kind)}
-                className={cn(
-                  "hover:text-foreground disabled:hover:text-muted-foreground px-2.5 py-0.5 font-mono transition-colors disabled:cursor-not-allowed disabled:line-through",
-                )}
-                title={hidden ? `${kind} is hidden` : `Show only ${kind}`}
-              >
-                {kind} ({count})
-              </button>
-              <button
-                type="button"
-                onClick={() => toggleKindHidden(kind)}
-                className="border-border hover:bg-muted hover:text-foreground border-l px-1.5 py-0.5 transition-colors"
-                aria-label={hidden ? `Show ${kind}` : `Hide ${kind}`}
-                title={hidden ? `Show ${kind}` : `Hide ${kind}`}
-              >
-                {hidden ? (
-                  <Eye className="h-3 w-3" />
-                ) : (
-                  <EyeOff className="h-3 w-3" />
-                )}
-              </button>
-            </span>
-          );
-        })}
+        {kindFacets.map((facet) => (
+          <FilterPill
+            key={facet.kind}
+            active={kind === facet.kind}
+            onClick={() =>
+              setKind((cur) => (cur === facet.kind ? null : facet.kind))
+            }
+            count={facet.count}
+            className="font-mono"
+          >
+            {facet.kind}
+          </FilterPill>
+        ))}
       </div>
       <DataTable
         columns={columns}
-        data={filtered}
+        data={items}
         emptyMessage="No matching issues."
       />
+      {hasNextPage ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                Loading more…
+              </>
+            ) : (
+              "Load more"
+            )}
+          </Button>
+        </div>
+      ) : null}
       <AlertDialog
         open={confirmDeepValidate}
         onOpenChange={setConfirmDeepValidate}

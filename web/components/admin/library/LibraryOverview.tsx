@@ -43,8 +43,9 @@ export function LibraryOverview({ id }: { id: string }) {
   }
   const last = runs.data?.[0];
   const scanPreview = preview.data;
-  const openIssues =
-    issues.data?.filter((i) => !i.resolved_at && !i.dismissed_at) ?? [];
+  // Open count from the server-computed summary — the items array is a
+  // paginated sample, so its length would undercount.
+  const openIssueCount = issues.data?.counts?.open ?? 0;
 
   const stats = [
     {
@@ -54,7 +55,7 @@ export function LibraryOverview({ id }: { id: string }) {
         : "Never",
     },
     { label: "Last state", value: last?.state ?? "—" },
-    { label: "Open health issues", value: String(openIssues.length) },
+    { label: "Open health issues", value: String(openIssueCount) },
     {
       label: "Thumbnail backlog",
       value:
