@@ -27,6 +27,7 @@ use server::{
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::redis::Redis;
@@ -64,6 +65,46 @@ impl TestApp {
     pub fn state(&self) -> AppState {
         self.state.clone()
     }
+}
+
+/// testcontainers registers every started container in a process-global
+/// `conquer_once::Lazy` watchdog. conquer-once 0.4.0 — pinned transitively by
+/// testcontainers 0.27.3 — has a bug in its *blocking* init path: when several
+/// `#[tokio::test]` threads first-touch that global at once, the threads that
+/// lose the init race hit `unreachable!()` and the whole test process aborts
+/// with "entered unreachable code". The contention exists only on the very
+/// first start — once the `Lazy` is initialized, concurrent starts are safe.
+///
+/// So we serialize just the *first* container start per process: the first
+/// caller holds [`WARM_LOCK`] across its start and flips [`WATCHDOG_WARM`];
+/// everyone else takes the lock-free fast path. This de-flakes the suite
+/// without serializing steady-state container churn. `spawn_inner` always
+/// starts Postgres before Redis, so warming on the Postgres start is enough —
+/// Redis is never the process's first start.
+static WATCHDOG_WARM: AtomicBool = AtomicBool::new(false);
+static WARM_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Start the per-test Postgres container, serializing the first start per
+/// process to dodge the testcontainers watchdog init race (see
+/// [`WATCHDOG_WARM`]).
+async fn start_postgres() -> ContainerAsync<Postgres> {
+    // Pin to 18-alpine; the testcontainers-modules default of 11-alpine
+    // predates STORED generated columns (Postgres 12+) used by the search
+    // migration, and the prod compose stack is on 18 anyway.
+    let build = || {
+        Postgres::default()
+            .with_db_name("comic_reader_test")
+            .with_user("comic")
+            .with_password("comic")
+            .with_tag("18-alpine")
+    };
+    if WATCHDOG_WARM.load(Ordering::Acquire) {
+        return build().start().await.expect("postgres start");
+    }
+    let _guard = WARM_LOCK.lock().await;
+    let container = build().start().await.expect("postgres start");
+    WATCHDOG_WARM.store(true, Ordering::Release);
+    container
 }
 
 /// Knobs flipped per test variant. Keeps `spawn_inner` from growing a
@@ -234,17 +275,7 @@ impl TestApp {
     }
 
     async fn spawn_inner(opts: SpawnOpts) -> Self {
-        // Pin to 17-alpine; the testcontainers-modules default of 11-alpine
-        // predates STORED generated columns (Postgres 12+) used by the search
-        // migration, and the prod compose stack is on 17 anyway.
-        let pg = Postgres::default()
-            .with_db_name("comic_reader_test")
-            .with_user("comic")
-            .with_password("comic")
-            .with_tag("18-alpine")
-            .start()
-            .await
-            .expect("postgres start");
+        let pg = start_postgres().await;
 
         let host = pg.get_host().await.expect("pg host");
         let port = pg.get_host_port_ipv4(5432).await.expect("pg port");
