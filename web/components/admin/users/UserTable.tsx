@@ -195,34 +195,40 @@ export function UserTable() {
         />
       )}
 
-      <div className="text-muted-foreground flex items-center justify-end gap-2 text-xs">
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={history.length === 0 || isFetching}
-          onClick={() => {
-            setHistory((prev) => {
-              const next = [...prev];
-              const back = next.pop();
-              setCursor(back);
-              return next;
-            });
-          }}
-        >
-          ← Previous
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={!data?.next_cursor || isFetching}
-          onClick={() => {
-            setHistory((prev) => [...prev, cursor]);
-            setCursor(data?.next_cursor ?? undefined);
-          }}
-        >
-          Next →
-        </Button>
-      </div>
+      {/* Only show the pager when it can actually do something — i.e.
+          there's a page to go back to or a next page. On a single page of
+          results the controls were rendered just disabled, which reads as
+          broken (audit D9). */}
+      {history.length > 0 || data?.next_cursor ? (
+        <div className="text-muted-foreground flex items-center justify-end gap-2 text-xs">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={history.length === 0 || isFetching}
+            onClick={() => {
+              setHistory((prev) => {
+                const next = [...prev];
+                const back = next.pop();
+                setCursor(back);
+                return next;
+              });
+            }}
+          >
+            ← Previous
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!data?.next_cursor || isFetching}
+            onClick={() => {
+              setHistory((prev) => [...prev, cursor]);
+              setCursor(data?.next_cursor ?? undefined);
+            }}
+          >
+            Next →
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
