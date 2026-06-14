@@ -184,6 +184,48 @@ async fn list_users_returns_paginated_set() {
     assert_eq!(roles.iter().filter(|r| **r == "user").count(), 3);
 }
 
+/// D9: the first page carries a `total` matching the active filters; later
+/// pages omit it (so the count isn't recomputed on every page).
+#[tokio::test]
+async fn list_users_reports_filtered_total_on_first_page_only() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    for i in 0..3 {
+        let _ = register(
+            &app,
+            &format!("user{i}@example.com"),
+            "correctly-horse-battery",
+        )
+        .await;
+    }
+
+    // First page → total counts every matching user (admin + 3).
+    let resp = admin_get(&app, &admin, "/api/admin/users").await;
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["total"].as_u64(), Some(4), "total counts every user");
+
+    // The total tracks the active filter, not the unfiltered table.
+    let resp = admin_get(&app, &admin, "/api/admin/users?role=admin").await;
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["total"].as_u64(), Some(1), "total respects filters");
+
+    // Later pages (cursor present) omit the total entirely.
+    let resp = admin_get(&app, &admin, "/api/admin/users?limit=2").await;
+    let body = body_json(resp.into_body()).await;
+    let cursor = body["next_cursor"].as_str().expect("a second page");
+    let resp = admin_get(
+        &app,
+        &admin,
+        &format!("/api/admin/users?limit=2&cursor={cursor}"),
+    )
+    .await;
+    let body = body_json(resp.into_body()).await;
+    assert!(
+        body["total"].is_null(),
+        "total appears only on the first page"
+    );
+}
+
 #[tokio::test]
 async fn list_users_filters_role() {
     let app = TestApp::spawn().await;

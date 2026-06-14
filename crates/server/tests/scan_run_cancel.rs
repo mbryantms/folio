@@ -392,3 +392,66 @@ async fn cancel_unknown_scan_returns_404() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// D5: the per-library scan-runs list is cursor-paginated — walking the
+/// `next_cursor` returns every run with no silent cap and no duplicates.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scan_runs_list_paginates_past_the_first_page() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin-page@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    // Seeds the library + 1 run; add 5 more for 6 total.
+    let (lib_id, slug, _first) = seed_library_and_scan_run(&app, "complete").await;
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let base = Utc::now().fixed_offset();
+    for i in 1i64..=5 {
+        scan_run::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            library_id: Set(lib_id),
+            state: Set("complete".into()),
+            started_at: Set(base - chrono::Duration::seconds(i)),
+            ended_at: Set(None),
+            stats: Set(serde_json::json!({})),
+            error: Set(None),
+            kind: Set("library".into()),
+            series_id: Set(None),
+            issue_id: Set(None),
+            batch_id: Set(None),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+
+    // Walk pages of 2 until exhausted; collect ids.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+    loop {
+        let uri = match &cursor {
+            Some(c) => format!("/api/libraries/{slug}/scan-runs?limit=2&cursor={c}"),
+            None => format!("/api/libraries/{slug}/scan-runs?limit=2"),
+        };
+        let (status, body) = http(&app, Method::GET, &uri, &auth).await;
+        assert_eq!(status, StatusCode::OK, "body: {body:#?}");
+        let items = body["items"].as_array().expect("items array");
+        assert!(items.len() <= 2, "page exceeded the requested limit");
+        for it in items {
+            let id = it["id"].as_str().unwrap().to_owned();
+            assert!(seen.insert(id), "duplicate row across pages");
+        }
+        pages += 1;
+        assert!(pages < 10, "pagination failed to terminate");
+        match body["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_owned()),
+            None => break,
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        6,
+        "every run should be reachable across pages (no cap)"
+    );
+    assert!(pages >= 3, "6 rows at limit=2 should span at least 3 pages");
+}

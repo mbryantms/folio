@@ -4,7 +4,10 @@ import * as React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 
+import { Loader2 } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Collapsible,
   CollapsibleContent,
@@ -13,7 +16,7 @@ import {
 import { DataTable } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useScanRuns } from "@/lib/api/queries";
+import { useScanRunsInfinite } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { ScanRunKind, ScanRunView } from "@/lib/api/types";
 
@@ -76,7 +79,18 @@ function resultsFromStats(stats: unknown): {
 
 export function ScanRunsTable({ libraryId }: { libraryId: string }) {
   const [filter, setFilter] = React.useState<Filter>("all");
-  const { data, isLoading, error } = useScanRuns(libraryId, { kind: filter });
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useScanRunsInfinite(libraryId, { kind: filter });
+  const items = React.useMemo(
+    () => data?.pages.flatMap((p) => p.items) ?? [],
+    [data],
+  );
 
   const columns = React.useMemo<ColumnDef<ScanRunView>[]>(
     () => [
@@ -144,12 +158,32 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
       </Tabs>
       <DataTable
         columns={columns}
-        data={data ?? []}
+        data={items}
         emptyMessage={
           filter === "all" ? "No scans yet." : `No ${filter} scans yet.`
         }
         renderExpanded={(row) => <ScanRunDetails run={row.original} />}
       />
+      {hasNextPage ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                Loading more…
+              </>
+            ) : (
+              "Load older"
+            )}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

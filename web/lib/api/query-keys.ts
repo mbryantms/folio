@@ -93,6 +93,9 @@ export const queryKeys = {
     ["issues", seriesSlug, issueSlug, "metadata-overview"] as const,
   scanRuns: (libraryId: string, kind?: string) =>
     ["libraries", libraryId, "scan-runs", kind ?? "all"] as const,
+  /** Cursor-paginated variant (load-more history table). */
+  scanRunsInfinite: (libraryId: string, kind?: string) =>
+    ["libraries", libraryId, "scan-runs", "infinite", kind ?? "all"] as const,
   /** Prefix that matches every `scanRuns(libraryId, *)` variant — used by
    *  cache invalidations that don't care which kind filter is active. */
   scanRunsAll: (libraryId: string) =>
