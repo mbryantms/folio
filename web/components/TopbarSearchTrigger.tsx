@@ -1,6 +1,7 @@
 "use client";
 
 import { Search } from "lucide-react";
+import { Kbd } from "@/components/ui/kbd";
 import { useEffect, useState } from "react";
 
 import { useSearchModal } from "@/lib/search/use-search-modal";
@@ -62,14 +63,14 @@ export function TopbarSearchTrigger({ className }: { className?: string }) {
       <span className="text-muted-foreground hidden flex-1 truncate text-left sm:block">
         Search series, issues, people…
       </span>
-      <kbd
+      <Kbd
         aria-hidden="true"
         suppressHydrationWarning
-        className="bg-background text-muted-foreground border-border hidden h-5 items-center gap-0.5 rounded border px-1.5 font-mono text-[10px] leading-none md:inline-flex"
+        className="bg-background text-muted-foreground hidden h-5 gap-0.5 px-1.5 md:inline-flex"
       >
         <span>{modGlyph}</span>
         <span>K</span>
-      </kbd>
+      </Kbd>
     </button>
   );
 }

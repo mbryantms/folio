@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight, BookOpen, ChevronRight, Clock, X } from "lucide-react";
+import { Kbd } from "@/components/ui/kbd";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -358,9 +359,9 @@ function RecentsSection({
 
 function KbdGlyph({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="bg-muted text-foreground border-border mx-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
+    <Kbd className="mx-1">
       {children}
-    </kbd>
+    </Kbd>
   );
 }
 
@@ -468,12 +469,12 @@ function ShortcutHint({
     <span className="inline-flex items-center gap-1.5">
       <span className="inline-flex items-center gap-1">
         {keys.map((k, i) => (
-          <kbd
+          <Kbd
             key={i}
-            className="bg-muted text-foreground border-border inline-flex h-5 min-w-5 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none"
+            className="h-5 min-w-5"
           >
             {k}
-          </kbd>
+          </Kbd>
         ))}
       </span>
       <span>{label}</span>

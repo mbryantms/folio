@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import {
   Dialog,
   DialogContent,
@@ -250,9 +251,9 @@ function CaptureDialog({
         </DialogHeader>
         {pending ? (
           <div className="grid place-items-center py-6">
-            <kbd className="border-destructive/60 bg-destructive/10 text-foreground rounded border px-3 py-2 font-mono text-base">
+            <Kbd size="lg" className="border-destructive/60 bg-destructive/10">
               {formatKey(pending.chord)}
-            </kbd>
+            </Kbd>
           </div>
         ) : action ? (
           <CaptureBody onCancel={onCancel} onCapture={onCapture} />
@@ -336,9 +337,9 @@ function CaptureBody({
 
   return (
     <div className="grid place-items-center py-6">
-      <kbd className="border-border bg-muted text-foreground rounded border px-3 py-2 font-mono text-base">
+      <Kbd size="lg">
         {pending ? formatKey(pending) : "Listening…"}
-      </kbd>
+      </Kbd>
     </div>
   );
 }

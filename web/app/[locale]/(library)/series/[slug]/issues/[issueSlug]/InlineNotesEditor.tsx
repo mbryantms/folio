@@ -4,6 +4,7 @@ import { Check, Pencil, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
 import { useUpdateIssue } from "@/lib/api/mutations";
 
@@ -149,13 +150,13 @@ export function InlineNotesEditor({
       />
       <div className="flex items-center justify-between gap-2">
         <p className="text-muted-foreground text-[11px]">
-          <kbd className="bg-muted text-foreground border-border mx-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
+          <Kbd className="mx-1">
             ⌘
-          </kbd>
-          <kbd className="bg-muted text-foreground border-border inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
+          </Kbd>
+          <Kbd>
             ↵
-          </kbd>{" "}
-          save · <kbd className="bg-muted text-foreground border-border mx-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">esc</kbd> cancel
+          </Kbd>{" "}
+          save · <Kbd className="mx-1">esc</Kbd> cancel
         </p>
         <div className="flex items-center gap-2">
           <Button
