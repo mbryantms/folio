@@ -8,6 +8,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useTouchDevice } from "@/lib/ui/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 
 import type { CoverMenuAction } from "./CoverMenuButton";
@@ -48,7 +49,7 @@ export function useCoverLongPressActions({
   wrapperProps: TouchHandlerProps;
   sheet: React.ReactNode;
 } {
-  const isTouch = useIsTouchDevice();
+  const isTouch = useTouchDevice();
   const [open, setOpen] = React.useState(false);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const fired = React.useRef(false);
@@ -177,34 +178,3 @@ type TouchHandlerProps = {
 };
 
 const EMPTY_HANDLERS: TouchHandlerProps = {};
-
-/**
- * `true` when the primary pointer is coarse and the device cannot hover
- * (phones + touch-only tablets). Uses `useSyncExternalStore` so it stays
- * SSR-safe (returns `false` during prerender — the desktop render path)
- * and picks up runtime changes (rare, but a Surface-style device flipping
- * to touch mode does fire the `change` event).
- */
-const TOUCH_QUERY = "(hover: none) and (pointer: coarse)";
-
-function subscribeTouchQuery(callback: () => void): () => void {
-  const mq = window.matchMedia(TOUCH_QUERY);
-  mq.addEventListener("change", callback);
-  return () => mq.removeEventListener("change", callback);
-}
-
-function getTouchQuerySnapshot(): boolean {
-  return window.matchMedia(TOUCH_QUERY).matches;
-}
-
-function getTouchQueryServerSnapshot(): boolean {
-  return false;
-}
-
-function useIsTouchDevice(): boolean {
-  return React.useSyncExternalStore(
-    subscribeTouchQuery,
-    getTouchQuerySnapshot,
-    getTouchQueryServerSnapshot,
-  );
-}

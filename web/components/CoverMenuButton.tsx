@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useCoarsePointer } from "@/lib/ui/use-coarse-pointer";
+import { useTouchDevice } from "@/lib/ui/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 
 export type CoverMenuAction = {
@@ -48,11 +48,13 @@ export function CoverMenuButton({
   label?: string;
   className?: string;
 }) {
-  // Coarse pointers have no hover, so the kebab would never surface
-  // (audit B16). Render it persistently there instead of waiting on a
-  // hover that can't happen; hover-capable devices keep the reveal.
-  const coarse = useCoarsePointer();
-  if (actions.length === 0) return null;
+  // On touch devices the kebab is hidden entirely — a persistent button
+  // just sits on top of the cover and obscures the art (user report). The
+  // long-press bottom sheet (`useCoverLongPressActions`) is the touch way
+  // in, gated on the *same* media query so the two never disagree. Hover-
+  // capable devices keep the hover/focus-revealed kebab.
+  const touch = useTouchDevice();
+  if (actions.length === 0 || touch) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -78,17 +80,13 @@ export function CoverMenuButton({
             "absolute top-2 left-2 z-10",
             // Fixed visual footprint (32px) — never grows with cover size.
             "bg-background/85 text-foreground inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10",
-            // On coarse pointers there's no hover to trigger the reveal,
-            // so show it persistently (audit B16). Otherwise hidden by
-            // default, revealed on the parent .group's hover/focus.
-            coarse
-              ? "scale-100 opacity-100"
-              : cn(
-                  "scale-90 opacity-0 transition-all duration-150 ease-out",
-                  "group-hover:scale-100 group-hover:opacity-100",
-                  "group-focus-within:scale-100 group-focus-within:opacity-100",
-                  "focus-visible:scale-100 focus-visible:opacity-100 focus-visible:outline-none",
-                ),
+            // Hidden by default; revealed on the parent .group's hover/focus.
+            // (Touch devices never reach here — the kebab returns null there
+            // and the long-press sheet takes over.)
+            "scale-90 opacity-0 transition-all duration-150 ease-out",
+            "group-hover:scale-100 group-hover:opacity-100",
+            "group-focus-within:scale-100 group-focus-within:opacity-100",
+            "focus-visible:scale-100 focus-visible:opacity-100 focus-visible:outline-none",
             className,
           )}
         >
