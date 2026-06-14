@@ -506,6 +506,23 @@ test: test-rust test-web
 test-rust:
     cargo test --workspace --all-features
 
+# Fast Rust tests via cargo-nextest against a throwaway external Postgres —
+# one shared server + a per-test template clone, mirroring CI. Much better core
+# utilization than `cargo test`. (`just test-rust` / plain `cargo test` still
+# work — they fall back to per-test testcontainers when COMIC_TEST_PG_URL is
+# unset.) Requires `cargo-nextest` (https://nexte.st).
+test-rust-fast:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker rm -f folio-test-pg >/dev/null 2>&1 || true
+    docker run -d --name folio-test-pg \
+      -e POSTGRES_USER=comic -e POSTGRES_PASSWORD=comic -e POSTGRES_DB=comic_reader_test \
+      -p 5433:5432 postgres:18-alpine -c max_connections=300 -c fsync=off >/dev/null
+    until docker exec folio-test-pg pg_isready -U comic >/dev/null 2>&1; do sleep 0.5; done
+    trap 'docker rm -f folio-test-pg >/dev/null 2>&1 || true' EXIT
+    COMIC_TEST_PG_URL=postgres://comic:comic@localhost:5433/comic_reader_test \
+      cargo nextest run --workspace --all-features
+
 test-web:
     cd web && pnpm test
 

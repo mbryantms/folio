@@ -1,0 +1,24 @@
+# cargo-nextest config (CI-speed Phase 2).
+#
+# nextest runs each test in its own process and schedules every binary's tests
+# in one global pool — far better core utilization than `cargo test`'s
+# one-binary-at-a-time. The integration suite points at an EXTERNAL shared
+# Postgres (COMIC_TEST_PG_URL) since a per-process container would degenerate to
+# per-test under process-per-test; see crates/server/tests/common/mod.rs.
+
+[profile.default]
+# Run the whole suite even when something fails (matches the old
+# `cargo test --no-fail-fast`).
+fail-fast = false
+# One automatic retry absorbs the rare container/Docker flake on CI without a
+# manual re-run (belt-and-suspenders on top of the #207 de-flake).
+retries = 1
+# Integration tests are legitimately slow (~40s); warn, and only terminate a
+# test that's almost certainly hung (10 min), never a merely-slow one.
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+# CI profile: same, plus JUnit for any future test reporting.
+[profile.ci]
+fail-fast = false
+retries = 2
+slow-timeout = { period = "120s", terminate-after = 5 }

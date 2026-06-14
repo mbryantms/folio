@@ -70,9 +70,21 @@ Default admin (first registered user becomes admin):
 
 ## Tests
 
-- Server integration tests use `testcontainers` to spin up Postgres + Redis per
-  test process. They're slow (≈25s warmup). Run a single file with
-  `cargo test -p server --test <name>` to iterate.
+- Server integration tests share **one Postgres per process** (a migrated
+  `comic_template` cloned per test via `CREATE DATABASE … TEMPLATE`, dropped in
+  `TestApp::Drop`); Redis is still a per-test `testcontainers` container. Run a
+  single file with `cargo test -p server --test <name>` to iterate — plain
+  `cargo test` boots a per-process Postgres testcontainer (no external services
+  needed).
+  - **Fast path: `just test-rust-fast`** runs the whole suite via
+    `cargo-nextest` against a throwaway external Postgres (`COMIC_TEST_PG_URL`),
+    scheduling every binary's tests in one global pool. CI uses the same
+    (nextest + the Postgres service container); see
+    [`crates/server/tests/common/mod.rs`](crates/server/tests/common/mod.rs)
+    and [`.config/nextest.toml`](.config/nextest.toml).
+  - The harness drops each clone DB on teardown so databases/connections stay
+    flat on the shared server — do not remove `TestApp::Drop` or a big test file
+    will exhaust `max_connections`.
 - Web tests: vitest under `web/tests/`. Tests that touch routing/auth mock
   `next/navigation` and `@/lib/api/fetch`; see
   [web/tests/admin/layout.test.tsx](web/tests/admin/layout.test.tsx).
