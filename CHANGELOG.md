@@ -13,6 +13,24 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.13.0](https://github.com/mbryantms/folio/compare/v0.12.0...v0.13.0) (2026-06-14)
+
+
+### Added
+
+* **reader:** blur-up page placeholder from strip thumbnails (C3) ([#194](https://github.com/mbryantms/folio/issues/194)) ([0b8eb02](https://github.com/mbryantms/folio/commit/0b8eb02ac80b2414e226d4a65aff54be5b7892e6))
+
+
+### Fixed
+
+* **reader:** strip NUL bytes from MarkerEditor that broke dev highlight ([#190](https://github.com/mbryantms/folio/issues/190)) ([a92eeec](https://github.com/mbryantms/folio/commit/a92eeec5368a841dafae69d274f01b41b917cda1))
+* **search:** compact recent-search pills ([#191](https://github.com/mbryantms/folio/issues/191)) ([8ae05db](https://github.com/mbryantms/folio/commit/8ae05dbd8f962a5eeb849ccc2f4243eb5017cc63))
+
+
+### Changed
+
+* **reader:** lazy-load the OCR/crop path off select-text/image (G6) ([#193](https://github.com/mbryantms/folio/issues/193)) ([4d64a29](https://github.com/mbryantms/folio/commit/4d64a29e4dfa1efcca30220f85c6482657fd66b5))
+
 ## [0.12.0](https://github.com/mbryantms/folio/compare/v0.11.0...v0.12.0) (2026-06-13)
 
 
