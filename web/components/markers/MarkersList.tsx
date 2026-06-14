@@ -25,6 +25,7 @@ import { useCardSize } from "@/components/library/use-card-size";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { FilterPill } from "@/components/ui/filter-pill";
+import { Kbd } from "@/components/ui/kbd";
 import { Input } from "@/components/ui/input";
 import {
   useMarkerCount,
@@ -1010,11 +1011,11 @@ function EmptyState({ hasFilter }: { hasFilter: boolean }) {
       ) : (
         <>
           You haven&apos;t saved any markers yet. Open the reader and press{" "}
-          <kbd className="bg-muted rounded px-1 font-mono text-xs">b</kbd> to
+          <Kbd>b</Kbd> to
           bookmark a page,{" "}
-          <kbd className="bg-muted rounded px-1 font-mono text-xs">n</kbd> to
+          <Kbd>n</Kbd> to
           add a note, or{" "}
-          <kbd className="bg-muted rounded px-1 font-mono text-xs">h</kbd> to
+          <Kbd>h</Kbd> to
           start a highlight — or use the bookmark, star, and marker
           buttons in the reader&apos;s top toolbar.
         </>

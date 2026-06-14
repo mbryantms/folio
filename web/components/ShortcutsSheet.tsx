@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
+import { Kbd } from "@/components/ui/kbd";
 
 import {
   Sheet,
@@ -196,9 +197,9 @@ function Row({ label, keys }: { label: string; keys: readonly string[] }) {
             {i > 0 ? (
               <span className="text-[10px] text-neutral-500">or</span>
             ) : null}
-            <kbd className="inline-flex min-w-8 items-center justify-center rounded border border-neutral-700 bg-neutral-950 px-2 py-0.5 font-mono text-xs text-neutral-300">
+            <Kbd size="md">
               {k}
-            </kbd>
+            </Kbd>
           </Fragment>
         ))}
       </span>

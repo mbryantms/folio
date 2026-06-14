@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { Kbd } from "@/components/ui/kbd";
 import {
   ChevronLeft,
   ChevronRight,
@@ -150,12 +151,12 @@ function Hint({ keys, label }: { keys: string[]; label: string }) {
   return (
     <span className="text-muted-foreground inline-flex items-center gap-1.5">
       {keys.map((k) => (
-        <kbd
+        <Kbd
           key={k}
-          className="border-border bg-muted text-foreground inline-flex min-w-5 items-center justify-center rounded border px-1 py-0.5 font-mono text-[0.6875rem] leading-none"
+          className="h-auto min-w-5 px-1 py-0.5 text-[0.6875rem]"
         >
           {k}
-        </kbd>
+        </Kbd>
       ))}
       <span>{label}</span>
     </span>

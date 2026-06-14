@@ -1,6 +1,7 @@
 "use client";
 
 import { Bookmark, ChevronRight, Clock, Search, X } from "lucide-react";
+import { Kbd } from "@/components/ui/kbd";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 
@@ -238,13 +239,13 @@ export function TopbarSearchInline({ className }: { className?: string }) {
             <div className="text-muted-foreground space-y-2 px-4 py-6 text-center text-xs">
               <p>Type at least 2 characters to search.</p>
               <p>
-                <kbd className="bg-muted text-foreground border-border mx-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
+                <Kbd className="mx-1">
                   ↵
-                </kbd>
+                </Kbd>
                 opens · type{" "}
-                <kbd className="bg-muted text-foreground border-border mx-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
+                <Kbd className="mx-1">
                   &gt;
-                </kbd>
+                </Kbd>
                 for commands
               </p>
             </div>
@@ -395,12 +396,12 @@ export function TopbarSearchInline({ className }: { className?: string }) {
           {enabled && !commandMode ? (
             <div className="border-border text-muted-foreground flex items-center justify-between border-t px-3 py-2 text-xs">
               <span className="hidden sm:inline">
-                <kbd className="bg-muted text-foreground border-border mr-1 inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
+                <Kbd className="mr-1">
                   ⌘
-                </kbd>
-                <kbd className="bg-muted text-foreground border-border inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 font-mono text-[10px] leading-none">
+                </Kbd>
+                <Kbd>
                   ↵
-                </kbd>{" "}
+                </Kbd>{" "}
                 for top results
               </span>
               <button
