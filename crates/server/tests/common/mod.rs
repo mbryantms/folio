@@ -14,7 +14,7 @@ pub mod seed;
 
 use axum::Router;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use sea_orm::Database;
+use sea_orm::{ConnectOptions, ConnectionTrait, Database};
 use server::{
     app,
     config::{AuthMode, Config},
@@ -27,11 +27,11 @@ use server::{
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::redis::Redis;
 use tracing_subscriber::{EnvFilter, reload};
+use uuid::Uuid;
 
 /// One Prometheus recorder per test process — `install_recorder` errors on
 /// second call. Stored in a OnceLock so concurrent tests share the handle.
@@ -55,7 +55,10 @@ pub struct TestApp {
     pub email: MockSender,
     /// TempDir is held to keep `/data/secrets/` alive for the duration of the test.
     pub _data_dir: tempfile::TempDir,
-    pub _pg: ContainerAsync<Postgres>,
+    /// Per-test Redis container. Postgres is shared per process (see
+    /// [`SharedPg`]); Redis stays per-test — its boot is cheap and isolating
+    /// its many key consumers (apalis, ws-tickets, in-flight dedup) would need
+    /// invasive per-test namespacing.
     pub _redis: ContainerAsync<Redis>,
 }
 
@@ -67,44 +70,124 @@ impl TestApp {
     }
 }
 
-/// testcontainers registers every started container in a process-global
-/// `conquer_once::Lazy` watchdog. conquer-once 0.4.0 — pinned transitively by
-/// testcontainers 0.27.3 — has a bug in its *blocking* init path: when several
-/// `#[tokio::test]` threads first-touch that global at once, the threads that
-/// lose the init race hit `unreachable!()` and the whole test process aborts
-/// with "entered unreachable code". The contention exists only on the very
-/// first start — once the `Lazy` is initialized, concurrent starts are safe.
-///
-/// So we serialize just the *first* container start per process: the first
-/// caller holds [`WARM_LOCK`] across its start and flips [`WATCHDOG_WARM`];
-/// everyone else takes the lock-free fast path. This de-flakes the suite
-/// without serializing steady-state container churn. `spawn_inner` always
-/// starts Postgres before Redis, so warming on the Postgres start is enough —
-/// Redis is never the process's first start.
-static WATCHDOG_WARM: AtomicBool = AtomicBool::new(false);
-static WARM_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Name of the migrated template database every per-test database is cloned
+/// from. Built once per process by [`shared_pg`].
+const TEMPLATE_DB: &str = "comic_template";
 
-/// Start the per-test Postgres container, serializing the first start per
-/// process to dodge the testcontainers watchdog init race (see
-/// [`WATCHDOG_WARM`]).
-async fn start_postgres() -> ContainerAsync<Postgres> {
-    // Pin to 18-alpine; the testcontainers-modules default of 11-alpine
-    // predates STORED generated columns (Postgres 12+) used by the search
-    // migration, and the prod compose stack is on 18 anyway.
-    let build = || {
-        Postgres::default()
-            .with_db_name("comic_reader_test")
-            .with_user("comic")
-            .with_password("comic")
-            .with_tag("18-alpine")
-    };
-    if WATCHDOG_WARM.load(Ordering::Acquire) {
-        return build().start().await.expect("postgres start");
-    }
-    let _guard = WARM_LOCK.lock().await;
-    let container = build().start().await.expect("postgres start");
-    WATCHDOG_WARM.store(true, Ordering::Release);
-    container
+/// One Postgres container per test *process*, shared by every `TestApp` that
+/// process spawns. Booting a container and running all migrations per test was
+/// the dominant cost of the integration suite (≈1095 spawns × 93 migrations).
+/// Instead we migrate once into [`TEMPLATE_DB`] and clone it per test with
+/// `CREATE DATABASE … TEMPLATE` (a fast Postgres file-copy).
+///
+/// As a bonus, the shared [`OnceCell`] also serializes the single Postgres
+/// start before any per-test Redis start, so it subsumes the old
+/// first-start watchdog gate: testcontainers' process-global `conquer_once`
+/// watchdog `Lazy` (a blocking once-cell with an init-race bug in
+/// conquer-once 0.4.0 → `unreachable!()` panic) is warmed uncontended by that
+/// first Postgres boot, before any thread reaches a Redis start.
+struct SharedPg {
+    /// Held for the process lifetime so the container outlives every test.
+    _container: ContainerAsync<Postgres>,
+    host: String,
+    port: u16,
+}
+
+static SHARED_PG: tokio::sync::OnceCell<SharedPg> = tokio::sync::OnceCell::const_new();
+
+async fn shared_pg() -> &'static SharedPg {
+    SHARED_PG
+        .get_or_init(|| async {
+            // Pin to 18-alpine; the testcontainers-modules default of 11-alpine
+            // predates STORED generated columns (Postgres 12+) used by the
+            // search migration, and the prod compose stack is on 18 anyway.
+            // Every per-test clone now shares this server's connection budget,
+            // so raise max_connections; durability is pointless for ephemeral
+            // test data, and turning it off speeds migrations + writes.
+            let container = Postgres::default()
+                .with_db_name("comic_reader_test")
+                .with_user("comic")
+                .with_password("comic")
+                .with_tag("18-alpine")
+                .with_cmd([
+                    "postgres",
+                    "-c",
+                    "max_connections=500",
+                    "-c",
+                    "fsync=off",
+                    "-c",
+                    "synchronous_commit=off",
+                    "-c",
+                    "full_page_writes=off",
+                ])
+                .start()
+                .await
+                .expect("postgres start");
+            let host = container.get_host().await.expect("pg host").to_string();
+            let port = container.get_host_port_ipv4(5432).await.expect("pg port");
+
+            // Build the migrated template once. Both connections here live on
+            // (and are closed within) this OnceCell init — do NOT keep a
+            // long-lived pool in the static: each `#[tokio::test]` runs on its
+            // own tokio runtime, and an sqlx pool's background tasks die with
+            // the runtime that created it, so a later test would hang acquiring
+            // from it. Per-test DDL gets a fresh connection in `clone_test_db`.
+            let admin = admin_conn(&host, port).await;
+            // Postgres refuses to clone a template that has live connections, so
+            // migrate it on a dedicated connection and close that before any
+            // test clones it.
+            admin
+                .execute_unprepared(&format!("CREATE DATABASE {TEMPLATE_DB}"))
+                .await
+                .expect("create template db");
+            let tmpl_url = format!("postgres://comic:comic@{host}:{port}/{TEMPLATE_DB}");
+            let tmpl = Database::connect(&tmpl_url)
+                .await
+                .expect("connect template");
+            use migration::MigratorTrait;
+            migration::Migrator::up(&tmpl, None)
+                .await
+                .expect("migrate template");
+            tmpl.close().await.expect("close template connection");
+            admin.close().await.expect("close admin connection");
+
+            SharedPg {
+                _container: container,
+                host,
+                port,
+            }
+        })
+        .await
+}
+
+/// A single-connection, short-lived pool on the maintenance database, for
+/// issuing `CREATE DATABASE` (which can't run inside a transaction —
+/// `execute_unprepared` runs it in autocommit). Caller closes it.
+async fn admin_conn(host: &str, port: u16) -> sea_orm::DatabaseConnection {
+    let url = format!("postgres://comic:comic@{host}:{port}/comic_reader_test");
+    let mut opts = ConnectOptions::new(url);
+    opts.max_connections(1)
+        .min_connections(0)
+        .sqlx_logging(false);
+    Database::connect(opts).await.expect("connect admin")
+}
+
+/// Clone a fresh, already-migrated database off [`TEMPLATE_DB`] for one test.
+/// Returns its connection URL. The clone is done on a fresh connection bound to
+/// the calling test's runtime (see [`shared_pg`] for why a shared pool can't be
+/// reused across tests). The database is dropped implicitly when the shared
+/// container dies at process exit.
+async fn clone_test_db(pg: &SharedPg) -> String {
+    let db_name = format!("t_{}", Uuid::now_v7().simple());
+    let admin = admin_conn(&pg.host, pg.port).await;
+    admin
+        .execute_unprepared(&format!(
+            "CREATE DATABASE \"{db_name}\" TEMPLATE {TEMPLATE_DB}"
+        ))
+        .await
+        .expect("clone test db from template");
+    admin.close().await.ok();
+    format!("postgres://comic:comic@{}:{}/{}", pg.host, pg.port, db_name)
 }
 
 /// Knobs flipped per test variant. Keeps `spawn_inner` from growing a
@@ -275,17 +358,17 @@ impl TestApp {
     }
 
     async fn spawn_inner(opts: SpawnOpts) -> Self {
-        let pg = start_postgres().await;
+        // Clone a fresh, pre-migrated database off the shared per-process
+        // container instead of booting a container + running 93 migrations.
+        let pg = shared_pg().await;
+        let db_url = clone_test_db(pg).await;
 
-        let host = pg.get_host().await.expect("pg host");
-        let port = pg.get_host_port_ipv4(5432).await.expect("pg port");
-        let db_url = format!("postgres://comic:comic@{}:{}/comic_reader_test", host, port);
-
-        let db = Database::connect(&db_url).await.expect("connect db");
-        use migration::MigratorTrait;
-        migration::Migrator::up(&db, None)
-            .await
-            .expect("run migrations");
+        // Cap the per-test pool: every test now shares one server's connection
+        // budget, so don't let each open the sea-orm default fan-out. 8 is
+        // ample for the request/assert shape of these tests.
+        let mut db_opts = ConnectOptions::new(db_url.clone());
+        db_opts.max_connections(8).sqlx_logging(false);
+        let db = Database::connect(db_opts).await.expect("connect test db");
 
         // Redis (apalis backend) — required since Library Scanner v1.
         let redis = Redis::default()
@@ -431,7 +514,6 @@ impl TestApp {
             state,
             email,
             _data_dir: data_dir,
-            _pg: pg,
             _redis: redis,
         }
     }
