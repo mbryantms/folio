@@ -3597,6 +3597,48 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3605,10 +3647,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/HealthIssueView"
-                  }
+                  "$ref": "#/components/schemas/HealthIssuesPage"
                 }
               }
             }
@@ -3618,6 +3657,9 @@
           },
           "404": {
             "description": "library not found"
+          },
+          "422": {
+            "description": "invalid filter value"
           }
         }
       }
@@ -13876,6 +13918,63 @@
           }
         }
       },
+      "HealthIssueCounts": {
+        "type": "object",
+        "description": "First-page-only aggregate counts for the table's filter pills. The status\ncounts are library-wide (independent of the selected severity/kind) so the\npills stay stable as you drill in; the kind facets are scoped to the current\nstatus+severity.",
+        "required": [
+          "open",
+          "resolved",
+          "dismissed",
+          "total",
+          "kinds"
+        ],
+        "properties": {
+          "dismissed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthIssueKindFacet"
+            }
+          },
+          "open": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "resolved": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "HealthIssueKindFacet": {
+        "type": "object",
+        "description": "One kind-facet tally within the current status+severity scope (drives the\nper-kind filter pills).",
+        "required": [
+          "kind",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
       "HealthIssueView": {
         "type": "object",
         "required": [
@@ -13924,6 +14023,37 @@
           },
           "severity": {
             "type": "string"
+          }
+        }
+      },
+      "HealthIssuesPage": {
+        "type": "object",
+        "description": "Paginated per-library health-issue page. `counts` is populated only on the\nfirst page (cursor absent), mirroring the `CursorPage::total` convention.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "counts": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HealthIssueCounts"
+              }
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthIssueView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

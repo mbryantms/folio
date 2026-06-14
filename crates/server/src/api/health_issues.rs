@@ -13,8 +13,8 @@ use axum::{
 use chrono::{DateTime, FixedOffset};
 use entity::{library, library_health_issue};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
-    Set,
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, FromQueryResult, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
 use shared::pagination::{CursorPage, decode_cursor, encode_cursor};
@@ -163,22 +163,101 @@ impl From<library_health_issue::Model> for HealthIssueView {
     }
 }
 
+/// Status facet for the per-library table's open/resolved/dismissed pills.
+/// A row can be both resolved and dismissed, so the four populations overlap
+/// (`total != open + resolved + dismissed`) — each is counted independently.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StatusFilter {
+    Open,
+    Resolved,
+    Dismissed,
+    All,
+}
+
+impl StatusFilter {
+    /// The `(library + status)` row predicate. `severity`/`kind` are layered on
+    /// top by the caller.
+    fn condition(self, library_id: Uuid) -> Condition {
+        let base = Condition::all().add(library_health_issue::Column::LibraryId.eq(library_id));
+        match self {
+            StatusFilter::Open => base
+                .add(library_health_issue::Column::ResolvedAt.is_null())
+                .add(library_health_issue::Column::DismissedAt.is_null()),
+            StatusFilter::Resolved => {
+                base.add(library_health_issue::Column::ResolvedAt.is_not_null())
+            }
+            StatusFilter::Dismissed => {
+                base.add(library_health_issue::Column::DismissedAt.is_not_null())
+            }
+            StatusFilter::All => base,
+        }
+    }
+}
+
+/// One kind-facet tally within the current status+severity scope (drives the
+/// per-kind filter pills).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct HealthIssueKindFacet {
+    pub kind: String,
+    pub count: u64,
+}
+
+/// First-page-only aggregate counts for the table's filter pills. The status
+/// counts are library-wide (independent of the selected severity/kind) so the
+/// pills stay stable as you drill in; the kind facets are scoped to the current
+/// status+severity.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct HealthIssueCounts {
+    pub open: u64,
+    pub resolved: u64,
+    pub dismissed: u64,
+    pub total: u64,
+    pub kinds: Vec<HealthIssueKindFacet>,
+}
+
+/// Paginated per-library health-issue page. `counts` is populated only on the
+/// first page (cursor absent), mirroring the `CursorPage::total` convention.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct HealthIssuesPage {
+    pub items: Vec<HealthIssueView>,
+    pub next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub counts: Option<HealthIssueCounts>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
+    /// `open` | `resolved` | `dismissed` | `all`. Default `open`.
     #[serde(default)]
-    pub include_resolved: Option<bool>,
+    pub status: Option<String>,
+    /// `error` | `warning` | `info` | `all`. Unknown values 422.
     #[serde(default)]
-    pub include_dismissed: Option<bool>,
+    pub severity: Option<String>,
+    /// Restrict to one `IssueKind`. Omit / `all` for every kind.
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u64>,
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 #[utoipa::path(
     operation_id = "health_issues_list",    get,
     path = "/libraries/{slug}/health-issues",
-    params(("slug" = String, Path,)),
+    params(
+        ("slug" = String, Path,),
+        ("status" = Option<String>, Query,),
+        ("severity" = Option<String>, Query,),
+        ("kind" = Option<String>, Query,),
+        ("limit" = Option<u64>, Query,),
+        ("cursor" = Option<String>, Query,),
+    ),
     responses(
-        (status = 200, body = Vec<HealthIssueView>),
+        (status = 200, body = HealthIssuesPage),
         (status = 403, description = "admin only"),
         (status = 404, description = "library not found"),
+        (status = 422, description = "invalid filter value"),
     )
 )]
 #[handler]
@@ -193,18 +272,80 @@ pub async fn list(
         Err(resp) => return resp,
     };
     let uuid = lib.id;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
-    let mut select = library_health_issue::Entity::find()
-        .filter(library_health_issue::Column::LibraryId.eq(uuid));
-    if !q.include_resolved.unwrap_or(false) {
-        select = select.filter(library_health_issue::Column::ResolvedAt.is_null());
+    let status = match q.status.as_deref() {
+        None | Some("") | Some("open") => StatusFilter::Open,
+        Some("resolved") => StatusFilter::Resolved,
+        Some("dismissed") => StatusFilter::Dismissed,
+        Some("all") => StatusFilter::All,
+        Some(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation.status",
+                "status must be one of: open, resolved, dismissed, all",
+            );
+        }
+    };
+    // The synth drift row is `info`, so a severity filter other than `info`
+    // hides it (see the synth-insert guard below).
+    let severity = match q.severity.as_deref() {
+        None | Some("") | Some("all") => None,
+        Some(s @ ("error" | "warning" | "info")) => Some(s.to_owned()),
+        Some(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation.severity",
+                "severity must be one of: error, warning, info, all",
+            );
+        }
+    };
+    let kind = q
+        .kind
+        .as_deref()
+        .filter(|s| !s.is_empty() && *s != "all")
+        .map(str::to_owned);
+
+    let cursor: Option<(DateTime<FixedOffset>, Uuid)> = match q.cursor.as_deref() {
+        None => None,
+        Some(c) => match decode_cursor::<(DateTime<FixedOffset>, Uuid)>(c) {
+            Ok(parsed) => Some(parsed),
+            Err(_) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "validation.cursor",
+                    "invalid cursor",
+                );
+            }
+        },
+    };
+    let first_page = cursor.is_none();
+
+    // Page query: (library + status + severity + kind) + keyset cursor, newest
+    // last_seen first with id as the total-order tiebreak, over-fetch one row to
+    // detect a further page.
+    let mut select = library_health_issue::Entity::find().filter(status.condition(uuid));
+    if let Some(sev) = severity.as_deref() {
+        select = select.filter(library_health_issue::Column::Severity.eq(sev));
     }
-    if !q.include_dismissed.unwrap_or(false) {
-        select = select.filter(library_health_issue::Column::DismissedAt.is_null());
+    if let Some(k) = kind.as_deref() {
+        select = select.filter(library_health_issue::Column::Kind.eq(k));
+    }
+    if let Some((c_at, c_id)) = cursor {
+        select = select.filter(
+            Condition::any()
+                .add(library_health_issue::Column::LastSeenAt.lt(c_at))
+                .add(
+                    Condition::all()
+                        .add(library_health_issue::Column::LastSeenAt.eq(c_at))
+                        .add(library_health_issue::Column::Id.lt(c_id)),
+                ),
+        );
     }
     select = select
-        .order_by_desc(library_health_issue::Column::Severity)
-        .order_by_desc(library_health_issue::Column::LastSeenAt);
+        .order_by_desc(library_health_issue::Column::LastSeenAt)
+        .order_by_desc(library_health_issue::Column::Id)
+        .limit(limit + 1);
 
     let rows = match select.all(&app.db).await {
         Ok(v) => v,
@@ -213,22 +354,56 @@ pub async fn list(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    let mut views: Vec<HealthIssueView> = rows.into_iter().map(HealthIssueView::from).collect();
+    let next_cursor = if rows.len() as u64 > limit {
+        rows.get((limit - 1) as usize)
+            .and_then(|r| encode_cursor(&(r.last_seen_at, r.id)).ok())
+    } else {
+        None
+    };
+    let mut views: Vec<HealthIssueView> = rows
+        .into_iter()
+        .take(limit as usize)
+        .map(HealthIssueView::from)
+        .collect();
+
+    // First-page-only: aggregate counts for the pill UI.
+    let mut counts = if first_page {
+        match compute_counts(&app.db, uuid, status, severity.as_deref()).await {
+            Ok(c) => Some(c),
+            Err(e) => {
+                tracing::error!(error = %e, "health issue counts failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    } else {
+        None
+    };
 
     // M6 of metadata-sidecar-writeback-1.0: synthesize a virtual
-    // `MetadataDriftFromXml` row when the library is in writeback mode
-    // AND has user pins that haven't been written into XML yet. The row
-    // is NOT persisted — it's computed per request — so dismiss/resolve
-    // don't apply to it (the UI recognizes the synthetic id prefix and
-    // hides those affordances). Skipped for libraries with writeback
-    // off, since "drift from XML" is meaningless there.
-    if lib.metadata_writeback_enabled
-        && !q.include_resolved.unwrap_or(false)
-        && !q.include_dismissed.unwrap_or(false)
+    // `MetadataDriftFromXml` row when the library is in writeback mode AND has
+    // user pins not yet written into XML. The row is NOT persisted — computed
+    // per request — so dismiss/resolve don't apply (the UI hides those
+    // affordances via the synthetic id prefix). It belongs to the open view
+    // (severity `info`), shows on the first page only, and is reflected in the
+    // counts so the pills stay accurate.
+    if first_page
+        && lib.metadata_writeback_enabled
+        && severity.as_deref().is_none_or(|s| s == "info")
+        && kind.as_deref().is_none_or(|k| k == "MetadataDriftFromXml")
     {
         match crate::metadata::drift::count_drift_in_library(&app.db, uuid).await {
             Ok(summary) if !summary.is_empty() => {
-                views.insert(0, synth_metadata_drift_row(&summary));
+                // Surface the virtual row only in the open view (its natural
+                // home). The counts bump is unconditional so the open pill reads
+                // the same on every status view.
+                if status == StatusFilter::Open {
+                    views.insert(0, synth_metadata_drift_row(&summary));
+                }
+                if let Some(c) = counts.as_mut() {
+                    c.open += 1;
+                    c.total += 1;
+                    bump_kind_facet(&mut c.kinds, "MetadataDriftFromXml");
+                }
             }
             Ok(_) => {}
             Err(e) => {
@@ -237,7 +412,81 @@ pub async fn list(
         }
     }
 
-    Json(views).into_response()
+    Json(HealthIssuesPage {
+        items: views,
+        next_cursor,
+        counts,
+    })
+    .into_response()
+}
+
+/// Library-wide status tallies + per-kind facets within the current
+/// status+severity scope. Cheap enough to run on every first page.
+async fn compute_counts(
+    db: &sea_orm::DatabaseConnection,
+    library_id: Uuid,
+    status: StatusFilter,
+    severity: Option<&str>,
+) -> Result<HealthIssueCounts, sea_orm::DbErr> {
+    let count_for = |cond: Condition| library_health_issue::Entity::find().filter(cond).count(db);
+
+    // Status counts are library-wide (not severity/kind scoped) so the pills
+    // are stable regardless of what's drilled into.
+    let open = count_for(StatusFilter::Open.condition(library_id)).await?;
+    let resolved = count_for(StatusFilter::Resolved.condition(library_id)).await?;
+    let dismissed = count_for(StatusFilter::Dismissed.condition(library_id)).await?;
+    let total = count_for(StatusFilter::All.condition(library_id)).await?;
+
+    // Kind facets within the current status+severity scope (so the kind pills
+    // reflect what the table is showing), but NOT scoped by the kind selection
+    // itself — otherwise switching kinds would be impossible.
+    let mut facet_cond = status.condition(library_id);
+    if let Some(sev) = severity {
+        facet_cond = facet_cond.add(library_health_issue::Column::Severity.eq(sev));
+    }
+    let facet_rows = library_health_issue::Entity::find()
+        .filter(facet_cond)
+        .select_only()
+        .column(library_health_issue::Column::Kind)
+        .column_as(library_health_issue::Column::Id.count(), "count")
+        .group_by(library_health_issue::Column::Kind)
+        .into_model::<KindCountRow>()
+        .all(db)
+        .await?;
+    let kinds = facet_rows
+        .into_iter()
+        .map(|r| HealthIssueKindFacet {
+            kind: r.kind,
+            count: r.count as u64,
+        })
+        .collect();
+
+    Ok(HealthIssueCounts {
+        open,
+        resolved,
+        dismissed,
+        total,
+        kinds,
+    })
+}
+
+#[derive(FromQueryResult)]
+struct KindCountRow {
+    kind: String,
+    count: i64,
+}
+
+/// Add 1 to `kind`'s facet (creating it if absent) — used to fold the synthetic
+/// drift row into the first-page kind counts.
+fn bump_kind_facet(kinds: &mut Vec<HealthIssueKindFacet>, kind: &str) {
+    if let Some(f) = kinds.iter_mut().find(|f| f.kind == kind) {
+        f.count += 1;
+    } else {
+        kinds.push(HealthIssueKindFacet {
+            kind: kind.to_owned(),
+            count: 1,
+        });
+    }
 }
 
 /// Stable id for the synthesized drift row. The `synth:` prefix is the
