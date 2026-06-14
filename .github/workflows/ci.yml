@@ -116,6 +116,11 @@ jobs:
         with:
           components: rustfmt,clippy
       - uses: Swatinem/rust-cache@v2
+      - name: install nextest
+        if: needs.changes.outputs.rust == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
       # fmt is pure-syntax and instant — always run it as a cheap guard.
       - run: cargo fmt --all -- --check
       # clippy + the test suite require a full compile; skip them when no
@@ -125,12 +130,19 @@ jobs:
       - name: clippy
         if: needs.changes.outputs.rust == 'true'
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      # --no-fail-fast: run every test binary so all failures surface in one
-      # run instead of stopping at the first failing binary.
+      # nextest schedules every binary's tests in one global pool (far better
+      # core use than cargo test's one-binary-at-a-time) and auto-retries the
+      # rare container flake. The integration harness points at the shared
+      # Postgres service via COMIC_TEST_PG_URL and clones a template DB per test
+      # (see crates/server/tests/common/mod.rs). A separate `cargo test --doc`
+      # covers doctests, which nextest doesn't run.
       - name: test
         if: needs.changes.outputs.rust == 'true'
-        run: cargo test --workspace --all-features --no-fail-fast
+        run: |
+          cargo nextest run --workspace --all-features --profile ci
+          cargo test --workspace --all-features --doc
         env:
+          COMIC_TEST_PG_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_DATABASE_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_REDIS_URL: redis://localhost:6379
 

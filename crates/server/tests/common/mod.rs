@@ -14,7 +14,7 @@ pub mod seed;
 
 use axum::Router;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseBackend, Statement};
 use server::{
     app,
     config::{AuthMode, Config},
@@ -60,10 +60,9 @@ pub struct TestApp {
     /// its many key consumers (apalis, ws-tickets, in-flight dedup) would need
     /// invasive per-test namespacing.
     pub _redis: ContainerAsync<Redis>,
-    /// Shared-Postgres coordinates + this test's clone DB name, so `Drop` can
-    /// drop the clone (see [`drop_test_db`]).
-    pg_host: String,
-    pg_port: u16,
+    /// Shared-Postgres base URL + this test's clone DB name, so `Drop` can drop
+    /// the clone (see [`drop_test_db`]).
+    pg_base: String,
     db_name: String,
 }
 
@@ -71,7 +70,7 @@ impl Drop for TestApp {
     fn drop(&mut self) {
         // Drop the clone DB so databases + their lingering connections don't
         // accumulate on the shared server across a binary's tests.
-        drop_test_db(self.pg_host.clone(), self.pg_port, self.db_name.clone());
+        drop_test_db(self.pg_base.clone(), self.db_name.clone());
     }
 }
 
@@ -100,13 +99,23 @@ const TEMPLATE_DB: &str = "comic_template";
 /// conquer-once 0.4.0 → `unreachable!()` panic) is warmed uncontended by that
 /// first Postgres boot, before any thread reaches a Redis start.
 struct SharedPg {
-    /// Held for the process lifetime so the container outlives every test.
-    _container: ContainerAsync<Postgres>,
-    host: String,
-    port: u16,
+    /// `Some` for the per-process testcontainer (the local `cargo test`
+    /// fallback); `None` when pointed at an external shared server (CI / the
+    /// `cargo nextest` path). Held for the process lifetime so the container
+    /// outlives every test.
+    _container: Option<ContainerAsync<Postgres>>,
+    /// Server base URL without a database path, e.g.
+    /// `postgres://comic:comic@localhost:5432`. Maintenance/template/clone URLs
+    /// are `{base}/<db>`.
+    base: String,
 }
 
 static SHARED_PG: tokio::sync::OnceCell<SharedPg> = tokio::sync::OnceCell::const_new();
+
+/// Advisory-lock key serializing template creation across processes. nextest
+/// runs process-per-test, so many processes race on the shared server's
+/// template; this makes only the first build it.
+const TEMPLATE_LOCK_KEY: i64 = 559_038_737;
 
 #[expect(
     clippy::print_stderr,
@@ -117,10 +126,9 @@ async fn shared_pg() -> &'static SharedPg {
         .get_or_init(|| async {
             // A failure here must NOT bubble as a panic: tokio's `OnceCell`
             // re-runs the init closure after a panic, so every test in the
-            // binary would retry the whole container-boot + migration — storming
-            // the log and piling up containers (which is how this first shipped
-            // and took down CI). Fail the process hard, once, with a readable
-            // message instead.
+            // process would retry the whole setup — storming the log and piling
+            // up resources (which is how Phase 1 first took down CI). Fail the
+            // process hard, once, with a readable message instead.
             match build_shared_pg().await {
                 Ok(pg) => pg,
                 Err(e) => {
@@ -132,9 +140,28 @@ async fn shared_pg() -> &'static SharedPg {
         .await
 }
 
-/// Boot the per-process Postgres container and build the migrated template.
+/// Provision the shared Postgres for this process and ensure the migrated
+/// template exists. Two modes:
+///   - `COMIC_TEST_PG_URL` set → an **external** shared server (CI service
+///     container, or a local test PG). Required for `cargo nextest`, which runs
+///     process-per-test: a per-process container would degenerate to per-test.
+///   - unset → boot a per-process **testcontainer** (the `cargo test` default;
+///     no external services needed for a plain local run).
+///
 /// Fallible so [`shared_pg`] can fail fast instead of panic-and-retry.
 async fn build_shared_pg() -> Result<SharedPg, String> {
+    if let Ok(url) = std::env::var("COMIC_TEST_PG_URL") {
+        let base = url
+            .rsplit_once('/')
+            .map(|(b, _db)| b.to_owned())
+            .ok_or_else(|| format!("COMIC_TEST_PG_URL needs a /<db> path: {url}"))?;
+        ensure_template(&base).await?;
+        return Ok(SharedPg {
+            _container: None,
+            base,
+        });
+    }
+
     // Pin to 18-alpine; the testcontainers-modules default of 11-alpine predates
     // STORED generated columns (Postgres 12+) used by the search migration, and
     // the prod compose stack is on 18 anyway. Raise max_connections (every
@@ -184,52 +211,80 @@ async fn build_shared_pg() -> Result<SharedPg, String> {
         .get_host_port_ipv4(5432)
         .await
         .map_err(|e| format!("pg port: {e}"))?;
+    let base = format!("postgres://comic:comic@{host}:{port}");
+    ensure_template(&base).await?;
+    Ok(SharedPg {
+        _container: Some(container),
+        base,
+    })
+}
 
-    // Build the migrated template once. Both connections live on (and close
-    // within) this init — do NOT keep a long-lived pool in the static: each
-    // `#[tokio::test]` runs on its own tokio runtime, and an sqlx pool's
-    // background tasks die with the runtime that created it, so a later test
-    // would hang acquiring from it. Per-test DDL gets a fresh connection in
-    // `clone_test_db`.
-    let admin = admin_conn(&host, port).await;
+/// Create + migrate [`TEMPLATE_DB`] if absent, serialized across processes by a
+/// Postgres advisory lock. Holding the lock across the existence check + build
+/// means "exists" reliably implies "fully migrated" for the next process.
+async fn ensure_template(base: &str) -> Result<(), String> {
+    let admin = admin_conn(base).await;
+    admin
+        .execute_unprepared(&format!("SELECT pg_advisory_lock({TEMPLATE_LOCK_KEY})"))
+        .await
+        .map_err(|e| format!("advisory lock: {e}"))?;
+    let result = build_template_locked(base, &admin).await;
+    // Release the lock + connection regardless of outcome.
+    let _ = admin
+        .execute_unprepared(&format!("SELECT pg_advisory_unlock({TEMPLATE_LOCK_KEY})"))
+        .await;
+    let _ = admin.close().await;
+    result
+}
+
+async fn build_template_locked(
+    base: &str,
+    admin: &sea_orm::DatabaseConnection,
+) -> Result<(), String> {
+    let exists = admin
+        .query_one(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!("SELECT 1 FROM pg_database WHERE datname = '{TEMPLATE_DB}'"),
+        ))
+        .await
+        .map_err(|e| format!("template existence check: {e}"))?
+        .is_some();
+    if exists {
+        return Ok(());
+    }
     admin
         .execute_unprepared(&format!("CREATE DATABASE {TEMPLATE_DB}"))
         .await
         .map_err(|e| format!("create template db: {e}"))?;
-    // sqlx_logging off: one migration's worth of SQL logging per binary (×130)
-    // is pure noise, and libtest dumps captured output on failure — keep it
-    // small so a real error stays legible.
-    let tmpl_url = format!("postgres://comic:comic@{host}:{port}/{TEMPLATE_DB}");
-    let mut tmpl_opts = ConnectOptions::new(tmpl_url);
+    // sqlx_logging off: migration SQL logging is noise, and libtest dumps
+    // captured output on failure — keep it small so a real error stays legible.
+    let mut tmpl_opts = ConnectOptions::new(format!("{base}/{TEMPLATE_DB}"));
     tmpl_opts.sqlx_logging(false);
     let tmpl = Database::connect(tmpl_opts)
         .await
         .map_err(|e| format!("connect template: {e}"))?;
     use migration::MigratorTrait;
-    migration::Migrator::up(&tmpl, None)
+    let migrated = migration::Migrator::up(&tmpl, None)
         .await
-        .map_err(|e| format!("migrate template: {e}"))?;
-    tmpl.close()
-        .await
-        .map_err(|e| format!("close template: {e}"))?;
-    admin
-        .close()
-        .await
-        .map_err(|e| format!("close admin: {e}"))?;
-
-    Ok(SharedPg {
-        _container: container,
-        host,
-        port,
-    })
+        .map_err(|e| format!("migrate template: {e}"));
+    let _ = tmpl.close().await;
+    if let Err(e) = migrated {
+        // Drop the half-built template so a later run rebuilds it cleanly.
+        let _ = admin
+            .execute_unprepared(&format!(
+                "DROP DATABASE IF EXISTS {TEMPLATE_DB} WITH (FORCE)"
+            ))
+            .await;
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// A single-connection, short-lived pool on the maintenance database, for
-/// issuing `CREATE DATABASE` (which can't run inside a transaction —
-/// `execute_unprepared` runs it in autocommit). Caller closes it.
-async fn admin_conn(host: &str, port: u16) -> sea_orm::DatabaseConnection {
-    let url = format!("postgres://comic:comic@{host}:{port}/comic_reader_test");
-    let mut opts = ConnectOptions::new(url);
+/// issuing `CREATE`/`DROP DATABASE` + advisory locks (DDL can't run in a
+/// transaction — `execute_unprepared` runs it in autocommit). Caller closes it.
+async fn admin_conn(base: &str) -> sea_orm::DatabaseConnection {
+    let mut opts = ConnectOptions::new(format!("{base}/comic_reader_test"));
     opts.max_connections(1)
         .min_connections(0)
         .sqlx_logging(false);
@@ -245,7 +300,7 @@ async fn admin_conn(host: &str, port: u16) -> sea_orm::DatabaseConnection {
 /// binary (which would otherwise exhaust `max_connections` on a big test file).
 async fn clone_test_db(pg: &SharedPg) -> String {
     let db_name = format!("t_{}", Uuid::now_v7().simple());
-    let admin = admin_conn(&pg.host, pg.port).await;
+    let admin = admin_conn(&pg.base).await;
     admin
         .execute_unprepared(&format!(
             "CREATE DATABASE \"{db_name}\" TEMPLATE {TEMPLATE_DB}"
@@ -260,7 +315,7 @@ async fn clone_test_db(pg: &SharedPg) -> String {
 /// (`WITH (FORCE)`, Postgres 13+) so connections don't pile up on the shared
 /// server. Runs on its own current-thread runtime in a dedicated OS thread so
 /// it works from `Drop` regardless of any ambient runtime's state.
-fn drop_test_db(host: String, port: u16, db_name: String) {
+fn drop_test_db(base: String, db_name: String) {
     let _ = std::thread::spawn(move || {
         let Ok(rt) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -271,12 +326,15 @@ fn drop_test_db(host: String, port: u16, db_name: String) {
         rt.block_on(async {
             // Fallible (no `.expect`): a connect hiccup during teardown should
             // leak the clone DB, not panic + spam backtraces.
-            let url = format!("postgres://comic:comic@{host}:{port}/comic_reader_test");
-            let mut opts = ConnectOptions::new(url);
-            opts.max_connections(1)
-                .min_connections(0)
-                .sqlx_logging(false);
-            if let Ok(admin) = Database::connect(opts).await {
+            if let Ok(admin) = Database::connect({
+                let mut opts = ConnectOptions::new(format!("{base}/comic_reader_test"));
+                opts.max_connections(1)
+                    .min_connections(0)
+                    .sqlx_logging(false);
+                opts
+            })
+            .await
+            {
                 let _ = admin
                     .execute_unprepared(&format!(
                         "DROP DATABASE IF EXISTS \"{db_name}\" WITH (FORCE)"
@@ -461,7 +519,7 @@ impl TestApp {
         // container instead of booting a container + running 93 migrations.
         let pg = shared_pg().await;
         let db_name = clone_test_db(pg).await;
-        let db_url = format!("postgres://comic:comic@{}:{}/{}", pg.host, pg.port, db_name);
+        let db_url = format!("{}/{}", pg.base, db_name);
 
         // Cap the per-test pool: every test now shares one server's connection
         // budget, so don't let each open the sea-orm default fan-out. 8 is
@@ -615,8 +673,7 @@ impl TestApp {
             email,
             _data_dir: data_dir,
             _redis: redis,
-            pg_host: pg.host.clone(),
-            pg_port: pg.port,
+            pg_base: pg.base.clone(),
             db_name,
         }
     }
