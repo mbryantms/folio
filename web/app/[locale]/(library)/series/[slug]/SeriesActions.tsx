@@ -30,6 +30,7 @@ export function SeriesActions({
   series,
   libraryId,
   firstIssue,
+  readIncognitoHref,
 }: {
   series: SeriesView;
   libraryId: string;
@@ -37,6 +38,9 @@ export function SeriesActions({
    *  sorted active issue. `null` when the series has no active issues
    *  (in which case the menu suppresses the item). */
   firstIssue: Pick<IssueSummaryView, "slug" | "series_slug"> | null;
+  /** Up-next-unread reader URL with incognito on — the "Read incognito"
+   *  menu target. `null` when there's nothing to resume. */
+  readIncognitoHref: string | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmForceRecreate, setConfirmForceRecreate] = useState(false);
@@ -53,6 +57,7 @@ export function SeriesActions({
         seriesName={series.name}
         libraryId={libraryId}
         firstIssue={firstIssue}
+        readIncognitoHref={readIncognitoHref}
         onEdit={() => setEditOpen(true)}
         onForceRecreatePageMap={() => setConfirmForceRecreate(true)}
       />

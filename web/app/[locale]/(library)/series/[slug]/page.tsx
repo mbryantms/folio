@@ -94,6 +94,11 @@ export default async function SeriesPage({
 
   const nextHref = resumeReaderHref(resume);
   const nextState = readStateFromResume(resume.state);
+  // Same up-next target as the Read button, with incognito enabled — backs
+  // the "Read incognito" actions-menu item.
+  const readIncognitoHref = nextHref
+    ? `${nextHref}${nextHref.includes("?") ? "&" : "?"}incognito=1`
+    : null;
   // The first active issue is the "Read from beginning" target — independent
   // of the resume target so users can always restart from #1 even when
   // they're mid-way through a later issue.
@@ -162,21 +167,16 @@ export default async function SeriesPage({
               fallback={series.publisher ?? "—"}
             />
           </div>
-          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm sm:flex-col lg:mx-0 lg:max-w-72">
+          {/* Read CTA + a small gear for actions, always side by side —
+              the Read button is the focus, so actions stay a compact icon
+              to its right rather than a full-width stacked button. */}
+          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
             {nextHref ? (
-              // `sm:flex-none` cancels mobile's `flex-1` once the
-              // container flips to `sm:flex-col` — otherwise
-              // flex-grow stretches the button vertically along the
-              // column's main axis and visually overrides sm:h-10.
-              <Button
-                asChild
-                size="lg"
-                className="h-12 flex-1 sm:h-10 sm:w-full sm:flex-none"
-              >
+              <Button asChild size="lg" className="h-12 flex-1 sm:h-10">
                 <Link href={nextHref}>{readButtonLabel(nextState)}</Link>
               </Button>
             ) : (
-              <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-auto sm:flex-none sm:py-2">
+              <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-10">
                 No active issues to read.
               </p>
             )}
@@ -184,6 +184,7 @@ export default async function SeriesPage({
               series={series}
               libraryId={series.library_id}
               firstIssue={firstIssue}
+              readIncognitoHref={readIncognitoHref}
             />
           </div>
         </div>

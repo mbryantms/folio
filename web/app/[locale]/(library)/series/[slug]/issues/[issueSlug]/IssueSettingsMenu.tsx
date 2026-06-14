@@ -16,7 +16,7 @@ import {
   Pencil,
   RefreshCw,
   RotateCcw,
-  Settings2,
+  Settings,
   Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -258,24 +258,21 @@ export function IssueSettingsMenu({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          {/* Responsive trigger:
-              - Mobile: icon-only 48 × 48 square that sits next to the
-                primary `Read` button on a single row (issue-page hero
-                reshape, 2026-05-23). No label text.
-              - sm+: full-width outlined button with label "Actions",
-                stacked below `Read` in the sidebar column. */}
+          {/* Compact gear that sits flush to the right of the primary
+              `Read` button at every breakpoint — the Read CTA is the focus,
+              so actions stay a small icon. Square, matching the Read
+              button's height (h-12 mobile / h-10 sm+). */}
           <Button
             variant="outline"
             disabled={busy}
             aria-label="Issue actions"
-            className="grid h-12 w-12 place-items-center p-0 sm:flex sm:h-10 sm:w-full sm:px-3"
+            className="h-12 w-12 shrink-0 place-items-center p-0 sm:h-10 sm:w-10"
           >
             {busy ? (
-              <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Settings2 className="h-4 w-4 sm:mr-2" />
+              <Settings className="h-4 w-4" />
             )}
-            <span className="hidden sm:inline">Actions</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-60">
