@@ -11,6 +11,7 @@ permissions:
 jobs:
   rust-audit:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.96.0
@@ -25,15 +26,18 @@ jobs:
 
   web-audit:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
       - uses: pnpm/action-setup@v6
         with:
           version: 11.5.3
-      - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile --prefer-offline
       - run: pnpm audit --audit-level=high
 
   # Cross-ecosystem advisory sweep over both lockfiles (Cargo.lock +
@@ -43,6 +47,7 @@ jobs:
   # advisories the ecosystem-native tools may not yet carry.
   osv-scan:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
