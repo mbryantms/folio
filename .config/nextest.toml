@@ -17,8 +17,15 @@ retries = 1
 # test that's almost certainly hung (10 min), never a merely-slow one.
 slow-timeout = { period = "120s", terminate-after = 5 }
 
-# CI profile: same, plus JUnit for any future test reporting.
+# CI profile: same, plus oversubscription.
 [profile.ci]
 fail-fast = false
 retries = 2
 slow-timeout = { period = "120s", terminate-after = 5 }
+# The integration tests are I/O-bound (they await Postgres/Redis/disk far more
+# than they burn CPU), so running more tests than the 4-vCPU runner has cores
+# overlaps that idle wait for a large throughput win (CI-speed Phase 3). Bounded
+# at 12 by two shared resources: the Redis service has 16 logical DBs (each test
+# isolates onto one via NEXTEST_TEST_GLOBAL_SLOT) and the Postgres service caps
+# at 100 connections (12 × the per-test pool of 6 = 72, with margin).
+test-threads = 12

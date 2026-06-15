@@ -70,18 +70,24 @@ Default admin (first registered user becomes admin):
 
 ## Tests
 
-- Server integration tests share **one Postgres per process** (a migrated
-  `comic_template` cloned per test via `CREATE DATABASE … TEMPLATE`, dropped in
-  `TestApp::Drop`); Redis is still a per-test `testcontainers` container. Run a
-  single file with `cargo test -p server --test <name>` to iterate — plain
-  `cargo test` boots a per-process Postgres testcontainer (no external services
-  needed).
+- Server integration tests share **one Postgres AND one Redis per process**
+  (a migrated `comic_template` cloned per test via `CREATE DATABASE … TEMPLATE`,
+  dropped in `TestApp::Drop`; Redis isolates each test onto its own **logical
+  DB** — `redis://…/<n>` — `FLUSHDB`-ed on acquire). Run a single file with
+  `cargo test -p server --test <name>` to iterate — plain `cargo test` boots a
+  per-process Postgres + Redis testcontainer (no external services needed).
   - **Fast path: `just test-rust-fast`** runs the whole suite via
-    `cargo-nextest` against a throwaway external Postgres (`COMIC_TEST_PG_URL`),
-    scheduling every binary's tests in one global pool. CI uses the same
-    (nextest + the Postgres service container); see
+    `cargo-nextest` against throwaway external Postgres + Redis
+    (`COMIC_TEST_PG_URL` / `COMIC_REDIS_URL`), scheduling every binary's tests
+    in one global pool. CI uses the same (nextest + the Postgres & Redis service
+    containers); see
     [`crates/server/tests/common/mod.rs`](crates/server/tests/common/mod.rs)
     and [`.config/nextest.toml`](.config/nextest.toml).
+  - **Redis logical-DB isolation (CI-speed Phase 3):** under nextest
+    (process-per-test on a shared external Redis) each test's DB index is
+    `NEXTEST_TEST_GLOBAL_SLOT`, so `[profile.ci] test-threads` must stay `≤` the
+    Redis `databases` count (16 on the service container → 12). Plain
+    `cargo test` (one process per binary) uses an in-process index pool instead.
   - The harness drops each clone DB on teardown so databases/connections stay
     flat on the shared server — do not remove `TestApp::Drop` or a big test file
     will exhaust `max_connections`.

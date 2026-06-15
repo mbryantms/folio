@@ -26,10 +26,12 @@ use server::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
 use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::redis::Redis;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing_subscriber::{EnvFilter, reload};
 use uuid::Uuid;
 
@@ -55,11 +57,11 @@ pub struct TestApp {
     pub email: MockSender,
     /// TempDir is held to keep `/data/secrets/` alive for the duration of the test.
     pub _data_dir: tempfile::TempDir,
-    /// Per-test Redis container. Postgres is shared per process (see
-    /// [`SharedPg`]); Redis stays per-test — its boot is cheap and isolating
-    /// its many key consumers (apalis, ws-tickets, in-flight dedup) would need
-    /// invasive per-test namespacing.
-    pub _redis: ContainerAsync<Redis>,
+    /// This test's lease on a Redis logical DB from the shared instance (see
+    /// [`SharedRedis`]). Held for the test's lifetime; `Drop` returns the index
+    /// to the in-process pool (plain `cargo test` path) or is a no-op (nextest,
+    /// where the slot index is owned by nextest).
+    _redis_lease: RedisLease,
     /// Shared-Postgres base URL + this test's clone DB name, so `Drop` can drop
     /// the clone (see [`drop_test_db`]).
     pg_base: String,
@@ -347,6 +349,210 @@ fn drop_test_db(base: String, db_name: String) {
     .join();
 }
 
+/// One Redis instance per test *process*, shared by every `TestApp` that
+/// process spawns — the Redis analogue of [`SharedPg`]. Previously every test
+/// booted its own Redis container (~600 container create/start/healthcheck/stop
+/// cycles per CI run), which dominated the suite once Postgres was shared. Now
+/// each test gets an isolated **logical DB** on one shared instance.
+///
+/// Two provisioning modes (mirrors [`build_shared_pg`]):
+///   - `COMIC_REDIS_URL` set → an **external** shared Redis (CI service
+///     container, or `just test-rust-fast`'s throwaway). Required for nextest,
+///     which runs process-per-test: a per-process container would degenerate to
+///     per-test.
+///   - unset → boot a per-process **testcontainer** (the plain `cargo test`
+///     fallback; no external services needed).
+///
+/// Per-test isolation = a distinct Redis logical DB (`redis://host:port/<n>`),
+/// `FLUSHDB`-ed on acquire. Index selection differs by run mode (see
+/// [`acquire_redis_db`]). Requires `test-threads <= db_count` so concurrent
+/// tests never share an index.
+struct SharedRedis {
+    /// `Some` for the per-process testcontainer; `None` for an external server.
+    _container: Option<ContainerAsync<Redis>>,
+    /// `redis://host:port` with no `/<db>` path.
+    base: String,
+    /// `databases` from `CONFIG GET` (default 16). Bounds the index space.
+    db_count: u32,
+    /// In-process index pool for the plain `cargo test` path (single process,
+    /// libtest thread concurrency). `None` under nextest, where each test is its
+    /// own process and uses `NEXTEST_TEST_GLOBAL_SLOT` for a cross-process-safe
+    /// index — an in-process pool couldn't coordinate across those processes.
+    pool: Option<RedisDbPool>,
+}
+
+/// Counting semaphore (caps concurrent leases to `db_count`) + a free-list that
+/// hands out the actual distinct index. The semaphore guarantees the free-list
+/// is non-empty whenever a permit is held.
+struct RedisDbPool {
+    sem: Arc<Semaphore>,
+    free: Arc<StdMutex<Vec<u32>>>,
+}
+
+/// A held Redis logical-DB index. Returned to the pool on drop (plain mode);
+/// a no-op under nextest. Kept alive by [`TestApp`] for the test's lifetime.
+struct RedisLease {
+    idx: u32,
+    /// `Some((permit, free))` in plain mode; `None` under nextest.
+    ret: Option<(OwnedSemaphorePermit, Arc<StdMutex<Vec<u32>>>)>,
+}
+
+impl Drop for RedisLease {
+    fn drop(&mut self) {
+        if let Some((permit, free)) = self.ret.take() {
+            // Return the index BEFORE releasing the permit so a waiter that
+            // acquires the freed permit always finds an index to pop.
+            free.lock()
+                .expect("redis free-list poisoned")
+                .push(self.idx);
+            drop(permit);
+        }
+    }
+}
+
+static SHARED_REDIS: tokio::sync::OnceCell<SharedRedis> = tokio::sync::OnceCell::const_new();
+
+#[expect(
+    clippy::print_stderr,
+    reason = "fatal harness error before logging exists"
+)]
+async fn shared_redis() -> &'static SharedRedis {
+    SHARED_REDIS
+        .get_or_init(|| async {
+            match build_shared_redis().await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("FATAL: shared test Redis init failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        })
+        .await
+}
+
+async fn build_shared_redis() -> Result<SharedRedis, String> {
+    let under_nextest = std::env::var("NEXTEST_TEST_GLOBAL_SLOT").is_ok();
+    let (container, base) = if let Ok(url) = std::env::var("COMIC_REDIS_URL") {
+        (None, redis_base(&url))
+    } else {
+        // Plain `cargo test`: boot one Redis per process. `--databases 256`
+        // gives the in-process pool plenty of headroom for libtest concurrency.
+        let mut container = None;
+        let mut last_err = String::from("no attempts");
+        for attempt in 1..=3 {
+            let build = Redis::default().with_tag("8-alpine").with_cmd([
+                "redis-server",
+                "--databases",
+                "256",
+            ]);
+            match build.start().await {
+                Ok(c) => {
+                    container = Some(c);
+                    break;
+                }
+                Err(e) => {
+                    last_err = format!("redis start (attempt {attempt}/3): {e}");
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+        let container = container.ok_or(last_err)?;
+        let host = container
+            .get_host()
+            .await
+            .map_err(|e| format!("redis host: {e}"))?
+            .to_string();
+        let port = container
+            .get_host_port_ipv4(6379)
+            .await
+            .map_err(|e| format!("redis port: {e}"))?;
+        (Some(container), format!("redis://{host}:{port}"))
+    };
+
+    let db_count = redis_db_count(&base).await.unwrap_or(16);
+    // Pool only off-nextest (single process). Seed indices 0..db_count.
+    let pool = if under_nextest {
+        None
+    } else {
+        let n = db_count as usize;
+        Some(RedisDbPool {
+            sem: Arc::new(Semaphore::new(n)),
+            free: Arc::new(StdMutex::new((0..db_count).collect())),
+        })
+    };
+    Ok(SharedRedis {
+        _container: container,
+        base,
+        db_count,
+        pool,
+    })
+}
+
+/// Strip any `/<db>` (and query) suffix off a redis URL, leaving `redis://host:port`.
+fn redis_base(url: &str) -> String {
+    // redis://host:port[/db]. Find the host[:port] segment after the scheme.
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let authority = rest.split(['/', '?']).next().unwrap_or(rest);
+            format!("{scheme}://{authority}")
+        }
+        None => url.trim_end_matches('/').to_owned(),
+    }
+}
+
+async fn redis_db_count(base: &str) -> Option<u32> {
+    let client = redis::Client::open(format!("{base}/0")).ok()?;
+    let mut conn = client.get_multiplexed_async_connection().await.ok()?;
+    // `CONFIG GET databases` → ["databases", "16"].
+    let kv: Vec<String> = redis::cmd("CONFIG")
+        .arg("GET")
+        .arg("databases")
+        .query_async(&mut conn)
+        .await
+        .ok()?;
+    kv.get(1).and_then(|s| s.parse().ok())
+}
+
+/// Acquire an isolated Redis logical DB for one test and return its URL +
+/// the lease that frees it. Under nextest the index is the per-test global
+/// slot (unique across the concurrently-running processes that share the
+/// external Redis); otherwise it comes from the in-process pool.
+async fn acquire_redis_db(redis: &'static SharedRedis) -> (String, RedisLease) {
+    let (idx, ret) = match (&redis.pool, std::env::var("NEXTEST_TEST_GLOBAL_SLOT")) {
+        (Some(pool), _) => {
+            let permit = pool
+                .sem
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("redis db semaphore");
+            let idx = pool
+                .free
+                .lock()
+                .expect("redis free-list poisoned")
+                .pop()
+                .expect("free redis db (semaphore guarantees availability)");
+            (idx, Some((permit, pool.free.clone())))
+        }
+        (None, Ok(slot)) => {
+            let slot: u32 = slot.parse().unwrap_or(0);
+            (slot % redis.db_count, None)
+        }
+        // No pool and no slot: shouldn't happen (pool is built whenever not
+        // under nextest), but fall back to DB 0 rather than panic.
+        (None, Err(_)) => (0, None),
+    };
+    let url = format!("{}/{}", redis.base, idx);
+    // Clean slate: the previous occupant of this index/slot left apalis +
+    // coalescing keys behind.
+    if let Ok(client) = redis::Client::open(url.clone())
+        && let Ok(mut conn) = client.get_multiplexed_async_connection().await
+    {
+        let _: redis::RedisResult<()> = redis::cmd("FLUSHDB").query_async(&mut conn).await;
+    }
+    (url, RedisLease { idx, ret })
+}
+
 /// Knobs flipped per test variant. Keeps `spawn_inner` from growing a
 /// long boolean parameter list.
 #[derive(Default, Clone)]
@@ -522,21 +728,19 @@ impl TestApp {
         let db_url = format!("{}/{}", pg.base, db_name);
 
         // Cap the per-test pool: every test now shares one server's connection
-        // budget, so don't let each open the sea-orm default fan-out. 8 is
-        // ample for the request/assert shape of these tests.
+        // budget, so don't let each open the sea-orm default fan-out. 6 keeps
+        // the request/assert shape of these tests comfortable while leaving the
+        // 100-connection Postgres service headroom at 12-way nextest
+        // oversubscription (12 × 6 = 72); the realistic peak is ~2 conns/test.
         let mut db_opts = ConnectOptions::new(db_url.clone());
-        db_opts.max_connections(8).sqlx_logging(false);
+        db_opts.max_connections(6).sqlx_logging(false);
         let db = Database::connect(db_opts).await.expect("connect test db");
 
-        // Redis (apalis backend) — required since Library Scanner v1.
-        let redis = Redis::default()
-            .with_tag("8-alpine")
-            .start()
-            .await
-            .expect("redis start");
-        let redis_host = redis.get_host().await.expect("redis host");
-        let redis_port = redis.get_host_port_ipv4(6379).await.expect("redis port");
-        let redis_url = format!("redis://{redis_host}:{redis_port}");
+        // Redis (apalis backend) — required since Library Scanner v1. One
+        // shared instance per process; this test gets an isolated logical DB
+        // (CI-speed Phase 3) instead of its own container.
+        let redis = shared_redis().await;
+        let (redis_url, redis_lease) = acquire_redis_db(redis).await;
 
         let data_dir = tempfile::tempdir().expect("tempdir");
         let secrets = Secrets::load(data_dir.path()).expect("load secrets");
@@ -672,7 +876,7 @@ impl TestApp {
             state,
             email,
             _data_dir: data_dir,
-            _redis: redis,
+            _redis_lease: redis_lease,
             pg_base: pg.base.clone(),
             db_name,
         }

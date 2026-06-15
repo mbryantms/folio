@@ -514,13 +514,20 @@ test-rust:
 test-rust-fast:
     #!/usr/bin/env bash
     set -euo pipefail
-    docker rm -f folio-test-pg >/dev/null 2>&1 || true
+    docker rm -f folio-test-pg folio-test-redis >/dev/null 2>&1 || true
     docker run -d --name folio-test-pg \
       -e POSTGRES_USER=comic -e POSTGRES_PASSWORD=comic -e POSTGRES_DB=comic_reader_test \
       -p 5433:5432 postgres:18-alpine -c max_connections=300 -c fsync=off >/dev/null
+    # One shared Redis + a per-test logical DB (mirrors CI). `--databases 256`
+    # so nextest oversubscription has plenty of isolated DBs. Port 6381 avoids
+    # the dev Redis on 6380. Removed BY NAME only — never touch the dev Redis.
+    docker run -d --name folio-test-redis \
+      -p 6381:6379 redis:8-alpine redis-server --databases 256 >/dev/null
     until docker exec folio-test-pg pg_isready -U comic >/dev/null 2>&1; do sleep 0.5; done
-    trap 'docker rm -f folio-test-pg >/dev/null 2>&1 || true' EXIT
+    until docker exec folio-test-redis redis-cli ping >/dev/null 2>&1; do sleep 0.3; done
+    trap 'docker rm -f folio-test-pg folio-test-redis >/dev/null 2>&1 || true' EXIT
     COMIC_TEST_PG_URL=postgres://comic:comic@localhost:5433/comic_reader_test \
+    COMIC_REDIS_URL=redis://localhost:6381 \
       cargo nextest run --workspace --all-features
 
 test-web:
