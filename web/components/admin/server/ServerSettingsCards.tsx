@@ -41,25 +41,35 @@ export function ServerSettingsCards() {
     return typeof r?.value === "number" ? r.value : fallback;
   };
 
+  // Each card seeds local `useState` from its `initial` prop once at mount.
+  // Keying the card on the underlying setting value remounts it whenever
+  // that value changes — after this admin's save, or an external change
+  // (another admin/tab) the settings query picks up — so a card never
+  // shows stale local state. Same resync pattern as ProviderConfigForm (D7).
+  const rateLimit = asBool("auth.rate_limit_enabled", true);
+  const logLevel = asString("observability.log_level", "info");
+  const panelsMode = asString("compat.opds_panels_mode", "off");
+  const zipLru = asUint("cache.zip_lru_capacity", 64);
+  const workers = {
+    scan_count: asUint("workers.scan_count", 4),
+    post_scan_count: asUint("workers.post_scan_count", 2),
+    scan_batch_size: asUint("workers.scan_batch_size", 100),
+    scan_hash_buffer_kb: asUint("workers.scan_hash_buffer_kb", 1024),
+    archive_work_parallel: asUint("workers.archive_work_parallel", 4),
+    thumb_inline_parallel: asUint("workers.thumb_inline_parallel", 8),
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <HardeningCard initial={asBool("auth.rate_limit_enabled", true)} />
-        <DiagnosticsCard
-          initial={asString("observability.log_level", "info")}
-        />
+        <HardeningCard key={`hardening-${rateLimit}`} initial={rateLimit} />
+        <DiagnosticsCard key={`diag-${logLevel}`} initial={logLevel} />
       </div>
-      <CompatibilityCard initial={asString("compat.opds_panels_mode", "off")} />
-      <CachingCard initial={asUint("cache.zip_lru_capacity", 64)} />
+      <CompatibilityCard key={`compat-${panelsMode}`} initial={panelsMode} />
+      <CachingCard key={`caching-${zipLru}`} initial={zipLru} />
       <WorkersCard
-        initial={{
-          scan_count: asUint("workers.scan_count", 4),
-          post_scan_count: asUint("workers.post_scan_count", 2),
-          scan_batch_size: asUint("workers.scan_batch_size", 100),
-          scan_hash_buffer_kb: asUint("workers.scan_hash_buffer_kb", 1024),
-          archive_work_parallel: asUint("workers.archive_work_parallel", 4),
-          thumb_inline_parallel: asUint("workers.thumb_inline_parallel", 8),
-        }}
+        key={`workers-${Object.values(workers).join("-")}`}
+        initial={workers}
       />
     </div>
   );

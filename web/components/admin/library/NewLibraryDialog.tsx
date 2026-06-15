@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useCreateLibrary } from "@/lib/api/mutations";
+import { applyServerErrors } from "@/lib/api/form-errors";
 
 import { DirectoryPicker } from "./DirectoryPicker";
 
@@ -81,6 +82,10 @@ export function NewLibraryDialog() {
         setOpen(false);
         form.reset();
       },
+      // Bind the server's field-level 422 details (CreateLibraryReq is
+      // garde-validated) onto the matching inputs; the mutation hook still
+      // toasts a summary. H2 adoption.
+      onError: (err) => applyServerErrors(form.setError, err),
     });
   });
 
