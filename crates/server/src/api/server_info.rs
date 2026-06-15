@@ -22,7 +22,9 @@ use crate::state::AppState;
 use server_macros::handler;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(info))
+    OpenApiRouter::new()
+        .routes(routes!(info))
+        .routes(routes!(restart_pending))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -142,4 +144,67 @@ pub async fn info(State(app): State<AppState>, _admin: RequireAdmin) -> Response
         watchers_enabled,
     })
     .into_response()
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RestartPendingItem {
+    /// Setting registry key, e.g. `workers.scan_count`.
+    pub key: String,
+    /// Value the running process booted with (display string).
+    pub boot_value: String,
+    /// Value currently persisted — what the admin form shows and what the
+    /// next restart will pick up (display string).
+    pub current_value: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RestartPendingView {
+    /// Boot-only settings whose persisted value now differs from the value
+    /// the process is actually running. Empty when nothing needs a restart.
+    pub pending: Vec<RestartPendingItem>,
+}
+
+/// `GET /admin/server/restart-pending` — boot-only settings (worker pools,
+/// ZIP LRU, the metadata weekly-refresh cron) whose persisted value has been
+/// changed since startup and so won't take effect until the server restarts.
+///
+/// Diffs the boot-time `Config` snapshot ([`AppState::cfg_boot`]) against the
+/// live one. Read-only; no audit row (allow-listed in `audit-check`).
+#[utoipa::path(
+    operation_id = "server_info_restart_pending",    get,
+    path = "/admin/server/restart-pending",
+    responses(
+        (status = 200, body = RestartPendingView),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn restart_pending(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
+    let boot = app.cfg_boot();
+    let current = app.cfg();
+    let pending = crate::settings::registry::RESTART_REQUIRED_KEYS
+        .iter()
+        .filter_map(|&key| {
+            let boot_value = crate::config::restart_setting_value(&boot, key)?;
+            let current_value = crate::config::restart_setting_value(&current, key)?;
+            if boot_value == current_value {
+                return None;
+            }
+            Some(RestartPendingItem {
+                key: key.to_string(),
+                boot_value: display_value(&boot_value),
+                current_value: display_value(&current_value),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Json(RestartPendingView { pending }).into_response()
+}
+
+/// Render a setting JSON value as a bare display string — a number as its
+/// digits, a string without surrounding quotes.
+fn display_value(v: &serde_json::Value) -> String {
+    v.as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| v.to_string())
 }

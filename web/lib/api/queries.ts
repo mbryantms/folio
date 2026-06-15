@@ -99,6 +99,7 @@ import type {
   LatestReleaseView,
   OcrModelsView,
   ServerInfoView,
+  RestartPendingView,
   SessionListView,
   SortOrder,
   ThumbnailsSettingsView,
@@ -1075,6 +1076,22 @@ export function useServerInfo(opts?: {
     enabled,
     refetchInterval: intervalMs,
     staleTime: intervalMs,
+  });
+}
+
+/** Boot-only settings (worker pools, ZIP LRU, metadata cron) whose
+ *  persisted value changed since startup and need a restart to apply.
+ *  Admin-only; gate with `enabled` so it never fires on the shared shell
+ *  for a non-admin user. Polled lightly — restart state only changes on a
+ *  settings save. */
+export function useRestartPending(opts?: { enabled?: boolean }) {
+  const { enabled = true } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.restartPending,
+    queryFn: () =>
+      jsonFetch<RestartPendingView>("/admin/server/restart-pending"),
+    enabled,
+    staleTime: 30_000,
   });
 }
 

@@ -353,3 +353,44 @@ pub fn affects_oidc(key: &str) -> bool {
 pub fn affects_log_level(key: &str) -> bool {
     key == "observability.log_level"
 }
+
+/// Setting keys whose value is consumed only at process boot: the apalis
+/// worker-pool sizes + scan tuning, the ZIP LRU capacity, and the metadata
+/// weekly-refresh cron (registered with `tokio_cron_scheduler` at startup).
+///
+/// A `PATCH /admin/settings` rebuilds the live [`crate::config::Config`] (so
+/// the admin form reflects the new value immediately), but the running
+/// process keeps using the *boot* value for these until it restarts. The
+/// restart-pending banner diffs a boot-time `Config` snapshot against the
+/// live one over exactly this set — see
+/// [`crate::config::restart_setting_value`] for the per-key extractor.
+pub const RESTART_REQUIRED_KEYS: &[&str] = &[
+    "cache.zip_lru_capacity",
+    "workers.scan_count",
+    "workers.post_scan_count",
+    "workers.scan_batch_size",
+    "workers.scan_hash_buffer_kb",
+    "workers.archive_work_parallel",
+    "workers.thumb_inline_parallel",
+    "metadata.weekly_refresh_cron",
+];
+
+/// True when a change to `key` only takes effect after a server restart.
+pub fn requires_restart(key: &str) -> bool {
+    RESTART_REQUIRED_KEYS.contains(&key)
+}
+
+#[cfg(test)]
+mod restart_keys_tests {
+    use super::*;
+
+    #[test]
+    fn every_restart_required_key_is_a_known_setting() {
+        for key in RESTART_REQUIRED_KEYS {
+            assert!(
+                is_known(key),
+                "RESTART_REQUIRED_KEYS lists unknown setting `{key}` (typo or removed?)"
+            );
+        }
+    }
+}

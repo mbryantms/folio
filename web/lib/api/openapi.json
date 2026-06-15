@@ -1877,6 +1877,28 @@
         }
       }
     },
+    "/api/admin/server/restart-pending": {
+      "get": {
+        "summary": "`GET /admin/server/restart-pending` — boot-only settings (worker pools,\nZIP LRU, the metadata weekly-refresh cron) whose persisted value has been\nchanged since startup and so won't take effect until the server restarts.",
+        "description": "Diffs the boot-time `Config` snapshot ([`AppState::cfg_boot`]) against the\nlive one. Read-only; no audit row (allow-listed in `audit-check`).",
+        "operationId": "server_info_restart_pending",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestartPendingView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/settings": {
       "get": {
         "operationId": "admin_settings_get_all",
@@ -18014,6 +18036,43 @@
             "type": "string"
           },
           "value": {}
+        }
+      },
+      "RestartPendingItem": {
+        "type": "object",
+        "required": [
+          "key",
+          "boot_value",
+          "current_value"
+        ],
+        "properties": {
+          "boot_value": {
+            "type": "string",
+            "description": "Value the running process booted with (display string)."
+          },
+          "current_value": {
+            "type": "string",
+            "description": "Value currently persisted — what the admin form shows and what the\nnext restart will pick up (display string)."
+          },
+          "key": {
+            "type": "string",
+            "description": "Setting registry key, e.g. `workers.scan_count`."
+          }
+        }
+      },
+      "RestartPendingView": {
+        "type": "object",
+        "required": [
+          "pending"
+        ],
+        "properties": {
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestartPendingItem"
+            },
+            "description": "Boot-only settings whose persisted value now differs from the value\nthe process is actually running. Empty when nothing needs a restart."
+          }
         }
       },
       "RestoreResponse": {

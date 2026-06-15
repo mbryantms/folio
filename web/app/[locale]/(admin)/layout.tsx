@@ -34,6 +34,7 @@ export default async function AdminLayout({
       title="Admin"
       homeHref={`/`}
       showScanBeacon
+      showRestartBanner
       defaultSidebar={defaultSidebar}
     >
       {children}

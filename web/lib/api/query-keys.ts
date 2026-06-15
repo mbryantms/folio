@@ -169,6 +169,8 @@ export const queryKeys = {
     ["admin", "users", userId, "reading-stats", range] as const,
   /** Server info — version, uptime, redis/postgres pings. */
   serverInfo: ["admin", "server-info"] as const,
+  /** Boot-only settings changed since startup (need a restart). */
+  restartPending: ["admin", "restart-pending"] as const,
   latestRelease: ["admin", "latest-release"] as const,
   /** OCR model download / on-disk state (text-detection-1.0 M5). */
   ocrModels: ["admin", "ocr-models"] as const,

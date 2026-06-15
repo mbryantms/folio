@@ -786,6 +786,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/server/restart-pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /admin/server/restart-pending` — boot-only settings (worker pools,
+         *     ZIP LRU, the metadata weekly-refresh cron) whose persisted value has been
+         *     changed since startup and so won't take effect until the server restarts.
+         * @description Diffs the boot-time `Config` snapshot ([`AppState::cfg_boot`]) against the
+         *     live one. Read-only; no audit row (allow-listed in `audit-check`).
+         */
+        get: operations["server_info_restart_pending"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/settings": {
         parameters: {
             query?: never;
@@ -7590,6 +7613,24 @@ export interface components {
             key: string;
             value: unknown;
         };
+        RestartPendingItem: {
+            /** @description Value the running process booted with (display string). */
+            boot_value: string;
+            /**
+             * @description Value currently persisted — what the admin form shows and what the
+             *     next restart will pick up (display string).
+             */
+            current_value: string;
+            /** @description Setting registry key, e.g. `workers.scan_count`. */
+            key: string;
+        };
+        RestartPendingView: {
+            /**
+             * @description Boot-only settings whose persisted value now differs from the value
+             *     the process is actually running. Empty when nothing needs a restart.
+             */
+            pending: components["schemas"]["RestartPendingItem"][];
+        };
         RestoreResponse: {
             issue_id: string;
             status: string;
@@ -10738,6 +10779,32 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    server_info_restart_pending: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestartPendingView"];
+                };
             };
             /** @description admin only */
             403: {

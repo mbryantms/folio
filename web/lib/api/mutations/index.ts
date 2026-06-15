@@ -1970,6 +1970,9 @@ export function useUpdateSettings() {
         qc.invalidateQueries({ queryKey: queryKeys.adminSettings });
         qc.invalidateQueries({ queryKey: queryKeys.adminAuthConfig });
         qc.invalidateQueries({ queryKey: queryKeys.adminEmailStatus });
+        // Boot-only keys (workers/cache/metadata cron) may now differ from
+        // the running process — refresh the restart-pending banner.
+        qc.invalidateQueries({ queryKey: queryKeys.restartPending });
         // metadata-providers M6: edits to `metadata.*` keys reshape
         // both the dashboard + providers lists immediately.
         qc.invalidateQueries({ queryKey: ["admin", "metadata"] });
