@@ -18,12 +18,14 @@ import {
   CREDIT_ROLES,
   type CreditKey,
   type CreditState,
+  type MetadataCompletenessTier,
   RATING_MIN,
   RATING_MAX,
 } from "./library-grid-filters";
 
 export type LibraryGridFilterSnapshot = {
   status: string;
+  metadataCompleteness: MetadataCompletenessTier | undefined;
   yearFrom: string;
   yearTo: string;
   publishers: string[];
@@ -74,6 +76,17 @@ export function libraryGridStateToFilterBuilderState(
       field: "status",
       op: "is",
       value: s.status,
+    });
+  }
+
+  // Completeness is a first-class saved-view field — carry it so a saved
+  // "Needs metadata" worklist keeps filtering after the grid hands off.
+  if (s.metadataCompleteness) {
+    conditions.push({
+      group_id: 0,
+      field: "metadata_completeness",
+      op: "is",
+      value: s.metadataCompleteness,
     });
   }
 

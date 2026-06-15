@@ -97,6 +97,8 @@ export function LibraryGridView({
     setOrder,
     status,
     setStatus,
+    metadataCompleteness,
+    setMetadataCompleteness,
     readStatus,
     setReadStatus,
     yearFrom,
@@ -297,6 +299,7 @@ export function LibraryGridView({
     const result = libraryGridStateToFilterBuilderState(
       {
         status,
+        metadataCompleteness,
         yearFrom,
         yearTo,
         publishers,
@@ -418,6 +421,7 @@ export function LibraryGridView({
       {facetCount > 0 ? (
         <ActiveChips
           status={status}
+          metadataCompleteness={metadataCompleteness}
           readStatus={readStatus}
           yearFrom={yearFrom}
           yearTo={yearTo}
@@ -433,6 +437,7 @@ export function LibraryGridView({
           teams={teams}
           locations={locations}
           onClearStatus={() => setStatus("any")}
+          onClearMetadataCompleteness={() => setMetadataCompleteness(undefined)}
           onRemoveReadStatus={(v) =>
             setReadStatus(readStatus.filter((x) => x !== v))
           }
@@ -538,6 +543,8 @@ export function LibraryGridView({
         libraryId={libraryId}
         status={status}
         onStatus={setStatus}
+        metadataCompleteness={metadataCompleteness}
+        onMetadataCompleteness={setMetadataCompleteness}
         readStatus={readStatus}
         onReadStatus={setReadStatus}
         yearFrom={yearFrom}

@@ -78,6 +78,7 @@ describe("serializeLibraryGridFilters", () => {
     const state = baseState({
       mode: "issues",
       status: "ended",
+      metadataCompleteness: "needs_metadata",
       readStatus: ["unread", "in_progress"],
       yearFrom: "1990",
       yearTo: "2005",
@@ -98,6 +99,7 @@ describe("serializeLibraryGridFilters", () => {
     expect(parsed).toMatchObject({
       mode: "issues",
       status: "ended",
+      metadataCompleteness: "needs_metadata",
       readStatus: ["unread", "in_progress"],
       yearFrom: "1990",
       yearTo: "2005",
@@ -124,5 +126,21 @@ describe("serializeLibraryGridFilters", () => {
     expect(serializeLibraryGridFilters(baseState({ status: "any" }))).toBe(
       "library=all",
     );
+  });
+
+  it("emits the metadata_completeness worklist param and round-trips it", () => {
+    const qs = serializeLibraryGridFilters(
+      baseState({ metadataCompleteness: "needs_metadata" }),
+    );
+    expect(qs).toContain("metadata_completeness=needs_metadata");
+    expect(parseLibraryGridFilters(parseQs(qs))).toMatchObject({
+      metadataCompleteness: "needs_metadata",
+    });
+  });
+
+  it("ignores an unknown metadata_completeness value (defends the deep-link)", () => {
+    expect(
+      parseLibraryGridFilters({ metadata_completeness: "bogus" }),
+    ).toBeUndefined();
   });
 });
