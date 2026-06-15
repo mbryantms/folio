@@ -82,10 +82,17 @@ export function MetadataMatchDialog({
   open,
   onOpenChange,
   scope,
+  onApplied,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   scope: MetadataMatchScope;
+  /** Fired once an apply lands (rescan completed / timeout fallback),
+   *  after re-hydration. When provided, it replaces the default
+   *  close-on-apply — the worklist controller uses it to advance to the
+   *  next series instead of dismissing. Omit for the standalone dialog,
+   *  which just closes. */
+  onApplied?: () => void;
 }) {
   // The compare view renders a wide per-candidate table; widen the
   // dialog while it's active so columns aren't crushed. The inner form
@@ -102,6 +109,7 @@ export function MetadataMatchDialog({
         <MetadataMatchForm
           scope={scope}
           onClose={() => onOpenChange(false)}
+          onApplied={onApplied}
           open={open}
           onCompareModeChange={setWide}
         />
@@ -117,11 +125,15 @@ export function MetadataMatchDialog({
 export function MetadataMatchForm({
   scope,
   onClose,
+  onApplied,
   open,
   onCompareModeChange,
 }: {
   scope: MetadataMatchScope;
   onClose: () => void;
+  /** Fired after a successful apply re-hydrates. When set, the dialog
+   *  defers to it instead of self-closing (worklist auto-advance). */
+  onApplied?: () => void;
   /** Used to gate the auto-kickoff effect so the search only fires
    *  once when the dialog opens. */
   open: boolean;
@@ -605,7 +617,9 @@ export function MetadataMatchForm({
       // The rescan re-ingested the freshly-written XML, so the DB cache is
       // now current — pull it into the page before closing.
       rehydrate();
-      onClose();
+      // Worklist controller advances to the next series; standalone closes.
+      if (onApplied) onApplied();
+      else onClose();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanEvents.events, waitingForRescan]);
@@ -626,7 +640,8 @@ export function MetadataMatchForm({
       toast.info(
         "Refreshing — reopen the page if the latest data isn't shown yet.",
       );
-      onClose();
+      if (onApplied) onApplied();
+      else onClose();
     }, 30_000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
