@@ -185,6 +185,10 @@ export type SeriesListFilters = {
    *  `in_progress`, `read` (OR-combined). Matches the saved-views
    *  three-state rollup; a never-touched series reads as `unread`. */
   read_status?: string;
+  /** Single metadata-completeness tier (`complete` | `partial` |
+   *  `needs_metadata`). Filters by the per-series rollup behind the cover
+   *  "meta" badge — `needs_metadata` is the "Unmatched" worklist (B4). */
+  metadata_completeness?: string;
 };
 
 export type IssueListFilters = {

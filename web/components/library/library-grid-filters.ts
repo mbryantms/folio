@@ -35,6 +35,26 @@ export const RATING_MIN = 0;
 export const RATING_MAX = 5;
 export const RATING_STEP = 0.5;
 
+/** Per-series metadata-completeness tiers the grid can filter on — the
+ *  same rollup the cover "meta" badge surfaces. `needs_metadata` is the
+ *  "Unmatched" worklist (B4). Mirrors the server's `COMPLETENESS_TIERS`
+ *  and the `metadata_completeness` saved-view enum. */
+export const METADATA_COMPLETENESS_TIERS = [
+  "complete",
+  "partial",
+  "needs_metadata",
+] as const;
+export type MetadataCompletenessTier =
+  (typeof METADATA_COMPLETENESS_TIERS)[number];
+export const METADATA_COMPLETENESS_LABELS: Record<
+  MetadataCompletenessTier,
+  string
+> = {
+  complete: "Complete",
+  partial: "Partial",
+  needs_metadata: "Needs metadata",
+};
+
 /** Library grid mode — series-level (default) or issue-level. URL
  *  param `mode=issues` lands on the issues view; anything else falls
  *  through to series. */
@@ -48,6 +68,9 @@ export type LibraryGridMode = "series" | "issues";
 export type LibraryGridInitialFilters = {
   mode?: LibraryGridMode;
   status?: string;
+  /** Metadata-completeness tier (series mode only) — the `metadata_completeness`
+   *  query param. `needs_metadata` is the worklist deep-link target. */
+  metadataCompleteness?: MetadataCompletenessTier;
   /** Per-user read state — CSV subset of `unread,in_progress,read`
    *  (series mode only). */
   readStatus?: string[];
@@ -109,9 +132,15 @@ export function parseLibraryGridFilters(
       : raw.mode === "series"
         ? "series"
         : undefined;
+  const completeness = raw.metadata_completeness;
   const out: LibraryGridInitialFilters = {
     mode,
     status: raw.status && raw.status !== "any" ? raw.status : undefined,
+    metadataCompleteness: (
+      METADATA_COMPLETENESS_TIERS as readonly string[]
+    ).includes(completeness ?? "")
+      ? (completeness as MetadataCompletenessTier)
+      : undefined,
     readStatus: csv("read_status"),
     yearFrom: raw.year_from || undefined,
     yearTo: raw.year_to || undefined,
@@ -141,6 +170,7 @@ export type LibraryGridUrlState = {
   library: string;
   mode: LibraryGridMode;
   status?: string;
+  metadataCompleteness?: MetadataCompletenessTier;
   readStatus: string[];
   yearFrom?: string;
   yearTo?: string;
@@ -173,6 +203,8 @@ export function serializeLibraryGridFilters(
   // so the grid's toolbar search stays local state.
   if (state.mode === "issues") sp.set("mode", "issues");
   if (state.status && state.status !== "any") sp.set("status", state.status);
+  if (state.metadataCompleteness)
+    sp.set("metadata_completeness", state.metadataCompleteness);
   if (state.readStatus.length)
     sp.set("read_status", state.readStatus.join(","));
   if (state.yearFrom?.trim()) sp.set("year_from", state.yearFrom.trim());

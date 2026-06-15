@@ -64,6 +64,41 @@ impl CompletenessTier {
     }
 }
 
+/// The SQL boolean that decides whether a single issue row counts as
+/// "metadata satisfied" for the per-series completeness rollup. `alias` is
+/// the table alias the caller bound the `issues` table to (e.g. `"i"`).
+///
+/// An operator "mark complete" acknowledgement (`metadata_review_accepted_at`)
+/// short-circuits to satisfied; otherwise the intrinsic core criteria must
+/// all hold — a plausible cover date, a summary, a positive page count, at
+/// least one creator credit, and a ComicVine/Metron external id. `title` is
+/// intentionally excluded (optional for comic issues), matching the pure
+/// [`assess_issue`] scorer.
+///
+/// This is the single source for the predicate so every SQL rollup that
+/// computes the tier — the card-badge tiers, the per-series summary, and the
+/// `/series?metadata_completeness=` grid filter — agrees to the row. (The
+/// saved-view `metadata_completeness` subquery in `views::compile` is the
+/// last copy still inlined; it builds the same expression and is being
+/// folded onto this helper.)
+#[must_use]
+pub fn issue_metadata_satisfied_sql(alias: &str) -> String {
+    let a = alias;
+    format!(
+        "{a}.metadata_review_accepted_at IS NOT NULL OR ( \
+         {a}.year IS NOT NULL AND {a}.year >= 1800 \
+         AND COALESCE(btrim({a}.summary), '') <> '' \
+         AND {a}.page_count IS NOT NULL AND {a}.page_count > 0 \
+         AND (COALESCE({a}.writer, '') <> '' OR COALESCE({a}.penciller, '') <> '' \
+           OR COALESCE({a}.inker, '') <> '' OR COALESCE({a}.colorist, '') <> '' \
+           OR COALESCE({a}.letterer, '') <> '' OR COALESCE({a}.cover_artist, '') <> '' \
+           OR COALESCE({a}.editor, '') <> '' OR COALESCE({a}.translator, '') <> '') \
+         AND EXISTS (SELECT 1 FROM external_ids x \
+           WHERE x.entity_type = 'issue' AND x.entity_id = {a}.id \
+           AND x.source IN ('comicvine', 'metron')))"
+    )
+}
+
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct CompletenessReport {
     pub tier: CompletenessTier,

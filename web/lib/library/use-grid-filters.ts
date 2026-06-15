@@ -13,6 +13,7 @@ import {
   type LibraryGridInitialFilters,
   type LibraryGridMode,
   type LibraryGridUrlState,
+  type MetadataCompletenessTier,
 } from "@/components/library/library-grid-filters";
 import type {
   IssuesCrossListFilters,
@@ -114,6 +115,11 @@ export function useLibraryGridFilters(
   // (a fresh search still defaults to relevance).
   const [sortExplicit, setSortExplicit] = React.useState(false);
   const [status, setStatus] = React.useState<string>(init.status ?? "any");
+  // Metadata-completeness tier (series mode only); undefined = unfiltered.
+  // The "Needs metadata" worklist deep-links here via ?metadata_completeness.
+  const [metadataCompleteness, setMetadataCompleteness] = React.useState<
+    MetadataCompletenessTier | undefined
+  >(init.metadataCompleteness);
   // Per-user read state (series mode only): CSV subset of
   // unread/in_progress/read; multiple values OR together.
   const [readStatus, setReadStatus] = React.useState<string[]>(
@@ -248,6 +254,8 @@ export function useLibraryGridFilters(
     status: status === "any" ? undefined : status,
     // read_status is a per-series rollup — series mode only.
     read_status: csvOrUndef(readStatus),
+    // Completeness rollup is series-only (the worklist filter).
+    metadata_completeness: metadataCompleteness,
   };
   const issueFilters: IssuesCrossListFilters = {
     ...sharedFilters,
@@ -259,6 +267,7 @@ export function useLibraryGridFilters(
     library: libraryParam,
     mode,
     status,
+    metadataCompleteness,
     readStatus,
     yearFrom,
     yearTo,
@@ -333,6 +342,7 @@ export function useLibraryGridFilters(
     applyParsedToState(parseLibraryGridFilters(raw) ?? {}, {
       setModeState,
       setStatus,
+      setMetadataCompleteness,
       setReadStatus,
       setYearFrom,
       setYearTo,
@@ -358,6 +368,7 @@ export function useLibraryGridFilters(
   );
   const facetCount =
     (status !== "any" ? 1 : 0) +
+    (metadataCompleteness ? 1 : 0) +
     readStatus.length +
     (yearFrom || yearTo ? 1 : 0) +
     (ratingRange ? 1 : 0) +
@@ -374,6 +385,7 @@ export function useLibraryGridFilters(
 
   function clearFacets() {
     setStatus("any");
+    setMetadataCompleteness(undefined);
     setReadStatus([]);
     setYearFrom("");
     setYearTo("");
@@ -411,6 +423,8 @@ export function useLibraryGridFilters(
     // Facets (state + setters)
     status,
     setStatus,
+    metadataCompleteness,
+    setMetadataCompleteness,
     readStatus,
     setReadStatus,
     yearFrom,
@@ -464,6 +478,7 @@ function urlStateFromParsed(
     library,
     mode: p.mode ?? fallbackMode,
     status: p.status,
+    metadataCompleteness: p.metadataCompleteness,
     readStatus: p.readStatus ?? [],
     yearFrom: p.yearFrom,
     yearTo: p.yearTo,
@@ -484,6 +499,7 @@ function urlStateFromParsed(
 type FacetSetters = {
   setModeState: (m: LibraryGridMode) => void;
   setStatus: (v: string) => void;
+  setMetadataCompleteness: (v: MetadataCompletenessTier | undefined) => void;
   setReadStatus: (v: string[]) => void;
   setYearFrom: (v: string) => void;
   setYearTo: (v: string) => void;
@@ -509,6 +525,7 @@ function applyParsedToState(
 ): void {
   if (p.mode) s.setModeState(p.mode);
   s.setStatus(p.status ?? "any");
+  s.setMetadataCompleteness(p.metadataCompleteness);
   s.setReadStatus(p.readStatus ?? []);
   s.setYearFrom(p.yearFrom ?? "");
   s.setYearTo(p.yearTo ?? "");

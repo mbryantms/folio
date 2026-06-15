@@ -1128,10 +1128,18 @@ pub struct ListSeriesQuery {
     /// all three (or none valid) is a no-op.
     #[serde(default)]
     pub read_status: Option<String>,
+    /// Single metadata-completeness tier (`complete` | `partial` |
+    /// `needs_metadata`). Filters series by the same per-series rollup the
+    /// card badge shows, so the "Needs metadata" worklist grid and a
+    /// `metadata_completeness` saved view agree to the row. A series with
+    /// zero active issues never matches any tier.
+    #[serde(default)]
+    pub metadata_completeness: Option<String>,
 }
 
 const VALID_STATUSES: &[&str] = &["continuing", "ended", "cancelled", "hiatus"];
 const READ_STATUSES: &[&str] = &["unread", "in_progress", "read"];
+const COMPLETENESS_TIERS: &[&str] = &["complete", "partial", "needs_metadata"];
 
 pub(crate) fn split_csv(raw: &str) -> Vec<String> {
     raw.split(',')
@@ -1259,6 +1267,11 @@ fn validate_list_series_query_params(q: &ListSeriesQuery) -> Result<(), &'static
             .any(|s| !READ_STATUSES.contains(&s.as_str()))
     {
         return Err("read_status must be unread, in_progress, or read");
+    }
+    if let Some(s) = q.metadata_completeness.as_deref()
+        && !COMPLETENESS_TIERS.contains(&s.trim())
+    {
+        return Err("metadata_completeness must be complete, partial, or needs_metadata");
     }
     Ok(())
 }
@@ -1488,6 +1501,42 @@ fn apply_series_read_status_filter(
     select
 }
 
+/// `metadata_completeness` grid facet (single tier). Filters series by the
+/// per-series completeness rollup — the same `complete_count >= active_count`
+/// / `= 0` / in-between split the card-badge tier and the saved-view
+/// `metadata_completeness` predicate use — via a correlated EXISTS over the
+/// per-series issue aggregate. A series with zero active issues never matches
+/// (mirrors the rollup, which drops `active_count == 0` series). Invalid
+/// values are rejected upstream in `validate_list_series_query_params`; the
+/// guard here is a defensive no-op.
+fn apply_series_metadata_completeness_filter(
+    select: sea_orm::Select<series::Entity>,
+    q: &ListSeriesQuery,
+) -> sea_orm::Select<series::Entity> {
+    let Some(tier) = q.metadata_completeness.as_deref().map(str::trim) else {
+        return select;
+    };
+    if !COMPLETENESS_TIERS.contains(&tier) {
+        return select;
+    }
+    let tier_cond = match tier {
+        "needs_metadata" => "agg.complete_count = 0",
+        "complete" => "agg.complete_count >= agg.active_count",
+        // partial
+        _ => "agg.complete_count > 0 AND agg.complete_count < agg.active_count",
+    };
+    let satisfied = crate::metadata::completeness::issue_metadata_satisfied_sql("i");
+    let sql = format!(
+        "EXISTS (SELECT 1 FROM ( \
+           SELECT COUNT(*) AS active_count, \
+                  COUNT(*) FILTER (WHERE {satisfied}) AS complete_count \
+             FROM issues i \
+            WHERE i.series_id = series.id AND i.state = 'active' AND i.removed_at IS NULL \
+         ) agg WHERE agg.active_count > 0 AND {tier_cond})"
+    );
+    select.filter(Expr::cust(&sql))
+}
+
 /// Decode the opaque cursor and dispatch to the per-sort
 /// `apply_*_cursor` helper. Static `Err` keeps the `Result` variant
 /// small (clippy::result_large_err); caller maps to 400 `validation`.
@@ -1667,6 +1716,7 @@ pub async fn list(
     select = apply_series_cast_setting_filters(select, &q);
     select = apply_series_user_rating_filter(select, &q, user.id);
     select = apply_series_read_status_filter(select, &q, user.id);
+    select = apply_series_metadata_completeness_filter(select, &q);
 
     let limit = clamp_limit(q.limit);
     let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
@@ -1959,38 +2009,23 @@ async fn fetch_metadata_completeness_tiers(
             format!("${}", params.len())
         })
         .collect();
+    // Single source for the per-issue "satisfied" predicate — an operator
+    // "mark complete" acknowledgement counts as satisfied, so an all-accepted
+    // series drops out of the needs-metadata worklist. Shared with the
+    // per-series summary and the `metadata_completeness` grid filter so they
+    // never disagree about a row.
+    let satisfied = crate::metadata::completeness::issue_metadata_satisfied_sql("i");
     let sql = format!(
         r#"
         SELECT i.series_id AS series_id,
                COUNT(*)::bigint AS active_count,
-               COUNT(*) FILTER (
-                 -- An operator "mark complete" acknowledgement (B4) counts as
-                 -- satisfied for the rollup, so an all-accepted series drops out
-                 -- of the needs-metadata worklist. `title` intentionally
-                 -- excluded from the intrinsic criteria: optional for comics.
-                 WHERE i.metadata_review_accepted_at IS NOT NULL OR (
-                   i.year IS NOT NULL AND i.year >= 1800
-                   AND COALESCE(btrim(i.summary), '') <> ''
-                   AND i.page_count IS NOT NULL AND i.page_count > 0
-                   AND (
-                     COALESCE(i.writer, '') <> '' OR COALESCE(i.penciller, '') <> '' OR
-                     COALESCE(i.inker, '') <> '' OR COALESCE(i.colorist, '') <> '' OR
-                     COALESCE(i.letterer, '') <> '' OR COALESCE(i.cover_artist, '') <> '' OR
-                     COALESCE(i.editor, '') <> '' OR COALESCE(i.translator, '') <> ''
-                   )
-                   AND EXISTS (
-                     SELECT 1 FROM external_ids x
-                     WHERE x.entity_type = 'issue' AND x.entity_id = i.id
-                       AND x.source IN ('comicvine', 'metron')
-                   )
-                 )
-               )::bigint AS complete_count
+               COUNT(*) FILTER (WHERE {satisfied})::bigint AS complete_count
           FROM issues i
          WHERE i.state = 'active' AND i.removed_at IS NULL
-           AND i.series_id IN ({})
+           AND i.series_id IN ({placeholders})
          GROUP BY i.series_id
     "#,
-        placeholders.join(",")
+        placeholders = placeholders.join(",")
     );
     let backend = app.db.get_database_backend();
     let stmt = Statement::from_sql_and_values(backend, sql, params);
@@ -3027,35 +3062,19 @@ async fn compute_metadata_completeness_summary(
         active_count: i64,
         complete_count: i64,
     }
-    let sql = r#"
+    // Same shared "satisfied" predicate as the worklist rollup / grid filter.
+    let satisfied = crate::metadata::completeness::issue_metadata_satisfied_sql("i");
+    let sql = format!(
+        r#"
         SELECT
           COUNT(*)::bigint AS active_count,
-          COUNT(*) FILTER (
-            -- An operator "mark complete" acknowledgement (B4) counts as
-            -- satisfied, keeping this summary in step with the worklist rollup.
-            -- `title` intentionally excluded from the intrinsic criteria.
-            WHERE i.metadata_review_accepted_at IS NOT NULL OR (
-              i.year IS NOT NULL AND i.year >= 1800
-              AND COALESCE(btrim(i.summary), '') <> ''
-              AND i.page_count IS NOT NULL AND i.page_count > 0
-              AND (
-                COALESCE(i.writer, '') <> '' OR COALESCE(i.penciller, '') <> '' OR
-                COALESCE(i.inker, '') <> '' OR COALESCE(i.colorist, '') <> '' OR
-                COALESCE(i.letterer, '') <> '' OR COALESCE(i.cover_artist, '') <> '' OR
-                COALESCE(i.editor, '') <> '' OR COALESCE(i.translator, '') <> ''
-              )
-              AND EXISTS (
-                SELECT 1 FROM external_ids x
-                WHERE x.entity_type = 'issue' AND x.entity_id = i.id
-                  AND x.source IN ('comicvine', 'metron')
-              )
-            )
-          )::bigint AS complete_count
+          COUNT(*) FILTER (WHERE {satisfied})::bigint AS complete_count
         FROM issues i
         WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
-    "#;
+    "#
+    );
     let backend = app.db.get_database_backend();
-    let stmt = Statement::from_sql_and_values(backend, sql, [series_id.into()]);
+    let stmt = Statement::from_sql_and_values(backend, &sql, [series_id.into()]);
     Row::find_by_statement(stmt)
         .one(&app.db)
         .await

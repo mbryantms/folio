@@ -11,6 +11,7 @@ function snapshot(
 ) {
   return {
     status: "any",
+    metadataCompleteness: undefined,
     yearFrom: "",
     yearTo: "",
     publishers: [],
@@ -54,6 +55,21 @@ describe("libraryGridStateToFilterBuilderState", () => {
     );
     expect(result.state.conditions).toEqual([
       { group_id: 0, field: "status", op: "is", value: "continuing" },
+    ]);
+  });
+
+  it("maps metadataCompleteness to `metadata_completeness is`", () => {
+    const result = libraryGridStateToFilterBuilderState(
+      snapshot({ metadataCompleteness: "needs_metadata" }),
+      TODAY,
+    );
+    expect(result.state.conditions).toEqual([
+      {
+        group_id: 0,
+        field: "metadata_completeness",
+        op: "is",
+        value: "needs_metadata",
+      },
     ]);
   });
 

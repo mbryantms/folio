@@ -6,8 +6,10 @@ import {
   CREDIT_ROLES,
   type CreditKey,
   type CreditState,
+  type MetadataCompletenessTier,
 } from "@/components/library/library-grid-filters";
 import {
+  LIBRARY_GRID_METADATA_COMPLETENESS_OPTIONS,
   LIBRARY_GRID_READ_STATUS_OPTIONS,
   LIBRARY_GRID_STATUS_OPTIONS,
 } from "@/components/library/FilterSheet";
@@ -21,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
  */
 export function ActiveChips({
   status,
+  metadataCompleteness,
   readStatus,
   yearFrom,
   yearTo,
@@ -36,6 +39,7 @@ export function ActiveChips({
   teams,
   locations,
   onClearStatus,
+  onClearMetadataCompleteness,
   onRemoveReadStatus,
   onClearYear,
   onClearRating,
@@ -51,6 +55,7 @@ export function ActiveChips({
   onRemoveLocation,
 }: {
   status: string;
+  metadataCompleteness: MetadataCompletenessTier | undefined;
   readStatus: string[];
   yearFrom: string;
   yearTo: string;
@@ -66,6 +71,7 @@ export function ActiveChips({
   teams: string[];
   locations: string[];
   onClearStatus: () => void;
+  onClearMetadataCompleteness: () => void;
   onRemoveReadStatus: (v: string) => void;
   onClearYear: () => void;
   onClearRating: () => void;
@@ -86,6 +92,15 @@ export function ActiveChips({
         <Chip
           label={`Status: ${labelFor(LIBRARY_GRID_STATUS_OPTIONS, status)}`}
           onRemove={onClearStatus}
+        />
+      ) : null}
+      {metadataCompleteness ? (
+        <Chip
+          label={`Metadata: ${labelFor(
+            LIBRARY_GRID_METADATA_COMPLETENESS_OPTIONS,
+            metadataCompleteness,
+          )}`}
+          onRemove={onClearMetadataCompleteness}
         />
       ) : null}
       {readStatus.map((v) => (

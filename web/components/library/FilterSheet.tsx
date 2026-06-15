@@ -11,6 +11,7 @@ import {
   type CreditKey,
   type CreditState,
   type LibraryGridMode,
+  type MetadataCompletenessTier,
 } from "@/components/library/library-grid-filters";
 import { MultiSelectEditor } from "@/components/filters/value-editors/MultiSelectEditor";
 import type { OptionsEndpoint } from "@/components/filters/field-registry";
@@ -57,6 +58,16 @@ const READ_STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "read", label: "Read" },
 ];
 
+/** Metadata-completeness tiers (series mode). `any` is the sentinel for
+ *  "unfiltered"; the rest map to the server's `metadata_completeness`
+ *  param. Worklist-first ordering — "Needs metadata" sits up top. */
+const METADATA_COMPLETENESS_OPTIONS: { value: string; label: string }[] = [
+  { value: "any", label: "Any" },
+  { value: "needs_metadata", label: "Needs metadata" },
+  { value: "partial", label: "Partial" },
+  { value: "complete", label: "Complete" },
+];
+
 /**
  * Right-side sheet drawer holding the metadata-driven filter facets:
  * status / year range / my-rating slider / multi-selects for
@@ -71,6 +82,8 @@ export function FilterSheet({
   libraryId,
   status,
   onStatus,
+  metadataCompleteness,
+  onMetadataCompleteness,
   readStatus,
   onReadStatus,
   yearFrom,
@@ -106,6 +119,8 @@ export function FilterSheet({
   libraryId: string | null;
   status: string;
   onStatus: (v: string) => void;
+  metadataCompleteness: MetadataCompletenessTier | undefined;
+  onMetadataCompleteness: (v: MetadataCompletenessTier | undefined) => void;
   readStatus: string[];
   onReadStatus: (v: string[]) => void;
   yearFrom: string;
@@ -187,6 +202,32 @@ export function FilterSheet({
                   </SelectTrigger>
                   <SelectContent>
                     {STATUS_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Section>
+            ) : null}
+            {/* Metadata-completeness rollup — series only. `needs_metadata`
+                is the "Unmatched" worklist; the cover "meta" badge surfaces
+                the same tier. */}
+            {mode === "series" ? (
+              <Section title="Metadata">
+                <Select
+                  value={metadataCompleteness ?? "any"}
+                  onValueChange={(v) =>
+                    onMetadataCompleteness(
+                      v === "any" ? undefined : (v as MetadataCompletenessTier),
+                    )
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {METADATA_COMPLETENESS_OPTIONS.map((o) => (
                       <SelectItem key={o.value} value={o.value}>
                         {o.label}
                       </SelectItem>
@@ -425,3 +466,5 @@ function Section({
  */
 export const LIBRARY_GRID_STATUS_OPTIONS = STATUS_OPTIONS;
 export const LIBRARY_GRID_READ_STATUS_OPTIONS = READ_STATUS_OPTIONS;
+export const LIBRARY_GRID_METADATA_COMPLETENESS_OPTIONS =
+  METADATA_COMPLETENESS_OPTIONS;
