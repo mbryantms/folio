@@ -291,6 +291,8 @@ async fn seed_library_with_metadata(
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
         cover_page_index: Set(0),
+        metadata_review_accepted_at: Set(None),
+        metadata_review_accepted_by: Set(None),
     }
     .insert(&db)
     .await
@@ -1261,6 +1263,8 @@ async fn seed_series_with_issue_csv(
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
         cover_page_index: Set(0),
+        metadata_review_accepted_at: Set(None),
+        metadata_review_accepted_by: Set(None),
     }
     .insert(&db)
     .await
@@ -1642,6 +1646,8 @@ async fn seed_issue_full(
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
         cover_page_index: Set(0),
+        metadata_review_accepted_at: Set(None),
+        metadata_review_accepted_by: Set(None),
     }
     .insert(&db)
     .await

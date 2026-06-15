@@ -40,6 +40,28 @@ pub enum CompletenessTier {
     Partial,
     /// Not matched to a provider, or more core fields missing than present.
     NeedsMetadata,
+    /// An operator explicitly marked this issue "complete enough" despite real
+    /// gaps (metadata-at-scale B4) — e.g. the provider record is thin or
+    /// missing. Distinct from [`Self::Complete`]: the gaps still exist and are
+    /// surfaced in `missing_core`; this only drops the issue out of the
+    /// unmatched worklist. Reversible (un-accept reverts to the intrinsic tier).
+    Accepted,
+}
+
+impl CompletenessTier {
+    /// Overlay an operator's "mark metadata complete" acknowledgement onto the
+    /// intrinsic (field-presence-derived) tier: a genuinely incomplete issue
+    /// becomes [`Self::Accepted`] when accepted, so it leaves the worklist
+    /// without faking field presence. An intrinsically [`Self::Complete`] issue
+    /// is left unchanged — the acknowledgement is moot there.
+    #[must_use]
+    pub fn with_acceptance(self, accepted: bool) -> Self {
+        if accepted && self != Self::Complete {
+            Self::Accepted
+        } else {
+            self
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]

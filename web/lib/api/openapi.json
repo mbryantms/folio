@@ -7771,6 +7771,86 @@
         }
       }
     },
+    "/api/series/{slug}/issues/{issue_slug}/metadata/accept": {
+      "post": {
+        "operationId": "metadata_accept_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptMetadataResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "metadata_unaccept_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptMetadataResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/issues/{issue_slug}/metadata/apply": {
       "post": {
         "operationId": "metadata_apply_issue",
@@ -8870,6 +8950,18 @@
           "emerald",
           "rose"
         ]
+      },
+      "AcceptMetadataResp": {
+        "type": "object",
+        "properties": {
+          "metadata_review_accepted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC3339 time the issue is marked \"metadata complete\", or `null` after\nun-accepting. The issue's completeness tier reads `accepted` while set."
+          }
+        }
       },
       "AccountReq": {
         "type": "object",
@@ -11347,7 +11439,8 @@
         "enum": [
           "complete",
           "partial",
-          "needs_metadata"
+          "needs_metadata",
+          "accepted"
         ]
       },
       "CompletionView": {
@@ -14423,6 +14516,13 @@
                 "description": "Metadata-completeness assessment (\"does this issue need metadata\npulled?\"). Populated by the issue-detail handler; `None` on list\nendpoints (the cheaper `IssueSummaryView.metadata_completeness_tier`\ncarries the at-a-glance signal there)."
               }
             ]
+          },
+          "metadata_review_accepted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC3339 time an operator marked this issue \"metadata complete\" despite\ngaps (B4), or `null`. Drives the issue's `accepted` completeness tier +\nthe \"Mark complete / Reopen\" affordance."
           },
           "metron_id": {
             "type": [

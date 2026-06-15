@@ -314,6 +314,8 @@ async fn seed_issue(app: &TestApp, file_path: &str) -> (Uuid, String) {
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
         cover_page_index: Set(0),
+        metadata_review_accepted_at: Set(None),
+        metadata_review_accepted_by: Set(None),
     }
     .insert(&db)
     .await

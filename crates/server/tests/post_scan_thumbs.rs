@@ -206,6 +206,8 @@ async fn seed_issue(app: &TestApp, file_path: &Path, pages: usize) -> String {
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
         cover_page_index: Set(0),
+        metadata_review_accepted_at: Set(None),
+        metadata_review_accepted_by: Set(None),
     }
     .insert(&db)
     .await
@@ -500,6 +502,8 @@ async fn worker_marks_error_on_unreadable_archive() {
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
         cover_page_index: Set(0),
+        metadata_review_accepted_at: Set(None),
+        metadata_review_accepted_by: Set(None),
     }
     .insert(&db)
     .await

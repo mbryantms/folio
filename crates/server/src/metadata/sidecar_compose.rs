@@ -1006,6 +1006,8 @@ mod tests {
             last_rewrite_at: None,
             last_rewrite_kind: None,
             cover_page_index: 0,
+            metadata_review_accepted_at: None,
+            metadata_review_accepted_by: None,
         }
     }
 
