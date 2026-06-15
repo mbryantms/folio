@@ -13,6 +13,41 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.14.0](https://github.com/mbryantms/folio/compare/v0.13.1...v0.14.0) (2026-06-15)
+
+
+### Added
+
+* **admin:** cursor-paginate per-library scan runs + users total (D5/D9) ([#203](https://github.com/mbryantms/folio/issues/203)) ([e728cd3](https://github.com/mbryantms/folio/commit/e728cd363a8c18b4bd642e33efeea00539802df4))
+* **admin:** finish admin-form polish — reset, thumbnail split, resync, error binding (2.8 / D7 + H2) ([#219](https://github.com/mbryantms/folio/issues/219)) ([e69ff89](https://github.com/mbryantms/folio/commit/e69ff89cc07816d27ef1c78048ba19b73393e708))
+* **admin:** metadata refresh cron uses CronInput + restart hint (2.8 / D9) ([#217](https://github.com/mbryantms/folio/issues/217)) ([6ec2f3d](https://github.com/mbryantms/folio/commit/6ec2f3d26ced66d9de1b6798d65a8b0eb05a398a))
+* **admin:** restart-pending banner from boot-vs-current settings (2.8 / D9) ([#218](https://github.com/mbryantms/folio/issues/218)) ([408c39d](https://github.com/mbryantms/folio/commit/408c39dea552eca607a0883df0b2635e5cab85e5))
+* **admin:** server-paginated + faceted per-library health-issues (D5) ([#209](https://github.com/mbryantms/folio/issues/209)) ([472d0c8](https://github.com/mbryantms/folio/commit/472d0c8e83aa850a98f8e138a39cdeeb09c61d6c))
+* **admin:** unsaved-changes guard on the long admin forms (2.8 / D6) ([#215](https://github.com/mbryantms/folio/issues/215)) ([cb6bfa8](https://github.com/mbryantms/folio/commit/cb6bfa8cbd7f3d43cdd672454d776ad3f0595957))
+* **series/issue:** gear-icon actions + Read incognito ([#205](https://github.com/mbryantms/folio/issues/205)) ([087eeb2](https://github.com/mbryantms/folio/commit/087eeb21368bcbe8323177f7745775e8f4109198))
+
+
+### Fixed
+
+* **admin:** per-row pending + optimistic-hide rollback on admin lists (2.8 / D7) ([#216](https://github.com/mbryantms/folio/issues/216)) ([c94c273](https://github.com/mbryantms/folio/commit/c94c2739fb88fc773a3b20d519bbf4ee64871db2))
+* **admin:** wrap audit payload + widen beacon clear target (D10) ([#204](https://github.com/mbryantms/folio/issues/204)) ([05e46d7](https://github.com/mbryantms/folio/commit/05e46d7a0c27a4304dbbb8e25588035a8306b812))
+
+
+### Changed
+
+* **test:** integration tests via cargo-nextest on a shared external Postgres (CI-speed Phase 2) ([#210](https://github.com/mbryantms/folio/issues/210)) ([fc46c81](https://github.com/mbryantms/folio/commit/fc46c815c17b3f9e8794ad8424d62fd6da9cfdca))
+* **test:** share Redis across tests + oversubscribe nextest (CI-speed Phase 3) ([#222](https://github.com/mbryantms/folio/issues/222)) ([6ce7635](https://github.com/mbryantms/folio/commit/6ce763561df62aadd406ca8ca1c0e9f2d73b186a))
+* **test:** shared Postgres + template-DB clone per test (CI-speed Phase 1) ([#208](https://github.com/mbryantms/folio/issues/208)) ([e82ffc6](https://github.com/mbryantms/folio/commit/e82ffc6175b36c9809bb02b67305b6ba88ce5b52))
+
+
+### Dependencies
+
+* update dependency react-hook-form to v7.79.0 ([#223](https://github.com/mbryantms/folio/issues/223)) ([6891584](https://github.com/mbryantms/folio/commit/68915840b42a94f22a8b72208a203374ed784fdf))
+* update dependency sass to v1.101.0 ([#224](https://github.com/mbryantms/folio/issues/224)) ([282668f](https://github.com/mbryantms/folio/commit/282668fad2d124924d28d367c0fa2649ed3128e3))
+* update rust crate time to v0.3.49 ([#220](https://github.com/mbryantms/folio/issues/220)) ([09b6a7c](https://github.com/mbryantms/folio/commit/09b6a7c9d9b561ba0198f862d76b545980466424))
+* update scalar monorepo to v0.9.46 ([#143](https://github.com/mbryantms/folio/issues/143)) ([2e44031](https://github.com/mbryantms/folio/commit/2e44031231f69d87356c0ae514039aab47da0bb4))
+* update tailwindcss monorepo to v4.3.1 ([#221](https://github.com/mbryantms/folio/issues/221)) ([932d9cd](https://github.com/mbryantms/folio/commit/932d9cd3d4f07f6fd24121661aad9872d4d0e544))
+
 ## [0.13.1](https://github.com/mbryantms/folio/compare/v0.13.0...v0.13.1) (2026-06-14)
 
 
