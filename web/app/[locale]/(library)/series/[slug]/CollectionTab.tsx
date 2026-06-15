@@ -414,13 +414,25 @@ function SelectionDetail({
         </div>
         <ClearButton onClear={onClear} />
       </div>
-      <Link
-        href={issueUrl(seriesSlug, entry.slug)}
-        className="text-primary mt-2 inline-flex items-center gap-1 text-xs font-medium hover:underline"
-      >
-        Open issue
-        <ChevronRight className="h-3.5 w-3.5" />
-      </Link>
+      {status === "needs_metadata" || status === "partial" ? (
+        // Incomplete metadata → "link to the fix" (B4): deep-link to the
+        // issue with ?match=1, which auto-opens the match dialog.
+        <Link
+          href={`${issueUrl(seriesSlug, entry.slug)}?match=1`}
+          className="text-primary mt-2 inline-flex items-center gap-1 text-xs font-medium hover:underline"
+        >
+          Find metadata
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Link>
+      ) : (
+        <Link
+          href={issueUrl(seriesSlug, entry.slug)}
+          className="text-primary mt-2 inline-flex items-center gap-1 text-xs font-medium hover:underline"
+        >
+          Open issue
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Link>
+      )}
     </div>
   );
 }
