@@ -13,6 +13,7 @@ import {
 import { FilterSheet } from "@/components/library/FilterSheet";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { LibraryGridToolbar } from "@/components/library/LibraryGridToolbar";
+import { MetadataWorklistButton } from "@/components/library/MetadataWorklistButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
 import { ISSUE_TEXT_H, SERIES_TEXT_H } from "@/lib/library/grid-window";
@@ -474,6 +475,21 @@ export function LibraryGridView({
             setLocations(locations.filter((x) => x !== v))
           }
         />
+      ) : null}
+
+      {/* Worklist churn (B4): when the grid is filtered to the
+          needs-metadata worklist, offer to walk the loaded series through
+          the match dialog with auto-advance after each apply. */}
+      {isSeriesMode && metadataCompleteness === "needs_metadata" ? (
+        <div className="mb-4">
+          <MetadataWorklistButton
+            series={seriesItems.map((s) => ({
+              seriesSlug: s.slug,
+              libraryId: s.library_id,
+              name: s.name,
+            }))}
+          />
+        </div>
       ) : null}
 
       {query.isError ? (
