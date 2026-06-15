@@ -67,22 +67,31 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
     // can't reach this handler. We still build the patch from a per-key
     // diff to keep the audit log signal-rich (only fields the user
     // actually changed).
+    //
+    // Diff against the form's current baseline (`defaultValues`), not the
+    // SSR `initial` prop: the `form.reset(...)` after a successful save
+    // re-baselines, so a second save in the same session diffs against
+    // what was actually persisted rather than the stale page-load snapshot.
+    const base = form.formState.defaultValues;
     const patch: Record<string, unknown> = {};
 
     // Strings: send `null` to clear, the trimmed value to set.
-    const diffString = (k: keyof SmtpInitial, key: string, next: string) => {
-      const prev = String(initial[k] ?? "");
-      if (prev === next) return;
+    const diffString = (
+      key: string,
+      prev: string | undefined,
+      next: string,
+    ) => {
+      if ((prev ?? "") === next) return;
       patch[key] = next === "" ? null : next;
     };
-    diffString("host", "smtp.host", values.host.trim());
-    diffString("username", "smtp.username", values.username);
-    diffString("from", "smtp.from", values.from.trim());
+    diffString("smtp.host", base?.host, values.host.trim());
+    diffString("smtp.username", base?.username, values.username);
+    diffString("smtp.from", base?.from, values.from.trim());
 
-    if (values.port !== initial.port) {
+    if (values.port !== base?.port) {
       patch["smtp.port"] = values.port === "" ? null : Number(values.port);
     }
-    if (values.tls !== initial.tls) {
+    if (values.tls !== base?.tls) {
       patch["smtp.tls"] = values.tls;
     }
 
@@ -92,6 +101,12 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
     }
 
     await update.mutateAsync(patch);
+    // Re-baseline the form to the just-saved values so `isDirty` clears.
+    // Without this the Save button stays enabled after a successful save
+    // and — more importantly — the D6 unsaved-changes guard would
+    // false-fire on the next navigation. The password input returns to
+    // its empty "(unchanged)" placeholder state.
+    form.reset({ ...values, password: "" });
   }
 
   return (

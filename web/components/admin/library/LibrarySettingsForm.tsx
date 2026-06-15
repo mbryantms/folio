@@ -24,6 +24,7 @@ import { TagInput } from "./TagInput";
 import { CronInput } from "./CronInput";
 import { useLibrary, useThumbnailsSettings } from "@/lib/api/queries";
 import { useUnsavedChangesGuard } from "@/lib/ui/use-unsaved-changes-guard";
+import { applyServerErrors } from "@/lib/api/form-errors";
 import {
   useUpdateLibrary,
   useUpdateThumbnailsSettings,
@@ -148,28 +149,39 @@ export function LibrarySettingsForm({ id }: { id: string }) {
   // the master toggle, so disable it in the UI with an explanation.
   const mountReadOnly = lib.data.root_path_writable === false;
 
-  const onSubmit = form.handleSubmit((values) => {
-    update.mutate({
-      ignore_globs: values.ignore_globs,
-      report_missing_comicinfo: values.report_missing_comicinfo,
-      soft_delete_days: values.soft_delete_days,
-      generate_page_thumbs_on_scan: values.generate_page_thumbs_on_scan,
-      allow_archive_writeback: values.allow_archive_writeback,
-      metadata_writeback_enabled: values.metadata_writeback_enabled,
-      auto_convert_cbr_on_scan: values.auto_convert_cbr_on_scan,
-      archive_backup_retain_count: values.archive_backup_retain_count,
-      archive_backup_retain_days: values.archive_backup_retain_days,
-      archive_writeback_jpeg_quality: values.archive_writeback_jpeg_quality,
-      metadata_publisher_blacklist: values.metadata_publisher_blacklist,
-      filename_ignore_leading_numbers: values.filename_ignore_leading_numbers,
-      filename_assume_issue_one: values.filename_assume_issue_one,
-      metadata_auto_apply_strong_matches:
-        values.metadata_auto_apply_strong_matches,
-      scan_schedule_cron:
-        values.scan_schedule_cron.trim() === ""
-          ? null
-          : values.scan_schedule_cron.trim(),
-    });
+  const onSubmit = form.handleSubmit(async (values) => {
+    try {
+      await update.mutateAsync({
+        ignore_globs: values.ignore_globs,
+        report_missing_comicinfo: values.report_missing_comicinfo,
+        soft_delete_days: values.soft_delete_days,
+        generate_page_thumbs_on_scan: values.generate_page_thumbs_on_scan,
+        allow_archive_writeback: values.allow_archive_writeback,
+        metadata_writeback_enabled: values.metadata_writeback_enabled,
+        auto_convert_cbr_on_scan: values.auto_convert_cbr_on_scan,
+        archive_backup_retain_count: values.archive_backup_retain_count,
+        archive_backup_retain_days: values.archive_backup_retain_days,
+        archive_writeback_jpeg_quality: values.archive_writeback_jpeg_quality,
+        metadata_publisher_blacklist: values.metadata_publisher_blacklist,
+        filename_ignore_leading_numbers: values.filename_ignore_leading_numbers,
+        filename_assume_issue_one: values.filename_assume_issue_one,
+        metadata_auto_apply_strong_matches:
+          values.metadata_auto_apply_strong_matches,
+        scan_schedule_cron:
+          values.scan_schedule_cron.trim() === ""
+            ? null
+            : values.scan_schedule_cron.trim(),
+      });
+      // Re-baseline to the just-saved values so isDirty clears — otherwise
+      // the D6 unsaved-changes guard false-fires on the next navigation
+      // after a successful save.
+      form.reset(values);
+    } catch (err) {
+      // Bind the server's field-level 422 details (UpdateLibraryReq is
+      // garde-validated) onto the matching inputs; the mutation hook still
+      // toasts a summary. H2 adoption.
+      applyServerErrors(form.setError, err);
+    }
   });
 
   return (
@@ -396,9 +408,8 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                       <FormDescription>
                         When the scanner finds a{" "}
                         <span className="font-mono">.cbr</span> (RAR) comic,
-                        convert it to a{" "}
-                        <span className="font-mono">.cbz</span> in place so it
-                        becomes readable. The original is kept as{" "}
+                        convert it to a <span className="font-mono">.cbz</span>{" "}
+                        in place so it becomes readable. The original is kept as{" "}
                         <span className="font-mono">.cbr.bak</span>. Without
                         this, CBR files are skipped with a library-health
                         warning.
@@ -606,6 +617,29 @@ export function LibrarySettingsForm({ id }: { id: string }) {
             />
           </CardContent>
         </Card>
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={update.isPending}
+            onClick={() =>
+              lib.data && form.reset(formValuesFromLibrary(lib.data))
+            }
+          >
+            Reset
+          </Button>
+          <Button
+            type="submit"
+            disabled={update.isPending || !form.formState.isDirty}
+          >
+            {update.isPending ? "Saving…" : "Save changes"}
+          </Button>
+        </div>
+      </form>
+      {/* Outside the save-gated <form>: each control below writes
+          immediately via its own mutation, so it must not look like it's
+          governed by the Save button above (D7). */}
+      <div className="mt-6">
         <ThumbnailSettingsCard
           enabled={thumbnailSettings.data?.enabled ?? true}
           format={
@@ -629,23 +663,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
             updateThumbnailSettings.mutate({ page_quality })
           }
         />
-        <div className="flex items-center justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={update.isPending}
-            onClick={() => lib.data && form.reset(formValuesFromLibrary(lib.data))}
-          >
-            Reset
-          </Button>
-          <Button
-            type="submit"
-            disabled={update.isPending || !form.formState.isDirty}
-          >
-            {update.isPending ? "Saving…" : "Save changes"}
-          </Button>
-        </div>
-      </form>
+      </div>
     </Form>
   );
 }
@@ -679,12 +697,17 @@ function ThumbnailSettingsCard({
     <Card>
       <CardContent className="space-y-5 p-6">
         <div>
-          <h3 className="text-foreground text-sm font-semibold tracking-tight">
-            Thumbnail settings
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-foreground text-sm font-semibold tracking-tight">
+              Thumbnail settings
+            </h3>
+            <span className="border-border bg-muted text-muted-foreground rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase">
+              Applies immediately
+            </span>
+          </div>
           <p className="text-muted-foreground mt-1 text-xs">
-            Configure how thumbnail jobs operate. Generation actions and queue
-            status live on the Live scan page.
+            Each change here saves on its own — there&rsquo;s no Save button.
+            Generation actions and queue status live on the Live scan page.
           </p>
         </div>
 
