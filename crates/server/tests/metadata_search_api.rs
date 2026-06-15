@@ -760,6 +760,60 @@ async fn series_batch_groups_per_issue_runs_and_holds_for_review() {
     );
 }
 
+#[tokio::test]
+async fn selection_batch_searches_only_the_chosen_in_series_issues() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    // Three active issues in the target series; we pick two.
+    let i1 = IssueSeed::new(lib_id, series_id, &dir.path().join("a.cbz"), b"a", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let i2 = IssueSeed::new(lib_id, series_id, &dir.path().join("b.cbz"), b"b", 2.0)
+        .insert(&app.state().db)
+        .await;
+    let _i3 = IssueSeed::new(lib_id, series_id, &dir.path().join("c.cbz"), b"c", 3.0)
+        .insert(&app.state().db)
+        .await;
+    // A real issue in a *different* series — including its id must NOT widen
+    // the batch past the series the caller is operating on.
+    let dir2 = tempdir().unwrap();
+    let (lib2, series2) = seed_series_in_library(&app, dir2.path()).await;
+    let foreign = IssueSeed::new(lib2, series2, &dir2.path().join("z.cbz"), b"z", 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/batch/selection"),
+        serde_json::json!({ "issue_ids": [i1, i2, foreign, "not-a-real-id"] }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    // Only the two in-series picks fan out; the foreign + bogus ids drop.
+    assert_eq!(body["jobs_enqueued"].as_u64().unwrap(), 2);
+    let batch_id = Uuid::parse_str(body["batch_id"].as_str().expect("batch_id")).unwrap();
+
+    let batch = entity::metadata_batch::Entity::find_by_id(batch_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("batch row");
+    assert_eq!(batch.scope, "series_issues");
+    assert_eq!(batch.items_total, 2);
+
+    let children = entity::metadata_run::Entity::find()
+        .filter(entity::metadata_run::Column::BatchId.eq(batch_id))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(children.len(), 2);
+    assert!(children.iter().all(|r| r.scope == "issue"));
+}
+
 /// Seed a one-child batch whose child is a `multi_good` (needs-review) run
 /// with two providers' candidates. `applied` flips both candidates' applied_at
 /// so the run looks already-applied. Returns the batch id.
