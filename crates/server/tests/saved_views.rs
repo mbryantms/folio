@@ -27,7 +27,10 @@ use entity::{
     series_team::ActiveModel as SeriesTeamAM,
     user::Entity as UserEntity,
 };
-use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, EntityTrait, QueryFilter, QueryOrder,
+    Set,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -2176,4 +2179,46 @@ async fn filter_view_by_locations_includes_any() {
         .collect();
     assert!(names.contains(&"Batman".to_owned()), "names: {names:?}");
     assert!(!names.contains(&"Superman".to_owned()), "names: {names:?}");
+}
+
+/// metadata-at-scale B4: an issue marked "metadata complete" (accepted) must
+/// drop out of the `needs_metadata` saved-view filter — the worklist's filter
+/// has to honor the accepted overlay just like the per-issue tier + the two
+/// rollups in `api::series`. Regression guard for the third completeness SQL
+/// copy in `views::compile` (#230 updated the other two but not this one).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metadata_completeness_filter_excludes_accepted() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "mc-accept@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    // Two bare series (no provider match / summary / credits) → needs_metadata.
+    let (_unmatched_id, _) = seed_series_with_issues(&app, "um", "Unmatched", 2, None).await;
+    let (accepted_id, _) = seed_series_with_issues(&app, "ac", "Accepted", 2, None).await;
+
+    // Mark every issue of the second series "metadata complete" (B4).
+    db.execute_unprepared(&format!(
+        "UPDATE issues SET metadata_review_accepted_at = now() WHERE series_id = '{accepted_id}'"
+    ))
+    .await
+    .unwrap();
+
+    let names = run_filter_for_names(
+        &app,
+        &auth,
+        "needs-meta worklist",
+        "metadata_completeness",
+        "is",
+        "needs_metadata".into(),
+    )
+    .await;
+    assert!(
+        names.contains(&"Unmatched".to_string()),
+        "a bare series must match needs_metadata: {names:?}"
+    );
+    assert!(
+        !names.contains(&"Accepted".to_string()),
+        "an all-accepted series must NOT match needs_metadata: {names:?}"
+    );
 }
