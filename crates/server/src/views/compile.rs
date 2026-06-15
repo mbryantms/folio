@@ -216,8 +216,12 @@ fn metadata_completeness_subquery() -> SelectStatement {
         )
         .expr_as(
             Expr::cust(
-                // `title` intentionally excluded: optional for comic issues.
+                // An operator "mark complete" acknowledgement (B4) counts as
+                // satisfied, so an all-accepted series leaves the
+                // needs-metadata worklist — keeps this in lockstep with the
+                // two rollups in `api::series`. `title` intentionally excluded.
                 "COUNT(*) FILTER (WHERE \
+                 issues.metadata_review_accepted_at IS NOT NULL OR ( \
                  issues.year IS NOT NULL AND issues.year >= 1800 \
                  AND COALESCE(btrim(issues.summary), '') <> '' \
                  AND issues.page_count IS NOT NULL AND issues.page_count > 0 \
@@ -231,7 +235,7 @@ fn metadata_completeness_subquery() -> SelectStatement {
                    OR COALESCE(issues.translator, '') <> '') \
                  AND EXISTS (SELECT 1 FROM external_ids x \
                    WHERE x.entity_type = 'issue' AND x.entity_id = issues.id \
-                   AND x.source IN ('comicvine', 'metron')))",
+                   AND x.source IN ('comicvine', 'metron'))))",
             ),
             Alias::new("complete_count"),
         )
