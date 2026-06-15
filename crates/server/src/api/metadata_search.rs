@@ -59,6 +59,8 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(sync_status_series))
         .routes(routes!(search_issue))
         .routes(routes!(candidates_issue))
+        // POST + DELETE on one path → combined in a single routes!() call.
+        .routes(routes!(accept_issue_metadata, unaccept_issue_metadata))
         .routes(routes!(proposed_diff_issue))
         .routes(routes!(apply_issue))
         .routes(routes!(refresh_library_metadata))
@@ -779,6 +781,108 @@ pub async fn candidates_issue(
         );
     }
     Json(build_candidates_resp(&app, run).await).into_response()
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AcceptMetadataResp {
+    /// RFC3339 time the issue is marked "metadata complete", or `null` after
+    /// un-accepting. The issue's completeness tier reads `accepted` while set.
+    pub metadata_review_accepted_at: Option<String>,
+}
+
+/// Set / clear the "mark metadata complete" acknowledgement on an issue (B4).
+/// This never touches field data — it only records the operator's judgement,
+/// so the completeness overlay reports `accepted` instead of `needs_metadata`
+/// (the detail view still lists the real gaps).
+async fn set_issue_metadata_accepted(
+    app: &AppState,
+    user: &CurrentUser,
+    ctx: &RequestContext,
+    slug: &str,
+    issue_slug: &str,
+    accept: bool,
+) -> Response {
+    let Some((s, i)) = find_series_issue(app, slug, issue_slug).await else {
+        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    };
+    if !user_can_see_library(app, user, s.library_id).await {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
+    }
+    let now = chrono::Utc::now().fixed_offset();
+    let accepted_at = accept.then_some(now);
+    let mut am: issue::ActiveModel = i.clone().into();
+    am.metadata_review_accepted_at = sea_orm::Set(accepted_at);
+    am.metadata_review_accepted_by = sea_orm::Set(accept.then_some(user.id));
+    am.updated_at = sea_orm::Set(now);
+    if let Err(e) = am.update(&app.db).await {
+        tracing::error!(error = %e, "issue metadata accept update failed");
+        return error(StatusCode::BAD_GATEWAY, "internal", "internal");
+    }
+    crate::audit::record(
+        &app.db,
+        crate::audit::AuditEntry {
+            actor_id: user.id,
+            action: if accept {
+                "metadata.issue.accept"
+            } else {
+                "metadata.issue.unaccept"
+            },
+            target_type: Some("issue"),
+            target_id: Some(i.id.clone()),
+            payload: serde_json::json!({ "accepted": accept }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+    Json(AcceptMetadataResp {
+        metadata_review_accepted_at: accepted_at.map(|t| t.to_rfc3339()),
+    })
+    .into_response()
+}
+
+#[utoipa::path(
+    operation_id = "metadata_accept_issue",    post,
+    path = "/series/{slug}/issues/{issue_slug}/metadata/accept",
+    params(("slug" = String, Path), ("issue_slug" = String, Path)),
+    responses(
+        (status = 200, body = AcceptMetadataResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "issue not found"),
+    )
+)]
+#[handler]
+pub async fn accept_issue_metadata(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Path((slug, issue_slug)): Path<(String, String)>,
+) -> Response {
+    set_issue_metadata_accepted(&app, &user, &ctx, &slug, &issue_slug, true).await
+}
+
+#[utoipa::path(
+    operation_id = "metadata_unaccept_issue",    delete,
+    path = "/series/{slug}/issues/{issue_slug}/metadata/accept",
+    params(("slug" = String, Path), ("issue_slug" = String, Path)),
+    responses(
+        (status = 200, body = AcceptMetadataResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "issue not found"),
+    )
+)]
+#[handler]
+pub async fn unaccept_issue_metadata(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+    Path((slug, issue_slug)): Path<(String, String)>,
+) -> Response {
+    set_issue_metadata_accepted(&app, &user, &ctx, &slug, &issue_slug, false).await
 }
 
 // ───────── /series/{slug}/metadata/proposed-diff ─────────
@@ -1859,7 +1963,11 @@ pub async fn create_series_batch(
             crate::api::series::assess_series_issue_tiers(&app, s.id)
                 .await
                 .into_iter()
-                .filter(|(_, tier)| !matches!(tier, CompletenessTier::Complete))
+                // Skip Complete AND Accepted (operator marked it done, B4) — the
+                // "only missing or partial" scope shouldn't re-fetch either.
+                .filter(|(_, tier)| {
+                    !matches!(tier, CompletenessTier::Complete | CompletenessTier::Accepted)
+                })
                 .map(|(id, _)| id)
                 .take(refresh::REFRESH_BATCH_CAP)
                 .collect()

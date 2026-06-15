@@ -3427,6 +3427,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/issues/{issue_slug}/metadata/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_accept_issue"];
+        delete: operations["metadata_unaccept_issue"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/issues/{issue_slug}/metadata/apply": {
         parameters: {
             query?: never;
@@ -3814,6 +3830,13 @@ export interface components {
          * @enum {string}
          */
         AccentColor: "amber" | "blue" | "emerald" | "rose";
+        AcceptMetadataResp: {
+            /**
+             * @description RFC3339 time the issue is marked "metadata complete", or `null` after
+             *     un-accepting. The issue's completeness tier reads `accepted` while set.
+             */
+            metadata_review_accepted_at?: string | null;
+        };
         AccountReq: {
             /**
              * @description Optional second password field. The web form ships two `<input>`s
@@ -4892,7 +4915,7 @@ export interface components {
             tier: components["schemas"]["CompletenessTier"];
         };
         /** @enum {string} */
-        CompletenessTier: "complete" | "partial" | "needs_metadata";
+        CompletenessTier: "complete" | "partial" | "needs_metadata" | "accepted";
         CompletionView: {
             /**
              * Format: int64
@@ -6074,6 +6097,12 @@ export interface components {
             locations?: string | null;
             manga?: string | null;
             metadata_completeness?: null | components["schemas"]["CompletenessReport"];
+            /**
+             * @description RFC3339 time an operator marked this issue "metadata complete" despite
+             *     gaps (B4), or `null`. Drives the issue's `accepted` completeness tier +
+             *     the "Mark complete / Reopen" affordance.
+             */
+            metadata_review_accepted_at?: string | null;
             /** Format: int64 */
             metron_id?: number | null;
             /** Format: int32 */
@@ -16043,6 +16072,78 @@ export interface operations {
                 content?: never;
             };
             /** @description issue / link not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_accept_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptMetadataResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_unaccept_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptMetadataResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
             404: {
                 headers: {
                     [name: string]: unknown;

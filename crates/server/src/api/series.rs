@@ -871,6 +871,11 @@ pub struct IssueDetailView {
     /// explainer when editing a `.cbr`. `archive-rewrite-1.0` M6.
     #[serde(default)]
     pub library_cbr_convert_confirmed: bool,
+    /// RFC3339 time an operator marked this issue "metadata complete" despite
+    /// gaps (B4), or `null`. Drives the issue's `accepted` completeness tier +
+    /// the "Mark complete / Reopen" affordance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_review_accepted_at: Option<String>,
     /// Metadata-completeness assessment ("does this issue need metadata
     /// pulled?"). Populated by the issue-detail handler; `None` on list
     /// endpoints (the cheaper `IssueSummaryView.metadata_completeness_tier`
@@ -996,6 +1001,7 @@ impl IssueDetailView {
             allow_archive_writeback: false,
             cover_page_index: m.cover_page_index,
             library_cbr_convert_confirmed: false,
+            metadata_review_accepted_at: m.metadata_review_accepted_at.map(|t| t.to_rfc3339()),
             metadata_completeness: None,
         }
     }
@@ -1958,8 +1964,12 @@ async fn fetch_metadata_completeness_tiers(
         SELECT i.series_id AS series_id,
                COUNT(*)::bigint AS active_count,
                COUNT(*) FILTER (
-                 -- `title` intentionally excluded: optional for comic issues.
-                 WHERE i.year IS NOT NULL AND i.year >= 1800
+                 -- An operator "mark complete" acknowledgement (B4) counts as
+                 -- satisfied for the rollup, so an all-accepted series drops out
+                 -- of the needs-metadata worklist. `title` intentionally
+                 -- excluded from the intrinsic criteria: optional for comics.
+                 WHERE i.metadata_review_accepted_at IS NOT NULL OR (
+                   i.year IS NOT NULL AND i.year >= 1800
                    AND COALESCE(btrim(i.summary), '') <> ''
                    AND i.page_count IS NOT NULL AND i.page_count > 0
                    AND (
@@ -1973,6 +1983,7 @@ async fn fetch_metadata_completeness_tiers(
                      WHERE x.entity_type = 'issue' AND x.entity_id = i.id
                        AND x.source IN ('comicvine', 'metron')
                    )
+                 )
                )::bigint AS complete_count
           FROM issues i
          WHERE i.state = 'active' AND i.removed_at IS NULL
@@ -2086,7 +2097,7 @@ pub(crate) fn assess_issue_view(
     ]
     .iter()
     .any(|f| non_empty(f.as_deref()));
-    assess_issue(&IssueCompletenessInput {
+    let mut report = assess_issue(&IssueCompletenessInput {
         has_external_id: view.comicvine_id.is_some() || view.metron_id.is_some(),
         has_title: non_empty(view.title.as_deref()),
         has_cover_date: plausible_year(view.year),
@@ -2099,7 +2110,12 @@ pub(crate) fn assess_issue_view(
         has_characters: non_empty(view.characters.as_deref()),
         has_story_arcs: non_empty(view.story_arc.as_deref()),
         has_genres: non_empty(view.genre.as_deref()),
-    })
+    });
+    // Overlay the operator's "mark complete" acknowledgement (B4).
+    report.tier = report
+        .tier
+        .with_acceptance(view.metadata_review_accepted_at.is_some());
+    report
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -2489,6 +2505,7 @@ struct IssueCompletenessRow {
     editor: Option<String>,
     translator: Option<String>,
     state: String,
+    metadata_review_accepted_at: Option<sea_orm::prelude::DateTimeWithTimeZone>,
 }
 
 /// Score every active issue in a series for metadata completeness, ordered by
@@ -2529,6 +2546,7 @@ async fn score_series_issues(
         .column(issue::Column::Editor)
         .column(issue::Column::Translator)
         .column(issue::Column::State)
+        .column(issue::Column::MetadataReviewAcceptedAt)
         .order_by_asc(issue::Column::SortNumber)
         .into_model::<IssueCompletenessRow>()
         .all(&app.db)
@@ -2568,7 +2586,7 @@ async fn score_series_issues(
             ]
             .iter()
             .any(|f| non_empty(f.as_deref()));
-            let report = assess_issue(&IssueCompletenessInput {
+            let mut report = assess_issue(&IssueCompletenessInput {
                 has_external_id: matched.contains(&r.id),
                 has_title: non_empty(r.title.as_deref()),
                 has_cover_date: plausible_year(r.year),
@@ -2578,6 +2596,10 @@ async fn score_series_issues(
                 has_cover: r.state == "active",
                 ..Default::default()
             });
+            // Overlay the operator's "mark complete" acknowledgement (B4).
+            report.tier = report
+                .tier
+                .with_acceptance(r.metadata_review_accepted_at.is_some());
             (r, report)
         })
         .collect()
@@ -2593,6 +2615,7 @@ async fn collect_issue_completeness(app: &AppState, series_id: Uuid) -> Vec<Coll
                 CompletenessTier::Complete => "complete",
                 CompletenessTier::NeedsMetadata => "needs_metadata",
                 CompletenessTier::Partial => "partial",
+                CompletenessTier::Accepted => "accepted",
             };
             CollectionIssueEntry {
                 slug: r.slug,
@@ -3008,8 +3031,11 @@ async fn compute_metadata_completeness_summary(
         SELECT
           COUNT(*)::bigint AS active_count,
           COUNT(*) FILTER (
-            -- `title` intentionally excluded: optional for comic issues.
-            WHERE i.year IS NOT NULL AND i.year >= 1800
+            -- An operator "mark complete" acknowledgement (B4) counts as
+            -- satisfied, keeping this summary in step with the worklist rollup.
+            -- `title` intentionally excluded from the intrinsic criteria.
+            WHERE i.metadata_review_accepted_at IS NOT NULL OR (
+              i.year IS NOT NULL AND i.year >= 1800
               AND COALESCE(btrim(i.summary), '') <> ''
               AND i.page_count IS NOT NULL AND i.page_count > 0
               AND (
@@ -3023,6 +3049,7 @@ async fn compute_metadata_completeness_summary(
                 WHERE x.entity_type = 'issue' AND x.entity_id = i.id
                   AND x.source IN ('comicvine', 'metron')
               )
+            )
           )::bigint AS complete_count
         FROM issues i
         WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL

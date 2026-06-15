@@ -223,6 +223,17 @@ pub struct Model {
     /// Matching-accuracy-1.0 M6.
     #[serde(default)]
     pub cover_page_index: i32,
+
+    /// Operator "this is as complete as it'll get" acknowledgement
+    /// (metadata-at-scale B4). When set, the per-request completeness tier
+    /// reports `accepted` instead of `needs_metadata`, so the issue drops out
+    /// of the unmatched worklist without faking field presence — the detail
+    /// view still lists the real gaps. NULL = not acknowledged. Reversible.
+    #[sea_orm(nullable)]
+    pub metadata_review_accepted_at: Option<DateTimeWithTimeZone>,
+    /// User who set [`Self::metadata_review_accepted_at`]. NULL when unset.
+    #[sea_orm(nullable)]
+    pub metadata_review_accepted_by: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

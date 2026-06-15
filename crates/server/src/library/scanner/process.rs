@@ -1007,6 +1007,10 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             // rewritten the bytes of.
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),
+            // A freshly-scanned issue is never pre-accepted (B4); the operator
+            // sets this later from the worklist.
+            metadata_review_accepted_at: Set(None),
+            metadata_review_accepted_by: Set(None),
         };
         let inserted = am.insert(db).await?;
         remember_primary_issue_path(db, &issue_id, &path_str).await?;
