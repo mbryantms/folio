@@ -20,7 +20,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -175,11 +175,31 @@ export function IssueSettingsMenu({
   const addToWtr = useAddCollectionEntry(wtrId);
   const removeFromWtr = useRemoveCollectionEntry(wtrId);
   const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
-  const [metadataDialogOpen, setMetadataDialogOpen] = useState(false);
+  // Deep-link: a "Needs metadata" chip (e.g. the CollectionTab detail link)
+  // navigates here with ?match=1 to pop the match dialog straight open —
+  // "chips link to the fix" (B4). Seed open-state from the param on mount.
+  const searchParams = useSearchParams();
+  const [metadataDialogOpen, setMetadataDialogOpen] = useState(
+    () => searchParams.get("match") === "1",
+  );
   // Mount the lazy match dialog on first open and keep it mounted so its
   // open/close animation still runs on later toggles (G6).
   const [metadataMounted, setMetadataMounted] = useState(false);
   if (metadataDialogOpen && !metadataMounted) setMetadataMounted(true);
+
+  // Toggling the dialog also strips ?match from the address bar (via
+  // replaceState, no RSC round-trip — same idiom as IssuesPanel) so a
+  // refresh or back-nav doesn't re-pop it after a manual close.
+  const handleMetadataOpenChange = (next: boolean) => {
+    setMetadataDialogOpen(next);
+    if (!next && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("match")) {
+        url.searchParams.delete("match");
+        window.history.replaceState({}, "", url.toString());
+      }
+    }
+  };
 
   const issueLabel = issue.title ?? `Issue ${issue.number ?? ""}`.trim();
 
@@ -430,7 +450,7 @@ export function IssueSettingsMenu({
       {metadataMounted && (
         <MetadataMatchDialog
           open={metadataDialogOpen}
-          onOpenChange={setMetadataDialogOpen}
+          onOpenChange={handleMetadataOpenChange}
           scope={{
             kind: "issue",
             seriesSlug: issue.series_slug,

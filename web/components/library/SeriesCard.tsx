@@ -189,18 +189,24 @@ function SeriesCardImpl({
           fallback={series.publisher ?? series.name}
           className="w-full transition group-hover:brightness-110"
         />
-        {/* Status badge moved to top-right so the kebab affordance can
-         *  live at the canonical top-left across all card types. */}
-        {status && status !== "Active" && (
-          <Badge
-            variant="secondary"
-            className="bg-background/80 absolute top-2 right-2 backdrop-blur"
-          >
-            {status}
-          </Badge>
-        )}
+        {/* Top-right indicator stack: publication status + the
+         *  metadata-needs chip. Both live here (not top-left) so the
+         *  kebab affordance owns the canonical top-left across all card
+         *  types — and so the *interactive* meta chip stays clickable on
+         *  desktop, where hovering the card reveals the kebab over the
+         *  top-left corner. */}
+        <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+          {status && status !== "Active" && (
+            <Badge
+              variant="secondary"
+              className="bg-background/80 backdrop-blur"
+            >
+              {status}
+            </Badge>
+          )}
+          <MetaNeedsBadge series={series} interactive={!inSelectMode} />
+        </div>
         <CollectionDot series={series} />
-        <MetaNeedsBadge series={series} />
         {!inSelectMode && (
           <>
             <CoverMenuButton
@@ -315,24 +321,68 @@ function CollectionDot({ series }: { series: SeriesView }) {
   );
 }
 
-/** Small amber "metadata" chip in the cover's top-left, shown only when the
- *  series' metadata is so sparse it likely needs pulling
- *  (`metadata_completeness_tier === "needs_metadata"`). Shares the
- *  `useCoverCollectionDot` opt-out so pristine-cover readers hide both cover
- *  overlays at once. The kebab hover affordance lives in the same corner but
- *  only appears on hover, so the at-rest glance stays clear. */
-function MetaNeedsBadge({ series }: { series: SeriesView }) {
+/** Small amber "metadata" chip shown only when the series' metadata is so
+ *  sparse it likely needs pulling (`metadata_completeness_tier ===
+ *  "needs_metadata"`). Positioned by the parent's top-right indicator stack
+ *  (kept out of the top-left kebab corner). Shares the `useCoverCollectionDot`
+ *  opt-out so pristine-cover readers hide both cover overlays at once.
+ *
+ *  When `interactive`, the chip "links to the fix" (B4): clicking it jumps to
+ *  the series page with `?match=1`, which auto-opens the metadata match
+ *  dialog (see `SeriesSettingsMenu`). Rendered as `<span role="button">` for
+ *  the same reason as `QuickReadOverlay` — a `<button>`/`<a>` nested in the
+ *  card's parent `<Link>` would be invalid HTML. While selecting, the chip
+ *  stays a passive badge so the card's selection toggle owns the click. */
+export function MetaNeedsBadge({
+  series,
+  interactive,
+}: {
+  series: SeriesView;
+  interactive: boolean;
+}) {
   const dotPref = useCoverCollectionDot();
+  const router = useRouter();
   if (!dotPref.enabled) return null;
   if (series.metadata_completeness_tier !== "needs_metadata") return null;
-  const label = "Metadata likely incomplete";
+  const badgeClass = cn(
+    "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-black/10 dark:ring-white/10",
+    statusToneSolid("warning"),
+  );
+
+  if (!interactive) {
+    const label = "Metadata likely incomplete";
+    return (
+      <span title={label} aria-label={label} className={badgeClass}>
+        meta
+      </span>
+    );
+  }
+
+  const label = "Find metadata — likely incomplete";
+  const activate = () => router.push(`${seriesUrl(series)}?match=1`);
   return (
     <span
+      role="button"
+      tabIndex={0}
       title={label}
       aria-label={label}
+      onClick={(e) => {
+        // The chip sits inside the card's parent <Link>; stop the parent
+        // navigation so only the match deep-link fires.
+        e.preventDefault();
+        e.stopPropagation();
+        activate();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          activate();
+        }
+      }}
       className={cn(
-        "absolute top-2 left-2 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-black/10 dark:ring-white/10",
-        statusToneSolid("warning"),
+        badgeClass,
+        "cursor-pointer transition hover:brightness-110 focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none",
       )}
     >
       meta
