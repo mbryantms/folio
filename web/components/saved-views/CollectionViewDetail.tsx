@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -30,7 +31,6 @@ import {
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
-import { BulkArchiveEditDialog } from "@/components/library/BulkArchiveEditDialog";
 import { IssueCard } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
@@ -76,6 +76,16 @@ import { cn } from "@/lib/utils";
 import type { CollectionEntryView, SavedViewView } from "@/lib/api/types";
 
 import { ViewHeader } from "./ViewHeader";
+
+// Heavy archive-edit dialog (+dnd) — lazy so it stays out of the collection
+// view's initial bundle; the chunk loads on first open (G6).
+const BulkArchiveEditDialog = dynamic(
+  () =>
+    import("@/components/library/BulkArchiveEditDialog").then(
+      (m) => m.BulkArchiveEditDialog,
+    ),
+  { ssr: false },
+);
 
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
@@ -123,6 +133,10 @@ export function CollectionViewDetail({
   const [confirmRemove, setConfirmRemove] = React.useState(false);
   const [archiveEditOpen, setArchiveEditOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
+  // Mount the lazy archive-edit dialog on first open; keep it mounted so its
+  // close animation still runs (G6).
+  const [archiveEditMounted, setArchiveEditMounted] = React.useState(false);
+  if (archiveEditOpen && !archiveEditMounted) setArchiveEditMounted(true);
   const isAdmin = useMe().data?.role === "admin";
   const [confirmDelete, setConfirmDelete] = React.useState(false);
 
@@ -504,14 +518,16 @@ export function CollectionViewDetail({
         }}
         targets={selectedTargets}
       />
-      <BulkArchiveEditDialog
-        open={archiveEditOpen}
-        onOpenChange={(next) => {
-          setArchiveEditOpen(next);
-          if (!next) selection.clear();
-        }}
-        issueIds={selectedIssueIds}
-      />
+      {archiveEditMounted && (
+        <BulkArchiveEditDialog
+          open={archiveEditOpen}
+          onOpenChange={(next) => {
+            setArchiveEditOpen(next);
+            if (!next) selection.clear();
+          }}
+          issueIds={selectedIssueIds}
+        />
+      )}
     </div>
   );
 }

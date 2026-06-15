@@ -19,6 +19,7 @@ import {
   Settings,
   Sparkles,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -27,7 +28,6 @@ import {
   AddToCollectionDialog,
   type AddToCollectionTarget,
 } from "@/components/collections/AddToCollectionDialog";
-import { MetadataMatchDialog } from "@/components/library/MetadataMatchDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -58,6 +58,16 @@ import { markerToCreateReq } from "@/lib/markers/recreate";
 import { readerUrl } from "@/lib/urls";
 import type { IssueDetailView } from "@/lib/api/types";
 import type { ReadState } from "@/lib/reading-state";
+
+// Heavy match dialog (~1.2k lines + provider-compare UI) — lazy so it stays
+// out of the issue-page initial bundle; the chunk loads on first open (G6).
+const MetadataMatchDialog = dynamic(
+  () =>
+    import("@/components/library/MetadataMatchDialog").then(
+      (m) => m.MetadataMatchDialog,
+    ),
+  { ssr: false },
+);
 
 const WANT_TO_READ_KEY = "want_to_read";
 
@@ -166,6 +176,10 @@ export function IssueSettingsMenu({
   const removeFromWtr = useRemoveCollectionEntry(wtrId);
   const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
   const [metadataDialogOpen, setMetadataDialogOpen] = useState(false);
+  // Mount the lazy match dialog on first open and keep it mounted so its
+  // open/close animation still runs on later toggles (G6).
+  const [metadataMounted, setMetadataMounted] = useState(false);
+  if (metadataDialogOpen && !metadataMounted) setMetadataMounted(true);
 
   const issueLabel = issue.title ?? `Issue ${issue.number ?? ""}`.trim();
 
@@ -413,16 +427,18 @@ export function IssueSettingsMenu({
         onOpenChange={setCollectionDialogOpen}
         target={collectionTarget}
       />
-      <MetadataMatchDialog
-        open={metadataDialogOpen}
-        onOpenChange={setMetadataDialogOpen}
-        scope={{
-          kind: "issue",
-          seriesSlug: issue.series_slug,
-          issueSlug: issue.slug,
-          libraryId: issue.library_id,
-        }}
-      />
+      {metadataMounted && (
+        <MetadataMatchDialog
+          open={metadataDialogOpen}
+          onOpenChange={setMetadataDialogOpen}
+          scope={{
+            kind: "issue",
+            seriesSlug: issue.series_slug,
+            issueSlug: issue.slug,
+            libraryId: issue.library_id,
+          }}
+        />
+      )}
     </>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2, PinOff, Plus, Trash2 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { createContext, useContext, useMemo, useState } from "react";
 
@@ -26,7 +27,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { PageEditor } from "@/components/library/PageEditor";
 import {
   useClearIssueFieldPin,
   useForceRecreateIssuePageMap,
@@ -62,6 +62,13 @@ type PinControl = {
   onRelease: (field: string) => void;
   pending: boolean;
 };
+
+// Heavy page editor (+dnd-kit) — lazy so it stays out of the issue page's
+// initial bundle; the chunk loads on first open (G6).
+const PageEditor = dynamic(
+  () => import("@/components/library/PageEditor").then((m) => m.PageEditor),
+  { ssr: false },
+);
 
 const PinControlContext = createContext<PinControl | null>(null);
 
@@ -103,6 +110,10 @@ export function IssueActions({
   const [editOpen, setEditOpen] = useState(false);
   const [confirmForceRecreate, setConfirmForceRecreate] = useState(false);
   const [archiveEditOpen, setArchiveEditOpen] = useState(false);
+  // Mount the lazy page editor on first open; keep it mounted so its close
+  // animation still runs (G6).
+  const [pageEditorMounted, setPageEditorMounted] = useState(false);
+  if (archiveEditOpen && !pageEditorMounted) setPageEditorMounted(true);
   const [confirmRestore, setConfirmRestore] = useState(false);
   const forceRecreatePageMap = useForceRecreateIssuePageMap(
     issue.series_slug,
@@ -136,11 +147,13 @@ export function IssueActions({
         open={editOpen}
         onOpenChange={setEditOpen}
       />
-      <PageEditor
-        issue={issue}
-        open={archiveEditOpen}
-        onOpenChange={setArchiveEditOpen}
-      />
+      {pageEditorMounted && (
+        <PageEditor
+          issue={issue}
+          open={archiveEditOpen}
+          onOpenChange={setArchiveEditOpen}
+        />
+      )}
       <AlertDialog open={confirmRestore} onOpenChange={setConfirmRestore}>
         <AlertDialogContent>
           <AlertDialogHeader>

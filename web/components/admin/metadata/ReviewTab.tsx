@@ -20,10 +20,9 @@ import { AlertCircle, CheckCircle2, ChevronRight, Loader2 } from "lucide-react";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import {
-  MetadataMatchDialog,
-  type MetadataMatchScope,
-} from "@/components/library/MetadataMatchDialog";
+import dynamic from "next/dynamic";
+
+import type { MetadataMatchScope } from "@/components/library/MetadataMatchDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +49,17 @@ import {
   statusToneDot,
 } from "@/lib/ui/status-tone";
 import type { BatchChildRow } from "@/lib/api/types";
+
+// Heavy match dialog (~1.2k lines + provider-compare UI) — lazy so the admin
+// metadata page's initial bundle stays lean; only loads when a reviewer opens
+// a row (the `{dialogScope && …}` mount already defers it). (G6)
+const MetadataMatchDialog = dynamic(
+  () =>
+    import("@/components/library/MetadataMatchDialog").then(
+      (m) => m.MetadataMatchDialog,
+    ),
+  { ssr: false },
+);
 
 /** Resolve a child row to the Fetch-metadata dialog scope. The dialog probes +
  *  adopts the child's already-completed run (no re-search), so the operator

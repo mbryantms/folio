@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -19,7 +20,6 @@ import {
 import { CblDetail, CblInfoRow } from "@/components/cbl/cbl-detail";
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
 import { CblStatsPills } from "@/components/cbl/CblStatsPills";
-import { BulkArchiveEditDialog } from "@/components/library/BulkArchiveEditDialog";
 import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
@@ -62,6 +62,16 @@ import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
 import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 
 import { ViewHeader } from "./ViewHeader";
+
+// Heavy archive-edit dialog (+dnd) — lazy so it stays out of the CBL view's
+// initial bundle; the chunk loads on first open (G6).
+const BulkArchiveEditDialog = dynamic(
+  () =>
+    import("@/components/library/BulkArchiveEditDialog").then(
+      (m) => m.BulkArchiveEditDialog,
+    ),
+  { ssr: false },
+);
 
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
@@ -245,6 +255,10 @@ function CblViewDetailInner({
   // rules-of-hooks invariant.
   const [markReadOpen, setMarkReadOpen] = React.useState(false);
   const [archiveEditOpen, setArchiveEditOpen] = React.useState(false);
+  // Mount the lazy archive-edit dialog on first open; keep it mounted so its
+  // close animation still runs (G6).
+  const [archiveEditMounted, setArchiveEditMounted] = React.useState(false);
+  if (archiveEditOpen && !archiveEditMounted) setArchiveEditMounted(true);
   const isAdmin = useMe().data?.role === "admin";
 
   if (detail.isLoading) {
@@ -656,14 +670,16 @@ function CblViewDetailInner({
         onConfirm={submitMarkRead}
         isPending={bulkMark.isPending}
       />
-      <BulkArchiveEditDialog
-        open={archiveEditOpen}
-        onOpenChange={(next) => {
-          setArchiveEditOpen(next);
-          if (!next) selection.clear();
-        }}
-        issueIds={selectedIssueIds}
-      />
+      {archiveEditMounted && (
+        <BulkArchiveEditDialog
+          open={archiveEditOpen}
+          onOpenChange={(next) => {
+            setArchiveEditOpen(next);
+            if (!next) selection.clear();
+          }}
+          issueIds={selectedIssueIds}
+        />
+      )}
     </div>
   );
 }
