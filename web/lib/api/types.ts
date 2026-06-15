@@ -706,6 +706,7 @@ export type FieldProvenanceRow = Schemas["FieldProvenanceRow"];
 export type SourceFilesView = Schemas["SourceFilesView"];
 export type CompletenessReport = Schemas["CompletenessReport"];
 export type CompletenessTier = Schemas["CompletenessTier"];
+export type AcceptMetadataResp = Schemas["AcceptMetadataResp"];
 export type MetadataCompletenessSummary =
   Schemas["MetadataCompletenessSummary"];
 export type ExternalIdsListResp = Schemas["ExternalIdsListResp"];

@@ -16,15 +16,19 @@
 
 import {
   AlertCircle,
+  Check,
   CheckCircle2,
   HelpCircle,
   Loader2,
   MinusCircle,
+  RotateCcw,
 } from "lucide-react";
 import * as React from "react";
 
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
+import { Button } from "@/components/ui/button";
 import { useIssueMetadataOverview } from "@/lib/api/queries";
+import { useSetIssueMetadataAccepted } from "@/lib/api/mutations";
 import { formatRelativeDate } from "@/lib/format";
 import { metadataFieldLabel, metadataFieldLabels } from "@/lib/metadata-fields";
 import { cn } from "@/lib/utils";
@@ -41,6 +45,7 @@ export function IssueMetadataTab({
     seriesSlug,
     issueSlug,
   );
+  const setAccepted = useSetIssueMetadataAccepted(seriesSlug, issueSlug);
 
   if (isLoading) {
     return (
@@ -85,6 +90,42 @@ export function IssueMetadataTab({
                 Also nice to have: {metadataFieldLabels(c.missing_recommended)}
               </p>
             )}
+            {/* Escape hatch (B4): a thin/unmatched issue can be marked complete
+                so it leaves the unmatched worklist. `accepted` is reversible
+                and never hides the gaps above. */}
+            {c.tier === "accepted" ? (
+              <div className="space-y-1.5 pt-1">
+                <p className="text-muted-foreground text-xs">
+                  Marked complete despite the gaps above — hidden from the
+                  unmatched worklist.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={setAccepted.isPending}
+                  onClick={() => setAccepted.mutate(false)}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reopen for metadata
+                </Button>
+              </div>
+            ) : c.tier !== "complete" ? (
+              <div className="space-y-1.5 pt-1">
+                <p className="text-muted-foreground text-xs">
+                  No usable provider match? Mark it complete to clear it from
+                  the unmatched worklist (reversible).
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={setAccepted.isPending}
+                  onClick={() => setAccepted.mutate(true)}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  Mark metadata complete
+                </Button>
+              </div>
+            ) : null}
           </MetaCard>
         )}
 
@@ -228,6 +269,22 @@ function TierPill({ tier }: { tier: string }) {
       >
         <CheckCircle2 className="h-3.5 w-3.5" />
         Complete
+      </span>
+    );
+  }
+  if (tier === "accepted") {
+    // Operator-acknowledged (B4) — distinct from genuine completeness; the
+    // info tone signals "manually resolved, gaps remain" without the alarm of
+    // the error pill.
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium",
+          statusTone("info"),
+        )}
+      >
+        <Check className="h-3.5 w-3.5" />
+        Accepted
       </span>
     );
   }
