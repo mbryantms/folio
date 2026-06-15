@@ -39,6 +39,12 @@ pub struct Inner {
     /// back to the env value rather than retaining the stale overlay.
     /// Immutable at runtime; replacing requires a restart.
     pub cfg_baseline: Arc<Config>,
+    /// Effective config at boot (env baseline + DB overlay), captured once.
+    /// Unlike [`Inner::cfg`] this never changes after startup, so it's the
+    /// reference the restart-pending banner diffs the live `cfg` against for
+    /// boot-only settings (worker pools, ZIP LRU, the metadata cron) — those
+    /// keep running on the boot value even after a PATCH updates `cfg`.
+    pub cfg_boot: Arc<Config>,
     pub db: DatabaseConnection,
     pub secrets: Secrets,
     /// JWT signer/verifier built once at boot from the Ed25519 secret +
@@ -139,6 +145,9 @@ impl AppState {
         jobs: JobRuntime,
         email: Arc<dyn EmailSender>,
     ) -> Self {
+        // Snapshot the effective boot config before `cfg` is moved into the
+        // live `ArcSwap` below — the restart-pending banner diffs against it.
+        let cfg_boot = Arc::new(cfg.clone());
         let zip_lru = ZipLru::new(cfg.zip_lru_capacity, cfg.archive_limits());
         let app_password_cache = crate::auth::app_password::AppPasswordCache::new();
         // Build the JWT keys once (PERF-9). from_secret is effectively
@@ -172,6 +181,7 @@ impl AppState {
         Self(Arc::new(Inner {
             cfg: ArcSwap::from_pointee(cfg),
             cfg_baseline: Arc::new(baseline),
+            cfg_boot,
             db,
             secrets,
             jwt_keys,
@@ -213,6 +223,13 @@ impl AppState {
     /// previous overlay state.
     pub fn cfg_baseline(&self) -> Arc<Config> {
         self.0.cfg_baseline.clone()
+    }
+
+    /// Effective config captured at boot. Diff the live [`Self::cfg`] against
+    /// this to find boot-only settings that changed since startup and need a
+    /// restart to take effect (see `api::server_info::restart_pending`).
+    pub fn cfg_boot(&self) -> Arc<Config> {
+        self.0.cfg_boot.clone()
     }
 
     /// Atomically replace the live config. Returns the previous snapshot

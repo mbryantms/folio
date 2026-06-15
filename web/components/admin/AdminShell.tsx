@@ -19,6 +19,7 @@ import { useSidebarState } from "@/lib/use-sidebar-state";
 import { cn } from "@/lib/utils";
 
 import { AdminSidebar } from "./AdminSidebar";
+import { RestartPendingBanner } from "./RestartPendingBanner";
 import { ScanEventBeacon } from "./ScanEventBeacon";
 import type { NavSection } from "./nav";
 
@@ -29,6 +30,7 @@ export function AdminShell({
   title,
   homeHref,
   showScanBeacon = false,
+  showRestartBanner = false,
   defaultSidebar = "expanded",
 }: {
   children: React.ReactNode;
@@ -38,6 +40,9 @@ export function AdminShell({
   homeHref: string;
   /** Show the WebSocket scan-event beacon — admin tree only. */
   showScanBeacon?: boolean;
+  /** Show the restart-pending banner — admin tree only (the query is
+   *  admin-gated; the settings tree shares this shell for non-admins). */
+  showRestartBanner?: boolean;
   /** SSR-resolved initial sidebar state (read from cookie by the layout)
    *  so the first paint matches the user's preference — no expand-then-
    *  collapse flash on reload. */
@@ -133,6 +138,7 @@ export function AdminShell({
           tabIndex={-1}
           className="min-w-0 flex-1 px-4 py-8 md:px-8"
         >
+          {showRestartBanner ? <RestartPendingBanner /> : null}
           {children}
         </main>
       </div>

@@ -107,6 +107,7 @@ list_library_events   # GET /admin/library-events — durable manifest read
 
 # ── server_info.rs ──────────────────────────────────────────
 info            # GET /admin/server — build/version/SHA info
+restart_pending # GET /admin/server/restart-pending — boot-vs-current settings diff (read-only)
 releases        # GET /admin/server/releases — upstream-release availability check
 
 # ── server_releases.rs ──────────────────────────────────────

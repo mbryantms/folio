@@ -1136,6 +1136,27 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
     }
 }
 
+/// Current value of a restart-required setting key as the JSON the API
+/// surfaces. Returns `None` for any key not in
+/// [`crate::settings::registry::RESTART_REQUIRED_KEYS`] (kept exhaustive
+/// over that set by a unit test). The restart-pending banner diffs this
+/// over a boot-time `Config` snapshot vs the live one — equal values mean
+/// the running process already matches what's persisted.
+pub fn restart_setting_value(cfg: &Config, key: &str) -> Option<serde_json::Value> {
+    use serde_json::json;
+    Some(match key {
+        "cache.zip_lru_capacity" => json!(cfg.zip_lru_capacity),
+        "workers.scan_count" => json!(cfg.scan_worker_count),
+        "workers.post_scan_count" => json!(cfg.post_scan_worker_count),
+        "workers.scan_batch_size" => json!(cfg.scan_batch_size),
+        "workers.scan_hash_buffer_kb" => json!(cfg.scan_hash_buffer_kb),
+        "workers.archive_work_parallel" => json!(cfg.archive_work_parallel),
+        "workers.thumb_inline_parallel" => json!(cfg.thumb_inline_parallel),
+        "metadata.weekly_refresh_cron" => json!(cfg.metadata_weekly_refresh_cron),
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1272,5 +1293,23 @@ mod tests {
             metadata_alternate_cover_fetch_cap: default_metadata_alternate_cover_fetch_cap(),
             metadata_merge_provider_preference: String::new(),
         }
+    }
+
+    /// Guards against a `RESTART_REQUIRED_KEYS` entry silently lacking a
+    /// `restart_setting_value` arm — that would make the key never show as
+    /// restart-pending even after it's changed.
+    #[test]
+    fn restart_setting_value_covers_every_restart_required_key() {
+        let cfg = test_config_skeleton();
+        for key in crate::settings::registry::RESTART_REQUIRED_KEYS {
+            assert!(
+                restart_setting_value(&cfg, key).is_some(),
+                "restart_setting_value has no arm for restart-required key `{key}`"
+            );
+        }
+        assert!(
+            restart_setting_value(&cfg, "smtp.host").is_none(),
+            "non-restart key must not map to a restart value"
+        );
     }
 }
