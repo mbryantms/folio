@@ -15,16 +15,15 @@ import {
   Pencil,
   Sparkles,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
-import { BulkArchiveEditDialog } from "@/components/library/BulkArchiveEditDialog";
 import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
-import { EditMetadataDialog } from "@/components/library/EditMetadataDialog";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
@@ -57,6 +56,24 @@ import {
   SpecialsExtrasSection,
   splitMainAndSpecials,
 } from "./SpecialsExtrasSection";
+
+// Bulk dialogs are heavy (metadata form / archive-edit + dnd) and only open
+// from the selection toolbar — lazy so they stay out of the series-page
+// initial bundle; each chunk loads on first open (G6).
+const EditMetadataDialog = dynamic(
+  () =>
+    import("@/components/library/EditMetadataDialog").then(
+      (m) => m.EditMetadataDialog,
+    ),
+  { ssr: false },
+);
+const BulkArchiveEditDialog = dynamic(
+  () =>
+    import("@/components/library/BulkArchiveEditDialog").then(
+      (m) => m.BulkArchiveEditDialog,
+    ),
+  { ssr: false },
+);
 
 /** Stable no-op for the windowed main-run grid: fetch is driven by the
  *  sentinel below (which also handles the empty-main-run edge), so the
@@ -151,6 +168,12 @@ export function IssuesPanel({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editMetadataOpen, setEditMetadataOpen] = useState(false);
   const [archiveEditOpen, setArchiveEditOpen] = useState(false);
+  // Mount each lazy dialog on first open and keep it mounted so its
+  // open/close animation still runs on later toggles (G6).
+  const [editMetadataMounted, setEditMetadataMounted] = useState(false);
+  if (editMetadataOpen && !editMetadataMounted) setEditMetadataMounted(true);
+  const [archiveEditMounted, setArchiveEditMounted] = useState(false);
+  if (archiveEditOpen && !archiveEditMounted) setArchiveEditMounted(true);
   const [markReadOpen, setMarkReadOpen] = useState(false);
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
@@ -503,22 +526,26 @@ export function IssuesPanel({
         }}
         targets={selectedTargets}
       />
-      <EditMetadataDialog
-        open={editMetadataOpen}
-        onOpenChange={(next) => {
-          setEditMetadataOpen(next);
-          if (!next) clearSelection();
-        }}
-        issueIds={Array.from(selection.selected)}
-      />
-      <BulkArchiveEditDialog
-        open={archiveEditOpen}
-        onOpenChange={(next) => {
-          setArchiveEditOpen(next);
-          if (!next) clearSelection();
-        }}
-        issueIds={Array.from(selection.selected)}
-      />
+      {editMetadataMounted && (
+        <EditMetadataDialog
+          open={editMetadataOpen}
+          onOpenChange={(next) => {
+            setEditMetadataOpen(next);
+            if (!next) clearSelection();
+          }}
+          issueIds={Array.from(selection.selected)}
+        />
+      )}
+      {archiveEditMounted && (
+        <BulkArchiveEditDialog
+          open={archiveEditOpen}
+          onOpenChange={(next) => {
+            setArchiveEditOpen(next);
+            if (!next) clearSelection();
+          }}
+          issueIds={Array.from(selection.selected)}
+        />
+      )}
       <BulkMarkReadDialog
         open={markReadOpen}
         onOpenChange={setMarkReadOpen}
@@ -596,7 +623,10 @@ export function IssuesPanel({
         className={cn("h-12", query.hasNextPage ? "" : "hidden")}
       />
       {query.isFetchingNextPage && (
-        <p role="status" className="text-muted-foreground mt-2 text-center text-xs">
+        <p
+          role="status"
+          className="text-muted-foreground mt-2 text-center text-xs"
+        >
           Loading more…
         </p>
       )}
