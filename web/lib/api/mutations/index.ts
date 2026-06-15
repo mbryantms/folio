@@ -26,6 +26,7 @@ export {
 export * from "./thumbnails";
 
 import type {
+  AcceptMetadataResp,
   AccountReq,
   AdminUserDetailView,
   AdminUserView,
@@ -957,6 +958,32 @@ export function useScanIssue(seriesSlug: string, issueSlug: string) {
       method: "POST",
     }),
     { successMessage: "Scan issue queued" },
+  );
+}
+
+/**
+ * Set / clear the "mark metadata complete" acknowledgement on an issue
+ * (metadata-at-scale B4). `true` POSTs (mark complete), `false` DELETEs
+ * (reopen). The completeness tier flips to / from `accepted`; refresh the
+ * metadata overview so the badge + gaps re-read.
+ */
+export function useSetIssueMetadataAccepted(
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  const qc = useQueryClient();
+  const base = `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/accept`;
+  return useApiMutation<AcceptMetadataResp, boolean>(
+    (accept) => ({ path: base, method: accept ? "POST" : "DELETE" }),
+    {
+      successMessage: (_data, accept) =>
+        accept ? "Marked metadata complete" : "Reopened for metadata",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: queryKeys.issueMetadataOverview(seriesSlug, issueSlug),
+        });
+      },
+    },
   );
 }
 
