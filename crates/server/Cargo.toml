@@ -156,6 +156,9 @@ server-macros = { path = "../server-macros" }
 [dev-dependencies]
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }
+# Harness uses a raw Redis connection to FLUSHDB a per-test logical DB and read
+# `CONFIG GET databases` (CI-speed Phase 3 shared-Redis isolation).
+redis = { workspace = true }
 reqwest = { workspace = true }
 insta = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
