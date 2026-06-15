@@ -25,6 +25,7 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: googleapis/release-please-action@v5
         with:

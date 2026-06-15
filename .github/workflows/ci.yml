@@ -28,6 +28,7 @@ jobs:
   changes:
     name: Detect changed paths
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       rust: ${{ steps.filter.outputs.rust || steps.mergequeue.outputs.full }}
       backend_or_spec: ${{ steps.filter.outputs.backend_or_spec || steps.mergequeue.outputs.full }}
@@ -92,10 +93,73 @@ jobs:
               - 'pnpm-workspace.yaml'
               - '.github/workflows/ci.yml'
 
-  rust-check:
-    name: Rust — fmt / clippy / test
+  rust-fmt:
+    name: Rust — fmt
     runs-on: ubuntu-24.04
     needs: [changes]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt
+      # fmt is pure-syntax and instant — always run it as a cheap guard.
+      - name: cargo fmt
+        run: |
+          start=$(date +%s)
+          cargo fmt --all -- --check
+          elapsed=$(($(date +%s) - start))
+          {
+            echo "### Rust fmt timing"
+            echo
+            echo "| Step | Duration |"
+            echo "| --- | ---: |"
+            echo "| cargo fmt | ${elapsed}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  rust-clippy:
+    name: Rust — clippy
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 50
+    env:
+      CARGO_INCREMENTAL: 0
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: clippy
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy
+        run: |
+          start=$(date +%s)
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          elapsed=$(($(date +%s) - start))
+          {
+            echo "### Rust clippy timing"
+            echo
+            echo "| Step | Duration |"
+            echo "| --- | ---: |"
+            echo "| cargo clippy | ${elapsed}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
+  rust-test:
+    name: Rust — test
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: 0
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     services:
       postgres:
         image: postgres:18-alpine
@@ -113,23 +177,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.96.0
-        with:
-          components: rustfmt,clippy
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: Swatinem/rust-cache@v2
       - name: install nextest
-        if: needs.changes.outputs.rust == 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: nextest
-      # fmt is pure-syntax and instant — always run it as a cheap guard.
-      - run: cargo fmt --all -- --check
-      # clippy + the test suite require a full compile; skip them when no
-      # Rust/Cargo/spec input changed (the job still reports success, so the
-      # required check is satisfied). Triggered by crates/**, Cargo.*,
-      # rust-toolchain.toml, or this workflow file.
-      - name: clippy
-        if: needs.changes.outputs.rust == 'true'
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # nextest schedules every binary's tests in one global pool (far better
       # core use than cargo test's one-binary-at-a-time) and auto-retries the
       # rare container flake. The integration harness points at the shared
@@ -137,18 +190,78 @@ jobs:
       # (see crates/server/tests/common/mod.rs). A separate `cargo test --doc`
       # covers doctests, which nextest doesn't run.
       - name: test
-        if: needs.changes.outputs.rust == 'true'
         run: |
-          cargo nextest run --workspace --all-features --profile ci
-          cargo test --workspace --all-features --doc
+          status=0
+          {
+            echo "### Rust test timings"
+            echo
+            echo "| Command | Duration | Exit |"
+            echo "| --- | ---: | ---: |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          run_timed() {
+            label="$1"
+            shift
+            start=$(date +%s)
+            "$@"
+            code=$?
+            elapsed=$(($(date +%s) - start))
+            echo "| ${label} | ${elapsed}s | ${code} |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$code" -ne 0 ]; then
+              status="$code"
+            fi
+          }
+
+          run_timed "cargo nextest" \
+            cargo nextest run --workspace --all-features --profile ci \
+              --status-level slow --final-status-level slow
+          run_timed "cargo test --doc" \
+            cargo test --workspace --all-features --doc
+          exit "$status"
         env:
           COMIC_TEST_PG_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_DATABASE_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_REDIS_URL: redis://localhost:6379
+      - name: sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
+  rust-check:
+    name: Rust — fmt / clippy / test
+    runs-on: ubuntu-24.04
+    needs: [changes, rust-fmt, rust-clippy, rust-test]
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: Verify Rust gates
+        run: |
+          {
+            echo "### Rust gate results"
+            echo
+            echo "| Gate | Result |"
+            echo "| --- | --- |"
+            echo "| fmt | ${{ needs.rust-fmt.result }} |"
+            echo "| clippy | ${{ needs.rust-clippy.result }} |"
+            echo "| test | ${{ needs.rust-test.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          case "${{ needs.rust-fmt.result }}" in
+            success) ;;
+            *) echo "::error::rust fmt gate did not pass"; exit 1 ;;
+          esac
+          case "${{ needs.rust-clippy.result }}" in
+            success|skipped) ;;
+            *) echo "::error::rust clippy gate did not pass"; exit 1 ;;
+          esac
+          case "${{ needs.rust-test.result }}" in
+            success|skipped) ;;
+            *) echo "::error::rust test gate did not pass"; exit 1 ;;
+          esac
 
   rust-audit:
     name: Rust — cargo deny / audit
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     # cargo-deny + cargo-audit inspect the dependency tree, so they only need
     # to run when deps change (Cargo.*, deny.toml). The job still RUNS (required
     # check reports) but skips its steps otherwise. A weekly scheduled sweep
@@ -180,6 +293,7 @@ jobs:
   web-check:
     name: Web — lint / typecheck / test
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     # Job always runs (so the required check always reports), but its steps are
     # gated on web changes — a docs/CHANGELOG-only PR skips the ~3min suite and
     # still goes green. `web` is true for any merge_group entry (full run).
@@ -188,37 +302,95 @@ jobs:
       WEB: ${{ needs.changes.outputs.web }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        if: env.WEB == 'true'
-        with:
-          node-version: 24
       - uses: pnpm/action-setup@v6
         if: env.WEB == 'true'
         with:
           version: 11.5.3
-      - if: env.WEB == 'true'
-        run: pnpm install --frozen-lockfile
-      - if: env.WEB == 'true'
-        run: pnpm --filter web run lint
-      - if: env.WEB == 'true'
-        run: pnpm --filter web run typecheck
+      - uses: actions/setup-node@v6
+        if: env.WEB == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Restore Next.js cache
+        if: env.WEB == 'true'
+        uses: actions/cache@v4
+        with:
+          path: web/.next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('web/**/*.ts', 'web/**/*.tsx', 'web/**/*.js', 'web/**/*.jsx', 'web/**/*.mjs', 'web/**/*.css', 'web/**/*.json') }}
+          restore-keys: |
+            ${{ runner.os }}-next-${{ hashFiles('pnpm-lock.yaml') }}-
+      - name: Start web timing summary
+        if: env.WEB == 'true'
+        run: |
+          {
+            echo "### Web timings"
+            echo
+            echo "| Step | Duration |"
+            echo "| --- | ---: |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Install dependencies
+        if: env.WEB == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm install --frozen-lockfile --prefer-offline
+          elapsed=$(($(date +%s) - start))
+          echo "| install | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
+      - name: Lint
+        if: env.WEB == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm --filter web run lint
+          elapsed=$(($(date +%s) - start))
+          echo "| lint | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
+      - name: Typecheck
+        if: env.WEB == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm --filter web run typecheck
+          elapsed=$(($(date +%s) - start))
+          echo "| typecheck | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       # Registry gate (audit H1a): query definitions must use the
       # queryKeys registry, never an inline tuple literal.
-      - if: env.WEB == 'true'
-        run: pnpm --filter web run check-query-keys
+      - name: Query-key registry gate
+        if: env.WEB == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm --filter web run check-query-keys
+          elapsed=$(($(date +%s) - start))
+          echo "| check-query-keys | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       # Status-color contrast gate (audit F1/F2): no bare light-shade
       # status text without a dark: fallback (invisible on light themes).
-      - if: env.WEB == 'true'
-        run: pnpm --filter web run check-status-colors
-      - if: env.WEB == 'true'
-        run: pnpm --filter web run test
+      - name: Status-color contrast gate
+        if: env.WEB == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm --filter web run check-status-colors
+          elapsed=$(($(date +%s) - start))
+          echo "| check-status-colors | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
+      - name: Unit tests
+        if: env.WEB == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm --filter web run test
+          elapsed=$(($(date +%s) - start))
+          echo "| test | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       # Build once so the bundle-budget script reads a real `.next/`
       # output rather than triggering an implicit build itself.
-      - if: env.WEB == 'true'
-        run: pnpm --filter web run build
+      - name: Build
+        if: env.WEB == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm --filter web run build
+          elapsed=$(($(date +%s) - start))
+          echo "| build | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       - name: Reader bundle budget
         if: env.WEB == 'true'
-        run: pnpm --filter web run check-bundle-size
+        run: |
+          start=$(date +%s)
+          pnpm --filter web run check-bundle-size
+          elapsed=$(($(date +%s) - start))
+          echo "| check-bundle-size | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       # Playwright is intentionally not run in CI. The current specs
       # only cover two static-degradation a11y checks (sign-in,
       # forgot-password); the reader-flow walk-through that would
@@ -238,49 +410,81 @@ jobs:
       # drift in unchanged deps.
       - name: pnpm audit
         if: needs.changes.outputs.web_deps == 'true'
-        run: pnpm audit --audit-level=high
+        run: |
+          start=$(date +%s)
+          pnpm audit --audit-level=high
+          elapsed=$(($(date +%s) - start))
+          echo "| pnpm audit | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
 
   docs-build:
     name: Docs site — build
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     # Always runs (required check reports); steps gated on docs-site changes.
     needs: [changes]
     env:
       DOCS: ${{ needs.changes.outputs.docs }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        if: env.DOCS == 'true'
-        with:
-          node-version: 24
       - uses: pnpm/action-setup@v6
         if: env.DOCS == 'true'
         with:
           version: 11.5.3
-      - if: env.DOCS == 'true'
-        run: pnpm install --frozen-lockfile
-      - if: env.DOCS == 'true'
-        run: pnpm --filter docs-site run build
+      - uses: actions/setup-node@v6
+        if: env.DOCS == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        if: env.DOCS == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm install --frozen-lockfile --prefer-offline
+          elapsed=$(($(date +%s) - start))
+          {
+            echo "### Docs timings"
+            echo
+            echo "| Step | Duration |"
+            echo "| --- | ---: |"
+            echo "| install | ${elapsed}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Build docs
+        if: env.DOCS == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm --filter docs-site run build
+          elapsed=$(($(date +%s) - start))
+          echo "| build | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
 
   openapi-drift:
     name: OpenAPI — snapshot + breaking-change check
     runs-on: ubuntu-24.04
+    timeout-minutes: 35
     # Decoupled from rust-check (it builds its own spec); depends only on the
     # ~5s `changes` job so drift feedback isn't queued behind the test suite.
     needs: [changes]
+    env:
+      CARGO_INCREMENTAL: 0
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
       - uses: pnpm/action-setup@v6
         with:
           version: 11.5.3
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
       # The Rust build (to emit the spec) only matters when backend or the
       # checked-in spec changed; the spec can't have drifted otherwise.
       - uses: dtolnay/rust-toolchain@1.96.0
+        if: needs.changes.outputs.backend_or_spec == 'true'
+      - uses: mozilla-actions/sccache-action@v0.0.10
         if: needs.changes.outputs.backend_or_spec == 'true'
       - uses: Swatinem/rust-cache@v2
         if: needs.changes.outputs.backend_or_spec == 'true'
@@ -288,7 +492,17 @@ jobs:
         if: needs.changes.outputs.backend_or_spec == 'true'
         # Debug build — the emitted spec is identical to release, and a debug
         # build is far faster on every backend PR.
-        run: cargo run --bin server -- --emit-openapi > /tmp/pr-openapi.json
+        run: |
+          start=$(date +%s)
+          cargo run --bin server -- --emit-openapi > /tmp/pr-openapi.json
+          elapsed=$(($(date +%s) - start))
+          {
+            echo "### OpenAPI timings"
+            echo
+            echo "| Step | Duration |"
+            echo "| --- | ---: |"
+            echo "| generate spec | ${elapsed}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Snapshot match
         if: needs.changes.outputs.backend_or_spec == 'true'
         run: |
@@ -303,7 +517,8 @@ jobs:
       # always runs (also catches a hand-edited openapi.json / types file).
       - name: Generated TS types match
         run: |
-          pnpm install --frozen-lockfile
+          start=$(date +%s)
+          pnpm install --frozen-lockfile --prefer-offline
           # openapi-typescript is a dependency of the `web` workspace package,
           # not the repo root, so it must be exec'd in the web context — a bare
           # `pnpm exec` from the root fails with ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL.
@@ -312,6 +527,14 @@ jobs:
           pnpm --filter web exec openapi-typescript lib/api/openapi.json -o /tmp/pr-types.generated.ts
           diff -q /tmp/pr-types.generated.ts web/lib/api/types.generated.ts || \
             (echo "::error::web/lib/api/types.generated.ts is stale. Run 'just openapi'." && exit 1)
+          elapsed=$(($(date +%s) - start))
+          {
+            echo "### OpenAPI timings"
+            echo
+            echo "| Step | Duration |"
+            echo "| --- | ---: |"
+            echo "| generated TS types | ${elapsed}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: oasdiff vs main
         if: github.event_name == 'pull_request' && needs.changes.outputs.backend_or_spec == 'true'
         run: |
@@ -328,10 +551,14 @@ jobs:
             ([[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}" == "true" ]] && \
               echo "::warning::Breaking changes detected (acknowledged via label)" || \
               (echo "::error::Breaking API changes — add 'breaking-change' label and update CHANGELOG.md" && exit 1))
+      - name: sccache stats
+        if: always() && needs.changes.outputs.backend_or_spec == 'true'
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
   audit-check:
     name: Rust — audit-log enforcement (M10.2)
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     # Decoupled from rust-check; gated on Rust changes (a handler audit only
     # matters when crates/** changed). Job still reports success when skipped.
     needs: [changes]
@@ -348,11 +575,22 @@ jobs:
       # cover read-only admin GETs + delegate-pattern wrappers.
       - name: audit-log enforcement
         if: needs.changes.outputs.rust == 'true'
-        run: cargo run -p audit-check --release
+        run: |
+          start=$(date +%s)
+          cargo run -p audit-check
+          elapsed=$(($(date +%s) - start))
+          {
+            echo "### Audit-log enforcement timing"
+            echo
+            echo "| Step | Duration |"
+            echo "| --- | ---: |"
+            echo "| cargo run -p audit-check | ${elapsed}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   docker-build:
     name: Docker — amd64 build
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     # Intentionally gated on the full check jobs — don't burn an image build
     # if fmt/clippy/test or the web suite failed. Build steps additionally skip
     # when neither image's inputs changed (e.g. a docs/CHANGELOG-only PR): the
