@@ -1,8 +1,9 @@
-import { redirect } from "next/navigation";
+import { CollectionsIndex } from "@/components/collections/CollectionsIndex";
 
-/** Collections moved into the unified `/views` index (A3) as the
- *  `#collections` section. Redirect keeps old links + the sidebar entry
- *  working; the fragment lands the user on the Collections section. */
-export default function CollectionsIndexRedirectPage() {
-  redirect("/views#collections");
+/** Standalone collections-only browse page — the main-UI sidebar
+ *  "Collections" link lands here. The full three-type management view
+ *  (with create/import + pin/sidebar arrangement) lives at
+ *  `/settings/views`. */
+export default function CollectionsPage() {
+  return <CollectionsIndex />;
 }

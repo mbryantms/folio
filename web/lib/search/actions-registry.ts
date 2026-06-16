@@ -123,7 +123,7 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     label: "Views",
     group: "Library",
     icon: ListChecks,
-    href: "/views",
+    href: "/settings/views",
     keywords: ["filters", "smart view", "cbl", "reading lists", "collections"],
   },
   {
@@ -165,7 +165,7 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     label: "Collections",
     group: "Library",
     icon: FolderClosed,
-    href: "/views#collections",
+    href: "/collections",
     keywords: ["lists", "manual"],
   },
   {
