@@ -28,6 +28,7 @@ export type IconName =
   | "ScanLine"
   | "Search"
   | "Server"
+  | "Settings"
   | "Shield"
   | "Sparkles"
   | "UserCog"

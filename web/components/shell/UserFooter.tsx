@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import {
   ChevronUp,
+  House,
+  Info,
   Keyboard,
   LogOut,
   Settings,
@@ -33,11 +35,15 @@ import { useShortcutsSheet } from "@/components/GlobalShortcutsSheet";
 export function UserFooter({
   user,
   collapsed = false,
+  libraryHref,
 }: {
   user: { display_name: string; email?: string | null; role: string };
   /** When true, the footer renders just the avatar (matches the
    *  collapsed sidebar's icon-only look). The dropdown menu is unchanged. */
   collapsed?: boolean;
+  /** When set (admin/settings shells), adds a "Library" item that returns
+   *  to the main app. Omitted in the library shell, where it'd be redundant. */
+  libraryHref?: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -119,6 +125,13 @@ export function UserFooter({
             </span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+          {libraryHref ? (
+            <DropdownMenuItem asChild>
+              <Link href={libraryHref}>
+                <House /> Library
+              </Link>
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem asChild>
             <Link href={`/settings/account`}>
               <UserIcon /> Profile
@@ -133,6 +146,13 @@ export function UserFooter({
             <DropdownMenuItem asChild>
               <Link href={`/admin`}>
                 <Shield /> Admin
+              </Link>
+            </DropdownMenuItem>
+          ) : null}
+          {isAdmin ? (
+            <DropdownMenuItem asChild>
+              <Link href={`/admin/server`}>
+                <Info /> About
               </Link>
             </DropdownMenuItem>
           ) : null}
