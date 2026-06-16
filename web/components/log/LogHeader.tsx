@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { RotateCcw } from "lucide-react";
+import { Download, RotateCcw } from "lucide-react";
 
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
 import { PageHeader } from "@/components/admin/PageHeader";
@@ -56,6 +56,20 @@ export function LogHeader({
           <>
             <ActivityRangeSelector value={range} onChange={onRangeChange} />
             <AddWidgetMenu current={widgets} />
+            {/* Data liberation (3.3): download the full reading history as
+                CSV. A plain same-origin `<a download>` carries the session
+                cookie, so no client fetch/auth plumbing is needed. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              asChild
+              title="Download your full reading log as a CSV"
+            >
+              <a href="/api/me/reading-log/export" download>
+                <Download aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
+                Export CSV
+              </a>
+            </Button>
             <Button
               variant="ghost"
               size="sm"

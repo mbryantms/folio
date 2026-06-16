@@ -6034,6 +6034,73 @@
         }
       }
     },
+    "/api/me/reading-log/export": {
+      "get": {
+        "summary": "`GET /me/reading-log/export` — the same feed as the list endpoint,\nflattened to a CSV download (data-liberation 3.3). Honors the same\n`kind` / `from` / `to` / `library_id` / `series_id` / `include_hidden`\nfilters; no pagination — returns up to `EXPORT_MAX_EVENTS` most-recent\nrows.",
+        "operationId": "reading_log_export",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "library_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "series_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_hidden",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reading log as CSV",
+            "content": {
+              "text/csv": {}
+            }
+          },
+          "400": {
+            "description": "validation"
+          }
+        }
+      }
+    },
     "/api/me/reading-log/hide": {
       "post": {
         "operationId": "reading_log_hide",

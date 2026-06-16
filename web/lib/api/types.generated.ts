@@ -2713,6 +2713,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/reading-log/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /me/reading-log/export` — the same feed as the list endpoint,
+         *     flattened to a CSV download (data-liberation 3.3). Honors the same
+         *     `kind` / `from` / `to` / `library_id` / `series_id` / `include_hidden`
+         *     filters; no pagination — returns up to `EXPORT_MAX_EVENTS` most-recent
+         *     rows.
+         */
+        get: operations["reading_log_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/reading-log/hide": {
         parameters: {
             query?: never;
@@ -14556,6 +14579,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadingLogPageView"];
+                };
+            };
+            /** @description validation */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reading_log_export: {
+        parameters: {
+            query?: {
+                kind?: string;
+                from?: string;
+                to?: string;
+                library_id?: string;
+                series_id?: string;
+                include_hidden?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reading log as CSV */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": unknown;
                 };
             };
             /** @description validation */
