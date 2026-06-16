@@ -2,7 +2,10 @@
 
 import {
   Bookmark,
+  Folder,
   Highlighter,
+  LayoutDashboard,
+  ListChecks,
   Star,
   StickyNote,
   User,
@@ -11,9 +14,12 @@ import {
 import { useMemo } from "react";
 
 import {
+  useCollections,
   useIssueSearch,
   useMarkerSearch,
+  useMePages,
   usePeopleSearch,
+  useSavedViews,
   useSeriesList,
   type SeriesListFilters,
 } from "@/lib/api/queries";
@@ -21,6 +27,8 @@ import type {
   IssueSearchHit,
   MarkerKind,
   MarkerSearchHit,
+  PageView,
+  SavedViewView,
   SeriesView,
 } from "@/lib/api/types";
 import { issueUrl, pageBytesUrl, seriesUrl, readerUrl } from "@/lib/urls";
@@ -60,6 +68,105 @@ const BACKEND_MAX = {
   people: 100,
 } as const;
 
+/** Soft cap for the client-filtered saved-content categories (views,
+ *  collections, pages). Unlike the backend categories these have no
+ *  server `MAX_LIMIT` — they filter cached, per-user-bounded lists in
+ *  memory — so the rails just cap at a sane ceiling when no explicit
+ *  `perCategory` is supplied. */
+const SAVED_CONTENT_MAX = 25;
+
+const WANT_TO_READ_KEY = "want_to_read";
+
+/** One-line subtitle for a saved-view hit, mirroring the concept copy
+ *  on the `/views` index: filter views update from rules, reading lists
+ *  track an imported CBL. */
+function savedViewSubtitle(kind: SavedViewView["kind"]): string {
+  switch (kind) {
+    case "cbl":
+      return "Reading list";
+    case "filter_series":
+      return "Filter view";
+    default:
+      return "View";
+  }
+}
+
+/** Cached lists the saved-content palette categories (A4) filter over. */
+export interface SavedContentSources {
+  /** `/me/saved-views` — all kinds; the `views` category keeps only the
+   *  user-content kinds (`filter_series` / `cbl`) and drops the `system`
+   *  rails + `collection` rows (collections get their own category). */
+  savedViews: SavedViewView[];
+  /** `/me/collections` — collection rows, including the built-in Want to
+   *  Read. */
+  collections: SavedViewView[];
+  /** `/me/pages` — the user's custom + system pages. */
+  pages: PageView[];
+}
+
+export interface SavedContentHits {
+  views: SearchHit[];
+  collections: SearchHit[];
+  pages: SearchHit[];
+}
+
+const EMPTY_SAVED_CONTENT: SavedContentHits = {
+  views: [],
+  collections: [],
+  pages: [],
+};
+
+/** Build the `views` / `collections` / `pages` palette hits by matching
+ *  cached lists on name (A4). `needle` MUST be pre-lowercased; pass `""`
+ *  to short-circuit to empty groups. Pure + exported so the
+ *  categorization rules are unit-tested directly (no hook render). The
+ *  caller slices each array to its per-category cap and reads `.length`
+ *  for the category total. */
+export function buildSavedContentHits(
+  needle: string,
+  sources: SavedContentSources,
+): SavedContentHits {
+  if (!needle) return EMPTY_SAVED_CONTENT;
+  const views: SearchHit[] = sources.savedViews
+    .filter(
+      (v) =>
+        (v.kind === "filter_series" || v.kind === "cbl") &&
+        v.name.toLowerCase().includes(needle),
+    )
+    .map((v) => ({
+      kind: "views" as const,
+      id: v.id,
+      title: v.name,
+      subtitle: savedViewSubtitle(v.kind),
+      href: `/views/${v.id}`,
+      icon: ListChecks,
+    }));
+  const collections: SearchHit[] = sources.collections
+    .filter((c) => c.name.toLowerCase().includes(needle))
+    .map((c) => {
+      const isWantToRead = c.system_key === WANT_TO_READ_KEY;
+      return {
+        kind: "collections" as const,
+        id: c.id,
+        title: c.name,
+        subtitle: isWantToRead ? "Built-in collection" : "Collection",
+        href: `/views/${isWantToRead ? "want-to-read" : c.id}`,
+        icon: Folder,
+      };
+    });
+  const pages: SearchHit[] = sources.pages
+    .filter((p) => p.name.toLowerCase().includes(needle))
+    .map((p) => ({
+      kind: "pages" as const,
+      id: p.id,
+      title: p.name,
+      subtitle: "Page",
+      href: `/pages/${p.slug}`,
+      icon: LayoutDashboard,
+    }));
+  return { views, collections, pages };
+}
+
 /** Raw payload arrays for the cover-renderable categories. The
  *  `/search` page reads these so it can render proper `<SeriesCard>` /
  *  `<IssueCard>` components (cover-menu, badges, progress overlay)
@@ -92,6 +199,9 @@ const EMPTY_TOTALS: GlobalSearchTotals = {
   issues: 0,
   markers: 0,
   people: 0,
+  views: 0,
+  collections: 0,
+  pages: 0,
 };
 
 /** Build the URL a person hit links to.
@@ -182,13 +292,14 @@ function markerToSearchHit(m: MarkerSearchHit): SearchHit {
 }
 
 /**
- * Fan-out search hook. Series, issues, and people each have their own
- * backend query; the hook merges them into `SearchHit` groups plus the
- * raw payload arrays used by the rails on `/search`. When a new
- * category backend lands, plug another hook call here and map its rows
- * into `SearchHit`s with the matching `kind` — the modal and `/search`
- * pick them up automatically once the category is added to
- * `SEARCH_CATEGORIES`.
+ * Fan-out search hook. Series, issues, markers, and people each have
+ * their own backend query; views / collections / pages (A4) are matched
+ * client-side over already-cached lists (`buildSavedContentHits`). The
+ * hook merges them all into `SearchHit` groups plus the raw payload
+ * arrays used by the rails on `/search`. When a new category lands, plug
+ * another source in here and map its rows into `SearchHit`s with the
+ * matching `kind` — the modal and `/search` pick them up automatically
+ * once the category is added to `SEARCH_CATEGORIES`.
  */
 export function useGlobalSearch(
   rawQuery: string,
@@ -219,6 +330,16 @@ export function useGlobalSearch(
     enabled ? { q: query, limit: peopleLimit } : {},
   );
 
+  // Saved-content sources (A4). These hooks read already-cached,
+  // per-user-bounded lists (`/me/saved-views`, `/me/collections`,
+  // `/me/pages`), so the palette can match a view / collection / page
+  // by name without a new backend. They're filtered client-side below;
+  // calling them unconditionally just shares the existing cache.
+  const savedViews = useSavedViews();
+  const collections = useCollections();
+  const pages = useMePages();
+  const savedContentLimit = opts.perCategory ?? SAVED_CONTENT_MAX;
+
   const seriesItems = useMemo<SeriesView[]>(
     () => (enabled ? (series.data?.items ?? []) : []),
     [enabled, series.data],
@@ -226,6 +347,23 @@ export function useGlobalSearch(
   const issueItems = useMemo<IssueSearchHit[]>(
     () => (enabled ? (issues.data?.items ?? []) : []),
     [enabled, issues.data],
+  );
+
+  // Lower-cased query for the client-side name match. Empty when the
+  // search isn't enabled so the helper short-circuits to empty groups.
+  const needle = enabled ? query.toLowerCase() : "";
+
+  // Saved-content hits (views / collections / pages), name-matched over
+  // the cached lists. Unsliced here so `categoryTotals` can report the
+  // true match count; the `groups` memo applies the per-category cap.
+  const savedContent = useMemo<SavedContentHits>(
+    () =>
+      buildSavedContentHits(needle, {
+        savedViews: savedViews.data?.items ?? [],
+        collections: collections.data ?? [],
+        pages: pages.data ?? [],
+      }),
+    [needle, savedViews.data, collections.data, pages.data],
   );
 
   const groups = useMemo<SearchGroups>(() => {
@@ -274,8 +412,19 @@ export function useGlobalSearch(
       issues: issueHits,
       markers: markerHits,
       people: peopleHits,
+      views: savedContent.views.slice(0, savedContentLimit),
+      collections: savedContent.collections.slice(0, savedContentLimit),
+      pages: savedContent.pages.slice(0, savedContentLimit),
     };
-  }, [enabled, seriesItems, issueItems, markers.data, people.data]);
+  }, [
+    enabled,
+    seriesItems,
+    issueItems,
+    markers.data,
+    people.data,
+    savedContent,
+    savedContentLimit,
+  ]);
 
   const payloads = useMemo<GlobalSearchPayloads>(() => {
     if (!enabled) return EMPTY_PAYLOADS;
@@ -289,6 +438,9 @@ export function useGlobalSearch(
       issues: issueItems.length,
       markers: markers.data?.items.length ?? 0,
       people: people.data?.items.length ?? 0,
+      views: savedContent.views.length,
+      collections: savedContent.collections.length,
+      pages: savedContent.pages.length,
     };
   }, [
     enabled,
@@ -297,6 +449,7 @@ export function useGlobalSearch(
     issueItems.length,
     markers.data?.items.length,
     people.data?.items.length,
+    savedContent,
   ]);
 
   // Future: aggregate `isFetching` across each backend so the spinner is

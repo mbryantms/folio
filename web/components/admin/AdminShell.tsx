@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 
 import { PullToRefresh } from "@/components/PullToRefresh";
+import { TopbarSearchTrigger } from "@/components/TopbarSearchTrigger";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -65,7 +66,7 @@ export function AdminShell({
     <div className="bg-background text-foreground min-h-screen">
       <SkipToContent />
       <PullToRefresh />
-      <header className="border-border bg-background/80 sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pl-[max(1rem,var(--safe-left))] pr-[max(1rem,var(--safe-right))] backdrop-blur md:pl-[max(1.5rem,var(--safe-left))] md:pr-[max(1.5rem,var(--safe-right))]">
+      <header className="border-border bg-background/80 sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] backdrop-blur md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
             <Button
@@ -105,8 +106,17 @@ export function AdminShell({
         <span className="text-muted-foreground ml-2 hidden text-xs font-medium tracking-widest uppercase sm:inline">
           {title}
         </span>
+        {/* Global search — the same `<SearchModal>` surface as the
+            app-wide `Mod+K` / `/` hotkeys, surfaced here so the admin +
+            settings trees advertise search instead of being a visible
+            dead zone (A4). Input-shaped and grows to fill at sm+; an
+            icon button on phones. */}
+        <div className="ml-2 hidden min-w-0 flex-1 sm:block sm:max-w-md">
+          <TopbarSearchTrigger />
+        </div>
+        <TopbarSearchTrigger className="ml-auto sm:hidden" />
         {showScanBeacon ? (
-          <div className="text-muted-foreground ml-auto flex items-center gap-3 text-sm">
+          <div className="text-muted-foreground flex shrink-0 items-center gap-3 text-sm">
             <ScanEventBeacon />
           </div>
         ) : null}
