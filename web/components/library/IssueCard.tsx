@@ -21,6 +21,7 @@ import { formatIssueHeading } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { IssueSummaryView } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
+import { useShareLink } from "@/lib/ui/use-share-link";
 
 function IssueCardImpl({
   issue,
@@ -77,6 +78,7 @@ function IssueCardImpl({
     ref_id: issue.id,
     label: `${heading}${issue.number ? ` ${numberLabel}` : ""}`,
   });
+  const share = useShareLink();
   // Same actions backing the desktop kebab — sharing the array means
   // touch (long-press sheet) and desktop (dropdown) can't drift.
   const menuActions: CoverMenuAction[] =
@@ -101,6 +103,10 @@ function IssueCardImpl({
               }),
           },
           ...collectionActions.actions,
+          {
+            label: share.label,
+            onSelect: () => void share.shareOrCopy(issueUrl(issue), heading),
+          },
           ...(extraActions ?? []),
         ]
       : [];

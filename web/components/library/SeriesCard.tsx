@@ -24,6 +24,7 @@ import { statusToneDot, statusToneSolid } from "@/lib/ui/status-tone";
 import { formatPublicationStatus } from "@/lib/format";
 import { collectionStatus } from "@/lib/series-status";
 import { seriesUrl } from "@/lib/urls";
+import { useShareLink } from "@/lib/ui/use-share-link";
 
 type Size = "sm" | "md";
 
@@ -88,6 +89,7 @@ function SeriesCardImpl({
     ref_id: series.id,
     label: series.name,
   });
+  const share = useShareLink();
   const menuActions: CoverMenuAction[] = [
     {
       label: "Mark all read",
@@ -100,6 +102,10 @@ function SeriesCardImpl({
       onSelect: () => upsertSeriesProgress.mutate({ finished: false }),
     },
     ...collectionActions.actions,
+    {
+      label: share.label,
+      onSelect: () => void share.shareOrCopy(seriesUrl(series), series.name),
+    },
     ...(extraActions ?? []),
   ];
   // Prepend "Select" to the long-press sheet when the parent
