@@ -1,14 +1,9 @@
-import { PageHeader } from "@/components/admin/PageHeader";
-import { SavedViewsManager } from "@/components/saved-views/SavedViewsManager";
+import { ViewsIndex } from "@/components/saved-views/ViewsIndex";
 
-export default function SavedViewsSettingsPage() {
-  return (
-    <>
-      <PageHeader
-        title="Views"
-        description="Arrange where your saved views appear — pin them to pages and toggle sidebar visibility. Create, import, and edit from the Views library."
-      />
-      <SavedViewsManager />
-    </>
-  );
+/** Settings → Views: the unified saved-content manager (A3). Browse,
+ *  create/import, and arrange (pin-to-pages + sidebar) all three saved
+ *  types — Filter views, Reading lists, Collections — in one tabbed page.
+ *  `ViewsIndex` owns its own PageHeader. */
+export default function ViewsSettingsPage() {
+  return <ViewsIndex />;
 }

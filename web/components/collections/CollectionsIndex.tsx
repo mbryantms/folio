@@ -6,7 +6,6 @@ import { BookmarkPlus, Folder, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/PageHeader";
-import { ViewsSection } from "@/components/saved-views/views-section";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,76 +25,49 @@ import type { SavedViewView } from "@/lib/api/types";
 
 const WANT_TO_READ_KEY = "want_to_read";
 
-/** Grid of the user's collections + "New collection" button. Want to
- *  Read is pinned to the front of the list with a distinct icon so the
- *  built-in collection is visually separated from user-curated lists.
- *
- *  `embedded` renders it as a section of the unified `/views` index (A3) —
- *  a `ViewsSection` header instead of the standalone `PageHeader`. The
- *  standalone form is now only reached transiently (the `/collections`
- *  route redirects to `/views#collections`). */
-export function CollectionsIndex({
-  embedded = false,
-}: {
-  embedded?: boolean;
-} = {}) {
+/** Standalone collections-only index — the day-to-day browse surface for
+ *  the user's collections, reached from the main-UI sidebar "Collections"
+ *  link (`/collections`). Want to Read is pinned to the front with a
+ *  distinct icon so the built-in collection is visually separated from
+ *  user-curated lists. Arrangement (pin-to-pages / sidebar) + the full
+ *  three-type management view live on `/settings/views`. */
+export function CollectionsIndex() {
   const collectionsQ = useCollections();
   const [createOpen, setCreateOpen] = React.useState(false);
 
   const collections = collectionsQ.data ?? [];
-
-  const createButton = (
-    <Button type="button" onClick={() => setCreateOpen(true)}>
-      <Plus className="mr-1 h-4 w-4" /> New collection
-    </Button>
-  );
-
-  const body = collectionsQ.isLoading ? (
-    <div className="text-muted-foreground py-6 text-sm">Loading…</div>
-  ) : collectionsQ.isError ? (
-    <div className="text-destructive rounded-md border p-4 text-sm">
-      Failed to load collections.
-    </div>
-  ) : collections.length === 0 ? (
-    <EmptyState onCreate={() => setCreateOpen(true)} />
-  ) : (
-    <ul
-      role="list"
-      className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-    >
-      {collections.map((collection) => (
-        <li key={collection.id}>
-          <CollectionCard collection={collection} />
-        </li>
-      ))}
-    </ul>
-  );
-
-  if (embedded) {
-    return (
-      <>
-        <ViewsSection
-          id="collections"
-          icon={Folder}
-          title="Collections"
-          blurb="hand-picked series & issues"
-          action={createButton}
-        >
-          {body}
-        </ViewsSection>
-        <NewCollectionDialog open={createOpen} onOpenChange={setCreateOpen} />
-      </>
-    );
-  }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Collections"
         description="Manual reading lists of mixed series and issues. Use the kebab menu on any cover to add items."
-        actions={createButton}
+        actions={
+          <Button type="button" onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-1 h-4 w-4" /> New collection
+          </Button>
+        }
       />
-      {body}
+      {collectionsQ.isLoading ? (
+        <div className="text-muted-foreground py-6 text-sm">Loading…</div>
+      ) : collectionsQ.isError ? (
+        <div className="text-destructive rounded-md border p-4 text-sm">
+          Failed to load collections.
+        </div>
+      ) : collections.length === 0 ? (
+        <EmptyState onCreate={() => setCreateOpen(true)} />
+      ) : (
+        <ul
+          role="list"
+          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        >
+          {collections.map((collection) => (
+            <li key={collection.id}>
+              <CollectionCard collection={collection} />
+            </li>
+          ))}
+        </ul>
+      )}
       <NewCollectionDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );
@@ -153,7 +125,9 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   );
 }
 
-function NewCollectionDialog({
+/** Create-collection dialog. Used by the standalone `/collections` index
+ *  and by the Collections tab of the `/settings/views` manager. */
+export function NewCollectionDialog({
   open,
   onOpenChange,
 }: {

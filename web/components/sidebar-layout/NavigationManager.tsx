@@ -86,9 +86,9 @@ function newRefId(): string {
 function SidebarSection() {
   const layoutQ = useSidebarLayout();
   const update = useUpdateSidebarLayout();
-  // Optimistic post-drag order. Mirrors `SavedViewsManager`'s pattern:
-  // local state wins until the server reconciles, at which point we
-  // drop back to the query's resolved layout.
+  // Optimistic post-drag order: local state wins until the server
+  // reconciles, at which point we drop back to the query's resolved
+  // layout.
   const [optimistic, setOptimistic] = React.useState<SidebarEntryView[] | null>(
     null,
   );
