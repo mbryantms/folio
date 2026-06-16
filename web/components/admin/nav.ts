@@ -142,9 +142,9 @@ export function settingsNav(localePrefix: string): NavSection[] {
     {
       label: "Library",
       items: [
-        { href: p("/views"), label: "Saved views", icon: "ListChecks" },
+        { href: p("/views"), label: "Views", icon: "ListChecks" },
         { href: p("/pages"), label: "Pages", icon: "LayoutGrid" },
-        { href: p("/navigation"), label: "Sidebar", icon: "PanelLeft" },
+        { href: p("/sidebar"), label: "Sidebar", icon: "PanelLeft" },
       ],
     },
     {

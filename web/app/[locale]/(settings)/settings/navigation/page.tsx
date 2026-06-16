@@ -1,14 +1,8 @@
-import { PageHeader } from "@/components/admin/PageHeader";
-import { NavigationManager } from "@/components/sidebar-layout/NavigationManager";
+import { redirect } from "next/navigation";
 
-export default function NavigationSettingsPage() {
-  return (
-    <>
-      <PageHeader
-        title="Sidebar"
-        description="Rearrange libraries, pages, and saved views in the left sidebar. Drag to reorder, toggle to hide, add custom headers or spacers to organize sections."
-      />
-      <NavigationManager />
-    </>
-  );
+/** The sidebar-arrangement surface moved to `/settings/sidebar` so the
+ *  settings → Library trio reads Views · Pages · Sidebar with matching
+ *  routes. Old bookmarks / inbound links land on the new route. */
+export default function NavigationSettingsRedirect() {
+  redirect("/settings/sidebar");
 }

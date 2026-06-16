@@ -5,8 +5,8 @@ export default function SavedViewsSettingsPage() {
   return (
     <>
       <PageHeader
-        title="Saved views"
-        description="Arrange where your saved views appear — pin them to pages and toggle sidebar visibility. Create, import, and edit under Views."
+        title="Views"
+        description="Arrange where your saved views appear — pin them to pages and toggle sidebar visibility. Create, import, and edit from the Views library."
       />
       <SavedViewsManager />
     </>

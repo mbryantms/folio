@@ -16,7 +16,7 @@ import { MultiPinDialog } from "./MultiPinDialog";
  *  Defaults & arrangement only (A3): pin each view to one or more pages and
  *  toggle sidebar visibility. Creating, importing, editing, and deleting now
  *  live in the library at `/views`; pin order + sidebar order live on
- *  `/settings/pages` / `/settings/navigation`. */
+ *  `/settings/pages` / `/settings/sidebar`. */
 export function SavedViewsManager() {
   const viewsQ = useSavedViews();
   const all = React.useMemo(
@@ -25,7 +25,7 @@ export function SavedViewsManager() {
   );
   const sorted = React.useMemo(() => {
     // Alphabetical, system and user views interleaved — same ordering the
-    // picker on `/settings/navigation` uses, so a row is recognizable in
+    // picker on `/settings/sidebar` uses, so a row is recognizable in
     // both places.
     return [...all].sort((a, b) =>
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
@@ -58,7 +58,7 @@ export function SavedViewsManager() {
         </Link>{" "}
         and sidebar order under{" "}
         <Link
-          href="/settings/navigation"
+          href="/settings/sidebar"
           className="text-foreground underline underline-offset-2"
         >
           Sidebar
@@ -156,7 +156,7 @@ function ViewRow({ view }: { view: SavedViewView }) {
 
 /** Compact Switch + label cluster for the per-row "In sidebar" toggle.
  *  De-emphasized so it reads as a secondary affordance; primary sidebar
- *  arrangement lives on `/settings/navigation`. */
+ *  arrangement lives on `/settings/sidebar`. */
 function ToggleControl({
   label,
   checked,

@@ -107,7 +107,7 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     label: "Sidebar layout",
     group: "Settings",
     icon: LayoutDashboard,
-    href: "/settings/navigation",
+    href: "/settings/sidebar",
     keywords: ["sidebar", "nav", "reorder"],
   },
   {
