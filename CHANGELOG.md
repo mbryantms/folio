@@ -13,6 +13,34 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.15.0](https://github.com/mbryantms/folio/compare/v0.14.0...v0.15.0) (2026-06-16)
+
+
+### Added
+
+* **cbl:** bulk-resolve similar entries + auto-advance (2.6 / B10) ([#237](https://github.com/mbryantms/folio/issues/237)) ([c3f2858](https://github.com/mbryantms/folio/commit/c3f285857ef9edd389c7a1cb626f773424170b46))
+* **metadata:** "mark metadata complete" escape hatch (2.6 / B4 server) ([#230](https://github.com/mbryantms/folio/issues/230)) ([cd411c1](https://github.com/mbryantms/folio/commit/cd411c1914406656b1a457e9448f6ab2b843577d))
+* **metadata:** "Needs metadata" chips deep-link to the match dialog (2.6 / B4) ([#233](https://github.com/mbryantms/folio/issues/233)) ([0738c3b](https://github.com/mbryantms/folio/commit/0738c3bffbc77ca555ee40cfa3ee61e633d11a6b))
+* **metadata:** auto-advance through the needs-metadata worklist (2.6 / B4) ([#235](https://github.com/mbryantms/folio/issues/235)) ([5a3a531](https://github.com/mbryantms/folio/commit/5a3a53193175051586719b73765520f996489580))
+* **metadata:** bulk fetch routes through a batch + "Review results" (2.6 / B5) ([#236](https://github.com/mbryantms/folio/issues/236)) ([675d341](https://github.com/mbryantms/folio/commit/675d3414e41debbe55500a2694cb8e109f3ec3b9))
+* **metadata:** URL-addressable "Needs metadata" worklist grid (2.6 / B4) ([#234](https://github.com/mbryantms/folio/issues/234)) ([68991c3](https://github.com/mbryantms/folio/commit/68991c39679e64fd862ec4a7a37de5307df455c8))
+
+
+### Fixed
+
+* **metadata:** honor the accepted overlay in the saved-view completeness filter (2.6 / B4) ([#232](https://github.com/mbryantms/folio/issues/232)) ([45be605](https://github.com/mbryantms/folio/commit/45be6053f9430979bec55af8fb09dbbcd5666c47))
+
+
+### Changed
+
+* **web:** lazy-load the heavy series/issue dialogs (2.6 / G6) ([#229](https://github.com/mbryantms/folio/issues/229)) ([2a0aea7](https://github.com/mbryantms/folio/commit/2a0aea76fa442aebb0f2c1a94a62def8e2c3dcc5))
+
+
+### Dependencies
+
+* update lucide monorepo to v1.18.0 ([#225](https://github.com/mbryantms/folio/issues/225)) ([007b189](https://github.com/mbryantms/folio/commit/007b18908e7debbb2c1998cdc82209cd12b33efb))
+* update pnpm to v11.7.0 ([#226](https://github.com/mbryantms/folio/issues/226)) ([ab65664](https://github.com/mbryantms/folio/commit/ab65664921dca42f042f7f7d1f2705b385c62d3c))
+
 ## [0.14.0](https://github.com/mbryantms/folio/compare/v0.13.1...v0.14.0) (2026-06-15)
 
 
