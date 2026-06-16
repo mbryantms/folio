@@ -98,6 +98,38 @@ async fn get_json(app: &TestApp, uri: &str, auth: &Authed) -> (StatusCode, serde
     (status, body_json(resp.into_body()).await)
 }
 
+/// Like `get_json` but returns the raw body + content-type — for the CSV
+/// export, which isn't JSON.
+async fn get_text(app: &TestApp, uri: &str, auth: &Authed) -> (StatusCode, String, String) {
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &auth.csrf)
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    (
+        status,
+        content_type,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
 /// Seed one library + one series + `count` issues. Returns (library_id,
 /// series_id, issue_ids[]).
 async fn seed_library_with_issues(
@@ -860,4 +892,33 @@ async fn hide_series_finished_is_rejected_as_validation_error() {
     // Audit-remediation M9: HideEventReq::kind is enum-validated by
     // garde; rejection lands at 422.
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn csv_export_flattens_events_to_text_csv() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "export@rl.test").await;
+    let (_lib, _sid, ids) = seed_library_with_issues(&app, "export", 2).await;
+    // First user is admin → no library grant needed (same as the list tests).
+    let base = Utc::now().fixed_offset();
+    mark_finished_at(&app, auth.user_id, &ids[0], base - Duration::hours(1)).await;
+    mark_finished_at(&app, auth.user_id, &ids[1], base).await;
+
+    let (status, content_type, body) = get_text(&app, "/api/me/reading-log/export", &auth).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type.starts_with("text/csv"),
+        "content-type was {content_type}"
+    );
+    let mut lines = body.lines();
+    let header = lines.next().unwrap();
+    assert!(
+        header.starts_with("occurred_at,kind,series,"),
+        "header was {header}"
+    );
+    // 2 issue_finished + 1 synthesized series_finished == 3 data rows.
+    let rows = lines.filter(|l| !l.is_empty()).count();
+    assert_eq!(rows, 3, "csv body:\n{body}");
+    assert!(body.contains("issue_finished"));
+    assert!(body.contains("series_finished"));
 }

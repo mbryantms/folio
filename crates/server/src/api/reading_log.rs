@@ -50,6 +50,7 @@ use server_macros::handler;
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(reading_log))
+        .routes(routes!(reading_log_export))
         .routes(routes!(hide))
         .routes(routes!(unhide))
 }
@@ -394,79 +395,131 @@ pub async fn reading_log(
     };
     let include_hidden = q.include_hidden.unwrap_or(false);
 
-    // ── Per-source candidate harvest ──
-    // Each source pulls `limit` rows (the worst-case feed contribution
-    // when all of them are concentrated at the top of the timeline).
-    // After merging we keep only the first `limit` — over-fetching is
-    // the cost of unioning ordered sources without a global index.
+    // Gather → merge → ACL → hydrate runs through the shared pipeline so
+    // the paginated list endpoint and the CSV export can't drift.
+    let params = GatherParams {
+        kinds: kinds_requested,
+        from,
+        to,
+        series_id: q.series_id,
+        library_id: q.library_id,
+        include_hidden,
+        limit,
+        cursor,
+    };
+    let (events, has_more) = match gather_events(&app, &user, &params).await {
+        Ok(out) => out,
+        Err(e) => return internal_err(e),
+    };
 
-    let mut candidates: Vec<Candidate> = Vec::with_capacity((limit as usize) * 4);
-    // Each source over-fetches by one so the merge layer can detect
-    // "more remain" even when a single source dominates the page. With
-    // limit=3 and a source returning exactly 3 rows, has_more couldn't
-    // distinguish "exactly 3" from "≥ 3, truncated"; fetching 4 makes
-    // the truncate->pop branch fire iff the source actually has more.
+    let next_cursor = if has_more {
+        events
+            .last()
+            .map(|e| encode_cursor(parse_rfc3339(&e.occurred_at), &e.kind, &e.id))
+    } else {
+        None
+    };
+
+    Json(ReadingLogPageView {
+        events,
+        next_cursor,
+    })
+    .into_response()
+}
+
+/// Parsed gather inputs shared by the paginated list endpoint and the CSV
+/// export. `limit` + `cursor` drive pagination on the list path; the
+/// export passes a high `limit` and no `cursor` to take everything.
+struct GatherParams {
+    kinds: HashSet<EventKind>,
+    from: Option<DateTime<FixedOffset>>,
+    to: Option<DateTime<FixedOffset>>,
+    series_id: Option<Uuid>,
+    library_id: Option<Uuid>,
+    include_hidden: bool,
+    limit: i64,
+    cursor: Option<Cursor>,
+}
+
+/// Harvest candidates from every requested source, merge + truncate to
+/// `limit` (each source over-fetches by one so the list endpoint can
+/// report `has_more`), enforce ACL + the optional `library_id` filter,
+/// and hydrate into view rows. Returns `(events, has_more)`. Extracted
+/// so the list + export endpoints share one pipeline.
+async fn gather_events(
+    app: &AppState,
+    user: &CurrentUser,
+    p: &GatherParams,
+) -> Result<(Vec<ReadingLogEventView>, bool), sea_orm::DbErr> {
+    let limit = p.limit;
     let fetch_limit = limit + 1;
+    // Cap the preallocation so the export's huge `limit` doesn't reserve
+    // tens of MB up front; the Vec still grows to whatever the sources
+    // return.
+    let mut candidates: Vec<Candidate> = Vec::with_capacity((limit.clamp(0, 1000) as usize) * 4);
 
-    macro_rules! collect_from {
-        ($call:expr) => {
-            match $call.await {
-                Ok(rows) => candidates.extend(rows),
-                Err(e) => return internal_err(e),
-            }
-        };
+    if p.kinds.contains(&EventKind::IssueFinished) {
+        candidates.extend(
+            fetch_issue_finished(
+                app,
+                user.id,
+                fetch_limit,
+                p.cursor.as_ref(),
+                p.from.as_ref(),
+                p.to.as_ref(),
+                p.series_id,
+                p.include_hidden,
+            )
+            .await?,
+        );
     }
-
-    if kinds_requested.contains(&EventKind::IssueFinished) {
-        collect_from!(fetch_issue_finished(
-            &app,
-            user.id,
-            fetch_limit,
-            cursor.as_ref(),
-            from.as_ref(),
-            to.as_ref(),
-            q.series_id,
-            include_hidden,
-        ));
+    if p.kinds.contains(&EventKind::SessionCompleted) {
+        candidates.extend(
+            fetch_sessions(
+                app,
+                user.id,
+                fetch_limit,
+                p.cursor.as_ref(),
+                p.from.as_ref(),
+                p.to.as_ref(),
+                p.series_id,
+                p.include_hidden,
+            )
+            .await?,
+        );
     }
-    if kinds_requested.contains(&EventKind::SessionCompleted) {
-        collect_from!(fetch_sessions(
-            &app,
-            user.id,
-            fetch_limit,
-            cursor.as_ref(),
-            from.as_ref(),
-            to.as_ref(),
-            q.series_id,
-            include_hidden,
-        ));
+    if p.kinds.contains(&EventKind::MarkerCreated) {
+        candidates.extend(
+            fetch_markers(
+                app,
+                user.id,
+                fetch_limit,
+                p.cursor.as_ref(),
+                p.from.as_ref(),
+                p.to.as_ref(),
+                p.series_id,
+                p.include_hidden,
+            )
+            .await?,
+        );
     }
-    if kinds_requested.contains(&EventKind::MarkerCreated) {
-        collect_from!(fetch_markers(
-            &app,
-            user.id,
-            fetch_limit,
-            cursor.as_ref(),
-            from.as_ref(),
-            to.as_ref(),
-            q.series_id,
-            include_hidden,
-        ));
-    }
-    if kinds_requested.contains(&EventKind::SeriesFinished) {
+    if p.kinds.contains(&EventKind::SeriesFinished) {
         // Series-finished is a derived event (MAX(finished_at) per
-        // series); there's no single row to flag as hidden. The
-        // fetcher continues to filter `is_backfill = false` so the
-        // event surfaces consistently with the issue-finished side.
-        collect_from!(fetch_series_finished(
-            &app,
-            user.id,
-            fetch_limit,
-            cursor.as_ref(),
-            from.as_ref(),
-            to.as_ref(),
-            q.series_id,
-        ));
+        // series); there's no single row to flag as hidden. The fetcher
+        // filters `is_backfill = false` so it surfaces consistently with
+        // the issue-finished side.
+        candidates.extend(
+            fetch_series_finished(
+                app,
+                user.id,
+                fetch_limit,
+                p.cursor.as_ref(),
+                p.from.as_ref(),
+                p.to.as_ref(),
+                p.series_id,
+            )
+            .await?,
+        );
     }
 
     // ── Merge & truncate ──
@@ -481,9 +534,9 @@ pub async fn reading_log(
         candidates.pop();
     }
 
-    // ── ACL: collect series + issue rows, then drop events whose
-    //   series sits in a library the user can't see. The library_id
-    //   filter (when supplied) is enforced here too. ──
+    // ── ACL: collect series + issue rows, then drop events whose series
+    //   sits in a library the user can't see. The `library_id` filter
+    //   (when supplied) is enforced here too. ──
     let series_ids: HashSet<Uuid> = candidates.iter().map(|c| c.series_id).collect();
     let issue_ids: HashSet<String> = candidates
         .iter()
@@ -493,58 +546,41 @@ pub async fn reading_log(
     let series_rows = if series_ids.is_empty() {
         Vec::new()
     } else {
-        match series::Entity::find()
+        series::Entity::find()
             .filter(series::Column::Id.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
             .all(&app.db)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => return internal_err(e),
-        }
+            .await?
     };
     let issue_rows = if issue_ids.is_empty() {
         Vec::new()
     } else {
-        match issue::Entity::find()
+        issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids.iter().cloned().collect::<Vec<_>>()))
             .all(&app.db)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => return internal_err(e),
-        }
+            .await?
     };
     let series_by_id: HashMap<Uuid, series::Model> =
         series_rows.into_iter().map(|s| (s.id, s)).collect();
     let issue_by_id: HashMap<String, issue::Model> =
         issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
 
-    // Representative cover thumbnail per series. `series_finished`
-    // events carry no `event.issue`, so without this the frontend
-    // would render a grey placeholder for every "Series complete"
-    // row. We pick the lowest-`sort_number` active issue per series
-    // as the cover — one extra batched query per page.
+    // Representative cover thumbnail per series — `series_finished`
+    // events carry no issue, so pick the lowest-`sort_number` active
+    // issue per series as the cover (one extra batched query).
     let series_cover_by_id: HashMap<Uuid, String> = if series_ids.is_empty() {
         HashMap::new()
     } else {
-        let candidates_for_cover = match issue::Entity::find()
+        let candidates_for_cover = issue::Entity::find()
             .filter(issue::Column::SeriesId.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
             .filter(issue::Column::State.eq("active"))
             .filter(issue::Column::RemovedAt.is_null())
             .all(&app.db)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => return internal_err(e),
-        };
+            .await?;
         let mut by_series: HashMap<Uuid, (Option<f64>, String)> = HashMap::new();
         for i in candidates_for_cover {
-            let entry = by_series.entry(i.series_id);
-            // Keep the issue with the lowest `sort_number` (NULLs
-            // sort last); ties broken by whichever we see first
-            // since the query order isn't guaranteed.
             let url = format!("/issues/{}/pages/0/thumb", i.id);
-            entry
+            by_series
+                .entry(i.series_id)
                 .and_modify(|cur| {
                     let take = match (cur.0, i.sort_number) {
                         (Some(a), Some(b)) => b < a,
@@ -566,18 +602,20 @@ pub async fn reading_log(
     let allowed_libraries: Option<HashSet<Uuid>> = if user.role == "admin" {
         None
     } else {
-        match library_user_access::Entity::find()
-            .filter(library_user_access::Column::UserId.eq(user.id))
-            .all(&app.db)
-            .await
-        {
-            Ok(v) => Some(v.into_iter().map(|r| r.library_id).collect()),
-            Err(e) => return internal_err(e),
-        }
+        Some(
+            library_user_access::Entity::find()
+                .filter(library_user_access::Column::UserId.eq(user.id))
+                .all(&app.db)
+                .await?
+                .into_iter()
+                .map(|r| r.library_id)
+                .collect(),
+        )
     };
 
+    let library_filter = p.library_id;
     let visible = |library_id: Uuid| -> bool {
-        if let Some(filter) = q.library_id
+        if let Some(filter) = library_filter
             && filter != library_id
         {
             return false;
@@ -601,19 +639,240 @@ pub async fn reading_log(
         })
         .collect();
 
-    let next_cursor = if has_more {
-        events
-            .last()
-            .map(|e| encode_cursor(parse_rfc3339(&e.occurred_at), &e.kind, &e.id))
-    } else {
-        None
+    Ok((events, has_more))
+}
+
+/// Hard cap on rows the CSV export returns. A reading log past this is
+/// extraordinary; the export stops at the cap (most-recent first), noted
+/// in the OpenAPI response. Bounds the memory held while building the CSV.
+const EXPORT_MAX_EVENTS: i64 = 50_000;
+
+/// `GET /me/reading-log/export` — the same feed as the list endpoint,
+/// flattened to a CSV download (data-liberation 3.3). Honors the same
+/// `kind` / `from` / `to` / `library_id` / `series_id` / `include_hidden`
+/// filters; no pagination — returns up to `EXPORT_MAX_EVENTS` most-recent
+/// rows.
+#[utoipa::path(
+    operation_id = "reading_log_export",    get,
+    path = "/me/reading-log/export",
+    params(
+        ("kind"           = Option<String>, Query,),
+        ("from"           = Option<String>, Query,),
+        ("to"             = Option<String>, Query,),
+        ("library_id"     = Option<String>, Query,),
+        ("series_id"      = Option<String>, Query,),
+        ("include_hidden" = Option<bool>,   Query,),
+    ),
+    responses(
+        (status = 200, description = "Reading log as CSV", content_type = "text/csv"),
+        (status = 400, description = "validation"),
+    )
+)]
+#[handler]
+pub async fn reading_log_export(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<ReadingLogQuery>,
+) -> Response {
+    let kinds: HashSet<EventKind> = match q.kind.as_deref() {
+        None => [
+            EventKind::IssueFinished,
+            EventKind::SeriesFinished,
+            EventKind::SessionCompleted,
+            EventKind::MarkerCreated,
+        ]
+        .into_iter()
+        .collect(),
+        Some(csv) => csv.split(',').filter_map(EventKind::parse).collect(),
+    };
+    let from = match q.from.as_deref().map(DateTime::parse_from_rfc3339) {
+        Some(Ok(t)) => Some(t),
+        Some(Err(_)) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "validation",
+                "from must be RFC3339",
+            );
+        }
+        None => None,
+    };
+    let to = match q.to.as_deref().map(DateTime::parse_from_rfc3339) {
+        Some(Ok(t)) => Some(t),
+        Some(Err(_)) => {
+            return error(StatusCode::BAD_REQUEST, "validation", "to must be RFC3339");
+        }
+        None => None,
     };
 
-    Json(ReadingLogPageView {
-        events,
-        next_cursor,
-    })
-    .into_response()
+    let params = GatherParams {
+        kinds,
+        from,
+        to,
+        series_id: q.series_id,
+        library_id: q.library_id,
+        include_hidden: q.include_hidden.unwrap_or(false),
+        limit: EXPORT_MAX_EVENTS,
+        cursor: None,
+    };
+    let (events, _has_more) = match gather_events(&app, &user, &params).await {
+        Ok(out) => out,
+        Err(e) => return internal_err(e),
+    };
+
+    let body = match build_reading_log_csv(&events) {
+        Ok(b) => b,
+        Err(_) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "failed to encode CSV",
+            );
+        }
+    };
+
+    use axum::http::header;
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"reading-log.csv\"".to_string(),
+            ),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// Flatten reading-log events into an RFC 4180 CSV — one row per event,
+/// with kind-specific payload fields fanned out into dedicated columns
+/// (empty where not applicable) so the output stays analyzable.
+fn build_reading_log_csv(events: &[ReadingLogEventView]) -> Result<Vec<u8>, csv::Error> {
+    let mut w = csv::Writer::from_writer(Vec::new());
+    w.write_record([
+        "occurred_at",
+        "kind",
+        "series",
+        "series_year",
+        "publisher",
+        "issue_number",
+        "issue_title",
+        "started_at",
+        "ended_at",
+        "active_minutes",
+        "pages_read",
+        "total_sessions",
+        "is_reread",
+        "total_issues",
+        "span_days",
+        "marker_kind",
+        "tags",
+    ])?;
+
+    for e in events {
+        let series_name = e.series.as_ref().map(|s| s.name.as_str()).unwrap_or("");
+        let series_year = e
+            .series
+            .as_ref()
+            .and_then(|s| s.year)
+            .map(|y| y.to_string())
+            .unwrap_or_default();
+        let publisher = e
+            .series
+            .as_ref()
+            .and_then(|s| s.publisher.as_deref())
+            .unwrap_or("");
+        let issue_number = e
+            .issue
+            .as_ref()
+            .and_then(|i| i.number.as_deref())
+            .unwrap_or("");
+        let issue_title = e
+            .issue
+            .as_ref()
+            .and_then(|i| i.title.as_deref())
+            .unwrap_or("");
+
+        // Payload-specific columns default to empty; each variant fills
+        // the ones it carries.
+        let mut started_at = String::new();
+        let mut ended_at = String::new();
+        let mut active_minutes = String::new();
+        let mut pages_read = String::new();
+        let mut total_sessions = String::new();
+        let mut is_reread = String::new();
+        let mut total_issues = String::new();
+        let mut span_days = String::new();
+        let mut marker_kind = String::new();
+        let mut tags = String::new();
+        match &e.payload {
+            EventPayload::IssueFinished {
+                total_sessions: ts,
+                total_active_ms,
+                is_reread: rr,
+                ..
+            } => {
+                total_sessions = ts.to_string();
+                active_minutes = (total_active_ms / 60_000).to_string();
+                is_reread = rr.to_string();
+            }
+            EventPayload::SeriesFinished {
+                total_issues: ti,
+                total_active_ms,
+                span_days: sd,
+                ..
+            } => {
+                total_issues = ti.to_string();
+                active_minutes = (total_active_ms / 60_000).to_string();
+                if let Some(d) = sd {
+                    span_days = d.to_string();
+                }
+            }
+            EventPayload::SessionCompleted {
+                started_at: st,
+                ended_at: en,
+                active_ms,
+                pages_read: pr,
+                ..
+            } => {
+                started_at = st.clone();
+                ended_at = en.clone();
+                active_minutes = (active_ms / 60_000).to_string();
+                pages_read = pr.to_string();
+            }
+            EventPayload::MarkerCreated {
+                marker_kind: mk,
+                tags: tg,
+                ..
+            } => {
+                marker_kind = mk.clone();
+                tags = tg.join(", ");
+            }
+        }
+
+        w.write_record([
+            e.occurred_at.as_str(),
+            e.kind.as_str(),
+            series_name,
+            &series_year,
+            publisher,
+            issue_number,
+            issue_title,
+            &started_at,
+            &ended_at,
+            &active_minutes,
+            &pages_read,
+            &total_sessions,
+            &is_reread,
+            &total_issues,
+            &span_days,
+            &marker_kind,
+            &tags,
+        ])?;
+    }
+    w.flush()?;
+    w.into_inner().map_err(|e| csv::Error::from(e.into_error()))
 }
 
 fn parse_rfc3339(s: &str) -> DateTime<FixedOffset> {
