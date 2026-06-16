@@ -13,6 +13,14 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.17.0](https://github.com/mbryantms/folio/compare/v0.16.0...v0.17.0) (2026-06-16)
+
+
+### Added
+
+* **shell:** IA renames + breadcrumbs (3.1b) ([#245](https://github.com/mbryantms/folio/issues/245)) ([c55b2ae](https://github.com/mbryantms/folio/commit/c55b2ae3080408715fad857f8f3df7b8ec5b3f31))
+* **shell:** mobile bottom nav + wayfinding (3.1a) ([#243](https://github.com/mbryantms/folio/issues/243)) ([4e7f63a](https://github.com/mbryantms/folio/commit/4e7f63a34aa516143f584ac91049d5068183b1f5))
+
 ## [0.16.0](https://github.com/mbryantms/folio/compare/v0.15.0...v0.16.0) (2026-06-16)
 
 
