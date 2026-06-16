@@ -23,11 +23,14 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   Check,
   Circle,
+  Download,
   FileCog,
   FolderPlus,
   GripVertical,
   Trash2,
 } from "lucide-react";
+
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
@@ -309,6 +312,20 @@ export function CollectionViewDetail({
       <ViewHeader
         view={savedView}
         onEdit={() => setEditOpen(true)}
+        extraMenuItems={
+          // Data-liberation (3.3): export the collection as a CBL reading
+          // list. Series entries expand to their issues server-side; a
+          // plain same-origin `<a download>` carries the session cookie.
+          <DropdownMenuItem asChild>
+            <a
+              href={`/api/me/collections/${savedView.id}/export`}
+              download
+              title="Download as a .cbl reading list"
+            >
+              <Download className="mr-2 h-4 w-4" /> Export CBL
+            </a>
+          </DropdownMenuItem>
+        }
         extraActions={
           <>
             <Badge variant="secondary">

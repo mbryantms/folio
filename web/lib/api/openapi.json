@@ -4965,6 +4965,33 @@
         }
       }
     },
+    "/api/me/collections/{id}/export": {
+      "get": {
+        "summary": "`GET /me/collections/{id}/export` — serialize a collection to a CBL\nreading-list download (data-liberation 3.3). An issue entry becomes\none `<Book>`; a whole-series entry EXPANDS in place into one `<Book>`\nper active issue in that series (decided with the user). `<Database>`\nrows carry ComicVine / Metron ids when known so the list re-matches.",
+        "operationId": "collections_export",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CBL XML",
+            "content": {
+              "application/xml": {}
+            }
+          },
+          "404": {
+            "description": "collection not found"
+          }
+        }
+      }
+    },
     "/api/me/collections/{id}/members/bulk-add": {
       "post": {
         "summary": "Multi-select Tranche M3: append many (entry_kind, ref_id) members\nto a collection in one round-trip. Per-row insert semantics\nmatch `add_entry` — including the partial-unique idempotent skip,\nwhich the response surfaces as `already_present`. Each member\ngets its own light validation + existence check so a single\nbad id in the batch can't poison the rest.",

@@ -25,13 +25,13 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use entity::{collection_entry, issue, saved_view, series, user_view_pin};
+use entity::{collection_entry, external_id, issue, saved_view, series, user_view_pin};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, ModelTrait,
     QueryFilter, QueryOrder, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
@@ -60,6 +60,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(reorder_entries))
         .routes(routes!(bulk_add_members))
         .routes(routes!(bulk_remove_members))
+        .routes(routes!(export))
 }
 
 // ───── wire types ─────
@@ -1316,3 +1317,260 @@ fn decode_position_cursor(s: &str) -> Option<i32> {
 use super::error;
 use sea_orm::PaginatorTrait;
 use sea_orm::QuerySelect;
+
+/// `GET /me/collections/{id}/export` — serialize a collection to a CBL
+/// reading-list download (data-liberation 3.3). An issue entry becomes
+/// one `<Book>`; a whole-series entry EXPANDS in place into one `<Book>`
+/// per active issue in that series (decided with the user). `<Database>`
+/// rows carry ComicVine / Metron ids when known so the list re-matches.
+#[utoipa::path(
+    operation_id = "collections_export",
+    get,
+    path = "/me/collections/{id}/export",
+    params(("id" = String, Path,)),
+    responses(
+        (status = 200, description = "CBL XML", content_type = "application/xml"),
+        (status = 404, description = "collection not found"),
+    )
+)]
+#[handler]
+pub async fn export(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+) -> axum::response::Response {
+    let collection = match fetch_owned(&app.db, user.id, id).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+
+    let cbl = match build_collection_cbl(&app, &collection).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "collections: export build failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let xml = match parsers::cbl::to_xml(&cbl) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "collections: cbl serialize failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    // Slug-ify the collection name for a friendlier filename.
+    let safe: String = collection
+        .name
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    let trimmed = safe.trim_matches('_');
+    let filename = if trimmed.is_empty() {
+        format!("{id}.cbl")
+    } else {
+        format!("{trimmed}.cbl")
+    };
+
+    use axum::http::header;
+    (
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/xml; charset=utf-8".to_string(),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            ),
+        ],
+        xml.into_bytes(),
+    )
+        .into_response()
+}
+
+/// Build the CBL model for a collection: issue entries → one book each;
+/// series entries → one book per active issue (expanded in place). CV /
+/// Metron ids are batch-fetched for the involved issues + their series.
+async fn build_collection_cbl(
+    app: &AppState,
+    collection: &saved_view::Model,
+) -> Result<parsers::cbl::ParsedCbl, sea_orm::DbErr> {
+    use parsers::cbl::{ParsedCbl, ParsedCblBook, ParsedCblDatabase};
+
+    let entries = collection_entry::Entity::find()
+        .filter(collection_entry::Column::SavedViewId.eq(collection.id))
+        .order_by_asc(collection_entry::Column::Position)
+        .all(&app.db)
+        .await?;
+
+    let direct_issue_ids: Vec<String> = entries
+        .iter()
+        .filter(|e| e.entry_kind == ENTRY_KIND_ISSUE)
+        .filter_map(|e| e.issue_id.clone())
+        .collect();
+    let series_entry_ids: Vec<Uuid> = entries
+        .iter()
+        .filter(|e| e.entry_kind == ENTRY_KIND_SERIES)
+        .filter_map(|e| e.series_id)
+        .collect();
+
+    // Direct issue entries — fetched by id regardless of state (the user
+    // hand-picked them).
+    let direct_issues: HashMap<String, issue::Model> = if direct_issue_ids.is_empty() {
+        HashMap::new()
+    } else {
+        issue::Entity::find()
+            .filter(issue::Column::Id.is_in(direct_issue_ids.clone()))
+            .all(&app.db)
+            .await?
+            .into_iter()
+            .map(|i| (i.id.clone(), i))
+            .collect()
+    };
+
+    // Series-expansion — only active, non-removed issues, in reading order.
+    let mut series_issues: HashMap<Uuid, Vec<issue::Model>> = HashMap::new();
+    if !series_entry_ids.is_empty() {
+        let rows = issue::Entity::find()
+            .filter(issue::Column::SeriesId.is_in(series_entry_ids.clone()))
+            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::RemovedAt.is_null())
+            .all(&app.db)
+            .await?;
+        for i in rows {
+            series_issues.entry(i.series_id).or_default().push(i);
+        }
+        for v in series_issues.values_mut() {
+            v.sort_by(|a, b| {
+                a.sort_number
+                    .partial_cmp(&b.sort_number)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
+
+    // Walk entries in order, expanding series entries in place.
+    let mut ordered_issues: Vec<issue::Model> = Vec::new();
+    for e in &entries {
+        match e.entry_kind.as_str() {
+            ENTRY_KIND_ISSUE => {
+                if let Some(iid) = &e.issue_id
+                    && let Some(i) = direct_issues.get(iid)
+                {
+                    ordered_issues.push(i.clone());
+                }
+            }
+            ENTRY_KIND_SERIES => {
+                if let Some(sid) = e.series_id
+                    && let Some(list) = series_issues.get(&sid)
+                {
+                    ordered_issues.extend(list.iter().cloned());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Series rows for name / volume / year.
+    let series_ids: Vec<Uuid> = ordered_issues
+        .iter()
+        .map(|i| i.series_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let series_by_id: HashMap<Uuid, series::Model> = if series_ids.is_empty() {
+        HashMap::new()
+    } else {
+        series::Entity::find()
+            .filter(series::Column::Id.is_in(series_ids.clone()))
+            .all(&app.db)
+            .await?
+            .into_iter()
+            .map(|s| (s.id, s))
+            .collect()
+    };
+
+    let issue_ext = fetch_ext_ids(
+        &app.db,
+        "issue",
+        &ordered_issues
+            .iter()
+            .map(|i| i.id.clone())
+            .collect::<Vec<_>>(),
+    )
+    .await?;
+    let series_ext = fetch_ext_ids(
+        &app.db,
+        "series",
+        &series_ids.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+    )
+    .await?;
+
+    let mut books = Vec::with_capacity(ordered_issues.len());
+    for i in &ordered_issues {
+        let series = series_by_id.get(&i.series_id);
+        let (icv, imet) = issue_ext.get(&i.id).cloned().unwrap_or((None, None));
+        let (scv, smet) = series_ext
+            .get(&i.series_id.to_string())
+            .cloned()
+            .unwrap_or((None, None));
+        let mut databases = Vec::new();
+        if icv.is_some() || scv.is_some() {
+            databases.push(ParsedCblDatabase {
+                name: "cv".into(),
+                series: scv,
+                issue: icv,
+            });
+        }
+        if imet.is_some() || smet.is_some() {
+            databases.push(ParsedCblDatabase {
+                name: "metron".into(),
+                series: smet,
+                issue: imet,
+            });
+        }
+        books.push(ParsedCblBook {
+            series: series.map(|s| s.name.clone()).unwrap_or_default(),
+            number: i.number_raw.clone().unwrap_or_default(),
+            volume: series.and_then(|s| s.volume).map(|v| v.to_string()),
+            year: series.and_then(|s| s.year).map(|y| y.to_string()),
+            databases,
+        });
+    }
+
+    Ok(ParsedCbl {
+        name: collection.name.clone(),
+        num_issues_declared: Some(books.len() as i32),
+        matchers_present: false,
+        books,
+    })
+}
+
+/// Batch-fetch `(ComicVine, Metron)` external ids for a set of entities,
+/// keyed by `entity_id`.
+async fn fetch_ext_ids<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    ids: &[String],
+) -> Result<HashMap<String, (Option<String>, Option<String>)>, sea_orm::DbErr> {
+    let mut out: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+    if ids.is_empty() {
+        return Ok(out);
+    }
+    let rows = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq(entity_type))
+        .filter(external_id::Column::EntityId.is_in(ids.to_vec()))
+        .all(db)
+        .await?;
+    for r in rows {
+        let slot = out.entry(r.entity_id).or_insert((None, None));
+        match r.source.as_str() {
+            "comicvine" => slot.0 = Some(r.external_id),
+            "metron" => slot.1 = Some(r.external_id),
+            _ => {}
+        }
+    }
+    Ok(out)
+}

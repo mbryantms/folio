@@ -2213,6 +2213,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/collections/{id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /me/collections/{id}/export` — serialize a collection to a CBL
+         *     reading-list download (data-liberation 3.3). An issue entry becomes
+         *     one `<Book>`; a whole-series entry EXPANDS in place into one `<Book>`
+         *     per active issue in that series (decided with the user). `<Database>`
+         *     rows carry ComicVine / Metron ids when known so the list re-matches.
+         */
+        get: operations["collections_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/collections/{id}/members/bulk-add": {
         parameters: {
             query?: never;
@@ -13676,6 +13699,35 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    collections_export: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CBL XML */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/xml": unknown;
+                };
+            };
+            /** @description collection not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
