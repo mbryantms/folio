@@ -12,7 +12,14 @@
 import type { ComponentType } from "react";
 import type { MarkerRegion } from "@/lib/api/types";
 
-export type SearchCategory = "series" | "issues" | "markers" | "people";
+export type SearchCategory =
+  | "series"
+  | "issues"
+  | "markers"
+  | "people"
+  | "views"
+  | "collections"
+  | "pages";
 
 export interface SearchCategoryDef {
   /** Stable key used as the discriminator on `SearchHit.kind` and the
@@ -33,6 +40,12 @@ export const SEARCH_CATEGORIES: readonly SearchCategoryDef[] = [
   // user's saved annotations, then the people facet.
   { key: "markers", label: "Bookmark", labelPlural: "bookmarks" },
   { key: "people", label: "Person", labelPlural: "people" },
+  // Saved-content surfaces (A4) — matched client-side by name over the
+  // already-cached lists, so `Mod+K` finds a view / collection / page the
+  // way it finds a series.
+  { key: "views", label: "View", labelPlural: "views" },
+  { key: "collections", label: "Collection", labelPlural: "collections" },
+  { key: "pages", label: "Page", labelPlural: "pages" },
 ] as const;
 
 export interface SearchHit {
@@ -62,6 +75,9 @@ export const EMPTY_SEARCH_GROUPS: SearchGroups = {
   issues: [],
   markers: [],
   people: [],
+  views: [],
+  collections: [],
+  pages: [],
 };
 
 /** Flatten groups in display order so the modal can navigate hits with

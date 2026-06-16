@@ -471,7 +471,9 @@ function CategoryRailBody({
   const empty =
     (def.key === "series" && payloads.series.length === 0) ||
     (def.key === "issues" && payloads.issues.length === 0) ||
-    ((def.key === "people" || def.key === "markers") && hits.length === 0);
+    // Every non-cover category — markers, people, and the saved-content
+    // categories (views / collections / pages) — is hits-backed.
+    (def.key !== "series" && def.key !== "issues" && hits.length === 0);
   if (empty) {
     return <NoMatches query={query} labelPlural={def.labelPlural} />;
   }
@@ -509,7 +511,7 @@ function renderRailItems(
       {def.key === "markers" ? (
         <MarkerSearchCard hit={hit} />
       ) : (
-        <PersonCard hit={hit} />
+        <IconHitCard hit={hit} />
       )}
     </div>
   ));
@@ -565,10 +567,12 @@ function CategoryGrid({
     }
     return <MarkerGrid hits={groups.markers} gridStyle={gridStyle} />;
   }
-  if (groups.people.length === 0) {
+  // People + the saved-content categories (views / collections / pages)
+  // all render as generic icon-hit tiles from their `groups[key]` slice.
+  if (groups[def.key].length === 0) {
     return <NoMatches query={query} labelPlural={def.labelPlural} />;
   }
-  return <PeopleGrid hits={groups.people} gridStyle={gridStyle} />;
+  return <IconHitGrid hits={groups[def.key]} gridStyle={gridStyle} />;
 }
 
 function SeriesCategoryGrid({
@@ -981,7 +985,7 @@ function IssuesGrid({
   );
 }
 
-function PeopleGrid({
+function IconHitGrid({
   hits,
   gridStyle,
 }: {
@@ -992,7 +996,7 @@ function PeopleGrid({
     <ul role="list" className="grid gap-4" style={gridStyle}>
       {hits.map((hit) => (
         <li key={hit.id}>
-          <PersonCard hit={hit} />
+          <IconHitCard hit={hit} />
         </li>
       ))}
     </ul>
@@ -1013,11 +1017,12 @@ function NoMatches({
   );
 }
 
-/** Cover-shaped tile for a person hit — same 2:3 footprint as
- *  `SeriesCard` / `IssueCard` so rails read uniformly. The icon stands
+/** Cover-shaped tile for an icon-backed hit (people + the saved-content
+ *  categories — views / collections / pages) — same 2:3 footprint as
+ *  `SeriesCard` / `IssueCard` so rails read uniformly. `hit.icon` stands
  *  in for the cover; the title + subtitle slot mirrors the cards
  *  below. */
-function PersonCard({ hit }: { hit: SearchHit }) {
+function IconHitCard({ hit }: { hit: SearchHit }) {
   const Icon = hit.icon ?? User;
   return (
     <Link
