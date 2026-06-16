@@ -261,6 +261,10 @@ export type IssuesCrossListFilters = {
   locations?: string;
   user_rating_min?: number;
   user_rating_max?: number;
+  /** Per-user read-status CSV (`unread,in_progress,read`). Server applies
+   *  it as a correlated subquery over the caller's progress; all-three or
+   *  empty is a no-op. */
+  read_status?: string;
 };
 
 // `queryKeys` now lives in ./query-keys (imported above). Re-export it

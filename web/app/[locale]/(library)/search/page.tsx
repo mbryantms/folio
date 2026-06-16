@@ -1,3 +1,4 @@
+import { parseIssueReadStatus } from "@/lib/search/issue-search-filters";
 import { parseSeriesSearchFilters } from "@/lib/search/series-search-filters";
 import { SEARCH_CATEGORIES, type SearchCategory } from "@/lib/search/types";
 
@@ -32,6 +33,8 @@ export default async function SearchPage({
   // `EMPTY_SERIES_SEARCH_FILTERS` so the SearchView's initial state
   // remains stable.
   const initialFilters = parseSeriesSearchFilters(params);
+  // Issue-category read-status facet (deep-linkable like the series facets).
+  const initialReadStatus = parseIssueReadStatus(params);
   // `key` makes SearchView remount whenever the URL query or category
   // changes (e.g. the user clicks a rail's top-results link →
   // `category=series`).
@@ -46,6 +49,7 @@ export default async function SearchPage({
       initialQuery={q}
       category={validCategory}
       initialFilters={initialFilters}
+      initialReadStatus={initialReadStatus}
     />
   );
 }
