@@ -1266,6 +1266,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/creators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /creators` — alphabetical, cursor-paginated browse of every
+         *     creator visible to the caller (distinct names aggregated across
+         *     `series_credits` + `issue_credits`, with role rollup + credit count).
+         *     Library-ACL gated like `/people` + the detail page. Keyset on the
+         *     creator name so the list never silently truncates (audit A11 +
+         *     list-pagination-completeness).
+         */
+        get: operations["creators_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/creators/{slug}": {
         parameters: {
             query?: never;
@@ -5257,6 +5281,23 @@ export interface components {
             roles: string[];
             slug: string;
         };
+        /**
+         * @description One creator row in the browse index — same shape the people-search
+         *     hit uses (name + slug + role rollup + credit count) so the web can
+         *     render them with one card.
+         */
+        CreatorListItem: {
+            /** Format: int64 */
+            credit_count: number;
+            person: string;
+            roles: string[];
+            /**
+             * @description `/creators/<slug>` target. `None` until the `person` backfill
+             *     catches a freshly-scanned credit; the client falls back to the
+             *     legacy `?library=all&credits=<name>` URL.
+             */
+            slug?: string | null;
+        };
         CreatorRoleRail: {
             /**
              * @description Canonical role name as stored on the credit rows (e.g. `"writer"`,
@@ -5311,6 +5352,27 @@ export interface components {
                 state: string;
                 top_series_name?: string | null;
                 user_id: string;
+            }[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
+        CursorPage_CreatorListItem: {
+            items: {
+                /** Format: int64 */
+                credit_count: number;
+                person: string;
+                roles: string[];
+                /**
+                 * @description `/creators/<slug>` target. `None` until the `person` backfill
+                 *     catches a freshly-scanned credit; the client falls back to the
+                 *     legacy `?library=all&credits=<name>` URL.
+                 */
+                slug?: string | null;
             }[];
             next_cursor?: string | null;
             /** Format: int64 */
@@ -11791,6 +11853,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CatalogEntriesView"];
+                };
+            };
+        };
+    };
+    creators_list: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_CreatorListItem"];
                 };
             };
         };

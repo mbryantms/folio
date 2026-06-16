@@ -12,14 +12,14 @@
 
 use axum::{
     Json,
-    extract::{Path as AxPath, State},
+    extract::{Path as AxPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -32,9 +32,15 @@ use crate::library::access;
 use crate::state::AppState;
 use entity::{person, series};
 use server_macros::handler;
+use shared::pagination::{CursorPage, decode_cursor, encode_cursor};
+
+const LIST_DEFAULT_LIMIT: u64 = 60;
+const LIST_MAX_LIMIT: u64 = 100;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(get_one))
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(get_one))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -82,6 +88,200 @@ const ROLE_ORDER: &[&str] = &[
 struct CreditRow {
     series_id: Uuid,
     role: String,
+}
+
+// ───────── Browse index (A11) ─────────
+
+/// One creator row in the browse index — same shape the people-search
+/// hit uses (name + slug + role rollup + credit count) so the web can
+/// render them with one card.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CreatorListItem {
+    pub person: String,
+    /// `/creators/<slug>` target. `None` until the `person` backfill
+    /// catches a freshly-scanned credit; the client falls back to the
+    /// legacy `?library=all&credits=<name>` URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    pub roles: Vec<String>,
+    pub credit_count: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListQuery {
+    /// Opaque keyset cursor (a prior page's `next_cursor`).
+    pub cursor: Option<String>,
+    /// Page size. Clamped to `[1, 100]`; default 60.
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct ListRow {
+    person: String,
+    slug: Option<String>,
+    roles: Vec<String>,
+    credit_count: i64,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct CountRow {
+    n: i64,
+}
+
+/// `GET /creators` — alphabetical, cursor-paginated browse of every
+/// creator visible to the caller (distinct names aggregated across
+/// `series_credits` + `issue_credits`, with role rollup + credit count).
+/// Library-ACL gated like `/people` + the detail page. Keyset on the
+/// creator name so the list never silently truncates (audit A11 +
+/// list-pagination-completeness).
+#[utoipa::path(
+    operation_id = "creators_list",    get,
+    path = "/creators",
+    params(
+        ("cursor" = Option<String>, Query,),
+        ("limit"  = Option<u64>,    Query,),
+    ),
+    responses((status = 200, body = CursorPage<CreatorListItem>))
+)]
+#[handler]
+pub async fn list(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<ListQuery>,
+) -> impl IntoResponse {
+    let limit = q
+        .limit
+        .unwrap_or(LIST_DEFAULT_LIMIT)
+        .clamp(1, LIST_MAX_LIMIT);
+
+    let visible = access::for_user(&app, &user).await;
+
+    // Library-allowlist clause woven into BOTH UNION branches of the
+    // credit CTE; the same UUID placeholders are reused across branches.
+    let mut lib_params: Vec<Value> = Vec::new();
+    let library_filter = if visible.unrestricted {
+        String::new()
+    } else {
+        if visible.allowed.is_empty() {
+            return Json(CursorPage {
+                items: Vec::<CreatorListItem>::new(),
+                next_cursor: None,
+                total: Some(0),
+            })
+            .into_response();
+        }
+        let placeholders: Vec<String> = visible
+            .allowed
+            .iter()
+            .map(|id| {
+                lib_params.push(Value::from(*id));
+                format!("${}", lib_params.len())
+            })
+            .collect();
+        // Qualify the column: the issue-credits UNION branch joins both
+        // `issues` and `series`, each of which exposes `library_id`, so a
+        // bare reference is ambiguous. `series s` is present in both
+        // branches, so `s.library_id` resolves cleanly everywhere.
+        format!(" AND s.library_id IN ({})", placeholders.join(","))
+    };
+
+    // Keyset cursor = the last creator name of the prior page.
+    let after = match q.cursor.as_deref() {
+        Some(c) => match decode_cursor::<String>(c) {
+            Ok(name) => Some(name),
+            Err(_) => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
+        },
+        None => None,
+    };
+
+    let credits_cte = format!(
+        "WITH all_credits AS ( \
+           SELECT sc.person AS person, sc.role AS role, \
+                  'series:' || sc.series_id::text AS ref_id, s.library_id AS library_id \
+             FROM series_credits sc JOIN series s ON s.id = sc.series_id \
+            WHERE s.removed_at IS NULL{library_filter} \
+           UNION ALL \
+           SELECT ic.person AS person, ic.role AS role, \
+                  'issue:' || ic.issue_id AS ref_id, s.library_id AS library_id \
+             FROM issue_credits ic \
+             JOIN issues i ON i.id = ic.issue_id \
+             JOIN series s ON s.id = i.series_id \
+            WHERE s.removed_at IS NULL AND i.removed_at IS NULL \
+              AND i.state = 'active'{library_filter} \
+         ), \
+         agg AS ( \
+           SELECT person, ARRAY_AGG(DISTINCT role ORDER BY role) AS roles, \
+                  COUNT(DISTINCT ref_id)::bigint AS credit_count \
+             FROM all_credits GROUP BY person \
+         )"
+    );
+
+    // Page query: keyset filter + over-fetch one to detect a next page.
+    let mut params = lib_params.clone();
+    let cursor_clause = if let Some(name) = &after {
+        params.push(Value::from(name.clone()));
+        format!(" WHERE a.person > ${}", params.len())
+    } else {
+        String::new()
+    };
+    let sql = format!(
+        "{credits_cte} \
+         SELECT a.person, a.roles, a.credit_count, p.slug \
+           FROM agg a \
+           LEFT JOIN person p ON p.normalized_name = btrim(lower(a.person)){cursor_clause} \
+          ORDER BY a.person ASC \
+          LIMIT {fetch}",
+        fetch = limit + 1,
+    );
+
+    let backend = app.db.get_database_backend();
+    let stmt = Statement::from_sql_and_values(backend, sql, params);
+    let mut rows = match ListRow::find_by_statement(stmt).all(&app.db).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "creators: list failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let next_cursor = if rows.len() as u64 > limit {
+        rows.truncate(limit as usize);
+        match rows.last().map(|r| encode_cursor(&r.person)) {
+            Some(Ok(c)) => Some(c),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    // Total only on the first page (keyset pages stay cheap).
+    let total = if after.is_none() {
+        let count_sql = format!("{credits_cte} SELECT COUNT(*)::bigint AS n FROM agg");
+        let count_stmt = Statement::from_sql_and_values(backend, count_sql, lib_params);
+        CountRow::find_by_statement(count_stmt)
+            .one(&app.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| r.n as u64)
+    } else {
+        None
+    };
+
+    Json(CursorPage {
+        items: rows
+            .into_iter()
+            .map(|r| CreatorListItem {
+                person: r.person,
+                slug: r.slug,
+                roles: r.roles,
+                credit_count: r.credit_count,
+            })
+            .collect(),
+        next_cursor,
+        total,
+    })
+    .into_response()
 }
 
 #[utoipa::path(

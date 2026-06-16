@@ -2719,6 +2719,44 @@
         }
       }
     },
+    "/api/creators": {
+      "get": {
+        "summary": "`GET /creators` — alphabetical, cursor-paginated browse of every\ncreator visible to the caller (distinct names aggregated across\n`series_credits` + `issue_credits`, with role rollup + credit count).\nLibrary-ACL gated like `/people` + the detail page. Keyset on the\ncreator name so the list never silently truncates (audit A11 +\nlist-pagination-completeness).",
+        "operationId": "creators_list",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_CreatorListItem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/creators/{slug}": {
       "get": {
         "operationId": "creators_get_one",
@@ -12341,6 +12379,37 @@
           }
         }
       },
+      "CreatorListItem": {
+        "type": "object",
+        "description": "One creator row in the browse index — same shape the people-search\nhit uses (name + slug + role rollup + credit count) so the web can\nrender them with one card.",
+        "required": [
+          "person",
+          "roles",
+          "credit_count"
+        ],
+        "properties": {
+          "credit_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "person": {
+            "type": "string"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`/creators/<slug>` target. `None` until the `person` backfill\ncatches a freshly-scanned credit; the client falls back to the\nlegacy `?library=all&credits=<name>` URL."
+          }
+        }
+      },
       "CreatorRoleRail": {
         "type": "object",
         "required": [
@@ -12493,6 +12562,63 @@
                 },
                 "user_id": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_CreatorListItem": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One creator row in the browse index — same shape the people-search\nhit uses (name + slug + role rollup + credit count) so the web can\nrender them with one card.",
+              "required": [
+                "person",
+                "roles",
+                "credit_count"
+              ],
+              "properties": {
+                "credit_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "person": {
+                  "type": "string"
+                },
+                "roles": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "slug": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`/creators/<slug>` target. `None` until the `person` backfill\ncatches a freshly-scanned credit; the client falls back to the\nlegacy `?library=all&credits=<name>` URL."
                 }
               }
             }

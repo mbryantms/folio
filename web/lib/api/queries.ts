@@ -73,6 +73,7 @@ import type {
   IssueSearchView,
   IssueSort,
   PeopleListView,
+  CreatorListView,
   LibraryView,
   FsListResp,
   LogLevel,
@@ -210,6 +211,14 @@ export type IssueSearchFilters = {
 /** People search shape (global-search M4). */
 export type PeopleSearchFilters = {
   q?: string;
+  limit?: number;
+};
+
+/** Creator browse-index shape (`/creators`, audit A11). Cursor-paginated
+ *  alphabetical walk of every visible creator — no `q` (this is browse,
+ *  not search; the global-search modal still owns `/people`). */
+export type CreatorsListFilters = {
+  cursor?: string;
   limit?: number;
 };
 
@@ -1338,6 +1347,26 @@ export function usePeopleSearch(filters: PeopleSearchFilters = {}) {
     queryFn: () => jsonFetch<PeopleListView>(`/people${buildQuery(filters)}`),
     enabled,
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Alphabetical creator browse index backed by `GET /creators` (audit
+ *  A11). Cursor-paginated so the directory never silently truncates —
+ *  the `/people` search hook above can't browse-all (empty `q` returns
+ *  nothing), so this is its own endpoint. `total` rides the first page. */
+export function useCreatorsInfinite(filters: CreatorsListFilters = {}) {
+  const rest = stripCursor(filters);
+  return useInfiniteQuery({
+    queryKey: queryKeys.creatorsList(filters),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<CreatorListView>(
+        `/creators${buildQuery({ ...rest, cursor: pageParam })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    // Back-nav from a creator detail page restores the windowed grid +
+    // scroll position from cache (audit B15 / G1), same as series list.
+    gcTime: 30 * 60_000,
   });
 }
 
