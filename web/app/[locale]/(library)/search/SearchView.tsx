@@ -87,6 +87,11 @@ import {
   type SeriesSearchFilterState,
   type SeriesSearchSort,
 } from "@/lib/search/series-search-filters";
+import {
+  ISSUE_READ_STATUS_OPTIONS,
+  issueReadStatusToParam,
+} from "@/lib/search/issue-search-filters";
+import { FilterPill } from "@/components/ui/filter-pill";
 
 const QUERY_DEBOUNCE_MS = 250;
 
@@ -117,12 +122,16 @@ export function SearchView({
   initialQuery,
   category,
   initialFilters,
+  initialReadStatus,
 }: {
   initialQuery: string;
   category: SearchCategory | null;
   /** Server-parsed initial filter state (sort + facets) for the
    *  series category. Null when no filter params were on the URL. */
   initialFilters?: SeriesSearchFilterState;
+  /** Server-parsed initial read-status facet for the issues category
+   *  (deep-linked `?read_status=`). Empty when no param was set. */
+  initialReadStatus?: string[];
 }) {
   // One-time touch hint for the now-persistent cover kebab (audit B16).
   useCoarsePointerActionsHint();
@@ -135,6 +144,13 @@ export function SearchView({
   // Filters apply only on the series category grid. Anywhere else the
   // hook ignores them, so we just hide the Sort/Filter affordances.
   const filtersActive = category === "series";
+  // The issues category gets its own (lighter) read-status facet, backed
+  // by the paginated `/issues` cross-list.
+  const issueFiltersActive = category === "issues";
+  const [issueReadStatus, setIssueReadStatus] = useState<string[]>(
+    () => initialReadStatus ?? [],
+  );
+  const [issueFilterOpen, setIssueFilterOpen] = useState(false);
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
     min: CARD_SIZE_MIN,
@@ -175,8 +191,15 @@ export function SearchView({
       if (value) url.searchParams.set(key, value);
       else url.searchParams.delete(key);
     }
+    // The issues category carries its own `read_status` facet; strip it
+    // anywhere else so it doesn't linger across category nav.
+    const readStatusParam = issueFiltersActive
+      ? issueReadStatusToParam(issueReadStatus)
+      : undefined;
+    if (readStatusParam) url.searchParams.set("read_status", readStatusParam);
+    else url.searchParams.delete("read_status");
     window.history.replaceState({}, "", url.toString());
-  }, [debounced, filters, filtersActive]);
+  }, [debounced, filters, filtersActive, issueFiltersActive, issueReadStatus]);
 
   // Omit `perCategory` so each backend serves its server-side max (the
   // old single `75` quietly clamped to 50 on the issues backend,
@@ -225,6 +248,14 @@ export function SearchView({
                 filters={filters}
                 onChange={setFilters}
                 activeCount={countActiveSeriesFilters(filters)}
+              />
+            ) : null}
+            {issueFiltersActive ? (
+              <IssueFilterSheet
+                open={issueFilterOpen}
+                onOpenChange={setIssueFilterOpen}
+                readStatus={issueReadStatus}
+                onChange={setIssueReadStatus}
               />
             ) : null}
             <CardSizeOptions
@@ -280,6 +311,11 @@ export function SearchView({
           cardSize={cardSize}
           seriesFilters={
             filtersActive ? seriesSearchFiltersToHook(filters) : {}
+          }
+          issueReadStatusParam={
+            issueFiltersActive
+              ? issueReadStatusToParam(issueReadStatus)
+              : undefined
           }
         />
       ) : (
@@ -524,6 +560,7 @@ function CategoryGrid({
   groups,
   cardSize,
   seriesFilters,
+  issueReadStatusParam,
 }: {
   def: SearchCategoryDef;
   query: string;
@@ -531,6 +568,7 @@ function CategoryGrid({
   groups: { [K in SearchCategory]: SearchHit[] };
   cardSize: number;
   seriesFilters: Partial<SeriesListFilters>;
+  issueReadStatusParam: string | undefined;
 }) {
   if (!enabled) {
     return (
@@ -558,6 +596,7 @@ function CategoryGrid({
         query={query}
         enabled={enabled}
         gridStyle={gridStyle}
+        readStatusParam={issueReadStatusParam}
       />
     );
   }
@@ -622,13 +661,15 @@ function IssuesCategoryGrid({
   query,
   enabled,
   gridStyle,
+  readStatusParam,
 }: {
   query: string;
   enabled: boolean;
   gridStyle: CSSProperties;
+  readStatusParam: string | undefined;
 }) {
   const results = useIssuesCrossListInfinite(
-    enabled ? { q: query, limit: 60 } : {},
+    enabled ? { q: query, limit: 60, read_status: readStatusParam } : {},
     { enabled },
   );
   const issues = results.data?.pages.flatMap((p) => p.items) ?? [];
@@ -1314,6 +1355,97 @@ function SeriesFilterSheet({
                 sort: f.sort,
               }))
             }
+          >
+            <X className="mr-1 size-3" aria-hidden="true" />
+            Clear filters
+          </Button>
+          <Button type="button" size="sm" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/** Issue-search facet sheet. Lighter than the series sheet — the issue
+ *  results grid (`/issues` cross-list) carries a single per-user
+ *  read-status facet (Unread / Reading / Read), toggled as a pill row.
+ *  Filter state lives on the parent so the URL-sync effect picks up every
+ *  change. */
+function IssueFilterSheet({
+  open,
+  onOpenChange,
+  readStatus,
+  onChange,
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  readStatus: string[];
+  onChange: React.Dispatch<React.SetStateAction<string[]>>;
+}) {
+  const activeCount = readStatus.length;
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9"
+          aria-label={
+            activeCount > 0 ? `Filters (${activeCount} active)` : "Filters"
+          }
+        >
+          <Filter className="mr-1 size-3.5" aria-hidden="true" />
+          Filters
+          {activeCount > 0 ? (
+            <span className="bg-foreground text-background ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-medium tabular-nums">
+              {activeCount}
+            </span>
+          ) : null}
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="w-full max-w-sm space-y-6 px-5">
+        <SheetHeader className="space-y-1 px-0">
+          <SheetTitle>Refine issue results</SheetTitle>
+          <SheetDescription>
+            Filter the matched issues by your reading progress. Applies only on
+            the issues category grid.
+          </SheetDescription>
+        </SheetHeader>
+        <fieldset className="space-y-2">
+          <legend className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Read status
+          </legend>
+          <div className="flex flex-wrap gap-2">
+            {ISSUE_READ_STATUS_OPTIONS.map((o) => {
+              const active = readStatus.includes(o.value);
+              return (
+                <FilterPill
+                  key={o.value}
+                  active={active}
+                  onClick={() =>
+                    onChange((prev) =>
+                      active
+                        ? prev.filter((v) => v !== o.value)
+                        : [...prev, o.value],
+                    )
+                  }
+                >
+                  {o.label}
+                </FilterPill>
+              );
+            })}
+          </div>
+        </fieldset>
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={activeCount === 0}
+            onClick={() => onChange([])}
           >
             <X className="mr-1 size-3" aria-hidden="true" />
             Clear filters

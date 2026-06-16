@@ -1138,7 +1138,7 @@ pub struct ListSeriesQuery {
 }
 
 const VALID_STATUSES: &[&str] = &["continuing", "ended", "cancelled", "hiatus"];
-const READ_STATUSES: &[&str] = &["unread", "in_progress", "read"];
+pub(crate) const READ_STATUSES: &[&str] = &["unread", "in_progress", "read"];
 const COMPLETENESS_TIERS: &[&str] = &["complete", "partial", "needs_metadata"];
 
 pub(crate) fn split_csv(raw: &str) -> Vec<String> {

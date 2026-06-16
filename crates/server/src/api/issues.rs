@@ -31,7 +31,7 @@ use crate::middleware::RequestContext;
 use crate::state::AppState;
 
 use super::error;
-use super::series::{IssueDetailView, IssueLink, IssueSummaryView};
+use super::series::{IssueDetailView, IssueLink, IssueSummaryView, READ_STATUSES, split_csv};
 use server_macros::handler;
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -1754,6 +1754,12 @@ pub struct ListIssuesCrossQuery {
     pub user_rating_min: Option<f64>,
     #[serde(default)]
     pub user_rating_max: Option<f64>,
+    /// Per-user read-status CSV (`unread`, `in_progress`, `read`) — the
+    /// same three-state vocabulary the series-grid `read_status` facet
+    /// uses, applied at issue granularity. Selecting all three (or none
+    /// valid) is a no-op; invalid tokens 422.
+    #[serde(default)]
+    pub read_status: Option<String>,
 }
 
 fn default_cross_limit() -> u64 {
@@ -1787,7 +1793,56 @@ fn validate_list_query_params(q: &ListIssuesCrossQuery) -> Result<(), &'static s
             return Err("user_rating bounds must be 0..=5 with min <= max");
         }
     }
+    if let Some(raw) = q.read_status.as_deref()
+        && split_csv(raw)
+            .iter()
+            .any(|s| !READ_STATUSES.contains(&s.as_str()))
+    {
+        return Err("read_status must be unread, in_progress, or read");
+    }
     Ok(())
+}
+
+/// Per-user read-status filter for the cross-library issue list. Correlated
+/// subquery over `progress_records` reproducing the per-issue three-state
+/// rollup `series::compute_progress_summary` uses verbatim (`finished` →
+/// read; otherwise `last_page > 0` → in_progress; else unread, including a
+/// LEFT-JOIN miss). Selecting all three states (or none valid) is a no-op.
+/// Mirrors `series::apply_series_read_status_filter` at issue granularity;
+/// applied before the search/non-search split so it scopes both branches.
+fn apply_issue_read_status_filter(
+    select: sea_orm::Select<issue::Entity>,
+    q: &ListIssuesCrossQuery,
+    user_id: Uuid,
+) -> sea_orm::Select<issue::Entity> {
+    let Some(raw) = q.read_status.as_deref() else {
+        return select;
+    };
+    let statuses: Vec<String> = split_csv(raw)
+        .into_iter()
+        .filter(|s| READ_STATUSES.contains(&s.as_str()))
+        .collect();
+    if statuses.is_empty() || statuses.len() == READ_STATUSES.len() {
+        return select;
+    }
+    // `$2..$N` placeholders for the validated status list ($1 is the user).
+    let placeholders = (0..statuses.len())
+        .map(|i| format!("${}", i + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "COALESCE((SELECT CASE \
+            WHEN pr.finished THEN 'read' \
+            WHEN pr.last_page > 0 THEN 'in_progress' \
+            ELSE 'unread' END \
+          FROM progress_records pr \
+          WHERE pr.user_id = $1 AND pr.issue_id = issues.id), 'unread') \
+         IN ({placeholders})"
+    );
+    let mut values: Vec<Value> = Vec::with_capacity(statuses.len() + 1);
+    values.push(Value::from(user_id));
+    values.extend(statuses.into_iter().map(Value::from));
+    select.filter(Expr::cust_with_values(&sql, values))
 }
 
 /// Apply the per-user library visibility filter. Returns `None` when
@@ -2152,6 +2207,7 @@ pub async fn list(
     select = apply_issue_direct_column_filters(select, &q);
     select = apply_issue_csv_facet_filters(select, &q);
     select = apply_issue_user_rating_filter(select, &q, user.id);
+    select = apply_issue_read_status_filter(select, &q, user.id);
 
     let limit = clamp_limit(q.limit);
     let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());

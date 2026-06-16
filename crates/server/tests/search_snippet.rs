@@ -30,6 +30,7 @@ async fn body_json(b: Body) -> serde_json::Value {
 struct Authed {
     session: String,
     csrf: String,
+    user_id: Uuid,
 }
 
 async fn register(app: &TestApp, email: &str) -> Authed {
@@ -68,9 +69,12 @@ async fn register(app: &TestApp, email: &str) -> Authed {
             })
             .expect(prefix)
     };
+    let json = body_json(resp.into_body()).await;
+    let user_id = Uuid::parse_str(json["user"]["id"].as_str().unwrap()).unwrap();
     Authed {
         session: extract("__Host-comic_session="),
         csrf: extract("__Host-comic_csrf="),
+        user_id,
     }
 }
 
@@ -345,6 +349,173 @@ async fn issue_search_returns_mark_highlighted_snippet() {
         snippet.contains("<mark>portal</mark>"),
         "snippet should wrap the matched term: {snippet}"
     );
+}
+
+/// Seed a `progress_records` row so the per-issue read-status filter has
+/// something to bucket. `finished` → read; `last_page > 0` (not finished)
+/// → in_progress; no row → unread.
+async fn seed_progress(
+    app: &TestApp,
+    user_id: Uuid,
+    issue_id: &str,
+    last_page: i32,
+    finished: bool,
+) {
+    use entity::progress_record;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    progress_record::ActiveModel {
+        user_id: Set(user_id),
+        issue_id: Set(issue_id.to_owned()),
+        last_page: Set(last_page),
+        percent: Set(if finished {
+            100.0
+        } else {
+            f64::from(last_page) * 5.0
+        }),
+        finished: Set(finished),
+        updated_at: Set(now),
+        device: Set(None),
+        finished_at: Set(finished.then_some(now)),
+        is_backfill: Set(false),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+}
+
+/// Pull the `title` strings out of an `IssueSearchView` body.
+fn titles(json: &serde_json::Value) -> Vec<String> {
+    json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["title"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// `read_status` filters the cross-library issue list (`/issues`, the
+/// paginated grid backing `/search`) to the per-user bucket. Three issues
+/// share the query term but differ in progress: one finished, one
+/// started-not-finished, one untouched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_list_read_status_buckets_by_progress() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "rs-issue@example.com").await;
+
+    let lib = seed_library(&app, "rs").await;
+    let series_id = seed_series(&app, lib, "Quasar Quest", None).await;
+    // All three summaries share "quasar" so they all match `q=quasar`;
+    // the title disambiguates which row came back.
+    let i_read = seed_issue(&app, lib, series_id, 1, Some("a quasar tale")).await;
+    let i_prog = seed_issue(&app, lib, series_id, 2, Some("a quasar saga")).await;
+    let _i_unread = seed_issue(&app, lib, series_id, 3, Some("a quasar epic")).await;
+    seed_progress(&app, auth.user_id, &i_read, 20, true).await;
+    seed_progress(&app, auth.user_id, &i_prog, 5, false).await;
+    // i_unread: no progress row at all.
+
+    // read → only the finished issue.
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/issues?q=quasar&read_status=read",
+        &auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    assert_eq!(titles(&json), vec!["Issue 1"], "read → finished only");
+
+    // in_progress → only the started-not-finished issue.
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/issues?q=quasar&read_status=in_progress",
+        &auth,
+    )
+    .await;
+    assert_eq!(
+        titles(&json),
+        vec!["Issue 2"],
+        "in_progress → started, not finished"
+    );
+
+    // unread → only the untouched issue (no progress row).
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/issues?q=quasar&read_status=unread",
+        &auth,
+    )
+    .await;
+    assert_eq!(titles(&json), vec!["Issue 3"], "unread → no progress row");
+
+    // All three selected = no-op (every match returns).
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/issues?q=quasar&read_status=unread,in_progress,read",
+        &auth,
+    )
+    .await;
+    let mut all = titles(&json);
+    all.sort();
+    assert_eq!(
+        all,
+        vec!["Issue 1", "Issue 2", "Issue 3"],
+        "all-three filter is a no-op"
+    );
+}
+
+/// `read_status` is per-user: another user's progress doesn't leak into
+/// the caller's buckets.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_list_read_status_is_per_user() {
+    let app = TestApp::spawn().await;
+    let reader = register(&app, "rs-me@example.com").await;
+    let other = register(&app, "rs-other@example.com").await;
+
+    let lib = seed_library(&app, "rs-pu").await;
+    let series_id = seed_series(&app, lib, "Nova Nights", None).await;
+    let issue = seed_issue(&app, lib, series_id, 1, Some("a nova story")).await;
+    // The OTHER user finished it; the caller never touched it.
+    seed_progress(&app, other.user_id, &issue, 20, true).await;
+
+    // For the caller it's still unread.
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/issues?q=nova&read_status=unread",
+        &reader,
+    )
+    .await;
+    assert_eq!(titles(&json), vec!["Issue 1"], "unread for the caller");
+    // …and absent from their `read` bucket.
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/issues?q=nova&read_status=read",
+        &reader,
+    )
+    .await;
+    assert!(
+        json["items"].as_array().unwrap().is_empty(),
+        "other user's finish doesn't leak: {json:#?}"
+    );
+}
+
+/// An invalid `read_status` token is a 422 (mirrors the series-grid facet).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_list_read_status_invalid_is_422() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "rs-bad@example.com").await;
+    let (status, _json) = http(
+        &app,
+        Method::GET,
+        "/api/issues?q=quasar&read_status=bogus",
+        &auth,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 /// Snippet is omitted when the row's summary doesn't contain a
