@@ -16,6 +16,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
@@ -42,10 +43,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { apiMutate } from "@/lib/api/mutations";
 import {
   useBulkMarkProgress,
   useBulkMarkSeriesMatchingProgress,
+  useCreateSeriesSelectionBatch,
 } from "@/lib/api/mutations";
 import { useMe, useSeriesIssuesInfinite } from "@/lib/api/queries";
 import { ISSUE_TEXT_H } from "@/lib/library/grid-window";
@@ -177,6 +178,7 @@ export function IssuesPanel({
   const [markReadOpen, setMarkReadOpen] = useState(false);
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
+  const router = useRouter();
   const matchingTotal =
     query.data?.pages[0]?.total ?? issueCount ?? items.length;
   const matchingQuery = debouncedQ || undefined;
@@ -262,48 +264,38 @@ export function IssuesPanel({
     ref_id: id,
   }));
 
-  const [bulkFetchPending, setBulkFetchPending] = useState(false);
-  const runBulkMetadataFetch = async () => {
-    const ids = selection.selected;
-    if (ids.size === 0) return;
-    const slugs = items.filter((iss) => ids.has(iss.id)).map((iss) => iss.slug);
-    if (slugs.length === 0) return;
-    setBulkFetchPending(true);
-    const toastId = toast.loading(
-      `Searching providers for ${slugs.length} issue${slugs.length === 1 ? "" : "s"}…`,
-    );
-    // POST only enqueues the search job — returns ~immediately. Run in
-    // parallel; the server's per-provider token bucket gates the actual
-    // upstream calls. Surface a single summary toast at the end.
-    const results = await Promise.allSettled(
-      slugs.map((slug) =>
-        apiMutate({
-          path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(slug)}/metadata/search`,
-          method: "POST",
-        }),
-      ),
-    );
-    const ok = results.filter((r) => r.status === "fulfilled").length;
-    const failed = results.length - ok;
-    if (failed === 0) {
-      toast.success(
-        `Queued metadata search for ${ok} issue${ok === 1 ? "" : "s"}.`,
-        {
-          id: toastId,
+  // Bulk fetch routes through one server batch (not N fire-and-forget POSTs)
+  // so it returns a `batch_id` the completion toast can deep-link to the
+  // Review queue — B5: bulk fetch is no longer a dead end.
+  const selectionBatch = useCreateSeriesSelectionBatch(seriesSlug);
+  const runBulkMetadataFetch = () => {
+    const ids = Array.from(selection.selected);
+    if (ids.length === 0) return;
+    selectionBatch.mutate(
+      { issue_ids: ids },
+      {
+        onSuccess: (resp) => {
+          if (!resp) return;
+          clearSelection();
+          if (resp.items_total === 0) {
+            toast.info("Nothing to search — those issues are already queued.");
+            return;
+          }
+          toast.success(
+            `Searching ${resp.items_total} issue${resp.items_total === 1 ? "" : "s"} for metadata`,
+            {
+              action: {
+                label: "Review results",
+                onClick: () =>
+                  router.push(
+                    `/admin/metadata?tab=review&batch=${resp.batch_id}`,
+                  ),
+              },
+            },
+          );
         },
-      );
-    } else if (ok === 0) {
-      toast.error(
-        `Failed to queue any metadata searches (${failed} error${failed === 1 ? "" : "s"}).`,
-        {
-          id: toastId,
-        },
-      );
-    } else {
-      toast.message(`Queued ${ok}, ${failed} failed.`, { id: toastId });
-    }
-    setBulkFetchPending(false);
-    clearSelection();
+      },
+    );
   };
 
   // Auto-fetch the next page when the sentinel scrolls into view.
@@ -479,8 +471,8 @@ export function IssuesPanel({
                 id: "fetch-metadata",
                 label: "Fetch metadata",
                 icon: Sparkles,
-                onClick: () => void runBulkMetadataFetch(),
-                disabled: allMatchingSelected || bulkFetchPending,
+                onClick: () => runBulkMetadataFetch(),
+                disabled: allMatchingSelected || selectionBatch.isPending,
               },
               // Admin-only: rewrites archive files. The server skips issues
               // whose library has writeback off (reported in the result).

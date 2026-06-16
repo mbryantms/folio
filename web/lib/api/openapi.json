@@ -8317,6 +8317,50 @@
         }
       }
     },
+    "/api/series/{slug}/metadata/batch/selection": {
+      "post": {
+        "summary": "`POST /series/{slug}/metadata/batch/selection` — fan out a metadata search\nover a hand-picked subset of the series' issues, grouped under one\n`metadata_batch`. The multi-select \"Fetch metadata\" action routes here so\nthe bulk fetch is no longer fire-and-forget: the caller deep-links the\nReview queue to the returned `batch_id` (B5). Access is gated at the series\nlibrary; the id list is intersected with the series' active issues, so the\nscope can't be widened past what the series page already exposes.",
+        "operationId": "metadata_create_series_selection_batch",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeriesSelectionBatchReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchCreatedResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/metadata/candidates": {
       "get": {
         "operationId": "metadata_candidates_series",
@@ -19056,6 +19100,21 @@
           "state": {
             "type": "string",
             "description": "One of `'unread' | 'in_progress' | 'finished'`. `'finished'` means\nthe user already read every issue — `issue_slug` points at #1 so a\n\"Read again\" CTA is honored."
+          }
+        }
+      },
+      "SeriesSelectionBatchReq": {
+        "type": "object",
+        "description": "`POST /series/{slug}/metadata/batch/selection` request — the hand-picked\nsubset of issues to search (the grid multi-select). Ids that don't belong\nto the series (or aren't active) drop out server-side, so a stale / forged\nid is a no-op rather than an error.",
+        "required": [
+          "issue_ids"
+        ],
+        "properties": {
+          "issue_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

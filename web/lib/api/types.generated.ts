@@ -3571,6 +3571,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/metadata/batch/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /series/{slug}/metadata/batch/selection` — fan out a metadata search
+         *     over a hand-picked subset of the series' issues, grouped under one
+         *     `metadata_batch`. The multi-select "Fetch metadata" action routes here so
+         *     the bulk fetch is no longer fire-and-forget: the caller deep-links the
+         *     Review queue to the returned `batch_id` (B5). Access is gated at the series
+         *     library; the id list is intersected with the series' active issues, so the
+         *     scope can't be widened past what the series page already exposes.
+         */
+        post: operations["metadata_create_series_selection_batch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/metadata/candidates": {
         parameters: {
             query?: never;
@@ -8037,6 +8062,15 @@ export interface components {
              *     "Read again" CTA is honored.
              */
             state: string;
+        };
+        /**
+         * @description `POST /series/{slug}/metadata/batch/selection` request — the hand-picked
+         *     subset of issues to search (the grid multi-select). Ids that don't belong
+         *     to the series (or aren't active) drop out server-side, so a stale / forged
+         *     id is a no-op rather than an error.
+         */
+        SeriesSelectionBatchReq: {
+            issue_ids: string[];
         };
         SeriesView: {
             age_rating?: string | null;
@@ -16507,6 +16541,45 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchCreatedResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_create_series_selection_batch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeriesSelectionBatchReq"];
+            };
+        };
         responses: {
             202: {
                 headers: {

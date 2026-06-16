@@ -65,6 +65,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(apply_issue))
         .routes(routes!(refresh_library_metadata))
         .routes(routes!(create_series_batch))
+        .routes(routes!(create_series_selection_batch))
         .routes(routes!(create_saved_view_batch))
         .routes(routes!(batch_status))
         .routes(routes!(list_batches))
@@ -1981,6 +1982,101 @@ pub async fn create_series_batch(
             Ok(id) => id,
             Err(e) => {
                 tracing::error!(error = %e, "create_series_batch: batch insert failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+
+    let outcome = fan_out_issue_batch(&app, &issue_ids, Some(user.id), batch_id).await;
+    set_batch_items_total(&app.db, batch_id, outcome.jobs_enqueued as i32).await;
+
+    (
+        StatusCode::ACCEPTED,
+        Json(BatchCreatedResp {
+            batch_id,
+            items_total: outcome.jobs_enqueued,
+            jobs_enqueued: outcome.jobs_enqueued,
+            jobs_coalesced: outcome.jobs_coalesced,
+            jobs_failed: outcome.jobs_failed,
+        }),
+    )
+        .into_response()
+}
+
+/// `POST /series/{slug}/metadata/batch/selection` request — the hand-picked
+/// subset of issues to search (the grid multi-select). Ids that don't belong
+/// to the series (or aren't active) drop out server-side, so a stale / forged
+/// id is a no-op rather than an error.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SeriesSelectionBatchReq {
+    pub issue_ids: Vec<String>,
+}
+
+/// `POST /series/{slug}/metadata/batch/selection` — fan out a metadata search
+/// over a hand-picked subset of the series' issues, grouped under one
+/// `metadata_batch`. The multi-select "Fetch metadata" action routes here so
+/// the bulk fetch is no longer fire-and-forget: the caller deep-links the
+/// Review queue to the returned `batch_id` (B5). Access is gated at the series
+/// library; the id list is intersected with the series' active issues, so the
+/// scope can't be widened past what the series page already exposes.
+#[utoipa::path(
+    operation_id = "metadata_create_series_selection_batch",    post,
+    path = "/series/{slug}/metadata/batch/selection",
+    request_body = SeriesSelectionBatchReq,
+    responses(
+        (status = 202, body = BatchCreatedResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "series not found"),
+    )
+)]
+#[handler]
+pub async fn create_series_selection_batch(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path(slug): Path<String>,
+    Json(req): Json<SeriesSelectionBatchReq>,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
+    }
+
+    // Intersect the requested ids with this series' active issues — a foreign
+    // or stale id simply drops out. Capped like the other fan-outs.
+    let issue_ids: Vec<String> = if req.issue_ids.is_empty() {
+        Vec::new()
+    } else {
+        match issue::Entity::find()
+            .filter(issue::Column::SeriesId.eq(s.id))
+            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::RemovedAt.is_null())
+            .filter(issue::Column::Id.is_in(req.issue_ids.iter().cloned()))
+            .order_by_asc(issue::Column::SortNumber)
+            .limit(refresh::REFRESH_BATCH_CAP as u64)
+            .all(&app.db)
+            .await
+        {
+            Ok(rows) => rows.into_iter().map(|r| r.id).collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "create_series_selection_batch: issue query failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    };
+
+    let batch_id =
+        match insert_metadata_batch(&app.db, "series_issues", Some(s.library_id), Some(user.id))
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!(error = %e, "create_series_selection_batch: batch insert failed");
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         };

@@ -2531,7 +2531,10 @@ export function useApplyMetadataForIssue(
  *  `scope: "incomplete"` restricts the fan-out to issues whose metadata is
  *  missing or partial; omit (or `"all"`) to search every active issue. */
 export function useCreateSeriesBatch(seriesSlug: string) {
-  return useApiMutation<BatchCreatedResp, { scope?: "all" | "incomplete" } | void>(
+  return useApiMutation<
+    BatchCreatedResp,
+    { scope?: "all" | "incomplete" } | void
+  >(
     (input) => {
       const scope = input?.scope;
       const qs = scope && scope !== "all" ? `?scope=${scope}` : "";
@@ -2542,6 +2545,18 @@ export function useCreateSeriesBatch(seriesSlug: string) {
     },
     { successMessage: "Queued metadata search" },
   );
+}
+
+/** Fan out a per-issue metadata search over a hand-picked subset of a
+ *  series' issues (the grid multi-select) → one batch. The caller owns the
+ *  success toast so it can attach a "Review results" deep-link to the
+ *  returned `batch_id` (B5 — bulk fetch is no longer fire-and-forget). */
+export function useCreateSeriesSelectionBatch(seriesSlug: string) {
+  return useApiMutation<BatchCreatedResp, { issue_ids: string[] }>((input) => ({
+    path: `/series/${encodeURIComponent(seriesSlug)}/metadata/batch/selection`,
+    method: "POST",
+    body: input,
+  }));
 }
 
 /** Fan out a metadata search over a saved view's targets → one batch. */
