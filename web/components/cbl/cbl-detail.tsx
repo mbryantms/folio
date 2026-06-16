@@ -501,6 +501,19 @@ function ResolutionTab({
         ? stats.ambiguous
         : stats.missing);
 
+  // Auto-advance (B10): one popover is "active" at a time. Matching an entry
+  // opens the next still-unresolved one so the user churns the list without
+  // re-clicking "Match…". `next` is read from the pre-refetch list, so it
+  // survives the matched row dropping out.
+  const [openEntryId, setOpenEntryId] = React.useState<string | null>(null);
+  const advanceAfter = React.useCallback(
+    (entry: CblEntryHydratedView) => {
+      const idx = items.findIndex((e) => e.id === entry.id);
+      setOpenEntryId(idx >= 0 ? (items[idx + 1]?.id ?? null) : null);
+    },
+    [items],
+  );
+
   // IntersectionObserver sentinel — works because Resolution scrolls
   // its outer TabsContent rather than running a virtualizer.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
@@ -565,9 +578,16 @@ function ResolutionTab({
         </div>
       ) : (
         <ul className="divide-border border-border divide-y rounded-md border">
-          {items.map((entry) => (
+          {items.map((entry, index) => (
             <li key={entry.id} className="p-3">
-              <ResolutionRow listId={listId} entry={entry} />
+              <ResolutionRow
+                listId={listId}
+                entry={entry}
+                similarFollowing={similarFollowing(items, index)}
+                open={openEntryId === entry.id}
+                onOpenChange={(o) => setOpenEntryId(o ? entry.id : null)}
+                onResolved={() => advanceAfter(entry)}
+              />
             </li>
           ))}
         </ul>
@@ -585,12 +605,36 @@ function ResolutionTab({
   );
 }
 
+/** The contiguous run of following entries (in the loaded resolution list)
+ *  that share this entry's `series_name` — the candidates for a one-click
+ *  "use this series for N similar entries" bulk match (B10). */
+export function similarFollowing(
+  items: CblEntryHydratedView[],
+  index: number,
+): CblEntryHydratedView[] {
+  const name = items[index]?.series_name;
+  const out: CblEntryHydratedView[] = [];
+  for (let j = index + 1; j < items.length; j++) {
+    if (items[j].series_name !== name) break;
+    out.push(items[j]);
+  }
+  return out;
+}
+
 function ResolutionRow({
   listId,
   entry,
+  similarFollowing,
+  open,
+  onOpenChange,
+  onResolved,
 }: {
   listId: string;
   entry: CblEntryHydratedView;
+  similarFollowing: CblEntryHydratedView[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onResolved: () => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
@@ -611,6 +655,10 @@ function ResolutionRow({
       <ManualMatchPopover
         listId={listId}
         entry={entry}
+        similarFollowing={similarFollowing}
+        open={open}
+        onOpenChange={onOpenChange}
+        onResolved={onResolved}
         trigger={
           <Button type="button" size="sm" variant="outline">
             Match…
