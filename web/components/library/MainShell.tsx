@@ -1,20 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { Menu } from "lucide-react";
+import { Suspense, useState } from "react";
 
 import { AddToHomeScreenBanner } from "@/components/AddToHomeScreenBanner";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { TopbarSearchInline } from "@/components/TopbarSearchInline";
 import { TopbarSearchTrigger } from "@/components/TopbarSearchTrigger";
-import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { SidebarTrigger } from "@/components/shell/SidebarTrigger";
 import { SkipToContent } from "@/components/shell/SkipToContent";
 import type { SidebarState } from "@/lib/sidebar-state";
@@ -23,6 +16,7 @@ import { cn } from "@/lib/utils";
 
 import { ScanEventBeacon } from "@/components/admin/ScanEventBeacon";
 
+import { BottomTabBar } from "./BottomTabBar";
 import { MainSidebar } from "./MainSidebar";
 import type { MainNavSection } from "./main-nav";
 
@@ -62,18 +56,11 @@ export function MainShell({
       <SkipToContent />
       <PullToRefresh />
       <AddToHomeScreenBanner />
-      <header className="border-border bg-background/80 sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pl-[max(1rem,var(--safe-left))] pr-[max(1rem,var(--safe-right))] backdrop-blur md:pl-[max(1.5rem,var(--safe-left))] md:pr-[max(1.5rem,var(--safe-right))]">
+      <header className="border-border bg-background/80 sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] backdrop-blur md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]">
+        {/* The nav sheet is controlled (no inline trigger) — on mobile the
+            bottom bar's "More" tab opens it; on md+ the persistent sidebar
+            replaces it. */}
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              aria-label="Open navigation"
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
-          </SheetTrigger>
           <SheetContent
             side="left"
             // Safe-area insets: the sheet covers the full viewport
@@ -111,10 +98,11 @@ export function MainShell({
         />
         <Link
           href={homeHref}
-          // Hide on the smallest viewports so the search trigger can
-          // claim the row width; the hamburger to the left is already
-          // a strong anchor.
-          className="hidden font-semibold tracking-tight sm:inline"
+          // Brand anchors the topbar on every width now that the mobile
+          // hamburger is gone (its job moved to the bottom bar's "More"
+          // tab); the search trigger on the right is a compact icon at
+          // `< sm`, so there's room for it here.
+          className="font-semibold tracking-tight"
         >
           Folio
         </Link>
@@ -130,7 +118,7 @@ export function MainShell({
         <div className="ml-1 hidden flex-1 sm:block sm:max-w-md">
           <TopbarSearchInline />
         </div>
-        <TopbarSearchTrigger className="ml-1 sm:hidden" />
+        <TopbarSearchTrigger className="ml-auto sm:hidden" />
         {user.role === "admin" ? (
           <div className="flex shrink-0 items-center">
             <ScanEventBeacon />
@@ -167,11 +155,18 @@ export function MainShell({
         <main
           id="main-content"
           tabIndex={-1}
-          className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8"
+          // Mobile: extra bottom padding so the last row clears the fixed
+          // bottom tab bar (+ home-indicator safe area). md+ has no bar.
+          className="min-w-0 flex-1 px-4 py-6 pb-[calc(var(--bottom-tab-h)+var(--safe-bottom)+1.5rem)] md:px-8 md:py-8"
         >
           {children}
         </main>
       </div>
+      {/* Mobile bottom tab bar. Reads `?library=all` (Suspense-gated) to
+          split the Home/Library tabs; "More" opens the nav sheet above. */}
+      <Suspense fallback={null}>
+        <BottomTabBar onMore={() => setMobileOpen(true)} />
+      </Suspense>
     </div>
   );
 }

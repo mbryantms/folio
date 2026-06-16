@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 
 import {
   Tooltip,
@@ -52,6 +53,33 @@ export function AdminSidebar({
             collapsed ? "px-2" : "px-3",
           )}
         >
+          {/* Wayfinding back to the main library app — admin/settings are
+              secondary surfaces reached from the library, so the return
+              trip is a first-class row at the top of the nav. */}
+          {collapsed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  href="/"
+                  aria-label="Back to library"
+                  className="text-muted-foreground hover:bg-secondary/50 hover:text-foreground mx-auto flex size-9 items-center justify-center rounded-md transition-colors"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                Back to library
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <Link
+              href="/"
+              className="text-muted-foreground hover:bg-secondary/50 hover:text-foreground flex items-center gap-2.5 rounded-md px-3 py-1.5 transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4 shrink-0" />
+              <span className="truncate">Back to library</span>
+            </Link>
+          )}
           {!collapsed && (
             <div className="px-3">
               <p className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
@@ -77,7 +105,8 @@ export function AdminSidebar({
                   const active = item.exact
                     ? pathname === item.href
                     : pathname === item.href ||
-                      (item.href !== "" && pathname.startsWith(item.href + "/"));
+                      (item.href !== "" &&
+                        pathname.startsWith(item.href + "/"));
                   const Icon = navIcons[item.icon];
                   const link = (
                     <Link
@@ -126,7 +155,7 @@ export function AdminSidebar({
           ))}
         </nav>
       </TooltipProvider>
-      <UserFooter user={user} collapsed={collapsed} />
+      <UserFooter user={user} collapsed={collapsed} libraryHref="/" />
     </div>
   );
 }

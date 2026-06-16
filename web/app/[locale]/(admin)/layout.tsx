@@ -24,13 +24,20 @@ export default async function AdminLayout({
   if (me.role !== "admin") {
     redirect(`/`);
   }
+  // Mirror the settings sidebar's "Admin console" cross-link: give admins a
+  // first-class jump to their personal Settings from the admin tree.
+  const sections = adminNav("");
+  sections.push({
+    label: "Settings",
+    items: [{ href: `/settings`, label: "Settings", icon: "Settings" }],
+  });
   const defaultSidebar = parseSidebarState(
     (await cookies()).get(SIDEBAR_COOKIE)?.value,
   );
   return (
     <AdminShell
       user={me}
-      sections={adminNav("")}
+      sections={sections}
       title="Admin"
       homeHref={`/`}
       showScanBeacon

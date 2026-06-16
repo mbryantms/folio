@@ -210,6 +210,9 @@
   --safe-left: env(safe-area-inset-left, 0px);
   --topbar-content-h: 3.5rem;
   --topbar-h: calc(var(--topbar-content-h) + var(--safe-top));
+  /* Mobile bottom tab bar (md:hidden). Content padding clears this plus
+   * the home-indicator safe area so the last row isn't hidden behind it. */
+  --bottom-tab-h: 3.5rem;
 }
 
 [data-density="compact"] {
