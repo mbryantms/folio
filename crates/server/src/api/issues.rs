@@ -13,8 +13,8 @@ use axum::{
 };
 use entity::{issue, library, library_health_issue, library_user_access, series};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
-    Set, Statement, Value, sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, Condition, DbBackend, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set, Statement, Value, sea_query::Expr,
 };
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -1768,6 +1768,29 @@ fn default_cross_limit() -> u64 {
 
 const MAX_QUERY_LEN: usize = 200;
 
+/// Issue free-text match: full-text on `issues.search_doc` OR a pg_trgm
+/// fallback on the issue's **series name**, so a typo / spacing variant
+/// ("spiderman") still finds the issues of a similar series ("Spider-Man").
+/// The issue's `search_doc` can't carry the series name (a STORED generated
+/// column can't join), so the trigram reaches it through the issue's
+/// `series_id`, reusing the existing `series_normalized_name_trgm` index.
+/// Mirrors `series::list`'s FTS-or-trigram. Exact FTS hits still rank first
+/// (`ts_rank_cd` is 0 for trigram-only matches), so this only *adds* fuzzy
+/// rows below the strict ones — no reordering of good matches.
+fn issue_search_condition(text: &str) -> Condition {
+    Condition::any()
+        .add(Expr::cust_with_values(
+            "search_doc @@ websearch_to_tsquery('simple', $1)",
+            [text],
+        ))
+        .add(Expr::cust_with_values(
+            "EXISTS (SELECT 1 FROM series strg \
+               WHERE strg.id = issues.series_id \
+                 AND strg.normalized_name % $1)",
+            [entity::series::normalize_name(text)],
+        ))
+}
+
 // ───── /issues list helpers ─────
 //
 // `list` orchestrates these: validate → visibility → static filters →
@@ -2229,10 +2252,7 @@ pub async fn list(
             },
             None => 0,
         };
-        let filtered = select.filter(Expr::cust_with_values(
-            "search_doc @@ websearch_to_tsquery('simple', $1)",
-            [text],
-        ));
+        let filtered = select.filter(issue_search_condition(text));
         let total = if q.cursor.is_none() {
             use sea_orm::PaginatorTrait;
             match filtered.clone().count(&app.db).await {
@@ -2456,10 +2476,7 @@ pub async fn search(
     let mut sel = issue::Entity::find()
         .filter(issue::Column::State.eq("active"))
         .filter(issue::Column::RemovedAt.is_null())
-        .filter(Expr::cust_with_values(
-            "search_doc @@ websearch_to_tsquery('simple', $1)",
-            [text],
-        ))
+        .filter(issue_search_condition(text))
         .order_by_desc(Expr::cust_with_values(
             "ts_rank_cd(search_doc, websearch_to_tsquery('simple', $1), 32)",
             [text],
