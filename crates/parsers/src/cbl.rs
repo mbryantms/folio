@@ -278,6 +278,63 @@ fn database_from_attrs(
     Ok(db)
 }
 
+/// Serialize a [`ParsedCbl`] back to CBL XML — the inverse of [`parse`].
+/// Round-trips: `parse(to_xml(&cbl)?.as_bytes())` reproduces the same
+/// `name` + `books`. Used by the collections→CBL export (data-liberation
+/// 3.3). `<Matchers>` / `num_issues_declared` aren't emitted — they're
+/// read-only hints the importer derives, not data we own.
+pub fn to_xml(cbl: &ParsedCbl) -> Result<String, quick_xml::Error> {
+    use quick_xml::events::{BytesEnd, BytesStart, BytesText};
+    use quick_xml::writer::Writer;
+
+    let mut w = Writer::new_with_indent(Vec::new(), b' ', 2);
+    w.write_event(Event::Start(BytesStart::new("ReadingList")))?;
+
+    w.write_event(Event::Start(BytesStart::new("Name")))?;
+    w.write_event(Event::Text(BytesText::new(&cbl.name)))?;
+    w.write_event(Event::End(BytesEnd::new("Name")))?;
+
+    w.write_event(Event::Start(BytesStart::new("Books")))?;
+    for b in &cbl.books {
+        let mut book = BytesStart::new("Book");
+        book.push_attribute(("Series", b.series.as_str()));
+        book.push_attribute(("Number", b.number.as_str()));
+        if let Some(v) = &b.volume {
+            book.push_attribute(("Volume", v.as_str()));
+        }
+        if let Some(y) = &b.year {
+            book.push_attribute(("Year", y.as_str()));
+        }
+        if b.databases.is_empty() {
+            w.write_event(Event::Empty(book))?;
+        } else {
+            w.write_event(Event::Start(book))?;
+            for d in &b.databases {
+                let mut db = BytesStart::new("Database");
+                db.push_attribute(("Name", d.name.as_str()));
+                if let Some(s) = &d.series {
+                    db.push_attribute(("Series", s.as_str()));
+                }
+                if let Some(i) = &d.issue {
+                    db.push_attribute(("Issue", i.as_str()));
+                }
+                w.write_event(Event::Empty(db))?;
+            }
+            w.write_event(Event::End(BytesEnd::new("Book")))?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("Books")))?;
+    w.write_event(Event::End(BytesEnd::new("ReadingList")))?;
+
+    // quick-xml only ever emits valid UTF-8, so the conversion can't fail
+    // in practice; map it through the crate error to keep `?` ergonomic.
+    let body = String::from_utf8(w.into_inner())
+        .map_err(|e| quick_xml::Error::from(std::io::Error::other(e)))?;
+    Ok(format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n{body}\n"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,5 +422,73 @@ mod tests {
             parse(xml.as_bytes()),
             Err(ParseError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn to_xml_round_trips_through_parse() {
+        let cbl = ParsedCbl {
+            name: "My Capes".to_string(),
+            num_issues_declared: None,
+            matchers_present: false,
+            books: vec![
+                ParsedCblBook {
+                    series: "Saga".to_string(),
+                    number: "1".to_string(),
+                    volume: Some("2012".to_string()),
+                    year: Some("2012".to_string()),
+                    databases: vec![ParsedCblDatabase {
+                        name: "cv".to_string(),
+                        series: Some("44144".to_string()),
+                        issue: Some("344037".to_string()),
+                    }],
+                },
+                ParsedCblBook {
+                    series: "Tech Jacket".to_string(),
+                    number: "2".to_string(),
+                    volume: None,
+                    year: None,
+                    databases: vec![],
+                },
+            ],
+        };
+        let xml = to_xml(&cbl).unwrap();
+        let re = parse(xml.as_bytes()).unwrap();
+        assert_eq!(re.name, "My Capes");
+        assert_eq!(re.books.len(), 2);
+        assert_eq!(re.books[0].series, "Saga");
+        assert_eq!(re.books[0].number, "1");
+        assert_eq!(re.books[0].volume.as_deref(), Some("2012"));
+        assert_eq!(re.books[0].year.as_deref(), Some("2012"));
+        assert_eq!(re.books[0].comicvine_series_id(), Some(44144));
+        assert_eq!(re.books[0].comicvine_issue_id(), Some(344037));
+        assert_eq!(re.books[1].series, "Tech Jacket");
+        assert!(re.books[1].databases.is_empty());
+    }
+
+    /// The writer still *escapes* special chars to valid XML even though
+    /// the reader can't currently reassemble entity-split text (a parser
+    /// limitation, tracked separately). Asserting the escaped output
+    /// keeps the serializer honest without depending on the reader.
+    #[test]
+    fn to_xml_escapes_special_chars() {
+        let cbl = ParsedCbl {
+            name: r#"Cape & "Cowl""#.to_string(),
+            num_issues_declared: None,
+            matchers_present: false,
+            books: vec![ParsedCblBook {
+                series: r#"A & B"#.to_string(),
+                number: "1".to_string(),
+                volume: None,
+                year: None,
+                databases: vec![],
+            }],
+        };
+        let xml = to_xml(&cbl).unwrap();
+        // quick-xml escapes `&` and `"` in both text and attributes.
+        assert!(
+            xml.contains("Cape &amp; &quot;Cowl&quot;"),
+            "name text: {xml}"
+        );
+        assert!(xml.contains(r#"Series="A &amp; B""#), "series attr: {xml}");
     }
 }

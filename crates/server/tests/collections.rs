@@ -109,6 +109,34 @@ async fn http(
     (status, body_json(resp.into_body()).await)
 }
 
+/// Like `http` but returns the raw body + content-type — for the CBL
+/// export, which is XML, not JSON.
+async fn http_text(app: &TestApp, uri: &str, auth: &Authed) -> (StatusCode, String, String) {
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &auth.csrf)
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let ct = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    (status, ct, String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// Insert a library, one series, and one active issue belonging to it.
 /// Returns the IDs so tests can ref them as entries.
 async fn seed_series_with_issue(app: &TestApp, slug: &str) -> (Uuid, Uuid, String) {
@@ -975,4 +1003,42 @@ async fn bulk_remove_rejects_non_owner() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cbl_export_expands_series_entries_to_issues() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cblexport@col.test").await;
+    let (_lib, series_id, issue_id) = seed_series_with_issue(&app, "cblx").await;
+    let cid = create_collection(&app, &auth, "Export Me").await;
+
+    // An issue entry + a whole-series entry. The series has one active
+    // issue, so the series entry expands to one more Book → 2 total.
+    let (s1, _) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/collections/{cid}/entries"),
+        Some(&auth),
+        Some(serde_json::json!({ "entry_kind": "issue", "ref_id": issue_id })),
+    )
+    .await;
+    assert!(s1.is_success(), "add issue entry: {s1}");
+    let (s2, _) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/collections/{cid}/entries"),
+        Some(&auth),
+        Some(serde_json::json!({ "entry_kind": "series", "ref_id": series_id.to_string() })),
+    )
+    .await;
+    assert!(s2.is_success(), "add series entry: {s2}");
+
+    let (status, ct, body) =
+        http_text(&app, &format!("/api/me/collections/{cid}/export"), &auth).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(ct.starts_with("application/xml"), "content-type: {ct}");
+    assert!(body.contains("<ReadingList>"), "body:\n{body}");
+    assert!(body.contains("<Name>Export Me</Name>"), "body:\n{body}");
+    // 1 issue entry + 1 series-expansion (the series' single active issue).
+    assert_eq!(body.matches("<Book ").count(), 2, "body:\n{body}");
 }
