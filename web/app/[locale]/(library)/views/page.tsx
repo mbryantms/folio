@@ -1,7 +1,9 @@
-import { redirect } from "next/navigation";
+import { ViewsIndex } from "@/components/saved-views/ViewsIndex";
 
-/** /views moved to /settings/views (per-user management surface). The
- *  per-view detail at /views/[id] still lives here. */
-export default function ViewsIndexRedirect() {
-  redirect("/settings/views");
+/** The unified saved-content index (A3): Filter views · Reading lists ·
+ *  Collections, each with in-page create/import. `/settings/views` keeps
+ *  arrangement (pins + sidebar) only; per-view detail stays at
+ *  `/views/[id]`. */
+export default function ViewsIndexPage() {
+  return <ViewsIndex />;
 }

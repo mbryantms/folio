@@ -35,7 +35,7 @@ export function QuickApplyPrefill() {
     remaining.delete("quick_field");
     remaining.delete("quick_value");
     const qs = remaining.toString();
-    router.replace(qs ? `/settings/views?${qs}` : "/settings/views");
+    router.replace(qs ? `/views?${qs}` : "/views");
   }
 
   return (

@@ -120,11 +120,11 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
   },
   {
     id: "open-views",
-    label: "Saved views",
-    group: "Settings",
+    label: "Views",
+    group: "Library",
     icon: ListChecks,
-    href: "/settings/views",
-    keywords: ["filters", "smart view", "cbl"],
+    href: "/views",
+    keywords: ["filters", "smart view", "cbl", "reading lists", "collections"],
   },
   {
     id: "open-api-tokens",
@@ -165,7 +165,7 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     label: "Collections",
     group: "Library",
     icon: FolderClosed,
-    href: "/collections",
+    href: "/views#collections",
     keywords: ["lists", "manual"],
   },
   {

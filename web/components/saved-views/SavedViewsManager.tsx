@@ -2,32 +2,21 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Lock, Pencil, Pin, Trash2 } from "lucide-react";
+import { Lock, Pin } from "lucide-react";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { useDeleteSavedView, useSidebarSavedView } from "@/lib/api/mutations";
+import { useSidebarSavedView } from "@/lib/api/mutations";
 import { useSavedViews } from "@/lib/api/queries";
 import type { SavedViewView } from "@/lib/api/types";
 
-import { AddViewButton } from "./AddViewButton";
 import { MultiPinDialog } from "./MultiPinDialog";
 
-/** Per-user saved-views **catalog**. Lives at `/settings/views`. Pure
- *  CRUD surface — create / open-to-edit / delete. Per-row Switches
- *  for "On home" and "In sidebar" expose the most common cross-flow
- *  without forcing a trip to `/settings/navigation`, but pin order and
- *  sidebar arrangement live exclusively on that page. */
+/** Per-user saved-views **arrangement** surface. Lives at `/settings/views`.
+ *  Defaults & arrangement only (A3): pin each view to one or more pages and
+ *  toggle sidebar visibility. Creating, importing, editing, and deleting now
+ *  live in the library at `/views`; pin order + sidebar order live on
+ *  `/settings/pages` / `/settings/navigation`. */
 export function SavedViewsManager() {
   const viewsQ = useSavedViews();
   const all = React.useMemo(
@@ -35,10 +24,9 @@ export function SavedViewsManager() {
     [viewsQ.data?.items],
   );
   const sorted = React.useMemo(() => {
-    // Alphabetical, system views and user views interleaved. Same name
-    // ordering the picker on `/settings/navigation` uses, so the user
-    // can find a row in one place and recognize its position in the
-    // other.
+    // Alphabetical, system and user views interleaved — same ordering the
+    // picker on `/settings/navigation` uses, so a row is recognizable in
+    // both places.
     return [...all].sort((a, b) =>
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     );
@@ -52,31 +40,42 @@ export function SavedViewsManager() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-muted-foreground text-sm">
-          {sorted.length} view{sorted.length === 1 ? "" : "s"}. Manage page
-          rails under{" "}
-          <Link
-            href="/settings/pages"
-            className="text-foreground underline underline-offset-2"
-          >
-            Pages
-          </Link>
-          ; sidebar order under{" "}
-          <Link
-            href="/settings/navigation"
-            className="text-foreground underline underline-offset-2"
-          >
-            Sidebar
-          </Link>
-          .
-        </p>
-        <AddViewButton />
-      </div>
+      <p className="text-muted-foreground text-sm">
+        {sorted.length} view{sorted.length === 1 ? "" : "s"}. Create, import,
+        and edit under{" "}
+        <Link
+          href="/views"
+          className="text-foreground underline underline-offset-2"
+        >
+          Views
+        </Link>
+        ; manage page rails under{" "}
+        <Link
+          href="/settings/pages"
+          className="text-foreground underline underline-offset-2"
+        >
+          Pages
+        </Link>{" "}
+        and sidebar order under{" "}
+        <Link
+          href="/settings/navigation"
+          className="text-foreground underline underline-offset-2"
+        >
+          Sidebar
+        </Link>
+        .
+      </p>
 
       {sorted.length === 0 ? (
         <div className="border-border/60 text-muted-foreground rounded-md border border-dashed p-4 text-sm">
-          No saved views yet. Click <strong>Add view</strong> to create one.
+          No saved views yet. Create one under{" "}
+          <Link
+            href="/views"
+            className="text-foreground underline underline-offset-2"
+          >
+            Views
+          </Link>
+          .
         </div>
       ) : (
         <ul className="border-border/60 divide-border/60 divide-y rounded-lg border">
@@ -91,16 +90,11 @@ export function SavedViewsManager() {
 
 function ViewRow({ view }: { view: SavedViewView }) {
   const sidebar = useSidebarSavedView();
-  const del = useDeleteSavedView(view.id);
-  const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [pinOpen, setPinOpen] = React.useState(false);
-  const isCbl = view.kind === "cbl";
   const pinnedCount = (view.pinned_on_pages ?? []).length;
   // The per-user Want to Read collection (kind='collection',
-  // system_key='want_to_read') is auto-seeded for every account and
-  // backend-guarded against deletion. Surface it as built-in in the
-  // catalog: lock chip + no Delete affordance. Edit stays visible
-  // because the user still curates its contents from the detail page.
+  // system_key='want_to_read') is auto-seeded + backend-guarded; surface it
+  // as built-in (lock chip) alongside the system rails.
   const isWantToRead =
     view.kind === "collection" && view.system_key === "want_to_read";
   const isBuiltIn = view.is_system || isWantToRead;
@@ -120,8 +114,8 @@ function ViewRow({ view }: { view: SavedViewView }) {
             className="text-muted-foreground bg-muted/40 inline-flex shrink-0 items-center rounded-md border px-2 py-0.5 text-xs"
             title={
               isWantToRead
-                ? "Built-in collection. Manage its contents on the detail page; the list itself can't be deleted."
-                : "Built-in views can't be edited or deleted"
+                ? "Built-in collection — its contents are curated on the detail page; the list itself can't be deleted."
+                : "Built-in views can't be deleted"
             }
           >
             <Lock className="mr-1 h-3 w-3" /> Built-in
@@ -129,64 +123,10 @@ function ViewRow({ view }: { view: SavedViewView }) {
         ) : null}
       </div>
 
-      {/* Edit + Delete render first (left of the toggles) so the
-       *  trailing `[On home] [In sidebar]` pair lines up on the right
-       *  edge across every row, regardless of whether a row carries
-       *  Edit/Delete (user views) or not (system views).
-       *
-       *  Three states:
-       *  - `is_system`        → no Edit, no Delete  (read-only system rails)
-       *  - `isWantToRead`     → Edit, no Delete     (built-in, but contents are curated)
-       *  - otherwise          → Edit + Delete       (regular user view)
-       */}
-      {view.is_system ? null : (
-        <>
-          <Button type="button" variant="ghost" size="sm" asChild>
-            <Link href={`/views/${view.id}`} title="Open and edit">
-              <Pencil className="h-4 w-4 sm:mr-1" />
-              <span className="hidden sm:inline">Edit</span>
-            </Link>
-          </Button>
-          {isWantToRead ? null : (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setConfirmOpen(true)}
-                aria-label="Delete view"
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-              <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this view?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {isCbl
-                        ? "Removes the saved view but keeps the underlying CBL list. You can re-import or re-pin later."
-                        : "Removes the filter view permanently."}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => del.mutate()}>
-                      Delete
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </>
-          )}
-        </>
-      )}
-
-      {/* Multi-page rails M6: pinning is per-page. The pill opens a
-       *  picker that lists every user page (system + custom) with a
-       *  checkbox; toggling pins/unpins this view on that specific
-       *  page. The label reflects total pin count so you can see
-       *  at-a-glance whether the view appears anywhere. */}
+      {/* Multi-page rails M6: pinning is per-page. The pill opens a picker
+       *  listing every user page (system + custom) with a checkbox; toggling
+       *  pins/unpins this view on that page. The label reflects total pin
+       *  count so you can see at-a-glance where the view appears. */}
       <Button
         type="button"
         variant="outline"
@@ -214,10 +154,9 @@ function ViewRow({ view }: { view: SavedViewView }) {
   );
 }
 
-/** Compact Switch + label cluster for the per-row cross-flow toggles
- *  ("On home", "In sidebar"). Visually de-emphasized so it reads as a
- *  secondary affordance against Edit/Delete; primary management lives
- *  on `/settings/navigation`. */
+/** Compact Switch + label cluster for the per-row "In sidebar" toggle.
+ *  De-emphasized so it reads as a secondary affordance; primary sidebar
+ *  arrangement lives on `/settings/navigation`. */
 function ToggleControl({
   label,
   checked,
