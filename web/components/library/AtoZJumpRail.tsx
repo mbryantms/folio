@@ -35,7 +35,13 @@ export function AtoZJumpRail({
   return (
     <nav
       aria-label="Jump to letter"
-      className={cn("flex flex-wrap items-center gap-0.5", className)}
+      // Mobile: wrap into left-packed rows. md+: a single row that spreads
+      // edge-to-edge so the rail fills the content width instead of
+      // trailing off ~3/4 across on wide screens.
+      className={cn(
+        "flex flex-wrap items-center gap-0.5 md:flex-nowrap md:justify-between",
+        className,
+      )}
     >
       {BUCKETS.map((b) => {
         const active = value === b.value;
