@@ -34,9 +34,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 
-import { apiMutate } from "@/lib/api/mutations";
 import {
   useApplyCompositeMetadataForIssue,
   useApplyCompositeMetadataForSeries,
@@ -45,7 +43,6 @@ import {
   useClearIssueFieldPin,
 } from "@/lib/api/mutations";
 import {
-  jsonFetch,
   useMe,
   useMetadataCandidatesIssue,
   useMetadataCandidatesSeries,
@@ -54,11 +51,7 @@ import {
   useMetadataProposedDiffIssue,
   useMetadataProposedDiffSeries,
 } from "@/lib/api/queries";
-import type {
-  ApplyMode,
-  CandidatesResp,
-  SearchStartedResp,
-} from "@/lib/api/types";
+import type { ApplyMode } from "@/lib/api/types";
 
 import {
   MetadataCompareView,
@@ -73,10 +66,10 @@ import {
   MatchOutcomeBanner,
 } from "@/components/library/MetadataMatchCandidates";
 import { useMetadataApplyWait } from "@/components/library/useMetadataApplyWait";
+import { useMetadataCandidateSearch } from "@/components/library/useMetadataCandidateSearch";
+import type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
 
-export type MetadataMatchScope =
-  | { kind: "series"; seriesSlug: string; libraryId: string }
-  | { kind: "issue"; seriesSlug: string; issueSlug: string; libraryId: string };
+export type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
 
 export function MetadataMatchDialog({
   open,
@@ -147,7 +140,7 @@ export function MetadataMatchForm({
   // fired by an explicit user click (the Apply button) post-mount,
   // so the React 19 StrictMode dev mount→unmount→remount cycle has
   // long settled by the time the user clicks. The auto-kick search
-  // below uses apiMutate directly instead, see below.
+  // uses raw apiMutate instead (see useMetadataCandidateSearch).
   const seriesApply = useApplyMetadataForSeries(
     scope.kind === "series" ? scope.seriesSlug : "",
   );
@@ -191,9 +184,12 @@ export function MetadataMatchForm({
     qc.invalidateQueries({ queryKey: ["issues"] });
     qc.invalidateQueries({ queryKey: ["series"] });
   }, [router, qc]);
-  const [runId, setRunId] = React.useState<string | null>(null);
-  const [searchPending, setSearchPending] = React.useState(false);
-  const [searchError, setSearchError] = React.useState<string | null>(null);
+  // Provider-search orchestration (run lifecycle + auto-kick + re-search)
+  // lives in its own hook; the dialog reads `runId` to drive its candidate
+  // query and the seeding effects below. See useMetadataCandidateSearch for
+  // the StrictMode-vs-raw-apiMutate rationale.
+  const { runId, searchPending, searchError, reused, researchFromScratch } =
+    useMetadataCandidateSearch({ scope, open });
   const seriesCandidates = useMetadataCandidatesSeries(
     scope.kind === "series" ? scope.seriesSlug : "",
     scope.kind === "series" ? runId : null,
@@ -250,10 +246,6 @@ export function MetadataMatchForm({
       lastSeededOrdinal.current = previewOrdinal;
     }
   }, [previewOrdinal, diffQuery.data]);
-
-  // True when the dialog adopted a prior completed run instead of
-  // firing a fresh provider search (quota saver).
-  const [reused, setReused] = React.useState(false);
 
   // ── Composite (multi-provider) compare mode ──────────────────────
   const [compareMode, setCompareMode] = React.useState(false);
@@ -322,146 +314,6 @@ export function MetadataMatchForm({
     setSelectedOrdinals(picks);
     lastSeededSelection.current = runId;
   }, [runId, candidates.data]);
-
-  // Auto-kick the search via raw apiMutate — NOT useApiMutation.
-  // Backstory: TanStack Query v5's useMutation observer ends up
-  // disconnected from its state machine when fired from an effect
-  // that gets cleaned up by React 19 StrictMode's intentional
-  // mount → unmount → remount dev cycle. The mutationFn promise
-  // resolves (the network roundtrip completes), but the observer's
-  // `data`/`status`/per-call onSuccess all silently drop on the
-  // floor — the kick effect would set `search.mutate()` running,
-  // then the cleanup tears the observer down, then the resolution
-  // arrives nowhere. Bypassing the observer entirely with a direct
-  // apiMutate call sidesteps the issue: the response lands in plain
-  // React state via the local `searchPending`/`runId` slots, which
-  // survive the strict-mode cycle just like any other useState.
-  const searchPath = React.useMemo(
-    () =>
-      scope.kind === "series"
-        ? `/series/${encodeURIComponent(scope.seriesSlug)}/metadata/search`
-        : `/series/${encodeURIComponent(scope.seriesSlug)}/issues/${encodeURIComponent(scope.issueSlug)}/metadata/search`,
-    [scope],
-  );
-  const candidatesInvalidateKey = React.useMemo(
-    () =>
-      scope.kind === "series"
-        ? ["series", scope.seriesSlug, "metadata", "candidates"]
-        : [
-            "series",
-            scope.seriesSlug,
-            "issues",
-            scope.issueSlug,
-            "metadata",
-            "candidates",
-          ],
-    [scope],
-  );
-
-  const candidatesProbePath = React.useMemo(
-    () =>
-      scope.kind === "series"
-        ? `/series/${encodeURIComponent(scope.seriesSlug)}/metadata/candidates`
-        : `/series/${encodeURIComponent(scope.seriesSlug)}/issues/${encodeURIComponent(scope.issueSlug)}/metadata/candidates`,
-    [scope],
-  );
-
-  const runSearch = React.useCallback(() => {
-    setSearchPending(true);
-    setSearchError(null);
-    setReused(false);
-    let cancelled = false;
-    void (async () => {
-      try {
-        const result = await apiMutate<SearchStartedResp>({
-          path: searchPath,
-          method: "POST",
-        });
-        if (cancelled) return;
-        if (result?.run_id) {
-          setRunId(result.run_id);
-          qc.invalidateQueries({ queryKey: candidatesInvalidateKey });
-        } else {
-          setSearchError("Empty response from search endpoint.");
-        }
-      } catch (e) {
-        if (cancelled) return;
-        const msg = e instanceof Error ? e.message : "Search failed.";
-        setSearchError(msg);
-        toast.error(msg);
-      } finally {
-        if (!cancelled) setSearchPending(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [searchPath, candidatesInvalidateKey, qc]);
-
-  // Quota saver: on open, probe the latest completed run for this scope
-  // (a cheap GET, no provider quota). If one exists with candidates,
-  // adopt it instead of firing a fresh fan-out. The explicit "Re-search"
-  // button always forces a fresh search via `runSearch`.
-  const kickOrReuse = React.useCallback(() => {
-    setSearchPending(true);
-    setSearchError(null);
-    setReused(false);
-    let cancelled = false;
-    void (async () => {
-      try {
-        const latest = await jsonFetch<CandidatesResp>(
-          candidatesProbePath,
-        ).catch(() => null);
-        if (cancelled) return;
-        if (
-          latest &&
-          latest.status === "completed" &&
-          (latest.candidates?.length ?? 0) > 0 &&
-          latest.run_id
-        ) {
-          setRunId(latest.run_id);
-          setReused(true);
-          setSearchPending(false);
-          return;
-        }
-        const result = await apiMutate<SearchStartedResp>({
-          path: searchPath,
-          method: "POST",
-        });
-        if (cancelled) return;
-        if (result?.run_id) {
-          setRunId(result.run_id);
-          qc.invalidateQueries({ queryKey: candidatesInvalidateKey });
-        } else {
-          setSearchError("Empty response from search endpoint.");
-        }
-      } catch (e) {
-        if (cancelled) return;
-        const msg = e instanceof Error ? e.message : "Search failed.";
-        setSearchError(msg);
-        toast.error(msg);
-      } finally {
-        if (!cancelled) setSearchPending(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [searchPath, candidatesProbePath, candidatesInvalidateKey, qc]);
-
-  const kickedRef = React.useRef(false);
-  React.useEffect(() => {
-    if (!open) {
-      kickedRef.current = false;
-      return;
-    }
-    if (kickedRef.current) return;
-    kickedRef.current = true;
-    kickOrReuse();
-    // kickOrReuse is stable per (searchPath, probePath, key) — those
-    // don't change mid-dialog.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
 
   const runStatus = candidates.data?.status ?? "queued";
   // "Searching providers..." renders when EITHER the POST is in
@@ -582,7 +434,6 @@ export function MetadataMatchForm({
   });
 
   const restart = () => {
-    setRunId(null);
     setPickedOrdinal(null);
     setPreviewOrdinal(null);
     setCompareMode(false);
@@ -590,8 +441,8 @@ export function MetadataMatchForm({
     setFieldSources({});
     lastSeededComposite.current = null;
     lastSeededSelection.current = null;
-    kickedRef.current = false;
-    runSearch();
+    // Run + auto-kick guard reset live in the search hook.
+    researchFromScratch();
   };
 
   return (
