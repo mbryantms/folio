@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   Images,
   Layers,
+  Link2,
   Loader2,
   Pencil,
   RefreshCw,
@@ -55,7 +56,8 @@ import {
 import { useCollections, useIssueMarkers, useMe } from "@/lib/api/queries";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import { markerToCreateReq } from "@/lib/markers/recreate";
-import { readerUrl } from "@/lib/urls";
+import { issueUrl, readerUrl } from "@/lib/urls";
+import { useShareLink } from "@/lib/ui/use-share-link";
 import type { IssueDetailView } from "@/lib/api/types";
 import type { ReadState } from "@/lib/reading-state";
 
@@ -117,6 +119,7 @@ export function IssueSettingsMenu({
   onRestoreArchive?: () => void;
 }) {
   const me = useMe();
+  const share = useShareLink();
   const router = useRouter();
   const isAdmin = me.data?.role === "admin";
 
@@ -354,6 +357,14 @@ export function IssueSettingsMenu({
             <DropdownMenuItem onSelect={() => setCollectionDialogOpen(true)}>
               <Folder className="mr-2 h-4 w-4" />
               Add to collection…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() =>
+                void share.shareOrCopy(issueUrl(issue), issueLabel)
+              }
+            >
+              <Link2 className="mr-2 h-4 w-4" />
+              {share.label}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
               <Sparkles className="mr-2 h-4 w-4" />

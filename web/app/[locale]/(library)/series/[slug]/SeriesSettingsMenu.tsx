@@ -8,6 +8,7 @@ import {
   Folder,
   Image as ImageIcon,
   Images,
+  Link2,
   Loader2,
   Pencil,
   RefreshCw,
@@ -51,7 +52,8 @@ import {
 import { useCollections, useMe } from "@/lib/api/queries";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { IssueSummaryView } from "@/lib/api/types";
-import { readerUrl } from "@/lib/urls";
+import { readerUrl, seriesUrl } from "@/lib/urls";
+import { useShareLink } from "@/lib/ui/use-share-link";
 
 // Heavy match dialog (~1.2k lines + provider-compare UI) — lazy so it stays
 // out of the series-page initial bundle; the chunk loads on first open (G6).
@@ -101,6 +103,7 @@ export function SeriesSettingsMenu({
   const me = useMe();
   const router = useRouter();
   const isAdmin = me.data?.role === "admin";
+  const share = useShareLink();
 
   const progress = useUpsertSeriesProgress(seriesSlug);
   const scan = useTriggerSeriesScan(seriesSlug, libraryId);
@@ -302,6 +305,17 @@ export function SeriesSettingsMenu({
             <DropdownMenuItem onSelect={() => setCollectionDialogOpen(true)}>
               <Folder className="mr-2 h-4 w-4" />
               Add to collection…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() =>
+                void share.shareOrCopy(
+                  seriesUrl({ slug: seriesSlug }),
+                  seriesName,
+                )
+              }
+            >
+              <Link2 className="mr-2 h-4 w-4" />
+              {share.label}
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
