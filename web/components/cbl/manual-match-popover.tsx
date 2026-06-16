@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { apiFetch } from "@/lib/api/auth-refresh";
+import { apiMutate } from "@/lib/api/mutations";
 import { queryKeys, useLibraryList } from "@/lib/api/queries";
 import { useClearMatchEntry, useManualMatchEntry } from "@/lib/api/mutations";
 import type {
@@ -43,13 +45,31 @@ export function ManualMatchPopover({
   /** Default query for step 1; defaults to the entry's series_name so
    *  the picker lands on something useful before the user types. */
   initialQuery,
+  /** Following unresolved entries that share this entry's `series_name`
+   *  (a contiguous run). When non-empty, picking a series surfaces a
+   *  "use this series for all N" bulk action (B10). */
+  similarFollowing,
+  /** Controlled open-state. When provided, the parent owns it so it can
+   *  auto-advance the popover to the next unresolved entry after a match
+   *  (B10). Falls back to internal state for standalone use. */
+  open: controlledOpen,
+  onOpenChange,
+  /** Fired after a single manual match lands — the parent advances to the
+   *  next unresolved entry. Omit to just close. */
+  onResolved,
 }: {
   listId: string;
   entry: CblEntryView;
   trigger: React.ReactNode;
   initialQuery?: string;
+  similarFollowing?: CblEntryView[];
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  onResolved?: () => void;
 }) {
-  const [open, setOpen] = React.useState(false);
+  const [internalOpen, setInternalOpen] = React.useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const seriesSeed = initialQuery ?? entry.series_name;
   const issueSeed = entry.issue_number;
   const [step, setStep] = React.useState<Step>(() => ({
@@ -69,6 +89,7 @@ export function ManualMatchPopover({
 
   const match = useManualMatchEntry(listId);
   const clear = useClearMatchEntry(listId);
+  const similar = similarFollowing ?? [];
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -84,7 +105,10 @@ export function ManualMatchPopover({
           />
         ) : (
           <IssueStep
+            listId={listId}
             series={step.series}
+            entry={entry}
+            similar={similar}
             query={step.query}
             onQuery={(q) =>
               setStep({ kind: "issue", series: step.series, query: q })
@@ -96,11 +120,14 @@ export function ManualMatchPopover({
                   entryId: entry.id,
                   req: { issue_id: issueId },
                 });
-                setOpen(false);
+                // Parent auto-advances to the next entry; else just close.
+                if (onResolved) onResolved();
+                else setOpen(false);
               } catch {
                 // toast comes from useApiMutation
               }
             }}
+            onBulkDone={() => setOpen(false)}
             disabled={match.isPending}
           />
         )}
@@ -192,23 +219,32 @@ function SeriesStep({
 }
 
 function IssueStep({
+  listId,
   series,
+  entry,
+  similar,
   query,
   onQuery,
   onBack,
   onPick,
+  onBulkDone,
   disabled,
 }: {
+  listId: string;
   series: SeriesView;
+  entry: CblEntryView;
+  similar: CblEntryView[];
   query: string;
   onQuery: (q: string) => void;
   onBack: () => void;
   onPick: (issueId: string) => void;
+  onBulkDone: () => void;
   disabled: boolean;
 }) {
   const debounced = useDebouncedValue(query, 200);
   const issues = useSeriesIssuesPage(series.slug, debounced);
   const items = issues.data?.items ?? [];
+  const bulk = useBulkMatchSeries(listId, series, [entry, ...similar]);
 
   return (
     <>
@@ -231,6 +267,31 @@ function IssueStep({
           </div>
         </div>
       </div>
+      {similar.length > 0 ? (
+        <div className="border-border bg-muted/40 flex items-center justify-between gap-2 border-b p-2 pl-3">
+          <span className="text-muted-foreground text-xs">
+            {similar.length + 1} consecutive “{entry.series_name}” entries
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={bulk.pending}
+            className="gap-1.5"
+            onClick={async () => {
+              await bulk.run();
+              onBulkDone();
+            }}
+          >
+            {bulk.pending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
+            Match all by number
+          </Button>
+        </div>
+      ) : null}
       <div className="border-border border-b p-3">
         <Input
           autoFocus
@@ -311,6 +372,82 @@ function useSeriesIssuesPage(seriesSlug: string, q: string) {
     enabled: !!seriesSlug,
     staleTime: 30_000,
   });
+}
+
+/** "Use this series for N similar entries" (B10). Resolves each entry's
+ *  issue number to an issue in the chosen series, then wires the match —
+ *  one number→issue lookup per entry so it stays correct for long series
+ *  (rather than scanning a single capped page). Surfaces one summary toast
+ *  and refetches once at the end. */
+function useBulkMatchSeries(
+  listId: string,
+  series: SeriesView,
+  entries: CblEntryView[],
+) {
+  const qc = useQueryClient();
+  const [pending, setPending] = React.useState(false);
+  const run = async () => {
+    if (pending) return;
+    setPending(true);
+    let matched = 0;
+    let unresolved = 0;
+    try {
+      for (const e of entries) {
+        const issueId = await resolveIssueByNumber(series.slug, e.issue_number);
+        if (!issueId) {
+          unresolved += 1;
+          continue;
+        }
+        try {
+          await apiMutate({
+            path: `/me/cbl-lists/${listId}/entries/${e.id}/match`,
+            method: "POST",
+            body: { issue_id: issueId },
+          });
+          matched += 1;
+        } catch {
+          // apiMutate throws on failure; count and keep going so one bad
+          // entry doesn't abort the whole run.
+          unresolved += 1;
+        }
+      }
+    } finally {
+      qc.invalidateQueries({ queryKey: queryKeys.cblList(listId) });
+      qc.invalidateQueries({
+        queryKey: ["cbl-lists", "entries", listId],
+        exact: false,
+      });
+      setPending(false);
+    }
+    if (matched === 0) {
+      toast.error(`No issues in ${series.name} matched those entry numbers.`);
+    } else if (unresolved === 0) {
+      toast.success(`Matched ${matched} entries to ${series.name}.`);
+    } else {
+      toast.message(
+        `Matched ${matched}; ${unresolved} had no number match in ${series.name}.`,
+      );
+    }
+  };
+  return { run, pending };
+}
+
+/** Look up the issue in `seriesSlug` whose number equals `issueNumber`.
+ *  Returns its id, or null when the series has no issue with that number. */
+async function resolveIssueByNumber(
+  seriesSlug: string,
+  issueNumber: string,
+): Promise<string | null> {
+  const norm = (s: string | null | undefined) =>
+    (s ?? "").trim().replace(/^#/, "").toLowerCase();
+  const wanted = norm(issueNumber);
+  if (!wanted) return null;
+  const sp = new URLSearchParams({ q: issueNumber.trim(), limit: "20" });
+  const res = await apiFetch(`/series/${seriesSlug}/issues?${sp.toString()}`);
+  if (!res.ok) return null;
+  const data = (await res.json()) as IssueListView;
+  const hit = data.items.find((iss) => norm(iss.number) === wanted);
+  return hit?.id ?? null;
 }
 
 function useDebouncedValue<T>(value: T, ms: number): T {
