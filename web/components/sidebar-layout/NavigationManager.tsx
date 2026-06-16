@@ -60,7 +60,7 @@ import type {
   UpdateEntryReq,
 } from "@/lib/api/types";
 
-/** Top-level manager for `/settings/navigation`. Owns the unified
+/** Top-level manager for `/settings/sidebar`. Owns the unified
  *  ordered sidebar list — built-ins, libraries, pages, saved views,
  *  plus user-inserted headers and spacers. Home rails (the per-page
  *  rail pin set) moved to `/settings/pages`. */

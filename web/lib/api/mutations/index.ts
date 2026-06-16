@@ -1628,7 +1628,7 @@ export function useSidebarSavedView() {
       },
       onSettled: () => {
         qc.invalidateQueries({ queryKey: ["saved-views"] });
-        // The /settings/navigation NavigationManager reads from this
+        // The /settings/sidebar NavigationManager reads from this
         // client-side query; without invalidating it the new row only
         // appears after a manual refresh.
         qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
@@ -2127,7 +2127,7 @@ export const useRenamePage = useUpdatePage;
 
 /** `POST /me/pages/{id}/sidebar?show=...`. Toggle whether the page
  *  surfaces in the left-nav sidebar. System pages reject with 409 —
- *  the builtin Home entry has its own toggle in /settings/navigation. */
+ *  the builtin Home entry has its own toggle in /settings/sidebar. */
 export function useTogglePageSidebar(id: string) {
   const qc = useQueryClient();
   const router = useRouter();

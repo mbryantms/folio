@@ -471,7 +471,7 @@ export function CollectionViewDetail({
                 del.mutate(undefined, {
                   onSuccess: () => {
                     setConfirmDelete(false);
-                    router.push("/collections");
+                    router.push("/views#collections");
                   },
                 })
               }

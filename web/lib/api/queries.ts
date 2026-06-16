@@ -1358,7 +1358,7 @@ export function useMarkerSearch(filters: MarkerSearchFilters = {}) {
 // ---------- Sidebar layout (navigation customization M1) ----------
 
 /** Client-side fetch of the resolved sidebar layout. The
- *  `/settings/navigation` page uses this so drag-reorder + hide-toggle
+ *  `/settings/sidebar` page uses this so drag-reorder + hide-toggle
  *  can update the cache optimistically; the main app shell still reads
  *  the layout server-side in `[locale]/(library)/layout.tsx`. */
 export function useSidebarLayout() {

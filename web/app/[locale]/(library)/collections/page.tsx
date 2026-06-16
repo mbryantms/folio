@@ -1,9 +1,8 @@
-import { CollectionsIndex } from "@/components/collections/CollectionsIndex";
+import { redirect } from "next/navigation";
 
-/** Index of the user's collections (kind='collection' saved views).
- *  Mirrors `/settings/views` in spirit but scoped to manual lists; the
- *  actual rendering is a client component so the `useCollections`
- *  cache + create dialog land without an extra page-level mount. */
-export default function CollectionsIndexPage() {
-  return <CollectionsIndex />;
+/** Collections moved into the unified `/views` index (A3) as the
+ *  `#collections` section. Redirect keeps old links + the sidebar entry
+ *  working; the fragment lands the user on the Collections section. */
+export default function CollectionsIndexRedirectPage() {
+  redirect("/views#collections");
 }
