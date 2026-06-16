@@ -475,7 +475,7 @@ export type AdminOpenHealth = {
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
 // Server stream only (observability-split M13). Scan + health moved to the
-// Library stream ("Library activity" / /admin/findings).
+// Library stream ("Library events" / /admin/findings).
 export type ActivityKind = "audit" | "reading";
 
 export type SettingKind = "string" | "bool" | "uint" | "duration";

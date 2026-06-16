@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
 import { LibraryTabs } from "@/components/admin/library/LibraryTabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { LibraryView } from "@/lib/api/types";
@@ -23,9 +24,13 @@ export default async function LibraryDetailLayout({
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <p className="text-muted-foreground text-xs font-medium tracking-widest uppercase">
-          Library
-        </p>
+        <Breadcrumbs
+          className="mb-1"
+          items={[
+            { label: "Admin", href: "/admin" },
+            { label: "Libraries", href: "/admin/libraries" },
+          ]}
+        />
         <h1 className="text-foreground text-2xl font-semibold tracking-tight">
           {library.name}
         </h1>

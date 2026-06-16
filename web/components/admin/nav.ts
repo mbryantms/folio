@@ -79,7 +79,7 @@ export function adminNav(localePrefix: string): NavSection[] {
         },
         {
           href: p("/findings"),
-          label: "Library activity",
+          label: "Library events",
           icon: "HeartPulse",
         },
       ],
@@ -110,7 +110,7 @@ export function adminNav(localePrefix: string): NavSection[] {
     {
       // The Server stream (observability-split): how the app runs + how
       // users use it. The Library stream (scans, health, changes) lives
-      // under Overview as "Library activity" + "Scan dashboard".
+      // under Overview as "Library events" + "Scan dashboard".
       label: "System",
       items: [
         { href: p("/server"), label: "Server info", icon: "Server" },
@@ -134,9 +134,13 @@ export function settingsNav(localePrefix: string): NavSection[] {
       label: "Reader",
       items: [
         { href: p("/reading"), label: "Reading", icon: "BookOpen" },
-        { href: p("/keybinds"), label: "Key binds", icon: "Keyboard" },
+        {
+          href: p("/keybinds"),
+          label: "Keyboard shortcuts",
+          icon: "Keyboard",
+        },
         { href: p("/theme"), label: "Theme", icon: "Palette" },
-        { href: p("/activity"), label: "Activity", icon: "Activity" },
+        { href: p("/activity"), label: "Reading stats", icon: "Activity" },
       ],
     },
     {
