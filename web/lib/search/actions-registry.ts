@@ -136,11 +136,11 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
   },
   {
     id: "open-activity",
-    label: "Reading activity",
+    label: "Reading stats",
     group: "Settings",
     icon: Activity,
     href: "/settings/activity",
-    keywords: ["stats", "history", "minutes"],
+    keywords: ["stats", "history", "minutes", "activity"],
   },
 
   // ── Library / navigation ──

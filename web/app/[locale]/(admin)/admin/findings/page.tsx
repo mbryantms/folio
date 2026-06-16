@@ -5,7 +5,7 @@ export default async function FindingsPage() {
   return (
     <>
       <PageHeader
-        title="Library activity"
+        title="Library events"
         description="The Library stream: an itemized log of every change (issues, series, thumbnails, metadata, archives), plus open health issues and recent scan runs — across every library."
       />
       <FindingsView />

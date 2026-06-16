@@ -6,7 +6,7 @@ export default function LogsPage() {
     <>
       <PageHeader
         title="Server log"
-        description="In-process app-runtime log tail (Server stream) — filter by stream, level, and error code to triage. Triage-grade: bounded buffer, lost on restart. Library scanner/worker events live in Library activity."
+        description="In-process app-runtime log tail (Server stream) — filter by stream, level, and error code to triage. Triage-grade: bounded buffer, lost on restart. Library scanner/worker events live in Library events."
       />
       <LogsClient />
     </>

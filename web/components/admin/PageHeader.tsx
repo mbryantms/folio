@@ -1,14 +1,18 @@
+import { Breadcrumbs, type Crumb } from "@/components/shell/Breadcrumbs";
 import { cn } from "@/lib/utils";
 
 export function PageHeader({
   title,
   description,
   actions,
+  breadcrumbs,
   className,
 }: {
   title: string;
   description?: string;
   actions?: React.ReactNode;
+  /** Ancestor trail shown above the title (A2 wayfinding). */
+  breadcrumbs?: Crumb[];
   className?: string;
 }) {
   return (
@@ -19,6 +23,9 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
+        {breadcrumbs && breadcrumbs.length > 0 ? (
+          <Breadcrumbs items={breadcrumbs} className="mb-1.5" />
+        ) : null}
         <h1 className="text-foreground text-2xl font-semibold tracking-tight">
           {title}
         </h1>

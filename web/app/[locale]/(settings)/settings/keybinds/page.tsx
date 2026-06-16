@@ -5,7 +5,7 @@ export default function KeybindsPage() {
   return (
     <>
       <PageHeader
-        title="Key binds"
+        title="Keyboard shortcuts"
         description="Re-bindable hotkeys for the reader. Spacebar always advances and is not user-rebindable."
       />
       <KeybindEditor />

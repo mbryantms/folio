@@ -1,7 +1,5 @@
 import {
   BookOpen,
-  ChevronLeft,
-  ChevronRight,
   Building2,
   FileStack,
   Clock,
@@ -11,6 +9,7 @@ import {
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
 import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
 import {
@@ -36,6 +35,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
   IssueListView,
+  LibraryView,
   SeriesResumeView,
   SeriesView,
 } from "@/lib/api/types";
@@ -73,16 +73,19 @@ export default async function SeriesPage({
   let series: SeriesView;
   let firstIssuePage: IssueListView;
   let resume: SeriesResumeView;
+  let libraries: LibraryView[];
   try {
-    // All three depend only on the slug — fetch concurrently instead
-    // of stacking three sequential round-trips onto TTFB.
+    // All depend only on the slug (or nothing) — fetch concurrently instead
+    // of stacking sequential round-trips onto TTFB.
     // A bounded issue preview feeds "Read from beginning" and the activity
     // heatmap. The primary resume CTA comes from the server endpoint so
-    // long series are not capped to this preview page.
-    [series, firstIssuePage, resume] = await Promise.all([
+    // long series are not capped to this preview page. The libraries list
+    // resolves the breadcrumb's library segment by `series.library_id`.
+    [series, firstIssuePage, resume, libraries] = await Promise.all([
       apiGet<SeriesView>(`/series/${slug}`),
       apiGet<IssueListView>(`/series/${slug}/issues?limit=200`),
       apiGet<SeriesResumeView>(`/series/${slug}/resume`),
+      apiGet<LibraryView[]>(`/libraries`),
     ]);
   } catch (e) {
     if (e instanceof ApiError) {
@@ -91,6 +94,10 @@ export default async function SeriesPage({
     }
     throw e;
   }
+
+  // Breadcrumb library segment — `series` carries only `library_id`, so
+  // resolve the name from the user's accessible libraries list.
+  const library = libraries.find((l) => l.id === series.library_id) ?? null;
 
   const nextHref = resumeReaderHref(resume);
   const nextState = readStateFromResume(resume.state);
@@ -126,32 +133,18 @@ export default async function SeriesPage({
 
   return (
     <div className="space-y-10">
-      <nav aria-label="Breadcrumb" className="text-muted-foreground text-xs">
-        {/* Mobile: back chevron + "Library" parent only. The H1
-            already announces the series name, so the trailing
-            "{series.name}" was just visual noise on phones. */}
-        <div className="flex items-center gap-1.5 sm:hidden">
-          <Link
-            href={`/`}
-            className="hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
-            aria-label="Back to library"
-          >
-            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-            <span>Library</span>
-          </Link>
-        </div>
-        {/* sm+: full `Library › Series` trail. */}
-        <div className="hidden items-center gap-1.5 sm:flex">
-          <Link
-            href={`/`}
-            className="hover:text-foreground underline-offset-2 hover:underline"
-          >
-            Library
-          </Link>
-          <ChevronRight className="h-3 w-3" />
-          <span className="text-foreground/80">{series.name}</span>
-        </div>
-      </nav>
+      {/* Ancestor trail — `Library › <library name>`. The series-name H1
+          below is the leaf, so the trail stays the parents (mirrors the
+          admin PageHeader breadcrumbs). The library segment scopes the
+          home grid to this series' library (`?library=<id>`). */}
+      <Breadcrumbs
+        items={[
+          { label: "Library", href: "/" },
+          ...(library
+            ? [{ label: library.name, href: `/?library=${library.id}` }]
+            : []),
+        ]}
+      />
 
       <header className="grid grid-cols-1 gap-6 sm:gap-8 lg:grid-cols-[18rem_1fr]">
         {/* v0.5.10 mobile hero reshape — mirrors the issue page so

@@ -38,6 +38,10 @@ export function UserDetail({ id }: { id: string }) {
       <PageHeader
         title={data.display_name}
         description={data.email ?? "No email on file"}
+        breadcrumbs={[
+          { label: "Admin", href: "/admin" },
+          { label: "Users", href: "/admin/users" },
+        ]}
       />
       <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList>

@@ -5,7 +5,7 @@ export default async function ActivityPage() {
   return (
     <>
       <PageHeader
-        title="Activity"
+        title="Reading stats"
         description="Your reading totals, heatmaps, pace, rankings, rereads, and recent sessions. Privacy controls and history deletion sit at the bottom."
       />
       <ActivityPanel />
