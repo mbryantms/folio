@@ -74,6 +74,9 @@ export type LibraryGridInitialFilters = {
   /** Per-user read state — CSV subset of `unread,in_progress,read`
    *  (series mode only). */
   readStatus?: string[];
+  /** A–Z jump-rail bucket (series mode only): a single lowercase letter
+   *  `a`–`z` or `#`. */
+  startsWith?: string;
   yearFrom?: string;
   yearTo?: string;
   publishers?: string[];
@@ -93,6 +96,17 @@ export type LibraryGridInitialFilters = {
   locations?: string[];
   ratingRange?: [number, number];
 };
+
+/** Validate an A–Z jump-rail `starts_with` value: a single ASCII letter
+ *  (normalized to lowercase) or `#`. Returns undefined for anything else.
+ *  Shared with the `/creators` page so both rails validate identically. */
+export function parseStartsWithParam(
+  raw: string | undefined,
+): string | undefined {
+  if (!raw) return undefined;
+  if (raw === "#") return "#";
+  return /^[a-zA-Z]$/.test(raw) ? raw.toLowerCase() : undefined;
+}
 
 /** Parse a `Record<string, string | undefined>` (the shape App
  *  Router's `searchParams` resolves to) into the grid's
@@ -142,6 +156,7 @@ export function parseLibraryGridFilters(
       ? (completeness as MetadataCompletenessTier)
       : undefined,
     readStatus: csv("read_status"),
+    startsWith: parseStartsWithParam(raw.starts_with),
     yearFrom: raw.year_from || undefined,
     yearTo: raw.year_to || undefined,
     publishers: csv("publisher"),
@@ -172,6 +187,7 @@ export type LibraryGridUrlState = {
   status?: string;
   metadataCompleteness?: MetadataCompletenessTier;
   readStatus: string[];
+  startsWith: string | null;
   yearFrom?: string;
   yearTo?: string;
   publishers: string[];
@@ -207,6 +223,7 @@ export function serializeLibraryGridFilters(
     sp.set("metadata_completeness", state.metadataCompleteness);
   if (state.readStatus.length)
     sp.set("read_status", state.readStatus.join(","));
+  if (state.startsWith) sp.set("starts_with", state.startsWith);
   if (state.yearFrom?.trim()) sp.set("year_from", state.yearFrom.trim());
   if (state.yearTo?.trim()) sp.set("year_to", state.yearTo.trim());
   const csv = (key: string, values: string[]) => {

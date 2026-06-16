@@ -3,6 +3,7 @@
 import Link from "next/link";
 import * as React from "react";
 
+import { AtoZJumpRail } from "@/components/library/AtoZJumpRail";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,9 +33,30 @@ const CANONICAL_ROLES: readonly string[] = [
  *  the creator's detail page (`/creators/<slug>`), falling back to the
  *  legacy library-grid `?credits=<name>` filter for names the `person`
  *  backfill hasn't slugged yet. */
-export function CreatorsIndex() {
-  const query = useCreatorsInfinite({ limit: 60 });
+export function CreatorsIndex({
+  initialStartsWith,
+}: {
+  /** Server-parsed `?starts_with=` jump-rail bucket for deep-links. */
+  initialStartsWith?: string | null;
+}) {
+  const [startsWith, setStartsWith] = React.useState<string | null>(
+    initialStartsWith ?? null,
+  );
+  const query = useCreatorsInfinite({
+    limit: 60,
+    starts_with: startsWith ?? undefined,
+  });
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+
+  // Keep `?starts_with=` on the URL so a chosen letter is shareable and
+  // survives reload (the server page re-seeds `initialStartsWith`).
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (startsWith) url.searchParams.set("starts_with", startsWith);
+    else url.searchParams.delete("starts_with");
+    window.history.replaceState({}, "", url.toString());
+  }, [startsWith]);
 
   // Same sentinel shape as `IssuesPanel` / `MarkersList` — depend on the
   // three fields (not the whole result object) so the observer isn't torn
@@ -74,6 +96,8 @@ export function CreatorsIndex() {
         }
       />
 
+      <AtoZJumpRail value={startsWith} onSelect={setStartsWith} />
+
       {query.isLoading ? (
         <CreatorGridSkeleton />
       ) : query.isError ? (
@@ -82,7 +106,9 @@ export function CreatorsIndex() {
         </p>
       ) : items.length === 0 ? (
         <p className="text-muted-foreground text-sm">
-          No creators are credited in any library you can access yet.
+          {startsWith
+            ? `No creators start with "${startsWith === "#" ? "#" : startsWith.toUpperCase()}".`
+            : "No creators are credited in any library you can access yet."}
         </p>
       ) : (
         <ul

@@ -125,6 +125,11 @@ export function useLibraryGridFilters(
   const [readStatus, setReadStatus] = React.useState<string[]>(
     init.readStatus ?? [],
   );
+  // A–Z jump-rail bucket (series mode only): a single lowercase letter or
+  // `#`, or null for "all". Drives the server `starts_with` filter.
+  const [startsWith, setStartsWith] = React.useState<string | null>(
+    init.startsWith ?? null,
+  );
   const [yearFrom, setYearFrom] = React.useState<string>(init.yearFrom ?? "");
   const [yearTo, setYearTo] = React.useState<string>(init.yearTo ?? "");
   const [publishers, setPublishers] = React.useState<string[]>(
@@ -256,6 +261,8 @@ export function useLibraryGridFilters(
     read_status: csvOrUndef(readStatus),
     // Completeness rollup is series-only (the worklist filter).
     metadata_completeness: metadataCompleteness,
+    // A–Z jump — matched against normalized_name (the Name-sort column).
+    starts_with: startsWith ?? undefined,
   };
   const issueFilters: IssuesCrossListFilters = {
     ...sharedFilters,
@@ -269,6 +276,7 @@ export function useLibraryGridFilters(
     status,
     metadataCompleteness,
     readStatus,
+    startsWith,
     yearFrom,
     yearTo,
     publishers,
@@ -344,6 +352,7 @@ export function useLibraryGridFilters(
       setStatus,
       setMetadataCompleteness,
       setReadStatus,
+      setStartsWith,
       setYearFrom,
       setYearTo,
       setPublishers,
@@ -387,6 +396,7 @@ export function useLibraryGridFilters(
     setStatus("any");
     setMetadataCompleteness(undefined);
     setReadStatus([]);
+    setStartsWith(null);
     setYearFrom("");
     setYearTo("");
     setRatingRange(null);
@@ -427,6 +437,8 @@ export function useLibraryGridFilters(
     setMetadataCompleteness,
     readStatus,
     setReadStatus,
+    startsWith,
+    setStartsWith,
     yearFrom,
     setYearFrom,
     yearTo,
@@ -480,6 +492,7 @@ function urlStateFromParsed(
     status: p.status,
     metadataCompleteness: p.metadataCompleteness,
     readStatus: p.readStatus ?? [],
+    startsWith: p.startsWith ?? null,
     yearFrom: p.yearFrom,
     yearTo: p.yearTo,
     publishers: p.publishers ?? [],
@@ -501,6 +514,7 @@ type FacetSetters = {
   setStatus: (v: string) => void;
   setMetadataCompleteness: (v: MetadataCompletenessTier | undefined) => void;
   setReadStatus: (v: string[]) => void;
+  setStartsWith: (v: string | null) => void;
   setYearFrom: (v: string) => void;
   setYearTo: (v: string) => void;
   setPublishers: (v: string[]) => void;
@@ -527,6 +541,7 @@ function applyParsedToState(
   s.setStatus(p.status ?? "any");
   s.setMetadataCompleteness(p.metadataCompleteness);
   s.setReadStatus(p.readStatus ?? []);
+  s.setStartsWith(p.startsWith ?? null);
   s.setYearFrom(p.yearFrom ?? "");
   s.setYearTo(p.yearTo ?? "");
   s.setPublishers(p.publishers ?? []);

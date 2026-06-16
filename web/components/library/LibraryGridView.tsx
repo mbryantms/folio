@@ -10,6 +10,7 @@ import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
+import { AtoZJumpRail } from "@/components/library/AtoZJumpRail";
 import { FilterSheet } from "@/components/library/FilterSheet";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { LibraryGridToolbar } from "@/components/library/LibraryGridToolbar";
@@ -102,6 +103,8 @@ export function LibraryGridView({
     setMetadataCompleteness,
     readStatus,
     setReadStatus,
+    startsWith,
+    setStartsWith,
     yearFrom,
     setYearFrom,
     yearTo,
@@ -474,6 +477,17 @@ export function LibraryGridView({
           onRemoveLocation={(v) =>
             setLocations(locations.filter((x) => x !== v))
           }
+        />
+      ) : null}
+
+      {/* A–Z jump rail (B9): series mode only — maps to the server
+          `starts_with` filter on normalized_name. Issues sort by number,
+          so the rail is meaningless there. */}
+      {isSeriesMode ? (
+        <AtoZJumpRail
+          value={startsWith}
+          onSelect={setStartsWith}
+          className="mb-2"
         />
       ) : null}
 
