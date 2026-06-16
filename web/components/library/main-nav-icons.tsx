@@ -9,6 +9,7 @@ import {
   ListPlus,
   ScrollText,
   Sparkles,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -30,6 +31,9 @@ export const mainNavIcons: Record<MainNavItem["icon"], LucideIcon> = {
   LayoutGrid,
   ScrollText,
   Sparkles,
+  // Creators builtin (audit A11) — the only Browse entry whose icon is a
+  // real person glyph rather than a placeholder.
+  Users,
   // The remaining IconName values from admin/nav.ts — not used today by the
   // library shell, but having them in the map keeps `MainNavItem.icon: IconName |
   // …` typesafe without admin nav imports needing to know about us.
@@ -48,5 +52,4 @@ export const mainNavIcons: Record<MainNavItem["icon"], LucideIcon> = {
   Server: Sparkles,
   Shield: Sparkles,
   UserCog: Sparkles,
-  Users: Sparkles,
 };

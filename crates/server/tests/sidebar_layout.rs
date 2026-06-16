@@ -227,6 +227,7 @@ async fn default_layout_contains_builtins_and_libraries() {
             &"bookmarks",
             &"reading_log",
             &"collections",
+            &"creators",
             &"want_to_read",
         ],
         "default builtin order"

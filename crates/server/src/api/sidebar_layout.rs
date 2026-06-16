@@ -105,6 +105,12 @@ pub const BUILTIN_REGISTRY: &[BuiltinDef] = &[
         href: "/collections",
     },
     BuiltinDef {
+        key: "creators",
+        label: "Creators",
+        icon: "Users",
+        href: "/creators",
+    },
+    BuiltinDef {
         key: "want_to_read",
         label: "Want to Read",
         icon: "ListPlus",

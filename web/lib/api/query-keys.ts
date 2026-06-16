@@ -19,6 +19,7 @@ import type {
   IssueListFilters,
   IssuesCrossListFilters,
   IssueSearchFilters,
+  CreatorsListFilters,
   MarkerListFilters,
   MarkerSearchFilters,
   PeopleSearchFilters,
@@ -133,6 +134,9 @@ export const queryKeys = {
   /** Cross-credits people search (`/people`). Global-search M4. */
   peopleSearch: (filters: PeopleSearchFilters) =>
     ["people", "search", filters] as const,
+  /** Alphabetical creator browse index (`/creators`). Audit A11. */
+  creatorsList: (filters: CreatorsListFilters) =>
+    ["creators", "list", filters] as const,
   /** Marker search (`/me/markers/search`). 4th global-search category. */
   markerSearch: (filters: MarkerSearchFilters) =>
     ["markers", "search", filters] as const,
