@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
   EMPTY_CREDITS,
   parseLibraryGridFilters,
+  parseStartsWithParam,
   serializeLibraryGridFilters,
   type LibraryGridUrlState,
 } from "@/components/library/library-grid-filters";
@@ -25,6 +26,7 @@ function baseState(
     mode: "series",
     status: undefined,
     readStatus: [],
+    startsWith: null,
     yearFrom: undefined,
     yearTo: undefined,
     publishers: [],
@@ -80,6 +82,7 @@ describe("serializeLibraryGridFilters", () => {
       status: "ended",
       metadataCompleteness: "needs_metadata",
       readStatus: ["unread", "in_progress"],
+      startsWith: "s",
       yearFrom: "1990",
       yearTo: "2005",
       publishers: ["Image", "Marvel"],
@@ -101,6 +104,7 @@ describe("serializeLibraryGridFilters", () => {
       status: "ended",
       metadataCompleteness: "needs_metadata",
       readStatus: ["unread", "in_progress"],
+      startsWith: "s",
       yearFrom: "1990",
       yearTo: "2005",
       publishers: ["Image", "Marvel"],
@@ -142,5 +146,34 @@ describe("serializeLibraryGridFilters", () => {
     expect(
       parseLibraryGridFilters({ metadata_completeness: "bogus" }),
     ).toBeUndefined();
+  });
+
+  it("emits + round-trips the starts_with jump bucket", () => {
+    const qs = serializeLibraryGridFilters(baseState({ startsWith: "s" }));
+    expect(qs).toContain("starts_with=s");
+    expect(parseLibraryGridFilters(parseQs(qs))).toMatchObject({
+      startsWith: "s",
+    });
+    // The "#" bucket survives the URL round-trip too.
+    const hashQs = serializeLibraryGridFilters(baseState({ startsWith: "#" }));
+    expect(parseLibraryGridFilters(parseQs(hashQs))).toMatchObject({
+      startsWith: "#",
+    });
+  });
+});
+
+describe("parseStartsWithParam", () => {
+  it("normalizes a letter to lowercase", () => {
+    expect(parseStartsWithParam("S")).toBe("s");
+    expect(parseStartsWithParam("a")).toBe("a");
+  });
+  it("passes through the # bucket", () => {
+    expect(parseStartsWithParam("#")).toBe("#");
+  });
+  it("rejects multi-char, digits, and empty (→ undefined)", () => {
+    expect(parseStartsWithParam("ab")).toBeUndefined();
+    expect(parseStartsWithParam("1")).toBeUndefined();
+    expect(parseStartsWithParam("")).toBeUndefined();
+    expect(parseStartsWithParam(undefined)).toBeUndefined();
   });
 });

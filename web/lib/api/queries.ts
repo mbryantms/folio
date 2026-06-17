@@ -190,6 +190,9 @@ export type SeriesListFilters = {
    *  `needs_metadata`). Filters by the per-series rollup behind the cover
    *  "meta" badge — `needs_metadata` is the "Unmatched" worklist (B4). */
   metadata_completeness?: string;
+  /** A–Z jump-rail bucket: a single letter `a`–`z` or `#`, matched against
+   *  `normalized_name` (the Name-sort column). */
+  starts_with?: string;
 };
 
 export type IssueListFilters = {
@@ -220,6 +223,8 @@ export type PeopleSearchFilters = {
 export type CreatorsListFilters = {
   cursor?: string;
   limit?: number;
+  /** A–Z jump-rail bucket: a single letter `a`–`z` or `#`. */
+  starts_with?: string;
 };
 
 /** Marker search shape (global-search M2 of the search-improvements

@@ -26,7 +26,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
-use super::series::{SeriesView, hydrate_series};
+use super::series::{SeriesView, StartsWithBucket, hydrate_series, parse_starts_with};
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
@@ -113,6 +113,10 @@ pub struct ListQuery {
     pub cursor: Option<String>,
     /// Page size. Clamped to `[1, 100]`; default 60.
     pub limit: Option<u64>,
+    /// A–Z jump-rail bucket: a single letter `a`–`z` (case-insensitive)
+    /// matching creators whose name starts with it, or `#` for names that
+    /// sort under a non-letter. Invalid values 422.
+    pub starts_with: Option<String>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -140,6 +144,7 @@ struct CountRow {
     params(
         ("cursor" = Option<String>, Query,),
         ("limit"  = Option<u64>,    Query,),
+        ("starts_with" = Option<String>, Query,),
     ),
     responses((status = 200, body = CursorPage<CreatorListItem>))
 )]
@@ -153,6 +158,22 @@ pub async fn list(
         .limit
         .unwrap_or(LIST_DEFAULT_LIMIT)
         .clamp(1, LIST_MAX_LIMIT);
+
+    // A–Z jump-rail bucket (validated → reused for both the page and count
+    // queries). Bad values 422 before any DB work.
+    let starts_with = match q.starts_with.as_deref() {
+        Some(raw) => match parse_starts_with(raw) {
+            Some(b) => Some(b),
+            None => {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation",
+                    "starts_with must be a single letter or #",
+                );
+            }
+        },
+        None => None,
+    };
 
     let visible = access::for_user(&app, &user).await;
 
@@ -216,19 +237,33 @@ pub async fn list(
          )"
     );
 
-    // Page query: keyset filter + over-fetch one to detect a next page.
+    // Page query: keyset filter (+ optional jump-rail bucket) + over-fetch
+    // one to detect a next page. Both are WHERE conditions on `agg a`.
     let mut params = lib_params.clone();
-    let cursor_clause = if let Some(name) = &after {
+    let mut conds: Vec<String> = Vec::new();
+    if let Some(name) = &after {
         params.push(Value::from(name.clone()));
-        format!(" WHERE a.person > ${}", params.len())
-    } else {
+        conds.push(format!("a.person > ${}", params.len()));
+    }
+    match &starts_with {
+        Some(StartsWithBucket::Letter(c)) => {
+            params.push(Value::from(format!("{c}%")));
+            conds.push(format!("lower(a.person) LIKE ${}", params.len()));
+        }
+        // "#" catches everything that doesn't sort under a letter.
+        Some(StartsWithBucket::Digit) => conds.push("lower(a.person) !~ '^[a-z]'".to_string()),
+        None => {}
+    }
+    let where_clause = if conds.is_empty() {
         String::new()
+    } else {
+        format!(" WHERE {}", conds.join(" AND "))
     };
     let sql = format!(
         "{credits_cte} \
          SELECT a.person, a.roles, a.credit_count, p.slug \
            FROM agg a \
-           LEFT JOIN person p ON p.normalized_name = btrim(lower(a.person)){cursor_clause} \
+           LEFT JOIN person p ON p.normalized_name = btrim(lower(a.person)){where_clause} \
           ORDER BY a.person ASC \
           LIMIT {fetch}",
         fetch = limit + 1,
@@ -254,10 +289,22 @@ pub async fn list(
         None
     };
 
-    // Total only on the first page (keyset pages stay cheap).
+    // Total only on the first page (keyset pages stay cheap). The count
+    // honors the same jump-rail bucket as the page query (but never the
+    // cursor — total is the whole filtered set).
     let total = if after.is_none() {
-        let count_sql = format!("{credits_cte} SELECT COUNT(*)::bigint AS n FROM agg");
-        let count_stmt = Statement::from_sql_and_values(backend, count_sql, lib_params);
+        let mut count_params = lib_params;
+        let count_where = match &starts_with {
+            Some(StartsWithBucket::Letter(c)) => {
+                count_params.push(Value::from(format!("{c}%")));
+                format!(" WHERE lower(a.person) LIKE ${}", count_params.len())
+            }
+            Some(StartsWithBucket::Digit) => " WHERE lower(a.person) !~ '^[a-z]'".to_string(),
+            None => String::new(),
+        };
+        let count_sql =
+            format!("{credits_cte} SELECT COUNT(*)::bigint AS n FROM agg a{count_where}");
+        let count_stmt = Statement::from_sql_and_values(backend, count_sql, count_params);
         CountRow::find_by_statement(count_stmt)
             .one(&app.db)
             .await

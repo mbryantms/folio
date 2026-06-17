@@ -512,3 +512,68 @@ async fn invalid_cursor_rejected() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn starts_with_buckets_by_name() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    let lib = seed_library(&app, "main").await;
+    let s = seed_series(&app, lib, "Anthology").await;
+    add_series_credit(&app, s, "writer", "Alan Moore").await;
+    add_series_credit(&app, s, "writer", "Brian K. Vaughan").await;
+    add_series_credit(&app, s, "writer", "Stan Lee").await;
+    // A non-letter-leading credit → the "#" bucket.
+    add_series_credit(&app, s, "artist", "30 Coins Studio").await;
+
+    // Letter bucket, case-insensitive.
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/creators?starts_with=a",
+        Some(&auth),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    assert_eq!(people(&json), vec!["Alan Moore"], "a → Alan Moore");
+
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/creators?starts_with=S",
+        Some(&auth),
+    )
+    .await;
+    assert_eq!(people(&json), vec!["Stan Lee"], "uppercase S matches");
+
+    // "#" → the digit-leading name (URL-encoded).
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/creators?starts_with=%23",
+        Some(&auth),
+    )
+    .await;
+    assert_eq!(people(&json), vec!["30 Coins Studio"], "# → digit-leading");
+
+    // `total` honors the bucket on the first page.
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/creators?starts_with=a",
+        Some(&auth),
+    )
+    .await;
+    assert_eq!(json["total"].as_u64(), Some(1), "total respects the bucket");
+
+    // Invalid bucket → 422.
+    let (status, _) = http(
+        &app,
+        Method::GET,
+        "/api/creators?starts_with=ab",
+        Some(&auth),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}

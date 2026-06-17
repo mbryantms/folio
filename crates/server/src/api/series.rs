@@ -1135,6 +1135,13 @@ pub struct ListSeriesQuery {
     /// zero active issues never matches any tier.
     #[serde(default)]
     pub metadata_completeness: Option<String>,
+    /// A–Z jump-rail bucket: a single letter `a`–`z` (case-insensitive)
+    /// matching series whose `normalized_name` starts with it, or `#` for
+    /// names that sort under a digit (the name sort is on
+    /// `normalized_name`, so this lands the jump where the row actually
+    /// appears). Invalid values 422.
+    #[serde(default)]
+    pub starts_with: Option<String>,
 }
 
 const VALID_STATUSES: &[&str] = &["continuing", "ended", "cancelled", "hiatus"];
@@ -1147,6 +1154,31 @@ pub(crate) fn split_csv(raw: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+/// A–Z jump-rail bucket parsed from a `starts_with` query param.
+pub(crate) enum StartsWithBucket {
+    /// A single lowercased ASCII letter (`a`–`z`).
+    Letter(char),
+    /// The `#` bucket — names that sort under a digit.
+    Digit,
+}
+
+/// Parse a jump-rail `starts_with` value: a single ASCII letter
+/// (case-insensitive) or `#`. Returns `None` for anything else so the
+/// caller can 422. Shared by `/series` and `/creators`.
+pub(crate) fn parse_starts_with(raw: &str) -> Option<StartsWithBucket> {
+    let t = raw.trim();
+    if t == "#" {
+        return Some(StartsWithBucket::Digit);
+    }
+    let mut chars = t.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphabetic() => {
+            Some(StartsWithBucket::Letter(c.to_ascii_lowercase()))
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1272,6 +1304,11 @@ fn validate_list_series_query_params(q: &ListSeriesQuery) -> Result<(), &'static
         && !COMPLETENESS_TIERS.contains(&s.trim())
     {
         return Err("metadata_completeness must be complete, partial, or needs_metadata");
+    }
+    if let Some(raw) = q.starts_with.as_deref()
+        && parse_starts_with(raw).is_none()
+    {
+        return Err("starts_with must be a single letter or #");
     }
     Ok(())
 }
@@ -1501,6 +1538,33 @@ fn apply_series_read_status_filter(
     select
 }
 
+/// A–Z jump-rail filter (`starts_with`). Matches against `normalized_name`
+/// — the same column the Name sort orders by — so clicking "S" lands on
+/// the rows that actually sort under S. `normalized_name` is already
+/// lowercased, so a letter bucket is a plain `LIKE 'x%'`; `#` matches a
+/// leading digit. Invalid values are rejected upstream in
+/// `validate_list_series_query_params`; the guard here is a defensive no-op.
+fn apply_series_starts_with_filter(
+    select: sea_orm::Select<series::Entity>,
+    q: &ListSeriesQuery,
+) -> sea_orm::Select<series::Entity> {
+    let Some(raw) = q.starts_with.as_deref() else {
+        return select;
+    };
+    match parse_starts_with(raw) {
+        Some(StartsWithBucket::Letter(c)) => select.filter(Expr::cust_with_values(
+            "series.normalized_name LIKE $1",
+            [format!("{c}%")],
+        )),
+        // "#" catches everything that doesn't sort under a letter
+        // (digits, and the rare empty-normalized name).
+        Some(StartsWithBucket::Digit) => {
+            select.filter(Expr::cust("series.normalized_name !~ '^[a-z]'"))
+        }
+        None => select,
+    }
+}
+
 /// `metadata_completeness` grid facet (single tier). Filters series by the
 /// per-series completeness rollup — the same `complete_count >= active_count`
 /// / `= 0` / in-between split the card-badge tier and the saved-view
@@ -1717,6 +1781,7 @@ pub async fn list(
     select = apply_series_user_rating_filter(select, &q, user.id);
     select = apply_series_read_status_filter(select, &q, user.id);
     select = apply_series_metadata_completeness_filter(select, &q);
+    select = apply_series_starts_with_filter(select, &q);
 
     let limit = clamp_limit(q.limit);
     let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
