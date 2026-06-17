@@ -114,6 +114,43 @@ pub struct CandidatesResp {
     /// `NoMatches`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub match_outcome: Option<MatchOutcomeView>,
+    /// Live provider-quota snapshot + retry ETA (audit B13). Populated
+    /// once the run finalizes so the dialog can show remaining budget
+    /// before the next batch and a concrete "retries in …" while parked
+    /// on quota; omitted while still `queued`/`searching`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<QuotaStateView>,
+}
+
+/// Per-provider remaining-quota view for the match dialog (audit B13).
+/// Mirrors `crate::metadata::provider::QuotaSnapshot`; ComicVine carries
+/// only the hour bucket, Metron carries both the minute (`remaining_hour`)
+/// and day buckets.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ProviderQuotaView {
+    /// `"comicvine"` | `"metron"`.
+    pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_hour: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_day: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seconds_until_reset: Option<u64>,
+}
+
+/// Quota state attached to a finalized run (audit B13).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct QuotaStateView {
+    /// Each enabled + configured provider's live budget. Empty when no
+    /// provider is configured (the search itself returns
+    /// `metadata.no_providers` in that case).
+    pub providers: Vec<ProviderQuotaView>,
+    /// Seconds until a quota-parked run retries, derived server-side from
+    /// `metadata_run.resume_after` (clamped at 0). Only set while `status`
+    /// is `awaiting_quota`; relative so the client renders it without a
+    /// clock-skew-prone `Date.now()`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
 }
 
 /// Discriminated view of the matcher's outcome classification.
@@ -3044,6 +3081,7 @@ async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> Cand
             candidate: r.candidate,
         })
         .collect();
+    let quota = build_quota_state(app, &run).await;
     CandidatesResp {
         run_id: run.id,
         status: run.status,
@@ -3057,7 +3095,64 @@ async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> Cand
         error_summary: run.error_summary,
         candidates,
         match_outcome,
+        quota,
     }
+}
+
+/// Live provider-quota snapshot for the dialog (audit B13). Built only once
+/// the run has finalized — while it's still `queued`/`searching` the dialog
+/// shows a spinner and doesn't need budget numbers, so we skip the per-poll
+/// Redis bucket reads. `retry_at` mirrors a quota-parked run's `resume_after`
+/// so the dialog can say "retries in ~12m" instead of "try again shortly".
+async fn build_quota_state(app: &AppState, run: &metadata_run::Model) -> Option<QuotaStateView> {
+    let finalized = matches!(
+        run.status.as_str(),
+        orchestrator::status::COMPLETED
+            | orchestrator::status::FAILED
+            | orchestrator::status::AWAITING_QUOTA
+    );
+    if !finalized {
+        return None;
+    }
+
+    let providers = orchestrator::build_providers(&app.cfg(), app.jobs.redis.clone());
+    let mut views = Vec::with_capacity(providers.len());
+    for p in &providers {
+        match p.quota().await {
+            Ok(snap) => views.push(ProviderQuotaView {
+                provider: snap.provider.as_str().to_owned(),
+                remaining_hour: snap.remaining_hour,
+                remaining_day: snap.remaining_day,
+                seconds_until_reset: snap.seconds_until_reset,
+            }),
+            // A Redis hiccup shouldn't drop the provider — report it with
+            // no numbers so the dialog still knows it's configured.
+            Err(_) => views.push(ProviderQuotaView {
+                provider: p.id().as_str().to_owned(),
+                remaining_hour: None,
+                remaining_day: None,
+                seconds_until_reset: None,
+            }),
+        }
+    }
+
+    let retry_after_seconds = if run.status == orchestrator::status::AWAITING_QUOTA {
+        run.resume_after
+            .map(|t| (t.timestamp() - chrono::Utc::now().timestamp()).max(0) as u64)
+    } else {
+        None
+    };
+
+    // Nothing to surface when no provider is configured and nothing is
+    // parked — the unconfigured case is already reported by the search's
+    // `metadata.no_providers` error.
+    if views.is_empty() && retry_after_seconds.is_none() {
+        return None;
+    }
+    Some(QuotaStateView {
+        providers: views,
+        retry_after_seconds,
+    })
 }
 
 /// Classify the run's ranked-candidate list into a [`MatchOutcomeView`].

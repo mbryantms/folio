@@ -49,16 +49,23 @@ export class ApiMutationError extends Error {
   /** Field-level validation failures from `error.details` (422 only;
    *  empty otherwise). */
   readonly fields: ApiFieldError[];
+  /** Machine-readable `error.code` from the envelope (e.g.
+   *  `"metadata.no_providers"`), so call sites can branch on the
+   *  specific failure rather than matching on the human message.
+   *  `null` for network errors / non-enveloped responses. */
+  readonly code: string | null;
 
   constructor(
     message: string,
     status: number | "network",
     fields: ApiFieldError[] = [],
+    code: string | null = null,
   ) {
     super(message);
     this.name = "ApiMutationError";
     this.status = status;
     this.fields = fields;
+    this.code = code;
   }
 
   /**
@@ -110,9 +117,11 @@ export async function apiMutate<T>({
   if (!res.ok) {
     let detail = "";
     let fields: ApiFieldError[] = [];
+    let code: string | null = null;
     try {
       const errBody = (await res.json()).error;
       detail = errBody?.message ?? `${res.status}`;
+      code = typeof errBody?.code === "string" ? errBody.code : null;
       if (Array.isArray(errBody?.details)) {
         fields = errBody.details.filter(
           (d: unknown): d is ApiFieldError =>
@@ -125,7 +134,7 @@ export async function apiMutate<T>({
     } catch {
       detail = `${res.status}`;
     }
-    throw new ApiMutationError(detail, res.status, fields);
+    throw new ApiMutationError(detail, res.status, fields, code);
   }
   if (res.status === 204) return null;
   const text = await res.text();
