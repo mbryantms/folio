@@ -37,6 +37,10 @@ import {
 
 import { IssueSourcesFooter } from "./IssueMetadataPanel";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
+import {
+  InlineIssueFieldEdit,
+  type InlineIssueField,
+} from "@/components/library/InlineIssueFieldEdit";
 import { Stat } from "@/components/library/Stat";
 import { UserRating } from "@/components/library/UserRating";
 import { Badge } from "@/components/ui/badge";
@@ -169,6 +173,25 @@ export default async function IssuePage({
   )
     ? null
     : issue.web_url;
+
+  // Inline single-field edit (B12): wrap a Details-grid value so admins can
+  // PATCH that one field from a popover instead of the full sheet. Only
+  // mounts for fields that already have a value (the grid drops empty rows
+  // to stay compact; adding a missing field still uses the sheet).
+  const edit = (
+    field: InlineIssueField,
+    value: string | number | null | undefined,
+    display?: React.ReactNode,
+  ) =>
+    value != null && value !== "" ? (
+      <InlineIssueFieldEdit
+        seriesSlug={seriesSlug}
+        issueSlug={issueSlug}
+        field={field}
+        value={String(value)}
+        display={display}
+      />
+    ) : null;
 
   return (
     <div className="space-y-10">
@@ -439,11 +462,12 @@ export default async function IssuePage({
                     },
                     {
                       label: "Volume",
-                      value: issue.volume ?? series?.volume ?? null,
+                      value:
+                        edit("volume", issue.volume) ?? series?.volume ?? null,
                     },
                     {
                       label: "Alternate series",
-                      value: issue.alternate_series,
+                      value: edit("alternate_series", issue.alternate_series),
                     },
                     { label: "Publication date", value: publicationDate },
                     {
@@ -452,12 +476,18 @@ export default async function IssuePage({
                         <Badge variant="outline">{seriesStatus}</Badge>
                       ) : null,
                     },
-                    { label: "Publisher", value: issue.publisher },
-                    { label: "Imprint", value: issue.imprint },
-                    { label: "Story arc", value: issue.story_arc },
+                    {
+                      label: "Publisher",
+                      value: edit("publisher", issue.publisher),
+                    },
+                    { label: "Imprint", value: edit("imprint", issue.imprint) },
+                    {
+                      label: "Story arc",
+                      value: edit("story_arc", issue.story_arc),
+                    },
                     {
                       label: "Story arc number",
-                      value: issue.story_arc_number,
+                      value: edit("story_arc_number", issue.story_arc_number),
                     },
                     {
                       label: "Web page",
@@ -479,24 +509,36 @@ export default async function IssuePage({
                   items={[
                     {
                       label: "Language",
-                      value: issue.language_code ? (
-                        <Badge variant="secondary">
-                          {issue.language_code.toUpperCase()}
-                        </Badge>
-                      ) : null,
+                      value: edit(
+                        "language_code",
+                        issue.language_code,
+                        issue.language_code ? (
+                          <Badge variant="secondary">
+                            {issue.language_code.toUpperCase()}
+                          </Badge>
+                        ) : undefined,
+                      ),
                     },
                     { label: "Reading direction", value: readingDirection },
                     {
                       label: "Age rating",
-                      value: issue.age_rating ? (
-                        <Badge variant="secondary">{issue.age_rating}</Badge>
-                      ) : null,
+                      value: edit(
+                        "age_rating",
+                        issue.age_rating,
+                        issue.age_rating ? (
+                          <Badge variant="secondary">{issue.age_rating}</Badge>
+                        ) : undefined,
+                      ),
                     },
                     {
                       label: "Format",
-                      value: issue.format ? (
-                        <Badge variant="secondary">{issue.format}</Badge>
-                      ) : null,
+                      value: edit(
+                        "format",
+                        issue.format,
+                        issue.format ? (
+                          <Badge variant="secondary">{issue.format}</Badge>
+                        ) : undefined,
+                      ),
                     },
                     {
                       label: "Color",
