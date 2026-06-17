@@ -13,6 +13,21 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.20.0](https://github.com/mbryantms/folio/compare/v0.19.0...v0.20.0) (2026-06-17)
+
+
+### Added
+
+* **jobs:** run cover-phash + variant-cover backfills as apalis jobs (B17) ([#268](https://github.com/mbryantms/folio/issues/268)) ([1d88f57](https://github.com/mbryantms/folio/commit/1d88f5708258b80321e650674ecd19b09875be07))
+* **library:** surface bulk-archive skip reasons + keep skipped selected (B17) ([#264](https://github.com/mbryantms/folio/issues/264)) ([241be22](https://github.com/mbryantms/folio/commit/241be22dd4f01a91bd8c336258b1dc873df4b715))
+* **metadata:** add a "Recent applies" feed to the metadata dashboard (B14) ([#267](https://github.com/mbryantms/folio/issues/267)) ([e1e56fb](https://github.com/mbryantms/folio/commit/e1e56fbf0062bf07ffff8555d5f89a8c21f938f6))
+* **metadata:** surface provider quota + retry ETA in the match dialog (B13) ([#265](https://github.com/mbryantms/folio/issues/265)) ([ba8a5f2](https://github.com/mbryantms/folio/commit/ba8a5f2e777667fb3a48d13d4422f64be568eb5f))
+
+
+### Fixed
+
+* **web:** skeleton loading states match their real page layouts ([#269](https://github.com/mbryantms/folio/issues/269)) ([dca255a](https://github.com/mbryantms/folio/commit/dca255a52485203def7f9281cb53cf2f9e871137))
+
 ## [0.19.0](https://github.com/mbryantms/folio/compare/v0.18.0...v0.19.0) (2026-06-17)
 
 
