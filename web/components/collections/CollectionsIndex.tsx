@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -49,7 +50,7 @@ export function CollectionsIndex() {
         }
       />
       {collectionsQ.isLoading ? (
-        <div className="text-muted-foreground py-6 text-sm">Loading…</div>
+        <CollectionsGridSkeleton />
       ) : collectionsQ.isError ? (
         <div className="text-destructive rounded-md border p-4 text-sm">
           Failed to load collections.
@@ -103,6 +104,40 @@ function CollectionCard({ collection }: { collection: SavedViewView }) {
         ) : null}
       </div>
     </Link>
+  );
+}
+
+/** Single placeholder card — mirrors `CollectionCard`'s box so the loading
+ *  state has the same footprint as the real grid (icon row + name +
+ *  description). Exported so the route `loading.tsx` reuses the exact shape. */
+export function CollectionCardSkeleton() {
+  return (
+    <div className="border-border/60 flex h-full flex-col gap-2 rounded-lg border p-4">
+      <Skeleton className="h-5 w-5 rounded" />
+      <div className="space-y-1.5">
+        <Skeleton className="h-4 w-2/3" />
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-1/2" />
+      </div>
+    </div>
+  );
+}
+
+/** The collection card grid in its loading state — same responsive columns
+ *  as the real `<ul>` so nothing reflows when data arrives. */
+export function CollectionsGridSkeleton({ count = 8 }: { count?: number }) {
+  return (
+    <ul
+      role="list"
+      aria-hidden
+      className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+    >
+      {Array.from({ length: count }, (_, i) => (
+        <li key={i}>
+          <CollectionCardSkeleton />
+        </li>
+      ))}
+    </ul>
   );
 }
 

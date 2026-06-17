@@ -249,7 +249,7 @@ function CreatorCard({ creator }: { creator: CreatorListItem }) {
   );
 }
 
-function CreatorGridSkeleton() {
+export function CreatorGridSkeleton() {
   return (
     <ul
       role="list"
