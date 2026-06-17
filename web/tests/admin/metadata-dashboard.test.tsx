@@ -43,6 +43,10 @@ let matchQualityState: {
 vi.mock("@/lib/api/queries", () => ({
   useAdminMetadataDashboard: () => queryState,
   useAdminMetadataMatchQuality: () => matchQualityState,
+  useAdminMetadataRecentApplies: () => ({
+    data: { applies: [] },
+    isLoading: false,
+  }),
 }));
 
 import { DashboardTab } from "@/components/admin/metadata/DashboardTab";

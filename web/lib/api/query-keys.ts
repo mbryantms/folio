@@ -318,6 +318,8 @@ export const queryKeys = {
     before?: string;
   }) => ["admin", "metadata", "runs", filters] as const,
   adminMetadataRun: (id: string) => ["admin", "metadata", "runs", id] as const,
+  adminMetadataRecentApplies: (limit: number) =>
+    ["admin", "metadata", "recent-applies", limit] as const,
   adminMetadataAutoSynced: ["admin", "metadata", "auto-synced"] as const,
   /** Runtime-editable settings (M1 of runtime-config-admin). Registry
    *  + resolved values; mutated via PATCH /admin/settings. */

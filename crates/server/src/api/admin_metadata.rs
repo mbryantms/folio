@@ -18,7 +18,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{audit_log, library, metadata_run, metadata_run_candidate, series};
+use entity::{audit_log, issue, library, metadata_run, metadata_run_candidate, series};
 use sea_orm::{
     ColumnTrait, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect, Statement,
@@ -47,6 +47,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(match_quality))
         .routes(routes!(list_runs))
         .routes(routes!(get_run))
+        .routes(routes!(recent_applies))
         .routes(routes!(run_phash_backfill))
         .routes(routes!(run_variant_cover_backfill))
         .routes(routes!(list_auto_synced))
@@ -756,6 +757,197 @@ pub async fn get_run(
         candidates,
     })
     .into_response()
+}
+
+// ───────── GET /admin/metadata/recent-applies ─────────
+
+/// One recent metadata-apply event for the dashboard feed (audit B14).
+/// Sourced from `metadata_run` rows that actually wrote changes
+/// (`items_applied > 0`) — the only place that captures **automatic**
+/// (weekly-refresh) applies, which emit no audit_log row. `automatic`
+/// flags the server-side runs an operator otherwise never sees.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RecentApplyRow {
+    pub run_id: Uuid,
+    pub batch_id: Option<Uuid>,
+    /// `series` | `issue` | `library` | `bulk_refresh`.
+    pub scope: String,
+    /// Human label — series name, `"<series> #<n>"`, or library name.
+    /// Falls back to the raw scope id when the row has since been removed.
+    pub entity_label: String,
+    /// Series slug for linking to the affected page, when resolvable.
+    pub series_slug: Option<String>,
+    pub library_id: Option<Uuid>,
+    /// `true` when the run had no `triggered_by` — a server-side
+    /// automatic (weekly-refresh) apply, the silent case B14 surfaces.
+    pub automatic: bool,
+    pub trigger_kind: String,
+    pub items_applied: i32,
+    pub providers: Vec<String>,
+    pub applied_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RecentAppliesResp {
+    pub applies: Vec<RecentApplyRow>,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct RecentAppliesQuery {
+    /// Max rows (default 10, capped 50). This is a dashboard *summary*
+    /// — the full, filterable history lives in the Runs tab.
+    #[serde(default)]
+    pub limit: Option<u64>,
+}
+
+#[utoipa::path(
+    operation_id = "admin_metadata_recent_applies",
+    get,
+    path = "/admin/metadata/recent-applies",
+    params(RecentAppliesQuery),
+    responses(
+        (status = 200, body = RecentAppliesResp),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn recent_applies(
+    State(app): State<AppState>,
+    _admin: RequireAdmin,
+    Query(q): Query<RecentAppliesQuery>,
+) -> Response {
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    // Runs that actually changed data, newest finish first. A run is only
+    // `finished_at`-stamped once it finalizes, so applied runs always carry
+    // one — order on it for true apply-recency.
+    let rows = match metadata_run::Entity::find()
+        .filter(metadata_run::Column::ItemsApplied.gt(0))
+        .filter(metadata_run::Column::FinishedAt.is_not_null())
+        .order_by_desc(metadata_run::Column::FinishedAt)
+        .limit(limit)
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "admin_metadata.recent_applies db error");
+            return error(StatusCode::BAD_GATEWAY, "internal", "internal");
+        }
+    };
+
+    // Batch-resolve entity labels: collect the series + issue ids referenced
+    // by the page, fetch each set once, then map per row.
+    let mut series_ids: Vec<Uuid> = Vec::new();
+    let mut issue_ids: Vec<String> = Vec::new();
+    for r in &rows {
+        match (r.scope.as_str(), r.scope_entity_id.as_deref()) {
+            ("series", Some(id)) => {
+                if let Ok(u) = id.parse::<Uuid>() {
+                    series_ids.push(u);
+                }
+            }
+            ("issue", Some(id)) => issue_ids.push(id.to_owned()),
+            _ => {}
+        }
+    }
+
+    let series_rows = series::Entity::find()
+        .filter(series::Column::Id.is_in(series_ids.clone()))
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    let series_by_id: std::collections::HashMap<Uuid, series::Model> =
+        series_rows.into_iter().map(|s| (s.id, s)).collect();
+
+    let issue_rows = issue::Entity::find()
+        .filter(issue::Column::Id.is_in(issue_ids.clone()))
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    // Issue → its series (for the label + slug), fetched in one more pass.
+    let issue_series_ids: Vec<Uuid> = issue_rows.iter().map(|i| i.series_id).collect();
+    let extra_series = series::Entity::find()
+        .filter(series::Column::Id.is_in(issue_series_ids))
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    let mut series_lookup = series_by_id;
+    for s in extra_series {
+        series_lookup.entry(s.id).or_insert(s);
+    }
+    let issue_by_id: std::collections::HashMap<String, issue::Model> =
+        issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
+
+    let library_rows = library::Entity::find()
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    let library_name: std::collections::HashMap<Uuid, String> =
+        library_rows.into_iter().map(|l| (l.id, l.name)).collect();
+
+    let applies = rows
+        .into_iter()
+        .map(|r| {
+            let (entity_label, series_slug) =
+                resolve_apply_label(&r, &series_lookup, &issue_by_id, &library_name);
+            RecentApplyRow {
+                run_id: r.id,
+                batch_id: r.batch_id,
+                scope: r.scope,
+                entity_label,
+                series_slug,
+                library_id: r.library_id,
+                automatic: r.triggered_by.is_none(),
+                trigger_kind: r.trigger_kind,
+                items_applied: r.items_applied,
+                providers: r.providers,
+                applied_at: r.finished_at.map(|t| t.to_rfc3339()),
+            }
+        })
+        .collect();
+
+    Json(RecentAppliesResp { applies }).into_response()
+}
+
+/// Resolve a run's `(entity_label, series_slug)` for the recent-applies
+/// feed. Soft-falls to the raw scope id when the referenced row is gone.
+fn resolve_apply_label(
+    run: &metadata_run::Model,
+    series_by_id: &std::collections::HashMap<Uuid, series::Model>,
+    issue_by_id: &std::collections::HashMap<String, issue::Model>,
+    library_name: &std::collections::HashMap<Uuid, String>,
+) -> (String, Option<String>) {
+    match (run.scope.as_str(), run.scope_entity_id.as_deref()) {
+        ("series", Some(id)) => {
+            if let Some(s) = id.parse::<Uuid>().ok().and_then(|u| series_by_id.get(&u)) {
+                return (s.name.clone(), Some(s.slug.clone()));
+            }
+            (format!("Series {id}"), None)
+        }
+        ("issue", Some(id)) => {
+            if let Some(i) = issue_by_id.get(id) {
+                let series = series_by_id.get(&i.series_id);
+                let series_name = series
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| "Issue".to_owned());
+                let label = match i.number_raw.as_deref() {
+                    Some(n) if !n.is_empty() => format!("{series_name} #{n}"),
+                    _ => i.title.clone().unwrap_or_else(|| series_name.clone()),
+                };
+                return (label, series.map(|s| s.slug.clone()));
+            }
+            ("Issue".to_owned(), None)
+        }
+        (_, _) => {
+            // library / bulk_refresh scopes name the library when set.
+            let label = run
+                .library_id
+                .and_then(|id| library_name.get(&id).cloned())
+                .map(|n| format!("{n} (library refresh)"))
+                .unwrap_or_else(|| "Library refresh".to_owned());
+            (label, None)
+        }
+    }
 }
 
 // ───────── /admin/metadata/phash-backfill ─────────

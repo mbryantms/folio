@@ -94,6 +94,7 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
       ["series"],
       queryKeys.adminMetadataDashboard,
       queryKeys.adminMetadataMatchQuality,
+      ["admin", "metadata", "recent-applies"],
     ],
   },
   {

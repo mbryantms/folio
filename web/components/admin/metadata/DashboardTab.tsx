@@ -15,6 +15,7 @@ import {
   Loader2,
   XCircle,
 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -25,8 +26,14 @@ import { apiMutate } from "@/lib/api/mutations";
 import {
   useAdminMetadataDashboard,
   useAdminMetadataMatchQuality,
+  useAdminMetadataRecentApplies,
 } from "@/lib/api/queries";
-import type { MatchQualityWindow, ProviderView } from "@/lib/api/types";
+import { formatRelativeDate } from "@/lib/format";
+import type {
+  MatchQualityWindow,
+  ProviderView,
+  RecentApplyRow,
+} from "@/lib/api/types";
 
 export function DashboardTab() {
   const q = useAdminMetadataDashboard();
@@ -78,12 +85,92 @@ export function DashboardTab() {
         </CardContent>
       </Card>
 
+      <RecentAppliesCard />
+
       <MatchQualityCard />
 
       <CoverHashBackfillCard />
 
       <VariantCoverBackfillCard />
     </div>
+  );
+}
+
+/**
+ * "Recent applies" feed (audit B14). Surfaces the runs that actually wrote
+ * metadata — crucially the **automatic** weekly-refresh applies, which emit
+ * no audit-log row and otherwise run invisibly. A bounded summary; the full,
+ * filterable history is the Runs tab.
+ */
+function RecentAppliesCard() {
+  const q = useAdminMetadataRecentApplies(10);
+  const rows = q.data?.applies ?? [];
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <CardTitle className="text-sm font-medium">Recent applies</CardTitle>
+        <Link
+          href="/admin/metadata?tab=runs"
+          className="text-muted-foreground hover:text-foreground text-xs underline"
+        >
+          View all runs
+        </Link>
+      </CardHeader>
+      <CardContent>
+        {q.isLoading ? (
+          <div className="text-muted-foreground flex items-center gap-2 text-sm">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            Nothing applied yet. Searches that write changes — manual or the
+            weekly auto-refresh — show up here.
+          </p>
+        ) : (
+          <ul className="divide-border/60 divide-y text-sm">
+            {rows.map((r) => (
+              <RecentApplyItem key={r.run_id} row={r} />
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RecentApplyItem({ row }: { row: RecentApplyRow }) {
+  const when = formatRelativeDate(row.applied_at) ?? "";
+  const sub = [
+    row.providers.length > 0 ? row.providers.join(", ") : null,
+    row.items_applied > 1 ? `${row.items_applied} items` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <li className="flex items-center justify-between gap-3 py-2">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          {row.series_slug ? (
+            <Link
+              href={`/series/${row.series_slug}`}
+              className="truncate font-medium hover:underline"
+            >
+              {row.entity_label}
+            </Link>
+          ) : (
+            <span className="truncate font-medium">{row.entity_label}</span>
+          )}
+          <Badge
+            variant={row.automatic ? "secondary" : "outline"}
+            className="shrink-0"
+          >
+            {row.automatic ? "Automatic" : "Manual"}
+          </Badge>
+        </div>
+        {sub && <div className="text-muted-foreground text-xs">{sub}</div>}
+      </div>
+      <span className="text-muted-foreground shrink-0 text-xs">{when}</span>
+    </li>
   );
 }
 

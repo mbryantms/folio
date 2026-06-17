@@ -1096,6 +1096,42 @@
         }
       }
     },
+    "/api/admin/metadata/recent-applies": {
+      "get": {
+        "operationId": "admin_metadata_recent_applies",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max rows (default 10, capped 50). This is a dashboard *summary*\n— the full, filterable history lives in the Runs tab.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentAppliesResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/runs": {
       "get": {
         "operationId": "admin_metadata_runs_list",
@@ -18229,6 +18265,91 @@
           },
           "totals": {
             "$ref": "#/components/schemas/TotalsView"
+          }
+        }
+      },
+      "RecentAppliesResp": {
+        "type": "object",
+        "required": [
+          "applies"
+        ],
+        "properties": {
+          "applies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecentApplyRow"
+            }
+          }
+        }
+      },
+      "RecentApplyRow": {
+        "type": "object",
+        "description": "One recent metadata-apply event for the dashboard feed (audit B14).\nSourced from `metadata_run` rows that actually wrote changes\n(`items_applied > 0`) — the only place that captures **automatic**\n(weekly-refresh) applies, which emit no audit_log row. `automatic`\nflags the server-side runs an operator otherwise never sees.",
+        "required": [
+          "run_id",
+          "scope",
+          "entity_label",
+          "automatic",
+          "trigger_kind",
+          "items_applied",
+          "providers"
+        ],
+        "properties": {
+          "applied_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "automatic": {
+            "type": "boolean",
+            "description": "`true` when the run had no `triggered_by` — a server-side\nautomatic (weekly-refresh) apply, the silent case B14 surfaces."
+          },
+          "batch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "entity_label": {
+            "type": "string",
+            "description": "Human label — series name, `\"<series> #<n>\"`, or library name.\nFalls back to the raw scope id when the row has since been removed."
+          },
+          "items_applied": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "library_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`series` | `issue` | `library` | `bulk_refresh`."
+          },
+          "series_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Series slug for linking to the affected page, when resolvable."
+          },
+          "trigger_kind": {
+            "type": "string"
           }
         }
       },
