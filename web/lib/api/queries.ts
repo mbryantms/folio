@@ -2351,6 +2351,7 @@ import type {
   DashboardResp,
   MatchQualityResp,
   ProvidersListResp,
+  RecentAppliesResp,
   RunDetailResp,
   RunsListResp,
   AutoSyncedResp,
@@ -2424,5 +2425,21 @@ export function useAdminMetadataRun(id: string) {
       ),
     enabled: !!id,
     staleTime: 15_000,
+  });
+}
+
+/** Bounded "Recent applies" dashboard summary (audit B14) — the most
+ *  recent runs that changed data, incl. silent automatic (weekly-refresh)
+ *  applies. The full, filterable history lives in the Runs tab, so this
+ *  intentionally returns a capped list with no cursor (it's a preview). */
+export function useAdminMetadataRecentApplies(limit = 10) {
+  return useQuery({
+    queryKey: queryKeys.adminMetadataRecentApplies(limit),
+    queryFn: () =>
+      jsonFetch<RecentAppliesResp>(
+        `/admin/metadata/recent-applies?limit=${limit}`,
+      ),
+    staleTime: 30_000,
+    // Invalidated by the metadata.applied WS event (see scan-events.ts).
   });
 }

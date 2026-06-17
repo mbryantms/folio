@@ -64,6 +64,8 @@ export function invalidationsForEvent(
         ["series"],
         queryKeys.adminMetadataDashboard,
         queryKeys.adminMetadataMatchQuality,
+        // Prefix-match every limit of the recent-applies summary (B14).
+        ["admin", "metadata", "recent-applies"],
       ];
     case "lagged":
       // We missed events — recover by sweeping every WS-driven cache.

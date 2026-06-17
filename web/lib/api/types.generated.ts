@@ -411,6 +411,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/recent-applies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_metadata_recent_applies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/runs": {
         parameters: {
             query?: never;
@@ -7765,6 +7781,43 @@ export interface components {
             top_tags?: components["schemas"]["TopNameEntry"][];
             totals: components["schemas"]["TotalsView"];
         };
+        RecentAppliesResp: {
+            applies: components["schemas"]["RecentApplyRow"][];
+        };
+        /**
+         * @description One recent metadata-apply event for the dashboard feed (audit B14).
+         *     Sourced from `metadata_run` rows that actually wrote changes
+         *     (`items_applied > 0`) — the only place that captures **automatic**
+         *     (weekly-refresh) applies, which emit no audit_log row. `automatic`
+         *     flags the server-side runs an operator otherwise never sees.
+         */
+        RecentApplyRow: {
+            applied_at?: string | null;
+            /**
+             * @description `true` when the run had no `triggered_by` — a server-side
+             *     automatic (weekly-refresh) apply, the silent case B14 surfaces.
+             */
+            automatic: boolean;
+            /** Format: uuid */
+            batch_id?: string | null;
+            /**
+             * @description Human label — series name, `"<series> #<n>"`, or library name.
+             *     Falls back to the raw scope id when the row has since been removed.
+             */
+            entity_label: string;
+            /** Format: int32 */
+            items_applied: number;
+            /** Format: uuid */
+            library_id?: string | null;
+            providers: string[];
+            /** Format: uuid */
+            run_id: string;
+            /** @description `series` | `issue` | `library` | `bulk_refresh`. */
+            scope: string;
+            /** @description Series slug for linking to the affected page, when resolvable. */
+            series_slug?: string | null;
+            trigger_kind: string;
+        };
         RefreshLibraryResp: {
             jobs_coalesced: number;
             jobs_enqueued: number;
@@ -10356,6 +10409,38 @@ export interface operations {
             };
             /** @description provider responded with an error */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_recent_applies: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Max rows (default 10, capped 50). This is a dashboard *summary*
+                 *     — the full, filterable history lives in the Runs tab.
+                 */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentAppliesResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

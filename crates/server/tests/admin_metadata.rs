@@ -302,6 +302,74 @@ async fn runs_list_empty_then_returns_seeded_row() {
     assert_eq!(body["candidates"].as_array().unwrap().len(), 0);
 }
 
+/// B14: the recent-applies feed lists only runs that wrote changes
+/// (`items_applied > 0`), newest finish first, with resolved entity labels
+/// and the `automatic` flag distinguishing weekly-refresh from manual.
+#[tokio::test]
+async fn recent_applies_lists_applied_runs_with_labels() {
+    use sea_orm::{ActiveModelTrait, ColumnTrait, QueryFilter, Set};
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let db = &app.state().db;
+    let admin_id = entity::user::Entity::find()
+        .filter(entity::user::Column::Email.eq("admin@example.com"))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let lib = LibrarySeed::new(std::path::Path::new("/tmp/folio-recent-applies"))
+        .insert(db)
+        .await;
+    let series_id = SeriesSeed::new(lib, "Saga").insert(db).await;
+    let now = chrono::Utc::now().fixed_offset();
+
+    let mk = |applied: i32, triggered: Option<uuid::Uuid>, secs_ago: i64| {
+        entity::metadata_run::ActiveModel {
+            id: Set(uuid::Uuid::now_v7()),
+            scope: Set("series".into()),
+            scope_entity_id: Set(Some(series_id.to_string())),
+            library_id: Set(Some(lib)),
+            triggered_by: Set(triggered),
+            trigger_kind: Set("manual".into()),
+            providers: Set(vec!["comicvine".into()]),
+            status: Set("completed".into()),
+            started_at: Set(now - chrono::Duration::seconds(secs_ago + 1)),
+            finished_at: Set(Some(now - chrono::Duration::seconds(secs_ago))),
+            items_total: Set(applied.max(1)),
+            items_matched_high: Set(0),
+            items_matched_medium: Set(0),
+            items_matched_low: Set(0),
+            items_no_match: Set(0),
+            items_applied: Set(applied),
+            items_skipped: Set(0),
+            items_failed: Set(0),
+            error_summary: Set(None),
+            resume_after: Set(None),
+            batch_id: Set(None),
+            query: Set(None),
+        }
+    };
+
+    // Newest = a manual apply; older = an automatic (no triggered_by) apply;
+    // and a 0-applies run that must be excluded.
+    mk(1, Some(admin_id), 0).insert(db).await.unwrap();
+    mk(2, None, 60).insert(db).await.unwrap();
+    mk(0, Some(admin_id), 5).insert(db).await.unwrap();
+
+    let resp = get(&app, &admin, "/api/admin/metadata/recent-applies").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let applies = body["applies"].as_array().unwrap();
+    assert_eq!(applies.len(), 2, "the 0-applies run is excluded");
+    // Newest finish first → manual, then automatic.
+    assert_eq!(applies[0]["entity_label"], "Saga");
+    assert_eq!(applies[0]["automatic"], false);
+    assert_eq!(applies[0]["items_applied"], 1);
+    assert_eq!(applies[1]["automatic"], true);
+    assert_eq!(applies[1]["items_applied"], 2);
+}
+
 #[tokio::test]
 async fn list_providers_includes_metron_row() {
     let app = TestApp::spawn_with_metron("u", "p", true).await;
