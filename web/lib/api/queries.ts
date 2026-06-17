@@ -1483,7 +1483,11 @@ export function useSavedViewResultsInfinite(id: string) {
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<SeriesListView>(
-        `/me/saved-views/${id}/results${buildQuery({ cursor: pageParam })}`,
+        // Page at 60 like every other infinite list. Without an explicit
+        // `limit` the endpoint falls back to the view's `result_limit` —
+        // the home-rail *preview* count (default 12) — which made the
+        // detail page dribble out 12 rows at a time.
+        `/me/saved-views/${id}/results${buildQuery({ cursor: pageParam, limit: 60 })}`,
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: !!id,

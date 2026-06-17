@@ -18,7 +18,6 @@ import {
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { apiMutate } from "@/lib/api/mutations";
 import {
@@ -44,14 +43,37 @@ const CARD_SIZE_DEFAULT = 160;
 const CARD_SIZE_STORAGE_KEY = "folio.savedView.cardSize";
 
 /** Filter-view detail page: header + paginated series grid. The
- *  cursor-paginated results endpoint can return up to 200 rows per
- *  page; the "Load more" button below pulls additional pages until
- *  the server stops returning a `next_cursor`. */
+ *  cursor-paginated results endpoint pages at 60; an IntersectionObserver
+ *  sentinel auto-loads the next page on scroll — matching the creators
+ *  index, library grid, IssuesPanel, and CblViewDetail (no manual "Load
+ *  more" button). */
 export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const [editOpen, setEditOpen] = React.useState(false);
   const results = useSavedViewResultsInfinite(view.id);
   const router = useRouter();
   const createBatch = useCreateSavedViewBatch();
+
+  // Infinite-scroll sentinel — same shape as CblViewDetail / the creators
+  // index. Depend on the three result fields (not the whole object) so the
+  // observer isn't rebuilt every render.
+  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = results;
+  React.useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
+          }
+        }
+      },
+      { rootMargin: "600px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const fetchViewMetadata = () => {
     createBatch.mutate(
@@ -285,7 +307,10 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
       {isInitialLoading ? (
         <SeriesGridSkeleton style={gridStyle} />
       ) : items.length === 0 ? (
-        <EmptyState size="sm" description="Nothing matches this view yet. Tweak the conditions to broaden the search." />
+        <EmptyState
+          size="sm"
+          description="Nothing matches this view yet. Tweak the conditions to broaden the search."
+        />
       ) : (
         <ul role="list" className="grid gap-4" style={gridStyle}>
           {items.map((s) => (
@@ -309,17 +334,15 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
         </ul>
       )}
 
-      {results.hasNextPage ? (
-        <div className="flex justify-center">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => results.fetchNextPage()}
-            disabled={results.isFetchingNextPage}
-          >
-            {results.isFetchingNextPage ? "Loading…" : "Load more"}
-          </Button>
-        </div>
+      <div
+        ref={sentinelRef}
+        aria-hidden="true"
+        className={results.hasNextPage ? "h-12" : "hidden"}
+      />
+      {results.isFetchingNextPage ? (
+        <p className="text-muted-foreground text-center text-xs">
+          Loading more…
+        </p>
       ) : null}
 
       <EditFilterViewSheet
