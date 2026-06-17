@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.19.0](https://github.com/mbryantms/folio/compare/v0.18.0...v0.19.0) (2026-06-17)
+
+
+### Added
+
+* **admin:** surface + retry + purge dead-lettered background jobs (D8b) ([#262](https://github.com/mbryantms/folio/issues/262)) ([345872c](https://github.com/mbryantms/folio/commit/345872cb622be5ac5e92c96f0a0f3c9aaa56cc2a))
+* **scanner:** cooperative scan-cancel — worker drains without reconcile (D8a) ([#260](https://github.com/mbryantms/folio/issues/260)) ([1732848](https://github.com/mbryantms/folio/commit/1732848fe4ffcdd4db1f1ed51b2f178039065daa))
+
+
+### Fixed
+
+* **metadata:** don't fail sidecar rewrite when a duplicate/nested ComicInfo is dropped ([#263](https://github.com/mbryantms/folio/issues/263)) ([4e8977a](https://github.com/mbryantms/folio/commit/4e8977af75d0ff39f4ec78e9fd5eff9f50c584de))
+
 ## [0.18.0](https://github.com/mbryantms/folio/compare/v0.17.0...v0.18.0) (2026-06-17)
 
 
