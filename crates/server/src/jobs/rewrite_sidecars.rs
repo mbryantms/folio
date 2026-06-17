@@ -178,9 +178,12 @@ pub(crate) enum WritebackError {
 
 /// Re-open the freshly-rebuilt archive at `tmp` and confirm it's a sound
 /// replacement before the atomic swap: it must re-open cleanly, every
-/// entry the source exposed must still be present, and both sidecars must
-/// have landed. Runs inside the `rewrite_atomic` closure, so any failure
-/// aborts the rewrite with the original file untouched. This is what
+/// preserved source entry must still be present, and both sidecars must
+/// have landed. `source_names` is the caller's snapshot of the entries the
+/// rebuild must keep verbatim — the real pages, already filtered of the
+/// sidecar/trash entries `rebuild` intentionally drops (see the snapshot in
+/// [`rewrite_one_issue`]). Runs inside the `rewrite_atomic` closure, so any
+/// failure aborts the rewrite with the original file untouched. This is what
 /// makes `archive_backup_retain_count = 0` (no `.bak`) safe — a corrupt
 /// or lossy rewrite never replaces a good original.
 fn validate_rewrite(
@@ -193,8 +196,9 @@ fn validate_rewrite(
     })?;
     let new_names: std::collections::HashSet<&str> =
         new.entries().iter().map(|e| e.name.as_str()).collect();
-    // Every entry the source exposed (images + any pre-existing sidecars)
-    // must survive the rebuild verbatim.
+    // Every preserved source entry (the pages) must survive verbatim. Sidecar
+    // + trash entries were filtered out of `source_names` by the caller — the
+    // rebuild drops those and re-adds the canonical sidecars, checked below.
     for name in source_names {
         if !new_names.contains(name.as_str()) {
             return Err(RewriteError::ValidationFailed(format!(
@@ -284,11 +288,22 @@ pub(crate) async fn rewrite_one_issue(
                 // it.
                 let mut src =
                     Cbz::open(&src_path, arch_limits).map_err(RewriteError::ArchiveErr)?;
-                // Snapshot the source's visible entry names so the post-write
-                // validation can prove the rewrite preserved every one of
-                // them (only the two sidecars are intentionally rewritten).
-                let source_names: Vec<String> =
-                    src.entries().iter().map(|e| e.name.clone()).collect();
+                // Snapshot the source entries the rebuild is contractually
+                // required to preserve verbatim — i.e. the real pages. The
+                // reader surfaces sidecars + trash (`.xml`/`.json`/`.txt`,
+                // dotfiles, `Thumbs.db`, `__MACOSX`) through `entries()` too,
+                // but `rebuild` intentionally drops every such entry and
+                // re-adds the canonical ComicInfo/MetronInfo, so a nested or
+                // duplicate sidecar legitimately won't survive. Excluding them
+                // here keeps the post-write validation from a false "dropped
+                // entry" abort on those (the two sidecars' presence is checked
+                // separately in `validate_rewrite`).
+                let source_names: Vec<String> = src
+                    .entries()
+                    .iter()
+                    .filter(|e| !archive::cbz::is_rewrite_skipped(&e.name))
+                    .map(|e| e.name.clone())
+                    .collect();
                 let mut plan = RebuildPlan::new();
                 plan.set_entry("ComicInfo.xml", comic_info_xml.into_bytes());
                 plan.set_entry("MetronInfo.xml", metron_info_xml.into_bytes());
@@ -571,6 +586,70 @@ mod tests {
         assert!(
             matches!(res, Err(RewriteError::ValidationFailed(_))),
             "{res:?}"
+        );
+    }
+
+    /// Regression: an archive whose pages live under a subfolder and which
+    /// carries a stale `Sub/ComicInfo.xml` *in addition to* a root one (the
+    /// shape of a real "All Star Superman 002" CBZ). `rebuild` drops every
+    /// sidecar and re-adds the canonical root ComicInfo/MetronInfo, so the
+    /// nested copy legitimately won't survive — the rewrite used to abort
+    /// repeatedly with `rewrite validation failed: rewritten archive dropped
+    /// entry "Sub/ComicInfo.xml"`, leaving orphan `.tmp` files and never
+    /// applying metadata. The full rebuild → validate path must now succeed,
+    /// with the real pages preserved.
+    #[test]
+    fn rewrite_allows_dropped_nested_or_duplicate_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("src.cbz");
+        write_cbz(
+            &src_path,
+            &[
+                "Sub Folder/page-001.jpg",
+                "Sub Folder/page-002.jpg",
+                "Sub Folder/ComicInfo.xml", // stale nested sidecar (gets dropped)
+                "ComicInfo.xml",            // root sidecar (replaced)
+            ],
+        );
+
+        let limits = ArchiveLimits::default();
+        let mut src = Cbz::open(&src_path, limits).unwrap();
+        // Snapshot the must-survive set exactly as `rewrite_one_issue` does.
+        let source_names: Vec<String> = src
+            .entries()
+            .iter()
+            .filter(|e| !archive::cbz::is_rewrite_skipped(&e.name))
+            .map(|e| e.name.clone())
+            .collect();
+        // Only the two real pages are required to survive — neither sidecar.
+        assert_eq!(
+            source_names.len(),
+            2,
+            "sidecars must be filtered out: {source_names:?}"
+        );
+
+        let tmp = dir.path().join("out.cbz.tmp");
+        let mut plan = RebuildPlan::new();
+        plan.set_entry("ComicInfo.xml", b"<ComicInfo/>".to_vec());
+        plan.set_entry("MetronInfo.xml", b"<MetronInfo/>".to_vec());
+        rebuild(&mut src, plan, &tmp, limits).unwrap();
+        drop(src);
+
+        validate_rewrite(&tmp, &source_names, limits)
+            .expect("a dropped nested/duplicate sidecar must not fail validation");
+
+        // The pages survived; the canonical sidecars landed; the nested
+        // duplicate is gone.
+        let out = Cbz::open(&tmp, limits).unwrap();
+        let names: std::collections::HashSet<&str> =
+            out.entries().iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains("Sub Folder/page-001.jpg"));
+        assert!(names.contains("Sub Folder/page-002.jpg"));
+        assert!(names.contains("ComicInfo.xml"));
+        assert!(names.contains("MetronInfo.xml"));
+        assert!(
+            !names.contains("Sub Folder/ComicInfo.xml"),
+            "stale nested sidecar should be dropped, not preserved"
         );
     }
 }
