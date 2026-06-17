@@ -53,6 +53,7 @@ probe_discovery  # POST /admin/auth/oidc/discover — dry-run OIDC probe; alias
 # ── admin_queue.rs ──────────────────────────────────────────
 queue_depth      # GET /admin/queue/depth — read-only queue depth snapshot
 dead_letters     # GET /admin/queue/dead-letters — read-only dead-letter counts per queue (ZCARD)
+dead_jobs        # GET /admin/queue/dead-jobs — read-only paginated dead-job list (ZREVRANGE + HMGET)
 
 # ── auth_config.rs ──────────────────────────────────────────
 get_config_alt   # (handled above) — keep allow-list consistent

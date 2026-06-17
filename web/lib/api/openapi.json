@@ -1303,6 +1303,135 @@
         }
       }
     },
+    "/api/admin/queue/dead-jobs": {
+      "get": {
+        "operationId": "admin_queue_dead_jobs",
+        "parameters": [
+          {
+            "name": "queue",
+            "in": "query",
+            "description": "Queue label — one of the eleven apalis queues.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeadJobsView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "unknown queue"
+          }
+        }
+      }
+    },
+    "/api/admin/queue/dead-jobs/purge": {
+      "post": {
+        "operationId": "admin_queue_purge_dead_jobs",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeadJobsPurgeReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeadJobsPurgeResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "unknown queue"
+          }
+        }
+      }
+    },
+    "/api/admin/queue/dead-jobs/retry": {
+      "post": {
+        "operationId": "admin_queue_retry_dead_job",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeadJobRetryReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeadJobRetryResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "no dead job with that id"
+          },
+          "422": {
+            "description": "unknown queue or malformed task id"
+          }
+        }
+      }
+    },
     "/api/admin/queue/dead-letters": {
       "get": {
         "operationId": "admin_queue_dead_letters",
@@ -13276,6 +13405,139 @@
           "sessions": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "DeadJob": {
+        "type": "object",
+        "description": "One dead-lettered job surfaced for inspection / retry.",
+        "required": [
+          "task_id",
+          "payload"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The error apalis stored on the final failed attempt."
+          },
+          "failed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix seconds when apalis moved the job to the dead set."
+          },
+          "payload": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The job's `args` payload as opaque JSON, so the UI can show which\nlibrary / issue / series the dead job targeted without per-queue code."
+          },
+          "task_id": {
+            "type": "string",
+            "description": "apalis task id (ULID) — the retry key."
+          }
+        }
+      },
+      "DeadJobRetryReq": {
+        "type": "object",
+        "required": [
+          "queue",
+          "task_id"
+        ],
+        "properties": {
+          "queue": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          }
+        }
+      },
+      "DeadJobRetryResp": {
+        "type": "object",
+        "required": [
+          "queue",
+          "task_id",
+          "retried"
+        ],
+        "properties": {
+          "queue": {
+            "type": "string"
+          },
+          "retried": {
+            "type": "boolean"
+          },
+          "task_id": {
+            "type": "string"
+          }
+        }
+      },
+      "DeadJobsPurgeReq": {
+        "type": "object",
+        "required": [
+          "queue"
+        ],
+        "properties": {
+          "queue": {
+            "type": "string"
+          }
+        }
+      },
+      "DeadJobsPurgeResp": {
+        "type": "object",
+        "required": [
+          "queue",
+          "purged"
+        ],
+        "properties": {
+          "purged": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "queue": {
+            "type": "string"
+          }
+        }
+      },
+      "DeadJobsView": {
+        "type": "object",
+        "required": [
+          "queue",
+          "jobs",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeadJob"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "page_size": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "queue": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total dead jobs in the queue — the list pages, it never silently caps."
           }
         }
       },

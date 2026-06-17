@@ -6,8 +6,11 @@
 //! `HLEN(job_data_hash) - ZCOUNT(done_jobs_set)` — i.e., all jobs minus
 //! finished ones. In-flight jobs are still counted as pending.
 
-use apalis::prelude::Storage;
-use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
+use std::str::FromStr;
+
+use apalis::prelude::{Storage, TaskId};
+use axum::{Extension, Json, extract::Query, http::StatusCode, response::IntoResponse};
+use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -24,7 +27,28 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(queue_depth))
         .routes(routes!(dead_letters))
         .routes(routes!(clear_queue))
+        .routes(routes!(dead_jobs))
+        .routes(routes!(retry_dead_job))
+        .routes(routes!(purge_dead_jobs))
 }
+
+/// The eleven apalis queue labels, matching the keys in
+/// [`crate::jobs::JobRuntime::dead_letter_counts`]. The dead-job list / retry
+/// / purge endpoints validate their `queue` arg against this set so a typo
+/// returns 422 instead of silently operating on a non-existent key.
+const DEAD_QUEUES: &[&str] = &[
+    "scan",
+    "scan_series",
+    "post_scan_thumbs",
+    "post_scan_search",
+    "post_scan_dictionary",
+    "metadata_search_series",
+    "metadata_search_issue",
+    "metadata_apply_series",
+    "metadata_apply_issue",
+    "rewrite_issue_sidecars",
+    "archive_edit",
+];
 
 #[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
 pub struct QueueDepthView {
@@ -215,6 +239,391 @@ pub async fn clear_queue(
         running_jobs_may_finish: before.total > after.total,
     })
     .into_response()
+}
+
+// ───────────────────────── dead-job inspection (D8b) ─────────────────────────
+//
+// apalis moves a job to `{queue}:dead` after it exhausts its 5 attempts,
+// stamping the kill time as the ZSET score and the final error into a
+// `{queue}:data::result` hash. `dead_letters` already surfaces the per-queue
+// COUNT; these endpoints let an operator see the individual failures and
+// either retry one (re-enqueue a fresh copy via the typed storage) or purge
+// the queue's dead set. "Manual retry + retention" — dead jobs are kept until
+// an operator acts, never auto-discarded.
+
+/// One dead-lettered job surfaced for inspection / retry.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeadJob {
+    /// apalis task id (ULID) — the retry key.
+    pub task_id: String,
+    /// Unix seconds when apalis moved the job to the dead set.
+    pub failed_at: Option<i64>,
+    /// The error apalis stored on the final failed attempt.
+    pub error: Option<String>,
+    /// The job's `args` payload as opaque JSON, so the UI can show which
+    /// library / issue / series the dead job targeted without per-queue code.
+    #[schema(value_type = Object, nullable = true)]
+    pub payload: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeadJobsView {
+    pub queue: String,
+    pub jobs: Vec<DeadJob>,
+    /// Total dead jobs in the queue — the list pages, it never silently caps.
+    pub total: i64,
+    pub page: u32,
+    pub page_size: u32,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct DeadJobsQuery {
+    /// Queue label — one of the eleven apalis queues.
+    pub queue: String,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct DeadJobRetryReq {
+    pub queue: String,
+    pub task_id: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeadJobRetryResp {
+    pub queue: String,
+    pub task_id: String,
+    pub retried: bool,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct DeadJobsPurgeReq {
+    pub queue: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeadJobsPurgeResp {
+    pub queue: String,
+    pub purged: usize,
+}
+
+#[utoipa::path(
+    operation_id = "admin_queue_dead_jobs", get,
+    path = "/admin/queue/dead-jobs",
+    params(DeadJobsQuery),
+    responses(
+        (status = 200, body = DeadJobsView),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "unknown queue"),
+    )
+)]
+#[handler]
+pub async fn dead_jobs(
+    axum::extract::State(app): axum::extract::State<AppState>,
+    _admin: RequireAdmin,
+    Query(q): Query<DeadJobsQuery>,
+) -> impl IntoResponse {
+    let Some((dead_set, data_hash)) = dead_keys(&app, &q.queue) else {
+        return unknown_queue(&q.queue);
+    };
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
+    let offset = (i64::from(page) - 1) * i64::from(page_size);
+    match list_dead(&app, &dead_set, &data_hash, offset, i64::from(page_size)).await {
+        Ok((jobs, total)) => Json(DeadJobsView {
+            queue: q.queue,
+            jobs,
+            total,
+            page,
+            page_size,
+        })
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, queue = %q.queue, "dead_jobs: redis read failed");
+            internal()
+        }
+    }
+}
+
+#[utoipa::path(
+    operation_id = "admin_queue_retry_dead_job", post,
+    path = "/admin/queue/dead-jobs/retry",
+    request_body = DeadJobRetryReq,
+    responses(
+        (status = 200, body = DeadJobRetryResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "no dead job with that id"),
+        (status = 422, description = "unknown queue or malformed task id"),
+    )
+)]
+#[handler]
+pub async fn retry_dead_job(
+    axum::extract::State(app): axum::extract::State<AppState>,
+    admin: RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<DeadJobRetryReq>,
+) -> impl IntoResponse {
+    if !DEAD_QUEUES.contains(&req.queue.as_str()) {
+        return unknown_queue(&req.queue);
+    }
+    if TaskId::from_str(&req.task_id).is_err() {
+        return super::error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_task_id",
+            "task_id is not a valid job id",
+        );
+    }
+    match retry_one(&app, &req.queue, &req.task_id).await {
+        Ok(true) => {
+            audit::record(
+                &app.db,
+                AuditEntry {
+                    actor_id: admin.0.id,
+                    action: "admin.queue.job.retry",
+                    target_type: Some("queue_job"),
+                    target_id: Some(req.task_id.clone()),
+                    payload: serde_json::json!({ "queue": req.queue, "task_id": req.task_id }),
+                    ip: ctx.ip_string(),
+                    user_agent: ctx.user_agent.clone(),
+                },
+            )
+            .await;
+            Json(DeadJobRetryResp {
+                queue: req.queue,
+                task_id: req.task_id,
+                retried: true,
+            })
+            .into_response()
+        }
+        Ok(false) => super::error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no dead job with that id in this queue",
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, queue = %req.queue, "retry_dead_job failed");
+            internal()
+        }
+    }
+}
+
+#[utoipa::path(
+    operation_id = "admin_queue_purge_dead_jobs", post,
+    path = "/admin/queue/dead-jobs/purge",
+    request_body = DeadJobsPurgeReq,
+    responses(
+        (status = 200, body = DeadJobsPurgeResp),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "unknown queue"),
+    )
+)]
+#[handler]
+pub async fn purge_dead_jobs(
+    axum::extract::State(app): axum::extract::State<AppState>,
+    admin: RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<DeadJobsPurgeReq>,
+) -> impl IntoResponse {
+    let Some((dead_set, data_hash)) = dead_keys(&app, &req.queue) else {
+        return unknown_queue(&req.queue);
+    };
+    match purge_dead(&app, &dead_set, &data_hash).await {
+        Ok(purged) => {
+            audit::record(
+                &app.db,
+                AuditEntry {
+                    actor_id: admin.0.id,
+                    action: "admin.queue.dead.purge",
+                    target_type: Some("queue"),
+                    target_id: Some(req.queue.clone()),
+                    payload: serde_json::json!({ "queue": req.queue, "purged": purged }),
+                    ip: ctx.ip_string(),
+                    user_agent: ctx.user_agent.clone(),
+                },
+            )
+            .await;
+            Json(DeadJobsPurgeResp {
+                queue: req.queue,
+                purged,
+            })
+            .into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, queue = %req.queue, "purge_dead_jobs failed");
+            internal()
+        }
+    }
+}
+
+/// `(dead_jobs_set, job_data_hash)` Redis keys for a queue label, resolved from
+/// each typed storage's apalis `Config` so they track the lib's key scheme.
+/// `None` for an unknown label.
+fn dead_keys(app: &AppState, queue: &str) -> Option<(String, String)> {
+    let j = &app.jobs;
+    macro_rules! keys {
+        ($s:expr) => {
+            Some((
+                $s.get_config().dead_jobs_set(),
+                $s.get_config().job_data_hash(),
+            ))
+        };
+    }
+    match queue {
+        "scan" => keys!(j.scan_storage),
+        "scan_series" => keys!(j.scan_series_storage),
+        "post_scan_thumbs" => keys!(j.post_scan_thumbs_storage),
+        "post_scan_search" => keys!(j.post_scan_search_storage),
+        "post_scan_dictionary" => keys!(j.post_scan_dictionary_storage),
+        "metadata_search_series" => keys!(j.metadata_search_series_storage),
+        "metadata_search_issue" => keys!(j.metadata_search_issue_storage),
+        "metadata_apply_series" => keys!(j.metadata_apply_series_storage),
+        "metadata_apply_issue" => keys!(j.metadata_apply_issue_storage),
+        "rewrite_issue_sidecars" => keys!(j.rewrite_issue_sidecars_storage),
+        "archive_edit" => keys!(j.archive_edit_storage),
+        _ => None,
+    }
+}
+
+/// Read one page of a queue's dead set, newest-killed first. Type-erased: the
+/// payload is the stored `Request`'s `args` sub-object as opaque JSON, so no
+/// per-queue code is needed to list any of the eleven queues.
+async fn list_dead(
+    app: &AppState,
+    dead_set: &str,
+    data_hash: &str,
+    offset: i64,
+    limit: i64,
+) -> redis::RedisResult<(Vec<DeadJob>, i64)> {
+    let mut conn = app.jobs.redis.clone();
+    let total: i64 = conn.zcard(dead_set).await?;
+    if total == 0 || limit <= 0 {
+        return Ok((Vec::new(), total));
+    }
+    let stop = offset + limit - 1;
+    let pairs: Vec<(String, i64)> = conn
+        .zrevrange_withscores(dead_set, offset as isize, stop as isize)
+        .await?;
+    if pairs.is_empty() {
+        return Ok((Vec::new(), total));
+    }
+    let ids: Vec<String> = pairs.iter().map(|(id, _)| id.clone()).collect();
+    let result_hash = format!("{data_hash}::result");
+    let blobs: Vec<Option<String>> = redis::cmd("HMGET")
+        .arg(data_hash)
+        .arg(&ids)
+        .query_async(&mut conn)
+        .await?;
+    let errors: Vec<Option<String>> = redis::cmd("HMGET")
+        .arg(&result_hash)
+        .arg(&ids)
+        .query_async(&mut conn)
+        .await?;
+    let jobs = pairs
+        .into_iter()
+        .enumerate()
+        .map(|(i, (task_id, score))| {
+            let payload = blobs
+                .get(i)
+                .and_then(|b| b.as_deref())
+                .and_then(|b| serde_json::from_str::<serde_json::Value>(b).ok())
+                .and_then(|v| v.get("args").cloned());
+            let error = errors.get(i).and_then(Clone::clone);
+            DeadJob {
+                task_id,
+                failed_at: Some(score),
+                error,
+                payload,
+            }
+        })
+        .collect();
+    Ok((jobs, total))
+}
+
+/// Re-enqueue a single dead job. Robust by construction: it fetches the typed
+/// job via apalis `fetch_by_id` and `push`es a fresh copy (new task id, attempt
+/// counter reset to 0) so the retry doesn't instantly re-die on the exhausted
+/// counter — then drops the old dead entry. Returns `false` when the id isn't
+/// actually in the queue's dead set (so a stale id can't double-enqueue a live
+/// job).
+async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result<bool> {
+    let Some((dead_set, data_hash)) = dead_keys(app, queue) else {
+        return Ok(false);
+    };
+    let mut conn = app.jobs.redis.clone();
+    let score: Option<i64> = conn.zscore(&dead_set, task_id).await?;
+    if score.is_none() {
+        return Ok(false);
+    }
+    let tid = TaskId::from_str(task_id)?;
+    macro_rules! try_retry {
+        ($s:expr) => {{
+            let mut st = $s.clone();
+            match st.fetch_by_id(&tid).await? {
+                Some(req) => {
+                    st.push(req.args).await?;
+                    true
+                }
+                None => false,
+            }
+        }};
+    }
+    let pushed = match queue {
+        "scan" => try_retry!(app.jobs.scan_storage),
+        "scan_series" => try_retry!(app.jobs.scan_series_storage),
+        "post_scan_thumbs" => try_retry!(app.jobs.post_scan_thumbs_storage),
+        "post_scan_search" => try_retry!(app.jobs.post_scan_search_storage),
+        "post_scan_dictionary" => try_retry!(app.jobs.post_scan_dictionary_storage),
+        "metadata_search_series" => try_retry!(app.jobs.metadata_search_series_storage),
+        "metadata_search_issue" => try_retry!(app.jobs.metadata_search_issue_storage),
+        "metadata_apply_series" => try_retry!(app.jobs.metadata_apply_series_storage),
+        "metadata_apply_issue" => try_retry!(app.jobs.metadata_apply_issue_storage),
+        "rewrite_issue_sidecars" => try_retry!(app.jobs.rewrite_issue_sidecars_storage),
+        "archive_edit" => try_retry!(app.jobs.archive_edit_storage),
+        _ => return Ok(false),
+    };
+    if !pushed {
+        return Ok(false);
+    }
+    let result_hash = format!("{data_hash}::result");
+    let _: () = redis::pipe()
+        .zrem(&dead_set, task_id)
+        .ignore()
+        .hdel(&data_hash, task_id)
+        .ignore()
+        .hdel(&result_hash, task_id)
+        .ignore()
+        .query_async(&mut conn)
+        .await?;
+    Ok(true)
+}
+
+/// Drop every dead job in a queue (member ids + their data + result rows).
+/// Returns the count removed.
+async fn purge_dead(app: &AppState, dead_set: &str, data_hash: &str) -> redis::RedisResult<usize> {
+    let mut conn = app.jobs.redis.clone();
+    let ids: Vec<String> = conn.zrange(dead_set, 0, -1).await?;
+    let n = ids.len();
+    if n == 0 {
+        return Ok(0);
+    }
+    let result_hash = format!("{data_hash}::result");
+    let mut pipe = redis::pipe();
+    pipe.del(dead_set).ignore();
+    for id in &ids {
+        pipe.hdel(data_hash, id).ignore();
+        pipe.hdel(&result_hash, id).ignore();
+    }
+    let _: () = pipe.query_async(&mut conn).await?;
+    Ok(n)
+}
+
+fn unknown_queue(queue: &str) -> axum::response::Response {
+    super::error(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "unknown_queue",
+        &format!("unknown queue: {queue}"),
+    )
 }
 
 pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDepthView> {

@@ -507,6 +507,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/queue/dead-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_queue_dead_jobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/queue/dead-jobs/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_queue_purge_dead_jobs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/queue/dead-jobs/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["admin_queue_retry_dead_job"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/queue/dead-letters": {
         parameters: {
             query?: never;
@@ -5613,6 +5661,52 @@ export interface components {
             /** Format: int64 */
             sessions: number;
         };
+        /** @description One dead-lettered job surfaced for inspection / retry. */
+        DeadJob: {
+            /** @description The error apalis stored on the final failed attempt. */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description Unix seconds when apalis moved the job to the dead set.
+             */
+            failed_at?: number | null;
+            /**
+             * @description The job's `args` payload as opaque JSON, so the UI can show which
+             *     library / issue / series the dead job targeted without per-queue code.
+             */
+            payload: Record<string, never> | null;
+            /** @description apalis task id (ULID) — the retry key. */
+            task_id: string;
+        };
+        DeadJobRetryReq: {
+            queue: string;
+            task_id: string;
+        };
+        DeadJobRetryResp: {
+            queue: string;
+            retried: boolean;
+            task_id: string;
+        };
+        DeadJobsPurgeReq: {
+            queue: string;
+        };
+        DeadJobsPurgeResp: {
+            purged: number;
+            queue: string;
+        };
+        DeadJobsView: {
+            jobs: components["schemas"]["DeadJob"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            page_size: number;
+            queue: string;
+            /**
+             * Format: int64
+             * @description Total dead jobs in the queue — the list pages, it never silently caps.
+             */
+            total: number;
+        };
         /** @description One queue's dead-letter count (OPS-3 follow-up). */
         DeadLetterCount: {
             /** Format: int64 */
@@ -10408,6 +10502,125 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_queue_dead_jobs: {
+        parameters: {
+            query: {
+                /** @description Queue label — one of the eleven apalis queues. */
+                queue: string;
+                page?: number | null;
+                page_size?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeadJobsView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown queue */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_queue_purge_dead_jobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeadJobsPurgeReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeadJobsPurgeResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown queue */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_queue_retry_dead_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeadJobRetryReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeadJobRetryResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no dead job with that id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown queue or malformed task id */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

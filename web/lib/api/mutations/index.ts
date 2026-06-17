@@ -63,6 +63,10 @@ import type {
   PreferencesReq,
   QueueClearReq,
   QueueClearResp,
+  DeadJobRetryReq,
+  DeadJobRetryResp,
+  DeadJobsPurgeReq,
+  DeadJobsPurgeResp,
   ProgressView,
   RatingView,
   SavedViewListView,
@@ -758,6 +762,50 @@ export function useClearQueue() {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.queueDepth });
         qc.invalidateQueries({ queryKey: ["admin", "libraries"] });
+      },
+    },
+  );
+}
+
+/**
+ * `POST /admin/queue/dead-jobs/retry`. Re-enqueues a single dead-lettered job
+ * as a fresh copy (attempt counter reset) and drops the old dead entry.
+ */
+export function useRetryDeadJob() {
+  const qc = useQueryClient();
+  return useApiMutation<DeadJobRetryResp, DeadJobRetryReq>(
+    (body) => ({ path: "/admin/queue/dead-jobs/retry", method: "POST", body }),
+    {
+      successMessage: () => "Job re-enqueued",
+      onSuccess: (_data, input) => {
+        qc.invalidateQueries({ queryKey: queryKeys.deadLetters });
+        qc.invalidateQueries({
+          queryKey: ["admin", "queue", "dead-jobs", input.queue],
+        });
+        qc.invalidateQueries({ queryKey: queryKeys.queueDepth });
+      },
+    },
+  );
+}
+
+/**
+ * `POST /admin/queue/dead-jobs/purge`. Clears a queue's entire dead set — the
+ * retention override for failures an operator has decided not to retry.
+ */
+export function usePurgeDeadJobs() {
+  const qc = useQueryClient();
+  return useApiMutation<DeadJobsPurgeResp, DeadJobsPurgeReq>(
+    (body) => ({ path: "/admin/queue/dead-jobs/purge", method: "POST", body }),
+    {
+      successMessage: (data) =>
+        `Cleared ${data?.purged ?? 0} failed job${
+          (data?.purged ?? 0) === 1 ? "" : "s"
+        }`,
+      onSuccess: (_data, input) => {
+        qc.invalidateQueries({ queryKey: queryKeys.deadLetters });
+        qc.invalidateQueries({
+          queryKey: ["admin", "queue", "dead-jobs", input.queue],
+        });
       },
     },
   );
