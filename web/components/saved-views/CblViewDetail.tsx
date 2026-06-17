@@ -56,6 +56,7 @@ import {
   useCreateSavedViewBatch,
   useRefreshCblList,
 } from "@/lib/api/mutations";
+import { skippedEntryIds } from "@/lib/library/bulk-archive-skips";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
@@ -685,6 +686,22 @@ function CblViewDetailInner({
             if (!next) selection.clear();
           }}
           issueIds={selectedIssueIds}
+          onResult={(res) => {
+            setArchiveEditOpen(false);
+            if (res.skipped.length > 0) {
+              selection.replace(
+                skippedEntryIds(
+                  res.skipped,
+                  loadedEntries.map((e) => ({
+                    entryId: e.id,
+                    issueId: e.issue?.id,
+                  })),
+                ),
+              );
+            } else {
+              selection.clear();
+            }
+          }}
         />
       )}
     </div>

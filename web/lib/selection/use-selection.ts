@@ -29,6 +29,9 @@ import * as React from "react";
  *     iterable is paginated via `useInfiniteQuery`, the caller
  *     is responsible for walking pages before calling.
  *   - `clear()` — empty the selection; stays in select mode.
+ *   - `replace(ids)` — swap the selection for an explicit id set,
+ *     staying in select mode (used to keep just the skipped items
+ *     selected after a partial bulk action).
  *   - `exit()` — leave select mode entirely. Distinct from
  *     `clear` so the toolbar can offer both affordances on
  *     mobile (no `Esc` key).
@@ -99,6 +102,15 @@ export function useSelection<T extends { id: string }>(items: T[]) {
     anchorRef.current = null;
   }, []);
 
+  // Replace the selection with an explicit id set, staying in select mode.
+  // Used after a partial bulk action to keep just the leftover (e.g.
+  // skipped) items selected so the operator can fix + retry them.
+  const replace = React.useCallback((ids: readonly string[]) => {
+    setSelected(new Set(ids));
+    setSelectMode(true);
+    anchorRef.current = null;
+  }, []);
+
   const exit = React.useCallback(() => {
     setSelected(new Set());
     setSelectMode(false);
@@ -138,6 +150,7 @@ export function useSelection<T extends { id: string }>(items: T[]) {
     selectAll,
     enter,
     clear,
+    replace,
     exit,
   };
 }
