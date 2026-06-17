@@ -48,6 +48,7 @@ const DEAD_QUEUES: &[&str] = &[
     "metadata_apply_issue",
     "rewrite_issue_sidecars",
     "archive_edit",
+    "backfill",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
@@ -59,6 +60,8 @@ pub struct QueueDepthView {
     pub post_scan_dictionary: i64,
     /// Pending archive page-edit jobs (single + bulk; M7).
     pub archive_edit: i64,
+    /// Pending backfill drains (cover-phash / variant-cover; B17).
+    pub backfill: i64,
     /// Sum across all queues — convenient for the topbar pill.
     pub total: i64,
 }
@@ -481,6 +484,7 @@ fn dead_keys(app: &AppState, queue: &str) -> Option<(String, String)> {
         "metadata_apply_issue" => keys!(j.metadata_apply_issue_storage),
         "rewrite_issue_sidecars" => keys!(j.rewrite_issue_sidecars_storage),
         "archive_edit" => keys!(j.archive_edit_storage),
+        "backfill" => keys!(j.backfill_storage),
         _ => None,
     }
 }
@@ -580,6 +584,7 @@ async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result
         "metadata_apply_issue" => try_retry!(app.jobs.metadata_apply_issue_storage),
         "rewrite_issue_sidecars" => try_retry!(app.jobs.rewrite_issue_sidecars_storage),
         "archive_edit" => try_retry!(app.jobs.archive_edit_storage),
+        "backfill" => try_retry!(app.jobs.backfill_storage),
         _ => return Ok(false),
     };
     if !pushed {
@@ -633,17 +638,20 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
     let mut search = app.jobs.post_scan_search_storage.clone();
     let mut dictionary = app.jobs.post_scan_dictionary_storage.clone();
     let mut archive_edit = app.jobs.archive_edit_storage.clone();
+    let mut backfill = app.jobs.backfill_storage.clone();
 
-    let (scan_n, scan_series_n, thumbs_n, search_n, dictionary_n, archive_edit_n) = tokio::try_join!(
+    let (scan_n, scan_series_n, thumbs_n, search_n, dictionary_n, archive_edit_n, backfill_n) = tokio::try_join!(
         scan.len(),
         scan_series.len(),
         thumbs.len(),
         search.len(),
         dictionary.len(),
         archive_edit.len(),
+        backfill.len(),
     )?;
 
-    let total = scan_n + scan_series_n + thumbs_n + search_n + dictionary_n + archive_edit_n;
+    let total =
+        scan_n + scan_series_n + thumbs_n + search_n + dictionary_n + archive_edit_n + backfill_n;
     Ok(QueueDepthView {
         scan: scan_n,
         scan_series: scan_series_n,
@@ -651,6 +659,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         post_scan_search: search_n,
         post_scan_dictionary: dictionary_n,
         archive_edit: archive_edit_n,
+        backfill: backfill_n,
         total,
     })
 }

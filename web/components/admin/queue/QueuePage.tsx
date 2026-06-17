@@ -72,6 +72,7 @@ const QUEUE_LABELS: { key: string; label: string }[] = [
   { key: "post_scan_search", label: "Search index" },
   { key: "post_scan_dictionary", label: "Dictionary" },
   { key: "archive_edit", label: "Archive edits" },
+  { key: "backfill", label: "Backfills" },
 ];
 
 /** Friendly labels for every apalis queue (incl. the metadata + sidecar
@@ -88,6 +89,7 @@ const QUEUE_LABEL_MAP: Record<string, string> = {
   metadata_apply_issue: "Metadata apply (issue)",
   rewrite_issue_sidecars: "Sidecar rewrite",
   archive_edit: "Archive edits",
+  backfill: "Backfills",
 };
 
 function queueLabel(key: string): string {

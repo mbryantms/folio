@@ -127,6 +127,16 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
     expected: [],
   },
   {
+    // Backfill drain finished → refresh queue depth + metadata dashboard.
+    evt: {
+      type: "backfill.completed",
+      kind: "cover_phash",
+      processed: 12,
+      skipped: 1,
+    },
+    expected: [queryKeys.queueDepth, queryKeys.adminMetadataDashboard],
+  },
+  {
     // Dropped events → broad recovery sweep over every WS-driven cache.
     evt: { type: "lagged", skipped: 5 },
     expected: [["libraries"], ["admin"], ["series"], ["issues"]],

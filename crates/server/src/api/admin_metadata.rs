@@ -31,6 +31,7 @@ use uuid::Uuid;
 use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
+use crate::jobs::backfill::{self, BackfillKind};
 use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::identifier::Source;
 use crate::metadata::metron::MetronClient;
@@ -952,22 +953,61 @@ fn resolve_apply_label(
 
 // ───────── /admin/metadata/phash-backfill ─────────
 
-/// Optional `?limit=` for [`run_phash_backfill`]. The admin UI drives the
-/// drain in small batches so each request returns well before a reverse
-/// proxy timeout; omit for the legacy 500-per-call default.
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-pub struct PhashBackfillQuery {
-    #[serde(default)]
-    pub limit: Option<u32>,
+/// Response for the backfill-trigger endpoints (audit B17). The sweep now
+/// runs as a background apalis job; `enqueued` reports that the job was
+/// accepted. Progress + the final tally arrive over the scan-events WS as a
+/// `backfill.completed` event, and the queue depth surfaces it while pending.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BackfillEnqueuedResp {
+    pub enqueued: bool,
+    /// `cover_phash` | `variant_cover`.
+    pub kind: String,
+}
+
+async fn enqueue_backfill(
+    app: &AppState,
+    actor_id: Uuid,
+    ctx: &RequestContext,
+    kind: BackfillKind,
+    action: &'static str,
+) -> Response {
+    let enqueued = backfill::enqueue(app, kind).await;
+    if !enqueued {
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "internal",
+            "could not enqueue backfill",
+        );
+    }
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id,
+            action,
+            target_type: None,
+            target_id: None,
+            payload: serde_json::json!({ "kind": kind.as_str(), "enqueued": true }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+    (
+        StatusCode::ACCEPTED,
+        Json(BackfillEnqueuedResp {
+            enqueued: true,
+            kind: kind.as_str().to_owned(),
+        }),
+    )
+        .into_response()
 }
 
 #[utoipa::path(
     operation_id = "metadata_phash_backfill",
     post,
     path = "/admin/metadata/phash-backfill",
-    params(PhashBackfillQuery),
     responses(
-        (status = 200, body = crate::metadata::phash::BackfillOutcome),
+        (status = 202, body = BackfillEnqueuedResp, description = "backfill job enqueued"),
         (status = 403, description = "admin only"),
     )
 )]
@@ -976,39 +1016,15 @@ pub async fn run_phash_backfill(
     State(app): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
-    Query(q): Query<PhashBackfillQuery>,
 ) -> Response {
-    let archive_limits = app.cfg().archive_limits();
-    let batch = q
-        .limit
-        .unwrap_or(crate::metadata::phash::BACKFILL_BATCH_CAP as u32)
-        .clamp(1, crate::metadata::phash::BACKFILL_BATCH_CAP as u32) as u64;
-    let outcome = match crate::metadata::phash::run_backfill(&app.db, archive_limits, batch).await {
-        Ok(o) => o,
-        Err(e) => {
-            tracing::error!(error = %e, "phash backfill: query failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
-    };
-    audit::record(
-        &app.db,
-        AuditEntry {
-            actor_id: actor.id,
-            action: "admin.metadata.phash_backfill",
-            target_type: None,
-            target_id: None,
-            payload: serde_json::json!({
-                "considered": outcome.considered,
-                "hashed": outcome.hashed,
-                "skipped": outcome.skipped,
-                "errored": outcome.errored,
-            }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
-        },
+    enqueue_backfill(
+        &app,
+        actor.id,
+        &ctx,
+        BackfillKind::CoverPhash,
+        "admin.metadata.phash_backfill",
     )
-    .await;
-    Json(outcome).into_response()
+    .await
 }
 
 // ───────── /admin/metadata/variant-cover-backfill ─────────
@@ -1018,7 +1034,7 @@ pub async fn run_phash_backfill(
     post,
     path = "/admin/metadata/variant-cover-backfill",
     responses(
-        (status = 200, body = crate::metadata::writers::VariantCoverBackfillOutcome),
+        (status = 202, body = BackfillEnqueuedResp, description = "backfill job enqueued"),
         (status = 403, description = "admin only"),
     )
 )]
@@ -1028,33 +1044,14 @@ pub async fn run_variant_cover_backfill(
     RequireAdmin(actor): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
 ) -> Response {
-    let data_path = app.cfg().data_path.clone();
-    let outcome =
-        match crate::metadata::writers::run_variant_cover_backfill(&app.db, &data_path).await {
-            Ok(o) => o,
-            Err(e) => {
-                tracing::error!(error = %e, "variant cover backfill: query failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        };
-    audit::record(
-        &app.db,
-        AuditEntry {
-            actor_id: actor.id,
-            action: "admin.metadata.variant_cover_backfill",
-            target_type: None,
-            target_id: None,
-            payload: serde_json::json!({
-                "considered": outcome.considered,
-                "stored": outcome.stored,
-                "skipped": outcome.skipped,
-            }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
-        },
+    enqueue_backfill(
+        &app,
+        actor.id,
+        &ctx,
+        BackfillKind::VariantCover,
+        "admin.metadata.variant_cover_backfill",
     )
-    .await;
-    Json(outcome).into_response()
+    .await
 }
 
 // ───────── GET /admin/metadata/auto-synced ─────────

@@ -692,6 +692,7 @@ pub async fn refresh_job_queue_depth_gauges(state: &AppState) {
             set("post_scan_search", q.post_scan_search);
             set("post_scan_dictionary", q.post_scan_dictionary);
             set("archive_edit", q.archive_edit);
+            set("backfill", q.backfill);
         }
         Err(e) => tracing::warn!(error = %e, "job-queue depth gauge refresh failed"),
     }

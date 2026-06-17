@@ -27,6 +27,7 @@ use uuid::Uuid;
 
 pub mod archive_edit;
 pub mod archive_transforms;
+pub mod backfill;
 pub mod close_dangling_sessions;
 pub mod metadata_apply;
 pub mod metadata_resume;
@@ -57,6 +58,7 @@ pub struct JobRuntime {
     pub metadata_apply_issue_storage: RedisStorage<metadata_apply::ApplyIssueJob>,
     pub rewrite_issue_sidecars_storage: RedisStorage<rewrite_sidecars::RewriteIssueSidecarsJob>,
     pub archive_edit_storage: RedisStorage<archive_edit::ArchiveEditJob>,
+    pub backfill_storage: RedisStorage<backfill::BackfillJob>,
     pub redis: ConnectionManager,
 }
 
@@ -82,6 +84,7 @@ impl JobRuntime {
         let rewrite_issue_sidecars_storage =
             RedisStorage::<rewrite_sidecars::RewriteIssueSidecarsJob>::new(conn.clone());
         let archive_edit_storage = RedisStorage::<archive_edit::ArchiveEditJob>::new(conn.clone());
+        let backfill_storage = RedisStorage::<backfill::BackfillJob>::new(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -95,6 +98,7 @@ impl JobRuntime {
             metadata_apply_issue_storage,
             rewrite_issue_sidecars_storage,
             archive_edit_storage,
+            backfill_storage,
             redis: conn,
         })
     }
@@ -382,6 +386,16 @@ impl JobRuntime {
             .backend(self.archive_edit_storage.clone())
             .build_fn(archive_edit::handle);
 
+        // Backfill drains — concurrency=1. Each job loops the whole backlog;
+        // serializing keeps one operator-triggered sweep at a time (and a
+        // redundant re-enqueue just queues behind it and finds nothing left).
+        let backfill_worker = WorkerBuilder::new("backfill")
+            .concurrency(1)
+            .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("backfill"))
+            .backend(self.backfill_storage.clone())
+            .build_fn(backfill::handle);
+
         let shutdown_fut = {
             let token = shutdown.clone();
             async move {
@@ -401,6 +415,7 @@ impl JobRuntime {
             .register(metadata_apply_issue_worker)
             .register(rewrite_issue_sidecars_worker)
             .register(archive_edit_worker)
+            .register(backfill_worker)
             // Bound the graceful drain (OPS-3, JOBS-3): without this the monitor
             // waits indefinitely for an in-flight job, so a SIGTERM during a
             // 30-minute scan wouldn't return until the scan finished — past the
@@ -652,7 +667,7 @@ impl JobRuntime {
     /// `{type_name}:dead` and the ZSET shape are unchanged from 0.7 through the
     /// 1.0 release candidates). Returns `(queue_label, count)` for every queue.
     pub async fn dead_letter_counts(&self) -> redis::RedisResult<Vec<(&'static str, i64)>> {
-        let keys: [(&'static str, String); 11] = [
+        let keys: [(&'static str, String); 12] = [
             ("scan", self.scan_storage.get_config().dead_jobs_set()),
             (
                 "scan_series",
@@ -705,6 +720,10 @@ impl JobRuntime {
             (
                 "archive_edit",
                 self.archive_edit_storage.get_config().dead_jobs_set(),
+            ),
+            (
+                "backfill",
+                self.backfill_storage.get_config().dead_jobs_set(),
             ),
         ];
         let mut conn = self.redis.clone();

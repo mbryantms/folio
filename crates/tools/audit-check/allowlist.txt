@@ -127,6 +127,8 @@ recent_applies      # GET /admin/metadata/recent-applies — read-only recent-ap
 # ── admin_metadata.rs (matching-accuracy-1.0 M0) ─────────────
 match_quality       # GET /admin/metadata/match-quality — read-only outcome distribution
 list_auto_synced    # GET /admin/metadata/auto-synced — read-only list of auto-sync-enabled series
+run_phash_backfill          # POST /admin/metadata/phash-backfill — delegates to enqueue_backfill which writes audit_log (B17)
+run_variant_cover_backfill  # POST /admin/metadata/variant-cover-backfill — delegates to enqueue_backfill which writes audit_log (B17)
 
 # ── archive_edit.rs (archive-rewrite-1.0 M2) ─────────────────
 edit                # POST /issues/{id}/archive/edit — enqueues ArchiveEditJob; the worker writes audit_log (admin.issue.archive_edit) on completion

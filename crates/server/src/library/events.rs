@@ -158,6 +158,17 @@ pub enum ScanEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         issue_id: Option<String>,
     },
+    /// A background backfill drain finished (audit B17). `kind` is
+    /// `cover_phash` | `variant_cover`; `processed` is the count that landed
+    /// (hashed / re-downloaded), `skipped` the residual rows that couldn't
+    /// be (undecodable covers / dead provider URLs). Lets the admin
+    /// dashboard card report the result of the now-async sweep.
+    #[serde(rename = "backfill.completed")]
+    BackfillCompleted {
+        kind: String,
+        processed: u64,
+        skipped: u64,
+    },
 }
 
 impl ScanEvent {
@@ -173,6 +184,9 @@ impl ScanEvent {
             | Self::ThumbsCompleted { library_id, .. }
             | Self::ThumbsFailed { library_id, .. }
             | Self::MetadataApplied { library_id, .. } => *library_id,
+            // Library-agnostic; only reached via the SeriesUpdated-guarded
+            // throttle, so this arm is never hit at runtime.
+            Self::BackfillCompleted { .. } => Uuid::nil(),
         }
     }
 }
