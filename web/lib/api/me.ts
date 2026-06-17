@@ -1,5 +1,3 @@
-import "server-only";
-
 import { cache } from "react";
 
 import { apiGet } from "@/lib/api/fetch";
