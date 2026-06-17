@@ -517,14 +517,18 @@ function ResolutionTab({
   // IntersectionObserver sentinel — works because Resolution scrolls
   // its outer TabsContent rather than running a virtualizer.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  // Depend on the three fields, not the whole query object — TanStack
+  // returns a fresh object identity each render, so `[query]` tore the
+  // observer down and rebuilt it on every render (audit G10).
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          if (query.hasNextPage && !query.isFetchingNextPage) {
-            void query.fetchNextPage();
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
           }
         }
       },
@@ -532,7 +536,7 @@ function ResolutionTab({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [query]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   if (stats.ambiguous + stats.missing === 0) {
     return (

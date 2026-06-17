@@ -174,14 +174,21 @@ function CblViewDetailInner({
   // fetch the next page. Matches the pattern in IssuesPanel +
   // ResolutionTab so behavior stays consistent across surfaces.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  // Depend on the three fields, not the whole query object (audit G10) —
+  // `[entriesQuery]` rebuilt the observer every render.
+  const {
+    hasNextPage: entriesHasNext,
+    isFetchingNextPage: entriesFetchingNext,
+    fetchNextPage: entriesFetchNext,
+  } = entriesQuery;
   React.useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          if (entriesQuery.hasNextPage && !entriesQuery.isFetchingNextPage) {
-            void entriesQuery.fetchNextPage();
+          if (entriesHasNext && !entriesFetchingNext) {
+            void entriesFetchNext();
           }
         }
       },
@@ -189,7 +196,7 @@ function CblViewDetailInner({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [entriesQuery]);
+  }, [entriesHasNext, entriesFetchingNext, entriesFetchNext]);
 
   // Hooks must run unconditionally — keep them above the early
   // returns and use empty arrays for selection-relevant state while
