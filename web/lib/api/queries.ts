@@ -1363,7 +1363,10 @@ export function usePeopleSearch(filters: PeopleSearchFilters = {}) {
  *  A11). Cursor-paginated so the directory never silently truncates —
  *  the `/people` search hook above can't browse-all (empty `q` returns
  *  nothing), so this is its own endpoint. `total` rides the first page. */
-export function useCreatorsInfinite(filters: CreatorsListFilters = {}) {
+export function useCreatorsInfinite(
+  filters: CreatorsListFilters = {},
+  options: { enabled?: boolean } = {},
+) {
   const rest = stripCursor(filters);
   return useInfiniteQuery({
     queryKey: queryKeys.creatorsList(filters),
@@ -1373,6 +1376,9 @@ export function useCreatorsInfinite(filters: CreatorsListFilters = {}) {
         `/creators${buildQuery({ ...rest, cursor: pageParam })}`,
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
+    // Idle (but mounted) while the page is in search mode — keeps hook
+    // order stable without firing the browse fetch.
+    enabled: options.enabled ?? true,
     // Back-nav from a creator detail page restores the windowed grid +
     // scroll position from cache (audit B15 / G1), same as series list.
     gcTime: 30 * 60_000,
