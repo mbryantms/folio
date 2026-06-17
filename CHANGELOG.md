@@ -13,6 +13,32 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.18.0](https://github.com/mbryantms/folio/compare/v0.17.0...v0.18.0) (2026-06-17)
+
+
+### Added
+
+* **collections:** CBL export endpoint (3.3c) ([#249](https://github.com/mbryantms/folio/issues/249)) ([509d29b](https://github.com/mbryantms/folio/commit/509d29b79088c46779844e5d71a1606ea30b845c))
+* **creators:** search box on the browse index (web-only follow-up) ([#256](https://github.com/mbryantms/folio/issues/256)) ([890a936](https://github.com/mbryantms/folio/commit/890a9367f96c275377a029def0d042a2dbf8d43c))
+* **library:** copy-link / share affordances (3.3a) ([#246](https://github.com/mbryantms/folio/issues/246)) ([0a2b306](https://github.com/mbryantms/folio/commit/0a2b306b66bb2972a7dfb4f0bdae6bd0a3625625))
+* **library:** inline single-field metadata edit on the issue Details tab (3.4/B12) ([#255](https://github.com/mbryantms/folio/issues/255)) ([85dad93](https://github.com/mbryantms/folio/commit/85dad934b043175cb02720d32c393c043ac4fb72))
+* **library:** paginated creators browse index + sidebar entry (3.4/A11) ([#250](https://github.com/mbryantms/folio/issues/250)) ([2936742](https://github.com/mbryantms/folio/commit/29367425b8cacd95b0ff912b81bd1c6ae977b278))
+* **reading-log:** CSV export endpoint (3.3b) ([#247](https://github.com/mbryantms/folio/issues/247)) ([d6536e1](https://github.com/mbryantms/folio/commit/d6536e16b3757c5be8ffdef8457e6bb0b46eec46))
+* **search/browse:** A–Z jump rail (starts_with) on library grid + creators (3.4/B9) ([#253](https://github.com/mbryantms/folio/issues/253)) ([2b1532b](https://github.com/mbryantms/folio/commit/2b1532be12ed7be504df03fbda76fb33e5787da2))
+* **search:** read-status facet on issue results (3.4) ([#252](https://github.com/mbryantms/folio/issues/252)) ([af1d80d](https://github.com/mbryantms/folio/commit/af1d80d49d207c30c6f70e3316ccb4e027ee499a))
+* **search:** trigram typo-tolerance on issue search (3.4/B7) ([#254](https://github.com/mbryantms/folio/issues/254)) ([fe76957](https://github.com/mbryantms/folio/commit/fe76957c407e297882937028ce4e010560e2ad1c))
+
+
+### Fixed
+
+* **saved-views:** infinite-scroll the filter-view detail page (built-in views) ([#257](https://github.com/mbryantms/folio/issues/257)) ([32e9b57](https://github.com/mbryantms/folio/commit/32e9b57be6c49c408519ae6432938dbefc1f6a0c))
+
+
+### Changed
+
+* **web:** seed the SSR me + sidebar payloads into the query cache (G7) ([#258](https://github.com/mbryantms/folio/issues/258)) ([a1ddead](https://github.com/mbryantms/folio/commit/a1ddead42257c5ebb7a435dc1533d73e5669b73e))
+* **web:** stop rebuilding infinite-scroll observers every render (G10) ([#259](https://github.com/mbryantms/folio/issues/259)) ([e0fb05b](https://github.com/mbryantms/folio/commit/e0fb05b46d8e0d449c344522db3e75bb3cf8ddba))
+
 ## [0.17.0](https://github.com/mbryantms/folio/compare/v0.16.0...v0.17.0) (2026-06-16)
 
 
