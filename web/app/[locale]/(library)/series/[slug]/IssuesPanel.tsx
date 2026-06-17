@@ -49,6 +49,7 @@ import {
   useCreateSeriesSelectionBatch,
 } from "@/lib/api/mutations";
 import { useMe, useSeriesIssuesInfinite } from "@/lib/api/queries";
+import { skippedIssueIds } from "@/lib/library/bulk-archive-skips";
 import { ISSUE_TEXT_H } from "@/lib/library/grid-window";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
@@ -536,6 +537,15 @@ export function IssuesPanel({
             if (!next) clearSelection();
           }}
           issueIds={Array.from(selection.selected)}
+          onResult={(res) => {
+            setArchiveEditOpen(false);
+            setAllMatchingSelected(false);
+            if (res.skipped.length > 0) {
+              selection.replace(skippedIssueIds(res.skipped));
+            } else {
+              clearSelection();
+            }
+          }}
         />
       )}
       <BulkMarkReadDialog

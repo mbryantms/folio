@@ -72,6 +72,7 @@ import {
   useReorderCollectionEntries,
   useUpdateCollection,
 } from "@/lib/api/mutations";
+import { skippedEntryIds } from "@/lib/library/bulk-archive-skips";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { TOAST } from "@/lib/api/toast-strings";
@@ -543,6 +544,22 @@ export function CollectionViewDetail({
             if (!next) selection.clear();
           }}
           issueIds={selectedIssueIds}
+          onResult={(res) => {
+            setArchiveEditOpen(false);
+            if (res.skipped.length > 0) {
+              selection.replace(
+                skippedEntryIds(
+                  res.skipped,
+                  orderedEntries.map((e) => ({
+                    entryId: e.id,
+                    issueId: e.entry_kind === "issue" ? e.issue?.id : undefined,
+                  })),
+                ),
+              );
+            } else {
+              selection.clear();
+            }
+          }}
         />
       )}
     </div>

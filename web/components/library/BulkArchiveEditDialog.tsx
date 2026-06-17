@@ -22,8 +22,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { summarizeBulkArchiveSkips } from "@/lib/library/bulk-archive-skips";
 import { useBulkArchiveEditMutation } from "@/lib/api/mutations";
-import type { BulkArchiveOp } from "@/lib/api/types";
+import type { BulkArchiveOp, BulkEditResponse } from "@/lib/api/types";
 
 /**
  * "Edit archives…" — `archive-rewrite-1.0` M7.
@@ -37,7 +38,12 @@ import type { BulkArchiveOp } from "@/lib/api/types";
  * Admin-gated at the call site; the server additionally skips issues whose
  * library has writeback disabled or whose format isn't editable, and reports
  * them back as `skipped` — so the summary toast tells the operator exactly
- * how many ran versus were left alone.
+ * how many ran versus were left alone, grouped by reason (audit B17).
+ *
+ * When `onResult` is supplied the caller owns the close + selection: it keeps
+ * the skipped issues selected so the operator can fix the cause and retry,
+ * instead of the whole selection being dropped. Without it the dialog falls
+ * back to closing itself (standalone usage).
  */
 
 type OpKind = "rotate_cover" | "rotate_all" | "remove_first" | "remove_last";
@@ -53,10 +59,17 @@ export function BulkArchiveEditDialog({
   open,
   onOpenChange,
   issueIds,
+  onResult,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   issueIds: string[];
+  /**
+   * Fired after a successful enqueue (in place of `onOpenChange(false)`).
+   * The caller closes the dialog and reconciles the selection — typically
+   * keeping the skipped issues selected for retry. Omit for standalone use.
+   */
+  onResult?: (res: BulkEditResponse) => void;
 }) {
   const [kind, setKind] = React.useState<OpKind>("rotate_cover");
   const [degrees, setDegrees] = React.useState<Degrees>("r180");
@@ -88,21 +101,37 @@ export function BulkArchiveEditDialog({
             onOpenChange(false);
             return;
           }
-          const parts = [
-            `${res.queued} issue${res.queued === 1 ? "" : "s"} queued`,
-          ];
-          if (res.skipped.length > 0) {
-            parts.push(`${res.skipped.length} skipped`);
-          }
+          const skippedCount = res.skipped.length;
+          const reasons = summarizeBulkArchiveSkips(res.skipped);
+          // The caller keeps the skipped issues selected for retry; only
+          // hint at that when it actually does (onResult wired).
+          const retryHint = onResult
+            ? " They stay selected so you can fix the cause and retry."
+            : "";
+
           if (res.queued > 0) {
-            toast.success(`Archive edit: ${parts.join(", ")}`);
+            const title =
+              skippedCount > 0
+                ? `Archive edit: ${res.queued} queued, ${skippedCount} skipped`
+                : `Archive edit: ${res.queued} issue${res.queued === 1 ? "" : "s"} queued`;
+            toast.success(
+              title,
+              skippedCount > 0
+                ? { description: `${reasons}.${retryHint}` }
+                : undefined,
+            );
           } else {
             // Nothing ran — usually writeback disabled / unsupported format.
-            toast.info(
-              `No archives edited (${res.skipped.length} skipped — check library writeback + format)`,
-            );
+            toast.info("No archives edited", {
+              description: `${reasons}.${retryHint}`,
+            });
           }
-          onOpenChange(false);
+
+          if (onResult) {
+            onResult(res);
+          } else {
+            onOpenChange(false);
+          }
         },
       },
     );
@@ -127,7 +156,11 @@ export function BulkArchiveEditDialog({
             className="gap-2"
           >
             <OpRow value="rotate_cover" label="Rotate cover" current={kind} />
-            <OpRow value="rotate_all" label="Rotate every page" current={kind} />
+            <OpRow
+              value="rotate_all"
+              label="Rotate every page"
+              current={kind}
+            />
             <OpRow
               value="remove_first"
               label="Remove first pages"
@@ -152,7 +185,9 @@ export function BulkArchiveEditDialog({
                 max={50}
                 value={count}
                 onChange={(e) =>
-                  setCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))
+                  setCount(
+                    Math.max(1, Math.min(50, Number(e.target.value) || 1)),
+                  )
                 }
                 className="w-20"
               />
