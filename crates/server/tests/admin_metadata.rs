@@ -324,7 +324,7 @@ async fn recent_applies_lists_applied_runs_with_labels() {
     let series_id = SeriesSeed::new(lib, "Saga").insert(db).await;
     let now = chrono::Utc::now().fixed_offset();
 
-    let mut mk = |applied: i32, triggered: Option<uuid::Uuid>, secs_ago: i64| {
+    let mk = |applied: i32, triggered: Option<uuid::Uuid>, secs_ago: i64| {
         entity::metadata_run::ActiveModel {
             id: Set(uuid::Uuid::now_v7()),
             scope: Set("series".into()),

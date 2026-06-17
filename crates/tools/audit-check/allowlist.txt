@@ -122,6 +122,7 @@ list_providers   # GET /admin/metadata/providers — read-only provider status +
 dashboard           # GET /admin/metadata/dashboard — read-only counts + quota
 list_runs           # GET /admin/metadata/runs — paginated run history
 get_run             # GET /admin/metadata/runs/{id} — single run detail
+recent_applies      # GET /admin/metadata/recent-applies — read-only recent-apply summary (B14)
 
 # ── admin_metadata.rs (matching-accuracy-1.0 M0) ─────────────
 match_quality       # GET /admin/metadata/match-quality — read-only outcome distribution
