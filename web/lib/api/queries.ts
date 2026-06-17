@@ -80,6 +80,8 @@ import type {
   LogsResp,
   MeView,
   QueueDepthView,
+  DeadLetterView,
+  DeadJobsView,
   LogWidgetListView,
   ReadingLogFilters,
   ReadingLogPageView,
@@ -843,6 +845,46 @@ export function useQueueDepth(opts?: {
     enabled,
     refetchInterval: intervalMs,
     staleTime: intervalMs,
+  });
+}
+
+/**
+ * Per-queue dead-letter counts — jobs apalis gave up on after exhausting their
+ * attempts. Polled slowly; a non-zero total is the operator's cue to open the
+ * Failed-jobs tab. Admin-only; callers gate on `me.role === "admin"`.
+ */
+export function useDeadLetters(opts?: { enabled?: boolean }) {
+  const { enabled = true } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.deadLetters,
+    queryFn: () => jsonFetch<DeadLetterView>("/admin/queue/dead-letters"),
+    enabled,
+    refetchInterval: 15_000,
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * One page of dead jobs for a single queue, newest-killed first. `total`
+ * drives paging so the list never silently caps. Enabled only once a queue is
+ * selected (the Failed-jobs tab passes the queue the operator drilled into).
+ */
+export function useDeadJobs(
+  queue: string | null,
+  page: number,
+  opts?: { pageSize?: number },
+) {
+  const pageSize = opts?.pageSize ?? 20;
+  return useQuery({
+    queryKey: queryKeys.deadJobs(queue ?? "", page),
+    queryFn: () =>
+      jsonFetch<DeadJobsView>(
+        `/admin/queue/dead-jobs?queue=${encodeURIComponent(
+          queue ?? "",
+        )}&page=${page}&page_size=${pageSize}`,
+      ),
+    enabled: !!queue,
+    staleTime: 5_000,
   });
 }
 

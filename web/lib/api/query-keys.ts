@@ -141,6 +141,11 @@ export const queryKeys = {
   markerSearch: (filters: MarkerSearchFilters) =>
     ["markers", "search", filters] as const,
   queueDepth: ["admin", "queue-depth"] as const,
+  /** Per-queue dead-letter counts (`/admin/queue/dead-letters`). */
+  deadLetters: ["admin", "queue", "dead-letters"] as const,
+  /** Paginated dead-job list for one queue (`/admin/queue/dead-jobs`). */
+  deadJobs: (queue: string, page: number) =>
+    ["admin", "queue", "dead-jobs", queue, page] as const,
   thumbnailsStatus: (libraryId: string) =>
     ["admin", "libraries", libraryId, "thumbnails-status"] as const,
   thumbnailsSettings: (libraryId: string) =>
