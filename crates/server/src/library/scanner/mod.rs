@@ -30,13 +30,14 @@ use entity::{
 };
 use futures::StreamExt;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Set,
+    TransactionTrait,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -121,6 +122,12 @@ pub async fn scan_library_with_run_id(
         "Scan started",
     );
 
+    // Cooperative cancellation (D8): the cancel endpoint flips the
+    // `scan_runs` row to `state='cancelled'`; `run_phases` polls for that on
+    // its heartbeat and sets this flag, which short-circuits not-yet-started
+    // folders and skips the reconcile pass (reconciling a partial scan would
+    // soft-delete every series the cancelled run never reached).
+    let cancel = Arc::new(AtomicBool::new(false));
     let result = run_phases(
         state,
         &lib,
@@ -130,20 +137,24 @@ pub async fn scan_library_with_run_id(
         &mut stats,
         &mut health,
         &mut events,
+        cancel.clone(),
     )
     .await;
+    let cancelled = cancel.load(Ordering::Relaxed);
 
     finalize_run(
-        state, &lib, scan_id, started, &mut stats, health, events, &result,
+        state, &lib, scan_id, started, &mut stats, health, events, &result, cancelled,
     )
     .await?;
 
-    // Bump library.last_scan_at on full scans only — per-series scans leave
-    // it alone so the scheduler still knows when a true library-wide pass
-    // last ran.
-    let mut lib_am: library::ActiveModel = lib.into();
-    lib_am.last_scan_at = Set(Some(Utc::now().fixed_offset()));
-    lib_am.update(&state.db).await?;
+    // Bump library.last_scan_at on full, completed scans only — per-series
+    // scans leave it alone so the scheduler still knows when a true
+    // library-wide pass last ran, and a cancelled scan doesn't count as one.
+    if !cancelled {
+        let mut lib_am: library::ActiveModel = lib.into();
+        lib_am.last_scan_at = Set(Some(Utc::now().fixed_offset()));
+        lib_am.update(&state.db).await?;
+    }
 
     result.map(|()| stats)
 }
@@ -463,7 +474,7 @@ pub async fn scan_series_folder(
     .await;
 
     finalize_run(
-        state, &lib, scan_id, started, &mut stats, health, events, &result,
+        state, &lib, scan_id, started, &mut stats, health, events, &result, false,
     )
     .await?;
 
@@ -539,7 +550,7 @@ pub async fn scan_issue_file(
     .await;
 
     finalize_run(
-        state, &lib, scan_id, started, &mut stats, health, events, &result,
+        state, &lib, scan_id, started, &mut stats, health, events, &result, false,
     )
     .await?;
     result.map(|()| stats)
@@ -600,6 +611,7 @@ async fn finalize_run(
     health: HealthCollector,
     mut events: EventCollector,
     result: &anyhow::Result<()>,
+    cancelled: bool,
 ) -> anyhow::Result<()> {
     stats.elapsed_ms = started.elapsed().as_millis() as u64;
     stats.finalize_rates();
@@ -624,9 +636,20 @@ async fn finalize_run(
         );
     }
 
-    let (final_state, error) = match result {
-        Ok(()) => ("complete".to_string(), None),
-        Err(e) => ("failed".to_string(), Some(e.to_string())),
+    // A cooperatively-cancelled run closes as `cancelled` regardless of the
+    // partial `result` — the endpoint already flipped the row + emitted the
+    // terminal WS event, so here we just persist the partial stats and skip
+    // re-emitting (see the event block below).
+    let (final_state, error) = if cancelled {
+        (
+            "cancelled".to_string(),
+            Some("Cancelled by admin".to_string()),
+        )
+    } else {
+        match result {
+            Ok(()) => ("complete".to_string(), None),
+            Err(e) => ("failed".to_string(), Some(e.to_string())),
+        }
     };
 
     let run_row = ScanRunEntity::find_by_id(scan_id)
@@ -647,54 +670,76 @@ async fn finalize_run(
         maybe_finalize_batch(&state.db, batch_id).await;
     }
 
-    match result {
-        Ok(()) => state.events.emit(ScanEvent::Completed {
-            library_id,
-            scan_id,
-            added: stats.files_added,
-            updated: stats.files_updated,
-            removed: stats.issues_removed,
-            duration_ms: stats.elapsed_ms,
-            batch_id: run_batch_id,
-        }),
-        Err(e) => state.events.emit(ScanEvent::Failed {
-            library_id,
-            scan_id,
-            error: e.to_string(),
-            batch_id: run_batch_id,
-        }),
+    // On cancel the endpoint already emitted the terminal `ScanEvent::Failed`,
+    // so don't double-emit here.
+    if !cancelled {
+        match result {
+            Ok(()) => state.events.emit(ScanEvent::Completed {
+                library_id,
+                scan_id,
+                added: stats.files_added,
+                updated: stats.files_updated,
+                removed: stats.issues_removed,
+                duration_ms: stats.elapsed_ms,
+                batch_id: run_batch_id,
+            }),
+            Err(e) => state.events.emit(ScanEvent::Failed {
+                library_id,
+                scan_id,
+                error: e.to_string(),
+                batch_id: run_batch_id,
+            }),
+        }
     }
 
     // Durable manifest: terminal lifecycle event, then flush the whole
     // per-scan buffer (issue/series add/update/remove + this row) in one
     // bulk insert. Done after the WS emit so the flush latency never blocks
     // the live UI.
-    match result {
-        Ok(()) => events.record(
+    if cancelled {
+        events.record(
             Category::Scan,
-            Action::Completed,
-            Severity::Info,
+            Action::Cancelled,
+            Severity::Warning,
             format!(
-                "Scan complete — {} added, {} updated, {} removed",
+                "Scan cancelled — partial: {} added, {} updated, {} removed",
                 stats.files_added, stats.files_updated, stats.issues_removed
             ),
-        ),
-        Err(e) => {
-            let ev = events
-                .build(
-                    Category::Scan,
-                    Action::Errored,
-                    Severity::Error,
-                    format!("Scan failed: {e}"),
-                )
-                .detail(serde_json::json!({ "error": e.to_string() }));
-            events.push(ev);
+        );
+    } else {
+        match result {
+            Ok(()) => events.record(
+                Category::Scan,
+                Action::Completed,
+                Severity::Info,
+                format!(
+                    "Scan complete — {} added, {} updated, {} removed",
+                    stats.files_added, stats.files_updated, stats.issues_removed
+                ),
+            ),
+            Err(e) => {
+                let ev = events
+                    .build(
+                        Category::Scan,
+                        Action::Errored,
+                        Severity::Error,
+                        format!("Scan failed: {e}"),
+                    )
+                    .detail(serde_json::json!({ "error": e.to_string() }));
+                events.push(ev);
+            }
         }
     }
     events.flush(&state.db).await;
 
     let lib_label = library_id.to_string();
-    let result_label = if result.is_ok() { "complete" } else { "failed" };
+    let result_label = if cancelled {
+        "cancelled"
+    } else if result.is_ok() {
+        "complete"
+    } else {
+        "failed"
+    };
     metrics::histogram!(
         "folio_scan_duration_seconds",
         "library_id" => lib_label.clone(),
@@ -1394,6 +1439,7 @@ async fn run_phases(
     stats: &mut ScanStats,
     health: &mut HealthCollector,
     events: &mut EventCollector,
+    cancel: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     use crate::library::health::IssueKind;
     let root = PathBuf::from(&lib.root_path);
@@ -1484,6 +1530,23 @@ async fn run_phases(
     let mut scanned_folder_paths: HashSet<String> = HashSet::new();
     let mut status_reconcile_entries = Vec::new();
 
+    // Cooperative cancel (D8): a cancellation that landed during the
+    // (potentially multi-second) enumerate + plan phases is detected here,
+    // before any per-folder work starts. Every folder then no-ops and the
+    // reconcile below is skipped — so a scan cancelled before it touched
+    // disk leaves the library exactly as it was.
+    if let Ok(Some(st)) = ScanRunEntity::find_by_id(scan_id)
+        .select_only()
+        .column(entity::scan_run::Column::State)
+        .into_tuple::<String>()
+        .one(&state.db)
+        .await
+        && st == "cancelled"
+    {
+        cancel.store(true, Ordering::Relaxed);
+        tracing::info!(scan_id = %scan_id, "scan: cancelled before processing — skipping per-folder work");
+    }
+
     let concurrency = state.cfg().scan_worker_count.max(1);
     // Anchor the parallel-phase totals so doc readers can derive
     // wall ≈ summed/parallel_workers. Set once on the global stats;
@@ -1496,6 +1559,7 @@ async fn run_phases(
             let state = state.clone();
             let lib = lib.clone();
             let live_tracker = live_tracker.clone();
+            let cancel = cancel.clone();
             async move {
                 let mut local_stats = ScanStats::default();
                 let mut local_health = HealthCollector::new(lib.id, scan_id, scan_started_at)
@@ -1512,18 +1576,31 @@ async fn run_phases(
                 // `process_planned_folder`.
                 let folder_path_str = planned.path.to_string_lossy().into_owned();
                 let work_units = 1 + planned.archives.len() as u64;
-                let result = process_planned_folder(
-                    &state,
-                    &lib,
-                    planned,
-                    &mut local_stats,
-                    &mut local_health,
-                    &mut local_events,
-                    Some(live_tracker),
-                    force,
-                    true,
-                )
-                .await;
+                // Cooperative cancel (D8): folders already in flight finish
+                // normally; folders not yet started no-op the moment the
+                // cancel flag is set, so the buffered stream drains fast
+                // without tearing down mid-folder work.
+                let result = if cancel.load(Ordering::Relaxed) {
+                    Ok(ProcessFolderOutcome {
+                        series_id: None,
+                        processed: false,
+                        series_json: None,
+                        seen_paths: Vec::new(),
+                    })
+                } else {
+                    process_planned_folder(
+                        &state,
+                        &lib,
+                        planned,
+                        &mut local_stats,
+                        &mut local_health,
+                        &mut local_events,
+                        Some(live_tracker),
+                        force,
+                        true,
+                    )
+                    .await
+                };
                 (
                     label,
                     folder_path_str,
@@ -1600,6 +1677,22 @@ async fn run_phases(
         last_live_seen = live_stats.files_seen;
             }
             _ = heartbeat.tick() => {
+                // Cooperative cancel poll (D8): the cancel endpoint flips the
+                // run to `state='cancelled'`; pick that up here and raise the
+                // shared flag so not-yet-started folders stop. A single-column
+                // PK read every heartbeat is negligible.
+                if !cancel.load(Ordering::Relaxed)
+                    && let Ok(Some(st)) = ScanRunEntity::find_by_id(scan_id)
+                        .select_only()
+                        .column(entity::scan_run::Column::State)
+                        .into_tuple::<String>()
+                        .one(&state.db)
+                        .await
+                    && st == "cancelled"
+                {
+                    cancel.store(true, Ordering::Relaxed);
+                    tracing::info!(scan_id = %scan_id, "scan: cancellation requested — draining in-flight folders");
+                }
                 let mut live_progress = live_tracker.progress_snapshot(&progress);
                 live_progress.health_issues = progress.health_issues;
                 let live_stats = live_tracker.stats_snapshot();
@@ -1622,6 +1715,14 @@ async fn run_phases(
         }
     }
     stats.record_phase("process", process_started.elapsed());
+
+    // Cooperative cancel (D8): bail before reconcile. A cancelled run only
+    // walked part of the library, so `seen_paths` is incomplete — running
+    // `reconcile_library_seen` here would soft-delete every series the scan
+    // never reached. The caller finalizes the run as `cancelled`.
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(());
+    }
 
     // ───── Phase 4: reconciliation (§4.7) ─────
     let reconcile_started = Instant::now();

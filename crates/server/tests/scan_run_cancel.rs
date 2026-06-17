@@ -15,6 +15,8 @@ use chrono::Utc;
 use common::TestApp;
 use entity::{library, scan_run};
 use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, Set};
+use std::io::Write;
+use std::path::Path;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -454,4 +456,187 @@ async fn scan_runs_list_paginates_past_the_first_page() {
         "every run should be reachable across pages (no cap)"
     );
     assert!(pages >= 3, "6 rows at limit=2 should span at least 3 pages");
+}
+
+// ─────────────────────────────────────────────────────────────
+// D8a: worker-side cooperative cancellation. The endpoint flips the
+// `scan_runs` row to `state='cancelled'`; the scanner polls for that and
+// drains without running the Phase-4 reconcile. The reconcile-skip is the
+// load-bearing invariant: a cancelled scan walked only part of the library,
+// so its `seen_paths` is incomplete — reconciling on it would soft-delete
+// every series the cancelled pass never reached.
+// ─────────────────────────────────────────────────────────────
+
+fn write_cbz(path: &Path, marker: u32) {
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    png.extend_from_slice(&marker.to_le_bytes());
+    png.extend(std::iter::repeat_n(0u8, 64));
+    zw.start_file("page-001.png", opts).unwrap();
+    zw.write_all(&png).unwrap();
+    zw.finish().unwrap();
+}
+
+async fn create_on_disk_library(app: &TestApp, root: &Path) -> Uuid {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    library::ActiveModel {
+        id: Set(id),
+        name: Set("Cancel Lib".into()),
+        root_path: Set(root.to_string_lossy().into_owned()),
+        default_language: Set("eng".into()),
+        default_reading_direction: Set("ltr".into()),
+        dedupe_by_content: Set(true),
+        slug: Set(id.to_string()),
+        scan_schedule_cron: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        last_scan_at: Set(None),
+        ignore_globs: Set(serde_json::json!([])),
+        report_missing_comicinfo: Set(false),
+        file_watch_enabled: Set(true),
+        soft_delete_days: Set(30),
+        thumbnails_enabled: Set(false),
+        thumbnail_format: Set("webp".into()),
+        thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
+        thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
+        generate_page_thumbs_on_scan: Set(false),
+        allow_archive_writeback: Set(false),
+        metadata_writeback_enabled: Set(false),
+        archive_backup_retain_count: Set(1),
+        archive_backup_retain_days: Set(30),
+        archive_writeback_jpeg_quality: Set(92),
+        cbr_convert_confirmed_at: Set(None),
+        metadata_publisher_blacklist: Set(serde_json::json!([])),
+        filename_ignore_leading_numbers: Set(false),
+        filename_assume_issue_one: Set(false),
+        metadata_auto_apply_strong_matches: Set(false),
+        auto_convert_cbr_on_scan: Set(false),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    id
+}
+
+/// A scan that observes `state='cancelled'` before it processes any folder
+/// must (a) finalize as `cancelled`, (b) NOT bump `last_scan_at`, and
+/// (c) NOT soft-delete the series a prior full scan created — because the
+/// Phase-4 reconcile is skipped on a partial pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_scan_skips_reconcile_and_preserves_series() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    // Three distinct series folders.
+    for (i, name) in ["Alpha (2025)", "Beta (2025)", "Gamma (2025)"]
+        .into_iter()
+        .enumerate()
+    {
+        let folder = tmp.path().join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        write_cbz(&folder.join(format!("{name} 001.cbz")), i as u32 + 1);
+    }
+
+    let lib_id = create_on_disk_library(&app, tmp.path()).await;
+    let state = app.state();
+
+    // Full scan: all three series land, none removed, last_scan_at bumped.
+    let s1 = server::library::scanner::scan_library(&state, lib_id)
+        .await
+        .unwrap();
+    assert_eq!(s1.files_added, 3, "first scan adds three issues: {s1:?}");
+    let live_before = entity::series::Entity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .filter(entity::series::Column::RemovedAt.is_null())
+        .all(&state.db)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(live_before, 3, "three live series after the full scan");
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let last_scan_after_full = library::Entity::find_by_id(lib_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .last_scan_at;
+    assert!(
+        last_scan_after_full.is_some(),
+        "full scan bumps last_scan_at"
+    );
+
+    // Pre-insert a `cancelled` run row, then ask the scanner to use that id.
+    // `open_scan_run` leaves a non-`queued` row untouched, so the scanner
+    // picks up the row already in `state='cancelled'` and the pre-loop poll
+    // trips the cooperative-cancel path deterministically.
+    let cancelled_id = Uuid::now_v7();
+    scan_run::ActiveModel {
+        id: Set(cancelled_id),
+        library_id: Set(lib_id),
+        state: Set("cancelled".into()),
+        started_at: Set(Utc::now().fixed_offset()),
+        ended_at: Set(None),
+        stats: Set(serde_json::json!({})),
+        error: Set(Some("Cancelled by admin".into())),
+        kind: Set("library".into()),
+        series_id: Set(None),
+        issue_id: Set(None),
+        batch_id: Set(None),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let s2 = server::library::scanner::scan_library_with_run_id(
+        &state,
+        lib_id,
+        false,
+        Some(cancelled_id),
+    )
+    .await
+    .expect("cancelled scan returns Ok (graceful drain)");
+    assert_eq!(
+        s2.issues_removed, 0,
+        "cancelled scan removes nothing: {s2:?}"
+    );
+
+    // (a) the run stays cancelled.
+    let row = scan_run::Entity::find_by_id(cancelled_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.state, "cancelled");
+    assert!(row.ended_at.is_some(), "finalize stamps ended_at");
+
+    // (b) last_scan_at is unchanged — a cancelled pass is not a completed scan.
+    let last_scan_after_cancel = library::Entity::find_by_id(lib_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .last_scan_at;
+    assert_eq!(
+        last_scan_after_cancel, last_scan_after_full,
+        "cancelled scan must not bump last_scan_at",
+    );
+
+    // (c) the load-bearing invariant: all three series survive. A reconcile
+    // over the cancelled pass's empty seen-set would have soft-deleted them.
+    let live_after = entity::series::Entity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .filter(entity::series::Column::RemovedAt.is_null())
+        .all(&state.db)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(
+        live_after, 3,
+        "cancelled scan skipped reconcile — no series soft-deleted",
+    );
 }
