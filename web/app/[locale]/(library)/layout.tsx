@@ -1,10 +1,12 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { HydrateAuthCache } from "@/components/HydrateAuthCache";
 import { MainShell } from "@/components/library/MainShell";
 import { RouteChangeReset } from "@/components/library/RouteChangeReset";
 import { mainNav } from "@/components/library/main-nav";
 import { apiGet, ApiError } from "@/lib/api/fetch";
+import { getMe } from "@/lib/api/me";
 import type { MeView, SidebarLayoutView } from "@/lib/api/types";
 import { SIDEBAR_COOKIE, parseSidebarState } from "@/lib/sidebar-state";
 
@@ -25,7 +27,7 @@ export default async function LibraryLayout({
 }) {
   let me: MeView | null = null;
   try {
-    me = await apiGet<MeView>("/auth/me");
+    me = await getMe();
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       // Anonymous fall-through. The home page handles unauthenticated state
@@ -55,15 +57,20 @@ export default async function LibraryLayout({
   );
 
   return (
-    <MainShell
-      user={me}
-      sections={mainNav("", layout)}
-      homeHref={`/`}
-      defaultSidebar={defaultSidebar}
-      showMarkerCount={me.show_marker_count}
-    >
-      <RouteChangeReset />
-      {children}
-    </MainShell>
+    <>
+      {/* `me` is already seeded at the root layout; here we only add the
+          library-shell-specific sidebar payload. */}
+      <HydrateAuthCache sidebar={layout} />
+      <MainShell
+        user={me}
+        sections={mainNav("", layout)}
+        homeHref={`/`}
+        defaultSidebar={defaultSidebar}
+        showMarkerCount={me.show_marker_count}
+      >
+        <RouteChangeReset />
+        {children}
+      </MainShell>
+    </>
   );
 }
