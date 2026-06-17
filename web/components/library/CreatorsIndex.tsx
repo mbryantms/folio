@@ -1,5 +1,6 @@
 "use client";
 
+import { Search, X } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 
@@ -7,8 +8,13 @@ import { AtoZJumpRail } from "@/components/library/AtoZJumpRail";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useCreatorsInfinite } from "@/lib/api/queries";
+import { useCreatorsInfinite, usePeopleSearch } from "@/lib/api/queries";
 import type { CreatorListItem } from "@/lib/api/types";
+
+const SEARCH_DEBOUNCE_MS = 250;
+/** Min query length before switching from browse to search — matches the
+ *  other global-search categories (and the `/people` server gate). */
+const SEARCH_MIN = 2;
 
 /** Roles shown on a creator card before collapsing to "+N". Keeps the
  *  card to a single chip row on the typical grid width. */
@@ -42,10 +48,24 @@ export function CreatorsIndex({
   const [startsWith, setStartsWith] = React.useState<string | null>(
     initialStartsWith ?? null,
   );
-  const query = useCreatorsInfinite({
-    limit: 60,
-    starts_with: startsWith ?? undefined,
-  });
+
+  // Search box: empty → alphabetical browse (the infinite directory + A–Z
+  // rail); ≥2 chars → `/people` fuzzy search (trigram, ranked). The browse
+  // endpoint can't search (empty `q` returns nothing) so the two are
+  // distinct hooks; we just render one or the other.
+  const [rawQ, setRawQ] = React.useState("");
+  const [debouncedQ, setDebouncedQ] = React.useState("");
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(rawQ.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [rawQ]);
+  const searching = debouncedQ.length >= SEARCH_MIN;
+
+  const query = useCreatorsInfinite(
+    { limit: 60, starts_with: startsWith ?? undefined },
+    { enabled: !searching },
+  );
+  const search = usePeopleSearch(searching ? { q: debouncedQ, limit: 60 } : {});
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
 
   // Keep `?starts_with=` on the URL so a chosen letter is shareable and
@@ -84,59 +104,111 @@ export function CreatorsIndex({
     [query.data],
   );
   const total = query.data?.pages[0]?.total ?? undefined;
+  const searchItems = search.data?.items ?? [];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Creators"
         description={
-          total != null
-            ? `${total.toLocaleString()} ${total === 1 ? "creator" : "creators"} across your libraries`
-            : "Everyone credited across your libraries"
+          searching
+            ? `Searching for “${debouncedQ}”`
+            : total != null
+              ? `${total.toLocaleString()} ${total === 1 ? "creator" : "creators"} across your libraries`
+              : "Everyone credited across your libraries"
         }
       />
 
-      <AtoZJumpRail value={startsWith} onSelect={setStartsWith} />
+      <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2">
+        <Search
+          aria-hidden="true"
+          className="text-muted-foreground size-4 shrink-0"
+        />
+        <input
+          type="search"
+          value={rawQ}
+          onChange={(e) => setRawQ(e.target.value)}
+          placeholder="Search creators by name…"
+          aria-label="Search creators"
+          className="placeholder:text-muted-foreground w-full bg-transparent text-sm focus:outline-none"
+        />
+        {rawQ ? (
+          <button
+            type="button"
+            onClick={() => setRawQ("")}
+            aria-label="Clear search"
+            className="text-muted-foreground hover:text-foreground shrink-0"
+          >
+            <X className="size-4" />
+          </button>
+        ) : null}
+      </div>
 
-      {query.isLoading ? (
-        <CreatorGridSkeleton />
-      ) : query.isError ? (
-        <p className="text-muted-foreground text-sm">
-          Couldn&apos;t load creators. Try refreshing.
-        </p>
-      ) : items.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          {startsWith
-            ? `No creators start with "${startsWith === "#" ? "#" : startsWith.toUpperCase()}".`
-            : "No creators are credited in any library you can access yet."}
-        </p>
+      {searching ? (
+        /* ── Search mode: ranked /people results, no A–Z rail. ── */
+        search.isLoading ? (
+          <CreatorGridSkeleton />
+        ) : search.isError ? (
+          <p className="text-muted-foreground text-sm">
+            Couldn&apos;t search creators. Try again.
+          </p>
+        ) : searchItems.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            No creators match “{debouncedQ}”.
+          </p>
+        ) : (
+          <CreatorGrid items={searchItems} />
+        )
       ) : (
-        <ul
-          role="list"
-          className="grid gap-3"
-          style={{
-            gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-          }}
-        >
-          {items.map((c) => (
-            <li key={c.slug ?? c.person}>
-              <CreatorCard creator={c} />
-            </li>
-          ))}
-        </ul>
-      )}
+        /* ── Browse mode: A–Z rail + the infinite directory. ── */
+        <>
+          <AtoZJumpRail value={startsWith} onSelect={setStartsWith} />
 
-      <div
-        ref={sentinelRef}
-        aria-hidden="true"
-        className={hasNextPage ? "h-12" : "hidden"}
-      />
-      {isFetchingNextPage ? (
-        <p className="text-muted-foreground text-center text-xs">
-          Loading more…
-        </p>
-      ) : null}
+          {query.isLoading ? (
+            <CreatorGridSkeleton />
+          ) : query.isError ? (
+            <p className="text-muted-foreground text-sm">
+              Couldn&apos;t load creators. Try refreshing.
+            </p>
+          ) : items.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              {startsWith
+                ? `No creators start with "${startsWith === "#" ? "#" : startsWith.toUpperCase()}".`
+                : "No creators are credited in any library you can access yet."}
+            </p>
+          ) : (
+            <CreatorGrid items={items} />
+          )}
+
+          <div
+            ref={sentinelRef}
+            aria-hidden="true"
+            className={hasNextPage ? "h-12" : "hidden"}
+          />
+          {isFetchingNextPage ? (
+            <p className="text-muted-foreground text-center text-xs">
+              Loading more…
+            </p>
+          ) : null}
+        </>
+      )}
     </div>
+  );
+}
+
+function CreatorGrid({ items }: { items: CreatorListItem[] }) {
+  return (
+    <ul
+      role="list"
+      className="grid gap-3"
+      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}
+    >
+      {items.map((c) => (
+        <li key={c.slug ?? c.person}>
+          <CreatorCard creator={c} />
+        </li>
+      ))}
+    </ul>
   );
 }
 
