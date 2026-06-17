@@ -370,6 +370,34 @@ async fn recent_applies_lists_applied_runs_with_labels() {
     assert_eq!(applies[1]["items_applied"], 2);
 }
 
+/// B17: the backfill endpoints now enqueue a background job (202) instead of
+/// running synchronously, and the new `backfill` queue shows the pending work.
+/// (The apalis worker doesn't run in TestApp, so the job stays queued.)
+#[tokio::test]
+async fn backfill_endpoints_enqueue_jobs() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    let resp = post(&app, &admin, "/api/admin/metadata/phash-backfill").await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["enqueued"], true);
+    assert_eq!(body["kind"], "cover_phash");
+
+    let resp = post(&app, &admin, "/api/admin/metadata/variant-cover-backfill").await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["kind"], "variant_cover");
+
+    // Both jobs are now pending on the backfill queue.
+    let depth = get(&app, &admin, "/api/admin/queue-depth").await;
+    let dbody = body_json(depth.into_body()).await;
+    assert!(
+        dbody["backfill"].as_i64().unwrap_or(0) >= 2,
+        "two enqueued backfills show in queue depth: {dbody}"
+    );
+}
+
 #[tokio::test]
 async fn list_providers_includes_metron_row() {
     let app = TestApp::spawn_with_metron("u", "p", true).await;

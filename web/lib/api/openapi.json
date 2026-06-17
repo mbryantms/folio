@@ -1001,28 +1001,13 @@
     "/api/admin/metadata/phash-backfill": {
       "post": {
         "operationId": "metadata_phash_backfill",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32",
-              "minimum": 0
-            }
-          }
-        ],
         "responses": {
-          "200": {
-            "description": "",
+          "202": {
+            "description": "backfill job enqueued",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackfillOutcome"
+                  "$ref": "#/components/schemas/BackfillEnqueuedResp"
                 }
               }
             }
@@ -1253,12 +1238,12 @@
       "post": {
         "operationId": "metadata_variant_cover_backfill",
         "responses": {
-          "200": {
-            "description": "",
+          "202": {
+            "description": "backfill job enqueued",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/VariantCoverBackfillOutcome"
+                  "$ref": "#/components/schemas/BackfillEnqueuedResp"
                 }
               }
             }
@@ -9948,35 +9933,20 @@
           }
         }
       },
-      "BackfillOutcome": {
+      "BackfillEnqueuedResp": {
         "type": "object",
-        "description": "Outcome of a phash backfill sweep — exposed via the admin\nendpoint so the operator can see how many rows landed in each\ncategory.",
+        "description": "Response for the backfill-trigger endpoints (audit B17). The sweep now\nruns as a background apalis job; `enqueued` reports that the job was\naccepted. Progress + the final tally arrive over the scan-events WS as a\n`backfill.completed` event, and the queue depth surfaces it while pending.",
         "required": [
-          "considered",
-          "hashed",
-          "skipped",
-          "errored"
+          "enqueued",
+          "kind"
         ],
         "properties": {
-          "considered": {
-            "type": "integer",
-            "description": "Rows visited (had `phash IS NULL` at the start of the sweep).",
-            "minimum": 0
+          "enqueued": {
+            "type": "boolean"
           },
-          "errored": {
-            "type": "integer",
-            "description": "Rows that errored during DB update.",
-            "minimum": 0
-          },
-          "hashed": {
-            "type": "integer",
-            "description": "Rows whose hashes wrote successfully.",
-            "minimum": 0
-          },
-          "skipped": {
-            "type": "integer",
-            "description": "Rows skipped because the file was missing or undecodable.",
-            "minimum": 0
+          "kind": {
+            "type": "string",
+            "description": "`cover_phash` | `variant_cover`."
           }
         }
       },
@@ -17918,6 +17888,7 @@
           "post_scan_search",
           "post_scan_dictionary",
           "archive_edit",
+          "backfill",
           "total"
         ],
         "properties": {
@@ -17925,6 +17896,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Pending archive page-edit jobs (single + bulk; M7)."
+          },
+          "backfill": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending backfill drains (cover-phash / variant-cover; B17)."
           },
           "post_scan_dictionary": {
             "type": "integer",
@@ -22072,32 +22048,6 @@
           "active",
           "disabled"
         ]
-      },
-      "VariantCoverBackfillOutcome": {
-        "type": "object",
-        "description": "Outcome of a variant-cover backfill sweep — surfaced via the admin\nendpoint so the operator sees how rows fared.",
-        "required": [
-          "considered",
-          "stored",
-          "skipped"
-        ],
-        "properties": {
-          "considered": {
-            "type": "integer",
-            "description": "Rows that needed work (no usable on-disk artifact: `local_path`\nempty, or set but the file is missing). Rows whose bytes already\nexist on disk are skipped before counting.",
-            "minimum": 0
-          },
-          "skipped": {
-            "type": "integer",
-            "description": "Rows skipped because the download / decode failed (stay hotlinks).",
-            "minimum": 0
-          },
-          "stored": {
-            "type": "integer",
-            "description": "Rows whose image downloaded + stored successfully.",
-            "minimum": 0
-          }
-        }
       },
       "ViewMode": {
         "type": "string",

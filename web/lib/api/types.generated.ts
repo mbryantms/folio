@@ -4251,19 +4251,15 @@ export interface components {
             year?: number | null;
         };
         /**
-         * @description Outcome of a phash backfill sweep — exposed via the admin
-         *     endpoint so the operator can see how many rows landed in each
-         *     category.
+         * @description Response for the backfill-trigger endpoints (audit B17). The sweep now
+         *     runs as a background apalis job; `enqueued` reports that the job was
+         *     accepted. Progress + the final tally arrive over the scan-events WS as a
+         *     `backfill.completed` event, and the queue depth surfaces it while pending.
          */
-        BackfillOutcome: {
-            /** @description Rows visited (had `phash IS NULL` at the start of the sweep). */
-            considered: number;
-            /** @description Rows that errored during DB update. */
-            errored: number;
-            /** @description Rows whose hashes wrote successfully. */
-            hashed: number;
-            /** @description Rows skipped because the file was missing or undecodable. */
-            skipped: number;
+        BackfillEnqueuedResp: {
+            enqueued: boolean;
+            /** @description `cover_phash` | `variant_cover`. */
+            kind: string;
         };
         /**
          * @description Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).
@@ -7598,6 +7594,11 @@ export interface components {
              * @description Pending archive page-edit jobs (single + bulk; M7).
              */
             archive_edit: number;
+            /**
+             * Format: int64
+             * @description Pending backfill drains (cover-phash / variant-cover; B17).
+             */
+            backfill: number;
             /** Format: int64 */
             post_scan_dictionary: number;
             /** Format: int64 */
@@ -9424,22 +9425,6 @@ export interface components {
         /** @enum {string} */
         UserState: "pending_verification" | "active" | "disabled";
         /**
-         * @description Outcome of a variant-cover backfill sweep — surfaced via the admin
-         *     endpoint so the operator sees how rows fared.
-         */
-        VariantCoverBackfillOutcome: {
-            /**
-             * @description Rows that needed work (no usable on-disk artifact: `local_path`
-             *     empty, or set but the file is missing). Rows whose bytes already
-             *     exist on disk are skipped before counting.
-             */
-            considered: number;
-            /** @description Rows skipped because the download / decode failed (stay hotlinks). */
-            skipped: number;
-            /** @description Rows whose image downloaded + stored successfully. */
-            stored: number;
-        };
-        /**
          * @description `single` | `double` | `webtoon`.
          * @enum {string}
          */
@@ -10307,21 +10292,20 @@ export interface operations {
     };
     metadata_phash_backfill: {
         parameters: {
-            query?: {
-                limit?: number | null;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            200: {
+            /** @description backfill job enqueued */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BackfillOutcome"];
+                    "application/json": components["schemas"]["BackfillEnqueuedResp"];
                 };
             };
             /** @description admin only */
@@ -10529,12 +10513,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
+            /** @description backfill job enqueued */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["VariantCoverBackfillOutcome"];
+                    "application/json": components["schemas"]["BackfillEnqueuedResp"];
                 };
             };
             /** @description admin only */

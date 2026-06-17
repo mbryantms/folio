@@ -67,6 +67,10 @@ export function invalidationsForEvent(
         // Prefix-match every limit of the recent-applies summary (B14).
         ["admin", "metadata", "recent-applies"],
       ];
+    case "backfill.completed":
+      // A background backfill drain finished — refresh the queue depth pill
+      // and the metadata dashboard (which hosts the backfill cards). B17.
+      return [queryKeys.queueDepth, queryKeys.adminMetadataDashboard];
     case "lagged":
       // We missed events — recover by sweeping every WS-driven cache.
       return [["libraries"], ["admin"], ["series"], ["issues"]];
@@ -290,6 +294,18 @@ export function useScanEvents(opts?: {
               toast.error(`Thumbnail job failed: ${evt.error}`);
             }
             break;
+          case "backfill.completed":
+            // No event id; dedup the same event delivered to multiple
+            // subscribers by a synthetic key (B17).
+            if (
+              toastCompletions &&
+              rememberScanToast(
+                `backfill:${evt.kind}:${evt.processed}:${evt.skipped}`,
+              )
+            ) {
+              toast.success(formatBackfillMessage(evt));
+            }
+            break;
           default:
             break;
         }
@@ -326,4 +342,23 @@ function formatCompletionMessage(
   if (evt.removed > 0) parts.push(`removed ${evt.removed}`);
   if (parts.length === 0) parts.push("no changes");
   return `Scan complete · ${parts.join(", ")}`;
+}
+
+/** Success-toast copy for a finished backfill drain (audit B17). */
+function formatBackfillMessage(
+  evt: Extract<ScanEvent, { type: "backfill.completed" }>,
+): string {
+  const noun = evt.kind === "cover_phash" ? "cover hash" : "variant cover";
+  const verb = evt.kind === "cover_phash" ? "Backfilled" : "Re-downloaded";
+  if (evt.processed === 0 && evt.skipped === 0) {
+    return `${noun === "cover hash" ? "Cover-hash" : "Variant-cover"} backfill complete — nothing to do.`;
+  }
+  let msg = `${verb} ${evt.processed.toLocaleString()} ${noun}${evt.processed === 1 ? "" : "s"}`;
+  if (evt.skipped > 0) {
+    msg +=
+      evt.kind === "cover_phash"
+        ? ` · ${evt.skipped} could not be decoded`
+        : ` · ${evt.skipped} could not be fetched`;
+  }
+  return msg;
 }

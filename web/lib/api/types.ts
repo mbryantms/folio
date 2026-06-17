@@ -609,6 +609,15 @@ export type ScanEvent =
       series_id: string;
       issue_id?: string;
     }
+  | {
+      // A background backfill drain finished (audit B17). `kind` is
+      // `cover_phash` | `variant_cover`; counts the rows that landed vs the
+      // residual rows that couldn't (undecodable covers / dead URLs).
+      type: "backfill.completed";
+      kind: string;
+      processed: number;
+      skipped: number;
+    }
   | { type: "lagged"; skipped: number };
 
 export type ApiError = {
@@ -749,6 +758,7 @@ export type RecentAppliesResp = Schemas["RecentAppliesResp"];
 export type RecentApplyRow = Schemas["RecentApplyRow"];
 export type ProvidersListResp = Schemas["ProvidersListResp"];
 export type TestProviderResp = Schemas["TestProviderResp"];
+export type BackfillEnqueuedResp = Schemas["BackfillEnqueuedResp"];
 export type AutoSyncedResp = Schemas["AutoSyncedResp"];
 export type AutoSyncedSeriesRow = Schemas["AutoSyncedSeriesRow"];
 
