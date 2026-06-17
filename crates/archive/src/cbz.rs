@@ -33,6 +33,22 @@ fn is_skipped(name: &str) -> bool {
     matches!(ext.as_str(), "xml" | "json" | "txt")
 }
 
+/// True for archive entries the CBZ rewrite path intentionally drops. The
+/// reader still surfaces them via [`Cbz::entries`] (so a caller can read a
+/// `ComicInfo.xml` for metadata), but [`crate::cbz_write::rebuild`] omits
+/// every such entry — dotfiles, `Thumbs.db`, `__MACOSX`, and
+/// `.xml`/`.json`/`.txt` sidecars — and re-adds the canonical
+/// `ComicInfo.xml` / `MetronInfo.xml` through its override channel.
+///
+/// The sidecar-writeback validator uses this to decide which source entries
+/// must survive a rebuild verbatim: a nested or duplicate sidecar (e.g. a
+/// stale `Sub Folder/ComicInfo.xml` alongside the root one) legitimately
+/// won't survive, so requiring it would trip a false "dropped entry" abort.
+/// Case-insensitive — safe to call on either the display or canonical name.
+pub fn is_rewrite_skipped(name: &str) -> bool {
+    is_skipped(name)
+}
+
 /// Image extensions we accept inside an archive.
 fn is_image(name: &str) -> bool {
     let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
