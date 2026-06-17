@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 
 import { AdminShell } from "@/components/admin/AdminShell";
 import { adminNav } from "@/components/admin/nav";
-import { apiGet, ApiError } from "@/lib/api/fetch";
+import { ApiError } from "@/lib/api/fetch";
+import { getMe } from "@/lib/api/me";
 import type { MeView } from "@/lib/api/types";
 import { SIDEBAR_COOKIE, parseSidebarState } from "@/lib/sidebar-state";
 
@@ -14,7 +15,7 @@ export default async function AdminLayout({
 }) {
   let me: MeView;
   try {
-    me = await apiGet<MeView>("/auth/me");
+    me = await getMe();
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       redirect(`/sign-in`);

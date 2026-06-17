@@ -3,6 +3,8 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { cookies, headers } from "next/headers";
 import { GlobalHotkeys } from "@/components/GlobalHotkeys";
+import { HydrateAuthCache } from "@/components/HydrateAuthCache";
+import { getMe, SESSION_COOKIE } from "@/lib/api/me";
 import { SearchModalProvider } from "@/lib/search/use-search-modal";
 import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
 import { QueryProvider } from "@/components/QueryProvider";
@@ -30,23 +32,68 @@ import "@/styles/globals.css";
 // `pwa-asset-generator --splash-only` per the icons README.
 const APPLE_STARTUP_IMAGES = [
   // iPhone 14 Pro Max / 15 Plus / 15 Pro Max  — 1290 x 2796 (@3x)
-  { rel: "apple-touch-startup-image", url: "/icons/splash-1290x2796.png", media: "(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+  {
+    rel: "apple-touch-startup-image",
+    url: "/icons/splash-1290x2796.png",
+    media:
+      "(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
+  },
   // iPhone 14 Pro / 15 / 15 Pro  — 1179 x 2556 (@3x)
-  { rel: "apple-touch-startup-image", url: "/icons/splash-1179x2556.png", media: "(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+  {
+    rel: "apple-touch-startup-image",
+    url: "/icons/splash-1179x2556.png",
+    media:
+      "(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
+  },
   // iPhone 12/13/14, 12/13 Pro, 14 Plus  — 1170 x 2532 (@3x)
-  { rel: "apple-touch-startup-image", url: "/icons/splash-1170x2532.png", media: "(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+  {
+    rel: "apple-touch-startup-image",
+    url: "/icons/splash-1170x2532.png",
+    media:
+      "(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
+  },
   // iPhone 12/13 mini  — 1080 x 2340 (@3x)
-  { rel: "apple-touch-startup-image", url: "/icons/splash-1080x2340.png", media: "(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+  {
+    rel: "apple-touch-startup-image",
+    url: "/icons/splash-1080x2340.png",
+    media:
+      "(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
+  },
   // iPhone XR / 11  — 828 x 1792 (@2x)
-  { rel: "apple-touch-startup-image", url: "/icons/splash-828x1792.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
+  {
+    rel: "apple-touch-startup-image",
+    url: "/icons/splash-828x1792.png",
+    media:
+      "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
+  },
   // iPhone X / XS / 11 Pro  — 1125 x 2436 (@3x)
-  { rel: "apple-touch-startup-image", url: "/icons/splash-1125x2436.png", media: "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+  {
+    rel: "apple-touch-startup-image",
+    url: "/icons/splash-1125x2436.png",
+    media:
+      "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
+  },
   // iPad Pro 12.9"  — 2048 x 2732 (@2x)
-  { rel: "apple-touch-startup-image", url: "/icons/splash-2048x2732.png", media: "(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
+  {
+    rel: "apple-touch-startup-image",
+    url: "/icons/splash-2048x2732.png",
+    media:
+      "(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
+  },
   // iPad Pro 11" / Air  — 1668 x 2388 (@2x)
-  { rel: "apple-touch-startup-image", url: "/icons/splash-1668x2388.png", media: "(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
+  {
+    rel: "apple-touch-startup-image",
+    url: "/icons/splash-1668x2388.png",
+    media:
+      "(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
+  },
   // iPad / iPad mini  — 1536 x 2048 (@2x)
-  { rel: "apple-touch-startup-image", url: "/icons/splash-1536x2048.png", media: "(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
+  {
+    rel: "apple-touch-startup-image",
+    url: "/icons/splash-1536x2048.png",
+    media:
+      "(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
+  },
 ];
 
 export const metadata: Metadata = {
@@ -154,6 +201,15 @@ export default async function RootLayout({
   const csp = (await headers()).get("content-security-policy");
   const nonce = /'nonce-([A-Za-z0-9+/_=-]+)'/.exec(csp ?? "")?.[1];
 
+  // Seed the query cache with `me` so the root-level `useMe` listeners
+  // (GlobalHotkeys / GlobalShortcutsSheet) don't refetch it client-side on
+  // hydration (audit G7). Gated on the session cookie so anonymous pages
+  // (sign-in / 404) pay no extra round-trip; `getMe()` is `cache()`-deduped
+  // so an authenticated route-group layout shares this fetch instead of
+  // making a second one. A stale cookie just 401s → no seed (and the group
+  // layout redirects).
+  const me = jar.get(SESSION_COOKIE) ? await getMe().catch(() => null) : null;
+
   return (
     <html
       lang={locale}
@@ -167,6 +223,7 @@ export default async function RootLayout({
         <ThemeProvider defaultTheme={theme} nonce={nonce}>
           <NextIntlClientProvider messages={messages}>
             <QueryProvider>
+              {me ? <HydrateAuthCache me={me} /> : null}
               <SearchModalProvider>
                 <ScanResultListener />
                 <GlobalHotkeys />
