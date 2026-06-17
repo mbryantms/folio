@@ -127,6 +127,9 @@ export function ChronoFeed({
   const query = useReadingLogInfinite(filters);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  // Depend on the three fields, not the whole query object (audit G10) —
+  // `[query]` rebuilt the observer every render.
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   React.useEffect(() => {
     const node = sentinelRef.current;
     const root = scrollRef.current;
@@ -135,17 +138,17 @@ export function ChronoFeed({
       (entries) => {
         if (
           entries.some((e) => e.isIntersecting) &&
-          query.hasNextPage &&
-          !query.isFetchingNextPage
+          hasNextPage &&
+          !isFetchingNextPage
         ) {
-          void query.fetchNextPage();
+          void fetchNextPage();
         }
       },
       { root, rootMargin: "120px" },
     );
     obs.observe(node);
     return () => obs.disconnect();
-  }, [query]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const events: ReadingLogEventView[] = React.useMemo(
     () => query.data?.pages.flatMap((p) => p.events) ?? [],

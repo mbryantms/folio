@@ -98,6 +98,9 @@ export function ActivityReportPage() {
   // user scrolls — the report can grow very long, so we lazy-load
   // even at limit 60 per page.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  // Depend on the three fields, not the whole query object (audit G10) —
+  // `[query]` rebuilt the observer every render.
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   React.useEffect(() => {
     const node = sentinelRef.current;
     if (!node) return;
@@ -105,17 +108,17 @@ export function ActivityReportPage() {
       (entries) => {
         if (
           entries.some((e) => e.isIntersecting) &&
-          query.hasNextPage &&
-          !query.isFetchingNextPage
+          hasNextPage &&
+          !isFetchingNextPage
         ) {
-          void query.fetchNextPage();
+          void fetchNextPage();
         }
       },
       { rootMargin: "400px" },
     );
     obs.observe(node);
     return () => obs.disconnect();
-  }, [query]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const events = React.useMemo(
     () => query.data?.pages.flatMap((p) => p.events) ?? [],
