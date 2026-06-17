@@ -543,3 +543,43 @@ async fn series_search_omits_snippet_when_summary_does_not_match() {
         "no summary → no snippet field on the wire"
     );
 }
+
+/// Issue search gains a pg_trgm fallback on the issue's **series name**, so
+/// a typo / spacing variant ("spiderman") finds the issues of a similar
+/// series ("Spider-Man") even though the strict FTS over the issue's own
+/// `search_doc` (title/number/credits) can't match — the series name isn't
+/// in the issue doc (audit B7). Covers both `/issues/search` and the
+/// paginated `/issues` cross-list.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_search_trigram_fallback_on_series_name() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "trgm@example.com").await;
+
+    let lib = seed_library(&app, "trgm").await;
+    // Hyphen → normalized "spider man"; the issue's own text has no "spider".
+    let s = seed_series(&app, lib, "Spider-Man", None).await;
+    seed_issue(&app, lib, s, 1, None).await;
+
+    for path in ["/api/issues/search?q=spiderman", "/api/issues?q=spiderman"] {
+        let (status, json) = http(&app, Method::GET, path, &auth).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {json:#?}");
+        assert_eq!(
+            json["items"].as_array().unwrap().len(),
+            1,
+            "{path}: the typo found the Spider-Man issue via series-name trigram"
+        );
+    }
+
+    // The fallback doesn't over-match: a query similar to nothing is empty.
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/issues/search?q=zzqxwvnothing",
+        &auth,
+    )
+    .await;
+    assert!(
+        json["items"].as_array().unwrap().is_empty(),
+        "no spurious trigram matches: {json:#?}"
+    );
+}
