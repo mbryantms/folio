@@ -67,6 +67,7 @@ import {
 } from "@/components/library/MetadataMatchCandidates";
 import { useMetadataApplyWait } from "@/components/library/useMetadataApplyWait";
 import { useMetadataCandidateSearch } from "@/components/library/useMetadataCandidateSearch";
+import { formatRetryEta, summarizeProviderQuota } from "@/lib/metadata/quota";
 import type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
 
 export type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
@@ -188,8 +189,14 @@ export function MetadataMatchForm({
   // lives in its own hook; the dialog reads `runId` to drive its candidate
   // query and the seeding effects below. See useMetadataCandidateSearch for
   // the StrictMode-vs-raw-apiMutate rationale.
-  const { runId, searchPending, searchError, reused, researchFromScratch } =
-    useMetadataCandidateSearch({ scope, open });
+  const {
+    runId,
+    searchPending,
+    searchError,
+    searchErrorCode,
+    reused,
+    researchFromScratch,
+  } = useMetadataCandidateSearch({ scope, open });
   const seriesCandidates = useMetadataCandidatesSeries(
     scope.kind === "series" ? scope.seriesSlug : "",
     scope.kind === "series" ? runId : null,
@@ -329,6 +336,16 @@ export function MetadataMatchForm({
     runStatus === "failed" ||
     runStatus === "awaiting_quota";
 
+  // Provider quota state (audit B13): the candidates response carries each
+  // provider's remaining budget once the run finalizes + a retry ETA while
+  // parked on quota. `noProvidersConfigured` is the pre-flight unconfigured
+  // case — the search kick 400s with `metadata.no_providers` before a run
+  // even exists.
+  const quota = candidates.data?.quota;
+  const quotaLines = (quota?.providers ?? []).map(summarizeProviderQuota);
+  const retryEta = formatRetryEta(quota?.retry_after_seconds);
+  const noProvidersConfigured = searchErrorCode === "metadata.no_providers";
+
   // M5: clicking a candidate's "Preview" now stages the diff view
   // instead of immediately writing. The actual apply fires from the
   // preview pane's "Apply N changes" button via `onConfirmApply`.
@@ -459,7 +476,9 @@ export function MetadataMatchForm({
             : isPolling
               ? "Searching providers…"
               : runStatus === "awaiting_quota"
-                ? "Providers are out of quota — try again shortly."
+                ? retryEta
+                  ? `Providers are out of quota — retries in ${retryEta}.`
+                  : "Providers are out of quota — try again shortly."
                 : runStatus === "failed"
                   ? "Search failed — see Error below."
                   : `${candidates.data?.candidates.length ?? 0} match${
@@ -574,7 +593,25 @@ export function MetadataMatchForm({
         />
       ) : (
         <div className="max-h-[50vh] overflow-y-auto pr-1">
-          {searchError ? (
+          {noProvidersConfigured ? (
+            // Pre-flight: nothing to search against. Retrying won't help —
+            // point an admin at the provider setup instead.
+            <div className="text-muted-foreground py-6 text-sm">
+              No metadata provider is configured, so there&apos;s nothing to
+              search.{" "}
+              {isAdmin ? (
+                <a
+                  href="/admin/metadata?tab=providers"
+                  className="text-foreground underline"
+                >
+                  Set up a provider
+                </a>
+              ) : (
+                "Ask an administrator to set one up"
+              )}{" "}
+              to fetch metadata.
+            </div>
+          ) : searchError ? (
             <div className="text-destructive py-6 text-sm">
               {searchError}{" "}
               <button onClick={restart} className="underline">
@@ -587,11 +624,20 @@ export function MetadataMatchForm({
             </div>
           ) : runStatus === "awaiting_quota" ? (
             <div className="text-muted-foreground py-6 text-sm">
-              Every configured provider is out of quota right now.{" "}
-              <button onClick={restart} className="underline">
-                Retry
-              </button>{" "}
-              once the budget refills.
+              <p>
+                Every configured provider is out of quota
+                {retryEta ? ` — retries in ${retryEta}` : " right now"}.{" "}
+                <button onClick={restart} className="underline">
+                  Retry now
+                </button>
+              </p>
+              {quotaLines.length > 0 && (
+                <ul className="mt-2 space-y-0.5 text-xs">
+                  {quotaLines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           ) : runStatus === "failed" ? (
             <div className="text-destructive py-6 text-sm">
@@ -651,6 +697,13 @@ export function MetadataMatchForm({
                     </li>
                   )}
               </ul>
+              {quotaLines.length > 0 && (
+                // Pre-flight budget gauge (audit B13) — lets the operator
+                // see remaining provider quota before kicking another batch.
+                <p className="text-muted-foreground border-border/60 mt-1 border-t pt-2 text-xs">
+                  Provider budget: {quotaLines.join(" · ")}
+                </p>
+              )}
             </>
           )}
         </div>

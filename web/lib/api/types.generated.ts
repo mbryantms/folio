@@ -4697,6 +4697,7 @@ export interface components {
             items_total: number;
             match_outcome?: null | components["schemas"]["MatchOutcomeView"];
             providers: string[];
+            quota?: null | components["schemas"]["QuotaStateView"];
             /** Format: uuid */
             run_id: string;
             started_at: string;
@@ -7495,6 +7496,22 @@ export interface components {
             remaining_hour?: number | null;
             source: string;
         };
+        /**
+         * @description Per-provider remaining-quota view for the match dialog (audit B13).
+         *     Mirrors `crate::metadata::provider::QuotaSnapshot`; ComicVine carries
+         *     only the hour bucket, Metron carries both the minute (`remaining_hour`)
+         *     and day buckets.
+         */
+        ProviderQuotaView: {
+            /** @description `"comicvine"` | `"metron"`. */
+            provider: string;
+            /** Format: int32 */
+            remaining_day?: number | null;
+            /** Format: int32 */
+            remaining_hour?: number | null;
+            /** Format: int64 */
+            seconds_until_reset?: number | null;
+        };
         ProviderView: {
             /**
              * @description `true` when the credential is set but the master toggle is off
@@ -7580,6 +7597,23 @@ export interface components {
              * @description Sum across all queues — convenient for the topbar pill.
              */
             total: number;
+        };
+        /** @description Quota state attached to a finalized run (audit B13). */
+        QuotaStateView: {
+            /**
+             * @description Each enabled + configured provider's live budget. Empty when no
+             *     provider is configured (the search itself returns
+             *     `metadata.no_providers` in that case).
+             */
+            providers: components["schemas"]["ProviderQuotaView"][];
+            /**
+             * Format: int64
+             * @description Seconds until a quota-parked run retries, derived server-side from
+             *     `metadata_run.resume_after` (clamped at 0). Only set while `status`
+             *     is `awaiting_quota`; relative so the client renders it without a
+             *     clock-skew-prone `Date.now()`.
+             */
+            retry_after_seconds?: number | null;
         };
         QuotaView: {
             /** Format: int32 */

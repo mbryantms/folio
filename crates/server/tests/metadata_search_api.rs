@@ -305,6 +305,125 @@ async fn candidates_series_returns_completed_run_with_rows() {
     assert_eq!(candidates[0]["bucket"], "high");
 }
 
+/// B13: a completed run surfaces each configured provider's live quota so
+/// the dialog can show remaining budget before the next batch.
+#[tokio::test]
+async fn candidates_completed_run_includes_provider_quota() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let db = &app.state().db;
+    let now = Utc::now().fixed_offset();
+    let run_id = Uuid::now_v7();
+    entity::metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("series".into()),
+        scope_entity_id: Set(Some(series_id.to_string())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(0),
+        items_matched_high: Set(0),
+        items_matched_medium: Set(0),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        batch_id: Set(None),
+        query: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    let resp = get(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/candidates"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let providers = body["quota"]["providers"].as_array().unwrap();
+    let cv = providers
+        .iter()
+        .find(|p| p["provider"] == "comicvine")
+        .expect("comicvine quota present");
+    assert!(
+        cv["remaining_hour"].is_number(),
+        "remaining_hour snapshot present: {cv}"
+    );
+    // No quota-park, so no retry ETA.
+    assert!(body["quota"]["retry_after_seconds"].is_null());
+}
+
+/// B13: a quota-parked run reports a concrete retry ETA (seconds), so the
+/// dialog can say "retries in ~Xm" instead of "try again shortly".
+#[tokio::test]
+async fn candidates_awaiting_quota_reports_retry_eta() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let db = &app.state().db;
+    let now = Utc::now().fixed_offset();
+    let resume = now + chrono::Duration::minutes(30);
+    let run_id = Uuid::now_v7();
+    entity::metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("series".into()),
+        scope_entity_id: Set(Some(series_id.to_string())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("awaiting_quota".into()),
+        started_at: Set(now),
+        finished_at: Set(None),
+        items_total: Set(0),
+        items_matched_high: Set(0),
+        items_matched_medium: Set(0),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(Some(resume)),
+        batch_id: Set(None),
+        query: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    let resp = get(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/candidates"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["status"], "awaiting_quota");
+    let secs = body["quota"]["retry_after_seconds"]
+        .as_u64()
+        .expect("retry_after_seconds present");
+    // ~30 min out; allow generous slack for test wall-clock.
+    assert!(
+        (1500..=1800).contains(&secs),
+        "retry ETA near 30m, got {secs}s"
+    );
+}
+
 #[tokio::test]
 async fn candidates_series_404_when_run_id_belongs_to_different_series() {
     let app = TestApp::spawn().await;

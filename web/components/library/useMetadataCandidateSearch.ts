@@ -31,7 +31,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { toast } from "sonner";
 
-import { apiMutate } from "@/lib/api/mutations";
+import { ApiMutationError, apiMutate } from "@/lib/api/mutations";
 import { jsonFetch } from "@/lib/api/queries";
 import type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
 import type { CandidatesResp, SearchStartedResp } from "@/lib/api/types";
@@ -43,6 +43,10 @@ export interface MetadataCandidateSearch {
   searchPending: boolean;
   /** Human-readable search failure, or null. */
   searchError: string | null;
+  /** Machine-readable `error.code` of the search failure (e.g.
+   *  `"metadata.no_providers"`), or null. Lets the dialog show a
+   *  pre-flight "configure a provider" notice instead of a bare retry. */
+  searchErrorCode: string | null;
   /** True when the dialog adopted a prior completed run (quota saver)
    *  instead of firing a fresh provider fan-out. */
   reused: boolean;
@@ -64,6 +68,9 @@ export function useMetadataCandidateSearch({
   const [runId, setRunId] = React.useState<string | null>(null);
   const [searchPending, setSearchPending] = React.useState(false);
   const [searchError, setSearchError] = React.useState<string | null>(null);
+  const [searchErrorCode, setSearchErrorCode] = React.useState<string | null>(
+    null,
+  );
   // True when the dialog adopted a prior completed run instead of
   // firing a fresh provider search (quota saver).
   const [reused, setReused] = React.useState(false);
@@ -101,6 +108,7 @@ export function useMetadataCandidateSearch({
   const runSearch = React.useCallback(() => {
     setSearchPending(true);
     setSearchError(null);
+    setSearchErrorCode(null);
     setReused(false);
     let cancelled = false;
     void (async () => {
@@ -120,6 +128,7 @@ export function useMetadataCandidateSearch({
         if (cancelled) return;
         const msg = e instanceof Error ? e.message : "Search failed.";
         setSearchError(msg);
+        setSearchErrorCode(e instanceof ApiMutationError ? e.code : null);
         toast.error(msg);
       } finally {
         if (!cancelled) setSearchPending(false);
@@ -137,6 +146,7 @@ export function useMetadataCandidateSearch({
   const kickOrReuse = React.useCallback(() => {
     setSearchPending(true);
     setSearchError(null);
+    setSearchErrorCode(null);
     setReused(false);
     let cancelled = false;
     void (async () => {
@@ -171,6 +181,7 @@ export function useMetadataCandidateSearch({
         if (cancelled) return;
         const msg = e instanceof Error ? e.message : "Search failed.";
         setSearchError(msg);
+        setSearchErrorCode(e instanceof ApiMutationError ? e.code : null);
         toast.error(msg);
       } finally {
         if (!cancelled) setSearchPending(false);
@@ -201,5 +212,12 @@ export function useMetadataCandidateSearch({
     runSearch();
   }, [runSearch]);
 
-  return { runId, searchPending, searchError, reused, researchFromScratch };
+  return {
+    runId,
+    searchPending,
+    searchError,
+    searchErrorCode,
+    reused,
+    researchFromScratch,
+  };
 }

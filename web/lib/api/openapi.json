@@ -10978,6 +10978,17 @@
               "type": "string"
             }
           },
+          "quota": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QuotaStateView",
+                "description": "Live provider-quota snapshot + retry ETA (audit B13). Populated\nonce the run finalizes so the dialog can show remaining budget\nbefore the next batch and a concrete \"retries in …\" while parked\non quota; omitted while still `queued`/`searching`."
+              }
+            ]
+          },
           "run_id": {
             "type": "string",
             "format": "uuid"
@@ -17699,6 +17710,43 @@
           }
         }
       },
+      "ProviderQuotaView": {
+        "type": "object",
+        "description": "Per-provider remaining-quota view for the match dialog (audit B13).\nMirrors `crate::metadata::provider::QuotaSnapshot`; ComicVine carries\nonly the hour bucket, Metron carries both the minute (`remaining_hour`)\nand day buckets.",
+        "required": [
+          "provider"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "`\"comicvine\"` | `\"metron\"`."
+          },
+          "remaining_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "remaining_hour": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "seconds_until_reset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "ProviderView": {
         "type": "object",
         "required": [
@@ -17866,6 +17914,31 @@
             "type": "integer",
             "format": "int64",
             "description": "Sum across all queues — convenient for the topbar pill."
+          }
+        }
+      },
+      "QuotaStateView": {
+        "type": "object",
+        "description": "Quota state attached to a finalized run (audit B13).",
+        "required": [
+          "providers"
+        ],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderQuotaView"
+            },
+            "description": "Each enabled + configured provider's live budget. Empty when no\nprovider is configured (the search itself returns\n`metadata.no_providers` in that case)."
+          },
+          "retry_after_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds until a quota-parked run retries, derived server-side from\n`metadata_run.resume_after` (clamped at 0). Only set while `status`\nis `awaiting_quota`; relative so the client renders it without a\nclock-skew-prone `Date.now()`.",
+            "minimum": 0
           }
         }
       },
