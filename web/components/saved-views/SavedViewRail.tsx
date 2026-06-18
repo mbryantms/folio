@@ -154,13 +154,18 @@ function RailHeader({ view }: { view: SavedViewView }) {
   return (
     <div className="flex min-w-0 items-center gap-1.5">
       <RailIconPicker view={view} />
-      <Link
-        href={href}
-        className="hover:text-foreground min-w-0 truncate text-lg font-semibold tracking-tight"
-        title={view.name}
-      >
-        {view.name}
-      </Link>
+      {/* Each rail is a home-page section — an `<h2>` gives the page a real
+          outline (h1 → rail h2s) instead of h1-then-flat (audit E9). The
+          title stays a link inside the heading. */}
+      <h2 className="min-w-0 truncate text-lg font-semibold tracking-tight">
+        <Link
+          href={href}
+          className="hover:text-foreground block truncate"
+          title={view.name}
+        >
+          {view.name}
+        </Link>
+      </h2>
       {isCbl && view.cbl_list_id ? (
         <CblStatsPills cblListId={view.cbl_list_id} size="rail" />
       ) : null}

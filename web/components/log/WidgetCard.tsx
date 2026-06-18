@@ -100,9 +100,14 @@ export function WidgetCard({
           aria-label="Reorder widget"
           {...dragHandleProps}
           className={cn(
-            "text-muted-foreground/40 hover:text-muted-foreground -ml-1 hidden h-6 w-6 cursor-grab touch-none items-center justify-center rounded transition-colors group-hover/widget:flex active:cursor-grabbing",
-            // Always-visible on mobile so reorder isn't hover-gated.
-            "max-md:flex",
+            // Opacity (not `display`) reveal so the handle stays in the tab
+            // order and a keyboard user can reach it — `display:none` made the
+            // configured KeyboardSensor dead code (audit E8). 44px hit area
+            // for touch; the grip glyph stays small.
+            "text-muted-foreground/40 hover:text-muted-foreground -ml-1.5 flex h-11 w-8 cursor-grab touch-none items-center justify-center rounded transition-opacity active:cursor-grabbing",
+            "focus-visible:ring-ring opacity-0 group-hover/widget:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none",
+            // Always visible on mobile (no hover) so reorder isn't gated.
+            "max-md:opacity-100",
           )}
         >
           <GripVertical aria-hidden="true" className="h-4 w-4" />

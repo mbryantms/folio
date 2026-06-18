@@ -630,9 +630,11 @@ function FactBlock({
 }) {
   return (
     <div className="space-y-1.5">
-      <h3 className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+      {/* A field label, not a document section — keep it out of the heading
+          outline so the page doesn't jump h1 → h3 (audit E9). */}
+      <p className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
         {label}
-      </h3>
+      </p>
       {children}
     </div>
   );
