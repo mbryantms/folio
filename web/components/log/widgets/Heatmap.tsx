@@ -1,6 +1,9 @@
 "use client";
 
+import { CalendarRange } from "lucide-react";
+
 import { ActivityHeatmap } from "@/components/activity/ActivityHeatmap";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useReadingStats } from "@/lib/api/queries";
 import type { ReadingStatsRange } from "@/lib/api/types";
@@ -34,7 +37,15 @@ export function Heatmap({ widget }: LogWidgetProps<HeatmapConfig>) {
       {stats.isLoading ? (
         <Skeleton className="h-24 w-full" />
       ) : stats.data ? (
-        <ActivityHeatmap perDay={stats.data.per_day} weeks={weeks} />
+        stats.data.per_day.some((d) => d.sessions > 0) ? (
+          <ActivityHeatmap perDay={stats.data.per_day} weeks={weeks} />
+        ) : (
+          <EmptyState
+            size="sm"
+            icon={CalendarRange}
+            description="No reading days in this window yet — your activity will fill in here."
+          />
+        )
       ) : (
         <p className="text-destructive text-sm">Failed to load heatmap.</p>
       )}

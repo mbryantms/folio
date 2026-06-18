@@ -2,6 +2,7 @@
 
 import { BookOpen, FileText, Flame, Gauge, Timer } from "lucide-react";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useReadingStats } from "@/lib/api/queries";
 import { formatTotalHours } from "@/lib/activity";
@@ -45,18 +46,38 @@ export function StatsHero({ widget, scope }: LogWidgetProps<StatsHeroConfig>) {
           ))}
         </div>
       ) : stats.data ? (
-        <div
-          className="grid gap-3"
-          style={{ gridTemplateColumns: `repeat(${metrics.length}, 1fr)` }}
-        >
-          {metrics.map((m) => (
-            <Tile key={m} metric={m} data={stats.data} />
-          ))}
-        </div>
+        isEmptyRange(stats.data) ? (
+          <EmptyState
+            size="sm"
+            icon={BookOpen}
+            description="Nothing logged in this range yet — start reading and your stats will appear here."
+          />
+        ) : (
+          <div
+            className="grid gap-3"
+            style={{ gridTemplateColumns: `repeat(${metrics.length}, 1fr)` }}
+          >
+            {metrics.map((m) => (
+              <Tile key={m} metric={m} data={stats.data} />
+            ))}
+          </div>
+        )
       ) : (
         <p className="text-destructive text-sm">Failed to load stats.</p>
       )}
     </WidgetCard>
+  );
+}
+
+/** No reading happened in the selected range — every headline total is
+ *  zero. Showing a warm one-liner reads better than a row of "0 / 0h / 0d"
+ *  tiles, especially for a brand-new account on first visit. */
+function isEmptyRange(
+  data: NonNullable<ReturnType<typeof useReadingStats>["data"]>,
+): boolean {
+  const t = data.totals;
+  return (
+    t.distinct_issues === 0 && t.distinct_pages_read === 0 && t.active_ms === 0
   );
 }
 
