@@ -79,10 +79,10 @@ export function CoverViewer({
       }}
     >
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        <DialogPrimitive.Overlay className="data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/90 backdrop-blur-sm" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
-          className="fixed inset-0 z-50 flex items-center justify-center outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+          className="data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 flex items-center justify-center outline-none"
         >
           {/* Radix requires a labelled title; the visible caption lives in the
               footer, so this one is screen-reader only. */}
@@ -139,9 +139,16 @@ export function CoverViewer({
             </>
           )}
 
-          {/* Caption + position counter, clear of the home indicator. */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 px-4 pt-8 pb-[max(0.75rem,var(--safe-bottom))] text-center text-sm text-white">
-            <span className="bg-black/50 inline-flex items-center gap-2 rounded-full px-3 py-1 backdrop-blur">
+          {/* Caption + position counter, clear of the home indicator.
+              `aria-live` announces the label + "2 / 5" when arrow-paging
+              changes the cover, which is otherwise a silent visual update
+              (audit E9). */}
+          <div
+            aria-live="polite"
+            aria-atomic="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 px-4 pt-8 pb-[max(0.75rem,var(--safe-bottom))] text-center text-sm text-white"
+          >
+            <span className="inline-flex items-center gap-2 rounded-full bg-black/50 px-3 py-1 backdrop-blur">
               <span className="font-medium capitalize">{current.label}</span>
               {current.provider && (
                 <span className="text-white/70">· {current.provider}</span>

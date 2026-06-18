@@ -56,18 +56,23 @@ export function ChipList({
       )}
     >
       {label && (
-        <h3
+        // A field label (e.g. "Pencillers"), not a document section — a
+        // non-heading keeps the series page from jumping h1 → h3 (audit E9).
+        <p
           className={cn(
             "text-muted-foreground text-xs font-semibold tracking-wider uppercase",
             horizontal && "sm:w-32 sm:shrink-0 sm:pt-1.5",
           )}
         >
           {label}
-        </h3>
+        </p>
       )}
       {list.length === 0 ? (
         <p
-          className={cn("text-muted-foreground text-sm", horizontal && "flex-1")}
+          className={cn(
+            "text-muted-foreground text-sm",
+            horizontal && "flex-1",
+          )}
         >
           {emptyLabel}
         </p>
