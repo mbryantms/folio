@@ -9,11 +9,18 @@ import {
   computeSpreadGroups,
   firstPageOfGroup,
   groupIndexForPage,
+  isSpreadPage,
   visiblePagesAt,
 } from "@/lib/reader/spreads";
 
 const single = (image: number): PageInfo => ({ image });
 const spread = (image: number): PageInfo => ({ image, double_page: true });
+/** Page with explicit intrinsic dimensions, for the aspect-ratio path. */
+const sized = (image: number, w: number, h: number): PageInfo => ({
+  image,
+  image_width: w,
+  image_height: h,
+});
 
 describe("computeSpreadGroups", () => {
   it("returns empty for an empty issue", () => {
@@ -147,6 +154,59 @@ describe("computeSpreadGroups", () => {
     const flat = groups.flat();
     expect(new Set(flat).size).toBe(32);
     expect(flat.length).toBe(32);
+  });
+});
+
+describe("isSpreadPage (aspect-ratio detection, audit C8)", () => {
+  it("honors the double_page flag regardless of dimensions", () => {
+    expect(isSpreadPage(spread(0))).toBe(true);
+  });
+
+  it("treats a clearly-landscape page as a spread without the flag", () => {
+    // 2048×1024 = aspect 2.0, well past the 1.2 threshold.
+    expect(isSpreadPage(sized(0, 2048, 1024))).toBe(true);
+  });
+
+  it("leaves a portrait page (a normal single) un-spread", () => {
+    // 1000×1500 = aspect 0.67 — a standard comic page.
+    expect(isSpreadPage(sized(0, 1000, 1500))).toBe(false);
+  });
+
+  it("does not trip on a slightly-wide single page below the threshold", () => {
+    // 1100×1000 = aspect 1.1 < 1.2.
+    expect(isSpreadPage(sized(0, 1100, 1000))).toBe(false);
+  });
+
+  it("returns false for missing pages or absent dimensions", () => {
+    expect(isSpreadPage(undefined)).toBe(false);
+    expect(isSpreadPage(single(0))).toBe(false);
+  });
+});
+
+describe("computeSpreadGroups with aspect-detected spreads", () => {
+  it("renders a dimension-only wide page solo and resumes pairing", () => {
+    // [cover, p1, p2, WIDE@3, p4, p5] — no double_page flag, just a
+    // landscape aspect on index 3.
+    const groups = computeSpreadGroups([
+      single(0),
+      single(1),
+      single(2),
+      sized(3, 3000, 1500),
+      single(4),
+      single(5),
+    ]);
+    expect(groups).toEqual([[0], [1, 2], [3], [4, 5]]);
+  });
+
+  it("never pairs a page into a following aspect-detected spread", () => {
+    // [cover, p1, WIDE@2, p3] — p1 must stay solo, not pair into the spread.
+    const groups = computeSpreadGroups([
+      single(0),
+      single(1),
+      sized(2, 4000, 2000),
+      single(3),
+    ]);
+    expect(groups).toEqual([[0], [1], [2], [3]]);
   });
 });
 
