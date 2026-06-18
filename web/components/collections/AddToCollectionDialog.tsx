@@ -24,6 +24,11 @@ import {
   useRemoveCollectionEntry,
 } from "@/lib/api/mutations";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import {
+  getRecentCollectionIds,
+  partitionByRecents,
+  recordCollectionUse,
+} from "@/lib/collections/recents";
 import { cn } from "@/lib/utils";
 import type {
   AddEntryReq,
@@ -84,6 +89,15 @@ export function AddToCollectionDialog({
   const filtered = needle
     ? others.filter((c) => c.name.toLowerCase().includes(needle))
     : others;
+  // Recently-used collections, surfaced in a "Recent" group above the
+  // alpha list when not actively searching (a search overrides grouping).
+  // Read once per open so the freshly-recorded pick doesn't reshuffle the
+  // list under the user mid-session.
+  const recentIds = React.useMemo(
+    () => (open ? getRecentCollectionIds() : []),
+    [open],
+  );
+  const { recent, rest } = partitionByRecents(others, recentIds);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -130,21 +144,50 @@ export function AddToCollectionDialog({
                   />
                 </li>
               ) : null}
-              {filtered.map((collection) => (
-                <li key={collection.id}>
-                  <PickRow
-                    target={target}
-                    collection={collection}
-                    onAdded={() => onOpenChange(false)}
-                    icon={
-                      <Folder
-                        className="text-muted-foreground h-4 w-4 shrink-0"
-                        aria-hidden="true"
+              {needle ? (
+                // Active search: flat filtered list, no grouping.
+                filtered.map((collection) => (
+                  <li key={collection.id}>
+                    <PickRow
+                      target={target}
+                      collection={collection}
+                      onAdded={() => onOpenChange(false)}
+                      icon={<FolderIcon />}
+                    />
+                  </li>
+                ))
+              ) : (
+                <>
+                  {recent.length > 0 ? (
+                    <>
+                      <PickGroupLabel>Recent</PickGroupLabel>
+                      {recent.map((collection) => (
+                        <li key={collection.id}>
+                          <PickRow
+                            target={target}
+                            collection={collection}
+                            onAdded={() => onOpenChange(false)}
+                            icon={<FolderIcon />}
+                          />
+                        </li>
+                      ))}
+                      {rest.length > 0 ? (
+                        <PickGroupLabel>All collections</PickGroupLabel>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {rest.map((collection) => (
+                    <li key={collection.id}>
+                      <PickRow
+                        target={target}
+                        collection={collection}
+                        onAdded={() => onOpenChange(false)}
+                        icon={<FolderIcon />}
                       />
-                    }
-                  />
-                </li>
-              ))}
+                    </li>
+                  ))}
+                </>
+              )}
               {filtered.length === 0 &&
               (needle || !wantToRead) &&
               !collectionsQ.isLoading ? (
@@ -176,6 +219,29 @@ export function AddToCollectionDialog({
   );
 }
 
+/** Folder glyph shared by every non-WTR pick row. */
+function FolderIcon() {
+  return (
+    <Folder
+      className="text-muted-foreground h-4 w-4 shrink-0"
+      aria-hidden="true"
+    />
+  );
+}
+
+/** Sticky section header inside the picker list ("Recent" / "All
+ *  collections"). Not a focusable row. */
+function PickGroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <li
+      role="presentation"
+      className="text-muted-foreground bg-muted/40 px-3 py-1 text-[11px] font-medium tracking-wide uppercase"
+    >
+      {children}
+    </li>
+  );
+}
+
 function PickRow({
   target,
   collection,
@@ -200,6 +266,7 @@ function PickRow({
           { entry_kind: target.entry_kind, ref_id: target.ref_id },
           {
             onSuccess: (entry) => {
+              recordCollectionUse(collection.id);
               if (!entry) {
                 toast.success(`Added to ${collection.name}`);
                 onAdded();
@@ -287,6 +354,7 @@ function CreateForm({
         queryKey: queryKeys.collectionEntriesInfinite(created.id),
       });
       qc.invalidateQueries({ queryKey: queryKeys.collections });
+      recordCollectionUse(created.id);
       // Undo discards the whole collection (not just the entry) since
       // the user's intent was "add to a new place" — leaving an empty
       // collection lying around isn't what they asked for. Uses apiMutate
