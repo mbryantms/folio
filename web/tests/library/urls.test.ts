@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { issueUrl, readerUrl } from "@/lib/urls";
+import { coverThumbSrcSet, issueUrl, readerUrl } from "@/lib/urls";
 
 const ISSUE = { slug: "issue-1", series_slug: "invincible" };
 const SV_ID = "00000000-0000-0000-0000-00000000abcd";
@@ -52,5 +52,26 @@ describe("issueUrl", () => {
 
   it("omits ?cbl= without opts", () => {
     expect(issueUrl(ISSUE)).toBe("/series/invincible/issues/issue-1");
+  });
+});
+
+describe("coverThumbSrcSet", () => {
+  it("builds a 300w/600w srcset for a cover thumb URL", () => {
+    expect(coverThumbSrcSet("/issues/abc/pages/0/thumb")).toBe(
+      "/issues/abc/pages/0/thumb?variant=cover_small 300w, /issues/abc/pages/0/thumb 600w",
+    );
+  });
+
+  it("preserves an existing query with &", () => {
+    expect(coverThumbSrcSet("/issues/abc/pages/0/thumb?v=2")).toBe(
+      "/issues/abc/pages/0/thumb?v=2&variant=cover_small 300w, /issues/abc/pages/0/thumb?v=2 600w",
+    );
+  });
+
+  it("returns null for non-cover-thumb URLs (provider covers, strips)", () => {
+    expect(coverThumbSrcSet("/issues/abc/covers/xyz")).toBeNull();
+    // strip page (n > 0) has no small variant
+    expect(coverThumbSrcSet("/issues/abc/pages/3/thumb")).toBeNull();
+    expect(coverThumbSrcSet("https://cdn.example.com/cover.jpg")).toBeNull();
   });
 });

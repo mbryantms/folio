@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { useCoverPriority } from "@/components/library/cover-priority";
+import { coverThumbSrcSet } from "@/lib/urls";
 
 /**
  * Single-cover component used by the library grid, rails, series page,
@@ -49,6 +50,12 @@ export function Cover({
   }, []);
 
   if (src) {
+    // Responsive cover (G9): lazy grid covers get a `srcset` + `sizes="auto"`
+    // so the browser picks the small (300px) variant for low-DPR / small-card
+    // renders instead of always pulling the full 600px. Priority (LCP) covers
+    // skip `sizes` so they default to the full-res step. Non-thumb URLs
+    // (provider covers) get a plain `src`.
+    const srcSet = coverThumbSrcSet(src) ?? undefined;
     return (
       // The box owns the aspect-ratio + placeholder + caller classes
       // (sizing, hover brightness); the img fills it and fades in, so the
@@ -58,6 +65,8 @@ export function Cover({
         <img
           ref={ref}
           src={src}
+          srcSet={srcSet}
+          sizes={srcSet && !priority ? "auto" : undefined}
           alt={alt}
           loading={priority ? "eager" : "lazy"}
           fetchPriority={priority ? "high" : undefined}

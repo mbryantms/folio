@@ -77,6 +77,15 @@ pub const COVER_MAX_WIDTH: u32 = 600;
 const COVER_FILTER: FirFilter = FirFilter::Lanczos3;
 pub const DEFAULT_COVER_QUALITY: u8 = 80;
 
+/// Small cover variant (audit G9). The 600px cover is the *2×* tier — it
+/// renders crisp at the largest card (280 CSS px) on a 2× DPR display. The
+/// far more common case is a small card (the 160px grid default) or a 1× DPR
+/// screen, where 600px is ~4× more pixels than painted. This half-width
+/// variant lets `Cover`'s `srcset` hand the browser a right-sized image
+/// (fewer bytes, identical visible quality), with the 600px as the upper
+/// `srcset` step. Same Lanczos3 filter + WebP quality as the full cover.
+pub const COVER_SMALL_WIDTH: u32 = 300;
+
 /// Strip variant — feeds the reader page-strip overlay. Inactive thumbs
 /// render at `w-24` (96 CSS px) for singles or `w-48` (192 CSS px) for
 /// double-page spreads. The *active* thumb gets `scale-[1.6]`, so a
@@ -111,6 +120,9 @@ const VARIANT_COVERS_ROOT: &str = "issues";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
     Cover,
+    /// Half-width cover for `srcset` (audit G9). Same source page + filter +
+    /// quality as `Cover`, resized to `COVER_SMALL_WIDTH`.
+    CoverSmall,
     Strip,
 }
 
@@ -118,6 +130,7 @@ impl Variant {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "cover" => Some(Self::Cover),
+            "cover_small" => Some(Self::CoverSmall),
             "strip" => Some(Self::Strip),
             _ => None,
         }
@@ -126,12 +139,13 @@ impl Variant {
     fn max_width(self) -> u32 {
         match self {
             Self::Cover => COVER_MAX_WIDTH,
+            Self::CoverSmall => COVER_SMALL_WIDTH,
             Self::Strip => STRIP_MAX_WIDTH,
         }
     }
     fn filter(self) -> FirFilter {
         match self {
-            Self::Cover => COVER_FILTER,
+            Self::Cover | Self::CoverSmall => COVER_FILTER,
             Self::Strip => STRIP_FILTER,
         }
     }
@@ -139,7 +153,7 @@ impl Variant {
     /// implement Display).
     fn filter_name(self) -> &'static str {
         match self {
-            Self::Cover => "lanczos3",
+            Self::Cover | Self::CoverSmall => "lanczos3",
             Self::Strip => "bilinear",
         }
     }
@@ -161,7 +175,7 @@ impl ThumbnailQuality {
 
     fn for_variant(self, variant: Variant) -> u8 {
         match variant {
-            Variant::Cover => self.cover,
+            Variant::Cover | Variant::CoverSmall => self.cover,
             Variant::Strip => self.strip,
         }
     }
@@ -262,6 +276,13 @@ pub fn cover_path(data_dir: &Path, issue_id: &str, format: ThumbFormat) -> PathB
     thumbs_root(data_dir).join(format!("{issue_id}.{}", format.ext()))
 }
 
+/// Disk path for the small (`@sm`) cover variant (audit G9). A sibling of
+/// `cover_path` so the read-side format probe stays a single directory
+/// listing; the `@` keeps it from colliding with any real issue id.
+pub fn cover_small_path(data_dir: &Path, issue_id: &str, format: ThumbFormat) -> PathBuf {
+    thumbs_root(data_dir).join(format!("{issue_id}@sm.{}", format.ext()))
+}
+
 /// Disk path the per-page strip thumbnail will be *written* to. Strip
 /// thumbs live in a per-issue subdirectory to keep the top-level
 /// `thumbs/` dir from ballooning into hundreds of thousands of entries.
@@ -304,6 +325,7 @@ pub fn variant_path(
 ) -> PathBuf {
     match variant {
         Variant::Cover => cover_path(data_dir, issue_id, format),
+        Variant::CoverSmall => cover_small_path(data_dir, issue_id, format),
         Variant::Strip => strip_path(data_dir, issue_id, page_index, format),
     }
 }
@@ -319,6 +341,17 @@ pub fn issue_thumbs_dir(data_dir: &Path, issue_id: &str) -> PathBuf {
 pub fn find_existing_cover(data_dir: &Path, issue_id: &str) -> Option<PathBuf> {
     for ext in KNOWN_EXTS {
         let p = thumbs_root(data_dir).join(format!("{issue_id}.{ext}"));
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Find an existing small (`@sm`) cover variant regardless of format (G9).
+pub fn find_existing_cover_small(data_dir: &Path, issue_id: &str) -> Option<PathBuf> {
+    for ext in KNOWN_EXTS {
+        let p = thumbs_root(data_dir).join(format!("{issue_id}@sm.{ext}"));
         if p.exists() {
             return Some(p);
         }
@@ -373,6 +406,7 @@ pub fn find_existing_variant(
 ) -> Option<PathBuf> {
     match variant {
         Variant::Cover => find_existing_cover(data_dir, issue_id),
+        Variant::CoverSmall => find_existing_cover_small(data_dir, issue_id),
         Variant::Strip => find_existing_strip(data_dir, issue_id, page_index),
     }
 }
@@ -383,11 +417,13 @@ pub fn find_existing_variant(
 /// work the user just paid to encode.
 pub fn wipe_issue_cover(data_dir: &Path, issue_id: &str) {
     for ext in KNOWN_EXTS {
-        let cover = thumbs_root(data_dir).join(format!("{issue_id}.{ext}"));
-        if cover.exists()
-            && let Err(e) = fs::remove_file(&cover)
-        {
-            tracing::warn!(path = %cover.display(), error = %e, "wipe cover failed");
+        for name in [format!("{issue_id}.{ext}"), format!("{issue_id}@sm.{ext}")] {
+            let cover = thumbs_root(data_dir).join(name);
+            if cover.exists()
+                && let Err(e) = fs::remove_file(&cover)
+            {
+                tracing::warn!(path = %cover.display(), error = %e, "wipe cover failed");
+            }
         }
     }
 }
@@ -615,6 +651,58 @@ pub fn encode_cover_from_image(
         return Ok(out);
     }
     encode_variant_to_disk(&out, img, Variant::Cover, format, quality)
+}
+
+/// Encode the small (`@sm`) cover variant from a *pre-decoded* page image
+/// (audit G9). Called by the post-scan worker right after the full cover,
+/// reusing the same decode. Idempotent — no-op when the `@sm` file already
+/// exists in the requested format.
+pub fn encode_cover_small_from_image(
+    data_dir: &Path,
+    issue_id: &str,
+    img: &DynamicImage,
+    format: ThumbFormat,
+    quality: ThumbnailQuality,
+) -> Result<PathBuf, ThumbError> {
+    let out = cover_small_path(data_dir, issue_id, format);
+    if out.exists() {
+        return Ok(out);
+    }
+    encode_variant_to_disk(&out, img, Variant::CoverSmall, format, quality)
+}
+
+/// Generate the small (`@sm`) cover by downscaling the issue's *existing*
+/// full cover on disk — no archive access (audit G9 backfill). The `@sm` is
+/// written in the same format as the full cover it derives from (so the read
+/// path stays format-agnostic), at the default cover quality. Returns
+/// `Ok(None)` when the `@sm` already exists or the issue has no full cover yet
+/// (nothing to derive from); `Ok(Some(path))` when one was written.
+pub fn generate_cover_small_from_existing(
+    data_dir: &Path,
+    issue_id: &str,
+) -> Result<Option<PathBuf>, ThumbError> {
+    if find_existing_cover_small(data_dir, issue_id).is_some() {
+        return Ok(None);
+    }
+    let Some(full) = find_existing_cover(data_dir, issue_id) else {
+        return Ok(None);
+    };
+    let format = full
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(ThumbFormat::parse)
+        .unwrap_or_default();
+    let bytes = fs::read(&full)?;
+    let img = decode_bytes(&bytes)?;
+    let out = cover_small_path(data_dir, issue_id, format);
+    encode_variant_to_disk(
+        &out,
+        &img,
+        Variant::CoverSmall,
+        format,
+        ThumbnailQuality::default(),
+    )
+    .map(Some)
 }
 
 fn decode_entry(

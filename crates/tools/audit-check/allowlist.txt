@@ -129,6 +129,7 @@ match_quality       # GET /admin/metadata/match-quality — read-only outcome di
 list_auto_synced    # GET /admin/metadata/auto-synced — read-only list of auto-sync-enabled series
 run_phash_backfill          # POST /admin/metadata/phash-backfill — delegates to enqueue_backfill which writes audit_log (B17)
 run_variant_cover_backfill  # POST /admin/metadata/variant-cover-backfill — delegates to enqueue_backfill which writes audit_log (B17)
+run_cover_variant_backfill  # POST /admin/metadata/cover-variant-backfill — delegates to enqueue_backfill which writes audit_log (G9)
 
 # ── archive_edit.rs (archive-rewrite-1.0 M2) ─────────────────
 edit                # POST /issues/{id}/archive/edit — enqueues ArchiveEditJob; the worker writes audit_log (admin.issue.archive_edit) on completion

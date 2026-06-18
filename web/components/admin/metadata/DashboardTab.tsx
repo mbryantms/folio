@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Fingerprint,
   ImageDown,
+  Images,
   Loader2,
   XCircle,
 } from "lucide-react";
@@ -93,6 +94,8 @@ export function DashboardTab() {
       <CoverHashBackfillCard />
 
       <VariantCoverBackfillCard />
+
+      <CoverVariantBackfillCard />
     </div>
   );
 }
@@ -262,6 +265,18 @@ function VariantCoverBackfillCard() {
       endpoint="/admin/metadata/variant-cover-backfill"
       icon={<ImageDown className="mr-2 h-4 w-4" />}
       label="Re-download missing covers"
+    />
+  );
+}
+
+function CoverVariantBackfillCard() {
+  return (
+    <BackfillCard
+      title="Cover size variants"
+      description="Generate the small (300px) cover variant used by responsive srcset, by downscaling each issue's existing full cover — no archive access. New covers get it automatically; this fills in the back catalogue so small / low-DPR cards download fewer bytes. Runs in the background; safe to re-run."
+      endpoint="/admin/metadata/cover-variant-backfill"
+      icon={<Images className="mr-2 h-4 w-4" />}
+      label="Generate cover variants"
     />
   );
 }

@@ -201,15 +201,30 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                                     width: img.width() as i32,
                                     height: img.height() as i32,
                                 });
-                                thumbnails::encode_cover_from_image(
+                                let cover = thumbnails::encode_cover_from_image(
                                     &data_dir,
                                     &issue_id,
                                     cover_page_index,
                                     &img,
                                     format,
                                     quality,
-                                )
-                                .map(|_| ())
+                                );
+                                // Emit the small srcset variant from the same
+                                // decode (G9). Best-effort — a missing `@sm`
+                                // just means the browser serves the full cover
+                                // for both srcset steps until the next regen.
+                                if cover.is_ok()
+                                    && let Err(e) = thumbnails::encode_cover_small_from_image(
+                                        &data_dir, &issue_id, &img, format, quality,
+                                    )
+                                {
+                                    tracing::debug!(
+                                        issue_id = %issue_id,
+                                        error = %e,
+                                        "thumbs job: @sm cover encode failed (non-fatal)"
+                                    );
+                                }
+                                cover.map(|_| ())
                             }
                             Err(e) => Err(e),
                         }

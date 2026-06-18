@@ -389,12 +389,18 @@ async fn backfill_endpoints_enqueue_jobs() {
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["kind"], "variant_cover");
 
-    // Both jobs are now pending on the backfill queue.
+    // G9: the cover size-variant backfill enqueues the same way.
+    let resp = post(&app, &admin, "/api/admin/metadata/cover-variant-backfill").await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["kind"], "cover_variant");
+
+    // All three jobs are now pending on the backfill queue.
     let depth = get(&app, &admin, "/api/admin/queue-depth").await;
     let dbody = body_json(depth.into_body()).await;
     assert!(
-        dbody["backfill"].as_i64().unwrap_or(0) >= 2,
-        "two enqueued backfills show in queue depth: {dbody}"
+        dbody["backfill"].as_i64().unwrap_or(0) >= 3,
+        "three enqueued backfills show in queue depth: {dbody}"
     );
 }
 

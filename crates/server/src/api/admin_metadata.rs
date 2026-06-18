@@ -51,6 +51,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(recent_applies))
         .routes(routes!(run_phash_backfill))
         .routes(routes!(run_variant_cover_backfill))
+        .routes(routes!(run_cover_variant_backfill))
         .routes(routes!(list_auto_synced))
 }
 
@@ -1050,6 +1051,33 @@ pub async fn run_variant_cover_backfill(
         &ctx,
         BackfillKind::VariantCover,
         "admin.metadata.variant_cover_backfill",
+    )
+    .await
+}
+
+// ───────── /admin/metadata/cover-variant-backfill ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_cover_variant_backfill",
+    post,
+    path = "/admin/metadata/cover-variant-backfill",
+    responses(
+        (status = 202, body = BackfillEnqueuedResp, description = "backfill job enqueued"),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn run_cover_variant_backfill(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+) -> Response {
+    enqueue_backfill(
+        &app,
+        actor.id,
+        &ctx,
+        BackfillKind::CoverVariant,
+        "admin.metadata.cover_variant_backfill",
     )
     .await
 }

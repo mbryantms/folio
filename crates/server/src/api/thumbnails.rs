@@ -77,6 +77,20 @@ pub async fn thumb(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
+    // G9: a small-cover (`@sm`) request degrades to the full cover when the
+    // variant hasn't been generated yet — new covers emit it inline and the
+    // backfill derives it for the back-catalogue, so until then the browser
+    // just gets the full cover for both `srcset` steps. This avoids paying an
+    // inline archive decode to produce a 300px image (the full cover is the
+    // one every other caller needs anyway).
+    let variant = if variant == Variant::CoverSmall
+        && thumbnails::find_existing_cover_small(&app.cfg().data_path, &row.id).is_none()
+    {
+        Variant::Cover
+    } else {
+        variant
+    };
+
     let page_index = n as usize;
     let cache_key = thumb_cache_key(&row.id, variant, page_index);
 
@@ -200,6 +214,7 @@ pub async fn thumb(
 fn thumb_cache_key(issue_id: &str, variant: Variant, page_index: usize) -> String {
     let variant = match variant {
         Variant::Cover => "cover",
+        Variant::CoverSmall => "cover_small",
         Variant::Strip => "strip",
     };
     format!("{issue_id}:{variant}:{page_index}")
@@ -214,6 +229,7 @@ async fn serve_file(
 ) -> Response {
     let variant_tag = match variant {
         Variant::Cover => "c",
+        Variant::CoverSmall => "cs",
         Variant::Strip => "s",
     };
     // ETag includes variant + page index + thumbnail version so changing
