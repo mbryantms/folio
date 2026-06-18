@@ -958,6 +958,26 @@
         }
       }
     },
+    "/api/admin/metadata/cover-variant-backfill": {
+      "post": {
+        "operationId": "metadata_cover_variant_backfill",
+        "responses": {
+          "202": {
+            "description": "backfill job enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillEnqueuedResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/dashboard": {
       "get": {
         "operationId": "admin_metadata_dashboard",

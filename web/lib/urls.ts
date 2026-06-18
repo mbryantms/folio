@@ -124,6 +124,21 @@ export function coverThumbUrl(issueId: string): string {
   return `/issues/${encodeURIComponent(issueId)}/pages/0/thumb`;
 }
 
+/**
+ * Build a responsive `srcset` for a cover image (audit G9). Only the cover
+ * **thumb route** (`…/pages/0/thumb`) has a small (`@sm`, 300px) variant —
+ * provider cover URLs (`…/covers/{id}`) and anything else return `null`, so
+ * the caller serves a plain `src`. The thumb route degrades gracefully:
+ * `?variant=cover_small` falls back to the full 600px cover until the `@sm`
+ * exists, so this never 404s. Pair with `sizes="auto"` (lazy imgs) for
+ * per-card sizing, or the browser defaults to the 600px step.
+ */
+export function coverThumbSrcSet(src: string): string | null {
+  if (!/\/pages\/0\/thumb(?:\?|$)/.test(src)) return null;
+  const sep = src.includes("?") ? "&" : "?";
+  return `${src}${sep}variant=cover_small 300w, ${src} 600w`;
+}
+
 /** Strip thumbnail URL for a specific page. */
 export function pageThumbUrl(issueId: string, page: number): string {
   return `/issues/${encodeURIComponent(issueId)}/pages/${page}/thumb`;
