@@ -13,6 +13,16 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.22.0](https://github.com/mbryantms/folio/compare/v0.21.0...v0.22.0) (2026-06-18)
+
+
+### Added
+
+* **admin:** create user with a one-time temp password (3.8 / D9) ([#280](https://github.com/mbryantms/folio/issues/280)) ([2bfa3d9](https://github.com/mbryantms/folio/commit/2bfa3d91db23d1bdd7b815cb275f5239457dc86d))
+* **collections:** recently-used collections in the add-to-collection picker (3.7) ([#276](https://github.com/mbryantms/folio/issues/276)) ([3efdbb7](https://github.com/mbryantms/folio/commit/3efdbb7d257f924d775d15d6106662e5f50c2ebf))
+* **collections:** undo collection deletes (B6) ([#274](https://github.com/mbryantms/folio/issues/274)) ([a824a8d](https://github.com/mbryantms/folio/commit/a824a8d516318e5aadf66de930a5978fd93e31e2))
+* **discovery:** card hover previews + surprise-me on the Recently Added rail (3.7) ([#278](https://github.com/mbryantms/folio/issues/278)) ([d74a3c2](https://github.com/mbryantms/folio/commit/d74a3c2f01ae7aa5c9f65b25501d8078c5d8bece))
+
 ## [0.21.0](https://github.com/mbryantms/folio/compare/v0.20.0...v0.21.0) (2026-06-18)
 
 
