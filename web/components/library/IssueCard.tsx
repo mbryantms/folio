@@ -14,12 +14,6 @@ import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
-import { IssueHoverPreview } from "@/components/library/CardHoverPreview";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { useUserProgress } from "@/lib/api/queries";
@@ -260,17 +254,9 @@ function IssueCardImpl({
           {innerCard}
         </button>
       ) : (
-        // Desktop hover preview (3.7); inert on touch/keyboard via Radix.
-        <HoverCard openDelay={400} closeDelay={120}>
-          <HoverCardTrigger asChild>
-            <Link href={issueUrl(issue)} className={cardClassName}>
-              {innerCard}
-            </Link>
-          </HoverCardTrigger>
-          <HoverCardContent align="start">
-            <IssueHoverPreview issue={issue} />
-          </HoverCardContent>
-        </HoverCard>
+        <Link href={issueUrl(issue)} className={cardClassName}>
+          {innerCard}
+        </Link>
       )}
       {collectionActions.dialog}
       {!inSelectMode && longPress.sheet}

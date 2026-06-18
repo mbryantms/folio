@@ -3,15 +3,19 @@
 import { Cover } from "@/components/Cover";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { formatIssueHeading, formatPublicationStatus } from "@/lib/format";
-import type { IssueSummaryView, SeriesView } from "@/lib/api/types";
+import { formatPublicationStatus } from "@/lib/format";
+import type { SeriesView } from "@/lib/api/types";
 
 /**
- * Rich card-hover previews (audit 3.7 discovery). Rendered inside a
- * `HoverCardContent` so they only mount on a desktop hover — a low-cost
- * "peek" at a series/issue without leaving the grid. Touch + keyboard
- * flows never trigger Radix HoverCard, so the card's tap / long-press /
- * cover-menu behavior is unchanged.
+ * Series card-hover preview (audit 3.7 discovery). Rendered inside a
+ * `HoverCardContent` so it only mounts on a desktop hover — a low-cost
+ * "peek" at a series (the summary especially) without leaving the grid.
+ * Touch + keyboard flows never trigger Radix HoverCard, so the card's
+ * tap / long-press / cover-menu behavior is unchanged.
+ *
+ * Series-only by design (review decision): issue cards already surface
+ * their key facts on the card face, so an issue preview added little over
+ * the per-page hover-root cost.
  */
 
 /** "2012", "2012–2018", or null. Em-dash for the range. */
@@ -93,42 +97,6 @@ export function SeriesHoverPreview({ series }: { series: SeriesView }) {
               </Badge>
             ))}
           </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-export function IssueHoverPreview({ issue }: { issue: IssueSummaryView }) {
-  const heading = formatIssueHeading(issue);
-  const meta = [
-    issue.series_name,
-    issue.page_count != null
-      ? `${issue.page_count} page${issue.page_count === 1 ? "" : "s"}`
-      : null,
-    issue.year != null ? String(issue.year) : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const stateLabel =
-    issue.state === "active"
-      ? null
-      : issue.state === "missing"
-        ? "Missing file"
-        : issue.state;
-
-  return (
-    <div className="flex gap-3">
-      <div className="w-16 shrink-0">
-        <Cover src={issue.cover_url} alt="" fallback={heading} />
-      </div>
-      <div className="min-w-0 flex-1 space-y-1.5">
-        <p className="text-sm leading-snug font-semibold">{heading}</p>
-        {meta ? <p className="text-muted-foreground text-xs">{meta}</p> : null}
-        {stateLabel ? (
-          <Badge variant="outline" className="text-[10px] capitalize">
-            {stateLabel}
-          </Badge>
         ) : null}
       </div>
     </div>
