@@ -994,7 +994,7 @@ export interface paths {
         };
         get: operations["admin_users_list"];
         put?: never;
-        post?: never;
+        post: operations["admin_users_create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5334,6 +5334,26 @@ export interface components {
             result_limit?: number | null;
             sort_field?: null | components["schemas"]["SortField"];
             sort_order?: null | components["schemas"]["SortOrder"];
+        };
+        /**
+         * @description Body for admin create-user (3.8 / audit D9). The server generates the
+         *     password — the admin only chooses identity + role — so a temporary
+         *     credential exists without the admin inventing (and likely reusing) one.
+         */
+        CreateUserReq: {
+            /** @description Optional display name. Defaults to the email's local part. */
+            display_name?: string | null;
+            email: string;
+            role?: null | components["schemas"]["UserRole"];
+        };
+        CreateUserResp: components["schemas"]["AdminUserView"] & {
+            /**
+             * @description One-time temporary password, generated server-side and returned
+             *     ONLY here so the admin can hand it to the new user. It is hashed at
+             *     rest like any other password and is never re-retrievable — the user
+             *     changes it from their own account settings after first sign-in.
+             */
+            temp_password: string;
         };
         CreatorDetailView: {
             /**
@@ -11564,6 +11584,50 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_users_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserReq"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateUserResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description email already in use / local auth disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

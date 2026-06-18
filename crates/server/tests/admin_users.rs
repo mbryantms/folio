@@ -521,3 +521,133 @@ async fn audit_log_requires_admin() {
     let resp = admin_get(&app, &user, "/api/admin/audit").await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+// ───────── admin create-user (3.8 / audit D9) ─────────
+
+/// Attempt a JSON login; returns the response so callers can assert on
+/// status + Set-Cookie. No CSRF — the login form-action is pre-auth.
+async fn login(app: &TestApp, email: &str, password: &str) -> axum::http::Response<Body> {
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(
+                    r#"{{"email":"{email}","password":"{password}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+fn sets_session_cookie(resp: &axum::http::Response<Body>) -> bool {
+    resp.headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .any(|c| c.starts_with("__Host-comic_session=") && c.len() > "__Host-comic_session=;".len())
+}
+
+#[tokio::test]
+async fn admin_create_user_returns_usable_temp_password() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    let resp = admin_send(
+        &app,
+        &admin,
+        Method::POST,
+        "/api/admin/users",
+        Some(serde_json::json!({ "email": "Provisioned@Example.com" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp.into_body()).await;
+    // Email is normalized lower; account is active + admin-vouched.
+    assert_eq!(body["email"], "provisioned@example.com");
+    assert_eq!(body["role"], "user");
+    assert_eq!(body["state"], "active");
+    assert_eq!(body["email_verified"], true);
+    let temp = body["temp_password"]
+        .as_str()
+        .expect("temp_password present");
+    assert!(
+        temp.len() >= 12,
+        "temp password meets the local-auth minimum"
+    );
+
+    // The returned temp password actually authenticates the new account.
+    let ok = login(&app, "provisioned@example.com", temp).await;
+    assert!(
+        sets_session_cookie(&ok),
+        "temp password should log the user in (status {:?})",
+        ok.status()
+    );
+    // A wrong password does not.
+    let bad = login(&app, "provisioned@example.com", "definitely-not-it-123").await;
+    assert_eq!(bad.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn admin_create_user_honors_role_and_duplicate_conflicts() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    // role=admin is honored.
+    let resp = admin_send(
+        &app,
+        &admin,
+        Method::POST,
+        "/api/admin/users",
+        Some(serde_json::json!({ "email": "newadmin@example.com", "role": "admin" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert_eq!(body_json(resp.into_body()).await["role"], "admin");
+
+    // Same email again → 409 conflict.
+    let dup = admin_send(
+        &app,
+        &admin,
+        Method::POST,
+        "/api/admin/users",
+        Some(serde_json::json!({ "email": "newadmin@example.com" })),
+    )
+    .await;
+    assert_eq!(dup.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn admin_create_user_requires_admin() {
+    let app = TestApp::spawn().await;
+    let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
+
+    let resp = admin_send(
+        &app,
+        &user,
+        Method::POST,
+        "/api/admin/users",
+        Some(serde_json::json!({ "email": "nope@example.com" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn admin_create_user_rejects_bad_email() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = admin_send(
+        &app,
+        &admin,
+        Method::POST,
+        "/api/admin/users",
+        Some(serde_json::json!({ "email": "not-an-email" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}

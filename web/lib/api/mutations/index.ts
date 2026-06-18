@@ -36,6 +36,8 @@ import type {
   CollectionEntryView,
   CreateCblListReq,
   CreateCollectionReq,
+  CreateUserReq,
+  CreateUserResp,
   CreateLibraryReq,
   CreateMarkerReq,
   CreateSavedViewReq,
@@ -1184,6 +1186,23 @@ export function useUpdateUser(id: string) {
     {
       successMessage: "User updated",
       onSuccess: () => invalidateUser(qc, id),
+    },
+  );
+}
+
+/** Admin create-user (3.8 / audit D9). The response carries a one-time
+ *  `temp_password` the caller surfaces inline — so no success toast here
+ *  (errors still toast via `useApiMutation`). Refreshes the user list +
+ *  audit log. */
+export function useCreateUser() {
+  const qc = useQueryClient();
+  return useApiMutation<CreateUserResp, CreateUserReq>(
+    (body) => ({ path: "/admin/users", method: "POST", body }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["admin", "users"], exact: false });
+        qc.invalidateQueries({ queryKey: ["admin", "audit"], exact: false });
+      },
     },
   );
 }
