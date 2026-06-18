@@ -50,6 +50,13 @@ import {
   useDeleteSavedView,
   useSidebarSavedView,
 } from "@/lib/api/mutations";
+import { toast } from "sonner";
+
+import {
+  fetchCollectionSnapshot,
+  type CollectionSnapshot,
+} from "@/lib/collections/recreate";
+import { useCollectionDeleteUndo } from "@/lib/collections/use-collection-undo";
 import { queryKeys, useCollections, useSavedViews } from "@/lib/api/queries";
 import type { SavedViewView } from "@/lib/api/types";
 
@@ -294,10 +301,15 @@ function ViewCard({
   // so calling both keeps the card a single component while routing the
   // delete through the right endpoint by kind.
   const delSaved = useDeleteSavedView(view.id);
-  const delCollection = useDeleteCollection(view.id);
+  // Collections delete silently + show an Undo toast (audit B6). Saved
+  // filter views keep their plain confirm — they're cheap to rebuild and
+  // out of B6's scope.
+  const delCollection = useDeleteCollection(view.id, { silent: true });
+  const showDeleteUndo = useCollectionDeleteUndo();
   const sidebar = useSidebarSavedView();
   const [pinOpen, setPinOpen] = React.useState(false);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
 
   const isWantToRead = isCollection && view.system_key === WANT_TO_READ_KEY;
   const isBuiltIn = view.is_system || isWantToRead;
@@ -305,7 +317,36 @@ function ViewCard({
     ? `/views/${isWantToRead ? "want-to-read" : view.id}`
     : `/views/${view.id}`;
   const pinnedCount = (view.pinned_on_pages ?? []).length;
-  const del = isCollection ? delCollection : delSaved;
+
+  async function handleConfirmDelete() {
+    if (!isCollection) {
+      // Filter / CBL views: plain delete (the hook toasts on its own).
+      delSaved.mutate(undefined, { onSuccess: () => setConfirmOpen(false) });
+      return;
+    }
+    // Collections: snapshot the full member list *before* the delete drops
+    // it, so the Undo toast can replay it. A snapshot failure (offline /
+    // race) still deletes — just without the undo affordance.
+    setDeleting(true);
+    let snapshot: CollectionSnapshot | null = null;
+    try {
+      snapshot = await fetchCollectionSnapshot(
+        view.id,
+        view.name,
+        view.description,
+      );
+    } catch {
+      snapshot = null;
+    }
+    delCollection.mutate(undefined, {
+      onSuccess: () => {
+        setConfirmOpen(false);
+        if (snapshot) showDeleteUndo(snapshot);
+        else toast.success(`Collection "${view.name}" deleted`);
+      },
+      onSettled: () => setDeleting(false),
+    });
+  }
 
   function toggleSidebar(next: boolean) {
     sidebar.mutate(
@@ -409,16 +450,24 @@ function ViewCard({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {isCollection
-                ? "Removes the collection and its hand-picked list. The series and issues themselves are untouched."
+                ? "Removes the collection and its hand-picked list — the series and issues themselves are untouched. You can undo this right after."
                 : view.kind === "cbl"
                   ? "Removes the saved view but keeps the underlying CBL list — you can re-import later."
                   : "Removes the filter view permanently."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => del.mutate()}>
-              Delete
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              // Keep the dialog mounted through the async snapshot+delete
+              // so the pending state shows; we close it on success.
+              onClick={(e) => {
+                e.preventDefault();
+                void handleConfirmDelete();
+              }}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting…" : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
