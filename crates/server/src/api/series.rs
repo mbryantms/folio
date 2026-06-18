@@ -1017,6 +1017,11 @@ pub enum SeriesSort {
     /// Release year (`series.year`). Nullable column — NULLs sort
     /// last on ASC, first on DESC, then ID tiebreaks.
     Year,
+    /// `ORDER BY random()` — backs the "Surprise me" discovery pick
+    /// (3.7). Not paginated: no stable cursor exists for a random
+    /// order, so the cursor seek is a no-op and `next_cursor` is always
+    /// null. Callers use it with a small `limit` (typically 1).
+    Random,
 }
 
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -1663,6 +1668,9 @@ fn apply_series_cursor(
                 asc,
             )
         }
+        // Random order has no stable boundary, so a cursor can't seek
+        // into it — leave the query unfiltered (callers don't paginate).
+        SeriesSort::Random => select,
     })
 }
 
@@ -1720,6 +1728,8 @@ fn apply_series_sort_ordering(
                     .order_by_desc(series::Column::Id)
             }
         }
+        // Postgres `random()` per row — order direction is irrelevant.
+        SeriesSort::Random => select.order_by_asc(Expr::cust("random()")),
     }
 }
 
@@ -1741,6 +1751,8 @@ fn compute_next_series_cursor(
         SeriesSort::CreatedAt => r.created_at.to_rfc3339(),
         SeriesSort::UpdatedAt => r.updated_at.to_rfc3339(),
         SeriesSort::Year => r.year.map(|y| y.to_string()).unwrap_or_default(),
+        // Random order is never paginated — no cursor to hand back.
+        SeriesSort::Random => return None,
     };
     Some(encode_cursor(&value, &r.id.to_string()))
 }
@@ -1839,7 +1851,10 @@ pub async fn list(
             // handles the NULL-aware order semantics for `year`.
             let order = q.order.unwrap_or(match sort {
                 SeriesSort::Name => SortOrder::Asc,
-                SeriesSort::CreatedAt | SeriesSort::UpdatedAt | SeriesSort::Year => SortOrder::Desc,
+                SeriesSort::CreatedAt
+                | SeriesSort::UpdatedAt
+                | SeriesSort::Year
+                | SeriesSort::Random => SortOrder::Desc,
             });
             let asc = matches!(order, SortOrder::Asc);
             apply_series_sort_ordering(filtered, sort, asc)
@@ -1900,7 +1915,9 @@ pub async fn list(
     let sort = q.sort.unwrap_or_default();
     let order = q.order.unwrap_or(match sort {
         SeriesSort::Name => SortOrder::Asc,
-        SeriesSort::CreatedAt | SeriesSort::UpdatedAt | SeriesSort::Year => SortOrder::Desc,
+        SeriesSort::CreatedAt | SeriesSort::UpdatedAt | SeriesSort::Year | SeriesSort::Random => {
+            SortOrder::Desc
+        }
     });
     let asc = matches!(order, SortOrder::Asc);
 

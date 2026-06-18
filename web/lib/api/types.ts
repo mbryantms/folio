@@ -330,7 +330,15 @@ export type CreateAppPasswordReq = Schemas["CreateAppPasswordReq"];
 // that hasn't been wired into the OpenAPI spec yet. When the Rust source
 // derives ToSchema, move the corresponding entry up into the aliased block.
 
-export type SeriesSort = "name" | "created_at" | "updated_at" | "year";
+export type SeriesSort =
+  | "name"
+  | "created_at"
+  | "updated_at"
+  | "year"
+  // `random` backs the "Surprise me" discovery pick (3.7); the server
+  // returns one random series and never a cursor. Not in OpenAPI —
+  // `ListSeriesQuery` isn't `IntoParams`, so this union is hand-maintained.
+  | "random";
 
 export type IssueSort =
   | "number"

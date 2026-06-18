@@ -14,6 +14,7 @@ import {
 import { CoverPriorityProvider } from "@/components/library/cover-priority";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { RailIconPicker } from "@/components/library/RailIconPicker";
+import { SurpriseMeButton } from "@/components/library/SurpriseMeButton";
 import {
   useCblListWindowInfinite,
   useCollectionEntries,
@@ -45,6 +46,11 @@ function viewDetailHref(view: SavedViewView): string {
  *  cards visible before the trailing "View all" tile becomes the way to
  *  reach the long tail. */
 const RAIL_PREVIEW_LIMIT = 30;
+
+/** Built-in "Recently Added" filter view (saved_views.rs, m20261205). The
+ *  rail hosts the "Surprise me" discovery action in its header (3.7) — the
+ *  feature lives on the existing rail rather than a duplicate one. */
+const RECENTLY_ADDED_VIEW_ID = "00000000-0000-0000-0000-000000000001";
 
 /** Read-only home-page rail. Pinning, reordering, edit, and delete all
  *  live on the management page (`/settings/views`); the home page is
@@ -146,6 +152,10 @@ function renderRailBody(
 function RailHeader({ view }: { view: SavedViewView }) {
   const isCbl = view.kind === "cbl";
   const href = viewDetailHref(view);
+  // "Surprise me" rides the Recently Added rail header (3.7) — a random
+  // pick across the whole library, hosted on the existing rail rather
+  // than a duplicate one.
+  const showSurpriseMe = view.id === RECENTLY_ADDED_VIEW_ID;
   // The trailing "View all" tile at the end of the rail (added by
   // `<HorizontalScrollRail>`) now serves that affordance, so the
   // duplicate right-aligned link that used to live here has been
@@ -168,6 +178,9 @@ function RailHeader({ view }: { view: SavedViewView }) {
       </h2>
       {isCbl && view.cbl_list_id ? (
         <CblStatsPills cblListId={view.cbl_list_id} size="rail" />
+      ) : null}
+      {showSurpriseMe ? (
+        <SurpriseMeButton className="ml-auto shrink-0" />
       ) : null}
     </div>
   );

@@ -14,7 +14,13 @@ import { useCoverMenuCollectionActions } from "@/components/collections/useCover
 import { SeriesPlayOverlay } from "@/components/QuickReadOverlay";
 import { BulkMarkReadDialog } from "@/components/library/BulkMarkReadDialog";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
+import { SeriesHoverPreview } from "@/components/library/CardHoverPreview";
 import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { Badge } from "@/components/ui/badge";
 import { jsonFetch } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";
@@ -253,9 +259,19 @@ function SeriesCardImpl({
           {innerCard}
         </button>
       ) : (
-        <Link href={link} className={cardClassName}>
-          {innerCard}
-        </Link>
+        // Desktop hover preview (3.7). Radix HoverCard ignores touch +
+        // keyboard, so the card's tap / long-press / cover-menu behavior is
+        // untouched; the peek only layers on for pointer hover.
+        <HoverCard openDelay={400} closeDelay={120}>
+          <HoverCardTrigger asChild>
+            <Link href={link} className={cardClassName}>
+              {innerCard}
+            </Link>
+          </HoverCardTrigger>
+          <HoverCardContent align="start">
+            <SeriesHoverPreview series={series} />
+          </HoverCardContent>
+        </HoverCard>
       )}
       {collectionActions.dialog}
       {!inSelectMode && longPress.sheet}
