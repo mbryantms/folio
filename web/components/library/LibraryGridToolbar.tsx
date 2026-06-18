@@ -18,7 +18,10 @@ import {
 } from "@/components/ui/select";
 import type { IssueSort, SeriesSort, SortOrder } from "@/lib/api/types";
 
-const SERIES_SORT_LABELS: Record<SeriesSort, string> = {
+// `random` is excluded — it's a one-shot discovery pick ("Surprise me"),
+// never a user-selectable grid sort. The Exclude keeps this map exhaustive
+// over the *pickable* sorts so adding a real sort still fails the build.
+const SERIES_SORT_LABELS: Record<Exclude<SeriesSort, "random">, string> = {
   name: "Name",
   created_at: "Recently added",
   updated_at: "Recently updated",
@@ -171,7 +174,11 @@ export function LibraryGridToolbar({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {(Object.keys(SERIES_SORT_LABELS) as SeriesSort[]).map((s) => (
+              {(
+                Object.keys(SERIES_SORT_LABELS) as Array<
+                  keyof typeof SERIES_SORT_LABELS
+                >
+              ).map((s) => (
                 <SelectItem key={s} value={s}>
                   {SERIES_SORT_LABELS[s]}
                 </SelectItem>
