@@ -25,17 +25,17 @@ export function QualityTab() {
         <StatCard
           label="Orphan sessions"
           value={data.orphan_sessions}
-          hint="reading_sessions whose issue row is missing"
+          hint="Sessions pointing at an issue that no longer exists"
         />
         <StatCard
           label="Long sessions"
           value={data.long_sessions}
-          hint="active_ms > 6h or span > 12h"
+          hint="Over 6 hours of tracked reading, or spanning more than 12 hours"
         />
         <StatCard
           label="Dangling sessions"
           value={data.dangling_sessions}
-          hint="open > 1h with no heartbeat"
+          hint="Open more than an hour with no recent activity"
         />
       </div>
 
