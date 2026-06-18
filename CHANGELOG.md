@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.21.0](https://github.com/mbryantms/folio/compare/v0.20.0...v0.21.0) (2026-06-18)
+
+
+### Added
+
+* **covers:** responsive cover variants — small [@sm](https://github.com/sm) tier + srcset (G9) ([#270](https://github.com/mbryantms/folio/issues/270)) ([5a37d8f](https://github.com/mbryantms/folio/commit/5a37d8fbed7bb86e606f42c4be4c723c3e2b27bb))
+
+
+### Fixed
+
+* **a11y:** keyboard-focusable widget handle + heading hierarchy + cover announce (E8/E9) ([#271](https://github.com/mbryantms/folio/issues/271)) ([51661dc](https://github.com/mbryantms/folio/commit/51661dc33b0de8b1c816e9257831b0f933725a5d))
+* **web:** purpose-shaped empty states + caught-up/search copy (3.7) ([#272](https://github.com/mbryantms/folio/issues/272)) ([cccd5d7](https://github.com/mbryantms/folio/commit/cccd5d78dadb9ceb0dc3458412ebdd9b0567c6c1))
+
 ## [0.20.0](https://github.com/mbryantms/folio/compare/v0.19.0...v0.20.0) (2026-06-17)
 
 
