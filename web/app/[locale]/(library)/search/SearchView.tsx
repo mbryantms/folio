@@ -317,6 +317,24 @@ export function SearchView({
               ? issueReadStatusToParam(issueReadStatus)
               : undefined
           }
+          activeFilterCount={
+            filtersActive
+              ? countActiveSeriesFilters(filters)
+              : issueFiltersActive
+                ? issueReadStatus.length
+                : 0
+          }
+          onClearFilters={
+            filtersActive
+              ? () =>
+                  setFilters((f) => ({
+                    ...EMPTY_SERIES_SEARCH_FILTERS,
+                    sort: f.sort,
+                  }))
+              : issueFiltersActive
+                ? () => setIssueReadStatus([])
+                : undefined
+          }
         />
       ) : (
         <div className="space-y-8">
@@ -561,6 +579,8 @@ function CategoryGrid({
   cardSize,
   seriesFilters,
   issueReadStatusParam,
+  activeFilterCount,
+  onClearFilters,
 }: {
   def: SearchCategoryDef;
   query: string;
@@ -569,6 +589,11 @@ function CategoryGrid({
   cardSize: number;
   seriesFilters: Partial<SeriesListFilters>;
   issueReadStatusParam: string | undefined;
+  /** Active facet count for the current category (series facets or the
+   *  issue read-status pills). Drives the empty-state "Clear filters"
+   *  escape hatch so a zero-result filtered grid isn't a dead end. */
+  activeFilterCount: number;
+  onClearFilters: (() => void) | undefined;
 }) {
   if (!enabled) {
     return (
@@ -580,6 +605,7 @@ function CategoryGrid({
   const gridStyle: CSSProperties = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   };
+  const clearFilters = activeFilterCount > 0 ? onClearFilters : undefined;
   if (def.key === "series") {
     return (
       <SeriesCategoryGrid
@@ -587,6 +613,7 @@ function CategoryGrid({
         enabled={enabled}
         filters={seriesFilters}
         gridStyle={gridStyle}
+        onClearFilters={clearFilters}
       />
     );
   }
@@ -597,6 +624,7 @@ function CategoryGrid({
         enabled={enabled}
         gridStyle={gridStyle}
         readStatusParam={issueReadStatusParam}
+        onClearFilters={clearFilters}
       />
     );
   }
@@ -619,11 +647,13 @@ function SeriesCategoryGrid({
   enabled,
   filters,
   gridStyle,
+  onClearFilters,
 }: {
   query: string;
   enabled: boolean;
   filters: Partial<SeriesListFilters>;
   gridStyle: CSSProperties;
+  onClearFilters: (() => void) | undefined;
 }) {
   const results = useSeriesListInfinite(
     enabled ? { q: query, limit: 60, ...filters } : {},
@@ -638,7 +668,13 @@ function SeriesCategoryGrid({
     return <GridError label="series" />;
   }
   if (series.length === 0) {
-    return <NoMatches query={query} labelPlural="series" />;
+    return (
+      <NoMatches
+        query={query}
+        labelPlural="series"
+        onClearFilters={onClearFilters}
+      />
+    );
   }
   return (
     <div className="space-y-4">
@@ -662,11 +698,13 @@ function IssuesCategoryGrid({
   enabled,
   gridStyle,
   readStatusParam,
+  onClearFilters,
 }: {
   query: string;
   enabled: boolean;
   gridStyle: CSSProperties;
   readStatusParam: string | undefined;
+  onClearFilters: (() => void) | undefined;
 }) {
   const results = useIssuesCrossListInfinite(
     enabled ? { q: query, limit: 60, read_status: readStatusParam } : {},
@@ -681,7 +719,13 @@ function IssuesCategoryGrid({
     return <GridError label="issues" />;
   }
   if (issues.length === 0) {
-    return <NoMatches query={query} labelPlural="issues" />;
+    return (
+      <NoMatches
+        query={query}
+        labelPlural="issues"
+        onClearFilters={onClearFilters}
+      />
+    );
   }
   return (
     <div className="space-y-4">
@@ -1047,14 +1091,32 @@ function IconHitGrid({
 function NoMatches({
   query,
   labelPlural,
+  onClearFilters,
 }: {
   query: string;
   labelPlural: string;
+  /** When set, the active facets are the likely reason for zero results;
+   *  offer a one-tap escape hatch rather than leaving a dead end. */
+  onClearFilters?: (() => void) | undefined;
 }) {
   return (
-    <p className="text-muted-foreground text-sm">
-      No {labelPlural} match &ldquo;{query}&rdquo;.
-    </p>
+    <div className="text-muted-foreground space-y-3 text-sm">
+      <p>
+        No {labelPlural} match &ldquo;{query}&rdquo;
+        {onClearFilters ? " with the current filters" : ""}.
+      </p>
+      {onClearFilters ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onClearFilters}
+        >
+          <X className="mr-1 size-3.5" aria-hidden="true" />
+          Clear filters
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

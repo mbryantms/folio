@@ -1,6 +1,7 @@
 import {
   BookOpen,
   Building2,
+  CheckCircle2,
   FileStack,
   Clock,
   Calendar,
@@ -131,6 +132,17 @@ export default async function SeriesPage({
     series.total_issues ??
     0;
 
+  // "Caught up" = the reader has finished every active issue we hold
+  // (the resume resolver returns `finished` only when nothing is left to
+  // read). Distinguish an ongoing series — where more issues will land —
+  // from one that's done, so the message sets the right expectation.
+  const caughtUp =
+    nextState === "finished" && totalCount > 0 && finishedCount >= totalCount;
+  const seriesOngoing = isOngoingStatus(series.status);
+  const caughtUpMessage = seriesOngoing
+    ? "You're all caught up — every issue we have is read. New issues will appear here as they're added."
+    : "You've finished this series — every issue is read.";
+
   return (
     <div className="space-y-10">
       {/* Ancestor trail — `Library › <library name>`. The series-name H1
@@ -180,6 +192,15 @@ export default async function SeriesPage({
               readIncognitoHref={readIncognitoHref}
             />
           </div>
+          {caughtUp ? (
+            <p className="text-muted-foreground mx-auto flex max-w-xs items-start gap-1.5 text-center text-xs text-balance sm:max-w-sm lg:mx-0 lg:max-w-72 lg:text-left">
+              <CheckCircle2
+                aria-hidden="true"
+                className="text-primary mt-px size-3.5 shrink-0"
+              />
+              <span>{caughtUpMessage}</span>
+            </p>
+          ) : null}
         </div>
 
         {/* Right column — title, inline icon-driven facts row, summary,
@@ -643,6 +664,26 @@ function FactBlock({
 function readStateFromResume(state: string): ReadState {
   if (state === "in_progress" || state === "finished") return state;
   return "unread";
+}
+
+/** Whether a series is still publishing (more issues expected) vs. wrapped.
+ *  Drives the "caught up" vs "finished the series" copy. Unknown / missing
+ *  status is treated as ongoing so we don't wrongly claim a series is done.
+ *  Mirrors the raw values `formatPublicationStatus` normalizes. */
+function isOngoingStatus(status: string | null | undefined): boolean {
+  if (!status) return true;
+  const normalized = status.replace(/[_-]+/g, " ").trim().toLowerCase();
+  switch (normalized) {
+    case "completed":
+    case "ended":
+    case "finished":
+    case "cancelled":
+    case "canceled":
+      return false;
+    default:
+      // "ongoing", "active", "continuing", "hiatus", or anything unknown.
+      return true;
+  }
 }
 
 function resumeReaderHref(resume: SeriesResumeView): string | null {
