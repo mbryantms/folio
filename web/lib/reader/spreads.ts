@@ -16,6 +16,34 @@ import type { PageInfo } from "@/lib/api/types";
 
 export type SpreadGroup = readonly number[];
 
+/**
+ * Width ÷ height at or above which a page is treated as a two-page spread
+ * even when `double_page` metadata is absent (audit C8). A single comic
+ * page is portrait (~0.65); a spread is landscape (~1.3+). 1.2 sits safely
+ * between, so a slightly-wide single page never trips it but any genuine
+ * double-wide scan does.
+ */
+export const SPREAD_ASPECT_RATIO = 1.2;
+
+/**
+ * Does this page read as a two-page spread? True when the `double_page`
+ * flag is set OR, failing that, the intrinsic dimensions are landscape
+ * past {@link SPREAD_ASPECT_RATIO}. Dimensionless pages with no flag fall
+ * back to `false` (paired normally). Many archives omit `double_page`, so
+ * the aspect heuristic is what stops a wide spread from being jammed into
+ * half a pane next to an unrelated page.
+ */
+export function isSpreadPage(page: PageInfo | undefined): boolean {
+  if (!page) return false;
+  if (page.double_page === true) return true;
+  const w = page.image_width;
+  const h = page.image_height;
+  if (typeof w === "number" && typeof h === "number" && w > 0 && h > 0) {
+    return w / h >= SPREAD_ASPECT_RATIO;
+  }
+  return false;
+}
+
 export interface SpreadOptions {
   /** When true (default), index 0 is rendered solo and pairs sync from 1. */
   coverSolo?: boolean;
@@ -35,13 +63,15 @@ export interface SpreadOptions {
  * Walk pages and emit spread groups. Rules, in order:
  *
  *  1. If `coverSolo` (default true) and `i === 0`, emit `[0]` and advance.
- *  2. If `pages[i].double_page === true`, emit `[i]` solo and advance.
- *  3. If `i + 1 < total` and `pages[i + 1].double_page !== true`,
+ *  2. If `isSpreadPage(pages[i])`, emit `[i]` solo and advance.
+ *  3. If `i + 1 < total` and `!isSpreadPage(pages[i + 1])`,
  *     emit `[i, i + 1]` and advance by 2.
  *  4. Else emit `[i]` solo and advance.
  *
- * Rule (3) avoids ever pairing a page with a *following* spread — the
- * spread takes its own group on the next iteration.
+ * "Spread" = the `double_page` flag OR a landscape aspect ratio (audit
+ * C8) — see {@link isSpreadPage}. Rule (3) avoids ever pairing a page with
+ * a *following* spread — the spread takes its own group on the next
+ * iteration.
  *
  * `total` is `opts.totalPages ?? pages.length`. The `pages[]` array is
  * a metadata side-table consulted for the `double_page` flag; missing
@@ -61,12 +91,12 @@ export function computeSpreadGroups(
       i = 1;
       continue;
     }
-    if (pages[i]?.double_page === true) {
+    if (isSpreadPage(pages[i])) {
       groups.push([i]);
       i += 1;
       continue;
     }
-    if (i + 1 < total && pages[i + 1]?.double_page !== true) {
+    if (i + 1 < total && !isSpreadPage(pages[i + 1])) {
       groups.push([i, i + 1]);
       i += 2;
       continue;

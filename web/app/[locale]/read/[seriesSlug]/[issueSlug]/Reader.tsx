@@ -30,6 +30,7 @@ import {
   computeSpreadGroups,
   firstPageOfGroup,
   groupIndexForPage,
+  isSpreadPage,
   type SpreadGroup,
 } from "@/lib/reader/spreads";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
@@ -584,7 +585,8 @@ export function Reader({
     [],
   );
   const zoomOut = useCallback(
-    () => setZoom((z) => ({ scale: nextZoomStep(z.scale, "out"), ...RECENTER })),
+    () =>
+      setZoom((z) => ({ scale: nextZoomStep(z.scale, "out"), ...RECENTER })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -791,6 +793,17 @@ export function Reader({
   // the pane is content-sized so the natural image width drives layout.
   const doublePaneClass =
     fitMode === "width" ? "flex-1 min-w-0" : "inline-block";
+  // Solo-page width cap (audit C8): in double-page width-fit mode a lone
+  // page (the solo cover or a trailing odd page) otherwise stretches across
+  // the whole spread — twice the scale of the paired pages around it, which
+  // reads as a jarring zoom on every cover. Cap it to one-page width UNLESS
+  // the lone page is itself a spread (wide art that genuinely wants both
+  // halves of the opening).
+  const soloPaneCapped =
+    viewMode === "double" &&
+    fitMode === "width" &&
+    visiblePages.length === 1 &&
+    !isSpreadPage(pages[visiblePages[0]!]);
 
   // Gestures: horizontal drag (swipe) for page nav. Pinch is left
   // to the browser as native pinch-to-zoom so mobile users can
@@ -925,6 +938,7 @@ export function Reader({
             direction={direction}
             fitClass={fitClass}
             paneClass={doublePaneClass}
+            soloCapped={soloPaneCapped}
             onLeftZone={onLeftZone}
             onRightZone={onRightZone}
             onChromeZone={toggleChrome}
@@ -1177,6 +1191,7 @@ function DoublePageView({
   direction,
   fitClass,
   paneClass,
+  soloCapped,
   onLeftZone,
   onRightZone,
   onChromeZone,
@@ -1189,6 +1204,9 @@ function DoublePageView({
   direction: Direction;
   fitClass: string;
   paneClass: string;
+  /** Solo, non-spread page in width-fit: cap the pane to one-page width
+   *  instead of letting flex-1 stretch it across the full spread (C8). */
+  soloCapped: boolean;
   onLeftZone: () => void;
   onRightZone: () => void;
   onChromeZone: () => void;
@@ -1228,7 +1246,10 @@ function DoublePageView({
               issueId={issueId}
               page={p}
               fitClass={fitClass}
-              paneClass={paneClass}
+              // Capped solo page: half the spread width (one page), centered
+              // by the container's `justify-center`, so the cover/last page
+              // sits at the same scale as the paired pages (C8).
+              paneClass={soloCapped ? "w-1/2 min-w-0" : paneClass}
               onNaturalSize={onNaturalSize(p)}
               naturalSize={pageNaturalSize.current?.get(p) ?? null}
             />

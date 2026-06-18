@@ -8,6 +8,11 @@
  */
 import { create } from "zustand";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
+import {
+  DEFAULT_SCOPE,
+  readerPrefGet,
+  readerPrefSet,
+} from "@/lib/reader/prefs-storage";
 import type {
   MarkerKind,
   MarkerRegion,
@@ -55,9 +60,6 @@ type PersistedSlice =
   | "brightness"
   | "sepia";
 
-const storageKey = (slice: PersistedSlice, seriesId: string | null) =>
-  `reader:${slice}:${seriesId ?? "_default"}`;
-
 const isFitMode = (v: unknown): v is FitMode =>
   v === "width" || v === "height" || v === "original";
 const isViewMode = (v: unknown): v is ViewMode =>
@@ -68,19 +70,22 @@ const isBoolFlag = (v: unknown): v is "true" | "false" =>
 const isNumericString = (v: unknown): v is string =>
   typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v));
 
+/** `null` seriesId → the global `_default` scope (markersHidden /
+ *  brightness / sepia, which persist library-wide). Per-series slices pass
+ *  the real id and participate in the storage LRU. */
+const scopeOf = (seriesId: string | null) => seriesId ?? DEFAULT_SCOPE;
+
 function load<T>(
   slice: PersistedSlice,
   seriesId: string | null,
   guard: (v: unknown) => v is T,
 ): T | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(storageKey(slice, seriesId));
+  const raw = readerPrefGet(slice, scopeOf(seriesId));
   return guard(raw) ? raw : null;
 }
 
 function save(slice: PersistedSlice, seriesId: string | null, value: string) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(storageKey(slice, seriesId), value);
+  readerPrefSet(slice, scopeOf(seriesId), value);
 }
 
 export const loadFitMode = (seriesId: string | null): FitMode =>

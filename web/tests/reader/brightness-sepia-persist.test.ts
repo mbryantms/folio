@@ -8,21 +8,23 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  loadBrightness,
-  loadSepia,
-  useReaderStore,
-} from "@/lib/reader/store";
+import { loadBrightness, loadSepia, useReaderStore } from "@/lib/reader/store";
 
 let store: Map<string, string>;
 
 beforeEach(() => {
   store = new Map();
+  // A complete-enough `Storage` (length + key) so the prefs-storage
+  // migration/LRU machinery can iterate keys, not just a get/set stub.
   vi.stubGlobal("window", {
     localStorage: {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => void store.set(k, v),
       removeItem: (k: string) => void store.delete(k),
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
     },
   });
 });
@@ -41,8 +43,8 @@ describe("reader brightness/sepia persistence", () => {
     useReaderStore.getState().setBrightness(1.2);
     useReaderStore.getState().setSepia(0.4);
 
-    expect(store.get("reader:brightness:_default")).toBe("1.2");
-    expect(store.get("reader:sepia:_default")).toBe("0.4");
+    expect(store.get("reader.v1:brightness:_default")).toBe("1.2");
+    expect(store.get("reader.v1:sepia:_default")).toBe("0.4");
     expect(loadBrightness()).toBe(1.2);
     expect(loadSepia()).toBe(0.4);
   });
@@ -57,14 +59,14 @@ describe("reader brightness/sepia persistence", () => {
   });
 
   it("clamps a tampered persisted value on rehydrate", () => {
-    store.set("reader:brightness:_default", "5");
-    store.set("reader:sepia:_default", "9");
+    store.set("reader.v1:brightness:_default", "5");
+    store.set("reader.v1:sepia:_default", "9");
     expect(loadBrightness()).toBe(1.5);
     expect(loadSepia()).toBe(1);
   });
 
   it("ignores a non-numeric persisted value", () => {
-    store.set("reader:brightness:_default", "bright");
+    store.set("reader.v1:brightness:_default", "bright");
     expect(loadBrightness()).toBeNull();
   });
 });
