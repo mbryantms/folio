@@ -73,6 +73,8 @@ import {
   useUpdateCollection,
 } from "@/lib/api/mutations";
 import { skippedEntryIds } from "@/lib/library/bulk-archive-skips";
+import { snapshotFromEntries } from "@/lib/collections/recreate";
+import { useCollectionDeleteUndo } from "@/lib/collections/use-collection-undo";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { TOAST } from "@/lib/api/toast-strings";
@@ -123,7 +125,11 @@ export function CollectionViewDetail({
   const reorder = useReorderCollectionEntries(savedView.id);
   const remove = useRemoveCollectionEntry(savedView.id);
   const update = useUpdateCollection(savedView.id);
-  const del = useDeleteCollection(savedView.id);
+  // Silent delete + an Undo toast (audit B6): the detail page already
+  // auto-walks every entry page, so the snapshot below is complete and
+  // free — no extra fetch needed.
+  const del = useDeleteCollection(savedView.id, { silent: true });
+  const showDeleteUndo = useCollectionDeleteUndo();
   // Multi-select bulk actions on the collection detail page.
   // Selection tracks `collection_entries.id` (the row PK) so we can
   // resolve each selected entry to its `(entry_kind, ref_id)` pair
@@ -479,20 +485,28 @@ export function CollectionViewDetail({
             <AlertDialogTitle>Delete this collection?</AlertDialogTitle>
             <AlertDialogDescription>
               Entries are removed from the collection but the underlying series
-              and issues are not touched. This can&apos;t be undone.
+              and issues are not touched. You can undo this right after.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() =>
+              onClick={() => {
+                // Snapshot name + description + ordered members BEFORE the
+                // delete drops them, so Undo can replay the collection.
+                const snapshot = snapshotFromEntries(
+                  savedView.name,
+                  savedView.description,
+                  allEntries,
+                );
                 del.mutate(undefined, {
                   onSuccess: () => {
                     setConfirmDelete(false);
                     router.push("/collections");
+                    showDeleteUndo(snapshot);
                   },
-                })
-              }
+                });
+              }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Delete

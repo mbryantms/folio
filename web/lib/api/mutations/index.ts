@@ -1818,13 +1818,18 @@ export function useUpdateCollection(id: string) {
 }
 
 /** Delete a collection. The server rejects deletion of the per-user
- *  Want to Read row (`system_key='want_to_read'`) with 409. */
-export function useDeleteCollection(id: string) {
+ *  Want to Read row (`system_key='want_to_read'`) with 409.
+ *
+ *  `silent` suppresses the default success toast so the call site can pop
+ *  its own "deleted" toast carrying an Undo action (audit B6) — see
+ *  [`useCollectionDeleteUndo`](../../collections/use-collection-undo.ts).
+ *  Error toasts still fire (every mutation toasts on error). */
+export function useDeleteCollection(id: string, opts?: { silent?: boolean }) {
   const qc = useQueryClient();
   return useApiMutation<unknown, void>(
     () => ({ path: `/me/collections/${id}`, method: "DELETE" }),
     {
-      successMessage: "Collection deleted",
+      ...(opts?.silent ? {} : { successMessage: "Collection deleted" }),
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.collections });
         qc.invalidateQueries({ queryKey: ["saved-views"] });
