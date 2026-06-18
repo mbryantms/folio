@@ -2305,6 +2305,40 @@
             "description": "admin only"
           }
         }
+      },
+      "post": {
+        "operationId": "admin_users_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateUserResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "409": {
+            "description": "email already in use / local auth disabled"
+          },
+          "422": {
+            "description": "validation"
+          }
+        }
       }
     },
     "/api/admin/users/{id}": {
@@ -12511,6 +12545,55 @@
             ]
           }
         }
+      },
+      "CreateUserReq": {
+        "type": "object",
+        "description": "Body for admin create-user (3.8 / audit D9). The server generates the\npassword — the admin only chooses identity + role — so a temporary\ncredential exists without the admin inventing (and likely reusing) one.",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional display name. Defaults to the email's local part."
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UserRole",
+                "description": "Defaults to `user` when omitted."
+              }
+            ]
+          }
+        }
+      },
+      "CreateUserResp": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AdminUserView"
+          },
+          {
+            "type": "object",
+            "required": [
+              "temp_password"
+            ],
+            "properties": {
+              "temp_password": {
+                "type": "string",
+                "description": "One-time temporary password, generated server-side and returned\nONLY here so the admin can hand it to the new user. It is hashed at\nrest like any other password and is never re-retrievable — the user\nchanges it from their own account settings after first sign-in."
+              }
+            }
+          }
+        ]
       },
       "CreatorDetailView": {
         "type": "object",

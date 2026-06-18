@@ -32,15 +32,19 @@ use super::extractors::Validated;
 use super::{error, respond};
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
+use crate::auth::password;
+use crate::config::AuthMode;
 use crate::middleware::RequestContext;
 use crate::record_admin_action;
 use crate::state::AppState;
+use rand::Rng;
 use server_macros::handler;
 use shared::error::ApiErrorCode;
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list))
+        .routes(routes!(create))
         .routes(routes!(get_one))
         .routes(routes!(update))
         .routes(routes!(disable))
@@ -168,7 +172,202 @@ pub struct LibraryAccessReq {
     pub library_ids: Vec<String>,
 }
 
+/// Body for admin create-user (3.8 / audit D9). The server generates the
+/// password — the admin only chooses identity + role — so a temporary
+/// credential exists without the admin inventing (and likely reusing) one.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct CreateUserReq {
+    #[garde(custom(valid_email))]
+    pub email: String,
+    /// Optional display name. Defaults to the email's local part.
+    #[serde(default)]
+    #[garde(inner(custom(non_empty_after_trim)))]
+    pub display_name: Option<String>,
+    /// Defaults to `user` when omitted.
+    #[serde(default)]
+    #[garde(skip)]
+    pub role: Option<UserRole>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CreateUserResp {
+    #[serde(flatten)]
+    pub user: AdminUserView,
+    /// One-time temporary password, generated server-side and returned
+    /// ONLY here so the admin can hand it to the new user. It is hashed at
+    /// rest like any other password and is never re-retrievable — the user
+    /// changes it from their own account settings after first sign-in.
+    pub temp_password: String,
+}
+
+fn valid_email(value: &str, _: &()) -> garde::Result {
+    let v = value.trim();
+    if v.len() < 3 || v.len() > 254 || !v.contains('@') {
+        return Err(garde::Error::new("invalid email"));
+    }
+    Ok(())
+}
+
+/// Generate a 20-char temporary password from an unambiguous alphabet
+/// (no `0/O/1/l/I`). Well over the 12-char minimum the local-auth path
+/// enforces; the admin copies it rather than types it, so length over
+/// memorability is the right trade.
+fn gen_temp_password() -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let mut rng = rand::thread_rng();
+    (0..20)
+        .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
+        .collect()
+}
+
 // ───────── handlers ─────────
+
+#[utoipa::path(
+    operation_id = "admin_users_create",    post,
+    path = "/admin/users",
+    request_body = CreateUserReq,
+    responses(
+        (status = 201, body = CreateUserResp),
+        (status = 403, description = "admin only"),
+        (status = 409, description = "email already in use / local auth disabled"),
+        (status = 422, description = "validation"),
+    )
+)]
+#[handler]
+pub async fn create(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Validated(req): Validated<CreateUserReq>,
+) -> impl IntoResponse {
+    // A temp-password user is a *local* account; refuse when local auth is
+    // off (OIDC-only) so we never mint an account that can't sign in.
+    // Note: this deliberately does NOT consult `local_registration_open` —
+    // admin provisioning is the whole point of the endpoint, independent of
+    // whether public self-registration is open (audit D9).
+    if !matches!(app.cfg().auth_mode, AuthMode::Local | AuthMode::Both) {
+        return respond(
+            StatusCode::CONFLICT,
+            ApiErrorCode::Conflict,
+            "local authentication is disabled; can't create a password user",
+        );
+    }
+
+    let email = req.email.trim().to_lowercase();
+    if let Ok(Some(_)) = user::Entity::find()
+        .filter(user::Column::Email.eq(email.clone()))
+        .one(&app.db)
+        .await
+    {
+        return respond(
+            StatusCode::CONFLICT,
+            ApiErrorCode::Conflict,
+            "email already in use",
+        );
+    }
+
+    let temp_password = gen_temp_password();
+    let hash = match password::hash(&temp_password, app.secrets.pepper.as_ref()) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(error = %e, "admin create-user: hash failed");
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiErrorCode::Internal,
+                "internal",
+            );
+        }
+    };
+
+    let role = req.role.unwrap_or(UserRole::User);
+    let display = req
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| email.split('@').next().unwrap_or("user").to_owned());
+    let user_id = Uuid::now_v7();
+    let now = chrono::Utc::now().fixed_offset();
+
+    // Admin-provisioned accounts land `active` + email-verified: the admin
+    // is vouching for the address, so the user can sign in immediately with
+    // the temp password even when SMTP isn't configured. Mirrors the field
+    // set in `auth::local::register`.
+    let am = user::ActiveModel {
+        id: Set(user_id),
+        external_id: Set(format!("local:{}", user_id)),
+        display_name: Set(display),
+        email: Set(Some(email.clone())),
+        email_verified: Set(true),
+        password_hash: Set(Some(hash)),
+        totp_secret: Set(None),
+        state: Set("active".into()),
+        role: Set(role.as_db_str().to_owned()),
+        token_version: Set(0),
+        created_at: Set(now),
+        updated_at: Set(now),
+        last_login_at: Set(None),
+        default_reading_direction: Set(None),
+        default_fit_mode: Set(None),
+        default_view_mode: Set(None),
+        default_page_strip: Set(false),
+        default_page_animation: Set(None),
+        default_cover_solo: Set(true),
+        theme: Set(None),
+        accent_color: Set(None),
+        density: Set(None),
+        keybinds: Set(serde_json::json!({})),
+        activity_tracking_enabled: Set(true),
+        timezone: Set("UTC".into()),
+        reading_min_active_ms: Set(30_000),
+        reading_min_pages: Set(3),
+        reading_idle_ms: Set(180_000),
+        language: Set("en".into()),
+        exclude_from_aggregates: Set(false),
+        show_marker_count: Set(false),
+        opds_wtr_reorder: Set(true),
+        opds_progress_glyphs: Set(true),
+        max_rails_per_page: Set(12),
+    };
+
+    let inserted = match am.insert(&app.db).await {
+        Ok(m) => m,
+        Err(e) => {
+            // The unique index on lower(email) is the real conflict defense
+            // (covers the TOCTOU between the check above and this insert).
+            tracing::warn!(error = %e, "admin create-user: insert failed");
+            return respond(
+                StatusCode::CONFLICT,
+                ApiErrorCode::Conflict,
+                "email already in use",
+            );
+        }
+    };
+
+    // Audit the creation — never log the password (or its hash).
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.user.create",
+        target = ("user", user_id.to_string()),
+        payload = serde_json::json!({
+            "email": email,
+            "role": role.as_db_str(),
+        }),
+    );
+
+    let counts = HashMap::new();
+    (
+        StatusCode::CREATED,
+        Json(CreateUserResp {
+            user: AdminUserView::from_model(inserted, &counts),
+            temp_password,
+        }),
+    )
+        .into_response()
+}
 
 #[utoipa::path(
     operation_id = "admin_users_list",    get,

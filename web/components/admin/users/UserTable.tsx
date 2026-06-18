@@ -11,6 +11,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CreateUserDialog } from "@/components/admin/users/CreateUserDialog";
 import { useUserList, type UserListFilters } from "@/lib/api/queries";
 import type { AdminUserView } from "@/lib/api/types";
 
@@ -180,6 +181,7 @@ export function UserTable() {
               className="h-8 w-56 pl-7"
             />
           </div>
+          <CreateUserDialog />
         </div>
       </div>
 
