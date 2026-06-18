@@ -25,6 +25,11 @@ import {
   type BulkAddMembersResp,
 } from "@/lib/api/mutations";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import {
+  getRecentCollectionIds,
+  partitionByRecents,
+  recordCollectionUse,
+} from "@/lib/collections/recents";
 import { cn } from "@/lib/utils";
 import type { CollectionEntryKind, SavedViewView } from "@/lib/api/types";
 
@@ -82,6 +87,13 @@ export function BulkAddToCollectionDialog({
   const filtered = needle
     ? others.filter((c) => c.name.toLowerCase().includes(needle))
     : others;
+  // Recently-used collections (read once per open) surfaced in a "Recent"
+  // group above the alpha list when not actively searching.
+  const recentIds = React.useMemo(
+    () => (open ? getRecentCollectionIds() : []),
+    [open],
+  );
+  const { recent, rest } = partitionByRecents(others, recentIds);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -130,21 +142,49 @@ export function BulkAddToCollectionDialog({
                   />
                 </li>
               ) : null}
-              {filtered.map((collection) => (
-                <li key={collection.id}>
-                  <BulkPickRow
-                    targets={targets}
-                    collection={collection}
-                    onDone={() => onOpenChange(false)}
-                    icon={
-                      <Folder
-                        className="text-muted-foreground h-4 w-4 shrink-0"
-                        aria-hidden="true"
+              {needle ? (
+                filtered.map((collection) => (
+                  <li key={collection.id}>
+                    <BulkPickRow
+                      targets={targets}
+                      collection={collection}
+                      onDone={() => onOpenChange(false)}
+                      icon={<BulkFolderIcon />}
+                    />
+                  </li>
+                ))
+              ) : (
+                <>
+                  {recent.length > 0 ? (
+                    <>
+                      <BulkPickGroupLabel>Recent</BulkPickGroupLabel>
+                      {recent.map((collection) => (
+                        <li key={collection.id}>
+                          <BulkPickRow
+                            targets={targets}
+                            collection={collection}
+                            onDone={() => onOpenChange(false)}
+                            icon={<BulkFolderIcon />}
+                          />
+                        </li>
+                      ))}
+                      {rest.length > 0 ? (
+                        <BulkPickGroupLabel>All collections</BulkPickGroupLabel>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {rest.map((collection) => (
+                    <li key={collection.id}>
+                      <BulkPickRow
+                        targets={targets}
+                        collection={collection}
+                        onDone={() => onOpenChange(false)}
+                        icon={<BulkFolderIcon />}
                       />
-                    }
-                  />
-                </li>
-              ))}
+                    </li>
+                  ))}
+                </>
+              )}
               {filtered.length === 0 &&
               (needle || !wantToRead) &&
               !collectionsQ.isLoading ? (
@@ -176,6 +216,29 @@ export function BulkAddToCollectionDialog({
   );
 }
 
+/** Folder glyph shared by every non-WTR bulk pick row. */
+function BulkFolderIcon() {
+  return (
+    <Folder
+      className="text-muted-foreground h-4 w-4 shrink-0"
+      aria-hidden="true"
+    />
+  );
+}
+
+/** Section header inside the bulk picker list ("Recent" / "All
+ *  collections"). */
+function BulkPickGroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <li
+      role="presentation"
+      className="text-muted-foreground bg-muted/40 px-3 py-1 text-[11px] font-medium tracking-wide uppercase"
+    >
+      {children}
+    </li>
+  );
+}
+
 function BulkPickRow({
   targets,
   collection,
@@ -196,6 +259,7 @@ function BulkPickRow({
           { members: targets },
           {
             onSuccess: () => {
+              recordCollectionUse(collection.id);
               onDone();
             },
           },
@@ -256,6 +320,7 @@ function BulkCreateForm({
       });
       invalidateCollectionEntries(qc, created.id);
       qc.invalidateQueries({ queryKey: queryKeys.collections });
+      recordCollectionUse(created.id);
 
       const addedCount = summary?.added ?? targets.length;
       toast.success(`${addedCount} added to ${trimmed}`, {
