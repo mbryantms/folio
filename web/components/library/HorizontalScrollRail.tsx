@@ -56,7 +56,8 @@ export function HorizontalScrollRail({
    *  of starting at the previously-finished context.
    *
    *  Prefer `data-rail-current="true"` on the anchor child when the
-   *  index isn't known up front — the rail will auto-find it. */
+   *  index isn't known up front — the rail watches the DOM and auto-finds
+   *  it whenever it appears, even when the body loads asynchronously. */
   initialScrollIndex?: number;
   className?: string;
 }) {
@@ -83,49 +84,71 @@ export function HorizontalScrollRail({
     const el = scrollerRef.current;
     if (!el) return;
 
-    // Apply the initial scroll once on first layout. Anchor selection,
-    // in priority order:
+    // Apply the initial scroll once. Anchor selection, in priority order:
     //   1. Explicit `initialScrollIndex` prop (when caller knows the index).
     //   2. A child carrying `data-rail-current="true"` (preferred for
     //      async cases like the CBL window — the body component flags
     //      one card and the rail finds it after layout).
-    if (!didInitialScroll.current) {
+    //
+    // Returns true once the anchor has been resolved (so the caller can
+    // stop watching), false while it's still absent. Crucially this is
+    // driven by a MutationObserver below, *not* by the effect's deps:
+    // async rail bodies (the CBL reading window) load their data inside a
+    // child component, so the anchor card lands in the DOM without
+    // re-rendering this rail — a `children`-keyed effect would never see
+    // it. Watching the DOM directly makes the scroll fire whenever the
+    // anchor actually appears.
+    const attemptInitialScroll = (): boolean => {
+      if (didInitialScroll.current) return true;
       const row = el.firstElementChild;
+      if (!row) return false;
       let anchor: HTMLElement | null = null;
-      if (
-        row &&
-        typeof initialScrollIndex === "number" &&
-        initialScrollIndex > 0
-      ) {
+      if (typeof initialScrollIndex === "number" && initialScrollIndex > 0) {
         const child = row.children.item(initialScrollIndex);
         if (child instanceof HTMLElement) anchor = child;
       }
-      if (!anchor && row) {
+      if (!anchor) {
         anchor = row.querySelector<HTMLElement>('[data-rail-current="true"]');
       }
-      if (anchor && row) {
-        // Subtract the row's content edge so the card aligns with the
-        // viewport's left padding (the inner row uses `px-1`). Then
-        // pull back by `LEFT_FADE_PX` so the card sits to the *right*
-        // of the left-edge fade gradient — without this offset the
-        // anchor lands directly under the fade and reads as darkened
-        // on first load.
-        const rowRect = row.getBoundingClientRect();
-        const cardRect = anchor.getBoundingClientRect();
-        const desired = Math.max(
-          0,
-          cardRect.left - rowRect.left - LEFT_FADE_PX,
-        );
-        // Skip when the anchor is already at column 0 (or very close)
-        // — avoids a no-op scroll write that would still mark the
-        // effect as "done."
-        if (desired > 1) {
-          el.scrollLeft = desired;
-          didInitialScroll.current = true;
-          recompute();
-        }
+      if (!anchor) return false;
+      // Subtract the row's content edge so the card aligns with the
+      // viewport's left padding (the inner row uses `px-1`). Then pull
+      // back by `LEFT_FADE_PX` so the card sits to the *right* of the
+      // left-edge fade gradient — without this offset the anchor lands
+      // directly under the fade and reads as darkened on first load.
+      const rowRect = row.getBoundingClientRect();
+      const cardRect = anchor.getBoundingClientRect();
+      const desired = Math.max(0, cardRect.left - rowRect.left - LEFT_FADE_PX);
+      // Mark done as soon as the anchor is resolved — even when it's
+      // already at column 0 (desired ≈ 0) — so we stop watching and
+      // never fight the user's later manual scroll.
+      didInitialScroll.current = true;
+      if (desired > 1) {
+        el.scrollLeft = desired;
+        recompute();
       }
-    }
+      return true;
+    };
+
+    // Try synchronously (covers rail bodies whose children are present on
+    // first layout). A MutationObserver then keeps two things live as the
+    // body's content changes: the affordance flags (chevrons/fades must
+    // reflect cards that load/prepend/append after mount) and the pending
+    // anchor scroll (retried until the `data-rail-current` card appears).
+    // This is what the old `children`-keyed effect re-run used to cover —
+    // but it only fired on a parent re-render, which an async child body
+    // never triggers.
+    attemptInitialScroll();
+    const mo = new MutationObserver(() => {
+      recompute();
+      attemptInitialScroll();
+    });
+    mo.observe(el, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-rail-current"],
+    });
 
     const ro = new ResizeObserver(() => recompute());
     ro.observe(el);
@@ -133,10 +156,11 @@ export function HorizontalScrollRail({
     for (const child of Array.from(el.children)) ro.observe(child);
     el.addEventListener("scroll", recompute, { passive: true });
     return () => {
+      mo.disconnect();
       ro.disconnect();
       el.removeEventListener("scroll", recompute);
     };
-  }, [recompute, children, initialScrollIndex]);
+  }, [recompute, initialScrollIndex]);
 
   const scrollBy = (dir: "left" | "right") => {
     const el = scrollerRef.current;
