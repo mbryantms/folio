@@ -13,6 +13,14 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.22.3](https://github.com/mbryantms/folio/compare/v0.22.2...v0.22.3) (2026-06-20)
+
+
+### Fixed
+
+* **ui:** keep dropdown menus + submenus inside the safe area ([#285](https://github.com/mbryantms/folio/issues/285)) ([5c13a86](https://github.com/mbryantms/folio/commit/5c13a861e5bcaabb6978561435d6f683d10163a8))
+* **ui:** keep popover/select/hover-card/tooltip inside the safe area ([#286](https://github.com/mbryantms/folio/issues/286)) ([cabed53](https://github.com/mbryantms/folio/commit/cabed53a602b314d493982403c86f661db8bb79c))
+
 ## [0.22.2](https://github.com/mbryantms/folio/compare/v0.22.1...v0.22.2) (2026-06-20)
 
 
