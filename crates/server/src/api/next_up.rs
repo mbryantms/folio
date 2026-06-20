@@ -538,60 +538,17 @@ pub(crate) async fn pick_next_in_series(
 ///     has nothing left forward); reach back for earlier gaps so the
 ///     user can still complete the series.
 ///
-/// Used by the On Deck rail to match the "continue reading from where
-/// I am" mental model. The in-reader sequential resolver still uses
-/// [`pick_next_in_series_after`] which anchors on the *currently open*
-/// issue rather than the latest finished one.
-pub(crate) async fn pick_next_in_series_continue(
-    app: &AppState,
-    user_id: Uuid,
-    series_id: Uuid,
-) -> Result<Option<issue::Model>, Response> {
-    let issues: Vec<issue::Model> = match issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
-        .order_by_asc(Expr::cust("sort_number IS NULL"))
-        .order_by_asc(issue::Column::SortNumber)
-        .order_by_asc(issue::Column::Id)
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "next_up: pick_next_in_series_continue issues lookup failed");
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            ));
-        }
-    };
-    if issues.is_empty() {
-        return Ok(None);
-    }
-    let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
-    let progress_rows = match progress_record::Entity::find()
-        .filter(progress_record::Column::UserId.eq(user_id))
-        .filter(progress_record::Column::IssueId.is_in(issue_ids))
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "next_up: pick_next_in_series_continue progress lookup failed");
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            ));
-        }
-    };
-    let progress_by_id: std::collections::HashMap<String, progress_record::Model> = progress_rows
-        .into_iter()
-        .map(|p| (p.issue_id.clone(), p))
-        .collect();
-
+/// Pure in-memory walk over an already-ordered issue list + the user's
+/// progress map. Shared by the batched On Deck rail
+/// (`rails::compute_on_deck`, which bulk-hydrates many series at once)
+/// and any single-series caller — keeping ONE implementation guarantees
+/// the rail and the reader's next-up resolver never resolve different
+/// issues. `issues` MUST be ordered the way the series reads:
+/// `sort_number IS NULL` last, then `sort_number`, then `id`.
+pub(crate) fn walk_series_continue_pick(
+    issues: &[issue::Model],
+    progress_by_id: &std::collections::HashMap<String, progress_record::Model>,
+) -> Option<issue::Model> {
     // Walk the ordered list once: track the index of the latest
     // finished issue and the first unread issue overall (the
     // fallback target).
@@ -612,8 +569,7 @@ pub(crate) async fn pick_next_in_series_continue(
     // No finished issue → fall back to the earliest-unread pick
     // (first-time reader entering the series).
     let Some(latest_idx) = latest_finished_idx else {
-        let pick = first_unread_idx.map(|i| issues[i].clone());
-        return Ok(pick);
+        return first_unread_idx.map(|i| issues[i].clone());
     };
 
     // Walk forward from after the latest finished; pick the first
@@ -624,7 +580,7 @@ pub(crate) async fn pick_next_in_series_continue(
             .map(|p| p.finished)
             .unwrap_or(false);
         if !finished {
-            return Ok(Some(iss.clone()));
+            return Some(iss.clone());
         }
     }
 
@@ -632,7 +588,7 @@ pub(crate) async fn pick_next_in_series_continue(
     // user can still mop up earlier gaps before the series is truly
     // caught up. Returns `None` only when literally every issue is
     // finished.
-    Ok(first_unread_idx.map(|i| issues[i].clone()))
+    first_unread_idx.map(|i| issues[i].clone())
 }
 
 /// "Next unread issue *strictly after* the given one" within the same
@@ -763,20 +719,6 @@ pub(crate) async fn pick_next_in_cbl(
     )
 }
 
-/// Frontier-aware variant for the On Deck rail: scans from the top of the
-/// list and also reports the finished-prefix activity so the rail can
-/// decide whether the user is *actively* reading the list (non-empty
-/// prefix) and rank it by frontier activity rather than any overlapping
-/// read.
-pub(crate) async fn pick_next_in_cbl_frontier(
-    app: &AppState,
-    user_id: Uuid,
-    cbl_list_id: Uuid,
-    acl: &access::VisibleLibraries,
-) -> Result<Option<CblNextPick>, Response> {
-    scan_next_in_cbl(app, user_id, cbl_list_id, acl, None).await
-}
-
 async fn scan_next_in_cbl(
     app: &AppState,
     user_id: Uuid,
@@ -815,7 +757,7 @@ async fn scan_next_in_cbl(
         .collect();
     let progress_rows = match progress_record::Entity::find()
         .filter(progress_record::Column::UserId.eq(user_id))
-        .filter(progress_record::Column::IssueId.is_in(matched_ids))
+        .filter(progress_record::Column::IssueId.is_in(matched_ids.clone()))
         .all(&app.db)
         .await
     {
@@ -835,11 +777,79 @@ async fn scan_next_in_cbl(
             .map(|p| (p.issue_id.clone(), p))
             .collect();
 
-    // Frontier tracking: max progress.updated_at over the finished
-    // entries walked past before the pick. Finished entries never reach
-    // the issue/ACL lookups below, so finished-but-ACL-invisible prefix
-    // entries still count toward the frontier — consistent with the pick
-    // the user would get.
+    // Bulk-hydrate the matched issues + their parent series for this list
+    // so the pick is a single in-memory walk (`walk_cbl_pick`) instead of
+    // a per-entry round-trip. Fetching every matched issue (not just up to
+    // the pick) is a bounded over-fetch — CBL lists are small — and yields
+    // the identical pick.
+    let issue_rows = match issue::Entity::find()
+        .filter(issue::Column::Id.is_in(matched_ids.clone()))
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "next_up: pick_next_in_cbl issue hydrate failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
+    let issue_by_id: std::collections::HashMap<String, issue::Model> = issue_rows
+        .iter()
+        .map(|i| (i.id.clone(), i.clone()))
+        .collect();
+    let mut series_ids: Vec<Uuid> = issue_rows.iter().map(|i| i.series_id).collect();
+    series_ids.sort();
+    series_ids.dedup();
+    let series_by_id: std::collections::HashMap<Uuid, series::Model> = if series_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        match series::Entity::find()
+            .filter(series::Column::Id.is_in(series_ids))
+            .all(&app.db)
+            .await
+        {
+            Ok(v) => v.into_iter().map(|s| (s.id, s)).collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "next_up: pick_next_in_cbl series hydrate failed");
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal",
+                ));
+            }
+        }
+    };
+
+    Ok(walk_cbl_pick(
+        &entries,
+        &progress_by_issue,
+        &issue_by_id,
+        &series_by_id,
+        acl,
+    ))
+}
+
+/// Pure in-memory pick over a CBL list's matched entries — shared by the
+/// next-up resolver ([`scan_next_in_cbl`]) and the batched On Deck rail
+/// (`rails::compute_on_deck`) so both resolve the same entry. `entries`
+/// MUST be ordered by `position` and pre-filtered to matched entries (and,
+/// for the resolver's `start_after`, the post-position tail). Walks past
+/// finished entries accumulating the frontier timestamp, then returns the
+/// first unfinished entry whose issue is hydrated and visible (library
+/// ACL), skipping forward on a missing/invisible pick exactly as the lazy
+/// per-entry scan did. Finished-but-ACL-invisible prefix entries still
+/// count toward the frontier (they never reach the visibility check).
+pub(crate) fn walk_cbl_pick(
+    entries: &[cbl_entry::Model],
+    progress_by_issue: &std::collections::HashMap<String, progress_record::Model>,
+    issue_by_id: &std::collections::HashMap<String, issue::Model>,
+    series_by_id: &std::collections::HashMap<Uuid, series::Model>,
+    acl: &access::VisibleLibraries,
+) -> Option<CblNextPick> {
     let mut prefix_last_activity: Option<chrono::DateTime<chrono::FixedOffset>> = None;
     for entry in entries {
         let Some(issue_id) = entry.matched_issue_id.clone() else {
@@ -858,28 +868,24 @@ async fn scan_next_in_cbl(
             }
             continue;
         }
-        let Ok(Some(issue_model)) = issue::Entity::find_by_id(issue_id).one(&app.db).await else {
+        let Some(issue_model) = issue_by_id.get(&issue_id) else {
             continue;
         };
         if !acl.contains(issue_model.library_id) {
             continue;
         }
-        let (series_slug, series_name) = match series::Entity::find_by_id(issue_model.series_id)
-            .one(&app.db)
-            .await
-        {
-            Ok(Some(s)) => (s.slug, s.name),
-            _ => continue,
+        let Some(s) = series_by_id.get(&issue_model.series_id) else {
+            continue;
         };
-        return Ok(Some(CblNextPick {
-            issue: issue_model,
-            series_slug,
-            series_name,
+        return Some(CblNextPick {
+            issue: issue_model.clone(),
+            series_slug: s.slug.clone(),
+            series_name: s.name.clone(),
             position: entry.position + 1,
             prefix_last_activity,
-        }));
+        });
     }
-    Ok(None)
+    None
 }
 
 // ───────────────────────────────────────────────────────────────────

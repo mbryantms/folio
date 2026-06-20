@@ -536,7 +536,11 @@ fn assert_quick(elapsed: Duration, path: &str) {
 /// are tuned so either category trips the test immediately while
 /// leaving room for legitimate one-off additions (a new ACL check,
 /// a new metadata sub-query).
-const MAX_QUERIES_ON_DECK: u64 = 50; // observed ≈ 23
+const MAX_QUERIES_ON_DECK: u64 = 20; // observed ≈ 9 after batching (was ≈ 23 with the per-candidate pick loop)
+// Scale guard: On Deck must stay O(1) in candidate count. Pre-batch, the
+// per-candidate pick loop cost ~2 queries per started series, so 30 series
+// would be ~65 queries; the batched hydrate keeps it flat.
+const MAX_QUERIES_ON_DECK_AT_SCALE: u64 = 20;
 const MAX_QUERIES_MARKERS: u64 = 10; // observed ≈ 2
 const MAX_QUERIES_READING_LOG: u64 = 30; // observed ≈ 9
 const MAX_QUERIES_SERIES: u64 = 20; // observed ≈ 5
@@ -623,6 +627,40 @@ async fn realistic_dataset_endpoints_respond_correctly() {
         snap.taken(),
         MAX_QUERIES_ADMIN_STATS,
         "/api/admin/stats/users",
+    );
+
+    // ── /me/on-deck at scale — the regression guard for the batched
+    // rewrite. A *second* user with 30 started series (each with a
+    // finished first issue) would, under the old per-candidate pick loop,
+    // cost ~2 queries per series (~65 total). The bulk hydrate keeps the
+    // round-trip count flat regardless of how many series are on deck.
+    // Kept inside this single test fn (not a separate one) because the
+    // query counter is process-global and per-call snapshots only stay
+    // accurate without a second test racing the DB in parallel.
+    let scale_user = register(&app, "perf-scale@example.com").await;
+    let (scale_lib, scale_series) = seed_library(&app, "perfscale", 30, 4).await;
+    grant_access(&app, scale_user.user_id, scale_lib).await;
+    let scale_finished: Vec<String> = scale_series
+        .iter()
+        .flat_map(|(_, ids)| ids.iter().take(1).cloned())
+        .collect();
+    seed_progress(&app, scale_user.user_id, &scale_finished).await;
+
+    let snap = QueryCount::snapshot(&counter);
+    let (status, body, elapsed) = get(&app, &scale_user, "/api/me/on-deck").await;
+    assert_eq!(status, StatusCode::OK);
+    let scale_items = body["items"].as_array().expect("on-deck items missing");
+    // 30 series each surface a next-up card; the handler caps the rail at 24.
+    assert_eq!(
+        scale_items.len(),
+        24,
+        "expected the 24-card cap over 30 started series",
+    );
+    assert_quick(elapsed, "/api/me/on-deck @scale");
+    assert_query_count(
+        snap.taken(),
+        MAX_QUERIES_ON_DECK_AT_SCALE,
+        "/api/me/on-deck @scale",
     );
 }
 

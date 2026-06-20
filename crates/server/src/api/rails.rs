@@ -26,10 +26,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use entity::{issue, rail_dismissal, series};
+use entity::{cbl_entry, issue, progress_record, rail_dismissal, series};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Set,
-    Statement, sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter,
+    QueryOrder, Set, Statement, sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -373,26 +373,40 @@ pub(crate) async fn compute_on_deck(
             }
         };
 
-    for row in &series_candidates {
-        if !acl.contains(row.library_id) {
+    // Resolve every visible series candidate's next-up pick in a constant
+    // number of round-trips: bulk-hydrate all candidates' issues + the
+    // user's progress once, then run the SAME in-memory walk the reader's
+    // next-up resolver uses (`walk_series_continue_pick`) per series. This
+    // anchors on the user's latest finished issue (finishing #20 surfaces
+    // #21, not #1) and falls back to earliest-unread when no finished
+    // issue exists — identical to the per-candidate path it replaces,
+    // which ran 2 queries per series and made On Deck scale O(series).
+    let visible_series: Vec<&SeriesRow> = series_candidates
+        .iter()
+        .filter(|r| acl.contains(r.library_id))
+        .collect();
+    let series_ids: Vec<Uuid> = visible_series.iter().map(|r| r.series_id).collect();
+    let issues_by_series = match hydrate_series_issues(app, &series_ids).await {
+        Ok(m) => m,
+        Err(resp) => return Err(resp),
+    };
+    let series_issue_ids: Vec<String> = issues_by_series
+        .values()
+        .flat_map(|v| v.iter().map(|i| i.id.clone()))
+        .collect();
+    let series_progress = match fetch_progress_for(app, user_id, &series_issue_ids).await {
+        Ok(m) => m,
+        Err(resp) => return Err(resp),
+    };
+    for row in &visible_series {
+        let Some(issues) = issues_by_series.get(&row.series_id) else {
             continue;
-        }
-        // `pick_next_in_series_continue` anchors on the user's latest
-        // finished issue in the series, so finishing #20 surfaces #21
-        // as on-deck instead of #1 (the bare "first unread anywhere"
-        // pick used pre-v0.5.6). Falls back to the earliest-unread
-        // pick when no finished issue exists, but the `started` CTE
-        // above guarantees we always have at least one finished
-        // issue here, so the fallback only matters for the helper's
-        // other call sites.
-        let next =
-            match crate::api::next_up::pick_next_in_series_continue(app, user_id, row.series_id)
-                .await
-            {
-                Ok(opt) => opt,
-                Err(resp) => return Err(resp),
-            };
-        let Some(issue_model) = next else { continue };
+        };
+        let Some(issue_model) =
+            crate::api::next_up::walk_series_continue_pick(issues, &series_progress)
+        else {
+            continue;
+        };
         series_buf.push((
             row.last_activity,
             OnDeckCard::SeriesNext {
@@ -563,27 +577,38 @@ pub(crate) async fn compute_on_deck(
         }
     };
 
+    // Bulk-hydrate every candidate list's matched entries + their issues,
+    // parent series, and the user's progress in a constant number of
+    // round-trips, then run the SAME in-memory walk the resolver uses
+    // (`walk_cbl_pick`) per list. Replaces the per-candidate
+    // `pick_next_in_cbl_frontier` call, which ran several queries per list
+    // and made On Deck scale O(active CBLs).
+    let cand_list_ids: Vec<Uuid> = cbl_candidates.iter().map(|c| c.cbl_list_id).collect();
+    let (cbl_entries_by_list, cbl_issue_by_id, cbl_series_by_id, cbl_progress) =
+        match hydrate_cbl_picks(app, user_id, &cand_list_ids).await {
+            Ok(t) => t,
+            Err(resp) => return Err(resp),
+        };
+
     for cand in &cbl_candidates {
         // Ghost guard. The SQL EXISTS already filtered; this re-check
         // keeps the map and the candidate query coherent across their
-        // race window and skips the pick's per-list queries for any
-        // stragglers. Emitted cards therefore always carry a saved-view
+        // race window. Emitted cards therefore always carry a saved-view
         // id the caller can navigate to.
         let Some(sv_id) = cbl_saved_view_by_list_id.get(&cand.cbl_list_id) else {
             continue;
         };
-        let next = match crate::api::next_up::pick_next_in_cbl_frontier(
-            app,
-            user_id,
-            cand.cbl_list_id,
+        let entries = cbl_entries_by_list
+            .get(&cand.cbl_list_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let Some(pick) = crate::api::next_up::walk_cbl_pick(
+            entries,
+            &cbl_progress,
+            &cbl_issue_by_id,
+            &cbl_series_by_id,
             acl,
-        )
-        .await
-        {
-            Ok(opt) => opt,
-            Err(resp) => return Err(resp),
-        };
-        let Some(pick) = next else {
+        ) else {
             continue;
         };
         // Frontier candidacy: a list with an empty finished prefix was
@@ -787,6 +812,178 @@ async fn series_ids_in_cbls(
         map.entry(r.cbl_list_id).or_default().push(r.series_id);
     }
     Ok(map)
+}
+
+/// Bulk-fetch the active, non-removed issues for many series in one query,
+/// grouped by series id and ordered the way each series reads
+/// (`sort_number IS NULL` last, then `sort_number`, then `id`) so a caller
+/// can feed each group straight into `next_up::walk_series_continue_pick`.
+/// Collapses the old per-series `pick_next_in_series_continue` round-trip
+/// in `compute_on_deck` to a single query.
+async fn hydrate_series_issues(
+    app: &AppState,
+    series_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, Vec<issue::Model>>, Response> {
+    use std::collections::HashMap;
+    if series_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = match issue::Entity::find()
+        .filter(issue::Column::SeriesId.is_in(series_ids.to_vec()))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .order_by_asc(issue::Column::SeriesId)
+        .order_by_asc(Expr::cust("sort_number IS NULL"))
+        .order_by_asc(issue::Column::SortNumber)
+        .order_by_asc(issue::Column::Id)
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: on-deck series-issue hydrate failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
+    let mut map: HashMap<Uuid, Vec<issue::Model>> = HashMap::new();
+    for r in rows {
+        map.entry(r.series_id).or_default().push(r);
+    }
+    Ok(map)
+}
+
+/// Bulk-fetch the caller's progress rows for a set of issue ids, keyed by
+/// issue id. Shared by the On Deck series + CBL hydration paths.
+async fn fetch_progress_for(
+    app: &AppState,
+    user_id: Uuid,
+    issue_ids: &[String],
+) -> Result<std::collections::HashMap<String, progress_record::Model>, Response> {
+    use std::collections::HashMap;
+    if issue_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = match progress_record::Entity::find()
+        .filter(progress_record::Column::UserId.eq(user_id))
+        .filter(progress_record::Column::IssueId.is_in(issue_ids.to_vec()))
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: on-deck progress hydrate failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
+    Ok(rows.into_iter().map(|p| (p.issue_id.clone(), p)).collect())
+}
+
+/// Maps returned by [`hydrate_cbl_picks`]: matched entries grouped by
+/// list (ordered by position), all matched issues, their parent series,
+/// and the caller's progress — everything `next_up::walk_cbl_pick` needs.
+type CblPickHydration = (
+    std::collections::HashMap<Uuid, Vec<cbl_entry::Model>>,
+    std::collections::HashMap<String, issue::Model>,
+    std::collections::HashMap<Uuid, series::Model>,
+    std::collections::HashMap<String, progress_record::Model>,
+);
+
+/// Bulk-hydrate everything needed to resolve the next-up pick for many
+/// CBL lists at once: matched entries (ordered by position, grouped by
+/// list), their issues + parent series, and the caller's progress.
+/// Collapses the per-candidate `pick_next_in_cbl_frontier` round-trips in
+/// `compute_on_deck` to a constant number of queries.
+async fn hydrate_cbl_picks(
+    app: &AppState,
+    user_id: Uuid,
+    list_ids: &[Uuid],
+) -> Result<CblPickHydration, Response> {
+    use std::collections::HashMap;
+    if list_ids.is_empty() {
+        return Ok((
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        ));
+    }
+    let entries = match cbl_entry::Entity::find()
+        .filter(cbl_entry::Column::CblListId.is_in(list_ids.to_vec()))
+        .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
+        .order_by_asc(cbl_entry::Column::CblListId)
+        .order_by_asc(cbl_entry::Column::Position)
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: on-deck cbl-entry hydrate failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
+    let matched_ids: Vec<String> = entries
+        .iter()
+        .filter_map(|e| e.matched_issue_id.clone())
+        .collect();
+    let progress = fetch_progress_for(app, user_id, &matched_ids).await?;
+    let issue_rows = match issue::Entity::find()
+        .filter(issue::Column::Id.is_in(matched_ids))
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: on-deck cbl-issue hydrate failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
+    let issue_by_id: HashMap<String, issue::Model> = issue_rows
+        .iter()
+        .map(|i| (i.id.clone(), i.clone()))
+        .collect();
+    let mut series_ids: Vec<Uuid> = issue_rows.iter().map(|i| i.series_id).collect();
+    series_ids.sort();
+    series_ids.dedup();
+    let series_by_id: HashMap<Uuid, series::Model> = if series_ids.is_empty() {
+        HashMap::new()
+    } else {
+        match series::Entity::find()
+            .filter(series::Column::Id.is_in(series_ids))
+            .all(&app.db)
+            .await
+        {
+            Ok(v) => v.into_iter().map(|s| (s.id, s)).collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "rails: on-deck cbl-series hydrate failed");
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal",
+                ));
+            }
+        }
+    };
+    let mut entries_by_list: HashMap<Uuid, Vec<cbl_entry::Model>> = HashMap::new();
+    for e in entries {
+        entries_by_list.entry(e.cbl_list_id).or_default().push(e);
+    }
+    Ok((entries_by_list, issue_by_id, series_by_id, progress))
 }
 
 #[utoipa::path(
