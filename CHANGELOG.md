@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.22.2](https://github.com/mbryantms/folio/compare/v0.22.1...v0.22.2) (2026-06-20)
+
+
+### Changed
+
+* **rails:** batch On Deck next-up picks (O(1) round-trips) ([#283](https://github.com/mbryantms/folio/issues/283)) ([790136c](https://github.com/mbryantms/folio/commit/790136c795dbcad41dfde93f312ab43597a075cb))
+
 ## [0.22.1](https://github.com/mbryantms/folio/compare/v0.22.0...v0.22.1) (2026-06-20)
 
 
