@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.22.1](https://github.com/mbryantms/folio/compare/v0.22.0...v0.22.1) (2026-06-20)
+
+
+### Fixed
+
+* **web:** reliably anchor CBL home rails on the Up Next issue ([#281](https://github.com/mbryantms/folio/issues/281)) ([96be135](https://github.com/mbryantms/folio/commit/96be135eb8b678415c1e66acbfd3787f7c5a0df8))
+
 ## [0.22.0](https://github.com/mbryantms/folio/compare/v0.21.0...v0.22.0) (2026-06-18)
 
 
