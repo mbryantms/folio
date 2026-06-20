@@ -515,6 +515,32 @@ async fn seed_progress(app: &TestApp, user_id: Uuid, issue_ids: &[String]) {
     }
 }
 
+/// Mark *every* supplied issue finished (unlike `seed_progress`, which caps at
+/// a few). The On Deck scale guard needs many started series so the batched
+/// hydrate is exercised against what the old per-candidate loop would cost.
+async fn seed_all_finished(app: &TestApp, user_id: Uuid, issue_ids: &[String]) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    for (i, issue_id) in issue_ids.iter().enumerate() {
+        progress_record::ActiveModel {
+            user_id: Set(user_id),
+            issue_id: Set(issue_id.clone()),
+            last_page: Set(19),
+            percent: Set(1.0),
+            finished: Set(true),
+            finished_at: Set(Some(now)),
+            // Stagger so the rail ordering (most-recent-activity first) is
+            // deterministic across the 30 cards.
+            updated_at: Set(now - chrono::Duration::seconds(i as i64)),
+            device: Set(None),
+            is_backfill: Set(false),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+}
+
 const TIMEOUT: Duration = Duration::from_secs(30);
 
 fn assert_quick(elapsed: Duration, path: &str) {
@@ -536,10 +562,13 @@ fn assert_quick(elapsed: Duration, path: &str) {
 /// are tuned so either category trips the test immediately while
 /// leaving room for legitimate one-off additions (a new ACL check,
 /// a new metadata sub-query).
-const MAX_QUERIES_ON_DECK: u64 = 20; // observed ≈ 9 after batching (was ≈ 23 with the per-candidate pick loop)
+// Small-seed sanity bound (10 series / 5 CBLs). After batching the per-candidate
+// pick loop, On Deck is O(1) in candidates; this confirms the batch path didn't
+// regress at the baseline seed.
+const MAX_QUERIES_ON_DECK: u64 = 20; // observed ≈ 9-12 after batching (was ≈ 23 with the per-candidate loop)
 // Scale guard: On Deck must stay O(1) in candidate count. Pre-batch, the
-// per-candidate pick loop cost ~2 queries per started series, so 30 series
-// would be ~65 queries; the batched hydrate keeps it flat.
+// per-candidate pick loop cost ~2 queries per started series, so 30 started
+// series ran ~65 queries; the batched hydrate keeps it flat (~10).
 const MAX_QUERIES_ON_DECK_AT_SCALE: u64 = 20;
 const MAX_QUERIES_MARKERS: u64 = 10; // observed ≈ 2
 const MAX_QUERIES_READING_LOG: u64 = 30; // observed ≈ 9
@@ -644,7 +673,7 @@ async fn realistic_dataset_endpoints_respond_correctly() {
         .iter()
         .flat_map(|(_, ids)| ids.iter().take(1).cloned())
         .collect();
-    seed_progress(&app, scale_user.user_id, &scale_finished).await;
+    seed_all_finished(&app, scale_user.user_id, &scale_finished).await;
 
     let snap = QueryCount::snapshot(&counter);
     let (status, body, elapsed) = get(&app, &scale_user, "/api/me/on-deck").await;
