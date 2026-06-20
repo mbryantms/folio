@@ -6,6 +6,40 @@ import { Check, ChevronRight, Circle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
+/** Minimum gap (px) we keep between a menu and the viewport edge on every
+ *  side, on top of any safe-area inset. */
+const EDGE_GUTTER = 8;
+
+/**
+ * Collision padding that keeps portalled menus inside the **safe area**.
+ *
+ * Radix positions a portalled menu against the raw visual viewport. In a
+ * `viewport-fit: cover` standalone PWA (Folio's manifest) that viewport
+ * extends *under* the status bar and out to the physical screen edges, so
+ * the Radix default (`collisionPadding = 0`) lets a tall menu slide under
+ * the status bar — clipped, with no room to scroll into — and lets a
+ * side-opened submenu (e.g. "Fetch metadata") run off the screen edge.
+ *
+ * Feeding the `--safe-*` insets (resolved to px at runtime) plus a small
+ * gutter as `collisionPadding` keeps menus within the safe area AND shrinks
+ * the `--radix-…-available-height` cap to the visible region, so genuinely
+ * tall menus actually scroll instead of overflowing. On desktop the insets
+ * resolve to 0, leaving just the gutter.
+ */
+function safeAreaCollisionPadding(): number | Partial<Record<string, number>> {
+  if (typeof window === "undefined") return EDGE_GUTTER;
+  const cs = getComputedStyle(document.documentElement);
+  const inset = (name: string) =>
+    Math.max(0, Math.round(parseFloat(cs.getPropertyValue(name)) || 0)) +
+    EDGE_GUTTER;
+  return {
+    top: inset("--safe-top"),
+    right: inset("--safe-right"),
+    bottom: inset("--safe-bottom"),
+    left: inset("--safe-left"),
+  };
+}
+
 const DropdownMenu = DropdownMenuPrimitive.Root;
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 const DropdownMenuGroup = DropdownMenuPrimitive.Group;
@@ -42,39 +76,58 @@ DropdownMenuSubTrigger.displayName =
 const DropdownMenuSubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubContent
-    ref={ref}
-    className={cn(
-      "border-border bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] overflow-x-hidden overflow-y-auto rounded-md border p-1 shadow-lg",
-      className,
-    )}
-    {...props}
-  />
-));
+>(({ className, collisionPadding, ...props }, ref) => {
+  // Default to the safe-area-aware padding so a side-opened submenu can't
+  // run off the screen edge; callers can still override.
+  const pad = React.useMemo(
+    () => collisionPadding ?? safeAreaCollisionPadding(),
+    [collisionPadding],
+  );
+  return (
+    <DropdownMenuPrimitive.SubContent
+      ref={ref}
+      collisionPadding={pad}
+      className={cn(
+        "border-border bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] overflow-x-hidden overflow-y-auto rounded-md border p-1 shadow-lg",
+        className,
+      )}
+      {...props}
+    />
+  );
+});
 DropdownMenuSubContent.displayName =
   DropdownMenuPrimitive.SubContent.displayName;
 
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal>
-    <DropdownMenuPrimitive.Content
-      ref={ref}
-      sideOffset={sideOffset}
-      className={cn(
-        // Cap to the space Radix measured between the trigger and the
-        // viewport edge (whichever side it opens) and scroll the overflow,
-        // so a long menu mid-screen on mobile doesn't run off-screen.
-        "border-border bg-popover text-popover-foreground z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] overflow-x-hidden overflow-y-auto rounded-md border p-1 shadow-md",
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
-        className,
-      )}
-      {...props}
-    />
-  </DropdownMenuPrimitive.Portal>
-));
+>(({ className, sideOffset = 4, collisionPadding, ...props }, ref) => {
+  // Keep the menu within the safe area (status bar / home indicator /
+  // notch) so it doesn't slide off-screen, and so the available-height cap
+  // resolves to the visible region and a tall menu scrolls. Overridable.
+  const pad = React.useMemo(
+    () => collisionPadding ?? safeAreaCollisionPadding(),
+    [collisionPadding],
+  );
+  return (
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.Content
+        ref={ref}
+        sideOffset={sideOffset}
+        collisionPadding={pad}
+        className={cn(
+          // Cap to the space Radix measured between the trigger and the
+          // viewport edge (whichever side it opens) and scroll the overflow,
+          // so a long menu mid-screen on mobile doesn't run off-screen.
+          "border-border bg-popover text-popover-foreground z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] overflow-x-hidden overflow-y-auto rounded-md border p-1 shadow-md",
+          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+          className,
+        )}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
+  );
+});
 DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
 
 const DropdownMenuItem = React.forwardRef<
