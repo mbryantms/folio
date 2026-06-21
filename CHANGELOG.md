@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.22.5](https://github.com/mbryantms/folio/compare/v0.22.4...v0.22.5) (2026-06-21)
+
+
+### Changed
+
+* **rails:** reduce On Deck rail work ([#290](https://github.com/mbryantms/folio/issues/290)) ([8cb5fcc](https://github.com/mbryantms/folio/commit/8cb5fcc07249a772231758d3b3ef78720f1eb03b))
+
 ## [0.22.4](https://github.com/mbryantms/folio/compare/v0.22.3...v0.22.4) (2026-06-21)
 
 
