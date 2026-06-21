@@ -112,8 +112,8 @@ function cardKey(card: OnDeckCardData, index: number): string {
  * without coupling it to layout decisions.
  */
 export function useSystemRailIsEmpty(systemKey: string): boolean {
-  const cr = useContinueReading();
-  const od = useOnDeck();
+  const cr = useContinueReading({ enabled: systemKey === "continue_reading" });
+  const od = useOnDeck({ enabled: systemKey === "on_deck" });
   if (systemKey === "continue_reading") {
     return !cr.isLoading && (cr.data?.items.length ?? 0) === 0;
   }

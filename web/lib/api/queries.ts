@@ -1961,19 +1961,22 @@ export function useSeriesIssuesInfinite(
 
 /** Issues the user has started but not finished, most-recent-activity first.
  *  Drives the Continue Reading rail on the home page. */
-export function useContinueReading() {
+export function useContinueReading(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.continueReading,
     queryFn: () => jsonFetch<ContinueReadingView>("/me/continue-reading"),
+    enabled: opts?.enabled ?? true,
   });
 }
 
 /** "What's next" suggestions across series + CBLs the user is working
  *  through. Drives the On Deck rail on the home page. */
-export function useOnDeck() {
+export function useOnDeck(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.onDeck,
     queryFn: () => jsonFetch<OnDeckView>("/me/on-deck"),
+    enabled: opts?.enabled ?? true,
+    staleTime: 60_000,
   });
 }
 
