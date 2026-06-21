@@ -439,50 +439,6 @@ pub(crate) async fn compute_on_deck(
     // candidate count is bounded by the user's actual CBL usage so the
     // round-trip count is small in practice.
     //
-    // Pre-fetch the (cbl_list_id → saved_view_id) lookup for every
-    // saved view of kind='cbl' the caller can see. Doubles as the
-    // loop-side ghost guard (candidates absent from the map are
-    // skipped) and lets each CblNext card carry the saved-view id so
-    // the web can thread `?cbl=` onto the reader URL. Tiebreak:
-    // user-owned saved view wins over system-owned (NULL user_id);
-    // within a tier, lowest id wins.
-    let cbl_saved_view_by_list_id: std::collections::HashMap<Uuid, Uuid> = {
-        use entity::saved_view;
-        use sea_orm::{Condition, QueryOrder};
-        let rows = match saved_view::Entity::find()
-            .filter(saved_view::Column::Kind.eq("cbl"))
-            .filter(saved_view::Column::CblListId.is_not_null())
-            .filter(
-                Condition::any()
-                    .add(saved_view::Column::UserId.is_null())
-                    .add(saved_view::Column::UserId.eq(user_id)),
-            )
-            // user-owned rows (UserId IS NOT NULL) first; within tier, lowest id wins.
-            .order_by_desc(Expr::cust("user_id IS NOT NULL"))
-            .order_by_asc(saved_view::Column::Id)
-            .all(&app.db)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!(error = %e, "rails: on-deck saved-view lookup failed");
-                return Err(error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    "internal",
-                ));
-            }
-        };
-        let mut map = std::collections::HashMap::new();
-        for sv in rows {
-            if let Some(list_id) = sv.cbl_list_id {
-                // First insert wins thanks to the ORDER BY tiebreak.
-                map.entry(list_id).or_insert(sv.id);
-            }
-        }
-        map
-    };
-
     #[derive(Debug, FromQueryResult)]
     struct CblCandidate {
         cbl_list_id: Uuid,
@@ -555,6 +511,17 @@ pub(crate) async fn compute_on_deck(
             }
         };
 
+    let cbl_candidate_ids: Vec<Uuid> = cbl_candidates.iter().map(|c| c.cbl_list_id).collect();
+
+    // Pre-fetch the (cbl_list_id → saved_view_id) lookup for only the
+    // bounded candidate set. The CBL candidate SQL already enforces the
+    // saved-view EXISTS predicate, but this race-window guard keeps emitted
+    // cards navigable and supplies the `?cbl=` saved-view id. Tiebreak:
+    // user-owned saved view wins over system-owned (NULL user_id); within
+    // a tier, lowest id wins.
+    let cbl_saved_view_by_list_id =
+        cbl_saved_view_ids_for_candidates(app, user_id, &cbl_candidate_ids).await?;
+
     // Series-wide ownership per CBL — pre-fetched in one round-trip
     // across every candidate (audit-remediation M5.2). Over-fetching
     // for CBLs that turn out to have no next is cheap compared to the
@@ -563,8 +530,7 @@ pub(crate) async fn compute_on_deck(
     // shadow every series in the CBL, not just the currently-pointed
     // issue.
     let cbl_series_ownership: std::collections::HashMap<Uuid, Vec<Uuid>> = {
-        let ids: Vec<Uuid> = cbl_candidates.iter().map(|c| c.cbl_list_id).collect();
-        match series_ids_in_cbls(app, &ids).await {
+        match series_ids_in_cbls(app, &cbl_candidate_ids).await {
             Ok(m) => m,
             Err(e) => {
                 tracing::error!(error = %e, "rails: on-deck cbl series-ownership lookup failed");
@@ -583,9 +549,8 @@ pub(crate) async fn compute_on_deck(
     // (`walk_cbl_pick`) per list. Replaces the per-candidate
     // `pick_next_in_cbl_frontier` call, which ran several queries per list
     // and made On Deck scale O(active CBLs).
-    let cand_list_ids: Vec<Uuid> = cbl_candidates.iter().map(|c| c.cbl_list_id).collect();
     let (cbl_entries_by_list, cbl_issue_by_id, cbl_series_by_id, cbl_progress) =
-        match hydrate_cbl_picks(app, user_id, &cand_list_ids).await {
+        match hydrate_cbl_picks(app, user_id, &cbl_candidate_ids).await {
             Ok(t) => t,
             Err(resp) => return Err(resp),
         };
@@ -810,6 +775,53 @@ async fn series_ids_in_cbls(
         std::collections::HashMap::with_capacity(list_ids.len());
     for r in rows {
         map.entry(r.cbl_list_id).or_default().push(r.series_id);
+    }
+    Ok(map)
+}
+
+async fn cbl_saved_view_ids_for_candidates(
+    app: &AppState,
+    user_id: Uuid,
+    list_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, Uuid>, Response> {
+    if list_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    use entity::saved_view;
+    use sea_orm::Condition;
+
+    let rows = match saved_view::Entity::find()
+        .filter(saved_view::Column::Kind.eq("cbl"))
+        .filter(saved_view::Column::CblListId.is_in(list_ids.to_vec()))
+        .filter(
+            Condition::any()
+                .add(saved_view::Column::UserId.is_null())
+                .add(saved_view::Column::UserId.eq(user_id)),
+        )
+        // user-owned rows (UserId IS NOT NULL) first; within tier, lowest id wins.
+        .order_by_desc(Expr::cust("user_id IS NOT NULL"))
+        .order_by_asc(saved_view::Column::Id)
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: on-deck saved-view lookup failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
+
+    let mut map = std::collections::HashMap::new();
+    for sv in rows {
+        if let Some(list_id) = sv.cbl_list_id {
+            // First insert wins thanks to the ORDER BY tiebreak.
+            map.entry(list_id).or_insert(sv.id);
+        }
     }
     Ok(map)
 }
