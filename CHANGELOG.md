@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.22.4](https://github.com/mbryantms/folio/compare/v0.22.3...v0.22.4) (2026-06-21)
+
+
+### Fixed
+
+* **ui:** flatten dropdown submenus on touch so they aren't off-screen ([#288](https://github.com/mbryantms/folio/issues/288)) ([a16cd25](https://github.com/mbryantms/folio/commit/a16cd2568f8ca0647ac2202ec443dc88d06964f0))
+
 ## [0.22.3](https://github.com/mbryantms/folio/compare/v0.22.2...v0.22.3) (2026-06-20)
 
 
