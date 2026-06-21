@@ -36,13 +36,10 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuPortal,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { DropdownMenuResponsiveSub } from "@/components/ui/dropdown-menu-responsive-sub";
 import {
   useAddCollectionEntry,
   useCreateMarker,
@@ -392,39 +389,34 @@ export function IssueSettingsMenu({
                   <RefreshCw className="mr-2 h-4 w-4" />
                   Scan issue
                 </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
+                <DropdownMenuResponsiveSub
+                  icon={<Images className="mr-2 h-4 w-4" />}
+                  label="Thumbnails"
+                >
+                  <DropdownMenuItem
+                    onSelect={() => regenerateCover.mutate()}
+                    disabled={regenerateCover.isPending}
+                  >
+                    <ImageIcon className="mr-2 h-4 w-4" />
+                    Rebuild cover
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => generatePageMap.mutate()}
+                    disabled={generatePageMap.isPending}
+                  >
                     <Images className="mr-2 h-4 w-4" />
-                    Thumbnails
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuPortal>
-                    <DropdownMenuSubContent>
-                      <DropdownMenuItem
-                        onSelect={() => regenerateCover.mutate()}
-                        disabled={regenerateCover.isPending}
-                      >
-                        <ImageIcon className="mr-2 h-4 w-4" />
-                        Rebuild cover
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onSelect={() => generatePageMap.mutate()}
-                        disabled={generatePageMap.isPending}
-                      >
-                        <Images className="mr-2 h-4 w-4" />
-                        Fill missing page thumbnails
-                      </DropdownMenuItem>
-                      {onForceRecreatePageMap && (
-                        <DropdownMenuItem
-                          onSelect={onForceRecreatePageMap}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Images className="mr-2 h-4 w-4" />
-                          Rebuild all page thumbnails
-                        </DropdownMenuItem>
-                      )}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuPortal>
-                </DropdownMenuSub>
+                    Fill missing page thumbnails
+                  </DropdownMenuItem>
+                  {onForceRecreatePageMap && (
+                    <DropdownMenuItem
+                      onSelect={onForceRecreatePageMap}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Images className="mr-2 h-4 w-4" />
+                      Rebuild all page thumbnails
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuResponsiveSub>
                 {onEdit && (
                   <DropdownMenuItem onSelect={onEdit}>
                     <Pencil className="mr-2 h-4 w-4" />

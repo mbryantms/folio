@@ -33,13 +33,10 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuPortal,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { DropdownMenuResponsiveSub } from "@/components/ui/dropdown-menu-responsive-sub";
 import {
   useAddCollectionEntry,
   useCreateSeriesBatch,
@@ -317,36 +314,29 @@ export function SeriesSettingsMenu({
               <Link2 className="mr-2 h-4 w-4" />
               {share.label}
             </DropdownMenuItem>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
+            <DropdownMenuResponsiveSub
+              icon={<Sparkles className="mr-2 h-4 w-4" />}
+              label="Fetch metadata"
+            >
+              <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
                 <Sparkles className="mr-2 h-4 w-4" />
-                Fetch metadata
-              </DropdownMenuSubTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuSubContent>
-                  <DropdownMenuItem
-                    onSelect={() => setMetadataDialogOpen(true)}
-                  >
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    Match this series…
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() => fetchAllMetadata("all")}
-                    disabled={createBatch.isPending}
-                  >
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    All issues
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() => fetchAllMetadata("incomplete")}
-                    disabled={createBatch.isPending}
-                  >
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    Only missing or partial
-                  </DropdownMenuItem>
-                </DropdownMenuSubContent>
-              </DropdownMenuPortal>
-            </DropdownMenuSub>
+                Match this series…
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => fetchAllMetadata("all")}
+                disabled={createBatch.isPending}
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                All issues
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => fetchAllMetadata("incomplete")}
+                disabled={createBatch.isPending}
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                Only missing or partial
+              </DropdownMenuItem>
+            </DropdownMenuResponsiveSub>
           </DropdownMenuGroup>
 
           {isAdmin && (
@@ -361,39 +351,34 @@ export function SeriesSettingsMenu({
                   <RefreshCw className="mr-2 h-4 w-4" />
                   Scan series
                 </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
+                <DropdownMenuResponsiveSub
+                  icon={<Images className="mr-2 h-4 w-4" />}
+                  label="Thumbnails"
+                >
+                  <DropdownMenuItem
+                    onSelect={() => regenerateCover.mutate()}
+                    disabled={regenerateCover.isPending}
+                  >
+                    <ImageIcon className="mr-2 h-4 w-4" />
+                    Rebuild cover
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => generatePageMap.mutate()}
+                    disabled={generatePageMap.isPending}
+                  >
                     <Images className="mr-2 h-4 w-4" />
-                    Thumbnails
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuPortal>
-                    <DropdownMenuSubContent>
-                      <DropdownMenuItem
-                        onSelect={() => regenerateCover.mutate()}
-                        disabled={regenerateCover.isPending}
-                      >
-                        <ImageIcon className="mr-2 h-4 w-4" />
-                        Rebuild cover
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onSelect={() => generatePageMap.mutate()}
-                        disabled={generatePageMap.isPending}
-                      >
-                        <Images className="mr-2 h-4 w-4" />
-                        Fill missing page thumbnails
-                      </DropdownMenuItem>
-                      {onForceRecreatePageMap && (
-                        <DropdownMenuItem
-                          onSelect={onForceRecreatePageMap}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Images className="mr-2 h-4 w-4" />
-                          Rebuild all page thumbnails
-                        </DropdownMenuItem>
-                      )}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuPortal>
-                </DropdownMenuSub>
+                    Fill missing page thumbnails
+                  </DropdownMenuItem>
+                  {onForceRecreatePageMap && (
+                    <DropdownMenuItem
+                      onSelect={onForceRecreatePageMap}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Images className="mr-2 h-4 w-4" />
+                      Rebuild all page thumbnails
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuResponsiveSub>
                 {onEdit && (
                   <DropdownMenuItem onSelect={onEdit}>
                     <Pencil className="mr-2 h-4 w-4" />
