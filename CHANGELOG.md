@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.22.6](https://github.com/mbryantms/folio/compare/v0.22.5...v0.22.6) (2026-06-22)
+
+
+### Changed
+
+* **rails:** project slim columns for On Deck hydration ([#295](https://github.com/mbryantms/folio/issues/295)) ([5a8c094](https://github.com/mbryantms/folio/commit/5a8c09433dee2da53ca9af02e01e9097bb06665f))
+
+
+### Dependencies
+
+* update dependency serialize-javascript@&lt;7.0.5 to v7.0.6 ([#292](https://github.com/mbryantms/folio/issues/292)) ([a58d5ec](https://github.com/mbryantms/folio/commit/a58d5ec5209a0c5fe28ce7c0c758f26a3cda6aed))
+* update radix-ui ([#293](https://github.com/mbryantms/folio/issues/293)) ([d179f48](https://github.com/mbryantms/folio/commit/d179f484a2c750ceb84686f67d8cd501982355b3))
+
 ## [0.22.5](https://github.com/mbryantms/folio/compare/v0.22.4...v0.22.5) (2026-06-21)
 
 
