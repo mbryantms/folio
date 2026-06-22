@@ -22,14 +22,14 @@
 use axum::{
     Extension, Json,
     extract::{Path as AxPath, State},
-    http::StatusCode,
+    http::{HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
 use entity::{cbl_entry, issue, progress_record, rail_dismissal, series};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter,
-    QueryOrder, Set, Statement, sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, DbBackend, DerivePartialModel, EntityTrait, FromQueryResult,
+    QueryFilter, QueryOrder, Set, Statement, prelude::DateTimeWithTimeZone, sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -259,13 +259,24 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
 )]
 #[handler]
 pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response {
+    // Time the whole handler (ACL + composition) so the cost shows up as a
+    // `Server-Timing` entry in the browser's Network → Timing panel — the
+    // same place the slow TTFB was first observed. Lets an operator confirm
+    // the rail's server cost directly without scraping `/metrics`.
+    let started = std::time::Instant::now();
     let acl = access::for_user(&app, &user).await;
     let mut items = match compute_on_deck(&app, user.id, &acl).await {
         Ok(v) => v,
         Err(resp) => return resp,
     };
     items.truncate(24);
-    Json(OnDeckView { items }).into_response()
+    let mut resp = Json(OnDeckView { items }).into_response();
+    let dur_ms = started.elapsed().as_secs_f64() * 1000.0;
+    if let Ok(value) = HeaderValue::from_str(&format!("compute;dur={dur_ms:.1}")) {
+        resp.headers_mut()
+            .insert(HeaderName::from_static("server-timing"), value);
+    }
+    resp
 }
 
 /// Composes the On Deck rail's cards (series_next + cbl_next mixed),
@@ -410,7 +421,8 @@ pub(crate) async fn compute_on_deck(
         series_buf.push((
             row.last_activity,
             OnDeckCard::SeriesNext {
-                issue: IssueSummaryView::from_model(issue_model, &row.series_slug)
+                issue: issue_model
+                    .into_summary_view(&row.series_slug)
                     .with_series_name(row.series_name.clone()),
                 series_name: row.series_name.clone(),
                 last_activity: row.last_activity.to_rfc3339(),
@@ -600,7 +612,9 @@ pub(crate) async fn compute_on_deck(
         items.push((
             frontier_ts,
             OnDeckCard::CblNext {
-                issue: IssueSummaryView::from_model(pick.issue, &pick.series_slug)
+                issue: pick
+                    .issue
+                    .into_summary_view(&pick.series_slug)
                     .with_series_name(pick.series_name),
                 cbl_list_id: cand.cbl_list_id.to_string(),
                 cbl_list_name: cand.cbl_list_name.clone(),
@@ -826,6 +840,73 @@ async fn cbl_saved_view_ids_for_candidates(
     Ok(map)
 }
 
+/// Slim projection of `issue` carrying only the columns the On Deck walk
+/// (`next_up::walk_*`) and the rendered `IssueSummaryView` card read —
+/// 13 narrow columns instead of all 76. The full row averages ~1.9 KB
+/// (the `pages` page-map JSON, `summary`, `characters`, `notes`,
+/// `search_doc`, …), and On Deck hydrates *every* active issue across up
+/// to 40 candidate series plus every matched CBL issue just to pick the
+/// next-up issue per candidate and keep 24 cards. Projecting to the
+/// fields actually used drops that transfer + deserialization by ~20-40x.
+/// The card output is byte-for-byte identical to `IssueSummaryView::
+/// from_model` (see `into_summary_view`).
+#[derive(Clone, Debug, FromQueryResult, DerivePartialModel)]
+#[sea_orm(entity = "issue::Entity")]
+pub(crate) struct OnDeckIssue {
+    pub id: String,
+    pub slug: String,
+    pub series_id: Uuid,
+    pub library_id: Uuid,
+    pub title: Option<String>,
+    pub number_raw: Option<String>,
+    pub sort_number: Option<f64>,
+    pub year: Option<i32>,
+    pub page_count: Option<i32>,
+    pub state: String,
+    pub special_type: Option<String>,
+    pub created_at: DateTimeWithTimeZone,
+    pub updated_at: DateTimeWithTimeZone,
+}
+
+impl crate::api::next_up::WalkIssue for OnDeckIssue {
+    fn walk_id(&self) -> &str {
+        &self.id
+    }
+    fn walk_series_id(&self) -> Uuid {
+        self.series_id
+    }
+    fn walk_library_id(&self) -> Uuid {
+        self.library_id
+    }
+}
+
+impl OnDeckIssue {
+    /// Build the card view from the slim row. Mirrors
+    /// [`IssueSummaryView::from_model`] field-for-field (including the
+    /// `cover_url` derivation) so the projection is invisible on the wire.
+    fn into_summary_view(self, series_slug: &str) -> IssueSummaryView {
+        let cover_url =
+            (self.state == "active").then(|| format!("/issues/{}/pages/0/thumb", self.id));
+        IssueSummaryView {
+            id: self.id,
+            slug: self.slug,
+            series_id: self.series_id.to_string(),
+            series_slug: series_slug.to_owned(),
+            series_name: None,
+            title: self.title,
+            number: self.number_raw,
+            sort_number: self.sort_number,
+            year: self.year,
+            page_count: self.page_count,
+            state: self.state,
+            cover_url,
+            special_type: self.special_type,
+            created_at: self.created_at.to_rfc3339(),
+            updated_at: self.updated_at.to_rfc3339(),
+        }
+    }
+}
+
 /// Bulk-fetch the active, non-removed issues for many series in one query,
 /// grouped by series id and ordered the way each series reads
 /// (`sort_number IS NULL` last, then `sort_number`, then `id`) so a caller
@@ -835,7 +916,7 @@ async fn cbl_saved_view_ids_for_candidates(
 async fn hydrate_series_issues(
     app: &AppState,
     series_ids: &[Uuid],
-) -> Result<std::collections::HashMap<Uuid, Vec<issue::Model>>, Response> {
+) -> Result<std::collections::HashMap<Uuid, Vec<OnDeckIssue>>, Response> {
     use std::collections::HashMap;
     if series_ids.is_empty() {
         return Ok(HashMap::new());
@@ -848,6 +929,7 @@ async fn hydrate_series_issues(
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::Id)
+        .into_partial_model::<OnDeckIssue>()
         .all(&app.db)
         .await
     {
@@ -861,7 +943,7 @@ async fn hydrate_series_issues(
             ));
         }
     };
-    let mut map: HashMap<Uuid, Vec<issue::Model>> = HashMap::new();
+    let mut map: HashMap<Uuid, Vec<OnDeckIssue>> = HashMap::new();
     for r in rows {
         map.entry(r.series_id).or_default().push(r);
     }
@@ -903,7 +985,7 @@ async fn fetch_progress_for(
 /// and the caller's progress — everything `next_up::walk_cbl_pick` needs.
 type CblPickHydration = (
     std::collections::HashMap<Uuid, Vec<cbl_entry::Model>>,
-    std::collections::HashMap<String, issue::Model>,
+    std::collections::HashMap<String, OnDeckIssue>,
     std::collections::HashMap<Uuid, series::Model>,
     std::collections::HashMap<String, progress_record::Model>,
 );
@@ -952,6 +1034,7 @@ async fn hydrate_cbl_picks(
     let progress = fetch_progress_for(app, user_id, &matched_ids).await?;
     let issue_rows = match issue::Entity::find()
         .filter(issue::Column::Id.is_in(matched_ids))
+        .into_partial_model::<OnDeckIssue>()
         .all(&app.db)
         .await
     {
@@ -965,7 +1048,7 @@ async fn hydrate_cbl_picks(
             ));
         }
     };
-    let issue_by_id: HashMap<String, issue::Model> = issue_rows
+    let issue_by_id: HashMap<String, OnDeckIssue> = issue_rows
         .iter()
         .map(|i| (i.id.clone(), i.clone()))
         .collect();

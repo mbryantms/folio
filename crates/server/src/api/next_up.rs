@@ -545,10 +545,10 @@ pub(crate) async fn pick_next_in_series(
 /// the rail and the reader's next-up resolver never resolve different
 /// issues. `issues` MUST be ordered the way the series reads:
 /// `sort_number IS NULL` last, then `sort_number`, then `id`.
-pub(crate) fn walk_series_continue_pick(
-    issues: &[issue::Model],
+pub(crate) fn walk_series_continue_pick<I: WalkIssue + Clone>(
+    issues: &[I],
     progress_by_id: &std::collections::HashMap<String, progress_record::Model>,
-) -> Option<issue::Model> {
+) -> Option<I> {
     // Walk the ordered list once: track the index of the latest
     // finished issue and the first unread issue overall (the
     // fallback target).
@@ -556,7 +556,7 @@ pub(crate) fn walk_series_continue_pick(
     let mut first_unread_idx: Option<usize> = None;
     for (idx, iss) in issues.iter().enumerate() {
         let finished = progress_by_id
-            .get(&iss.id)
+            .get(iss.walk_id())
             .map(|p| p.finished)
             .unwrap_or(false);
         if finished {
@@ -576,7 +576,7 @@ pub(crate) fn walk_series_continue_pick(
     // unread.
     for iss in &issues[latest_idx + 1..] {
         let finished = progress_by_id
-            .get(&iss.id)
+            .get(iss.walk_id())
             .map(|p| p.finished)
             .unwrap_or(false);
         if !finished {
@@ -673,11 +673,38 @@ async fn pick_next_in_series_after(
     Ok(None)
 }
 
+/// Minimal issue accessors the next-up / On Deck walks read. Implemented
+/// by the full [`issue::Model`] (the reader's next-up resolver) and by the
+/// slim `OnDeckIssue` partial model (the On Deck rail), so both share one
+/// walk implementation while the rail avoids hydrating all 76 issue
+/// columns just to pick a next-up issue. The walks only ever read these
+/// three fields off an issue; everything else a card needs is carried by
+/// the concrete type the caller hands in.
+pub(crate) trait WalkIssue {
+    fn walk_id(&self) -> &str;
+    fn walk_series_id(&self) -> Uuid;
+    fn walk_library_id(&self) -> Uuid;
+}
+
+impl WalkIssue for issue::Model {
+    fn walk_id(&self) -> &str {
+        &self.id
+    }
+    fn walk_series_id(&self) -> Uuid {
+        self.series_id
+    }
+    fn walk_library_id(&self) -> Uuid {
+        self.library_id
+    }
+}
+
 /// Pick produced by [`scan_next_in_cbl`]: the lowest-position unfinished
 /// matched entry plus the activity timestamp of the finished prefix that
-/// precedes it.
-pub(crate) struct CblNextPick {
-    pub issue: issue::Model,
+/// precedes it. Generic over the issue representation (`I`): the resolver
+/// uses the full [`issue::Model`] (the default), the On Deck rail uses the
+/// slim `OnDeckIssue` partial model.
+pub(crate) struct CblNextPick<I = issue::Model> {
+    pub issue: I,
     pub series_slug: String,
     pub series_name: String,
     /// 1-based position badge (`entry.position + 1`), matching the
@@ -843,13 +870,13 @@ async fn scan_next_in_cbl(
 /// ACL), skipping forward on a missing/invisible pick exactly as the lazy
 /// per-entry scan did. Finished-but-ACL-invisible prefix entries still
 /// count toward the frontier (they never reach the visibility check).
-pub(crate) fn walk_cbl_pick(
+pub(crate) fn walk_cbl_pick<I: WalkIssue + Clone>(
     entries: &[cbl_entry::Model],
     progress_by_issue: &std::collections::HashMap<String, progress_record::Model>,
-    issue_by_id: &std::collections::HashMap<String, issue::Model>,
+    issue_by_id: &std::collections::HashMap<String, I>,
     series_by_id: &std::collections::HashMap<Uuid, series::Model>,
     acl: &access::VisibleLibraries,
-) -> Option<CblNextPick> {
+) -> Option<CblNextPick<I>> {
     let mut prefix_last_activity: Option<chrono::DateTime<chrono::FixedOffset>> = None;
     for entry in entries {
         let Some(issue_id) = entry.matched_issue_id.clone() else {
@@ -871,10 +898,10 @@ pub(crate) fn walk_cbl_pick(
         let Some(issue_model) = issue_by_id.get(&issue_id) else {
             continue;
         };
-        if !acl.contains(issue_model.library_id) {
+        if !acl.contains(issue_model.walk_library_id()) {
             continue;
         }
-        let Some(s) = series_by_id.get(&issue_model.series_id) else {
+        let Some(s) = series_by_id.get(&issue_model.walk_series_id()) else {
             continue;
         };
         return Some(CblNextPick {
