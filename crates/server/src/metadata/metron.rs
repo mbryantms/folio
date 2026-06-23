@@ -715,6 +715,7 @@ fn issue_detail_to_metadata(i: MIssueDetail) -> GenericMetadata {
         imprint: i.imprint.as_ref().and_then(|p| p.name.clone()),
         series_name: series_ref.and_then(|s| s.name.clone()),
         series_sort_name: series_ref.and_then(|s| s.sort_name.clone()),
+        series_external_id: series_ref.and_then(|s| s.id.map(|n| n.to_string())),
         volume: series_ref.and_then(|s| s.volume),
         year_began: series_ref.and_then(|s| s.year_began),
         series_type: series_ref
@@ -842,6 +843,44 @@ impl MetadataProvider for MetronClient {
             .request(&format!("/api/issue/{external_id}/"), &[])
             .await?;
         Ok(issue_detail_to_metadata(detail))
+    }
+
+    async fn list_series_issue_numbers(
+        &self,
+        series_external_id: &str,
+    ) -> ProviderResult<Vec<String>> {
+        let mut numbers = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let params = vec![
+                ("series_id", series_external_id.to_owned()),
+                ("page_size", "100".to_owned()),
+                ("page", page.to_string()),
+            ];
+            let envelope: Paged<MIssueListItem> = self.request("/api/issue/", &params).await?;
+            for it in &envelope.results {
+                if let Some(n) = it.number.clone().or_else(|| it.issue.clone()) {
+                    numbers.push(canonical_issue_number(&n));
+                }
+            }
+            // Stop on the last page; the 50-page cap is a runaway guard
+            // (5000 issues — far beyond any real series).
+            if envelope.next.is_none() || envelope.results.is_empty() {
+                break;
+            }
+            page += 1;
+            if page > 50 {
+                // Don't truncate silently — a series past 5000 issues is
+                // unheard of, but if it happens the un-enumerated tail
+                // would be mis-read as an uncovered gap by auto-split.
+                tracing::warn!(
+                    series_id = series_external_id,
+                    "metron: series issue enumeration hit the 50-page cap; coverage may be incomplete"
+                );
+                break;
+            }
+        }
+        Ok(numbers)
     }
 
     async fn fetch_cover(&self, url: &str) -> ProviderResult<Vec<u8>> {

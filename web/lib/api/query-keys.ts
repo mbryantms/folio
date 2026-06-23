@@ -305,6 +305,12 @@ export const queryKeys = {
     ["series", slug, "external-ids"] as const,
   externalIdsIssue: (slug: string, issueSlug: string) =>
     ["series", slug, "issues", issueSlug, "external-ids"] as const,
+  /** Per-(series, provider) issue-range mappings (provider divergence). */
+  providerRangesSeries: (slug: string) =>
+    ["series", slug, "provider-ranges"] as const,
+  /** Full per-provider issue-range coverage map for a series. */
+  providerCoverageSeries: (slug: string) =>
+    ["series", slug, "provider-coverage"] as const,
   /** Cover gallery for an issue (M5.2). */
   issueCovers: (issueId: string) => ["issues", issueId, "covers"] as const,
   // ── M6 admin surface ──

@@ -2063,6 +2063,8 @@ import type {
   DiffResp,
   ExternalIdsListResp,
   IssueCoversResp,
+  ProviderCoverageResp,
+  ProviderRangesListResp,
   SyncStatusResp,
 } from "./types";
 
@@ -2332,6 +2334,30 @@ export function useExternalIdsIssue(seriesSlug: string, issueSlug: string) {
         `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
       ),
     enabled: !!seriesSlug && !!issueSlug,
+    staleTime: 30_000,
+  });
+}
+
+export function useProviderRangesSeries(seriesSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.providerRangesSeries(seriesSlug),
+    queryFn: () =>
+      jsonFetch<ProviderRangesListResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/provider-ranges`,
+      ),
+    enabled: !!seriesSlug,
+    staleTime: 30_000,
+  });
+}
+
+export function useProviderCoverageSeries(seriesSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.providerCoverageSeries(seriesSlug),
+    queryFn: () =>
+      jsonFetch<ProviderCoverageResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/provider-coverage`,
+      ),
+    enabled: !!seriesSlug,
     staleTime: 30_000,
   });
 }

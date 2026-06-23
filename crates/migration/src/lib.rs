@@ -94,6 +94,7 @@ mod m20270115_000001_metadata_batch;
 mod m20270116_000001_password_reset_uses;
 mod m20270117_000001_series_text_language;
 mod m20270118_000001_issue_metadata_review_accepted;
+mod m20270119_000001_series_provider_range;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -196,6 +197,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270116_000001_password_reset_uses::Migration),
             Box::new(m20270117_000001_series_text_language::Migration),
             Box::new(m20270118_000001_issue_metadata_review_accepted::Migration),
+            Box::new(m20270119_000001_series_provider_range::Migration),
         ]
     }
 }

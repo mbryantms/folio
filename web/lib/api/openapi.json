@@ -9157,6 +9157,186 @@
         }
       }
     },
+    "/api/series/{slug}/provider-coverage": {
+      "get": {
+        "operationId": "provider_ranges_coverage_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCoverageResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/provider-ranges": {
+      "get": {
+        "operationId": "provider_ranges_list_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderRangesListResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      },
+      "post": {
+        "operationId": "provider_ranges_add_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddProviderRangeReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderRangeRow"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid source / range"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "409": {
+            "description": "range overlaps an existing mapping"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/provider-ranges/detect": {
+      "post": {
+        "operationId": "provider_ranges_detect_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/provider-ranges/{id}": {
+      "delete": {
+        "operationId": "provider_ranges_delete_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "removed"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series / range not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/resume": {
       "get": {
         "operationId": "series_resume",
@@ -9479,6 +9659,55 @@
           }
         }
       },
+      "AddProviderRangeReq": {
+        "type": "object",
+        "required": [
+          "source",
+          "provider_series_id"
+        ],
+        "properties": {
+          "declared_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "provider_series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range_high": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Inclusive upper bound; canonicalized server-side. Empty / omitted\n⇒ open-ended."
+          },
+          "range_low": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Inclusive lower bound; canonicalized server-side. Empty / omitted\n⇒ open-ended."
+          },
+          "source": {
+            "type": "string",
+            "description": "`\"comicvine\" | \"metron\" | \"gcd\" | …`. Aliases accepted."
+          }
+        }
+      },
       "AddWidgetReq": {
         "type": "object",
         "description": "Audit-remediation M4 dropped `LogWidgetListView { widgets: Vec<_> }` in\nfavor of the workspace-uniform `shared::pagination::CursorPage<T>`\nenvelope (`{ items, next_cursor, total? }`). Widget lists are bounded\nper-user; `next_cursor` is always `None`.",
@@ -9662,6 +9891,76 @@
             "type": "string"
           },
           "state": {
+            "type": "string"
+          }
+        }
+      },
+      "AlternateProviderSeries": {
+        "type": "object",
+        "description": "Where this issue maps in one provider, plus its current match state.",
+        "required": [
+          "source",
+          "source_label",
+          "provider_series_id",
+          "diverges"
+        ],
+        "properties": {
+          "declared_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "diverges": {
+            "type": "boolean",
+            "description": "`true` ⇒ this provider files this issue in a non-default series\n(a range override); `false` ⇒ the series' default provider series."
+          },
+          "matched_issue_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "This issue's own external id for this provider, when matched —\nlets the UI show \"✓ matched\" + link straight to the provider issue."
+          },
+          "matched_issue_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "provider_series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range_high": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range_low": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The override range this issue falls in (`diverges` only)."
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_label": {
             "type": "string"
           }
         }
@@ -12201,6 +12500,62 @@
           }
         }
       },
+      "CoverageSegment": {
+        "type": "object",
+        "required": [
+          "low",
+          "high",
+          "issue_count",
+          "provider_series_id",
+          "via_range"
+        ],
+        "properties": {
+          "declared_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "high": {
+            "type": "string"
+          },
+          "issue_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "low": {
+            "type": "string"
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "provider_series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `series_provider_range` row id for an override segment, so the\nUI can offer a delete affordance."
+          },
+          "via_range": {
+            "type": "boolean",
+            "description": "`true` ⇒ a range-override sub-series; `false` ⇒ the series-level\ndefault mapping."
+          }
+        }
+      },
       "CreateAppPasswordReq": {
         "type": "object",
         "required": [
@@ -13799,6 +14154,70 @@
           "comfortable",
           "compact"
         ]
+      },
+      "DetectResp": {
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetectSourceResult"
+            }
+          }
+        }
+      },
+      "DetectSourceResult": {
+        "type": "object",
+        "required": [
+          "source",
+          "source_label",
+          "provider_series_id",
+          "covered_count",
+          "gaps",
+          "created"
+        ],
+        "properties": {
+          "covered_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issue numbers that series reported. `0` ⇒ the provider couldn't\nenumerate it (e.g. ComicVine, or an empty/failed response).",
+            "minimum": 0
+          },
+          "created": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderRangeRow"
+            },
+            "description": "Range mappings created this run."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when the detector errored for this source (provider call failed)."
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Local issue ranges the matched series didn't cover (\"600..611\")."
+          },
+          "provider_series_id": {
+            "type": "string",
+            "description": "The matched provider series the detector scanned against."
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          }
+        }
       },
       "DeviceBucket": {
         "type": "object",
@@ -16606,9 +17025,17 @@
           "source_files",
           "external_ids",
           "provenance",
-          "user_edited"
+          "user_edited",
+          "alternate_provider_series"
         ],
         "properties": {
+          "alternate_provider_series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlternateProviderSeries"
+            },
+            "description": "Per-provider series mapping for THIS issue, surfaced only when at\nleast one provider files it under a non-default series (provider\nseries-boundary divergence — e.g. a legacy-renumbered issue\nMetron/GCD split into a relaunch). Empty for the common (no-split)\ncase. When present, every mapped provider is listed (so the UI can\nshow the disagreement, e.g. ComicVine main run vs Metron 2012),\nwith `diverges` flagging the split ones."
+          },
           "completeness": {
             "oneOf": [
               {
@@ -17819,6 +18246,43 @@
           }
         }
       },
+      "ProviderCoverage": {
+        "type": "object",
+        "required": [
+          "source",
+          "source_label",
+          "segments"
+        ],
+        "properties": {
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageSegment"
+            },
+            "description": "Issue-range segments across this local series, in reading order."
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          }
+        }
+      },
+      "ProviderCoverageResp": {
+        "type": "object",
+        "required": [
+          "providers"
+        ],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderCoverage"
+            }
+          }
+        }
+      },
       "ProviderQuotaView": {
         "type": "object",
         "description": "Per-provider remaining-quota view for the match dialog (audit B13).\nMirrors `crate::metadata::provider::QuotaSnapshot`; ComicVine carries\nonly the hour bucket, Metron carries both the minute (`remaining_hour`)\nand day buckets.",
@@ -17853,6 +18317,93 @@
             ],
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "ProviderRangeRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "source_label",
+          "provider_series_id",
+          "set_by",
+          "first_set_at",
+          "last_synced_at"
+        ],
+        "properties": {
+          "declared_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The mapped sub-series' start year (used by the issue-search year gate)."
+          },
+          "first_set_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_synced_at": {
+            "type": "string"
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "provider_series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range_high": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Inclusive upper bound (canonical issue number). `null` = open-ended."
+          },
+          "range_low": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Inclusive lower bound (canonical issue number). `null` = open-ended."
+          },
+          "set_by": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          }
+        }
+      },
+      "ProviderRangesListResp": {
+        "type": "object",
+        "required": [
+          "series_id",
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderRangeRow"
+            }
+          },
+          "series_id": {
+            "type": "string"
           }
         }
       },

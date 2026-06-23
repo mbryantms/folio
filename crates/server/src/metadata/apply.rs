@@ -575,7 +575,7 @@ pub(crate) async fn apply_series_via_sidecar(
     state: &AppState,
     args: &ApplyArgs,
     series_row: &series::Model,
-    _source: Source,
+    source: Source,
     series_detail: GenericMetadata,
 ) -> Result<ApplyOutcome, ApplyError> {
     // Eligible issues: state='active' (the scanner's happy-path
@@ -587,6 +587,25 @@ pub(crate) async fn apply_series_via_sidecar(
         .filter(entity::issue::Column::State.eq("active"))
         .all(&state.db)
         .await?;
+
+    // Provider series-boundary divergence: issues covered by a
+    // `series_provider_range` row for *this apply's source* belong to a
+    // DIFFERENT provider series (e.g. legacy-renumbered #600–611 in a
+    // "FF (2012)" Metron series). For those issues the composed XML
+    // carries the splitter's series identity (name / volume / series id)
+    // instead of the main match's, while the rest of the run keeps the
+    // main identity. The local `series` row is never mutated — series
+    // membership is folder-pinned and the scanner freezes series.name /
+    // year on rescan (only series.volume follows the issue-volume MODE,
+    // which the small divergent minority can't flip). See
+    // `metadata::range_map` + `docs/dev` divergence plan.
+    let ranges_for_source: Vec<entity::series_provider_range::Model> =
+        entity::series_provider_range::Entity::find()
+            .filter(entity::series_provider_range::Column::SeriesId.eq(series_row.id))
+            .filter(entity::series_provider_range::Column::Source.eq(source.as_str()))
+            .all(&state.db)
+            .await
+            .unwrap_or_default();
 
     let series_external_ids_db = crate::metadata::sidecar_compose::load_external_ids(
         &state.db,
@@ -630,12 +649,53 @@ pub(crate) async fn apply_series_via_sidecar(
                 .await?
         };
 
+        // If a range mapping covers this issue for the apply's source,
+        // overlay the splitter's series identity (name / volume / series
+        // id) onto the provider + series-id map the composer sees. Issues
+        // outside every range borrow the main match's data untouched.
+        let canonical = issue_row
+            .number_raw
+            .as_deref()
+            .map(crate::metadata::matcher::canonical_issue_number);
+        let covering = canonical.as_deref().and_then(|n| {
+            ranges_for_source.iter().find(|r| {
+                crate::metadata::range_map::issue_in_range(
+                    n,
+                    r.range_low.as_deref(),
+                    r.range_high.as_deref(),
+                )
+            })
+        });
+        let (provider_for_issue, series_ids_for_issue) = match covering {
+            Some(r) => {
+                // Override only the series *name* with the splitter's — the
+                // identity readers see. Deliberately NOT `volume`: the range
+                // row carries the sub-series' start *year* (`declared_year`,
+                // for the search year-gate), but the composer writes
+                // `provider.volume` into ComicInfo `<Volume>`, which is the
+                // numeric volume — writing a year there would corrupt it and
+                // disagree with the rest of the run. The year is surfaced for
+                // display via the coverage / alternate-series API instead.
+                let mut p = series_detail.clone();
+                if let Some(name) = r.provider_series_name.as_deref().filter(|s| !s.is_empty()) {
+                    p.series_name = Some(name.to_owned());
+                }
+                let mut ids = series_external_ids.clone();
+                ids.insert(source.as_str().to_owned(), r.provider_series_id.clone());
+                (std::borrow::Cow::Owned(p), std::borrow::Cow::Owned(ids))
+            }
+            None => (
+                std::borrow::Cow::Borrowed(&series_detail),
+                std::borrow::Cow::Borrowed(&series_external_ids),
+            ),
+        };
+
         let ctx = crate::metadata::sidecar_compose::ComposeContext {
-            provider: &series_detail,
+            provider: &provider_for_issue,
             issue: issue_row,
             series: series_row,
             issue_external_ids: &issue_external_ids,
-            series_external_ids: &series_external_ids,
+            series_external_ids: &series_ids_for_issue,
             issue_user_pins: &issue_user_pins,
             series_user_pins: &series_user_pins,
         };

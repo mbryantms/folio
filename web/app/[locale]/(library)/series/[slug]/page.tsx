@@ -20,6 +20,7 @@ import {
 } from "@/components/library/DetailSection";
 import { Description } from "@/components/library/Description";
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
+import { SeriesProviderRangesCard } from "@/components/library/SeriesProviderRangesCard";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
 import {
@@ -549,6 +550,13 @@ export default async function SeriesPage({
                 seriesSlug={series.slug}
                 chrome="bare"
               />
+            </DetailSection>
+
+            <DetailSection
+              title="Provider series mapping"
+              description="How this run maps onto each metadata provider's series. Most issues use the default series; add an override when a provider splits part of the run (e.g. a legacy renumbering) into a separate series."
+            >
+              <SeriesProviderRangesCard seriesSlug={series.slug} />
             </DetailSection>
           </StackedTabsPanel>
           <StackedTabsPanel value="collection">

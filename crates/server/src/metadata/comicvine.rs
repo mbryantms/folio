@@ -766,6 +766,10 @@ fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
         cover_image_alt_urls: alts,
         aliases: split_aliases(&issue.aliases),
         series_name: issue.volume.as_ref().and_then(|v| v.name.clone()),
+        series_external_id: issue
+            .volume
+            .as_ref()
+            .and_then(|v| v.id.map(|n| n.to_string())),
         year_began: issue
             .volume
             .as_ref()

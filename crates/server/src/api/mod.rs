@@ -43,6 +43,7 @@ pub mod page_bytes;
 pub mod pages;
 pub mod people;
 pub mod progress;
+pub mod provider_ranges;
 pub mod rails;
 pub mod ratings;
 pub mod reading_log;

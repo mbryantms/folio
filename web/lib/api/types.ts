@@ -741,6 +741,15 @@ export type MetadataCompletenessSummary =
 export type ExternalIdsListResp = Schemas["ExternalIdsListResp"];
 export type ExternalIdRow = Schemas["ExternalIdRow"];
 export type AddExternalIdReq = Schemas["AddExternalIdReq"];
+export type ProviderRangesListResp = Schemas["ProviderRangesListResp"];
+export type ProviderRangeRow = Schemas["ProviderRangeRow"];
+export type AddProviderRangeReq = Schemas["AddProviderRangeReq"];
+export type AlternateProviderSeries = Schemas["AlternateProviderSeries"];
+export type DetectResp = Schemas["DetectResp"];
+export type DetectSourceResult = Schemas["DetectSourceResult"];
+export type ProviderCoverageResp = Schemas["ProviderCoverageResp"];
+export type ProviderCoverage = Schemas["ProviderCoverage"];
+export type CoverageSegment = Schemas["CoverageSegment"];
 export type IssueCoversResp = Schemas["IssueCoversResp"];
 export type IssueCoverRow = Schemas["IssueCoverRow"];
 // M5 preview pane / proposed-diff

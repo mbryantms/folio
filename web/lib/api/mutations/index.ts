@@ -2486,10 +2486,13 @@ import type {
   ApplyCoverPolicy,
   ApplyMode,
   AddExternalIdReq,
+  AddProviderRangeReq,
   BatchApplyResp,
   BatchCreatedResp,
   CompositeApplyResp,
+  DetectResp,
   ExternalIdRow,
+  ProviderRangeRow,
   SearchStartedResp,
   SyncStatusResp,
 } from "../types";
@@ -2804,6 +2807,69 @@ export function useDeleteExternalIdSeries(seriesSlug: string) {
         });
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "metadata", "status"],
+        });
+      },
+    },
+  );
+}
+
+export function useAddProviderRangeSeries(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<ProviderRangeRow, AddProviderRangeReq>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/provider-ranges`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Provider range mapping added",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "provider-ranges"],
+        });
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "provider-coverage"],
+        });
+      },
+    },
+  );
+}
+
+export function useDeleteProviderRangeSeries(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<null, { id: string }>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/provider-ranges/${encodeURIComponent(input.id)}`,
+      method: "DELETE",
+    }),
+    {
+      successMessage: "Provider range mapping removed",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "provider-ranges"],
+        });
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "provider-coverage"],
+        });
+      },
+    },
+  );
+}
+
+export function useDetectProviderRangesSeries(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<DetectResp, void>(
+    () => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/provider-ranges/detect`,
+      method: "POST",
+    }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "provider-ranges"],
+        });
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "provider-coverage"],
         });
       },
     },

@@ -165,6 +165,11 @@ pub struct GenericMetadata {
     pub series_name: Option<String>,
     pub series_sort_name: Option<String>,
     pub series_type: Option<String>,
+    /// When this detail is an *issue*, the parent series' provider id.
+    /// The issue *list* endpoints sometimes omit it, but the issue
+    /// *detail* carries it — auto-split (`metadata::auto_split`) reads
+    /// it to map a divergent issue range onto its alternate series.
+    pub series_external_id: Option<String>,
     pub volume: Option<i32>,
     pub year_began: Option<i32>,
     pub year_end: Option<i32>,
@@ -364,6 +369,21 @@ pub trait MetadataProvider: Send + Sync + 'static {
     async fn fetch_series(&self, external_id: &str) -> ProviderResult<GenericMetadata>;
 
     async fn fetch_issue(&self, external_id: &str) -> ProviderResult<GenericMetadata>;
+
+    /// List the **canonical** issue numbers a provider series contains.
+    /// Used by [`crate::metadata::auto_split`] to find local issues a
+    /// matched series doesn't cover (a split / legacy-renumbered run).
+    ///
+    /// Default `Ok(vec![])` means "enumeration unsupported" — auto-split
+    /// then skips this provider, which is the right behaviour for a
+    /// lumper like ComicVine that needs no split. Splitter providers
+    /// (Metron, and GCD when added) override it.
+    async fn list_series_issue_numbers(
+        &self,
+        _series_external_id: &str,
+    ) -> ProviderResult<Vec<String>> {
+        Ok(Vec::new())
+    }
 
     /// Streams cover bytes. Caller decides the on-disk path. Provider
     /// impls should re-use the per-provider HTTP client (kept alive

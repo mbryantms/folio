@@ -15,9 +15,9 @@
 //! gains nothing on the happy path and risks burst-deny on bucket
 //! exhaustion.
 
-use crate::metadata::identifier::Source;
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
 use crate::metadata::orchestrator::{self, StoredQuery};
+use crate::metadata::range_map::EffectiveTarget;
 use crate::state::AppState;
 use apalis::prelude::*;
 use redis::AsyncCommands;
@@ -180,10 +180,12 @@ pub struct SearchIssueJob {
     pub issue_id: String,
     pub library_id: Option<Uuid>,
     pub facts: IssueQueryFacts,
-    /// `(source, external_id)` pairs from `external_ids` for the
-    /// parent series — lets the per-provider issue search narrow to
-    /// a known volume and skip the keyword phase.
-    pub series_external_ids: Vec<(Source, String)>,
+    /// Effective per-provider series target for this issue — a covering
+    /// `series_provider_range` mapping folded over the parent series'
+    /// `external_ids` default (see [`crate::metadata::range_map`]). Lets
+    /// the per-provider issue search narrow to the right volume even
+    /// when this issue diverges from the rest of the series.
+    pub series_targets: Vec<EffectiveTarget>,
 }
 
 pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<(), Error> {
@@ -193,7 +195,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         issue_id,
         library_id,
         facts,
-        series_external_ids,
+        series_targets,
     } = job;
     tracing::info!(
         run_id = %run_id,
@@ -217,7 +219,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         run_id,
         &providers,
         &facts,
-        &series_external_ids,
+        &series_targets,
         thresholds,
         alt_cap,
         Some(issue_id.as_str()),
@@ -318,7 +320,7 @@ pub async fn run_issue_inline(
     run_id: Uuid,
     issue_id: String,
     facts: IssueQueryFacts,
-    series_external_ids: Vec<(Source, String)>,
+    series_targets: Vec<EffectiveTarget>,
 ) {
     let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
     let _ = orchestrator::run_issue_search(
@@ -326,7 +328,7 @@ pub async fn run_issue_inline(
         run_id,
         &providers,
         &facts,
-        &series_external_ids,
+        &series_targets,
         thresholds(state),
         state.cfg().metadata_alternate_cover_fetch_cap,
         Some(issue_id.as_str()),
@@ -457,9 +459,8 @@ pub async fn enqueue_issue_search(
     trigger_kind: &'static str,
     batch_id: Option<Uuid>,
 ) -> Result<EnqueueOutcome, anyhow::Error> {
-    use entity::{external_id, issue, series};
-    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-    use std::str::FromStr;
+    use entity::{issue, series};
+    use sea_orm::EntityTrait;
 
     let Some(i) = issue::Entity::find_by_id(issue_id.to_owned())
         .one(&state.db)
@@ -492,19 +493,15 @@ pub async fn enqueue_issue_search(
     }
     let providers_listed: Vec<_> = providers.iter().map(|p| p.id()).collect();
 
-    let series_external_ids: Vec<(Source, String)> = external_id::Entity::find()
-        .filter(external_id::Column::EntityType.eq("series"))
-        .filter(external_id::Column::EntityId.eq(s.id.to_string()))
-        .all(&state.db)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|row| {
-            Source::from_str(&row.source)
-                .ok()
-                .map(|src| (src, row.external_id))
-        })
-        .collect();
+    // Effective per-provider series target for this issue: a covering
+    // `series_provider_range` row folded over the parent series'
+    // `external_ids` default. Routes a divergent (split / renumbered)
+    // issue to the right provider series at search time.
+    let canonical_number = crate::metadata::matcher::canonical_issue_number(&facts.issue_number);
+    let series_targets =
+        crate::metadata::range_map::resolve_for_issue(&state.db, s.id, &canonical_number)
+            .await
+            .unwrap_or_default();
 
     let new_run_id = orchestrator::start_run(
         &state.db,
@@ -540,7 +537,7 @@ pub async fn enqueue_issue_search(
             issue_id: i.id.clone(),
             library_id: Some(s.library_id),
             facts,
-            series_external_ids,
+            series_targets,
         })
         .await
     {
