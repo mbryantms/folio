@@ -676,7 +676,15 @@ pub async fn search_issue(
     }
     let providers_listed: Vec<_> = providers.iter().map(|p| p.id()).collect();
 
-    let series_external_ids = fetch_series_external_ids(&app, &s).await;
+    // Effective per-provider series target for this issue — folds any
+    // covering `series_provider_range` mapping over the parent series'
+    // `external_ids` default so a divergent issue narrows to the right
+    // provider series. See `metadata::range_map`.
+    let canonical_number = crate::metadata::matcher::canonical_issue_number(&facts.issue_number);
+    let series_targets =
+        crate::metadata::range_map::resolve_for_issue(&app.db, s.id, &canonical_number)
+            .await
+            .unwrap_or_default();
 
     let new_run_id = match orchestrator::start_run(
         &app.db,
@@ -733,7 +741,7 @@ pub async fn search_issue(
             issue_id: i.id.clone(),
             library_id: Some(s.library_id),
             facts,
-            series_external_ids,
+            series_targets,
         })
         .await
     {
@@ -3182,26 +3190,4 @@ fn build_match_outcome_view(rows: &[entity::metadata_run_candidate::Model]) -> M
         top_hamming,
         matched_via_alternate,
     }
-}
-
-async fn fetch_series_external_ids(
-    app: &AppState,
-    s: &series::Model,
-) -> Vec<(crate::metadata::identifier::Source, String)> {
-    use entity::external_id;
-    use std::str::FromStr;
-    external_id::Entity::find()
-        .filter(external_id::Column::EntityType.eq("series"))
-        .filter(external_id::Column::EntityId.eq(s.id.to_string()))
-        .all(&app.db)
-        .await
-        .ok()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|row| {
-            crate::metadata::identifier::Source::from_str(&row.source)
-                .ok()
-                .map(|s| (s, row.external_id))
-        })
-        .collect()
 }

@@ -209,6 +209,37 @@ pub struct MetadataOverviewView {
     pub last_metadata_sync_at: Option<String>,
     pub last_rewrite_at: Option<String>,
     pub last_rewrite_kind: Option<String>,
+    /// Providers that catalogue this issue under a DIFFERENT series than
+    /// the rest of its local series (provider series-boundary
+    /// Per-provider series mapping for THIS issue, surfaced only when at
+    /// least one provider files it under a non-default series (provider
+    /// series-boundary divergence — e.g. a legacy-renumbered issue
+    /// Metron/GCD split into a relaunch). Empty for the common (no-split)
+    /// case. When present, every mapped provider is listed (so the UI can
+    /// show the disagreement, e.g. ComicVine main run vs Metron 2012),
+    /// with `diverges` flagging the split ones.
+    pub alternate_provider_series: Vec<AlternateProviderSeries>,
+}
+
+/// Where this issue maps in one provider, plus its current match state.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AlternateProviderSeries {
+    pub source: String,
+    pub source_label: String,
+    pub provider_series_id: String,
+    pub provider_series_name: Option<String>,
+    pub provider_series_url: Option<String>,
+    pub declared_year: Option<i32>,
+    /// `true` ⇒ this provider files this issue in a non-default series
+    /// (a range override); `false` ⇒ the series' default provider series.
+    pub diverges: bool,
+    /// The override range this issue falls in (`diverges` only).
+    pub range_low: Option<String>,
+    pub range_high: Option<String>,
+    /// This issue's own external id for this provider, when matched —
+    /// lets the UI show "✓ matched" + link straight to the provider issue.
+    pub matched_issue_id: Option<String>,
+    pub matched_issue_url: Option<String>,
 }
 
 /// Human label for a `field_provenance.set_by` code.
@@ -255,6 +286,7 @@ pub async fn metadata_overview(
 
     let issue_id = row.id.clone();
     let series_id = row.series_id;
+    let number_raw = row.number_raw.clone();
     let has_comicinfo = !row.comic_info_raw.is_null();
     let metroninfo_present = row.metroninfo_present;
     let last_metadata_sync_at = row.last_metadata_sync_at.map(|t| t.to_rfc3339());
@@ -295,6 +327,15 @@ pub async fn metadata_overview(
 
     let external_ids = crate::api::external_ids::fetch_rows(&app, "issue", &issue_id).await;
 
+    // Provider series-boundary divergence. Resolve this issue's effective
+    // series per provider; if ANY diverges (a range override), surface the
+    // full per-provider mapping (so the UI shows the disagreement), each
+    // enriched with the override range, the cached series name/year, and
+    // this issue's own matched provider id.
+    let alternate_provider_series =
+        build_alternate_provider_series(&app, series_id, number_raw.as_deref(), &external_ids)
+            .await;
+
     Json(MetadataOverviewView {
         completeness,
         source_files: SourceFilesView {
@@ -308,6 +349,7 @@ pub async fn metadata_overview(
         last_metadata_sync_at,
         last_rewrite_at,
         last_rewrite_kind,
+        alternate_provider_series,
     })
     .into_response()
 }
@@ -321,6 +363,99 @@ fn presence_str(v: Option<bool>) -> &'static str {
         Some(false) => "absent",
         None => "unknown",
     }
+}
+
+/// Build the per-provider mapping for one issue (provider series-boundary
+/// divergence). Returns empty unless at least one provider files the issue
+/// in a non-default series; otherwise lists every mapped provider so the UI
+/// can show the disagreement, each enriched with the override range, the
+/// cached series name/year, and this issue's matched provider id.
+async fn build_alternate_provider_series(
+    app: &AppState,
+    series_id: Uuid,
+    number_raw: Option<&str>,
+    external_ids: &[crate::api::external_ids::ExternalIdRow],
+) -> Vec<AlternateProviderSeries> {
+    use crate::metadata::identifier::Source;
+    use std::str::FromStr;
+
+    let Some(canon) = number_raw
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(crate::metadata::matcher::canonical_issue_number)
+    else {
+        return Vec::new();
+    };
+    // Load the mapping inputs once and fold in-memory (the range rows are
+    // reused below for the override bounds, avoiding a second query).
+    let ranges = entity::series_provider_range::Entity::find()
+        .filter(entity::series_provider_range::Column::SeriesId.eq(series_id))
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    let series_ids = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(series_id.to_string()))
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    let targets = crate::metadata::range_map::fold_targets(&ranges, &series_ids, &canon);
+    if !targets.iter().any(|t| t.via_range) {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for t in targets {
+        let (range_low, range_high) = if t.via_range {
+            ranges
+                .iter()
+                .find(|r| {
+                    Source::from_str(&r.source).ok() == Some(t.source)
+                        && r.provider_series_id == t.provider_series_id
+                        && crate::metadata::range_map::issue_in_range(
+                            &canon,
+                            r.range_low.as_deref(),
+                            r.range_high.as_deref(),
+                        )
+                })
+                .map(|r| (r.range_low.clone(), r.range_high.clone()))
+                .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
+        let mut name = t.provider_series_name.clone();
+        let mut year = t.declared_year;
+        if (name.is_none() || year.is_none())
+            && let Some((n, y)) = crate::metadata::cache::series_display_meta(
+                &app.db,
+                t.source,
+                &t.provider_series_id,
+            )
+            .await
+        {
+            if name.is_none() {
+                name = n;
+            }
+            if year.is_none() {
+                year = y;
+            }
+        }
+        let matched = external_ids.iter().find(|e| e.source == t.source.as_str());
+        out.push(AlternateProviderSeries {
+            source: t.source.as_str().to_owned(),
+            source_label: t.source.label().to_owned(),
+            provider_series_id: t.provider_series_id,
+            provider_series_name: name,
+            provider_series_url: t.provider_series_url,
+            declared_year: year,
+            diverges: t.via_range,
+            range_low,
+            range_high,
+            matched_issue_id: matched.map(|e| e.external_id.clone()),
+            matched_issue_url: matched.and_then(|e| e.external_url.clone()),
+        });
+    }
+    out
 }
 
 async fn build_issue_creator_slugs(

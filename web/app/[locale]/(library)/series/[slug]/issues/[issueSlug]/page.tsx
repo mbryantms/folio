@@ -766,7 +766,11 @@ export default async function IssuePage({
           </StableTabsPanel>
 
           <StackedTabsPanel value="metadata">
-            <IssueMetadataTab seriesSlug={seriesSlug} issueSlug={issue.slug} />
+            <IssueMetadataTab
+              seriesSlug={seriesSlug}
+              issueSlug={issue.slug}
+              libraryId={issue.library_id}
+            />
           </StackedTabsPanel>
 
           <StackedTabsPanel value="notes">

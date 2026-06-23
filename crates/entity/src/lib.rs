@@ -67,6 +67,7 @@ pub mod series_credit;
 pub mod series_genre;
 pub mod series_location;
 pub mod series_object;
+pub mod series_provider_range;
 pub mod series_tag;
 pub mod series_team;
 pub mod series_universe;

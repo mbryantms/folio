@@ -1344,3 +1344,72 @@ async fn entries_endpoint_walks_past_old_500_cap() {
     assert_eq!(sorted.first().copied(), Some(0));
     assert_eq!(sorted.last().copied(), Some((N - 1) as i64));
 }
+
+/// Provider series-boundary divergence regression: a `series_provider_range`
+/// mapping must NOT perturb CBL entry resolution. CBL resolution keys off
+/// stable issue ids + provider ids + the parent series'
+/// `normalized_name`/`year`/`volume` — none of which the range table touches
+/// (it's a separate table the local series row + CBL matcher never read).
+/// This anchors that invariant so a future change can't silently couple them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_provider_range_does_not_affect_cbl_resolution() {
+    use entity::series_provider_range;
+    use server::cbl::matcher::{EntryToMatch, MatchStatus, match_entries};
+
+    let app = TestApp::spawn().await;
+    let lib_id = seed_matchable_issues(&app).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let series = entity::series::Entity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("seeded series present");
+
+    // Fallback-only entry (no CV/Metron id) → resolves via
+    // normalized_name + volume(year) + number.
+    let entry = EntryToMatch {
+        series_name: "Invincible".into(),
+        number: "1".into(),
+        volume: Some("2003".into()),
+        cv_issue_id: None,
+        metron_issue_id: None,
+    };
+
+    let before = match_entries(&db, std::slice::from_ref(&entry))
+        .await
+        .unwrap();
+    assert_eq!(before[0].status, MatchStatus::Matched);
+    let matched_before = before[0].issue_id.clone().expect("matched an issue");
+
+    // Add a (deliberately divergent) range mapping for this series.
+    let now = Utc::now().fixed_offset();
+    series_provider_range::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        series_id: Set(series.id),
+        source: Set("metron".into()),
+        provider_series_id: Set("62349".into()),
+        provider_series_url: Set(None),
+        provider_series_name: Set(Some("Invincible (alt)".into())),
+        range_low: Set(Some("1".into())),
+        range_high: Set(Some("3".into())),
+        declared_year: Set(Some(2099)),
+        set_by: Set("user".into()),
+        first_set_at: Set(now),
+        last_synced_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let after = match_entries(&db, std::slice::from_ref(&entry))
+        .await
+        .unwrap();
+    assert_eq!(after[0].status, MatchStatus::Matched);
+    assert_eq!(
+        after[0].issue_id.as_deref(),
+        Some(matched_before.as_str()),
+        "CBL resolution must be unaffected by a provider-range mapping",
+    );
+}

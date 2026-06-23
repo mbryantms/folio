@@ -30,6 +30,7 @@ use crate::metadata::metron::MetronClient;
 use crate::metadata::provider::{
     IssueCandidate, IssueQuery, MetadataProvider, ProviderError, SeriesCandidate, SeriesQuery,
 };
+use crate::metadata::range_map::EffectiveTarget;
 use chrono::Utc;
 use entity::{metadata_run, metadata_run_candidate};
 use redis::aio::ConnectionManager;
@@ -465,21 +466,109 @@ pub(crate) fn pre_filter_series(
 /// only fires the year gate — `IssueCandidate` doesn't carry the
 /// publisher, so the operator's blacklist is enforced at the
 /// upstream series search instead.
+///
+/// `local_year` is the baseline the candidate's series year is gated
+/// against. It is normally the parent series start year, but for an
+/// issue routed through a `series_provider_range` mapping it is the
+/// mapped sub-series' `declared_year` — so a legacy-renumbered relaunch
+/// (e.g. a 2012 sub-series of a 2001 run) isn't dropped against the
+/// wrong baseline. See [`run_issue_search`].
 pub(crate) fn pre_filter_issue(
     candidates: Vec<IssueCandidate>,
-    facts: &IssueQueryFacts,
+    local_year: Option<i32>,
 ) -> Vec<IssueCandidate> {
     candidates
         .into_iter()
-        .filter(|c| {
-            if let (Some(local), Some(cand)) = (facts.series_year, c.series_year)
-                && cand > local + 1
-            {
-                return false;
-            }
-            true
-        })
+        .filter(|c| issue_year_ok(local_year, c.series_year))
         .collect()
+}
+
+/// The keep predicate behind the issue-search year gate: a candidate
+/// survives unless its series year runs more than one year past the
+/// local baseline. Missing on either side ⇒ keep (no signal to gate on).
+fn issue_year_ok(local_year: Option<i32>, candidate_year: Option<i32>) -> bool {
+    match (local_year, candidate_year) {
+        (Some(local), Some(cand)) => cand <= local + 1,
+        _ => true,
+    }
+}
+
+/// Year-gate policy for [`score_issue_candidates`].
+#[derive(Copy, Clone)]
+enum YearGate {
+    /// Drop a candidate before scoring when its series year exceeds the
+    /// baseline + 1. The default for the narrowed primary search — keeps
+    /// the matcher's golden behaviour intact.
+    Hard(Option<i32>),
+    /// Score first; keep a year-mismatched candidate only when its cover
+    /// pHash confirms the match (cover present + buckets MEDIUM-or-better
+    /// on the M4 Hamming ladder). Used on the broad fallback so a
+    /// cover-confirmed relaunch survives the year gate.
+    PhashAware(Option<i32>),
+}
+
+/// Fetch candidate cover pHashes, score each issue candidate against the
+/// local facts, apply the year gate per `gate`, and return ranked rows.
+/// Shared by the narrowed primary search and the broad fallback so the
+/// phash-fetch + scoring logic lives in one place.
+async fn score_issue_candidates(
+    http: &reqwest::Client,
+    facts: &IssueQueryFacts,
+    candidates: Vec<IssueCandidate>,
+    local_phash: Option<i64>,
+    alternate_cover_fetch_cap: u32,
+    thresholds: Thresholds,
+    gate: YearGate,
+) -> Vec<RankedCandidate> {
+    // The hard gate is cheapest applied before any cover fetch.
+    let candidates = match gate {
+        YearGate::Hard(year) => pre_filter_issue(candidates, year),
+        YearGate::PhashAware(_) => candidates,
+    };
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let candidate_phashes: Vec<Vec<Option<i64>>> = if local_phash.is_some() {
+        let urls_per_candidate: Vec<Vec<Option<&str>>> = candidates
+            .iter()
+            .map(|c| {
+                cover_urls_for_candidate(
+                    c.cover_image_url.as_deref(),
+                    &c.alternate_cover_urls,
+                    alternate_cover_fetch_cap,
+                )
+            })
+            .collect();
+        fetch_phashes_per_candidate(http, &urls_per_candidate).await
+    } else {
+        candidates.iter().map(|_| Vec::new()).collect()
+    };
+
+    let mut out = Vec::new();
+    for (c, cand_phashes) in candidates.into_iter().zip(candidate_phashes) {
+        let score = matcher::score_issue_with_phash(facts, &c, local_phash, &cand_phashes);
+        let bucket = score.bucket(thresholds);
+        // PhashAware fallback: a year-mismatched candidate survives only
+        // when the cover confirms it. Reusing `bucket` means the M5
+        // alternate-cover ceiling is honoured for free.
+        if let YearGate::PhashAware(year) = gate
+            && !issue_year_ok(year, c.series_year)
+        {
+            let cover_confirmed =
+                score.cover_hamming.is_some() && !matches!(bucket, Confidence::Low);
+            if !cover_confirmed {
+                continue;
+            }
+        }
+        out.push(RankedCandidate {
+            source: c.source,
+            external_id: c.external_id.clone(),
+            score,
+            bucket,
+            payload: CandidatePayload::Issue(c),
+        });
+    }
+    out
 }
 
 // ───────── search execution ─────────
@@ -658,7 +747,7 @@ pub async fn run_issue_search(
     run_id: Uuid,
     providers: &[Arc<dyn MetadataProvider>],
     facts: &IssueQueryFacts,
-    series_external_id_by_provider: &[(Source, String)],
+    series_targets: &[EffectiveTarget],
     thresholds: Thresholds,
     alternate_cover_fetch_cap: u32,
     local_issue_id: Option<&str>,
@@ -674,69 +763,61 @@ pub async fn run_issue_search(
         None => None,
     };
 
+    // `cover_year` is the year on the issue's cover (e.g. 2026 for an
+    // issue cover-dated Jan 2026). Distinct from `series_year`, the
+    // series *start* year. Metron filters its /api/issue/ endpoint by
+    // cover_year; CV ignores it, so the fix is Metron-specific by
+    // design. Captured once and reused for the narrowed + fallback query.
+    let issue_query = |series_external_id: Option<String>| IssueQuery {
+        series_external_id,
+        series_name: Some(facts.series_name.clone()),
+        series_year: facts.series_year,
+        issue_number: facts.issue_number.clone(),
+        cover_year: facts.issue_year,
+        limit: SEARCH_LIMIT_PER_PROVIDER,
+    };
+
     let mut ranked = Vec::new();
     let mut surfaced_quota: Option<u64> = None;
     let mut last_error: Option<ProviderError> = None;
     let http = cover_http_client();
     for p in providers {
-        // If we already know the provider's series id (because the
-        // series was previously matched), narrow the query — saves a
-        // budget slot vs the keyword search.
-        let series_external_id = series_external_id_by_provider
-            .iter()
-            .find(|(s, _)| *s == p.id())
-            .map(|(_, id)| id.clone());
-        let q = IssueQuery {
-            series_external_id,
-            series_name: Some(facts.series_name.clone()),
-            series_year: facts.series_year,
-            issue_number: facts.issue_number.clone(),
-            // `cover_year` is the year on the issue's cover (e.g.
-            // 2026 for an issue cover-dated Jan 2026). Distinct from
-            // `series_year`, which is the series *start* year (e.g.
-            // 2025 for a series that started in 2025 and is now
-            // shipping 2026 issues). Metron filters its /api/issue/
-            // endpoint by cover_year — passing series_year here
-            // would drop every issue whose cover year doesn't match
-            // the series start year, which is most ongoing series
-            // after their first calendar year. CV ignores this
-            // parameter, so the fix is Metron-specific by design.
-            cover_year: facts.issue_year,
-            limit: SEARCH_LIMIT_PER_PROVIDER,
+        // Effective provider target for this issue: a covering
+        // `series_provider_range` mapping wins, else the series-level
+        // external id default (see `metadata::range_map`).
+        let target = series_targets.iter().find(|t| t.source == p.id());
+        let narrow_id = target.map(|t| t.provider_series_id.clone());
+        // Gate the candidate year against the mapped sub-series year
+        // when a range supplies one; otherwise the parent series year.
+        let gate_year = target.and_then(|t| t.declared_year).or(facts.series_year);
+        // When we narrowed to a known provider series we trust the
+        // mapping and gate hard on the year. When we DIDN'T (this
+        // provider has no series-level id or range for the issue), the
+        // primary search is itself a broad discovery query — a divergent
+        // issue (e.g. a legacy-renumbered #601 that only Metron's "FF
+        // (2012)" series carries) would otherwise be year-gated out
+        // before its cover is ever compared. Use the cover-pHash-aware
+        // gate there so a cover-confirmed candidate survives the year
+        // mismatch even with no mapping configured.
+        let primary_gate = if narrow_id.is_some() {
+            YearGate::Hard(gate_year)
+        } else {
+            YearGate::PhashAware(gate_year)
         };
-        match p.search_issue(&q).await {
+
+        // ── primary search (narrowed to the provider series when known) ──
+        let primary = match p.search_issue(&issue_query(narrow_id.clone())).await {
             Ok(candidates) => {
-                // M3 pre-filter: hard year gate (issue candidates
-                // don't carry publisher, so the operator's blacklist
-                // is enforced at the series-search side instead).
-                let candidates = pre_filter_issue(candidates, facts);
-                let candidate_phashes: Vec<Vec<Option<i64>>> = if local_phash.is_some() {
-                    let urls_per_candidate: Vec<Vec<Option<&str>>> = candidates
-                        .iter()
-                        .map(|c| {
-                            cover_urls_for_candidate(
-                                c.cover_image_url.as_deref(),
-                                &c.alternate_cover_urls,
-                                alternate_cover_fetch_cap,
-                            )
-                        })
-                        .collect();
-                    fetch_phashes_per_candidate(&http, &urls_per_candidate).await
-                } else {
-                    candidates.iter().map(|_| Vec::new()).collect()
-                };
-                for (c, cand_phashes) in candidates.into_iter().zip(candidate_phashes) {
-                    let score =
-                        matcher::score_issue_with_phash(facts, &c, local_phash, &cand_phashes);
-                    let bucket = score.bucket(thresholds);
-                    ranked.push(RankedCandidate {
-                        source: c.source,
-                        external_id: c.external_id.clone(),
-                        score,
-                        bucket,
-                        payload: CandidatePayload::Issue(c),
-                    });
-                }
+                score_issue_candidates(
+                    &http,
+                    facts,
+                    candidates,
+                    local_phash,
+                    alternate_cover_fetch_cap,
+                    thresholds,
+                    primary_gate,
+                )
+                .await
             }
             Err(ProviderError::QuotaExceeded { retry_after_secs }) => {
                 surfaced_quota = Some(retry_after_secs);
@@ -745,6 +826,7 @@ pub async fn run_issue_search(
                     retry_after_secs,
                     "metadata search: provider out of quota; falling through"
                 );
+                continue;
             }
             Err(e) => {
                 tracing::warn!(
@@ -753,6 +835,59 @@ pub async fn run_issue_search(
                     "metadata search: provider returned error; falling through"
                 );
                 last_error = Some(e);
+                continue;
+            }
+        };
+
+        // ── broad fallback for provider series-boundary divergence ──
+        // We narrowed to the local series' provider id but found nothing.
+        // The issue may belong to a *different* provider series of this
+        // source (a split / legacy-renumbered run, e.g. Fantastic Four
+        // #600–611 in a "FF (2012)" Metron series). Re-search by
+        // name+number and keep candidates the cover confirms even when
+        // the year gate would otherwise drop the relaunch.
+        let mut produced = primary;
+        if produced.is_empty() && narrow_id.is_some() {
+            match p.search_issue(&issue_query(None)).await {
+                Ok(candidates) => {
+                    produced = score_issue_candidates(
+                        &http,
+                        facts,
+                        candidates,
+                        local_phash,
+                        alternate_cover_fetch_cap,
+                        thresholds,
+                        YearGate::PhashAware(gate_year),
+                    )
+                    .await;
+                }
+                Err(ProviderError::QuotaExceeded { retry_after_secs }) => {
+                    surfaced_quota = Some(retry_after_secs);
+                    tracing::info!(
+                        provider = p.id().as_str(),
+                        retry_after_secs,
+                        "metadata search: provider out of quota on fallback; falling through"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        provider = p.id().as_str(),
+                        error = %e,
+                        "metadata search: provider fallback error; falling through"
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        // Dedup by (source, external_id) — the fallback can resurface a
+        // candidate the narrowed pass already produced.
+        for rc in produced {
+            if !ranked
+                .iter()
+                .any(|x: &RankedCandidate| x.source == rc.source && x.external_id == rc.external_id)
+            {
+                ranked.push(rc);
             }
         }
     }
@@ -1185,8 +1320,30 @@ mod tests {
                 alternate_cover_urls: Vec::new(),
             },
         ];
-        let out = pre_filter_issue(candidates, &facts);
+        let out = pre_filter_issue(candidates, facts.series_year);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].external_id, "keep");
+    }
+
+    #[test]
+    fn pre_filter_issue_honours_mapped_sub_series_year() {
+        // A relaunch candidate (series_year 2012) is dropped against the
+        // parent 2001 baseline, but kept when the gate uses the mapped
+        // sub-series' declared year (2012) — the range-mapping case.
+        let relaunch = || IssueCandidate {
+            source: Source::Metron,
+            external_id: "ff-2012-600".into(),
+            external_url: None,
+            issue_number: Some("600".into()),
+            name: None,
+            cover_date: None,
+            series_name: Some("Fantastic Four".into()),
+            series_year: Some(2012),
+            series_external_id: None,
+            cover_image_url: None,
+            alternate_cover_urls: Vec::new(),
+        };
+        assert_eq!(pre_filter_issue(vec![relaunch()], Some(2001)).len(), 0);
+        assert_eq!(pre_filter_issue(vec![relaunch()], Some(2012)).len(), 1);
     }
 }

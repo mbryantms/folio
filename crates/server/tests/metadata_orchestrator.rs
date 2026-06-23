@@ -24,6 +24,7 @@ use server::metadata::metron::MetronClient;
 use server::metadata::orchestrator::PreFilter;
 use server::metadata::orchestrator::{self, StartRunArgs, StoredQuery, status};
 use server::metadata::provider::MetadataProvider;
+use server::metadata::range_map::EffectiveTarget;
 use std::sync::Arc;
 use uuid::Uuid;
 use wiremock::{
@@ -421,4 +422,116 @@ async fn run_issue_search_buckets_high_when_number_and_name_match() {
         .unwrap();
     assert_eq!(run.items_matched_high, 1);
     assert_eq!(run.items_matched_medium, 0);
+}
+
+/// Provider series-boundary divergence: a legacy-renumbered issue (#600)
+/// whose Metron candidate lives in a separate "FF (2012)" series is dropped
+/// by the year gate against the parent 2001 series — UNLESS a
+/// `series_provider_range` target supplies the mapped sub-series year, which
+/// the orchestrator gates against instead. This pins the M3 routing fix.
+#[tokio::test]
+async fn run_issue_search_range_target_rescues_relaunch_from_year_gate() {
+    let metron_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/issue/"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(paged_metron(json!([{
+                "id": 600123,
+                "series": {
+                    "id": 62349,
+                    "name": "Fantastic Four",
+                    "sort_name": "Fantastic Four",
+                    "volume": 1,
+                    "year_began": 2012,
+                    "series_type": null,
+                    "genres": []
+                },
+                "number": "600",
+                "name": ["The Lost Adventure"],
+                "cover_date": "2012-11-14",
+                "image": "https://static/ff-600.jpg",
+                "modified": "2024-01-15T12:34:56Z"
+            }]))),
+        )
+        .mount(&metron_mock)
+        .await;
+
+    let app = TestApp::spawn().await;
+    let providers: Vec<Arc<dyn MetadataProvider>> = vec![Arc::new(MetronClient::with_base_url(
+        "u",
+        "p",
+        metron_mock.uri(),
+        app.state().jobs.redis.clone(),
+    ))];
+    // Local series started in 2001; the candidate relaunch started 2012.
+    let facts = IssueQueryFacts {
+        series_name: "Fantastic Four".into(),
+        series_year: Some(2001),
+        publisher: None,
+        volume: Some(1),
+        issue_number: "600".into(),
+        issue_year: Some(2012),
+    };
+
+    let run_with_range = |targets: Vec<EffectiveTarget>| {
+        let app = &app;
+        let providers = &providers;
+        let facts = facts.clone();
+        async move {
+            let run_id = orchestrator::start_run(
+                &app.state().db,
+                StartRunArgs {
+                    scope: orchestrator::scope::ISSUE,
+                    scope_entity_id: Some("ff-600".into()),
+                    library_id: None,
+                    triggered_by: None,
+                    trigger_kind: orchestrator::trigger_kind::MANUAL,
+                    providers: &[Source::Metron],
+                    query: StoredQuery::Issue(facts.clone()),
+                    batch_id: None,
+                },
+            )
+            .await
+            .unwrap();
+            orchestrator::run_issue_search(
+                &app.state().db,
+                run_id,
+                providers,
+                &facts,
+                &targets,
+                Thresholds::new(80.0, 60.0),
+                3,
+                None,
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    // Control: no range mapping → year gate uses the parent 2001 year and
+    // hard-drops the 2012 relaunch candidate.
+    let without = run_with_range(vec![]).await;
+    assert_eq!(
+        without.len(),
+        0,
+        "relaunch candidate should be year-gated without a range mapping"
+    );
+
+    // With a range mapping declaring the 2012 sub-series, the gate uses 2012
+    // and the candidate survives.
+    let with = run_with_range(vec![EffectiveTarget {
+        source: Source::Metron,
+        provider_series_id: "62349".into(),
+        declared_year: Some(2012),
+        provider_series_name: Some("Fantastic Four (2012)".into()),
+        provider_series_url: Some("https://metron.cloud/series/fantastic-four-2012/".into()),
+        via_range: true,
+    }])
+    .await;
+    assert_eq!(
+        with.len(),
+        1,
+        "range mapping's declared year should rescue the relaunch candidate"
+    );
+    assert_eq!(with[0].external_id, "600123");
 }

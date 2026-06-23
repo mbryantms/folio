@@ -16,6 +16,7 @@
 //! - [`comicvine`] — first concrete provider impl (M1).
 
 pub mod apply;
+pub mod auto_split;
 pub mod cache;
 pub mod comicvine;
 pub mod completeness;
@@ -31,6 +32,7 @@ pub mod metron;
 pub mod orchestrator;
 pub mod phash;
 pub mod provider;
+pub mod range_map;
 pub mod ratcliff;
 pub mod rate_limit;
 pub mod refresh;

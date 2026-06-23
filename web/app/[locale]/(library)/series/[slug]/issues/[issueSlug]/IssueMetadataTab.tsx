@@ -22,12 +22,25 @@ import {
   Loader2,
   MinusCircle,
   RotateCcw,
+  Sparkles,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import * as React from "react";
 
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useIssueMetadataOverview } from "@/lib/api/queries";
+
+// Heavy match dialog — lazy so the Metadata tab stays light; the chunk
+// loads only when the user opens the per-issue match flow from here.
+const MetadataMatchDialog = dynamic(
+  () =>
+    import("@/components/library/MetadataMatchDialog").then(
+      (m) => m.MetadataMatchDialog,
+    ),
+  { ssr: false },
+);
 import { useSetIssueMetadataAccepted } from "@/lib/api/mutations";
 import { formatRelativeDate } from "@/lib/format";
 import { metadataFieldLabel, metadataFieldLabels } from "@/lib/metadata-fields";
@@ -37,15 +50,23 @@ import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 export function IssueMetadataTab({
   seriesSlug,
   issueSlug,
+  libraryId,
 }: {
   seriesSlug: string;
   issueSlug: string;
+  libraryId: string;
 }) {
   const { data, isLoading, isError } = useIssueMetadataOverview(
     seriesSlug,
     issueSlug,
   );
   const setAccepted = useSetIssueMetadataAccepted(seriesSlug, issueSlug);
+  // Own per-issue match dialog (self-contained — no coordination with the
+  // sibling settings menu). Mounted on first open and kept mounted so the
+  // close animation still runs (G6 idiom).
+  const [matchOpen, setMatchOpen] = React.useState(false);
+  const [matchMounted, setMatchMounted] = React.useState(false);
+  if (matchOpen && !matchMounted) setMatchMounted(true);
 
   if (isLoading) {
     return (
@@ -183,6 +204,109 @@ export function IssueMetadataTab({
         )}
       </div>
 
+      {/* ── Alternate provider series (provider series-boundary divergence) ──
+           Renders only when providers disagree on which series this issue
+           belongs to; then lists where it maps in EACH provider, flags the
+           split ones, and shows whether it's matched. Invisible otherwise. */}
+      {data.alternate_provider_series.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-foreground text-sm font-semibold">
+            Alternate provider series
+          </h3>
+          <div className="border-border bg-card space-y-3 rounded-lg border p-4">
+            <p className="text-muted-foreground text-sm">
+              Providers don&rsquo;t all file this issue under the same series
+              (e.g. a legacy renumbering). Here&rsquo;s where it maps in each
+              and whether it&rsquo;s matched — its metadata is pulled from the
+              series flagged <span className="font-medium">separate</span>.
+            </p>
+            <ul className="space-y-2">
+              {data.alternate_provider_series.map((a) => {
+                const name =
+                  a.provider_series_name ?? `#${a.provider_series_id}`;
+                const label =
+                  a.declared_year != null
+                    ? `${name} (${a.declared_year})`
+                    : name;
+                const rangeLabel =
+                  a.range_low && a.range_high
+                    ? a.range_low === a.range_high
+                      ? `#${a.range_low}`
+                      : `#${a.range_low}–${a.range_high}`
+                    : null;
+                return (
+                  <li
+                    key={`${a.source}:${a.provider_series_id}`}
+                    className="flex flex-wrap items-center gap-x-2 gap-y-1"
+                  >
+                    <Badge variant="outline" className="font-normal">
+                      {a.source_label}
+                    </Badge>
+                    {a.provider_series_url ? (
+                      <a
+                        href={a.provider_series_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:underline"
+                      >
+                        {label} ↗
+                      </a>
+                    ) : (
+                      <span>{label}</span>
+                    )}
+                    {a.diverges ? (
+                      <Badge variant="secondary" className="font-normal">
+                        separate{rangeLabel ? ` · ${rangeLabel}` : ""}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground text-[10px] font-medium tracking-wider uppercase">
+                        main run
+                      </span>
+                    )}
+                    {a.matched_issue_id ? (
+                      a.matched_issue_url ? (
+                        <a
+                          href={a.matched_issue_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={cn(
+                            "inline-flex items-center gap-1 text-xs hover:underline",
+                            statusToneText("success"),
+                          )}
+                        >
+                          <Check className="h-3 w-3" /> matched ↗
+                        </a>
+                      ) : (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 text-xs",
+                            statusToneText("success"),
+                          )}
+                        >
+                          <Check className="h-3 w-3" /> matched
+                        </span>
+                      )
+                    ) : (
+                      <span className="text-muted-foreground text-xs">
+                        not matched
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setMatchOpen(true)}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Find &amp; match metadata
+            </Button>
+          </div>
+        </section>
+      )}
+
       {/* ── External IDs (folded-in tab) ── */}
       <section className="space-y-2">
         <h3 className="text-foreground text-sm font-semibold">External IDs</h3>
@@ -232,6 +356,19 @@ export function IssueMetadataTab({
           </div>
         )}
       </section>
+
+      {matchMounted && (
+        <MetadataMatchDialog
+          open={matchOpen}
+          onOpenChange={setMatchOpen}
+          scope={{
+            kind: "issue",
+            seriesSlug,
+            issueSlug,
+            libraryId,
+          }}
+        />
+      )}
     </div>
   );
 }

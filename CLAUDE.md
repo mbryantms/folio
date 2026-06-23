@@ -414,6 +414,52 @@ Default admin (first registered user becomes admin):
   for the full pipeline diagram, operator-tunable knob list,
   telemetry recipe, and the fixture-adding playbook.
 
+- **Provider series-boundary divergence**: metadata providers
+  disagree on series boundaries — ComicVine "lumps" a run into one
+  volume while Metron/GCD "split" a legacy-renumbered relaunch into a
+  separate series (e.g. Fantastic Four #600–611). The local series
+  stays **whole** (stable `series_id` / issue ids / `normalized_name`,
+  so CBL resolution is unaffected); the exception is recorded in
+  [`series_provider_range`](crates/entity/src/series_provider_range.rs)
+  — per `(series, source)`, an issue-number range → a different
+  provider series. The series-level `external_ids` row is the implicit
+  whole-series default; a range overrides only the issues it covers.
+  - **One resolver**:
+    [`metadata::range_map::fold_targets`](crates/server/src/metadata/range_map.rs)
+    folds range overrides over the series-level default and answers
+    "which provider series does issue N belong to?" Search
+    ([`run_issue_search`](crates/server/src/metadata/orchestrator.rs)),
+    apply ([`apply_series_via_sidecar`](crates/server/src/metadata/apply.rs)),
+    the coverage map, and the issue surface all route through it — don't
+    re-derive the effective target ad hoc.
+  - **Auto-detection**:
+    [`metadata::auto_split`](crates/server/src/metadata/auto_split.rs)
+    runs after a *manual* series apply (and on the "Detect from
+    providers" button) — enumerates the matched series' issue numbers,
+    finds the contiguous block it doesn't cover, resolves the alternate
+    series, and writes the range row. Only splitter providers implement
+    `MetadataProvider::list_series_issue_numbers`; lumpers use the
+    no-op default → no split. Gated to manual applies to spare budget.
+  - **Year gate**: the issue-search gate uses the mapped sub-series'
+    `declared_year` when a range applies (so a 2012 relaunch isn't
+    dropped against a 2001 parent), and the *broad/unmapped* path is
+    cover-pHash-aware (a cover-confirmed candidate survives a year
+    mismatch). The narrowed path stays hard-gated.
+
+  **Reviewer heuristics — reject PRs that:**
+  - Write the matched series-level `external_ids` **inside**
+    `apply_*_via_sidecar` (the writeback invariant). Persist them in
+    the job handler post-apply (`persist_applied_series_external_ids`)
+    instead — the writeback rescan only ingests series-level ids at
+    series *creation*, so they must be written from the applied
+    candidates.
+  - Mutate the local `series` row (name/year) to carry a divergent
+    range's identity. Series membership is folder-pinned; the splitter
+    identity rides in the per-issue composed `<Series>` only (safe —
+    the scanner never re-homes on `<Series>` change).
+  - Load full `issue::Model`s to read just the number — project the
+    columns (`select_only`); `comic_info_raw` is large.
+
 ## Editing rules
 
 - Server tests must hit a real DB via `TestApp::spawn()`; never mock sea-orm.

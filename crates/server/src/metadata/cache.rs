@@ -127,6 +127,39 @@ pub async fn get<C: ConnectionTrait>(
     }
 }
 
+/// Lenient lookup of a cached series' display name + start year, for UI
+/// labelling (the provider-coverage + alternate-series cards). Ignores
+/// TTL + schema version on purpose — a slightly stale series *name* is
+/// far better than showing a bare id, and this never feeds matching or
+/// apply logic. Returns `None` when the series isn't cached at all.
+pub async fn series_display_meta<C: ConnectionTrait>(
+    db: &C,
+    provider: Source,
+    external_id: &str,
+) -> Option<(Option<String>, Option<i32>)> {
+    let row = metadata_cache::Entity::find_by_id((
+        provider.as_str().to_string(),
+        CacheEntity::Series.as_str().to_string(),
+        external_id.to_string(),
+    ))
+    .one(db)
+    .await
+    .ok()
+    .flatten()?;
+    let name = row
+        .payload
+        .get("series_name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned);
+    let year = row.payload.get("year_began").and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+            .map(|n| n as i32)
+    });
+    Some((name, year))
+}
+
 /// Upsert a freshly-fetched payload.
 pub async fn put<C: ConnectionTrait>(
     db: &C,

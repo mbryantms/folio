@@ -3906,6 +3906,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/provider-coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["provider_ranges_coverage_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/provider-ranges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["provider_ranges_list_series"];
+        put?: never;
+        post: operations["provider_ranges_add_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/provider-ranges/detect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["provider_ranges_detect_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/provider-ranges/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["provider_ranges_delete_series"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/resume": {
         parameters: {
             query?: never;
@@ -4068,6 +4132,25 @@ export interface components {
              */
             source: string;
         };
+        AddProviderRangeReq: {
+            /** Format: int32 */
+            declared_year?: number | null;
+            provider_series_id: string;
+            provider_series_name?: string | null;
+            provider_series_url?: string | null;
+            /**
+             * @description Inclusive upper bound; canonicalized server-side. Empty / omitted
+             *     ⇒ open-ended.
+             */
+            range_high?: string | null;
+            /**
+             * @description Inclusive lower bound; canonicalized server-side. Empty / omitted
+             *     ⇒ open-ended.
+             */
+            range_low?: string | null;
+            /** @description `"comicvine" | "metron" | "gcd" | …`. Aliases accepted. */
+            source: string;
+        };
         /**
          * @description Audit-remediation M4 dropped `LogWidgetListView { widgets: Vec<_> }` in
          *     favor of the workspace-uniform `shared::pagination::CursorPage<T>`
@@ -4131,6 +4214,30 @@ export interface components {
             library_count: number;
             role: string;
             state: string;
+        };
+        /** @description Where this issue maps in one provider, plus its current match state. */
+        AlternateProviderSeries: {
+            /** Format: int32 */
+            declared_year?: number | null;
+            /**
+             * @description `true` ⇒ this provider files this issue in a non-default series
+             *     (a range override); `false` ⇒ the series' default provider series.
+             */
+            diverges: boolean;
+            /**
+             * @description This issue's own external id for this provider, when matched —
+             *     lets the UI show "✓ matched" + link straight to the provider issue.
+             */
+            matched_issue_id?: string | null;
+            matched_issue_url?: string | null;
+            provider_series_id: string;
+            provider_series_name?: string | null;
+            provider_series_url?: string | null;
+            range_high?: string | null;
+            /** @description The override range this issue falls in (`diverges` only). */
+            range_low?: string | null;
+            source: string;
+            source_label: string;
         };
         AppPasswordCreatedView: {
             created_at: string;
@@ -5225,6 +5332,27 @@ export interface components {
         ContinueReadingView: {
             items: components["schemas"]["ContinueReadingCard"][];
         };
+        CoverageSegment: {
+            /** Format: int32 */
+            declared_year?: number | null;
+            high: string;
+            /** Format: int32 */
+            issue_count: number;
+            low: string;
+            provider_series_id: string;
+            provider_series_name?: string | null;
+            provider_series_url?: string | null;
+            /**
+             * @description The `series_provider_range` row id for an override segment, so the
+             *     UI can offer a delete affordance.
+             */
+            range_id?: string | null;
+            /**
+             * @description `true` ⇒ a range-override sub-series; `false` ⇒ the series-level
+             *     default mapping.
+             */
+            via_range: boolean;
+        };
         CreateAppPasswordReq: {
             /**
              * @description Free-form label so the user can tell their tokens apart.
@@ -5820,6 +5948,27 @@ export interface components {
          * @enum {string}
          */
         Density: "comfortable" | "compact";
+        DetectResp: {
+            results: components["schemas"]["DetectSourceResult"][];
+        };
+        DetectSourceResult: {
+            /**
+             * Format: int32
+             * @description Issue numbers that series reported. `0` ⇒ the provider couldn't
+             *     enumerate it (e.g. ComicVine, or an empty/failed response).
+             */
+            covered_count: number;
+            /** @description Range mappings created this run. */
+            created: components["schemas"]["ProviderRangeRow"][];
+            /** @description Set when the detector errored for this source (provider call failed). */
+            error?: string | null;
+            /** @description Local issue ranges the matched series didn't cover ("600..611"). */
+            gaps: string[];
+            /** @description The matched provider series the detector scanned against. */
+            provider_series_id: string;
+            source: string;
+            source_label: string;
+        };
         DeviceBucket: {
             /** Format: int64 */
             active_ms: number;
@@ -6998,6 +7147,18 @@ export interface components {
          *     freshness, per-field provenance, external IDs, and user-pinned fields.
          */
         MetadataOverviewView: {
+            /**
+             * @description Providers that catalogue this issue under a DIFFERENT series than
+             *     the rest of its local series (provider series-boundary
+             *     Per-provider series mapping for THIS issue, surfaced only when at
+             *     least one provider files it under a non-default series (provider
+             *     series-boundary divergence — e.g. a legacy-renumbered issue
+             *     Metron/GCD split into a relaunch). Empty for the common (no-split)
+             *     case. When present, every mapped provider is listed (so the UI can
+             *     show the disagreement, e.g. ComicVine main run vs Metron 2012),
+             *     with `diverges` flagging the split ones.
+             */
+            alternate_provider_series: components["schemas"]["AlternateProviderSeries"][];
             completeness?: null | components["schemas"]["CompletenessReport"];
             external_ids: components["schemas"]["ExternalIdRow"][];
             last_metadata_sync_at?: string | null;
@@ -7544,6 +7705,15 @@ export interface components {
             remaining_hour?: number | null;
             source: string;
         };
+        ProviderCoverage: {
+            /** @description Issue-range segments across this local series, in reading order. */
+            segments: components["schemas"]["CoverageSegment"][];
+            source: string;
+            source_label: string;
+        };
+        ProviderCoverageResp: {
+            providers: components["schemas"]["ProviderCoverage"][];
+        };
         /**
          * @description Per-provider remaining-quota view for the match dialog (audit B13).
          *     Mirrors `crate::metadata::provider::QuotaSnapshot`; ComicVine carries
@@ -7559,6 +7729,30 @@ export interface components {
             remaining_hour?: number | null;
             /** Format: int64 */
             seconds_until_reset?: number | null;
+        };
+        ProviderRangeRow: {
+            /**
+             * Format: int32
+             * @description The mapped sub-series' start year (used by the issue-search year gate).
+             */
+            declared_year?: number | null;
+            first_set_at: string;
+            id: string;
+            last_synced_at: string;
+            provider_series_id: string;
+            provider_series_name?: string | null;
+            provider_series_url?: string | null;
+            /** @description Inclusive upper bound (canonical issue number). `null` = open-ended. */
+            range_high?: string | null;
+            /** @description Inclusive lower bound (canonical issue number). `null` = open-ended. */
+            range_low?: string | null;
+            set_by: string;
+            source: string;
+            source_label: string;
+        };
+        ProviderRangesListResp: {
+            rows: components["schemas"]["ProviderRangeRow"][];
+            series_id: string;
         };
         ProviderView: {
             /**
@@ -17614,6 +17808,199 @@ export interface operations {
                 };
             };
             /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provider_ranges_coverage_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCoverageResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provider_ranges_list_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderRangesListResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provider_ranges_add_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddProviderRangeReq"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderRangeRow"];
+                };
+            };
+            /** @description invalid source / range */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description range overlaps an existing mapping */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provider_ranges_detect_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DetectResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provider_ranges_delete_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / range not found */
             404: {
                 headers: {
                     [name: string]: unknown;

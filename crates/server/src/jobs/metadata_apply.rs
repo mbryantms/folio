@@ -227,7 +227,134 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
     )
     .await;
     release_series_mutex(&state, series_id).await;
+
+    if outcome.is_ok() {
+        // Persist the matched provider series ids onto the series'
+        // external_ids. The DB-direct apply writes these inline; the
+        // writeback path doesn't (its rescan only ingests series-level
+        // ids at series *creation*), so without this the Metron/CV
+        // linkage never shows in the External IDs card / header.
+        persist_applied_series_external_ids(&state, series_id, run_id).await;
+
+        // M7: after a *manual* series match, auto-detect provider
+        // series-boundary splits and write the alternate-series range
+        // mappings. Skipped on auto-apply (bulk/scanner) to spare
+        // provider budget. Best-effort — never fails the apply.
+        if !is_auto {
+            run_auto_split_after_apply(&state, series_id, run_id).await;
+        }
+    }
     Ok(())
+}
+
+/// Write the matched provider series ids (from the run's applied
+/// candidates) onto the series' `external_ids`, so the series-level
+/// linkage is visible immediately regardless of apply path. Idempotent
+/// and honours user-precedence via `set_external_id`.
+async fn persist_applied_series_external_ids(
+    state: &AppState,
+    series_id: uuid::Uuid,
+    run_id: uuid::Uuid,
+) {
+    use crate::metadata::identifier::Identifier;
+    use crate::metadata::writers::{SetBy, set_external_id};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let applied = entity::metadata_run_candidate::Entity::find()
+        .filter(entity::metadata_run_candidate::Column::RunId.eq(run_id))
+        .filter(entity::metadata_run_candidate::Column::AppliedAt.is_not_null())
+        .all(&state.db)
+        .await
+        .unwrap_or_default();
+    let series_id_str = series_id.to_string();
+    for c in applied {
+        let Some(source) = crate::metadata::apply::parse_source(&c.source) else {
+            continue;
+        };
+        let identifier = Identifier::with_canonical_url(source, c.external_id.clone(), "series");
+        if let Err(e) = set_external_id(
+            &state.db,
+            "series",
+            &series_id_str,
+            &identifier,
+            SetBy::Provider(source),
+        )
+        .await
+        {
+            tracing::warn!(
+                series_id = %series_id,
+                source = source.as_str(),
+                error = %e,
+                "failed to persist applied series external id"
+            );
+        }
+    }
+}
+
+/// Run the auto-split detector for each provider series the apply just
+/// matched. Drives off the run's **applied candidates** (their
+/// `applied_at` is stamped synchronously during apply) rather than the
+/// series' `external_ids` — under the writeback path those are only
+/// written later by the enqueued rescan, so they aren't visible yet.
+/// Works for single and composite applies; lumper providers (ComicVine)
+/// return no issue list so they no-op without a network call.
+async fn run_auto_split_after_apply(state: &AppState, series_id: uuid::Uuid, run_id: uuid::Uuid) {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let Ok(Some(series_row)) = entity::series::Entity::find_by_id(series_id)
+        .one(&state.db)
+        .await
+    else {
+        return;
+    };
+    let applied = entity::metadata_run_candidate::Entity::find()
+        .filter(entity::metadata_run_candidate::Column::RunId.eq(run_id))
+        .filter(entity::metadata_run_candidate::Column::AppliedAt.is_not_null())
+        .all(&state.db)
+        .await
+        .unwrap_or_default();
+    tracing::debug!(
+        series_id = %series_id,
+        run_id = %run_id,
+        applied_candidates = applied.len(),
+        sources = ?applied.iter().map(|c| format!("{}:{}", c.source, c.external_id)).collect::<Vec<_>>(),
+        "auto-split: post-apply hook running"
+    );
+    for c in applied {
+        let Some(source) = crate::metadata::apply::parse_source(&c.source) else {
+            continue;
+        };
+        let Some(provider) = crate::metadata::apply::build_provider(state, source) else {
+            continue;
+        };
+        match crate::metadata::auto_split::detect_and_map(
+            &state.db,
+            &series_row,
+            source,
+            &c.external_id,
+            &*provider,
+        )
+        .await
+        {
+            Ok(outcome) if !outcome.created.is_empty() => {
+                tracing::info!(
+                    series_id = %series_id,
+                    source = source.as_str(),
+                    ranges = outcome.created.len(),
+                    "auto-split: created alternate provider series range mappings"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    series_id = %series_id,
+                    source = source.as_str(),
+                    error = %e,
+                    "auto-split: detection failed (non-fatal)"
+                );
+            }
+        }
+    }
 }
 
 // ───────── issue job ─────────
