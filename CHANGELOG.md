@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.23.0](https://github.com/mbryantms/folio/compare/v0.22.6...v0.23.0) (2026-06-23)
+
+
+### Added
+
+* **metadata:** provider series-boundary divergence (split/merged series) ([#296](https://github.com/mbryantms/folio/issues/296)) ([dd9bde8](https://github.com/mbryantms/folio/commit/dd9bde88e8866c2168f160596ff4879c417de13a))
+
 ## [0.22.6](https://github.com/mbryantms/folio/compare/v0.22.5...v0.22.6) (2026-06-22)
 
 
