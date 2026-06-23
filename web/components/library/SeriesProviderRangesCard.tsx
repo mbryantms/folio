@@ -157,7 +157,12 @@ export function SeriesProviderRangesCard({
         declared_year:
           yearNum !== null && Number.isFinite(yearNum) ? yearNum : null,
       },
-      { onSuccess: resetForm },
+      {
+        onSuccess: () => {
+          resetForm();
+          setDetectResult(null); // stale once the mapping set changed
+        },
+      },
     );
   };
 
@@ -165,7 +170,12 @@ export function SeriesProviderRangesCard({
     if (!confirmRemove) return;
     remove.mutate(
       { id: confirmRemove.id },
-      { onSuccess: () => setConfirmRemove(null) },
+      {
+        onSuccess: () => {
+          setConfirmRemove(null);
+          setDetectResult(null);
+        },
+      },
     );
   };
 

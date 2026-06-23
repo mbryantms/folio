@@ -209,8 +209,6 @@ pub struct MetadataOverviewView {
     pub last_metadata_sync_at: Option<String>,
     pub last_rewrite_at: Option<String>,
     pub last_rewrite_kind: Option<String>,
-    /// Providers that catalogue this issue under a DIFFERENT series than
-    /// the rest of its local series (provider series-boundary
     /// Per-provider series mapping for THIS issue, surfaced only when at
     /// least one provider files it under a non-default series (provider
     /// series-boundary divergence — e.g. a legacy-renumbered issue

@@ -17034,7 +17034,7 @@
             "items": {
               "$ref": "#/components/schemas/AlternateProviderSeries"
             },
-            "description": "Providers that catalogue this issue under a DIFFERENT series than\nthe rest of its local series (provider series-boundary\nPer-provider series mapping for THIS issue, surfaced only when at\nleast one provider files it under a non-default series (provider\nseries-boundary divergence — e.g. a legacy-renumbered issue\nMetron/GCD split into a relaunch). Empty for the common (no-split)\ncase. When present, every mapped provider is listed (so the UI can\nshow the disagreement, e.g. ComicVine main run vs Metron 2012),\nwith `diverges` flagging the split ones."
+            "description": "Per-provider series mapping for THIS issue, surfaced only when at\nleast one provider files it under a non-default series (provider\nseries-boundary divergence — e.g. a legacy-renumbered issue\nMetron/GCD split into a relaunch). Empty for the common (no-split)\ncase. When present, every mapped provider is listed (so the UI can\nshow the disagreement, e.g. ComicVine main run vs Metron 2012),\nwith `diverges` flagging the split ones."
           },
           "completeness": {
             "oneOf": [

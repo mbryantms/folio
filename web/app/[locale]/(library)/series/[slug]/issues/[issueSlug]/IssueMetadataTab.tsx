@@ -30,7 +30,7 @@ import * as React from "react";
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useIssueMetadataOverview } from "@/lib/api/queries";
+import { useIssueMetadataOverview, useMe } from "@/lib/api/queries";
 
 // Heavy match dialog — lazy so the Metadata tab stays light; the chunk
 // loads only when the user opens the per-issue match flow from here.
@@ -61,6 +61,7 @@ export function IssueMetadataTab({
     issueSlug,
   );
   const setAccepted = useSetIssueMetadataAccepted(seriesSlug, issueSlug);
+  const isAdmin = useMe().data?.role === "admin";
   // Own per-issue match dialog (self-contained — no coordination with the
   // sibling settings menu). Mounted on first open and kept mounted so the
   // close animation still runs (G6 idiom).
@@ -295,14 +296,16 @@ export function IssueMetadataTab({
                 );
               })}
             </ul>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setMatchOpen(true)}
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              Find &amp; match metadata
-            </Button>
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setMatchOpen(true)}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Find &amp; match metadata
+              </Button>
+            )}
           </div>
         </section>
       )}

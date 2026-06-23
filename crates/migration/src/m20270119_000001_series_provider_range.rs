@@ -60,6 +60,15 @@ impl MigrationTrait for Migration {
              ON series_provider_range (series_id, source)",
         )
         .await?;
+        // Backstop the auto-split / detect check-then-insert against
+        // duplicate identical mappings under concurrency (the apply hook +
+        // the manual detect endpoint aren't serialized). App-side overlap
+        // validation still gives the friendly 409; this catches the race.
+        db.execute_unprepared(
+            "CREATE UNIQUE INDEX IF NOT EXISTS series_provider_range_uniq \
+             ON series_provider_range (series_id, source, range_low, range_high)",
+        )
+        .await?;
         Ok(())
     }
 

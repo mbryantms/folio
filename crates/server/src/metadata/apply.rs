@@ -668,12 +668,17 @@ pub(crate) async fn apply_series_via_sidecar(
         });
         let (provider_for_issue, series_ids_for_issue) = match covering {
             Some(r) => {
+                // Override only the series *name* with the splitter's — the
+                // identity readers see. Deliberately NOT `volume`: the range
+                // row carries the sub-series' start *year* (`declared_year`,
+                // for the search year-gate), but the composer writes
+                // `provider.volume` into ComicInfo `<Volume>`, which is the
+                // numeric volume — writing a year there would corrupt it and
+                // disagree with the rest of the run. The year is surfaced for
+                // display via the coverage / alternate-series API instead.
                 let mut p = series_detail.clone();
                 if let Some(name) = r.provider_series_name.as_deref().filter(|s| !s.is_empty()) {
                     p.series_name = Some(name.to_owned());
-                }
-                if let Some(year) = r.declared_year {
-                    p.volume = Some(year);
                 }
                 let mut ids = series_external_ids.clone();
                 ids.insert(source.as_str().to_owned(), r.provider_series_id.clone());

@@ -870,6 +870,13 @@ impl MetadataProvider for MetronClient {
             }
             page += 1;
             if page > 50 {
+                // Don't truncate silently — a series past 5000 issues is
+                // unheard of, but if it happens the un-enumerated tail
+                // would be mis-read as an uncovered gap by auto-split.
+                tracing::warn!(
+                    series_id = series_external_id,
+                    "metron: series issue enumeration hit the 50-page cap; coverage may be incomplete"
+                );
                 break;
             }
         }

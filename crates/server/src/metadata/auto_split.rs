@@ -210,7 +210,19 @@ pub async fn detect_and_map<C: ConnectionTrait>(
             first_set_at: Set(now),
             last_synced_at: Set(now),
         };
-        model.insert(db).await?;
+        // Tolerate a unique-index conflict (a concurrent apply-hook /
+        // detect already wrote this exact mapping) — skip it without
+        // aborting detection of the other gaps.
+        if let Err(e) = model.insert(db).await {
+            tracing::info!(
+                series_id = %series_row.id,
+                source = source.as_str(),
+                gap = format!("{}..{}", low.canonical, high.canonical),
+                error = %e,
+                "auto-split: range insert skipped (already exists / conflict)"
+            );
+            continue;
+        }
         created.push(CreatedRange {
             source,
             provider_series_id: alt.series_id,

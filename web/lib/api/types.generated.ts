@@ -7148,9 +7148,7 @@ export interface components {
          */
         MetadataOverviewView: {
             /**
-             * @description Providers that catalogue this issue under a DIFFERENT series than
-             *     the rest of its local series (provider series-boundary
-             *     Per-provider series mapping for THIS issue, surfaced only when at
+             * @description Per-provider series mapping for THIS issue, surfaced only when at
              *     least one provider files it under a non-default series (provider
              *     series-boundary divergence — e.g. a legacy-renumbered issue
              *     Metron/GCD split into a relaunch). Empty for the common (no-split)
