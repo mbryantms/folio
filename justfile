@@ -596,14 +596,6 @@ openapi-check:
     fi
     echo "OpenAPI spec + generated types are in sync."
 
-# ───── docs site ─────
-
-docs:
-    cd docs-site && pnpm start
-
-docs-build:
-    cd docs-site && pnpm build
-
 # ───── docker ─────
 
 # Build both production images locally. Tags them with the `:dev` suffix so

@@ -33,7 +33,6 @@ jobs:
       rust: ${{ steps.filter.outputs.rust || steps.mergequeue.outputs.full }}
       backend_or_spec: ${{ steps.filter.outputs.backend_or_spec || steps.mergequeue.outputs.full }}
       web: ${{ steps.filter.outputs.web || steps.mergequeue.outputs.full }}
-      docs: ${{ steps.filter.outputs.docs || steps.mergequeue.outputs.full }}
       docker: ${{ steps.filter.outputs.docker || steps.mergequeue.outputs.full }}
       cargo_deps: ${{ steps.filter.outputs.cargo_deps || steps.mergequeue.outputs.full }}
       web_deps: ${{ steps.filter.outputs.web_deps || steps.mergequeue.outputs.full }}
@@ -66,12 +65,6 @@ jobs:
               - '.github/workflows/ci.yml'
             web:
               - 'web/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'pnpm-workspace.yaml'
-              - '.github/workflows/ci.yml'
-            docs:
-              - 'docs-site/**'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
@@ -399,12 +392,11 @@ jobs:
       # files stay in `web/tests/e2e/` so contributors can still run
       # them locally via `pnpm --filter web run test:e2e`. Restore
       # this step once the harness lands.
-      # Blocking as of the 2026-06 dependency audit: docs-site
-      # transitive highs were remediated via root `pnpm.overrides`, so
-      # the tree is high-clean. A new high-severity advisory now fails
-      # CI. Accepted moderates (e.g. the sockjs→uuid dev-server-only
-      # advisory) are documented in SECURITY-EXCEPTIONS.md and sit
-      # below this `--audit-level=high` gate.
+      # Blocking as of the 2026-06 dependency audit: the dep tree is
+      # high-clean (transitive highs remediated via root
+      # `pnpm.overrides`), so a new high-severity advisory now fails CI.
+      # Accepted moderates are documented in SECURITY-EXCEPTIONS.md and
+      # sit below this `--audit-level=high` gate.
       # Only when deps changed (lockfile/manifest) — code-only web PRs don't
       # alter the dep tree. The weekly security-audit workflow covers advisory
       # drift in unchanged deps.
@@ -415,47 +407,6 @@ jobs:
           pnpm audit --audit-level=high
           elapsed=$(($(date +%s) - start))
           echo "| pnpm audit | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
-
-  docs-build:
-    name: Docs site — build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    # Always runs (required check reports); steps gated on docs-site changes.
-    needs: [changes]
-    env:
-      DOCS: ${{ needs.changes.outputs.docs }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-        if: env.DOCS == 'true'
-        with:
-          version: 11.7.0
-      - uses: actions/setup-node@v6
-        if: env.DOCS == 'true'
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - name: Install dependencies
-        if: env.DOCS == 'true'
-        run: |
-          start=$(date +%s)
-          pnpm install --frozen-lockfile --prefer-offline
-          elapsed=$(($(date +%s) - start))
-          {
-            echo "### Docs timings"
-            echo
-            echo "| Step | Duration |"
-            echo "| --- | ---: |"
-            echo "| install | ${elapsed}s |"
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Build docs
-        if: env.DOCS == 'true'
-        run: |
-          start=$(date +%s)
-          pnpm --filter docs-site run build
-          elapsed=$(($(date +%s) - start))
-          echo "| build | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
 
   openapi-drift:
     name: OpenAPI — snapshot + breaking-change check
