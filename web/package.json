@@ -73,7 +73,7 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
-    "@axe-core/playwright": "4.11.3",
+    "@axe-core/playwright": "4.12.1",
     "@next/eslint-plugin-next": "16.2.9",
     "@playwright/test": "1.60.0",
     "@serwist/cli": "9.5.11",
