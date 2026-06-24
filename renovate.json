@@ -7,8 +7,7 @@
     ":semanticCommitTypeAll(deps)",
     ":semanticCommitScopeDisabled"
   ],
-  "timezone": "UTC",
-  "schedule": ["before 6am on monday"],
+  "timezone": "America/New_York",
   "prConcurrentLimit": 8,
   "rangeStrategy": "update-lockfile",
   "lockFileMaintenance": {
