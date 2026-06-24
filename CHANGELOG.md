@@ -13,6 +13,32 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.23.1](https://github.com/mbryantms/folio/compare/v0.23.0...v0.23.1) (2026-06-24)
+
+
+### Fixed
+
+* **deps:** bump quinn-proto to 0.11.15 (RUSTSEC-2026-0185) ([#302](https://github.com/mbryantms/folio/issues/302)) ([0a3b0f2](https://github.com/mbryantms/folio/commit/0a3b0f23cb55159912282650bcda5fd77f4af0e1))
+
+
+### Dependencies
+
+* update dependency @axe-core/playwright to v4.12.1 ([#308](https://github.com/mbryantms/folio/issues/308)) ([de9a050](https://github.com/mbryantms/folio/commit/de9a050e06b261143220c72fda4d632e3d38b7eb))
+* update dependency @vitejs/plugin-react to v6.0.3 ([#299](https://github.com/mbryantms/folio/issues/299)) ([3c87f74](https://github.com/mbryantms/folio/commit/3c87f743cc3fa5f8914df724e4929755626ab679))
+* update dependency cron-parser to v5.6.0 ([#310](https://github.com/mbryantms/folio/issues/310)) ([27d4ead](https://github.com/mbryantms/folio/commit/27d4eadab04d0f7159f099db95b256abe01c44c3))
+* update dependency cronstrue to v3.21.0 ([#311](https://github.com/mbryantms/folio/issues/311)) ([12ce676](https://github.com/mbryantms/folio/commit/12ce6764722ceb6f2fb2d10c4c3609ed15238b08))
+* update dependency react-hook-form to v7.80.0 ([#313](https://github.com/mbryantms/folio/issues/313)) ([8315f23](https://github.com/mbryantms/folio/commit/8315f2325cd0079d32a002ef8d7b40d7c830d1fe))
+* update dependency recharts to v3.9.0 ([#314](https://github.com/mbryantms/folio/issues/314)) ([6b288ca](https://github.com/mbryantms/folio/commit/6b288cac71a4e8c59179f3ab6796e6280351ac44))
+* update dependency vite to v8.1.0 ([#315](https://github.com/mbryantms/folio/issues/315)) ([c19243e](https://github.com/mbryantms/folio/commit/c19243e207f5c5d0e5c866fde69af0b6e375b790))
+* update docker/dockerfile docker tag to v1.25 ([#318](https://github.com/mbryantms/folio/issues/318)) ([762377f](https://github.com/mbryantms/folio/commit/762377f66ded0269d33b593325f83862026bac12))
+* update rust crate quote to v1.0.46 ([#300](https://github.com/mbryantms/folio/issues/300)) ([c49aaae](https://github.com/mbryantms/folio/commit/c49aaaefff76888c810b6abd26b0ec8ef144effa))
+* update rust crate syn to v2.0.118 ([#303](https://github.com/mbryantms/folio/issues/303)) ([59931fd](https://github.com/mbryantms/folio/commit/59931fd9f9330b17d480f8a9a763f70393df9daa))
+* update rust crate time to v0.3.51 ([#304](https://github.com/mbryantms/folio/issues/304)) ([8fccd6f](https://github.com/mbryantms/folio/commit/8fccd6f75940a6850093385653c1eeec3c6e8ed2))
+* update rust crate uuid to v1.23.4 ([#317](https://github.com/mbryantms/folio/issues/317)) ([2165498](https://github.com/mbryantms/folio/commit/216549848e5fd5a7bec98a5887dca15e6fe27211))
+* update scalar monorepo ([#305](https://github.com/mbryantms/folio/issues/305)) ([a8108f4](https://github.com/mbryantms/folio/commit/a8108f4790acd388fb4cba0094c30416c8e6bc93))
+* update tanstack ([#306](https://github.com/mbryantms/folio/issues/306)) ([f80c53d](https://github.com/mbryantms/folio/commit/f80c53d34f5ea9fcdad0531bc6f2186567b69efe))
+* update vitest monorepo ([#307](https://github.com/mbryantms/folio/issues/307)) ([af1a9e4](https://github.com/mbryantms/folio/commit/af1a9e47c4b9fbb5b77a7987acb072bf91859931))
+
 ## [0.23.0](https://github.com/mbryantms/folio/compare/v0.22.6...v0.23.0) (2026-06-23)
 
 
