@@ -64,6 +64,20 @@ export function PageStrip({
   const viewMode = useReaderStore((s) => s.viewMode);
   const coverSolo = useReaderStore((s) => s.coverSolo);
 
+  // Keep the thumbnail images mounted through the slide-out animation.
+  // When the user hides the chrome, `visible` flips to false immediately
+  // but the `<nav>` takes 300ms to translate off-screen (the
+  // `duration-300` transform below). Tearing the `<img>`s down on the
+  // same tick would swap them for the gray placeholder boxes mid-slide —
+  // most glaring on the scaled-up active thumb. Instead we hold the
+  // images mounted until the strip's transform transition actually
+  // finishes (`parked` = "settled off-screen"), so they ride the strip
+  // down and only unmount once it's out of view. Under reduced motion
+  // there's no transition to wait on, so the close unmounts immediately
+  // (correct — nothing slides).
+  const [parked, setParked] = useState(!visible);
+  const renderThumbs = visible || !parked;
+
   // v0.3.44 entrance polish: gate the open `data-state` on a first-
   // frame mount flip so the strip slides up from the viewport
   // bottom on initial reader open (when the user has the strip
@@ -270,6 +284,18 @@ export function PageStrip({
         // thumbnail buttons — without it, a 200-page issue put ~200
         // invisible tab stops behind the translate (WCAG 4.1.2).
         inert={mounted && visible ? undefined : true}
+        // Drop the lingering thumbnails once the strip has finished
+        // sliding off-screen. Guard to the nav's own `transform`
+        // transition — the thumbnails/li margins inside also transition
+        // and bubble their `transitionend` up here.
+        onTransitionEnd={(e) => {
+          if (
+            e.target === e.currentTarget &&
+            e.propertyName === "transform"
+          ) {
+            setParked(!visible);
+          }
+        }}
         className="fixed inset-x-0 bottom-0 z-20 transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:translate-y-full motion-reduce:transition-none"
       >
         {/* Background bar — only as tall as a non-active thumb. The active
@@ -307,7 +333,7 @@ export function PageStrip({
             const inViewport =
               visualIndex >= visibleRange.start &&
               visualIndex <= visibleRange.end;
-            const shouldLoad = visible && (isActive || inViewport);
+            const shouldLoad = renderThumbs && (isActive || inViewport);
             const isDouble = pages[i]?.double_page === true;
             const button = (
               <button
