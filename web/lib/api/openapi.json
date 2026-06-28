@@ -4497,6 +4497,40 @@
         }
       }
     },
+    "/api/me/cbl-lists/check-all": {
+      "post": {
+        "operationId": "cbl_lists_check_all",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CblBulkResultView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/cbl-lists/refresh-all": {
+      "post": {
+        "operationId": "cbl_lists_refresh_all",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CblBulkResultView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me/cbl-lists/upload": {
       "post": {
         "operationId": "cbl_lists_upload",
@@ -4588,6 +4622,33 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CblListView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/cbl-lists/{id}/check": {
+      "post": {
+        "operationId": "cbl_lists_check_one",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CblBulkItemView"
                 }
               }
             }
@@ -11455,6 +11516,91 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "CblBulkItemView": {
+        "type": "object",
+        "description": "One list's outcome in a bulk check / refresh.\n\n`applied=false` for a dry-run **check** — the counts are what *would*\nchange if refreshed. `applied=true` for a **refresh** — the counts are\nwhat *did* change. `ok=false` carries the failure in `error` (a source\nfetch/parse failure on one list never fails the whole batch).",
+        "required": [
+          "id",
+          "name",
+          "ok",
+          "applied",
+          "changed",
+          "upstream_changed",
+          "added",
+          "removed",
+          "reordered",
+          "rematched"
+        ],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "applied": {
+            "type": "boolean"
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "`true` when this refresh would change (check) / did change (refresh)\nthe list — new/removed/reordered books or newly-resolved entries."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "rematched": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "removed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reordered": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "upstream_changed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CblBulkResultView": {
+        "type": "object",
+        "required": [
+          "items",
+          "changed_count",
+          "failed_count"
+        ],
+        "properties": {
+          "changed_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Lists that changed (check: *would* change; refresh: *did* change)."
+          },
+          "failed_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Lists whose check/refresh errored."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CblBulkItemView"
+            }
           }
         }
       },

@@ -2017,6 +2017,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/cbl-lists/check-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_lists_check_all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/cbl-lists/refresh-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_lists_refresh_all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/cbl-lists/upload": {
         parameters: {
             query?: never;
@@ -2054,6 +2086,22 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["cbl_lists_update"];
+        trace?: never;
+    };
+    "/api/me/cbl-lists/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cbl_lists_check_one"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/me/cbl-lists/{id}/entries": {
@@ -4861,6 +4909,48 @@ export interface components {
             github_repo: string;
             id: string;
             last_indexed_at?: string | null;
+        };
+        /**
+         * @description One list's outcome in a bulk check / refresh.
+         *
+         *     `applied=false` for a dry-run **check** — the counts are what *would*
+         *     change if refreshed. `applied=true` for a **refresh** — the counts are
+         *     what *did* change. `ok=false` carries the failure in `error` (a source
+         *     fetch/parse failure on one list never fails the whole batch).
+         */
+        CblBulkItemView: {
+            /** Format: int32 */
+            added: number;
+            applied: boolean;
+            /**
+             * @description `true` when this refresh would change (check) / did change (refresh)
+             *     the list — new/removed/reordered books or newly-resolved entries.
+             */
+            changed: boolean;
+            error?: string | null;
+            id: string;
+            name: string;
+            ok: boolean;
+            /** Format: int32 */
+            rematched: number;
+            /** Format: int32 */
+            removed: number;
+            /** Format: int32 */
+            reordered: number;
+            upstream_changed: boolean;
+        };
+        CblBulkResultView: {
+            /**
+             * Format: int32
+             * @description Lists that changed (check: *would* change; refresh: *did* change).
+             */
+            changed_count: number;
+            /**
+             * Format: int32
+             * @description Lists whose check/refresh errored.
+             */
+            failed_count: number;
+            items: components["schemas"]["CblBulkItemView"][];
         };
         /**
          * @description Detail response — list metadata + aggregate counts only. Entries
@@ -13887,6 +13977,44 @@ export interface operations {
             };
         };
     };
+    cbl_lists_check_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CblBulkResultView"];
+                };
+            };
+        };
+    };
+    cbl_lists_refresh_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CblBulkResultView"];
+                };
+            };
+        };
+    };
     cbl_lists_upload: {
         parameters: {
             query?: never;
@@ -13967,6 +14095,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CblListView"];
+                };
+            };
+        };
+    };
+    cbl_lists_check_one: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CblBulkItemView"];
                 };
             };
         };
