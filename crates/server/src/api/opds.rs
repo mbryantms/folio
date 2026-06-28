@@ -1306,14 +1306,17 @@ async fn search(
         Ok(v) => v,
         Err(e) => return server_error(e),
     };
-    // Series search via tsvector — kept simple in OPDS to match the existing
-    // per-context `/series?q=` endpoint. Returns matched series as acquisition
-    // links pointing at the per-series feed.
-    let pattern = format!("%{}%", needle.replace('\\', "\\\\").replace('%', "\\%"));
+    // Series-name search for external OPDS readers. Case-insensitive and
+    // multi-term (each word must appear in the name), so "uncanny avengers"
+    // matches "Uncanny Avengers". Returns matched series as acquisition links
+    // pointing at the per-series feed.
+    use crate::util::search::{col_ilike, ilike_pattern};
     let mut sel = series::Entity::find()
-        .filter(series::Column::Name.like(&pattern))
         .order_by_asc(series::Column::Name)
         .limit(PAGE_SIZE);
+    for token in needle.split_whitespace() {
+        sel = sel.filter(col_ilike(series::Column::Name, &ilike_pattern(token)));
+    }
     if let Some(ids) = allowed.as_ref() {
         sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
     }

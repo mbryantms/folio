@@ -734,19 +734,22 @@ pub async fn list(
         }
     }
     if let Some(needle) = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-        let pattern = format!("%{}%", needle.replace('%', "\\%").replace('_', "\\_"));
-        // Match against `body` OR `selection->>'text'` — covers notes
-        // (free-form markdown) and text-aware highlights (OCR
-        // payload).
-        let pattern_for_sel = pattern.clone();
-        select = select.filter(
-            sea_orm::Condition::any()
-                .add(marker::Column::Body.like(pattern.as_str()))
-                .add(sea_orm::sea_query::Expr::cust_with_values(
-                    "(selection->>'text') ILIKE $1",
-                    [pattern_for_sel],
-                )),
-        );
+        // Case-insensitive, multi-term: each word must match the note body OR
+        // a text-aware highlight's selection text. `body` previously ran a
+        // case-sensitive `LIKE` while `selection->>'text'` was already ILIKE —
+        // inconsistent; both are now case-insensitive.
+        use crate::util::search::{col_ilike, ilike_pattern};
+        for token in needle.split_whitespace() {
+            let pat = ilike_pattern(token);
+            select = select.filter(
+                sea_orm::Condition::any()
+                    .add(col_ilike(marker::Column::Body, &pat))
+                    .add(sea_orm::sea_query::Expr::cust_with_values(
+                        "(selection->>'text') ILIKE $1",
+                        [pat],
+                    )),
+            );
+        }
     }
     if let Some(c) = q.cursor.as_deref() {
         match decode_cursor(c) {
@@ -837,23 +840,25 @@ pub async fn search(
         .unwrap_or(MARKER_SEARCH_DEFAULT_LIMIT)
         .clamp(1, MARKER_SEARCH_MAX_LIMIT);
 
-    // ILIKE pattern shared with the `/me/markers?q=` path. We escape
-    // the user's `%` / `_` so a query like "10_things" doesn't get
-    // misread as an LIKE wildcard. The escape is then forwarded to
-    // ts_headline as a websearch query for highlighting.
-    let pattern = format!("%{}%", text.replace('%', "\\%").replace('_', "\\_"));
-    let pattern_for_sel = pattern.clone();
-
-    let rows = match marker::Entity::find()
-        .filter(marker::Column::UserId.eq(user.id))
-        .filter(
+    // Case-insensitive, multi-term filter shared with the `/me/markers?q=`
+    // path: each word must match the note body OR a highlight's selection
+    // text. `ilike_pattern` escapes `%` / `_` so "10_things" isn't read as a
+    // wildcard. ts_headline highlighting runs separately off the raw `text`.
+    use crate::util::search::{col_ilike, ilike_pattern};
+    let mut search_sel = marker::Entity::find().filter(marker::Column::UserId.eq(user.id));
+    for token in text.split_whitespace() {
+        let pat = ilike_pattern(token);
+        search_sel = search_sel.filter(
             sea_orm::Condition::any()
-                .add(marker::Column::Body.like(pattern.as_str()))
+                .add(col_ilike(marker::Column::Body, &pat))
                 .add(sea_orm::sea_query::Expr::cust_with_values(
                     "(selection->>'text') ILIKE $1",
-                    [pattern_for_sel],
+                    [pat],
                 )),
-        )
+        );
+    }
+
+    let rows = match search_sel
         .order_by_desc(marker::Column::UpdatedAt)
         .order_by_desc(marker::Column::Id)
         .limit(limit)

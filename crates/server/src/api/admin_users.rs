@@ -410,12 +410,19 @@ pub async fn list(
     if let Some(needle) = q.q.as_deref()
         && !needle.trim().is_empty()
     {
-        let pattern = format!("%{}%", needle.trim().to_lowercase());
-        filtered = filtered.filter(
-            user::Column::Email
-                .like(pattern.clone())
-                .or(user::Column::DisplayName.like(pattern)),
-        );
+        // Case-insensitive, multi-term: each word must match the email OR the
+        // display name. The previous code lowercased the *pattern* but ran a
+        // case-sensitive `LIKE` against the raw column, so a mixed-case
+        // display name ("Jane Doe") never matched "jane".
+        use crate::util::search::{col_ilike, ilike_pattern};
+        for token in needle.split_whitespace() {
+            let pat = ilike_pattern(token);
+            filtered = filtered.filter(
+                sea_orm::Condition::any()
+                    .add(col_ilike(user::Column::Email, &pat))
+                    .add(col_ilike(user::Column::DisplayName, &pat)),
+            );
+        }
     }
 
     // Total matching the active filters — first page only (cursor absent),

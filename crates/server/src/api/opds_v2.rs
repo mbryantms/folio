@@ -1030,11 +1030,14 @@ async fn search(
         Ok(v) => v,
         Err(e) => return server_error(e),
     };
-    let pattern = format!("%{}%", needle.replace('\\', "\\\\").replace('%', "\\%"));
+    // Case-insensitive, multi-term series-name search (see opds::search).
+    use crate::util::search::{col_ilike, ilike_pattern};
     let mut sel = series::Entity::find()
-        .filter(series::Column::Name.like(&pattern))
         .order_by_asc(series::Column::Name)
         .limit(opds::PAGE_SIZE);
+    for token in needle.split_whitespace() {
+        sel = sel.filter(col_ilike(series::Column::Name, &ilike_pattern(token)));
+    }
     if let Some(ids) = allowed.as_ref() {
         sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
     }

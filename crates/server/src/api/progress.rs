@@ -485,12 +485,17 @@ pub async fn upsert_series_matching(
     if let Some(raw) = req.q.as_deref() {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
-            let pattern = format!("%{}%", trimmed.replace('%', "\\%").replace('_', "\\_"));
-            query = query.filter(
-                Condition::any()
-                    .add(issue::Column::Title.like(pattern.as_str()))
-                    .add(issue::Column::NumberRaw.like(pattern.as_str())),
-            );
+            // Case-insensitive, multi-term: each word must match the issue
+            // title OR its number, so "spider 5" narrows by both.
+            use crate::util::search::{col_ilike, ilike_pattern};
+            for token in trimmed.split_whitespace() {
+                let pat = ilike_pattern(token);
+                query = query.filter(
+                    Condition::any()
+                        .add(col_ilike(issue::Column::Title, &pat))
+                        .add(col_ilike(issue::Column::NumberRaw, &pat)),
+                );
+            }
         }
     }
 
