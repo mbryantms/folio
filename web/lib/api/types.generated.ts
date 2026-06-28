@@ -14193,7 +14193,7 @@ export interface operations {
                 limit?: number;
                 /** @description Comma-separated subset of matched,ambiguous,missing,manual */
                 status?: string;
-                /** @description Search imported CBL series, issue, year, or ids */
+                /** @description Case-insensitive search over series name, issue number, volume, year, and the matched issue's title; whitespace splits into AND-ed terms */
                 q?: string;
             };
             header?: never;
