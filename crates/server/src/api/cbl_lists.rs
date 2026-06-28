@@ -23,10 +23,10 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use entity::{catalog_source, cbl_entry, cbl_list, cbl_refresh_log};
+use entity::{catalog_source, cbl_entry, cbl_list, cbl_refresh_log, issue};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, FromQueryResult, ModelTrait,
-    QueryFilter, QueryOrder,
+    QueryFilter, QueryOrder, RelationTrait,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -673,19 +673,48 @@ fn cbl_entry_search_pattern(text: &str) -> String {
     format!("%{}%", text.replace('%', "\\%").replace('_', "\\_"))
 }
 
+/// Table-qualified, case-insensitive `col ILIKE pattern`. Mirrors how
+/// `ColumnTrait::like` qualifies the column (`(entity_name, col)`) so it's
+/// unambiguous across the issue join below.
+fn col_ilike<C: ColumnTrait>(col: C, pattern: &str) -> sea_orm::sea_query::SimpleExpr {
+    use sea_orm::sea_query::{Expr, extension::postgres::PgExpr};
+    Expr::col((col.entity_name(), col)).ilike(pattern)
+}
+
+/// Apply the page-local "Search this list" query.
+///
+/// Improvements over the original single-term, case-sensitive `LIKE`:
+///   - **Case-insensitive** (`ILIKE`) — "marvel" matches "Marvel".
+///   - **Per-token AND** — the query is split on whitespace and every token
+///     must match *some* column, so "avengers 5" narrows by series *and*
+///     number instead of needing one column to contain the whole phrase.
+///   - **Searches the matched issue's title** (via a LEFT JOIN on the
+///     resolved issue) in addition to the imported CBL fields. The internal
+///     `matched_issue_id` hash is dropped — a user never types a BLAKE3 id.
 fn apply_cbl_entry_search(
     sel: sea_orm::Select<cbl_entry::Entity>,
     text: &str,
 ) -> sea_orm::Select<cbl_entry::Entity> {
-    let pattern = cbl_entry_search_pattern(text);
-    sel.filter(
-        sea_orm::Condition::any()
-            .add(cbl_entry::Column::SeriesName.like(pattern.as_str()))
-            .add(cbl_entry::Column::IssueNumber.like(pattern.as_str()))
-            .add(cbl_entry::Column::Volume.like(pattern.as_str()))
-            .add(cbl_entry::Column::Year.like(pattern.as_str()))
-            .add(cbl_entry::Column::MatchedIssueId.like(pattern.as_str())),
-    )
+    use sea_orm::QuerySelect;
+    // LEFT JOIN the matched issue so its title is searchable. `matched_issue_id`
+    // is a unique FK, so the join is 1:0..1 — it never multiplies entry rows
+    // or inflates the first-page COUNT.
+    let mut sel = sel.join(
+        sea_orm::JoinType::LeftJoin,
+        cbl_entry::Relation::Issue.def(),
+    );
+    for token in text.split_whitespace() {
+        let pattern = cbl_entry_search_pattern(token);
+        sel = sel.filter(
+            sea_orm::Condition::any()
+                .add(col_ilike(cbl_entry::Column::SeriesName, &pattern))
+                .add(col_ilike(cbl_entry::Column::IssueNumber, &pattern))
+                .add(col_ilike(cbl_entry::Column::Volume, &pattern))
+                .add(col_ilike(cbl_entry::Column::Year, &pattern))
+                .add(col_ilike(issue::Column::Title, &pattern)),
+        );
+    }
+    sel
 }
 
 fn encode_entry_cursor(position: i32, id: &str) -> String {
@@ -718,7 +747,7 @@ fn parse_entry_cursor(s: &str) -> Result<(i32, Uuid), ()> {
         ("cursor" = Option<String>, Query,),
         ("limit" = Option<u64>, Query,),
         ("status" = Option<String>, Query, description = "Comma-separated subset of matched,ambiguous,missing,manual"),
-        ("q" = Option<String>, Query, description = "Search imported CBL series, issue, year, or ids"),
+        ("q" = Option<String>, Query, description = "Case-insensitive search over series name, issue number, volume, year, and the matched issue's title; whitespace splits into AND-ed terms"),
     ),
     responses(
         (status = 200, body = CblEntryListView),
