@@ -94,7 +94,13 @@ export function CblImportDialog({
               : "Name this view and choose how often the source should refresh."}
           </DialogDescription>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* `overflow-y-auto` forces `overflow-x: auto`, which clips the
+            box-shadow focus rings of any control sitting flush against the
+            body's edge (the search field's `focus-within:ring-2` was sliced
+            off left + right). Pad the scroll body so rings have room, and
+            pull it back out with a matching negative margin so its content
+            still lines up with the header above. */}
+        <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
           {step === "source" ? (
             <SourceStep
               onImported={(list) => {
