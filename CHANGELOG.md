@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.25.0](https://github.com/mbryantms/folio/compare/v0.24.0...v0.25.0) (2026-06-28)
+
+
+### Added
+
+* only show the "Appears in" tab when there are appearances ([#327](https://github.com/mbryantms/folio/issues/327)) ([2f05930](https://github.com/mbryantms/folio/commit/2f059305e5bcb108576f917e04ac48ba8403013a))
+
+
+### Fixed
+
+* make CBL "Search this list" matching case-insensitive and broader ([#328](https://github.com/mbryantms/folio/issues/328)) ([ec6b524](https://github.com/mbryantms/folio/commit/ec6b524930afb2d9e0b5ce1251b3b586f23858f1))
+* make user-facing searches case-insensitive and multi-term ([#329](https://github.com/mbryantms/folio/issues/329)) ([af80ba1](https://github.com/mbryantms/folio/commit/af80ba1d9160cb0e3acc85996b6d45f0d2df0fe8))
+
 ## [0.24.0](https://github.com/mbryantms/folio/compare/v0.23.2...v0.24.0) (2026-06-28)
 
 
