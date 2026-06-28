@@ -7224,6 +7224,36 @@
         }
       }
     },
+    "/api/series/{series_slug}/appearances": {
+      "get": {
+        "operationId": "series_appearances",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppearancesView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/series/{series_slug}/issues/{issue_slug}": {
       "get": {
         "operationId": "issues_get_one",
@@ -7310,6 +7340,44 @@
           },
           "404": {
             "description": "issue not found"
+          }
+        }
+      }
+    },
+    "/api/series/{series_slug}/issues/{issue_slug}/appearances": {
+      "get": {
+        "operationId": "issue_appearances",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppearancesView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
           }
         }
       }
@@ -10035,6 +10103,73 @@
           },
           "scope": {
             "type": "string"
+          }
+        }
+      },
+      "AppearanceView": {
+        "type": "object",
+        "description": "One container (reading list / collection / story arc) that an issue or\nseries belongs to.",
+        "required": [
+          "kind",
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Link-target id. For `cbl`/`collection` this is the **saved-view** id\n(open at `/views/{id}`); for `arc` it's the arc slug (no detail route\nyet — the web app renders arcs as informational chips)."
+          },
+          "issue_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How many of the series' issues appear in this container. Only\npopulated by the series endpoint (0 when a series was added to a\ncollection wholesale rather than issue-by-issue)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`\"cbl\"` | `\"collection\"` | `\"arc\"`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The issue's reading-order position within a `cbl`/`arc`, when the\ncontainer carries one. Only populated by the issue endpoint."
+          }
+        }
+      },
+      "AppearancesView": {
+        "type": "object",
+        "description": "Grouped membership for one issue or series.",
+        "required": [
+          "reading_lists",
+          "collections",
+          "arcs"
+        ],
+        "properties": {
+          "arcs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppearanceView"
+            }
+          },
+          "collections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppearanceView"
+            }
+          },
+          "reading_lists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppearanceView"
+            }
           }
         }
       },

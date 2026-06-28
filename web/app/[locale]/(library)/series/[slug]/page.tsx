@@ -58,6 +58,7 @@ import { readerUrl } from "@/lib/urls";
 import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
 
 import { CollectionTab } from "./CollectionTab";
+import { AppearancesTab } from "@/components/library/AppearancesTab";
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
 import { SeriesSourcesFooter } from "./SeriesSourcesFooter";
@@ -287,6 +288,7 @@ export default async function SeriesPage({
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="collection">Collection</TabsTrigger>
+          <TabsTrigger value="appearances">Appears in</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
         {/* Keep the common, lightweight metadata tabs in one force-mounted
@@ -561,6 +563,9 @@ export default async function SeriesPage({
           </StackedTabsPanel>
           <StackedTabsPanel value="collection">
             <CollectionTab seriesSlug={series.slug} />
+          </StackedTabsPanel>
+          <StackedTabsPanel value="appearances">
+            <AppearancesTab variant="series" seriesSlug={series.slug} />
           </StackedTabsPanel>
           <StackedTabsPanel value="activity">
             <SeriesActivityTab

@@ -26,6 +26,7 @@ import { queryKeys } from "./query-keys";
 import type {
   ActivityKind,
   ActivityListView,
+  AppearancesView,
   CollectionEntriesView,
   IssueMarkersView,
   MarkerKind,
@@ -509,6 +510,34 @@ export function useIssueMetadataOverview(
         `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata-overview`,
       ),
     enabled: !!seriesSlug && !!issueSlug,
+    staleTime: 30_000,
+  });
+}
+
+/** Reading lists, collections, and story arcs this issue appears in. Powers
+ *  the issue page's "Appears in" tab; scoped to the user's own lists. */
+export function useIssueAppearances(seriesSlug: string, issueSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.issueAppearances(seriesSlug, issueSlug),
+    queryFn: () =>
+      jsonFetch<AppearancesView>(
+        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/appearances`,
+      ),
+    enabled: !!seriesSlug && !!issueSlug,
+    staleTime: 30_000,
+  });
+}
+
+/** Reading lists, collections, and story arcs this series appears in. Powers
+ *  the series page's "Appears in" tab; scoped to the user's own lists. */
+export function useSeriesAppearances(seriesSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.seriesAppearances(seriesSlug),
+    queryFn: () =>
+      jsonFetch<AppearancesView>(
+        `/series/${encodeURIComponent(seriesSlug)}/appearances`,
+      ),
+    enabled: !!seriesSlug,
     staleTime: 30_000,
   });
 }

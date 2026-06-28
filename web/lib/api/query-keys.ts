@@ -100,6 +100,8 @@ export const queryKeys = {
     ["issues", seriesSlug, issueSlug, "health"] as const,
   issueMetadataOverview: (seriesSlug: string, issueSlug: string) =>
     ["issues", seriesSlug, issueSlug, "metadata-overview"] as const,
+  issueAppearances: (seriesSlug: string, issueSlug: string) =>
+    ["issues", seriesSlug, issueSlug, "appearances"] as const,
   scanRuns: (libraryId: string, kind?: string) =>
     ["libraries", libraryId, "scan-runs", kind ?? "all"] as const,
   /** Cursor-paginated variant (load-more history table). */
@@ -296,6 +298,8 @@ export const queryKeys = {
     ["series", slug, "metadata", "status"] as const,
   /** Collection-completeness report (owned vs. expected + missing issues). */
   seriesCollection: (slug: string) => ["series", slug, "collection"] as const,
+  /** Reading lists / collections / arcs this series appears in. */
+  seriesAppearances: (slug: string) => ["series", slug, "appearances"] as const,
   /** Bulk-metadata batch status (live progress + child list). */
   metadataBatch: (batchId: string) => ["metadata", "batch", batchId] as const,
   /** Recent bulk-metadata batches (Review tab picker). */
