@@ -36,6 +36,7 @@ import { SeriesActivityTab } from "@/components/activity/SeriesActivityTab";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
+  AppearancesView,
   IssueListView,
   LibraryView,
   SeriesResumeView,
@@ -77,6 +78,12 @@ export default async function SeriesPage({
   let firstIssuePage: IssueListView;
   let resume: SeriesResumeView;
   let libraries: LibraryView[];
+  // Kicked off in parallel with the critical fetches below; non-fatal (it
+  // only drives the optional "Appears in" tab). Awaited after the try so a
+  // failure here never 404s the page.
+  const appearancesPromise = apiGet<AppearancesView>(
+    `/series/${slug}/appearances`,
+  ).catch(() => null);
   try {
     // All depend only on the slug (or nothing) — fetch concurrently instead
     // of stacking sequential round-trips onto TTFB.
@@ -97,6 +104,14 @@ export default async function SeriesPage({
     }
     throw e;
   }
+
+  const appearances = await appearancesPromise;
+  const hasAppearances =
+    !!appearances &&
+    appearances.reading_lists.length +
+      appearances.collections.length +
+      appearances.arcs.length >
+      0;
 
   // Breadcrumb library segment — `series` carries only `library_id`, so
   // resolve the name from the user's accessible libraries list.
@@ -288,7 +303,9 @@ export default async function SeriesPage({
           <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="collection">Collection</TabsTrigger>
-          <TabsTrigger value="appearances">Appears in</TabsTrigger>
+          {hasAppearances && (
+            <TabsTrigger value="appearances">Appears in</TabsTrigger>
+          )}
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
         {/* Keep the common, lightweight metadata tabs in one force-mounted
@@ -564,9 +581,15 @@ export default async function SeriesPage({
           <StackedTabsPanel value="collection">
             <CollectionTab seriesSlug={series.slug} />
           </StackedTabsPanel>
-          <StackedTabsPanel value="appearances">
-            <AppearancesTab variant="series" seriesSlug={series.slug} />
-          </StackedTabsPanel>
+          {hasAppearances && (
+            <StackedTabsPanel value="appearances">
+              <AppearancesTab
+                variant="series"
+                seriesSlug={series.slug}
+                initialData={appearances ?? undefined}
+              />
+            </StackedTabsPanel>
+          )}
           <StackedTabsPanel value="activity">
             <SeriesActivityTab
               seriesId={series.id}

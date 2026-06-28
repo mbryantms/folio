@@ -19,11 +19,17 @@ import { BookMarked, Layers, Library, Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { useIssueAppearances, useSeriesAppearances } from "@/lib/api/queries";
-import type { AppearanceView } from "@/lib/api/types";
+import type { AppearanceView, AppearancesView } from "@/lib/api/types";
 
-type Props =
+type Props = (
   | { variant: "issue"; seriesSlug: string; issueSlug: string }
-  | { variant: "series"; seriesSlug: string };
+  | { variant: "series"; seriesSlug: string }
+) & {
+  /** Server-fetched appearances to seed the query — set when the page
+   *  already fetched them to decide whether to render this tab, so the tab
+   *  paints immediately instead of flashing a loader. */
+  initialData?: AppearancesView;
+};
 
 export function AppearancesTab(props: Props) {
   // Both hooks are declared so the hook order is stable; the inactive one is
@@ -31,9 +37,11 @@ export function AppearancesTab(props: Props) {
   const issueQ = useIssueAppearances(
     props.variant === "issue" ? props.seriesSlug : "",
     props.variant === "issue" ? props.issueSlug : "",
+    props.initialData,
   );
   const seriesQ = useSeriesAppearances(
     props.variant === "series" ? props.seriesSlug : "",
+    props.initialData,
   );
   const q = props.variant === "issue" ? issueQ : seriesQ;
 

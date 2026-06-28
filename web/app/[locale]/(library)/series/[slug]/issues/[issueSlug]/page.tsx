@@ -49,6 +49,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
+  AppearancesView,
   ExternalIdRow,
   ExternalIdsListResp,
   IssueDetailView,
@@ -119,6 +120,7 @@ export default async function IssuePage({
     nextIssues,
     prevIssue,
     issueExternalIds,
+    appearances,
   ] = await Promise.all([
     apiGet<SeriesView>(`/series/${seriesSlug}`).catch(() => null),
     apiGet<{ records: ProgressLike[] }>(`/progress`)
@@ -142,8 +144,20 @@ export default async function IssuePage({
     )
       .then((externalIds) => externalIds.rows)
       .catch(() => [] as ExternalIdRow[]),
+    // Drives the "Appears in" tab: fetched here so the tab can be hidden
+    // when this issue is in none of the user's lists/collections/arcs, and
+    // reused as the tab's initial data (no refetch flash). Non-fatal.
+    apiGet<AppearancesView>(
+      `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/appearances`,
+    ).catch(() => null),
   ]);
   const hasActivity = (activityStats?.totals.sessions ?? 0) > 0;
+  const hasAppearances =
+    !!appearances &&
+    appearances.reading_lists.length +
+      appearances.collections.length +
+      appearances.arcs.length >
+      0;
 
   const readState: ReadState = readStateFor(issue, issueProgress);
   const readLabel = readButtonLabel(readState);
@@ -397,7 +411,9 @@ export default async function IssuePage({
           <TabsTrigger value="covers">Covers</TabsTrigger>
           <TabsTrigger value="metadata">Metadata</TabsTrigger>
           <TabsTrigger value="notes">Notes</TabsTrigger>
-          <TabsTrigger value="appearances">Appears in</TabsTrigger>
+          {hasAppearances && (
+            <TabsTrigger value="appearances">Appears in</TabsTrigger>
+          )}
           {hasActivity && <TabsTrigger value="activity">Activity</TabsTrigger>}
         </TabsList>
 
@@ -787,13 +803,16 @@ export default async function IssuePage({
             <CoverGallery issueId={issue.id} chrome="bare" />
           </StackedTabsPanel>
 
-          <StackedTabsPanel value="appearances">
-            <AppearancesTab
-              variant="issue"
-              seriesSlug={seriesSlug}
-              issueSlug={issue.slug}
-            />
-          </StackedTabsPanel>
+          {hasAppearances && (
+            <StackedTabsPanel value="appearances">
+              <AppearancesTab
+                variant="issue"
+                seriesSlug={seriesSlug}
+                issueSlug={issue.slug}
+                initialData={appearances ?? undefined}
+              />
+            </StackedTabsPanel>
+          )}
           {hasActivity && (
             <StackedTabsPanel value="activity">
               <IssueActivityTab

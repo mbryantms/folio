@@ -516,7 +516,11 @@ export function useIssueMetadataOverview(
 
 /** Reading lists, collections, and story arcs this issue appears in. Powers
  *  the issue page's "Appears in" tab; scoped to the user's own lists. */
-export function useIssueAppearances(seriesSlug: string, issueSlug: string) {
+export function useIssueAppearances(
+  seriesSlug: string,
+  issueSlug: string,
+  initialData?: AppearancesView,
+) {
   return useQuery({
     queryKey: queryKeys.issueAppearances(seriesSlug, issueSlug),
     queryFn: () =>
@@ -525,12 +529,16 @@ export function useIssueAppearances(seriesSlug: string, issueSlug: string) {
       ),
     enabled: !!seriesSlug && !!issueSlug,
     staleTime: 30_000,
+    initialData,
   });
 }
 
 /** Reading lists, collections, and story arcs this series appears in. Powers
  *  the series page's "Appears in" tab; scoped to the user's own lists. */
-export function useSeriesAppearances(seriesSlug: string) {
+export function useSeriesAppearances(
+  seriesSlug: string,
+  initialData?: AppearancesView,
+) {
   return useQuery({
     queryKey: queryKeys.seriesAppearances(seriesSlug),
     queryFn: () =>
@@ -539,6 +547,7 @@ export function useSeriesAppearances(seriesSlug: string) {
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
+    initialData,
   });
 }
 
