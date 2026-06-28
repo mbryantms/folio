@@ -31,6 +31,8 @@ import type {
   AdminUserDetailView,
   AdminUserView,
   AddEntryReq,
+  CblBulkItemView,
+  CblBulkResultView,
   CblEntryView,
   CblListView,
   CollectionEntryView,
@@ -1474,6 +1476,67 @@ export function useRefreshCblList(id: string) {
           queryKey: ["cbl-lists", "entries", id],
           exact: false,
         });
+      },
+    },
+  );
+}
+
+/** Dry-run a single list's refresh — returns what *would* change without
+ *  applying it. Powers the "Review" affordance on the refresh dashboard. */
+export function useCheckCblList(id: string) {
+  return useApiMutation<CblBulkItemView, void>(
+    () => ({ path: `/me/cbl-lists/${id}/check`, method: "POST" }),
+    {
+      // No toast: the dashboard renders the returned diff inline.
+    },
+  );
+}
+
+/** Dry-run every reading list at once and report which have updates
+ *  available. Nothing is applied — the user reviews, then updates. */
+export function useCheckAllCblLists() {
+  return useApiMutation<CblBulkResultView, void>(
+    () => ({ path: `/me/cbl-lists/check-all`, method: "POST" }),
+    {
+      successMessage: (data) => {
+        if (!data) return "Checked";
+        const changed = data.changed_count;
+        const failed = data.failed_count;
+        const base =
+          changed === 0
+            ? "All reading lists are up to date"
+            : changed === 1
+              ? "1 list has updates available"
+              : `${changed} lists have updates available`;
+        return failed > 0 ? `${base} · ${failed} couldn't be checked` : base;
+      },
+    },
+  );
+}
+
+/** Refresh (apply) every reading list at once. Used by the dashboard's
+ *  "Update all" action; invalidates the list + per-list caches on settle. */
+export function useRefreshAllCblLists() {
+  const qc = useQueryClient();
+  return useApiMutation<CblBulkResultView, void>(
+    () => ({ path: `/me/cbl-lists/refresh-all`, method: "POST" }),
+    {
+      successMessage: (data) => {
+        if (!data) return "Updated";
+        const changed = data.changed_count;
+        const failed = data.failed_count;
+        const base =
+          changed === 0
+            ? "Everything was already up to date"
+            : changed === 1
+              ? "Updated 1 list"
+              : `Updated ${changed} lists`;
+        return failed > 0 ? `${base} · ${failed} failed` : base;
+      },
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.cblLists });
+        // Entries + per-list detail/log caches for every list may have moved.
+        qc.invalidateQueries({ queryKey: ["cbl-lists"], exact: false });
       },
     },
   );

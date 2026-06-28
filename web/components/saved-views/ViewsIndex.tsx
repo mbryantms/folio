@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CblImportDialog } from "@/components/cbl/cbl-import-dialog";
+import { CblRefreshDashboard } from "@/components/cbl/CblRefreshDashboard";
 import { NewFilterViewDialog } from "@/components/saved-views/AddViewButton";
 import { NewCollectionDialog } from "@/components/collections/CollectionsIndex";
 import { MultiPinDialog } from "@/components/saved-views/MultiPinDialog";
@@ -183,6 +184,7 @@ function ViewsTabs() {
       </TabsContent>
 
       <TabsContent value="reading-lists">
+        <CblRefreshDashboard count={readingLists.length} />
         <TabPanel
           blurb="Track an imported CBL reading order."
           action={

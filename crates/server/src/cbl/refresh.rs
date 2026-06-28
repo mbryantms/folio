@@ -12,7 +12,7 @@
 
 use entity::{catalog_source, cbl_list};
 use futures::StreamExt;
-use sea_orm::{ConnectionTrait, EntityTrait};
+use sea_orm::{ConnectionTrait, EntityTrait, TransactionTrait};
 use uuid::Uuid;
 
 use super::catalog;
@@ -66,6 +66,140 @@ pub async fn refresh(
         "catalog" => fetch_catalog_and_apply(db, &list, trigger, force).await,
         other => Err(RefreshError::Http(format!("unknown source_kind: {other}"))),
     }
+}
+
+/// What a refresh *would* change, computed without persisting anything.
+/// Returned by [`check`]; mirrors the structural counts of a real refresh's
+/// [`ImportSummary`].
+#[derive(Debug, Clone, Default)]
+pub struct CheckOutcome {
+    pub upstream_changed: bool,
+    pub added: i32,
+    pub removed: i32,
+    pub reordered: i32,
+    pub rematched: i32,
+}
+
+impl CheckOutcome {
+    /// Whether applying this refresh would alter the list (new/removed/
+    /// reordered books, or entries that would newly resolve).
+    pub fn has_changes(&self) -> bool {
+        self.upstream_changed
+            || self.added > 0
+            || self.removed > 0
+            || self.reordered > 0
+            || self.rematched > 0
+    }
+}
+
+/// Dry-run a refresh: fetch the source and compute the structural diff
+/// **without persisting anything**. Runs [`import::apply_parsed`] inside a
+/// transaction that is always rolled back, so the returned counts reflect
+/// exactly what a real [`refresh`] would change — including the matcher
+/// re-run — but no `cbl_entries`, `cbl_refresh_log`, or list-row writes
+/// survive. Powers the "Check for updates" review flow.
+pub async fn check(
+    db: &sea_orm::DatabaseConnection,
+    list_id: Uuid,
+) -> Result<CheckOutcome, RefreshError> {
+    let list = cbl_list::Entity::find_by_id(list_id)
+        .one(db)
+        .await?
+        .ok_or(RefreshError::NotFound)?;
+
+    // Resolve the source to (parsed, raw_xml, blob_sha). `None` means the
+    // source reports no change (HTTP 304 / identical catalog blob), so a
+    // real refresh would only re-match — which we still surface below.
+    let fetched: Option<(String, Option<String>)> = match list.source_kind.as_str() {
+        "upload" => Some((list.raw_xml.clone(), None)),
+        "url" => {
+            let url = list
+                .source_url
+                .as_deref()
+                .ok_or_else(|| RefreshError::Http("url source missing source_url".into()))?;
+            match fetch_url_source(url, &list, false).await? {
+                UrlFetch::NotModified => None,
+                UrlFetch::Fetched(fetched) => {
+                    if !is_allowed_cbl_response_type(
+                        fetched
+                            .headers
+                            .get(reqwest::header::CONTENT_TYPE)
+                            .and_then(|v| v.to_str().ok()),
+                        url,
+                    ) {
+                        return Err(RefreshError::Http(
+                            "URL source must return XML or a .cbl file".into(),
+                        ));
+                    }
+                    let xml = String::from_utf8_lossy(&fetched.bytes).into_owned();
+                    Some((xml, None))
+                }
+            }
+        }
+        "catalog" => {
+            let source_id = list
+                .catalog_source_id
+                .ok_or_else(|| RefreshError::Http("catalog source not set".into()))?;
+            let path = list
+                .catalog_path
+                .as_deref()
+                .ok_or_else(|| RefreshError::Http("catalog path not set".into()))?;
+            let source = catalog_source::Entity::find_by_id(source_id)
+                .one(db)
+                .await?
+                .ok_or(RefreshError::NotFound)?;
+            let blob = catalog::fetch_blob(db, &source, path, false).await?;
+            if list.github_blob_sha.as_deref() == Some(blob.blob_sha.as_str()) {
+                None
+            } else {
+                let xml = String::from_utf8_lossy(&blob.bytes).into_owned();
+                Some((xml, Some(blob.blob_sha)))
+            }
+        }
+        other => return Err(RefreshError::Http(format!("unknown source_kind: {other}"))),
+    };
+
+    let Some((xml, blob_sha)) = fetched else {
+        // Upstream unchanged. A real refresh would still re-match in case the
+        // library gained issues; reflect that as the rematch delta only.
+        let parsed = parsers::cbl::parse(list.raw_xml.as_bytes())
+            .map_err(|e| RefreshError::Parse(e.to_string()))?;
+        return dry_run_apply(db, list.id, &parsed, &list.raw_xml, None).await;
+    };
+
+    let parsed =
+        parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))?;
+    dry_run_apply(db, list.id, &parsed, &xml, blob_sha.as_deref()).await
+}
+
+/// Apply `parsed` inside a transaction and roll it back, returning only the
+/// structural counts. The rollback discards every write `apply_parsed` makes
+/// (entries, refresh-log row, list-row bumps).
+async fn dry_run_apply(
+    db: &sea_orm::DatabaseConnection,
+    list_id: Uuid,
+    parsed: &parsers::cbl::ParsedCbl,
+    raw_xml: &str,
+    blob_sha: Option<&str>,
+) -> Result<CheckOutcome, RefreshError> {
+    let txn = db.begin().await?;
+    let summary = import::apply_parsed(
+        &txn,
+        list_id,
+        parsed,
+        raw_xml,
+        blob_sha,
+        RefreshTrigger::Manual,
+    )
+    .await?;
+    txn.rollback().await?;
+    Ok(CheckOutcome {
+        upstream_changed: summary.upstream_changed,
+        added: summary.added,
+        removed: summary.removed,
+        reordered: summary.reordered,
+        rematched: summary.rematched,
+    })
 }
 
 async fn fetch_url_and_apply(

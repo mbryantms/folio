@@ -125,6 +125,9 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(detail, update))
         .routes(routes!(delete_one))
         .routes(routes!(refresh_one))
+        .routes(routes!(check_one))
+        .routes(routes!(check_all))
+        .routes(routes!(refresh_all))
         .routes(routes!(refresh_log))
         .routes(routes!(entries))
         .routes(routes!(issues))
@@ -197,6 +200,38 @@ pub struct CblStatsView {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CblListListView {
     pub items: Vec<CblListView>,
+}
+
+/// One list's outcome in a bulk check / refresh.
+///
+/// `applied=false` for a dry-run **check** — the counts are what *would*
+/// change if refreshed. `applied=true` for a **refresh** — the counts are
+/// what *did* change. `ok=false` carries the failure in `error` (a source
+/// fetch/parse failure on one list never fails the whole batch).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CblBulkItemView {
+    pub id: String,
+    pub name: String,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub applied: bool,
+    /// `true` when this refresh would change (check) / did change (refresh)
+    /// the list — new/removed/reordered books or newly-resolved entries.
+    pub changed: bool,
+    pub upstream_changed: bool,
+    pub added: i32,
+    pub removed: i32,
+    pub reordered: i32,
+    pub rematched: i32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CblBulkResultView {
+    pub items: Vec<CblBulkItemView>,
+    /// Lists that changed (check: *would* change; refresh: *did* change).
+    pub changed_count: i32,
+    /// Lists whose check/refresh errored.
+    pub failed_count: i32,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1385,6 +1420,171 @@ pub async fn refresh_one(
 
 fn summary_to_view(_app: &AppState, summary: &ImportSummary) -> ImportSummary {
     summary.clone()
+}
+
+// ───── bulk check / refresh (refresh dashboard) ─────
+
+/// The lists the caller can refresh: their own plus any system lists
+/// (`owner_user_id IS NULL`) — the same visibility set as [`list`].
+async fn refreshable_lists(
+    app: &AppState,
+    user: &CurrentUser,
+) -> Result<Vec<cbl_list::Model>, axum::response::Response> {
+    cbl_list::Entity::find()
+        .filter(
+            sea_orm::Condition::any()
+                .add(cbl_list::Column::OwnerUserId.is_null())
+                .add(cbl_list::Column::OwnerUserId.eq(user.id)),
+        )
+        .order_by_desc(cbl_list::Column::CreatedAt)
+        .all(&app.db)
+        .await
+        .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))
+}
+
+fn item_from_check(
+    list: &cbl_list::Model,
+    o: &crate::cbl::refresh::CheckOutcome,
+) -> CblBulkItemView {
+    CblBulkItemView {
+        id: list.id.to_string(),
+        name: list.parsed_name.clone(),
+        ok: true,
+        error: None,
+        applied: false,
+        changed: o.has_changes(),
+        upstream_changed: o.upstream_changed,
+        added: o.added,
+        removed: o.removed,
+        reordered: o.reordered,
+        rematched: o.rematched,
+    }
+}
+
+fn item_from_summary(list: &cbl_list::Model, s: &ImportSummary) -> CblBulkItemView {
+    let changed =
+        s.upstream_changed || s.added > 0 || s.removed > 0 || s.reordered > 0 || s.rematched > 0;
+    CblBulkItemView {
+        id: list.id.to_string(),
+        name: list.parsed_name.clone(),
+        ok: true,
+        error: None,
+        applied: true,
+        changed,
+        upstream_changed: s.upstream_changed,
+        added: s.added,
+        removed: s.removed,
+        reordered: s.reordered,
+        rematched: s.rematched,
+    }
+}
+
+fn item_error(list: &cbl_list::Model, applied: bool, msg: String) -> CblBulkItemView {
+    CblBulkItemView {
+        id: list.id.to_string(),
+        name: list.parsed_name.clone(),
+        ok: false,
+        error: Some(msg),
+        applied,
+        changed: false,
+        upstream_changed: false,
+        added: 0,
+        removed: 0,
+        reordered: 0,
+        rematched: 0,
+    }
+}
+
+fn bulk_result(items: Vec<CblBulkItemView>) -> axum::response::Response {
+    let changed_count = items.iter().filter(|i| i.changed).count() as i32;
+    let failed_count = items.iter().filter(|i| !i.ok).count() as i32;
+    Json(CblBulkResultView {
+        items,
+        changed_count,
+        failed_count,
+    })
+    .into_response()
+}
+
+#[utoipa::path(
+    operation_id = "cbl_lists_check_one",    post,
+    path = "/me/cbl-lists/{id}/check",
+    params(("id" = String, Path,)),
+    responses((status = 200, body = CblBulkItemView))
+)]
+#[handler]
+pub async fn check_one(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+) -> impl IntoResponse {
+    let row = match fetch_list(&app.db, id).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if let Err(resp) = ensure_owner(&row, &user).await {
+        return resp;
+    }
+    match crate::cbl::refresh::check(&app.db, id).await {
+        Ok(outcome) => Json(item_from_check(&row, &outcome)).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "cbl_lists: check failed");
+            error(StatusCode::BAD_GATEWAY, "check_failed", &e.to_string())
+        }
+    }
+}
+
+#[utoipa::path(
+    operation_id = "cbl_lists_check_all",    post,
+    path = "/me/cbl-lists/check-all",
+    responses((status = 200, body = CblBulkResultView))
+)]
+#[handler]
+pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
+    let lists = match refreshable_lists(&app, &user).await {
+        Ok(l) => l,
+        Err(resp) => return resp,
+    };
+    let mut items = Vec::with_capacity(lists.len());
+    for list in &lists {
+        let item = match crate::cbl::refresh::check(&app.db, list.id).await {
+            Ok(o) => item_from_check(list, &o),
+            Err(e) => {
+                tracing::warn!(error = %e, list_id = %list.id, "cbl_lists: check-all item failed");
+                item_error(list, false, e.to_string())
+            }
+        };
+        items.push(item);
+    }
+    bulk_result(items)
+}
+
+#[utoipa::path(
+    operation_id = "cbl_lists_refresh_all",    post,
+    path = "/me/cbl-lists/refresh-all",
+    responses((status = 200, body = CblBulkResultView))
+)]
+#[handler]
+pub async fn refresh_all(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
+    let lists = match refreshable_lists(&app, &user).await {
+        Ok(l) => l,
+        Err(resp) => return resp,
+    };
+    // Sequential on purpose: each item may hit a remote source, and a user's
+    // list set is small. Running them in parallel would hammer the upstreams
+    // (GitHub catalog, arbitrary URLs) with no real latency win here.
+    let mut items = Vec::with_capacity(lists.len());
+    for list in &lists {
+        let item = match refresh::refresh(&app.db, list.id, RefreshTrigger::Manual, false).await {
+            Ok(s) => item_from_summary(list, &s),
+            Err(e) => {
+                tracing::warn!(error = %e, list_id = %list.id, "cbl_lists: refresh-all item failed");
+                item_error(list, true, e.to_string())
+            }
+        };
+        items.push(item);
+    }
+    bulk_result(items)
 }
 
 #[utoipa::path(
