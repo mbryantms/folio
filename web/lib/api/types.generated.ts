@@ -3264,6 +3264,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{series_slug}/appearances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["series_appearances"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{series_slug}/issues/{issue_slug}": {
         parameters: {
             query?: never;
@@ -3278,6 +3294,22 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["issues_update"];
+        trace?: never;
+    };
+    "/api/series/{series_slug}/issues/{issue_slug}/appearances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["issue_appearances"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/series/{series_slug}/issues/{issue_slug}/confirm-removal": {
@@ -4258,6 +4290,40 @@ export interface components {
             label: string;
             last_used_at?: string | null;
             scope: string;
+        };
+        /**
+         * @description One container (reading list / collection / story arc) that an issue or
+         *     series belongs to.
+         */
+        AppearanceView: {
+            /**
+             * @description Link-target id. For `cbl`/`collection` this is the **saved-view** id
+             *     (open at `/views/{id}`); for `arc` it's the arc slug (no detail route
+             *     yet — the web app renders arcs as informational chips).
+             */
+            id: string;
+            /**
+             * Format: int64
+             * @description How many of the series' issues appear in this container. Only
+             *     populated by the series endpoint (0 when a series was added to a
+             *     collection wholesale rather than issue-by-issue).
+             */
+            issue_count?: number | null;
+            /** @description `"cbl"` | `"collection"` | `"arc"`. */
+            kind: string;
+            name: string;
+            /**
+             * Format: int32
+             * @description The issue's reading-order position within a `cbl`/`arc`, when the
+             *     container carries one. Only populated by the issue endpoint.
+             */
+            position?: number | null;
+        };
+        /** @description Grouped membership for one issue or series. */
+        AppearancesView: {
+            arcs: components["schemas"]["AppearanceView"][];
+            collections: components["schemas"]["AppearanceView"][];
+            reading_lists: components["schemas"]["AppearanceView"][];
         };
         ApplyAcceptedResp: {
             /** Format: int32 */
@@ -16137,6 +16203,33 @@ export interface operations {
             };
         };
     };
+    series_appearances: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppearancesView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     issues_get_one: {
         parameters: {
             query?: never;
@@ -16204,6 +16297,34 @@ export interface operations {
                 content?: never;
             };
             /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issue_appearances: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppearancesView"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -96,6 +96,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::audit::routes())
         .merge(api::series::routes())
         .merge(api::issues::routes())
+        .merge(api::appearances::routes())
         .merge(api::archive_edit::routes())
         .merge(api::people::routes())
         .merge(api::creators::routes())

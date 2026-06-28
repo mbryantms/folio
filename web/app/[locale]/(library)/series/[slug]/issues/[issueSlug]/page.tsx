@@ -26,6 +26,7 @@ import {
 } from "@/components/library/DetailSection";
 import { Description } from "@/components/library/Description";
 import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
+import { AppearancesTab } from "@/components/library/AppearancesTab";
 import { CoverGallery } from "@/components/library/CoverGallery";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
@@ -396,6 +397,7 @@ export default async function IssuePage({
           <TabsTrigger value="covers">Covers</TabsTrigger>
           <TabsTrigger value="metadata">Metadata</TabsTrigger>
           <TabsTrigger value="notes">Notes</TabsTrigger>
+          <TabsTrigger value="appearances">Appears in</TabsTrigger>
           {hasActivity && <TabsTrigger value="activity">Activity</TabsTrigger>}
         </TabsList>
 
@@ -783,6 +785,14 @@ export default async function IssuePage({
 
           <StackedTabsPanel value="covers">
             <CoverGallery issueId={issue.id} chrome="bare" />
+          </StackedTabsPanel>
+
+          <StackedTabsPanel value="appearances">
+            <AppearancesTab
+              variant="issue"
+              seriesSlug={seriesSlug}
+              issueSlug={issue.slug}
+            />
           </StackedTabsPanel>
           {hasActivity && (
             <StackedTabsPanel value="activity">
