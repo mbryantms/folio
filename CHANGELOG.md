@@ -13,6 +13,20 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.24.0](https://github.com/mbryantms/folio/compare/v0.23.2...v0.24.0) (2026-06-28)
+
+
+### Added
+
+* add "Appears in" tab to issue & series pages ([#324](https://github.com/mbryantms/folio/issues/324)) ([00e87b1](https://github.com/mbryantms/folio/commit/00e87b102ec879b76d8fdaa27daf2551eae4651a))
+* reading-list refresh dashboard with review-before-apply ([#325](https://github.com/mbryantms/folio/issues/325)) ([cebc2d4](https://github.com/mbryantms/folio/commit/cebc2d400d7e6e062d138a659ca5233839452aa1))
+
+
+### Fixed
+
+* keep page-strip thumbs mounted through chrome-hide slide on Tailwind v4 ([#322](https://github.com/mbryantms/folio/issues/322)) ([d69e78d](https://github.com/mbryantms/folio/commit/d69e78da927e0a3f6cf9821c6d882903eb26a38c))
+* stop dialog scroll body from clipping focus rings ([#323](https://github.com/mbryantms/folio/issues/323)) ([428f73c](https://github.com/mbryantms/folio/commit/428f73c4e53e0545eb2f931bbac97fae63c03b00))
+
 ## [0.23.2](https://github.com/mbryantms/folio/compare/v0.23.1...v0.23.2) (2026-06-28)
 
 
