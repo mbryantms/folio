@@ -285,13 +285,27 @@ export function PageStrip({
         // invisible tab stops behind the translate (WCAG 4.1.2).
         inert={mounted && visible ? undefined : true}
         // Drop the lingering thumbnails once the strip has finished
-        // sliding off-screen. Guard to the nav's own `transform`
-        // transition — the thumbnails/li margins inside also transition
-        // and bubble their `transitionend` up here.
+        // sliding off-screen. Guard to the nav's own slide transition —
+        // the thumbnails/li margins inside also transition and bubble
+        // their `transitionend` up here, so filter on `currentTarget`.
+        //
+        // The animated property is `translate`, NOT `transform`: in
+        // Tailwind v4 the `translate-y-full` utility emits the dedicated
+        // `translate:` CSS property (and `transition-transform` resolves
+        // to `transition-property: transform, translate, scale, rotate`).
+        // So the `transitionend` fires with `propertyName === "translate"`.
+        // The original guard checked `=== "transform"` (v3 semantics,
+        // where translate composed into `transform`), which never matched
+        // under v4 — `parked` stayed stuck at its initial value, and since
+        // the strip starts hidden (`pageStripVisible` defaults to false)
+        // that initial value is `true`, so the first close tore the
+        // thumbnails down on the same tick and re-exposed the gray boxes.
+        // Accept both names so a future utility/property swap can't
+        // silently re-break it.
         onTransitionEnd={(e) => {
           if (
             e.target === e.currentTarget &&
-            e.propertyName === "transform"
+            (e.propertyName === "translate" || e.propertyName === "transform")
           ) {
             setParked(!visible);
           }
