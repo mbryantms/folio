@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.23.2](https://github.com/mbryantms/folio/compare/v0.23.1...v0.23.2) (2026-06-28)
+
+
+### Dependencies
+
+* update dependency cron-parser to v5.6.1 ([#312](https://github.com/mbryantms/folio/issues/312)) ([b720004](https://github.com/mbryantms/folio/commit/b7200043605e25b1a1a152b002ed791e291c0928))
+
 ## [0.23.1](https://github.com/mbryantms/folio/compare/v0.23.0...v0.23.1) (2026-06-24)
 
 
