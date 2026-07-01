@@ -54,18 +54,24 @@ export class ApiMutationError extends Error {
    *  specific failure rather than matching on the human message.
    *  `null` for network errors / non-enveloped responses. */
   readonly code: string | null;
+  /** Server request id (`x-request-id` response header), surfaced in the
+   *  error toast so a user can quote it and an operator can grep it in
+   *  /admin/logs (OBS-1). `null` for network errors / missing header. */
+  readonly requestId: string | null;
 
   constructor(
     message: string,
     status: number | "network",
     fields: ApiFieldError[] = [],
     code: string | null = null,
+    requestId: string | null = null,
   ) {
     super(message);
     this.name = "ApiMutationError";
     this.status = status;
     this.fields = fields;
     this.code = code;
+    this.requestId = requestId;
   }
 
   /**
@@ -134,7 +140,13 @@ export async function apiMutate<T>({
     } catch {
       detail = `${res.status}`;
     }
-    throw new ApiMutationError(detail, res.status, fields, code);
+    throw new ApiMutationError(
+      detail,
+      res.status,
+      fields,
+      code,
+      res.headers.get("x-request-id"),
+    );
   }
   if (res.status === 204) return null;
   const text = await res.text();
@@ -188,8 +200,11 @@ export function useApiMutation<TData, TInput>(
       // 4xx errors are user-facing validation/auth/permission issues
       // that retrying without changing input won't fix.
       const transient = err instanceof ApiMutationError && err.transient;
+      const requestId =
+        err instanceof ApiMutationError ? err.requestId : null;
       toast.error(err.message, {
         ...(toastId ? { id: toastId } : {}),
+        ...(requestId ? { description: `Reference: ${requestId}` } : {}),
         ...(transient && {
           action: {
             label: "Retry",

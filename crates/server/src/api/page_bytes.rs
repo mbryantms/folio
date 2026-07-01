@@ -26,11 +26,13 @@ use tokio_util::io::{ReaderStream, SyncIoBridge};
 use super::error;
 use crate::auth::CurrentUser;
 use crate::state::AppState;
+use server_macros::handler;
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/issues/{id}/pages/{n}", get(serve))
 }
 
+#[handler]
 pub async fn serve(
     State(app): State<AppState>,
     user: CurrentUser,

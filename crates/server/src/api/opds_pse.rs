@@ -39,6 +39,7 @@ use uuid::Uuid;
 use crate::audit::{self, AuditEntry};
 use crate::auth::url_signing::{self, PseUrlError};
 use crate::state::AppState;
+use server_macros::handler;
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/opds/pse/{issue_id}/{n}", get(stream))
@@ -52,6 +53,7 @@ pub struct PseQuery {
 }
 
 /// `GET /opds/pse/{issue_id}/{n}` — sig-auth page stream.
+#[handler]
 pub async fn stream(
     State(app): State<AppState>,
     AxPath((issue_id, n)): AxPath<(String, u32)>,

@@ -141,6 +141,7 @@ pub struct ListQuery {
     pub issue_id: Option<String>,
 }
 
+#[handler]
 pub async fn upsert(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -247,6 +248,7 @@ pub(crate) async fn upsert_for(
     }
 }
 
+#[handler]
 pub async fn list(
     State(app): State<AppState>,
     user: CurrentUser,
