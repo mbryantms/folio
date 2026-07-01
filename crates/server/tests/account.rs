@@ -226,3 +226,137 @@ async fn empty_body_is_noop() {
     let (status, _) = patch_account(&app, &auth, r#"{}"#).await;
     assert_eq!(status, StatusCode::OK);
 }
+
+// ---- AUTH-1: a password change must revoke every OTHER session (so a stolen
+// refresh token can't outlive the change) while keeping the caller signed in. ----
+
+fn cookie_value(cookies: &[String], prefix: &str) -> String {
+    cookies
+        .iter()
+        .find(|c| c.starts_with(prefix))
+        .map(|c| {
+            c.split(';')
+                .next()
+                .unwrap()
+                .trim_start_matches(prefix)
+                .to_owned()
+        })
+        .unwrap_or_else(|| panic!("missing cookie {prefix}"))
+}
+
+/// POST an email/password auth request (register or login), returning the
+/// status and every `Set-Cookie` value so the caller can pull the refresh token.
+async fn auth_post(
+    app: &TestApp,
+    uri: &str,
+    email: &str,
+    password: &str,
+) -> (StatusCode, Vec<String>) {
+    let body = format!(r#"{{"email":"{email}","password":"{password}"}}"#);
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let cookies = resp
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .collect();
+    (status, cookies)
+}
+
+/// Attempt to rotate a refresh token. CSRF is double-submit, so any matching
+/// cookie+header value satisfies the middleware (it compares the two, not
+/// server state) — the refresh cookie is the credential under test.
+async fn refresh_status(app: &TestApp, refresh: &str) -> StatusCode {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/refresh")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_refresh={refresh}; __Host-comic_csrf=csrf-x"),
+                )
+                .header("X-CSRF-Token", "csrf-x")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    resp.status()
+}
+
+#[tokio::test]
+async fn password_change_revokes_other_sessions_but_keeps_caller() {
+    let app = TestApp::spawn().await;
+    let email = "auth1-sessions@example.com";
+    let pw = "original-password-123";
+
+    // Session A (the caller that will change the password) and session B (a
+    // second device), both on the same account.
+    let (sa, cookies_a) = auth_post(&app, "/auth/local/register", email, pw).await;
+    assert_eq!(sa, StatusCode::CREATED);
+    let (sb, cookies_b) = auth_post(&app, "/auth/local/login", email, pw).await;
+    assert_eq!(sb, StatusCode::OK);
+
+    let refresh_a = cookie_value(&cookies_a, "__Host-comic_refresh=");
+    let refresh_b = cookie_value(&cookies_b, "__Host-comic_refresh=");
+
+    // Session A changes its password. A real browser sends its refresh cookie
+    // on this request (Path=/), which is how the handler identifies and spares
+    // the caller's own session while revoking the rest.
+    let session_a = cookie_value(&cookies_a, "__Host-comic_session=");
+    let csrf_a = cookie_value(&cookies_a, "__Host-comic_csrf=");
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/me/account")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={session_a}; __Host-comic_csrf={csrf_a}; __Host-comic_refresh={refresh_a}"
+                    ),
+                )
+                .header("X-CSRF-Token", &csrf_a)
+                .body(Body::from(
+                    r#"{"current_password":"original-password-123","new_password":"second-password-456"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // The other device's refresh token is now revoked (it can no longer rotate)...
+    assert_eq!(
+        refresh_status(&app, &refresh_b).await,
+        StatusCode::UNAUTHORIZED,
+        "other-device refresh must be revoked after a password change",
+    );
+    // ...while the caller's own session survives so their browser stays signed
+    // in (its access token, invalidated by the token_version bump, re-mints here).
+    assert_eq!(
+        refresh_status(&app, &refresh_a).await,
+        StatusCode::OK,
+        "the caller's own refresh must survive the password change",
+    );
+}

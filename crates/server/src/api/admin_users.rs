@@ -646,6 +646,13 @@ pub async fn update(
         }
     };
 
+    // AUTH-1: when an admin update bumps token_version (password/role/state
+    // change), revoke the target's sessions so a stolen refresh token can't
+    // survive the change.
+    if bump_token_version {
+        crate::auth::local::revoke_sessions_for_user(&app.db, uuid, None).await;
+    }
+
     record_admin_action!(
         db = &app.db,
         ctx = &ctx,
@@ -747,6 +754,13 @@ async fn set_state(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+
+    // AUTH-1: disabling a user revokes their sessions so an already-issued
+    // refresh token can't keep rotating (the token_version bump only stops
+    // access tokens). Enabling is a no-op here.
+    if new_state == "disabled" {
+        crate::auth::local::revoke_sessions_for_user(&app.db, uuid, None).await;
+    }
 
     audit::record(
         &app.db,

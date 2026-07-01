@@ -265,6 +265,18 @@ pub async fn update(
         }
     };
 
+    // AUTH-1: a password change must not leave stolen refresh sessions alive.
+    // Revoke every OTHER session for this user; keep the caller's current
+    // session (identified by its refresh cookie) so the active browser stays
+    // signed in — its access token, invalidated by the token_version bump
+    // above, transparently re-mints via /auth/refresh.
+    if bump_token_version {
+        let keep = jar
+            .get(crate::auth::cookies::REFRESH_COOKIE)
+            .map(|c| crate::auth::cookies::sha256_hex(c.value()));
+        crate::auth::local::revoke_sessions_for_user(&app.db, user.id, keep.as_deref()).await;
+    }
+
     audit::record(
         &app.db,
         AuditEntry {

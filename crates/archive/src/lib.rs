@@ -89,6 +89,12 @@ pub struct ArchiveLimits {
     pub max_entry_bytes: u64,
     pub max_compression_ratio: u32,
     pub max_nesting_depth: u8,
+    // NOTE (audit ARC-4): the two `subprocess_*` limits below are currently
+    // INERT. CBR/7z handling is in-process FFI (`unrar` / `sevenz-rust` read to
+    // memory) — no child process is ever spawned, so there is nothing to bound.
+    // They are retained as the contract for a future out-of-process extractor;
+    // until such a path exists, do not assume archive work is wall-clock/RSS
+    // capped (per-entry/total byte caps above are the live defenses).
     pub subprocess_wall_timeout: Duration,
     pub subprocess_rss_bytes: u64,
 }

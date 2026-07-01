@@ -1542,7 +1542,7 @@ pub async fn apply_cover<C: ConnectionTrait>(
     // later. The decode is in-thread because the bytes are already
     // in memory; for archive covers the post-scan thumbnail job
     // hashes from the resized buffer instead.
-    let (p, d, a) = match image::load_from_memory(write.bytes) {
+    let (p, d, a) = match crate::util::image_decode::decode_limited(write.bytes) {
         Ok(img) => {
             let (p, d, a) = crate::metadata::phash::all_hashes(&img);
             (Some(p), Some(d), Some(a))
@@ -1695,7 +1695,7 @@ async fn download_cover_image(
         tracing::debug!(url, len = bytes.len(), "cover download: empty or oversize");
         return None;
     }
-    let img = match image::load_from_memory(&bytes) {
+    let img = match crate::util::image_decode::decode_limited(&bytes) {
         Ok(img) => img,
         Err(e) => {
             tracing::debug!(url, error = %e, "cover download: decode failed");

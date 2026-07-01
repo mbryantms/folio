@@ -176,7 +176,7 @@ async fn probe_one(
         let mut results: Vec<DecodeResult> = Vec::with_capacity(page_names.len());
         for (idx, name) in page_names.iter().enumerate() {
             match archive.read_entry_bytes(name) {
-                Ok(bytes) => match image::load_from_memory(&bytes) {
+                Ok(bytes) => match crate::util::image_decode::decode_limited(&bytes) {
                     Ok(_) => results.push(DecodeResult::Ok),
                     Err(e) => results.push(DecodeResult::DecodeError {
                         page_index: idx as u32,

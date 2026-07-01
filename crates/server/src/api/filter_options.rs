@@ -341,7 +341,10 @@ async fn fetch_distinct_issue_csv(
             let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
             Json(page_from_rows(values, limit)).into_response()
         }
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "db", &e.to_string()),
+        Err(e) => {
+            tracing::error!(error = %e, "filter_options query failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "db", "internal")
+        }
     }
 }
 
@@ -420,7 +423,10 @@ async fn fetch_distinct_series_column(
             let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
             Json(page_from_rows(values, limit)).into_response()
         }
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "db", &e.to_string()),
+        Err(e) => {
+            tracing::error!(error = %e, "filter_options query failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "db", "internal")
+        }
     }
 }
 
@@ -522,6 +528,9 @@ async fn fetch_distinct(
             let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
             Json(page_from_rows(values, limit)).into_response()
         }
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "db", &e.to_string()),
+        Err(e) => {
+            tracing::error!(error = %e, "filter_options query failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "db", "internal")
+        }
     }
 }

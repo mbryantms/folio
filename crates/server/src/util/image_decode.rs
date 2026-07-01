@@ -104,4 +104,21 @@ mod tests {
     fn rejects_garbage() {
         assert!(decode_limited(b"not an image").is_err());
     }
+
+    #[test]
+    fn decode_limited_rejects_dimension_bomb_at_production_cap() {
+        // A (MAX_DECODE_DIMENSION + 1) x 1 image is trivially cheap to allocate
+        // and encode (~20k pixels) yet its width exceeds the production cap. The
+        // guard `decode_limited` — the exact function ARC-1 routes the
+        // deep-validate and provider-cover decodes through — must reject it via
+        // the header dimension check *before* any pixel buffer is reserved.
+        let img = DynamicImage::ImageRgba8(RgbaImage::new(MAX_DECODE_DIMENSION + 1, 1));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, ImageFormat::Png).unwrap();
+        let err = decode_limited(buf.get_ref());
+        assert!(
+            matches!(err, Err(image::ImageError::Limits(_))),
+            "expected a Limits error at the production cap, got {err:?}",
+        );
+    }
 }
