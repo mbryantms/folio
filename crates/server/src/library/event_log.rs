@@ -337,6 +337,13 @@ impl EventCollector {
         self
     }
 
+    /// The batch this collector stamps — lets worker-local collectors
+    /// inherit the parent scan's batch (the per-folder fan-out builds
+    /// its own collectors).
+    pub fn batch_id(&self) -> Option<Uuid> {
+        self.batch_id
+    }
+
     /// Start an event pre-filled with this collector's library / scan / batch
     /// ids. Chain `.entity(...)` / `.detail(...)` then hand it to
     /// [`Self::push`]. Split from `push` (rather than a single

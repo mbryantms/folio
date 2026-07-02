@@ -158,3 +158,86 @@ async fn rescan_after_delete_emits_removed_event() {
         "expected an issue/removed manifest row, got {events:?}",
     );
 }
+
+/// Batch stamping regression (2026-07-02): `EventCollector::with_batch`
+/// existed since M5 but had zero callers — every event landed with
+/// `batch_id = NULL` and the scan-batch "Changes" manifest (M10) was
+/// permanently empty. Mimic a "Scan all" (pre-inserted queued run with a
+/// `batch_id`) and assert every event the scan writes carries the batch.
+#[tokio::test]
+async fn batch_scan_events_carry_batch_id() {
+    use entity::{scan_batch, scan_run};
+
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Batch (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_minimal_cbz(&folder.join("Batch 001.cbz"), 1);
+
+    let lib = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    let now = chrono::Utc::now().fixed_offset();
+
+    // Pre-insert the batch + queued member run, exactly like the
+    // "Scan all" endpoint (M6) does before enqueueing the jobs.
+    let batch_id = Uuid::now_v7();
+    scan_batch::ActiveModel {
+        id: Set(batch_id),
+        kind: Set("scan_all".into()),
+        actor_id: Set(None),
+        force: Set(false),
+        started_at: Set(now),
+        ended_at: Set(None),
+        library_count: Set(1),
+        state: Set("running".into()),
+    }
+    .insert(&state.db)
+    .await
+    .unwrap();
+    let scan_id = Uuid::now_v7();
+    scan_run::ActiveModel {
+        id: Set(scan_id),
+        library_id: Set(lib),
+        state: Set("queued".into()),
+        started_at: Set(now),
+        ended_at: Set(None),
+        stats: Set(serde_json::json!({})),
+        error: Set(None),
+        kind: Set("library".into()),
+        series_id: Set(None),
+        issue_id: Set(None),
+        batch_id: Set(Some(batch_id)),
+    }
+    .insert(&state.db)
+    .await
+    .unwrap();
+
+    scanner::scan_library_with_run_id(&state, lib, false, Some(scan_id))
+        .await
+        .expect("scan succeeds");
+
+    let events = events_for(&app, lib).await;
+    assert!(!events.is_empty(), "scan wrote events");
+    let unstamped: Vec<_> = events
+        .iter()
+        .filter(|e| e.batch_id != Some(batch_id))
+        .collect();
+    assert!(
+        unstamped.is_empty(),
+        "every event must carry the batch id; unstamped: {unstamped:?}"
+    );
+
+    // Ordinary single-library scans stay batch-less.
+    let tmp2 = tempfile::tempdir().unwrap();
+    let folder2 = tmp2.path().join("Series Solo (2025)");
+    std::fs::create_dir_all(&folder2).unwrap();
+    write_minimal_cbz(&folder2.join("Solo 001.cbz"), 2);
+    let lib2 = create_library(&app, tmp2.path()).await;
+    scanner::scan_library(&state, lib2).await.expect("scan");
+    let events2 = events_for(&app, lib2).await;
+    assert!(!events2.is_empty());
+    assert!(
+        events2.iter().all(|e| e.batch_id.is_none()),
+        "solo scans must not invent a batch"
+    );
+}
