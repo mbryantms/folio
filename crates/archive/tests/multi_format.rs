@@ -97,3 +97,96 @@ fn unknown_extension_rejected() {
     };
     assert!(matches!(err, ArchiveError::Malformed(_)));
 }
+
+// ─────────────────────────────────────────────────────────────────
+// CQ-TEST-2 (audit 2026-07): the CBT cap enforcement had code but zero
+// tests — a dropped or inverted check would have shipped silently. Each
+// test violates exactly one limit; the rest stay permissive.
+// ─────────────────────────────────────────────────────────────────
+
+fn tiny_limits() -> archive::ArchiveLimits {
+    archive::ArchiveLimits {
+        max_entries: 1000,
+        max_total_bytes: 1024 * 1024,
+        max_entry_bytes: 1024 * 1024,
+        ..archive::ArchiveLimits::default()
+    }
+}
+
+#[test]
+fn cbt_rejects_oversized_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = tmp.path().join("big-entry.cbt");
+    write_tar(&p, &[("huge.png", vec![0u8; 4096].as_slice())]);
+    let limits = archive::ArchiveLimits {
+        max_entry_bytes: 1024,
+        ..tiny_limits()
+    };
+    match archive::cbt::Cbt::open(&p, limits) {
+        Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which, "entry size"),
+        other => panic!("expected entry-size cap, got {other:?}"),
+    }
+}
+
+#[test]
+fn cbt_rejects_oversized_total() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = tmp.path().join("big-total.cbt");
+    let page = vec![0u8; 800];
+    write_tar(
+        &p,
+        &[
+            ("a.png", page.as_slice()),
+            ("b.png", page.as_slice()),
+            ("c.png", page.as_slice()),
+        ],
+    );
+    // Each entry fits (800 ≤ 1024) but the running total (2400) doesn't.
+    let limits = archive::ArchiveLimits {
+        max_entry_bytes: 1024,
+        max_total_bytes: 2000,
+        ..tiny_limits()
+    };
+    match archive::cbt::Cbt::open(&p, limits) {
+        Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which, "total bytes"),
+        other => panic!("expected total-bytes cap, got {other:?}"),
+    }
+}
+
+#[test]
+fn cbt_rejects_excessive_entry_count() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = tmp.path().join("many.cbt");
+    let page = vec![0u8; 8];
+    let names: Vec<String> = (0..5).map(|i| format!("p{i}.png")).collect();
+    let entries: Vec<(&str, &[u8])> = names
+        .iter()
+        .map(|n| (n.as_str(), page.as_slice()))
+        .collect();
+    write_tar(&p, &entries);
+    let limits = archive::ArchiveLimits {
+        max_entries: 3,
+        ..tiny_limits()
+    };
+    match archive::cbt::Cbt::open(&p, limits) {
+        Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which, "entry count"),
+        other => panic!("expected entry-count cap, got {other:?}"),
+    }
+}
+
+#[test]
+fn cbt_within_limits_still_opens() {
+    // Guard the guard: the same shapes UNDER the caps must open fine, so a
+    // future inverted comparison can't pass the reject tests by rejecting
+    // everything.
+    let tmp = tempfile::tempdir().unwrap();
+    let p = tmp.path().join("ok.cbt");
+    let page = vec![0u8; 800];
+    write_tar(
+        &p,
+        &[("a.png", page.as_slice()), ("b.png", page.as_slice())],
+    );
+    let a = archive::cbt::Cbt::open(&p, tiny_limits()).expect("within caps opens");
+    use archive::comic_archive::ComicArchive;
+    assert_eq!(a.pages().len(), 2);
+}

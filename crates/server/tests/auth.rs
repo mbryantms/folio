@@ -396,3 +396,55 @@ fn extract_cookie(resp: &axum::http::Response<Body>, name: &str) -> Option<Strin
                 .map(|v| v.to_owned())
         })
 }
+
+/// CQ-TEST-8 (audit 2026-07): the wrong-VALUE half of the CSRF
+/// double-submit check. `csrf_enforced_on_unsafe_verbs` covers the
+/// missing-header case; a dropped or reordered constant-time compare
+/// (header vs cookie) would still have passed it. A header that is
+/// present but disagrees with the cookie must 403 — including the
+/// prefix/truncation shapes a naive `starts_with` would wave through.
+#[tokio::test]
+async fn csrf_wrong_value_rejected() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "csrfval@example.com", "correctly-horse-battery").await;
+    let session_cookie = extract_cookie(&reg, "__Host-comic_session").unwrap();
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+
+    let attempt = |header_value: String| {
+        let router = app.router.clone();
+        let cookies = format!(
+            "__Host-comic_session={session_cookie}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}"
+        );
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/auth/refresh")
+                        .header(header::COOKIE, cookies)
+                        .header("x-csrf-token", header_value)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    // Entirely different token.
+    let resp = attempt("attacker-supplied-token-value-000".into()).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "different value");
+
+    // Truncated prefix of the real token.
+    let resp = attempt(csrf[..csrf.len() / 2].to_string()).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "truncated value");
+
+    // Real token with a suffix appended.
+    let resp = attempt(format!("{csrf}xx")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "extended value");
+
+    // Sanity: the untouched token still passes (guards the guard).
+    let resp = attempt(csrf.clone()).await;
+    assert_eq!(resp.status(), StatusCode::OK, "correct value still passes");
+}
