@@ -65,6 +65,12 @@ export default async function ReadPage({
   // land where they left off, not where the marker is.
   const explicitPage = parsePageParam(page);
 
+  // FEP-4: `/auth/me` is independent of the issue fetch, so kick it off now and
+  // race it with the issue detail rather than awaiting after — shaves a
+  // round-trip on the happy path (the window the loading skeleton is shown).
+  // Fails soft to `null` (an unauthed/transient `/auth/me` → built-in defaults).
+  const mePromise = apiGet<MeView>("/auth/me").catch(() => null);
+
   let issue: IssueDetailView;
   try {
     issue = await apiGet<IssueDetailView>(
@@ -88,19 +94,14 @@ export default async function ReadPage({
     notFound();
   }
 
-  // Kick off the two independent, best-effort fetches concurrently. Both
-  // only need `issue` (already resolved above) — not each other — so
-  // running them in parallel instead of sequentially shaves a round-trip
-  // off time-to-reader, the exact window the loading skeleton is shown.
-  // Each fails soft to `null`: a progress 4xx just means "no record yet";
-  // an unauthed/transient `/auth/me` falls back to the built-in defaults.
-  // Progress is skipped entirely when the user asked to start fresh
-  // (`?from=start`) or deep-linked a page (`?page=`).
+  // Progress is best-effort and fails soft to `null` (a 4xx just means "no
+  // record yet"). Skipped entirely when the user asked to start fresh
+  // (`?from=start`) or deep-linked a page (`?page=`). Awaited together with the
+  // already-in-flight `mePromise` (kicked off before the issue fetch above).
   const progressPromise =
     explicitPage === null && !startFresh
       ? apiGet<ProgressDelta>(`/progress`).catch(() => null)
       : null;
-  const mePromise = apiGet<MeView>("/auth/me").catch(() => null);
   const [delta, me] = await Promise.all([progressPromise, mePromise]);
 
   // page_count from ComicInfo isn't always trustworthy; if the reader walks

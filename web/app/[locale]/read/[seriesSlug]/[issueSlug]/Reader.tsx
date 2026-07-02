@@ -935,6 +935,7 @@ export function Reader({
           <DoublePageView
             issueId={issueId}
             visiblePages={visiblePages}
+            pages={pages}
             direction={direction}
             fitClass={fitClass}
             paneClass={doublePaneClass}
@@ -950,6 +951,7 @@ export function Reader({
           <SinglePageView
             issueId={issueId}
             currentPage={currentPage}
+            pageInfo={pages[currentPage]}
             fitClass={fitClass}
             onLeftZone={onLeftZone}
             onRightZone={onRightZone}
@@ -1001,9 +1003,22 @@ export function Reader({
   );
 }
 
+/** Server-known intrinsic dimensions for a page, or `undefined` when the
+ *  scanner didn't record them — passed to `<PageImage>` so it reserves
+ *  aspect-ratio height before the bytes arrive, preventing the page-turn
+ *  layout shift in single/double view (FEP-2). Webtoon already did this. */
+function pageDimensions(
+  info: PageInfo | undefined,
+): { width: number; height: number } | undefined {
+  return info?.image_width && info?.image_height
+    ? { width: info.image_width, height: info.image_height }
+    : undefined;
+}
+
 function SinglePageView({
   issueId,
   currentPage,
+  pageInfo,
   fitClass,
   onLeftZone,
   onRightZone,
@@ -1019,6 +1034,8 @@ function SinglePageView({
 }: {
   issueId: string;
   currentPage: number;
+  /** Server-known page metadata for the current page (intrinsic dims). */
+  pageInfo?: PageInfo;
   fitClass: string;
   onLeftZone: () => void;
   onRightZone: () => void;
@@ -1157,6 +1174,7 @@ function SinglePageView({
             fetchPriority="high"
             onNaturalSize={onNaturalSize(currentPage)}
             imgRef={imgRef}
+            dimensions={pageDimensions(pageInfo)}
           />
           <MarkerOverlay
             issueId={issueId}
@@ -1188,6 +1206,7 @@ function SinglePageView({
 function DoublePageView({
   issueId,
   visiblePages,
+  pages,
   direction,
   fitClass,
   paneClass,
@@ -1201,6 +1220,8 @@ function DoublePageView({
 }: {
   issueId: string;
   visiblePages: readonly number[];
+  /** Full page list so each pane can reserve its aspect-ratio height. */
+  pages: readonly PageInfo[];
   direction: Direction;
   fitClass: string;
   paneClass: string;
@@ -1245,6 +1266,7 @@ function DoublePageView({
               key={`${issueId}-${p}`}
               issueId={issueId}
               page={p}
+              pageInfo={pages[p]}
               fitClass={fitClass}
               // Capped solo page: half the spread width (one page), centered
               // by the container's `justify-center`, so the cover/last page
@@ -1270,6 +1292,7 @@ function DoublePageView({
 function DoublePagePane({
   issueId,
   page,
+  pageInfo,
   fitClass,
   paneClass,
   onNaturalSize,
@@ -1277,6 +1300,7 @@ function DoublePagePane({
 }: {
   issueId: string;
   page: number;
+  pageInfo?: PageInfo;
   fitClass: string;
   paneClass: string;
   onNaturalSize: (w: number, h: number) => void;
@@ -1301,6 +1325,7 @@ function DoublePagePane({
         fetchPriority="high"
         onNaturalSize={onNaturalSize}
         imgRef={imgRef}
+        dimensions={pageDimensions(pageInfo)}
       />
       <MarkerOverlay
         issueId={issueId}
@@ -1534,10 +1559,7 @@ const WebtoonPage = memo(function WebtoonPage({
   // (exact — the intrinsic ratio takes over on decode, so no shift
   // and no distortion risk). Pages without server-known dims keep
   // today's behavior; the scanner records dims for the common case.
-  const dimensions =
-    pageInfo?.image_width && pageInfo?.image_height
-      ? { width: pageInfo.image_width, height: pageInfo.image_height }
-      : undefined;
+  const dimensions = pageDimensions(pageInfo);
   // No own wrapper: the parent `WebtoonView` renders the stable
   // `data-page-idx` `relative` slot (so the observer never loses it
   // across the windowing swap), which also serves as `<MarkerOverlay>`'s
