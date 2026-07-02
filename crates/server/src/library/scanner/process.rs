@@ -26,8 +26,8 @@ use parsers::{
     series_json::SeriesMetadata,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, Set,
-    Statement,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter,
+    QueryOrder, QuerySelect, Set, Statement, sea_query::Expr,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -36,8 +36,29 @@ use uuid::Uuid;
 
 use super::stats::ScanStats;
 
+/// Lean per-file projection for the size+mtime fast path (audit PERF-6).
+/// The full `issue::Model` carries `comic_info_raw` — often tens of KB per
+/// row — and the old manifest loaded AND cloned it for every unchanged file
+/// on a re-scan. The fast path only needs the fingerprint columns plus the
+/// count-backfill bit, which is computed in SQL so the JSON never leaves
+/// Postgres.
+#[derive(FromQueryResult)]
+struct RowMeta {
+    file_path: String,
+    file_size: i64,
+    file_mtime: chrono::DateTime<chrono::FixedOffset>,
+    needs_count_backfill: bool,
+}
+
+/// SQL mirror of [`row_needs_comicinfo_count_backfill`] — keep the two in
+/// sync (the unit test `manifest_backfill_expr_matches_rust` pins parity).
+const NEEDS_COUNT_BACKFILL_EXPR: &str = "(comicinfo_count IS NULL AND (\
+     jsonb_typeof(comic_info_raw) = 'null' \
+     OR (comic_info_raw ? 'count' AND comic_info_raw->'count' <> 'null'::jsonb) \
+     OR (comic_info_raw ? 'Count' AND comic_info_raw->'Count' <> 'null'::jsonb)))";
+
 pub struct IssueManifest {
-    by_path: HashMap<String, issue::Model>,
+    by_path: HashMap<String, RowMeta>,
 }
 
 impl IssueManifest {
@@ -56,6 +77,15 @@ impl IssueManifest {
         }
         let rows = IssueEntity::find()
             .filter(issue::Column::FilePath.is_in(path_strings))
+            .select_only()
+            .column(issue::Column::FilePath)
+            .column(issue::Column::FileSize)
+            .column(issue::Column::FileMtime)
+            .column_as(
+                Expr::cust(NEEDS_COUNT_BACKFILL_EXPR),
+                "needs_count_backfill",
+            )
+            .into_model::<RowMeta>()
             .all(db)
             .await?;
         Ok(Self {
@@ -66,8 +96,24 @@ impl IssueManifest {
         })
     }
 
-    pub fn by_path(&self, path: &str) -> Option<issue::Model> {
-        self.by_path.get(path).cloned()
+    /// Does a row exist for this path at all?
+    pub fn contains(&self, path: &str) -> bool {
+        self.by_path.contains_key(path)
+    }
+
+    /// The size+mtime fast-path check, clone-free: true when a row exists,
+    /// its fingerprint matches the on-disk file, and it doesn't need the
+    /// comicinfo-count backfill. Mirrors [`row_metadata_is_current`] on the
+    /// projected columns.
+    pub fn metadata_is_current(
+        &self,
+        path: &str,
+        size: i64,
+        mtime: chrono::DateTime<chrono::Utc>,
+    ) -> bool {
+        self.by_path.get(path).is_some_and(|m| {
+            m.file_size == size && m.file_mtime.to_utc() == mtime && !m.needs_count_backfill
+        })
     }
 }
 
@@ -530,8 +576,28 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     let path_str = path.to_string_lossy().into_owned();
 
     // Existing row? If size+mtime match, skip re-hash (spec §9.1 fast path).
-    let mut existing = if let Some(manifest) = manifest {
-        manifest.by_path(&path_str)
+    //
+    // PERF-6: with a manifest, the fast path runs against the projected
+    // fingerprint columns — no full-`Model` load, no clone. Only files that
+    // are new/changed/backfill-pending (the ones about to pay a hash +
+    // archive parse anyway) fetch their full row for the update path below.
+    if !force
+        && let Some(manifest) = manifest
+        && manifest.metadata_is_current(&path_str, size, mtime)
+    {
+        stats.files_unchanged += 1;
+        // The archive isn't being re-opened, so any open health issue tied to
+        // this file (MissingComicInfo, MalformedComicInfo, …) won't be
+        // re-emitted by the rest of `process_file`. Tell the collector so the
+        // auto-resolve sweep at scan end leaves it alone.
+        health.touch_file(path);
+        return Ok(());
+    }
+    let mut existing = if let Some(manifest) = manifest
+        && !manifest.contains(&path_str)
+    {
+        // Manifest says no row exists — skip the pointless point query.
+        None
     } else {
         IssueEntity::find()
             .filter(issue::Column::FilePath.eq(path_str.clone()))
@@ -542,11 +608,8 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         && let Some(row) = &existing
         && row_metadata_is_current(row, size, mtime)
     {
+        // No-manifest fallback fast path (single-file scans).
         stats.files_unchanged += 1;
-        // The archive isn't being re-opened, so any open health issue tied to
-        // this file (MissingComicInfo, MalformedComicInfo, …) won't be
-        // re-emitted by the rest of `process_file`. Tell the collector so the
-        // auto-resolve sweep at scan end leaves it alone.
         health.touch_file(path);
         return Ok(());
     }

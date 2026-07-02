@@ -3,11 +3,12 @@
 /// <reference lib="webworker" />
 
 /**
- * Service worker entry. Compiled by @serwist/next at build time
- * (see `next.config.ts::withSerwistInit`) and written to
- * `public/sw.js`. The compiled SW is registered automatically by
- * `@serwist/next`'s injected client snippet on first page load in
- * production.
+ * Service worker entry. Compiled to `public/sw.js` by `@serwist/cli`
+ * in a separate post-`next build` step (see `serwist.config.js` and
+ * the `sw:compile` package script — NOT `@serwist/next`, whose
+ * Webpack requirement blows the reader-bundle budget; see
+ * `next.config.ts`). Registration is manual, via `@serwist/window`
+ * in `components/ServiceWorkerLoader.tsx`.
  *
  * Scope of caching:
  *
@@ -30,6 +31,10 @@
  *   `/me/app-passwords`, `/me/rail-dismissals`, `/me/pages`,
  *   `/me/views`, `/me/progress`, `/me/preferences`,
  *   `/me/account`, `/me/email`, `/me/sync`, and similar.
+ * - **Runtime-cache cover/strip thumbnails** (`/issues/{id}/pages/
+ *   {n}/thumb` + `/issues/{id}/covers/{id}`) with a bounded
+ *   stale-while-revalidate cache (audit FEP-3) — covers survive
+ *   offline launches and HTTP-cache eviction.
  * - **DO NOT cache page bytes.** Comic page bytes (`/issues/{id}/
  *   pages/{n}`) are large, per-user-authorised, and the offline-
  *   reading feature that would intentionally cache them gets its
@@ -44,7 +49,7 @@
  */
 import { defaultCache } from "@serwist/next/worker";
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
-import { Serwist } from "serwist";
+import { ExpirationPlugin, Serwist, StaleWhileRevalidate } from "serwist";
 
 // Serwist injects the precache manifest onto the SW global at
 // build time. Without the declaration, TypeScript can't see it.
@@ -60,6 +65,12 @@ declare global {
 }
 
 declare const self: ServiceWorkerGlobalScope;
+
+/** Pre-generated cover/strip thumbnails + applied provider covers —
+ *  the only `/issues/…` byte surfaces the SW may cache (audit FEP-3).
+ *  Full-resolution page bytes (`/pages/{n}` without `/thumb`) stay
+ *  uncached by design. */
+const THUMB_PATH_RE = /^\/issues\/[^/]+\/(?:pages\/\d+\/thumb|covers\/[^/]+)$/;
 
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
@@ -90,7 +101,36 @@ const serwist = new Serwist({
   // explicit list of API-route exclusions is enforced by the
   // path-pattern guards below taking precedence over the
   // catch-all default.
-  runtimeCaching: defaultCache,
+  //
+  // The thumbnail rule sits AHEAD of the defaults (audit FEP-3):
+  // cover/strip thumbs are extensionless URLs under `/issues/`, so
+  // the extension-matching `static-image-assets` default never
+  // caught them and the `/issues/` guard below force-bypassed them —
+  // no offline covers, and repeat browsing paid a re-fetch whenever
+  // the HTTP cache had evicted. Stale-while-revalidate (not
+  // cache-first, despite the server's `immutable` header) because an
+  // archive page-edit regenerates a thumb under the SAME URL — SWR
+  // self-heals on the next view instead of pinning the old art until
+  // eviction. Cache keys are the full URL including `?variant=`.
+  // Bounded: covers a few screens of grid browsing without letting a
+  // 24k-issue library eat the origin's storage quota.
+  runtimeCaching: [
+    {
+      matcher: ({ sameOrigin, url }) =>
+        sameOrigin && THUMB_PATH_RE.test(url.pathname),
+      handler: new StaleWhileRevalidate({
+        cacheName: "folio-thumbs",
+        plugins: [
+          new ExpirationPlugin({
+            maxEntries: 1200,
+            maxAgeSeconds: 30 * 24 * 60 * 60,
+            maxAgeFrom: "last-used",
+          }),
+        ],
+      }),
+    },
+    ...defaultCache,
+  ],
 });
 
 // Hard guard: any same-origin request to a backend API surface
@@ -180,6 +220,13 @@ self.addEventListener("fetch", (event: FetchEvent) => {
     return;
   }
   const path = url.pathname;
+  // Thumbnail/cover bytes are the one `/issues/…` surface serwist DOES
+  // handle (the SWR cache above) — skip the bypass guard for them
+  // (audit FEP-3). Everything else under these prefixes stays
+  // native-loader-only.
+  if (THUMB_PATH_RE.test(path)) {
+    return;
+  }
   if (
     API_PATH_PREFIXES.some(
       (p) => path === p.replace(/\/$/, "") || path.startsWith(p),
