@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { FolderPlus, LibraryBig } from "lucide-react";
 
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
-import { useSavedViews } from "@/lib/api/queries";
+import { Button } from "@/components/ui/button";
+import { useLibraryList, useMe, useSavedViews } from "@/lib/api/queries";
 
 import { LazyRail } from "./LazyRail";
 import { PageActionsMenu } from "./PageActionsMenu";
@@ -121,37 +123,69 @@ export function PageRails({
 }
 
 function EmptyPinnedState({ isSystem }: { isSystem: boolean }) {
+  // First-run signposting (audit UX-1): a fresh sign-in lands here with
+  // zero pinned views, so the system Home must route the user to their
+  // actual content (or to creating some) instead of dead-ending on a
+  // Settings link. Only the system page probes libraries/role — custom
+  // pages keep the lightweight pin hint.
+  const me = useMe({ enabled: isSystem });
+  const librariesQ = useLibraryList({ enabled: isSystem });
+  const isAdmin = me.data?.role === "admin";
+  const hasLibraries = (librariesQ.data?.length ?? 0) > 0;
+
+  if (!isSystem) {
+    return (
+      <div className="border-border/60 rounded-lg border border-dashed p-8">
+        <h2 className="text-xl font-semibold tracking-tight">
+          No pinned views yet
+        </h2>
+        <p className="text-muted-foreground mt-2 text-sm">
+          Pin saved views to this page from{" "}
+          <Link
+            href="/settings/views"
+            className="text-foreground font-medium underline-offset-4 hover:underline"
+          >
+            Settings → Saved views
+          </Link>
+          .
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="border-border/60 rounded-lg border border-dashed p-8">
       <h2 className="text-xl font-semibold tracking-tight">
-        No pinned views yet
+        {hasLibraries ? "Welcome to Folio" : "No libraries yet"}
       </h2>
       <p className="text-muted-foreground mt-2 text-sm">
-        {isSystem ? (
-          <>
-            Manage your saved views in{" "}
-            <Link
-              href="/settings/views"
-              className="text-foreground font-medium underline-offset-4 hover:underline"
-            >
-              Settings → Saved views
-            </Link>
-            . You can create filter views, import CBL reading lists, and pick
-            which ones show up here.
-          </>
-        ) : (
-          <>
-            Pin saved views to this page from{" "}
-            <Link
-              href="/settings/views"
-              className="text-foreground font-medium underline-offset-4 hover:underline"
-            >
-              Settings → Saved views
-            </Link>
-            .
-          </>
-        )}
+        {hasLibraries
+          ? "Your comics are ready — browse your library, or pin saved views here to build a custom home."
+          : isAdmin
+            ? "Create a library pointing at your comics folder, run a scan, and your collection shows up here."
+            : "Ask your server admin to grant you access to a library, then your comics will show up here."}
       </p>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {hasLibraries ? (
+          <Button asChild>
+            <Link href="/?library=all">
+              <LibraryBig />
+              Browse your library
+            </Link>
+          </Button>
+        ) : null}
+        {isAdmin && !hasLibraries ? (
+          <Button asChild>
+            <Link href="/admin/libraries">
+              <FolderPlus />
+              Create a library
+            </Link>
+          </Button>
+        ) : null}
+        <Button asChild variant="outline">
+          <Link href="/settings/views">Manage saved views</Link>
+        </Button>
+      </div>
     </div>
   );
 }

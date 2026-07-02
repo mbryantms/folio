@@ -71,12 +71,18 @@ const QUEUE_LABELS: { key: string; label: string }[] = [
   { key: "post_scan_thumbs", label: "Thumbnails" },
   { key: "post_scan_search", label: "Search index" },
   { key: "post_scan_dictionary", label: "Dictionary" },
+  // Metadata + sidecar queues (audit UX-16): a wedged provider apply was
+  // previously invisible on this grid.
+  { key: "metadata_search_series", label: "Metadata search (series)" },
+  { key: "metadata_search_issue", label: "Metadata search (issue)" },
+  { key: "metadata_apply_series", label: "Metadata apply (series)" },
+  { key: "metadata_apply_issue", label: "Metadata apply (issue)" },
+  { key: "rewrite_issue_sidecars", label: "Sidecar rewrites" },
   { key: "archive_edit", label: "Archive edits" },
   { key: "backfill", label: "Backfills" },
 ];
 
-/** Friendly labels for every apalis queue (incl. the metadata + sidecar
- *  queues that don't surface in the pending-depth overview). */
+/** Friendly labels for every apalis queue. */
 const QUEUE_LABEL_MAP: Record<string, string> = {
   scan: "Library scans",
   scan_series: "Series scans",

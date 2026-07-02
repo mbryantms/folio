@@ -704,6 +704,7 @@ export function Reader({
   useReaderProgressWrite({
     issueId,
     currentPage,
+    initialPage,
     totalPages,
     incognito: suppressWrites,
     // Webtoon scroll-tracking drives `currentPage` both ways; persist a

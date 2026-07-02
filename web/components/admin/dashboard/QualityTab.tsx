@@ -49,53 +49,58 @@ export function QualityTab() {
           </p>
         </CardHeader>
         <CardContent>
-          <table className="w-full text-sm">
-            <thead className="text-muted-foreground text-xs uppercase">
-              <tr>
-                <th className="px-1 py-1 text-left font-semibold">Field</th>
-                <th className="px-1 py-1 text-right font-semibold">Missing</th>
-                <th className="px-1 py-1 text-right font-semibold">
-                  % of {data.metadata.total_issues}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-border divide-y">
-              {[
-                { label: "Writer", missing: data.metadata.missing_writer },
-                {
-                  label: "Cover artist",
-                  missing: data.metadata.missing_cover_artist,
-                },
-                {
-                  label: "Page count",
-                  missing: data.metadata.missing_page_count,
-                },
-                { label: "Genre", missing: data.metadata.missing_genre },
-                {
-                  label: "Publisher",
-                  missing: data.metadata.missing_publisher,
-                },
-              ].map((row) => {
-                const pct =
-                  data.metadata.total_issues > 0
-                    ? Math.round(
-                        (row.missing / data.metadata.total_issues) * 100,
-                      )
-                    : 0;
-                return (
-                  <tr key={row.label}>
-                    <td className="px-1 py-1.5 font-medium">{row.label}</td>
-                    <td className="px-1 py-1.5 text-right tabular-nums">
-                      {row.missing.toLocaleString()}
-                    </td>
-                    <td className="text-muted-foreground px-1 py-1.5 text-right tabular-nums">
-                      {pct}%
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          {/* Overflow guard on narrow viewports (audit UX-13). */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-80 text-sm">
+              <thead className="text-muted-foreground text-xs uppercase">
+                <tr>
+                  <th className="px-1 py-1 text-left font-semibold">Field</th>
+                  <th className="px-1 py-1 text-right font-semibold">
+                    Missing
+                  </th>
+                  <th className="px-1 py-1 text-right font-semibold">
+                    % of {data.metadata.total_issues}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-border divide-y">
+                {[
+                  { label: "Writer", missing: data.metadata.missing_writer },
+                  {
+                    label: "Cover artist",
+                    missing: data.metadata.missing_cover_artist,
+                  },
+                  {
+                    label: "Page count",
+                    missing: data.metadata.missing_page_count,
+                  },
+                  { label: "Genre", missing: data.metadata.missing_genre },
+                  {
+                    label: "Publisher",
+                    missing: data.metadata.missing_publisher,
+                  },
+                ].map((row) => {
+                  const pct =
+                    data.metadata.total_issues > 0
+                      ? Math.round(
+                          (row.missing / data.metadata.total_issues) * 100,
+                        )
+                      : 0;
+                  return (
+                    <tr key={row.label}>
+                      <td className="px-1 py-1.5 font-medium">{row.label}</td>
+                      <td className="px-1 py-1.5 text-right tabular-nums">
+                        {row.missing.toLocaleString()}
+                      </td>
+                      <td className="text-muted-foreground px-1 py-1.5 text-right tabular-nums">
+                        {pct}%
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
     </div>

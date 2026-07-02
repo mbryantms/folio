@@ -47,21 +47,30 @@ export function LibraryOverview({ id }: { id: string }) {
   // paginated sample, so its length would undercount.
   const openIssueCount = issues.data?.counts?.open ?? 0;
 
-  const stats = [
+  // Deep-link the count stats to the tab that acts on them (audit UX-16):
+  // a number an admin can't click is a dead end.
+  const slug = lib.data.slug;
+  const stats: { label: string; value: string; href?: string }[] = [
     {
       label: "Last scan",
       value: last?.started_at
         ? new Date(last.started_at).toLocaleString()
         : "Never",
+      href: `/admin/libraries/${slug}/history`,
     },
     { label: "Last state", value: last?.state ?? "—" },
-    { label: "Open health issues", value: String(openIssueCount) },
+    {
+      label: "Open health issues",
+      value: String(openIssueCount),
+      href: `/admin/libraries/${slug}/health`,
+    },
     {
       label: "Thumbnail backlog",
       value:
         typeof scanPreview?.thumbnail_backlog === "number"
           ? String(scanPreview.thumbnail_backlog)
           : "—",
+      href: `/admin/libraries/${slug}/thumbnails`,
     },
   ];
 
@@ -74,7 +83,16 @@ export function LibraryOverview({ id }: { id: string }) {
               <p className="text-muted-foreground text-xs font-medium tracking-widest uppercase">
                 {s.label}
               </p>
-              <p className="text-foreground text-lg font-medium">{s.value}</p>
+              {s.href ? (
+                <Link
+                  href={s.href}
+                  className="text-foreground block text-lg font-medium underline-offset-4 hover:underline"
+                >
+                  {s.value}
+                </Link>
+              ) : (
+                <p className="text-foreground text-lg font-medium">{s.value}</p>
+              )}
             </CardContent>
           </Card>
         ))}

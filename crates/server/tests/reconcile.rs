@@ -322,3 +322,256 @@ async fn auto_confirm_sweep_processes_expired() {
     let row = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
     assert!(row.removal_confirmed_at.is_some());
 }
+
+/// UX-11: `POST /series/{slug}/restore` — 409 while the folder is missing;
+/// once the folder is back it restores the series row plus the child issues
+/// whose files exist, leaving still-missing files soft-deleted.
+#[tokio::test]
+async fn restore_series_endpoint_restores_on_disk_issues() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Pi (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let p1 = folder.join("Pi 001.cbz");
+    let p2 = folder.join("Pi 002.cbz");
+    write_cbz(&p1, 1);
+    write_cbz(&p2, 2);
+    // A second series keeps the library root non-empty after Pi's folder is
+    // parked — the scanner refuses to scan an empty root (unmounted-storage
+    // guard) and we need the removal rescan to actually run.
+    let decoy = tmp.path().join("Series Tau (2025)");
+    std::fs::create_dir_all(&decoy).unwrap();
+    write_cbz(&decoy.join("Tau 001.cbz"), 9);
+
+    let lib_id = create_library(&app, tmp.path(), 30).await;
+    let state = app.state();
+    let s = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(s.files_added, 3);
+    let series_row = SeriesEntity::find()
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name.contains("Pi"))
+        .unwrap();
+    let series_id = series_row.id;
+    let series_slug = series_row.slug.clone();
+
+    // Whole folder disappears → both issues + the series soft-delete. Park
+    // it OUTSIDE the library root, or the scanner ingests the parked copy
+    // as a new series and re-homes the content-hash-stable issues into it.
+    let park = tempfile::tempdir().unwrap();
+    let moved = park.path().join("Series Pi (2025)");
+    std::fs::rename(&folder, &moved).unwrap();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let series_row = SeriesEntity::find_by_id(series_id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(series_row.removed_at.is_some(), "series should soft-delete");
+
+    let post_restore = |app: &TestApp, auth: &Authed, slug: String| {
+        let router = app.router.clone();
+        let cookie = format!(
+            "__Host-comic_session={}; __Host-comic_csrf={}",
+            auth.session, auth.csrf
+        );
+        let csrf = auth.csrf.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/api/series/{slug}/restore"))
+                        .header(header::COOKIE, cookie)
+                        .header("X-CSRF-Token", csrf)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    // Folder still missing → 409.
+    let resp = post_restore(&app, &auth, series_slug.clone()).await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "conflict.folder_missing");
+
+    // Folder returns, but only issue 1's file is back.
+    std::fs::rename(&moved, &folder).unwrap();
+    std::fs::remove_file(&p2).unwrap();
+
+    let resp = post_restore(&app, &auth, series_slug).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let series_row = SeriesEntity::find_by_id(series_id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(series_row.removed_at.is_none(), "series restored");
+    let issues = IssueEntity::find().all(&state.db).await.unwrap();
+    let pi_issues: Vec<_> = issues.iter().filter(|i| i.series_id == series_id).collect();
+    let restored: Vec<_> = pi_issues
+        .iter()
+        .filter(|i| i.removed_at.is_none())
+        .collect();
+    assert_eq!(restored.len(), 1, "only the on-disk issue restores");
+    assert_eq!(restored[0].file_path, p1.to_string_lossy());
+}
+
+/// UX-11: the removed-items list paginates by cursor without dropping rows;
+/// series + `total_issues` ride on the first page only.
+#[tokio::test]
+async fn removed_list_paginates_by_cursor() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Rho (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    for n in 1..=3u32 {
+        write_cbz(&folder.join(format!("Rho 00{n}.cbz")), n);
+    }
+
+    let lib_id = create_library(&app, tmp.path(), 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    for n in 1..=3u32 {
+        std::fs::remove_file(folder.join(format!("Rho 00{n}.cbz"))).unwrap();
+    }
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let get = |app: &TestApp, auth: &Authed, uri: String| {
+        let router = app.router.clone();
+        let cookie = format!("__Host-comic_session={}", auth.session);
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri(uri)
+                        .header(header::COOKIE, cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    let resp = get(
+        &app,
+        &auth,
+        format!("/api/libraries/{lib_id}/removed?limit=2"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let page1 = body_json(resp.into_body()).await;
+    assert_eq!(page1["issues"].as_array().unwrap().len(), 2);
+    assert_eq!(page1["total_issues"], 3);
+    // The all-issues-removed series soft-deletes and rides the first page.
+    assert_eq!(page1["series"].as_array().unwrap().len(), 1);
+    let cursor = page1["next_cursor"]
+        .as_str()
+        .expect("next_cursor")
+        .to_owned();
+
+    let resp = get(
+        &app,
+        &auth,
+        format!("/api/libraries/{lib_id}/removed?limit=2&cursor={cursor}"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let page2 = body_json(resp.into_body()).await;
+    assert_eq!(page2["issues"].as_array().unwrap().len(), 1);
+    assert!(page2["next_cursor"].is_null());
+    assert!(page2["total_issues"].is_null(), "total is first-page only");
+    assert_eq!(page2["series"].as_array().unwrap().len(), 0);
+
+    // No overlap between pages — cursor is exclusive.
+    let id_of = |v: &serde_json::Value| v["id"].as_str().unwrap().to_owned();
+    let mut seen: Vec<String> = page1["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(id_of)
+        .collect();
+    seen.extend(page2["issues"].as_array().unwrap().iter().map(id_of));
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 3, "pages must partition the removed set");
+}
+
+/// UX-3: `GET /issues/{id}` (bare, no /api prefix) 303-redirects to the
+/// canonical slug URL so admin surfaces can link issues they only hold an
+/// id for.
+#[tokio::test]
+async fn issue_permalink_redirects_to_canonical_url() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Sigma (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz(&folder.join("Sigma 001.cbz"), 1);
+
+    let lib_id = create_library(&app, tmp.path(), 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let issue_row = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
+    let series_row = SeriesEntity::find_by_id(issue_row.series_id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/issues/{}", issue_row.id))
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", auth.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location header");
+    assert_eq!(
+        location,
+        format!("/series/{}/issues/{}", series_row.slug, issue_row.slug)
+    );
+
+    // Unknown id → 404, not a proxy fallthrough.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/issues/does-not-exist")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", auth.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

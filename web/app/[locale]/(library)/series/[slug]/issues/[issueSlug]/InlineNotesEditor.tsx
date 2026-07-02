@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
 import { useUpdateIssue } from "@/lib/api/mutations";
+import { useTouchDevice } from "@/lib/ui/use-coarse-pointer";
+import { cn } from "@/lib/utils";
 
 /** Inline notes editor for the issue detail page's Notes tab.
  *
@@ -38,6 +40,9 @@ export function InlineNotesEditor({
   const [draft, setDraft] = useState(initial ?? "");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const update = useUpdateIssue(seriesSlug, issueSlug);
+  // Touch devices have no hover to reveal the pencil, and an invisible
+  // control can't be focused — keep it always visible there (audit UX-9).
+  const isTouch = useTouchDevice();
 
   // Re-sync when the upstream value changes — e.g. someone else edits
   // through the Edit sheet while this surface is mounted. Skip while
@@ -91,7 +96,9 @@ export function InlineNotesEditor({
     if (!initial || initial.trim().length === 0) {
       return (
         <div className="flex max-w-prose flex-col items-start gap-3">
-          <p className="text-muted-foreground text-sm">No notes for this issue yet.</p>
+          <p className="text-muted-foreground text-sm">
+            No notes for this issue yet.
+          </p>
           <Button
             type="button"
             variant="outline"
@@ -116,7 +123,11 @@ export function InlineNotesEditor({
             variant="ghost"
             size="sm"
             onClick={() => setEditing(true)}
-            className="text-muted-foreground hover:text-foreground h-9 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+            className={cn(
+              "text-muted-foreground hover:text-foreground h-9 shrink-0 transition-opacity",
+              !isTouch &&
+                "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+            )}
             aria-label="Edit notes"
             title="Edit notes"
           >
@@ -150,13 +161,8 @@ export function InlineNotesEditor({
       />
       <div className="flex items-center justify-between gap-2">
         <p className="text-muted-foreground text-[11px]">
-          <Kbd className="mx-1">
-            ⌘
-          </Kbd>
-          <Kbd>
-            ↵
-          </Kbd>{" "}
-          save · <Kbd className="mx-1">esc</Kbd> cancel
+          <Kbd className="mx-1">⌘</Kbd>
+          <Kbd>↵</Kbd> save · <Kbd className="mx-1">esc</Kbd> cancel
         </p>
         <div className="flex items-center gap-2">
           <Button

@@ -539,15 +539,40 @@ export function MetadataMatchForm({
       </div>
 
       {isAdmin && (
+        // Scope feedback for the destructive toggle (audit UX-15): inert
+        // until a candidate diff is open, then annotated with how many
+        // user-edited fields the override would actually unlock.
         <div className="text-muted-foreground flex items-center gap-2 pb-2 text-xs">
           <Switch
             id="mmd-override"
             checked={overrideUserEdits}
             onCheckedChange={setOverrideUserEdits}
+            disabled={previewOrdinal == null}
           />
-          <Label htmlFor="mmd-override" className="cursor-pointer">
+          <Label
+            htmlFor="mmd-override"
+            className={previewOrdinal == null ? "opacity-60" : "cursor-pointer"}
+          >
             Override user-edited fields (audited as{" "}
             <code>metadata_apply_force</code>)
+            {previewOrdinal == null ? (
+              <> — preview a candidate to see which fields this affects</>
+            ) : diffQuery.data ? (
+              (() => {
+                const blocked = diffQuery.data.rows.filter(
+                  (r) => r.decision === "blocked_by_user",
+                ).length;
+                return blocked > 0 ? (
+                  <>
+                    {" "}
+                    — affects {blocked} user-edited field
+                    {blocked === 1 ? "" : "s"}
+                  </>
+                ) : (
+                  <> — no user-edited fields in this diff</>
+                );
+              })()
+            ) : null}
           </Label>
         </div>
       )}

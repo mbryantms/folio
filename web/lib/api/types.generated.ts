@@ -4050,6 +4050,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reconcile_restore_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/resume": {
         parameters: {
             query?: never;
@@ -4106,6 +4122,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["health_healthz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/issues/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["issue_permalink"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7984,11 +8016,30 @@ export interface components {
              */
             backfill: number;
             /** Format: int64 */
+            metadata_apply_issue: number;
+            /**
+             * Format: int64
+             * @description Pending provider metadata applies (series + issue scope; UX-16).
+             */
+            metadata_apply_series: number;
+            /** Format: int64 */
+            metadata_search_issue: number;
+            /**
+             * Format: int64
+             * @description Pending provider metadata searches (series + issue scope; UX-16).
+             */
+            metadata_search_series: number;
+            /** Format: int64 */
             post_scan_dictionary: number;
             /** Format: int64 */
             post_scan_search: number;
             /** Format: int64 */
             post_scan_thumbs: number;
+            /**
+             * Format: int64
+             * @description Pending sidecar-XML rewrite jobs (writeback path; UX-16).
+             */
+            rewrite_issue_sidecars: number;
             /** Format: int64 */
             scan: number;
             /** Format: int64 */
@@ -8267,7 +8318,20 @@ export interface components {
         };
         RemovedListView: {
             issues: components["schemas"]["RemovedIssueView"][];
+            /** @description Cursor for the next page of `issues`; `None` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * @description Complete on the first page (cursor absent); empty on subsequent
+             *     pages. Removed-series counts are small (one row per folder), so
+             *     they don't paginate — only the per-file issue list does.
+             */
             series: components["schemas"]["RemovedSeriesView"][];
+            /**
+             * Format: int64
+             * @description Total removed-issue count. First page only, mirroring the
+             *     `CursorPage::total` convention.
+             */
+            total_issues?: number | null;
         };
         RemovedSeriesView: {
             folder_path?: string | null;
@@ -13623,7 +13687,10 @@ export interface operations {
     };
     reconcile_list_removed: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
             header?: never;
             path: {
                 slug: string;
@@ -13639,6 +13706,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RemovedListView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description admin only */
             403: {
@@ -18277,6 +18351,47 @@ export interface operations {
             };
         };
     };
+    reconcile_restore_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description restored */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series is not removed, or its folder is still missing on disk */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     series_resume: {
         parameters: {
             query?: never;
@@ -18403,6 +18518,33 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Health"];
                 };
+            };
+        };
+    };
+    issue_permalink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description redirect to the canonical issue URL */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

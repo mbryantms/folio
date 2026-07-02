@@ -381,10 +381,11 @@ export function useAppPasswords() {
   });
 }
 
-export function useLibraryList() {
+export function useLibraryList({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.libraries,
     queryFn: () => jsonFetch<LibraryView[]>("/libraries"),
+    enabled,
   });
 }
 
@@ -831,11 +832,32 @@ export function useScanPreview(libraryId: string) {
   });
 }
 
-export function useRemovedItems(libraryId: string) {
-  return useQuery({
+/** `getNextPageParam` for {@link useRemovedItemsInfinite}. Exported + tested
+ *  so a refactor can't swallow `next_cursor` and silently truncate the
+ *  removed-items table (audit UX-11). */
+export function removedItemsNextPage(
+  page: RemovedListView,
+): string | undefined {
+  return page.next_cursor ?? undefined;
+}
+
+/**
+ * Paginated removed-items listing (audit UX-11): a bulk removal can strand
+ * thousands of issue rows, so the issue list pages by cursor. Removed
+ * *series* (and `total_issues`) ride on the first page only — read them from
+ * `pages[0]`.
+ */
+export function useRemovedItemsInfinite(libraryId: string) {
+  return useInfiniteQuery({
     queryKey: queryKeys.removed(libraryId),
-    queryFn: () =>
-      jsonFetch<RemovedListView>(`/libraries/${libraryId}/removed`),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<RemovedListView>(
+        `/libraries/${libraryId}/removed${
+          pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ""
+        }`,
+      ),
+    getNextPageParam: removedItemsNextPage,
     enabled: !!libraryId,
   });
 }

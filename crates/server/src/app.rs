@@ -74,6 +74,10 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(OpenApiRouter::from(auth::oidc::routes()))
         .merge(OpenApiRouter::from(axum::Router::from(auth::ws_ticket::routes())))
         .merge(OpenApiRouter::from(api::ws_scan_events::routes()))
+        // Bare (un-prefixed) browser navigation: `/issues/{id}` → 303 to the
+        // canonical slug URL. Has a `#[utoipa::path]`, so merged unwrapped to
+        // land in the spec.
+        .merge(api::issue_permalink::routes())
         .merge(OpenApiRouter::from(api::page_bytes::routes()))
         .merge(OpenApiRouter::from(api::thumbnails::routes()))
         .merge(OpenApiRouter::from(api::opds::routes()))

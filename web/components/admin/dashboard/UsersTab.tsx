@@ -17,8 +17,11 @@ export function UsersTab() {
     return <p className="text-muted-foreground text-sm">No users yet.</p>;
   }
   return (
-    <div className="border-border bg-card overflow-hidden rounded-md border">
-      <table className="w-full text-sm">
+    // Horizontal scroll on narrow viewports (audit UX-13): 7 columns
+    // otherwise crush on phone/tablet widths. min-w keeps the columns
+    // legible and lets the wrapper scroll instead.
+    <div className="border-border bg-card overflow-x-auto rounded-md border">
+      <table className="w-full min-w-180 text-sm">
         <thead className="bg-muted/50 text-muted-foreground text-xs uppercase">
           <tr>
             <th className="px-3 py-2 text-left font-semibold">User</th>

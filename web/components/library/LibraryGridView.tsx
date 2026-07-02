@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Check, Circle, FolderPlus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -38,6 +39,7 @@ import {
 } from "@/lib/api/mutations";
 import {
   useIssuesCrossListInfinite,
+  useMe,
   useSeriesListInfinite,
 } from "@/lib/api/queries";
 import { useLibraryGridFilters } from "@/lib/library/use-grid-filters";
@@ -507,13 +509,25 @@ export function LibraryGridView({
       ) : null}
 
       {query.isError ? (
-        <p className="text-destructive text-sm">
-          Failed to load {mode === "series" ? "series" : "issues"}.{" "}
-          {String(query.error)}
-        </p>
-      ) : null}
-
-      {query.isLoading ? (
+        // Recoverable error state (audit UX-6): a transient fetch failure
+        // gets a one-click retry instead of a dead-end paragraph — and we
+        // never interpolate the raw error object at the user.
+        <EmptyState
+          size="sm"
+          title={`Couldn't load ${mode === "series" ? "series" : "issues"}`}
+          description="Something went wrong while fetching. Check your connection and try again."
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void query.refetch()}
+            >
+              Retry
+            </Button>
+          }
+        />
+      ) : query.isLoading ? (
         <GridSkeleton mode={mode} style={gridStyle} />
       ) : items.length === 0 ? (
         <GridEmptyState
@@ -521,6 +535,8 @@ export function LibraryGridView({
           facetCount={facetCount}
           hasQuery={!!trimmedQ}
           onClearFacets={clearFacets}
+          isAllLibraries={libraryId === null}
+          libraryCount={libraryCount}
         />
       ) : (
         <VirtualizedCardGrid
@@ -642,12 +658,46 @@ function GridEmptyState({
   facetCount,
   hasQuery,
   onClearFacets,
+  isAllLibraries,
+  libraryCount,
 }: {
   mode: LibraryGridMode;
   facetCount: number;
   hasQuery: boolean;
   onClearFacets: () => void;
+  /** True when the grid spans every library (`libraryId === null`). */
+  isAllLibraries: boolean;
+  /** Accessible-library count, only meaningful when `isAllLibraries`. */
+  libraryCount?: number;
 }) {
+  const me = useMe();
+  const isAdmin = me.data?.role === "admin";
+
+  // Zero accessible libraries (audit UX-2): "this library has no series
+  // yet" is the wrong copy when there is no library at all — route the
+  // admin to creating one instead of dead-ending.
+  if (isAllLibraries && libraryCount === 0) {
+    return (
+      <EmptyState
+        size="sm"
+        icon={FolderPlus}
+        title="No libraries yet"
+        description={
+          isAdmin
+            ? "Create a library pointing at your comics folder to get started."
+            : "Ask your server admin to grant you access to a library."
+        }
+        action={
+          isAdmin ? (
+            <Button asChild size="sm">
+              <Link href="/admin/libraries">Create a library</Link>
+            </Button>
+          ) : undefined
+        }
+      />
+    );
+  }
+
   const noun = mode === "series" ? "series" : "issues";
   let message: string;
   if (hasQuery && facetCount > 0) {
@@ -656,6 +706,8 @@ function GridEmptyState({
     message = "No matches for that search.";
   } else if (facetCount > 0) {
     message = `No ${noun} match these filters.`;
+  } else if (isAllLibraries) {
+    message = `Your libraries have no ${noun} yet. Run a scan to ingest what's on disk.`;
   } else {
     message = `This library has no ${noun} yet.`;
   }

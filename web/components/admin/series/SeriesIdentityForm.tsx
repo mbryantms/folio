@@ -81,6 +81,28 @@ export function SeriesIdentityForm({ id }: { id: string }) {
           </Button>
         </CardContent>
       </Card>
+      {/* Doc stopgap for the missing merge/split feature (audit UX-4, D2):
+          until a real move/merge action exists, at least say how the model
+          works so a mis-split doesn't send admins hunting for a button
+          that isn't there. */}
+      <Card>
+        <CardContent className="space-y-2 p-5">
+          <p className="text-foreground font-medium">
+            Splitting or merging series
+          </p>
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            Series membership is{" "}
+            <span className="font-medium">pinned to the on-disk folder</span> —
+            every archive in a series&apos;s folder belongs to that series, and
+            there is no in-app merge, split, or move yet. To fix a mis-split
+            run: move the files into the folder layout you want on disk, then
+            run <span className="font-medium">Scan library</span>. Issue ids are
+            content-hash based, so reading progress, markers, and ratings follow
+            the files across the move. Renaming a series&apos;s folder re-homes
+            it the same way.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

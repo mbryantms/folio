@@ -665,7 +665,7 @@ function SeriesCategoryGrid({
     return <GridLoading label="series" />;
   }
   if (results.isError) {
-    return <GridError label="series" />;
+    return <GridError label="series" onRetry={() => void results.refetch()} />;
   }
   if (series.length === 0) {
     return (
@@ -716,7 +716,7 @@ function IssuesCategoryGrid({
     return <GridLoading label="issues" />;
   }
   if (results.isError) {
-    return <GridError label="issues" />;
+    return <GridError label="issues" onRetry={() => void results.refetch()} />;
   }
   if (issues.length === 0) {
     return (
@@ -753,11 +753,16 @@ function GridLoading({ label }: { label: string }) {
   );
 }
 
-function GridError({ label }: { label: string }) {
+function GridError({ label, onRetry }: { label: string; onRetry: () => void }) {
+  // Recoverable error state (audit UX-6): give the user a retry instead
+  // of a dead-end sentence.
   return (
-    <p className="text-destructive text-sm">
-      Failed to load {label}. Try again.
-    </p>
+    <div className="flex items-center gap-3">
+      <p className="text-destructive text-sm">Failed to load {label}.</p>
+      <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
   );
 }
 
@@ -1211,6 +1216,9 @@ function MarkerSearchThumbnail({
   }
 
   const region = hit.region;
+  // `alt=""` is deliberate on both thumbnails (audit UX-17): the sibling
+  // card text renders `hit.title` inside the same link, so a non-empty
+  // alt would double-announce the result to screen readers.
   if (!region) {
     return (
       <div className="border-border bg-muted relative aspect-[2/3] w-full overflow-hidden rounded-md border">

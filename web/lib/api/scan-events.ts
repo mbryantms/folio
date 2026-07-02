@@ -274,7 +274,14 @@ export function useScanEvents(opts?: {
         switch (evt.type) {
           case "scan.completed":
             if (toastCompletions && rememberScanToast(evt.scan_id)) {
-              toast.success(formatCompletionMessage(evt));
+              // A zero-change result is an app-state notice, not a success
+              // celebration (audit UX-14): for a brand-new library it's the
+              // only signal that the chosen folder had nothing to ingest.
+              if (evt.added === 0 && evt.updated === 0 && evt.removed === 0) {
+                toast.info(formatCompletionMessage(evt));
+              } else {
+                toast.success(formatCompletionMessage(evt));
+              }
             }
             break;
           case "scan.failed":
@@ -340,7 +347,13 @@ function formatCompletionMessage(
   if (evt.added > 0) parts.push(`added ${evt.added}`);
   if (evt.updated > 0) parts.push(`updated ${evt.updated}`);
   if (evt.removed > 0) parts.push(`removed ${evt.removed}`);
-  if (parts.length === 0) parts.push("no changes");
+  if (parts.length === 0) {
+    // Doubles as the empty-folder signal for a first scan (audit UX-14):
+    // the event doesn't say whether the library was already populated, so
+    // the copy has to read correctly for both a no-op re-scan and a
+    // pointed-at-the-wrong-folder first scan.
+    return "Scan complete — no new or changed comics found.";
+  }
   return `Scan complete · ${parts.join(", ")}`;
 }
 

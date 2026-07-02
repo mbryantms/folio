@@ -574,6 +574,59 @@ async fn search_shape() {
     assert!(!body.contains("Superman"));
 }
 
+/// UX-10: search paginates past PAGE_SIZE instead of silently truncating,
+/// with `next`/`last` rels so external readers (KOReader, Panels) can walk
+/// the full result set.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_paginates_past_page_size() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "searchpage@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    for i in 0..60 {
+        seed_series(&db, lib_id, &format!("Paged Series {i:03}")).await;
+    }
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/search?q=Paged",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(
+        body.matches("<entry>").count(),
+        50,
+        "page 1 caps at PAGE_SIZE"
+    );
+    assert!(
+        body.contains(r#"rel="next""#) && body.contains("page=2"),
+        "page 1 advertises a next page: {body}"
+    );
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/search?q=Paged&page=2",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(
+        body.matches("<entry>").count(),
+        10,
+        "page 2 carries the remainder"
+    );
+    assert!(
+        body.contains(r#"rel="previous""#),
+        "page 2 links back: {body}"
+    );
+    assert!(!body.contains(r#"rel="next""#), "last page has no next rel");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn download_mime_branches() {
     let app = TestApp::spawn().await;

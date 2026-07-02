@@ -97,9 +97,12 @@ export function NewLibraryDialog() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New library</DialogTitle>
+          {/* Copy tracks the scan_now toggle (audit UX-14) — it used to
+              claim scans start manually while the checkbox defaulted ON. */}
           <DialogDescription>
-            Point at a folder on disk. The first scan starts manually from the
-            library overview.
+            {scanNow
+              ? "Point at a folder on disk. The first scan starts right after the library is created."
+              : "Point at a folder on disk. Start the first scan whenever you like from the library overview."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
