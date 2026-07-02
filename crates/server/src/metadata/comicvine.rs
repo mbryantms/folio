@@ -127,27 +127,15 @@ impl ComicVineClient {
         let ttl =
             chrono::Duration::from_std(cache::CacheEntity::Series.default_ttl().to_std().unwrap())
                 .unwrap_or(chrono::Duration::hours(168));
-        if let Ok(Some(hit)) = cache::get(
+        cache::get_or_fetch(
             db,
             Source::ComicVine,
             cache::CacheEntity::Series,
             external_id,
             ttl,
+            || self.fetch_series(external_id),
         )
         .await
-        {
-            return Ok(hit);
-        }
-        let fresh = self.fetch_series(external_id).await?;
-        let _ = cache::put(
-            db,
-            Source::ComicVine,
-            cache::CacheEntity::Series,
-            external_id,
-            &fresh,
-        )
-        .await;
-        Ok(fresh)
     }
 
     /// Same shape as [`fetch_series_cached`] for issue detail.
@@ -159,27 +147,15 @@ impl ComicVineClient {
         let ttl =
             chrono::Duration::from_std(cache::CacheEntity::Issue.default_ttl().to_std().unwrap())
                 .unwrap_or(chrono::Duration::hours(24));
-        if let Ok(Some(hit)) = cache::get(
+        cache::get_or_fetch(
             db,
             Source::ComicVine,
             cache::CacheEntity::Issue,
             external_id,
             ttl,
+            || self.fetch_issue(external_id),
         )
         .await
-        {
-            return Ok(hit);
-        }
-        let fresh = self.fetch_issue(external_id).await?;
-        let _ = cache::put(
-            db,
-            Source::ComicVine,
-            cache::CacheEntity::Issue,
-            external_id,
-            &fresh,
-        )
-        .await;
-        Ok(fresh)
     }
 
     async fn reserve_slot(&self) -> ProviderResult<()> {
