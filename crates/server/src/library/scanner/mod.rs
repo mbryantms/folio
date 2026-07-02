@@ -2088,6 +2088,12 @@ async fn process_planned_folder(
         }
     }
 
+    // PERF-2: anything that missed the size+mtime fast path (new, changed,
+    // backfill-pending, fingerprint-unreadable, or a `force` scan) lands in
+    // `candidates` and goes through full ingest — that's the signal the
+    // post-folder rollup keys on below.
+    let folder_mutated = !candidates.is_empty();
+
     let db_write_started = Instant::now();
     for chunk in candidates.chunks(batch_size) {
         let txn = state.db.begin().await?;
@@ -2169,9 +2175,22 @@ async fn process_planned_folder(
 
     // Roll up genre/tag/credit junctions from this series's active issues.
     // Best-effort — a stale rollup is cosmetic and the next scan retries.
-    let rollup_started = Instant::now();
-    metadata_rollup::rollup_series_metadata_best_effort(&state.db, series_id).await;
-    stats.record_phase_parallel("metadata_rollup", rollup_started.elapsed());
+    //
+    // PERF-2: gated on the folder actually ingesting something. The rollup
+    // is the bulk of the post-folder statement cost, and on a no-change
+    // re-scan (e.g. an mtime-touching rsync of thousands of series) every
+    // input it reads is unchanged, so re-deriving the CSV caches is pure
+    // waste. `folder_mutated` is deliberately coarse — ANY file that missed
+    // the size+mtime fast path counts — so a skip requires a folder where
+    // literally nothing was re-ingested. The status reconcile below
+    // intentionally stays UNGATED: it's a handful of statements and it's
+    // keyed on `series.json`, which can change without any archive
+    // changing (the false-skip concern from #335's deferral note).
+    if folder_mutated {
+        let rollup_started = Instant::now();
+        metadata_rollup::rollup_series_metadata_best_effort(&state.db, series_id).await;
+        stats.record_phase_parallel("metadata_rollup", rollup_started.elapsed());
+    }
 
     // Refresh series.total_issues / status / summary using (in
     // priority order) the parsed series.json sidecar, then per-issue
