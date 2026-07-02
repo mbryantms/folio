@@ -69,7 +69,7 @@ export function ReaderFirstRunOverlay({
       aria-modal="true"
       aria-labelledby="reader-first-run-title"
       onClick={onDismiss}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm motion-safe:animate-in motion-safe:fade-in"
+      className="motion-safe:animate-in motion-safe:fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
     >
       <div
         // Clicks inside the card shouldn't dismiss — only the scrim and
@@ -111,8 +111,7 @@ export function ReaderFirstRunOverlay({
           <li className="flex items-center gap-3">
             <MousePointerClick className="text-muted-foreground size-4 shrink-0" />
             <span>
-              Tap the left or right edge to turn pages, the center for
-              controls.
+              Tap the left or right edge to turn pages, the center for controls.
             </span>
           </li>
           <li className="flex items-center gap-3">
@@ -151,10 +150,7 @@ function Hint({ keys, label }: { keys: string[]; label: string }) {
   return (
     <span className="text-muted-foreground inline-flex items-center gap-1.5">
       {keys.map((k) => (
-        <Kbd
-          key={k}
-          className="h-auto min-w-5 px-1 py-0.5 text-[0.6875rem]"
-        >
+        <Kbd key={k} className="h-auto min-w-5 px-1 py-0.5 text-[0.6875rem]">
           {k}
         </Kbd>
       ))}

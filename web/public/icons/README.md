@@ -11,20 +11,20 @@ files land.
 
 ## Required files
 
-| File                       | Size      | Purpose                                                                                                   |
-| -------------------------- | --------- | --------------------------------------------------------------------------------------------------------- |
-| `icon-192.png`             | 192 × 192 | Web App Manifest `any` icon. Used by Android Chrome / desktop browsers for the install tile.              |
-| `icon-512.png`             | 512 × 512 | Web App Manifest `any` icon at the larger size that Play Store / TWA wrappers want.                       |
-| `icon-512-maskable.png`    | 512 × 512 | Maskable icon. Android adaptive icons crop to a circle / squircle; the safe zone is the central 80 % of the canvas. |
-| `apple-touch-icon.png`     | 180 × 180 | iOS Home Screen icon. Without this, iOS scrapes a screenshot of the page (usually ugly).                  |
+| File                    | Size      | Purpose                                                                                                             |
+| ----------------------- | --------- | ------------------------------------------------------------------------------------------------------------------- |
+| `icon-192.png`          | 192 × 192 | Web App Manifest `any` icon. Used by Android Chrome / desktop browsers for the install tile.                        |
+| `icon-512.png`          | 512 × 512 | Web App Manifest `any` icon at the larger size that Play Store / TWA wrappers want.                                 |
+| `icon-512-maskable.png` | 512 × 512 | Maskable icon. Android adaptive icons crop to a circle / squircle; the safe zone is the central 80 % of the canvas. |
+| `apple-touch-icon.png`  | 180 × 180 | iOS Home Screen icon. Without this, iOS scrapes a screenshot of the page (usually ugly).                            |
 
 A favicon is not strictly required for PWA install but is a sensible
 companion file:
 
-| File           | Size           | Notes                                                                  |
-| -------------- | -------------- | ---------------------------------------------------------------------- |
-| `favicon.ico`  | 16 / 32 / 48   | Browser tab icon. Multi-resolution `.ico` so old browsers stay happy.  |
-| `icon.svg`     | scalable       | Modern browsers prefer the SVG favicon for crisp rendering at any DPI. |
+| File          | Size         | Notes                                                                  |
+| ------------- | ------------ | ---------------------------------------------------------------------- |
+| `favicon.ico` | 16 / 32 / 48 | Browser tab icon. Multi-resolution `.ico` so old browsers stay happy.  |
+| `icon.svg`    | scalable     | Modern browsers prefer the SVG favicon for crisp rendering at any DPI. |
 
 The favicon files belong in the parent `web/public/` directory rather
 than `web/public/icons/`, because Next.js auto-discovers `favicon.ico`

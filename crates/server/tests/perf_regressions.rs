@@ -193,6 +193,43 @@ async fn get(
     (status, body, elapsed)
 }
 
+async fn post(
+    app: &TestApp,
+    auth: &Authed,
+    path: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value, Duration) {
+    let started = Instant::now();
+    let cookie = format!(
+        "__Host-comic_session={}; __Host-comic_csrf={}",
+        auth.session, auth.csrf
+    );
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(path)
+                .header(header::COOKIE, cookie)
+                .header("X-CSRF-Token", &auth.csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let elapsed = started.elapsed();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body = if bytes.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+    };
+    (status, body, elapsed)
+}
+
 async fn grant_access(app: &TestApp, user_id: Uuid, library_id: Uuid) {
     let db = Database::connect(&app.db_url).await.unwrap();
     let now = Utc::now().fixed_offset();
@@ -574,6 +611,13 @@ const MAX_QUERIES_MARKERS: u64 = 10; // observed ≈ 2
 const MAX_QUERIES_READING_LOG: u64 = 30; // observed ≈ 9
 const MAX_QUERIES_SERIES: u64 = 20; // observed ≈ 5
 const MAX_QUERIES_ADMIN_STATS: u64 = 20; // observed ≈ 6
+// PERF-12 (audit 2026-07): guards for the endpoints PERF-1/PERF-8 fixed —
+// a future re-introduced per-member probe or serialized lookup ships loud.
+const MAX_QUERIES_SERIES_DETAIL: u64 = 15; // observed ≈ 5
+const MAX_QUERIES_ISSUE_DETAIL: u64 = 20; // observed ≈ 10 (parallel try_join set)
+// Must stay flat in the member count: the pre-PERF-1 shape cost ~2 queries
+// per member (~200 for the 100-member batch below).
+const MAX_QUERIES_BULK_ADD: u64 = 15;
 
 #[tokio::test]
 async fn realistic_dataset_endpoints_respond_correctly() {
@@ -656,6 +700,74 @@ async fn realistic_dataset_endpoints_respond_correctly() {
         snap.taken(),
         MAX_QUERIES_ADMIN_STATS,
         "/api/admin/stats/users",
+    );
+
+    // ── /series/{slug} detail — seeded slugs are `perf-{s}`.
+    let snap = QueryCount::snapshot(&counter);
+    let (status, body, elapsed) = get(&app, &user, "/api/series/perf-0").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["id"].is_string(), "series detail missing id: {body}");
+    assert_quick(elapsed, "/api/series/perf-0");
+    assert_query_count(
+        snap.taken(),
+        MAX_QUERIES_SERIES_DETAIL,
+        "/api/series/{slug}",
+    );
+
+    // ── /series/{slug}/issues/{slug} detail — PERF-8 parallelized its
+    // ~8 independent lookups; the guard keeps the set from growing back
+    // one sequential query at a time. Seeded issue slugs are
+    // `issue-{suffix}`; series 0 owns suffixes 0..issues_per_series.
+    let snap = QueryCount::snapshot(&counter);
+    let (status, body, elapsed) = get(&app, &user, "/api/series/perf-0/issues/issue-0").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["id"].is_string(), "issue detail missing id: {body}");
+    assert_quick(elapsed, "/api/series/perf-0/issues/issue-0");
+    assert_query_count(
+        snap.taken(),
+        MAX_QUERIES_ISSUE_DETAIL,
+        "/api/series/{slug}/issues/{slug}",
+    );
+
+    // ── collections bulk-add — PERF-1 replaced the per-member existence
+    // probe (~2N queries) with two batched `is_in` checks + one
+    // insert_many. The bound is intentionally member-count-independent:
+    // all 100 seeded issues go in one call.
+    let (status, created, _) = post(
+        &app,
+        &user,
+        "/api/me/collections",
+        serde_json::json!({"name": "Perf Pile"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create collection: {created}");
+    let cid = created["id"].as_str().expect("collection id").to_owned();
+    let members: Vec<serde_json::Value> = series_with_issues
+        .iter()
+        .flat_map(|(_, ids)| ids.iter())
+        .map(|id| serde_json::json!({"entry_kind": "issue", "ref_id": id}))
+        .collect();
+    let member_count = members.len() as u64;
+    assert_eq!(member_count, 100, "expected the full seeded issue set");
+    let snap = QueryCount::snapshot(&counter);
+    let (status, body, elapsed) = post(
+        &app,
+        &user,
+        &format!("/api/me/collections/{cid}/members/bulk-add"),
+        serde_json::json!({ "members": members }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bulk-add: {body}");
+    assert_eq!(
+        body["added"].as_u64(),
+        Some(member_count),
+        "all added: {body}"
+    );
+    assert_quick(elapsed, "/api/me/collections/{id}/members/bulk-add");
+    assert_query_count(
+        snap.taken(),
+        MAX_QUERIES_BULK_ADD,
+        "/api/me/collections/{id}/members/bulk-add (100 members)",
     );
 
     // ── /me/on-deck at scale — the regression guard for the batched

@@ -21,7 +21,11 @@ import { useEffect } from "react";
 const RELOAD_GUARD_KEY = "folio.loading-watchdog.last-reload";
 const RELOAD_GUARD_WINDOW_MS = 60_000;
 
-export function LoadingWatchdog({ timeoutMs = 15_000 }: { timeoutMs?: number }) {
+export function LoadingWatchdog({
+  timeoutMs = 15_000,
+}: {
+  timeoutMs?: number;
+}) {
   useEffect(() => {
     const timer = setTimeout(() => {
       const url = window.location.href;

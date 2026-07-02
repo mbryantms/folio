@@ -52,7 +52,7 @@ export function RestartPendingBanner() {
         </p>
         <ul className="space-y-0.5">
           {pending.map((p) => (
-            <li key={p.key} className="wrap-anywhere text-xs">
+            <li key={p.key} className="text-xs wrap-anywhere">
               <span className="font-medium">{KEY_LABELS[p.key] ?? p.key}</span>:{" "}
               <span className="font-mono">{p.boot_value}</span>
               {" → "}

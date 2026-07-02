@@ -2068,10 +2068,9 @@ async fn process_planned_folder(
         let path_str = path.to_string_lossy().into_owned();
         match process::file_fingerprint(path) {
             Ok((size, mtime)) => {
-                if !force
-                    && let Some(row) = manifest.by_path(&path_str)
-                    && process::row_metadata_is_current(&row, size, mtime)
-                {
+                // PERF-6: clone-free projected check — the manifest no longer
+                // materializes full `issue::Model`s (see `IssueManifest`).
+                if !force && manifest.metadata_is_current(&path_str, size, mtime) {
                     let before_stats = stats.clone();
                     stats.files_unchanged += 1;
                     health.touch_file(path);

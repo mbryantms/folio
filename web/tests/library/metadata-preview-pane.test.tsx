@@ -46,7 +46,10 @@ vi.mock("@/components/ui/tooltip", () => ({
     createElement("div", { "data-role": "tooltip" }, children),
 }));
 
-import { MetadataPreviewPane, defaultSelectedFields } from "@/components/library/MetadataPreviewPane";
+import {
+  MetadataPreviewPane,
+  defaultSelectedFields,
+} from "@/components/library/MetadataPreviewPane";
 
 function baseDiff(overrides: Partial<DiffResp> = {}): DiffResp {
   return {
@@ -203,9 +206,7 @@ describe("<MetadataPreviewPane>", () => {
           proposed_external_id: "2",
         },
       ],
-      external_ids_new: [
-        { source: "metron", external_id: "77777" },
-      ],
+      external_ids_new: [{ source: "metron", external_id: "77777" }],
       changes_count: 2,
     });
     const html = renderToStaticMarkup(
@@ -264,7 +265,9 @@ describe("<MetadataPreviewPane>", () => {
     // The blocked_by_user row's checkbox renders the disabled attr —
     // non-admin can't opt the row in even though it's a real diff.
     expect(html).toContain("User-set");
-    expect(html).toMatch(/<input[^>]*disabled[^>]*type="checkbox"|<input[^>]*type="checkbox"[^>]*disabled/);
+    expect(html).toMatch(
+      /<input[^>]*disabled[^>]*type="checkbox"|<input[^>]*type="checkbox"[^>]*disabled/,
+    );
   });
 });
 
@@ -277,11 +280,51 @@ describe("defaultSelectedFields", () => {
       source: "comicvine",
       source_external_id: "1",
       rows: [
-        { field: "title", label: "Title", current_value: null, proposed_value: "a", decision: "would_fill", current_set_by: null, current_set_at: null },
-        { field: "year_began", label: "Year began", current_value: "1", proposed_value: "2", decision: "would_replace", current_set_by: "metron", current_set_at: null },
-        { field: "publisher", label: "Publisher", current_value: "x", proposed_value: "x", decision: "no_change", current_set_by: null, current_set_at: null },
-        { field: "sort_name", label: "Sort name", current_value: "user", proposed_value: "x", decision: "blocked_by_user", current_set_by: "user", current_set_at: null },
-        { field: "deck", label: "Deck", current_value: "x", proposed_value: null, decision: "no_incoming_value", current_set_by: null, current_set_at: null },
+        {
+          field: "title",
+          label: "Title",
+          current_value: null,
+          proposed_value: "a",
+          decision: "would_fill",
+          current_set_by: null,
+          current_set_at: null,
+        },
+        {
+          field: "year_began",
+          label: "Year began",
+          current_value: "1",
+          proposed_value: "2",
+          decision: "would_replace",
+          current_set_by: "metron",
+          current_set_at: null,
+        },
+        {
+          field: "publisher",
+          label: "Publisher",
+          current_value: "x",
+          proposed_value: "x",
+          decision: "no_change",
+          current_set_by: null,
+          current_set_at: null,
+        },
+        {
+          field: "sort_name",
+          label: "Sort name",
+          current_value: "user",
+          proposed_value: "x",
+          decision: "blocked_by_user",
+          current_set_by: "user",
+          current_set_at: null,
+        },
+        {
+          field: "deck",
+          label: "Deck",
+          current_value: "x",
+          proposed_value: null,
+          decision: "no_incoming_value",
+          current_set_by: null,
+          current_set_at: null,
+        },
       ],
       external_id_conflicts: [],
       external_ids_new: [],

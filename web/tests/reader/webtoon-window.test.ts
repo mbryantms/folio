@@ -40,9 +40,9 @@ describe("computeWebtoonWindow", () => {
 
 describe("placeholderAspectRatio", () => {
   it("uses server-known dims", () => {
-    expect(placeholderAspectRatio({ image_width: 1988, image_height: 3056 })).toBe(
-      "1988 / 3056",
-    );
+    expect(
+      placeholderAspectRatio({ image_width: 1988, image_height: 3056 }),
+    ).toBe("1988 / 3056");
   });
 
   it("falls back to 2/3 when dims are missing or invalid", () => {
@@ -51,9 +51,9 @@ describe("placeholderAspectRatio", () => {
     expect(placeholderAspectRatio({ image_width: 0, image_height: 0 })).toBe(
       "2 / 3",
     );
-    expect(
-      placeholderAspectRatio({ image_width: -1, image_height: 100 }),
-    ).toBe("2 / 3");
+    expect(placeholderAspectRatio({ image_width: -1, image_height: 100 })).toBe(
+      "2 / 3",
+    );
     expect(
       placeholderAspectRatio({ image_width: 100, image_height: null }),
     ).toBe("2 / 3");

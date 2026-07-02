@@ -1049,3 +1049,77 @@ async fn duplicate_embedded_external_id_surfaces_health_without_wedging_scan() {
         "the duplicate id raised one DuplicateExternalId finding"
     );
 }
+
+/// PERF-6: the manifest's SQL-computed `needs_count_backfill` flag must
+/// mirror `row_needs_comicinfo_count_backfill` — a divergence would either
+/// re-ingest unchanged files on every scan (wasted work) or skip rows that
+/// still need the comicinfo-count backfill (stale data). Drives the four
+/// row states through `IssueManifest::metadata_is_current` with a matching
+/// on-disk fingerprint.
+#[tokio::test]
+async fn manifest_backfill_expr_matches_rust() {
+    use entity::issue;
+    use server::library::scanner::process::IssueManifest;
+
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Parity (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let p = folder.join("Parity 001.cbz");
+    write_cbz_with_xml(&p, 1, 1, None, None);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let row = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
+    let (size, mtime) = server::library::scanner::process::file_fingerprint(&p).unwrap();
+    let path_str = p.to_string_lossy().into_owned();
+    let paths = vec![p.clone()];
+
+    // (comicinfo_count, comic_info_raw) → expected fast-path currency.
+    let cases: [(Option<i32>, serde_json::Value, bool, &str); 4] = [
+        (
+            Some(3),
+            serde_json::Value::Null,
+            true,
+            "count set → current",
+        ),
+        (
+            None,
+            serde_json::Value::Null,
+            false,
+            "no count + raw json-null → backfill",
+        ),
+        (
+            None,
+            serde_json::json!({"Count": 5}),
+            false,
+            "no count + raw carries Count → backfill",
+        ),
+        (
+            None,
+            serde_json::json!({"series": "Parity"}),
+            true,
+            "no count + raw lacks count key → current",
+        ),
+    ];
+    for (count, raw, expect_current, label) in cases {
+        let mut am: issue::ActiveModel = row.clone().into();
+        am.comicinfo_count = Set(count);
+        am.comic_info_raw = Set(raw);
+        am.update(&state.db).await.unwrap();
+
+        let manifest = IssueManifest::for_paths(&state.db, &paths).await.unwrap();
+        assert!(manifest.contains(&path_str), "{label}: row visible");
+        assert_eq!(
+            manifest.metadata_is_current(&path_str, size, mtime),
+            expect_current,
+            "{label}"
+        );
+    }
+
+    // Fingerprint mismatch always defeats the fast path, regardless of state.
+    let manifest = IssueManifest::for_paths(&state.db, &paths).await.unwrap();
+    assert!(!manifest.metadata_is_current(&path_str, size + 1, mtime));
+}

@@ -1,6 +1,12 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
 import dynamic from "next/dynamic";
 
 /** `SearchModal` pulls in cmdk (~several KB). The provider mounts at the

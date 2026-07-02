@@ -69,7 +69,9 @@ export function parseSeriesSearchFilters(
   const sortRaw = raw.sort;
   const sort: SeriesSearchSort = isSort(sortRaw) ? sortRaw : "relevance";
   const status =
-    raw.status && raw.status !== "any" && SERIES_STATUS_OPTIONS.some((o) => o.value === raw.status)
+    raw.status &&
+    raw.status !== "any" &&
+    SERIES_STATUS_OPTIONS.some((o) => o.value === raw.status)
       ? raw.status
       : "any";
   const publishersCsv = (raw.publisher ?? "").trim();
@@ -131,7 +133,9 @@ export function seriesSearchFiltersToHook(state: SeriesSearchFilterState): {
 /** How many facets are active. Drives the "Filter (N)" badge so
  *  the user can see at a glance whether any non-default filter is
  *  applied. Sort doesn't count — it has its own dedicated chip. */
-export function countActiveSeriesFilters(state: SeriesSearchFilterState): number {
+export function countActiveSeriesFilters(
+  state: SeriesSearchFilterState,
+): number {
   let n = 0;
   if (state.yearFrom || state.yearTo) n += 1;
   if (state.status !== "any") n += 1;

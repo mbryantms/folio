@@ -40,8 +40,14 @@ export function BackupStorageCard({ libraryId }: { libraryId: string }) {
           <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
             <Stat label="Total size" value={formatBytes(q.data.total_bytes)} />
             <Stat label="Files" value={String(q.data.file_count)} />
-            <Stat label="Oldest" value={formatDate(q.data.oldest_modified_at)} />
-            <Stat label="Newest" value={formatDate(q.data.newest_modified_at)} />
+            <Stat
+              label="Oldest"
+              value={formatDate(q.data.oldest_modified_at)}
+            />
+            <Stat
+              label="Newest"
+              value={formatDate(q.data.newest_modified_at)}
+            />
           </dl>
         )}
       </CardContent>

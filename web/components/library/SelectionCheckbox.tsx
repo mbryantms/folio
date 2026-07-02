@@ -108,7 +108,7 @@ export function SelectionCheckbox({
       }}
       className={cn(
         visualClasses,
-        "cursor-pointer focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none",
+        "focus-visible:ring-ring cursor-pointer focus-visible:ring-2 focus-visible:outline-none",
         "pointer-events-none scale-95 opacity-0 group-hover:pointer-events-auto group-hover:scale-100 group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:scale-100 focus-visible:opacity-100",
       )}
     >

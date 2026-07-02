@@ -39,8 +39,10 @@ export function useCopyToClipboard(resetMs = 1500) {
   return { copied, copy };
 }
 
-export interface CopyButtonProps
-  extends Omit<ButtonProps, "value" | "onClick" | "children"> {
+export interface CopyButtonProps extends Omit<
+  ButtonProps,
+  "value" | "onClick" | "children"
+> {
   /** Text written to the clipboard on click. */
   value: string;
   /** Label shown next to the copy icon; omit for an icon-only button. */

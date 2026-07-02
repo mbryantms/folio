@@ -50,6 +50,9 @@ export function placeholderAspectRatio(page?: {
  * The on-screen page is free to move both ways; only what we persist is
  * clamped to the high-water mark.
  */
-export function nextPersistedProgressPage(prev: number, current: number): number {
+export function nextPersistedProgressPage(
+  prev: number,
+  current: number,
+): number {
   return Math.max(prev, current);
 }

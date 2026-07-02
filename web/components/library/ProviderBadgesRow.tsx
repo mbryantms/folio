@@ -10,10 +10,7 @@
  */
 
 import { ProviderBadges } from "@/components/library/ProviderBadges";
-import {
-  useExternalIdsIssue,
-  useExternalIdsSeries,
-} from "@/lib/api/queries";
+import { useExternalIdsIssue, useExternalIdsSeries } from "@/lib/api/queries";
 
 type Props =
   | { scope: "series"; seriesSlug: string; className?: string }
@@ -26,7 +23,9 @@ type Props =
 
 export function ProviderBadgesRow(props: Props) {
   if (props.scope === "series") {
-    return <SeriesBadges seriesSlug={props.seriesSlug} className={props.className} />;
+    return (
+      <SeriesBadges seriesSlug={props.seriesSlug} className={props.className} />
+    );
   }
   return (
     <IssueBadges

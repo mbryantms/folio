@@ -29,8 +29,8 @@ export function ProseClamp({ text }: { text: string }) {
     <div className="max-w-prose">
       <p
         className={
-          "text-foreground/90 text-sm leading-6 "
-          + (expanded ? "" : "line-clamp-3 sm:line-clamp-none")
+          "text-foreground/90 text-sm leading-6 " +
+          (expanded ? "" : "line-clamp-3 sm:line-clamp-none")
         }
       >
         {text}

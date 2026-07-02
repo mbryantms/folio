@@ -33,7 +33,6 @@ import type {
   TextRegionView,
 } from "@/lib/api/types";
 
-
 /** Pointer travel (percent of image size) below which a release
  *  counts as a tap rather than a drag. ~0.8% of a 1000px-wide page
  *  is 8px — forgiving enough for touch, far below any real drag. */

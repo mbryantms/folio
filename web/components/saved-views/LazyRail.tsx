@@ -79,7 +79,9 @@ export function LazyRail({
   }, [mounted]);
 
   if (mounted) {
-    return <SavedViewRail view={view} cardSize={cardSize} priority={priority} />;
+    return (
+      <SavedViewRail view={view} cardSize={cardSize} priority={priority} />
+    );
   }
 
   // Height estimate: one card-height row + ~120px for the title row

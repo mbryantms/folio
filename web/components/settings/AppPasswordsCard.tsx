@@ -514,4 +514,3 @@ function computeBasicHeader(email: string, token: string): string | null {
     return null;
   }
 }
-

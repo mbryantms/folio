@@ -453,7 +453,10 @@ export function MarkersList() {
             className={query.hasNextPage ? "h-12" : "hidden"}
           />
           {query.isFetchingNextPage ? (
-            <p role="status" className="text-muted-foreground text-center text-xs">
+            <p
+              role="status"
+              className="text-muted-foreground text-center text-xs"
+            >
               Loading more markers…
             </p>
           ) : null}
@@ -885,10 +888,7 @@ function MarkerCard({
   });
 
   const cardBody = (
-    <div
-      className="relative"
-      {...(inSelect ? {} : longPress.wrapperProps)}
-    >
+    <div className="relative" {...(inSelect ? {} : longPress.wrapperProps)}>
       {/* Thumbnail height comes from the row-packed layout above;
        *  width is `100%` of the parent slot, which itself was sized
        *  to `aspect × height`. So the wrapper ends up an exact tile
@@ -1011,13 +1011,9 @@ function EmptyState({ hasFilter }: { hasFilter: boolean }) {
       ) : (
         <>
           You haven&apos;t saved any markers yet. Open the reader and press{" "}
-          <Kbd>b</Kbd> to
-          bookmark a page,{" "}
-          <Kbd>n</Kbd> to
-          add a note, or{" "}
-          <Kbd>h</Kbd> to
-          start a highlight — or use the bookmark, star, and marker
-          buttons in the reader&apos;s top toolbar.
+          <Kbd>b</Kbd> to bookmark a page, <Kbd>n</Kbd> to add a note, or{" "}
+          <Kbd>h</Kbd> to start a highlight — or use the bookmark, star, and
+          marker buttons in the reader&apos;s top toolbar.
         </>
       )}
     </div>

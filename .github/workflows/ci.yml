@@ -336,6 +336,17 @@ jobs:
           pnpm --filter web run lint
           elapsed=$(($(date +%s) - start))
           echo "| lint | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
+      # Format gate: ESLint doesn't enforce Prettier formatting, so drift
+      # accumulated silently on main (~60 files by 2026-07) until a
+      # `prettier --write .` in an unrelated branch dragged them all into
+      # its diff. Fail fast instead.
+      - name: Format check
+        if: env.WEB == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm --filter web run format:check
+          elapsed=$(($(date +%s) - start))
+          echo "| format:check | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       - name: Typecheck
         if: env.WEB == 'true'
         run: |

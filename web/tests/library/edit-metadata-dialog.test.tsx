@@ -57,12 +57,7 @@ vi.mock("@/components/ui/select", () => ({
   }: {
     value: string;
     children: React.ReactNode;
-  }) =>
-    createElement(
-      "li",
-      { "data-value": value, role: "option" },
-      children,
-    ),
+  }) => createElement("li", { "data-value": value, role: "option" }, children),
 }));
 
 // Stub RadioGroup so RadioGroupItem renders an inspectable button
@@ -140,9 +135,7 @@ describe("<EditMetadataForm>", () => {
     // Default selection: skip_if_set. The radio group itself carries
     // the current value as `data-value`, and both radio items are
     // present with their own `data-value`.
-    expect(html).toMatch(
-      /role="radiogroup"[^>]*data-value="skip_if_set"/,
-    );
+    expect(html).toMatch(/role="radiogroup"[^>]*data-value="skip_if_set"/);
     expect(html).toMatch(/role="radio"[^>]*data-value="skip_if_set"/);
     expect(html).toMatch(/role="radio"[^>]*data-value="replace"/);
   });
