@@ -17,6 +17,9 @@ use chrono::{DateTime, Duration, Utc};
 use entity::metadata_cache;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Set};
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Version of the provider → [`GenericMetadata`] normalization. Stamped
 /// onto every cached payload by [`put`]; [`get`] treats a row whose
@@ -195,6 +198,55 @@ pub async fn put<C: ConnectionTrait>(
         .exec(db)
         .await?;
     Ok(())
+}
+
+/// Per-key async locks coordinating [`get_or_fetch`] single-flight, keyed by
+/// `"{provider}:{entity}:{external_id}"`. Entries are never removed — one cheap
+/// `Arc<tokio::Mutex<()>>` per distinct key ever fetched (bounded by library
+/// size), so the resident footprint is negligible for a self-hosted instance.
+fn keyed_locks() -> &'static Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// PERF-4: single-flight `get` → `fetch` → `put`. On a cache miss, only the
+/// first concurrent caller for a given `(provider, entity, external_id)` runs
+/// `fetch`; the rest block on a per-key async lock and then re-read the cache
+/// (which the leader has populated), so identical concurrent fetches don't
+/// stampede the provider or burn its rate-limit quota. On a fetch error the
+/// waiters just fetch themselves (no negative caching) — same observable
+/// behaviour as the pre-existing get→fetch→put, minus the stampede.
+pub async fn get_or_fetch<C, F, Fut, E>(
+    db: &C,
+    provider: Source,
+    entity: CacheEntity,
+    external_id: &str,
+    ttl: Duration,
+    fetch: F,
+) -> Result<GenericMetadata, E>
+where
+    C: ConnectionTrait,
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<GenericMetadata, E>>,
+{
+    if let Ok(Some(hit)) = get(db, provider, entity, external_id, ttl).await {
+        return Ok(hit);
+    }
+    let key = format!("{}:{}:{}", provider.as_str(), entity.as_str(), external_id);
+    let lock = {
+        let mut map = keyed_locks().lock().unwrap();
+        map.entry(key)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    let _guard = lock.lock().await;
+    // Re-check under the lock: a concurrent leader may have just populated it.
+    if let Ok(Some(hit)) = get(db, provider, entity, external_id, ttl).await {
+        return Ok(hit);
+    }
+    let fresh = fetch().await?;
+    let _ = put(db, provider, entity, external_id, &fresh).await;
+    Ok(fresh)
 }
 
 /// Delete every cached payload for a provider — used when the operator

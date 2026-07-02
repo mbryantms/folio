@@ -42,6 +42,55 @@ async fn cache_round_trips_payload() {
     assert_eq!(got.year_began, Some(2012));
 }
 
+/// PERF-4: concurrent cache misses for the same key single-flight — only the
+/// first (leader) caller runs `fetch`; the rest await the per-key lock and then
+/// read the value the leader cached, instead of all stampeding the provider.
+#[tokio::test]
+async fn get_or_fetch_single_flights_concurrent_misses() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let app = TestApp::spawn().await;
+    let db = app.state().db.clone();
+    let ttl = chrono::Duration::hours(1);
+    let fetches = Arc::new(AtomicU32::new(0));
+
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let db = db.clone();
+        let fetches = fetches.clone();
+        handles.push(tokio::spawn(async move {
+            cache::get_or_fetch(
+                &db,
+                Source::ComicVine,
+                CacheEntity::Series,
+                "single-flight-key",
+                ttl,
+                || async move {
+                    fetches.fetch_add(1, Ordering::SeqCst);
+                    // Hold the leader's lock long enough for the others to queue.
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    Ok::<_, String>(GenericMetadata {
+                        series_name: Some("Coalesced".into()),
+                        ..Default::default()
+                    })
+                },
+            )
+            .await
+        }));
+    }
+
+    for handle in handles {
+        let got = handle.await.expect("task join").expect("resolves Ok");
+        assert_eq!(got.series_name.as_deref(), Some("Coalesced"));
+    }
+    assert_eq!(
+        fetches.load(Ordering::SeqCst),
+        1,
+        "single-flight: only the leader should have run `fetch`",
+    );
+}
+
 #[tokio::test]
 async fn cache_misses_when_stale() {
     let app = TestApp::spawn().await;
