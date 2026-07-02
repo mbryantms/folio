@@ -35,6 +35,7 @@ import {
 } from "@/lib/reader/spreads";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
+import { pageBytesSrcSet } from "@/lib/urls";
 import { useReaderGestures } from "@/lib/reader/use-swipe";
 import { useReaderKeymap } from "@/lib/reader/use-keymap";
 import {
@@ -737,6 +738,11 @@ export function Reader({
     currentGroupIdx,
     groups,
     viewMode,
+    // FEP-1: warm the same variant the visible <img> will pick so the
+    // decode-and-retain cache hits by exact URL. Original-fit and zoom
+    // read full-res, so warms follow suit.
+    pageWidths: pages.map((p) => p.image_width ?? null),
+    variantsEnabled: fitMode !== "original" && zoom.scale === 1,
   });
 
   // Reset scroll on page change in single/double mode so each new page
@@ -1067,6 +1073,8 @@ function SinglePageView({
     rect: { w: number; h: number },
   ) => void;
 }) {
+  // FEP-1: fit mode gates the variant srcSet (original-fit -> full-res).
+  const singleFitMode = useReaderStore((s) => s.fitMode);
   const markerMode = useReaderStore((s) => s.markerMode);
   const panActive = (zoom.scale > 1 || overflowing) && markerMode === "idle";
   // The wrapper is a block-level <div> rather than the previous
@@ -1169,6 +1177,17 @@ function SinglePageView({
           <PageImage
             key={`${issueId}-${currentPage}`}
             src={`/issues/${issueId}/pages/${currentPage}`}
+            // FEP-1: sized variants — except original-fit and while
+            // zoomed, which always get full-res pixels.
+            srcSet={
+              singleFitMode !== "original" && zoom.scale === 1
+                ? pageBytesSrcSet(
+                    `/issues/${issueId}/pages/${currentPage}`,
+                    pageInfo?.image_width,
+                  )
+                : undefined
+            }
+            sizes="100vw"
             thumbSrc={`/issues/${issueId}/pages/${currentPage}/thumb?variant=strip`}
             alt={`Page ${currentPage + 1}`}
             fitClass={fitClass}
@@ -1316,10 +1335,22 @@ function DoublePagePane({
   // descender so the SVG overlay's `absolute inset-0` covers the img box
   // exactly.
   const imgRef = useRef<HTMLImageElement>(null);
+  // FEP-1: double-page has no pinch zoom, so only original-fit opts out
+  // of variants. Each pane occupies ~half the viewport row.
+  const paneFitMode = useReaderStore((s) => s.fitMode);
   return (
     <div className={`relative align-top ${paneClass}`}>
       <PageImage
         src={`/issues/${issueId}/pages/${page}`}
+        srcSet={
+          paneFitMode !== "original"
+            ? pageBytesSrcSet(
+                `/issues/${issueId}/pages/${page}`,
+                pageInfo?.image_width,
+              )
+            : undefined
+        }
+        sizes="50vw"
         thumbSrc={`/issues/${issueId}/pages/${page}/thumb?variant=strip`}
         alt={`Page ${page + 1}`}
         fitClass={fitClass}
@@ -1569,6 +1600,12 @@ const WebtoonPage = memo(function WebtoonPage({
     <>
       <PageImage
         src={`/issues/${issueId}/pages/${pageIndex}`}
+        // FEP-1: webtoon is width-fit by construction; no zoom surface.
+        srcSet={pageBytesSrcSet(
+          `/issues/${issueId}/pages/${pageIndex}`,
+          pageInfo?.image_width,
+        )}
+        sizes="100vw"
         thumbSrc={`/issues/${issueId}/pages/${pageIndex}/thumb?variant=strip`}
         alt={`Page ${pageIndex + 1}`}
         fitClass={fitClass}

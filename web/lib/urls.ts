@@ -149,6 +149,51 @@ export function pageBytesUrl(issueId: string, page: number): string {
   return `/issues/${encodeURIComponent(issueId)}/pages/${page}`;
 }
 
+/** Width ladder for reader page variants (audit FEP-1). Mirrors
+ *  `page_variants::TIERS` on the server — change both together. */
+export const PAGE_VARIANT_TIERS = [480, 720, 1080, 1600] as const;
+
+/** `?w=` variant of a page-bytes URL. */
+export function pageVariantUrl(src: string, w: number): string {
+  return `${src}${src.includes("?") ? "&" : "?"}w=${w}`;
+}
+
+/** The tier a `srcSet`+`sizes` browser pick resolves to for a given
+ *  device-pixel target, or `null` when the target wants full-res (bigger
+ *  than every useful tier, or at/above the intrinsic width). The reader
+ *  prefetcher uses this so warmed URLs match the rendered `<img>`'s pick
+ *  byte-for-byte — the decode-and-retain cache is keyed by exact URL. */
+export function selectPageVariantTier(
+  targetDevicePx: number,
+  intrinsicWidth?: number | null,
+): number | null {
+  for (const t of PAGE_VARIANT_TIERS) {
+    if (t >= targetDevicePx) {
+      return intrinsicWidth != null && t >= intrinsicWidth ? null : t;
+    }
+  }
+  return null;
+}
+
+/** `srcSet` for a reader page: one entry per tier below the intrinsic
+ *  width plus the full-res URL anchored at the intrinsic width, so the
+ *  browser can pick original pixels when the slot genuinely needs them.
+ *  `undefined` when the page is already smaller than the smallest tier
+ *  (or has no server-known width — no safe descriptor to anchor). */
+export function pageBytesSrcSet(
+  src: string,
+  intrinsicWidth?: number | null,
+): string | undefined {
+  if (intrinsicWidth == null || intrinsicWidth <= PAGE_VARIANT_TIERS[0]) {
+    return undefined;
+  }
+  const parts = PAGE_VARIANT_TIERS.filter((t) => t < intrinsicWidth).map(
+    (t) => `${pageVariantUrl(src, t)} ${t}w`,
+  );
+  parts.push(`${src} ${intrinsicWidth}w`);
+  return parts.join(", ");
+}
+
 // ───── Helper exports for caller convenience ─────
 
 /** Type guard: most call sites pass a `Pick<>` to keep coupling loose. */
