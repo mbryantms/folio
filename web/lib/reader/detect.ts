@@ -74,9 +74,8 @@ export function detectViewMode(pages: PageInfo[]): ViewMode {
   const heightOverWidth = sized
     .map((p) => p.image_height / p.image_width)
     .sort((a, b) => a - b);
-  const medianHW = heightOverWidth.length
-    ? heightOverWidth[Math.floor(heightOverWidth.length / 2)]
-    : null;
+  const medianHW =
+    heightOverWidth[Math.floor(heightOverWidth.length / 2)] ?? null;
 
   if (medianHW !== null && medianHW >= WEBTOON_ASPECT_THRESHOLD) {
     return "webtoon";

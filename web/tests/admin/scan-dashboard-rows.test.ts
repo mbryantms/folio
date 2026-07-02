@@ -77,7 +77,7 @@ describe("buildLibRows", () => {
         empty_folders: 0,
       },
     ];
-    const [a] = buildLibRows([member("a", "Alpha", "queued")], events, BATCH);
+    const a = buildLibRows([member("a", "Alpha", "queued")], events, BATCH)[0]!;
     expect(a.state).toBe("running");
     expect(a.completed).toBe(3);
     expect(a.total).toBe(10);
@@ -158,7 +158,7 @@ describe("buildLibRows", () => {
         empty_folders: 0,
       },
     ];
-    const [a] = buildLibRows([member("a", "Alpha", "queued")], events, BATCH);
+    const a = buildLibRows([member("a", "Alpha", "queued")], events, BATCH)[0]!;
     expect(a.state).toBe("running");
     expect(a.completed).toBe(5);
   });

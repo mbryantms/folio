@@ -400,6 +400,7 @@ function ReadingOrderTab({
             >
               {virtualItems.map((vi) => {
                 const entry = items[vi.index];
+                if (entry === undefined) return null;
                 return (
                   <div
                     key={entry.id}
@@ -619,8 +620,9 @@ export function similarFollowing(
   const name = items[index]?.series_name;
   const out: CblEntryHydratedView[] = [];
   for (let j = index + 1; j < items.length; j++) {
-    if (items[j].series_name !== name) break;
-    out.push(items[j]);
+    const next = items[j];
+    if (next === undefined || next.series_name !== name) break;
+    out.push(next);
   }
   return out;
 }

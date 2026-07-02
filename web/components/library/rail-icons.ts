@@ -84,7 +84,9 @@ export const RAIL_ICON_CATEGORY_LABELS: Record<RailIconCategory, string> = {
  *  comic-themed ones (drama masks, skull, swords, shield, crown, ghost)
  *  sit in the "Heroes & villains" group — Lucide doesn't have actual
  *  superhero crests, but these read closest to comic tropes. */
-export const RAIL_ICONS: ReadonlyArray<RailIconEntry> = [
+// Non-empty tuple type so `RAIL_ICONS[0]` stays a guaranteed fallback
+// under noUncheckedIndexedAccess.
+export const RAIL_ICONS: readonly [RailIconEntry, ...RailIconEntry[]] = [
   // Reading & books
   { key: "book-open", label: "Open book", category: "reading", Icon: BookOpen },
   { key: "book", label: "Book", category: "reading", Icon: Book },

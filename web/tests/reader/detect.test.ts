@@ -93,14 +93,14 @@ describe("detectViewMode", () => {
 
   it("picks double when ≥10% of pages carry the DoublePage flag", () => {
     const pages = portrait(20);
-    pages[0].double_page = true;
-    pages[1].double_page = true;
+    pages[0]!.double_page = true;
+    pages[1]!.double_page = true;
     expect(detectViewMode(pages)).toBe("double");
   });
 
   it("ignores a single DoublePage flag in a long issue (under 10%)", () => {
     const pages = portrait(20);
-    pages[5].double_page = true;
+    pages[5]!.double_page = true;
     expect(detectViewMode(pages)).toBe("single");
   });
 

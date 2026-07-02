@@ -345,6 +345,7 @@ export function PageAdjustDialog({
                 max={255}
                 step={1}
                 onValueChange={([a, b]) => {
+                  if (a === undefined || b === undefined) return;
                   setLo(Math.min(a, b));
                   setHi(Math.max(a, b));
                 }}
@@ -435,7 +436,9 @@ function AdjustSlider({
         min={min}
         max={max}
         step={step}
-        onValueChange={([v]) => onChange(v)}
+        onValueChange={([v]) => {
+          if (v !== undefined) onChange(v);
+        }}
       />
     </div>
   );

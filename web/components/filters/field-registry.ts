@@ -31,7 +31,9 @@ export type FieldSpec = {
   id: Field;
   label: string;
   kind: FieldKind;
-  allowedOps: Op[];
+  /** Non-empty by construction — every field must offer at least one op,
+   *  so `allowedOps[0]` is a safe default. */
+  allowedOps: readonly [Op, ...Op[]];
   /** Closed list of legal scalar values. Empty unless `kind === 'enum'`. */
   enumValues?: readonly string[];
   /** Optional display-label override per enum value. Falls back to the
@@ -44,14 +46,14 @@ export type FieldSpec = {
   optionsEndpoint?: OptionsEndpoint;
 };
 
-const TEXT_OPS: Op[] = [
+const TEXT_OPS: readonly [Op, ...Op[]] = [
   "contains",
   "not_contains",
   "starts_with",
   "equals",
   "not_equals",
 ];
-const NUMBER_OPS: Op[] = [
+const NUMBER_OPS: readonly [Op, ...Op[]] = [
   "equals",
   "not_equals",
   "gt",
@@ -60,9 +62,20 @@ const NUMBER_OPS: Op[] = [
   "lte",
   "between",
 ];
-const DATE_OPS: Op[] = ["before", "after", "between", "relative", "lt", "gt"];
-const ENUM_OPS: Op[] = ["is", "is_not", "in", "not_in"];
-const MULTI_OPS: Op[] = ["includes_any", "includes_all", "excludes"];
+const DATE_OPS: readonly [Op, ...Op[]] = [
+  "before",
+  "after",
+  "between",
+  "relative",
+  "lt",
+  "gt",
+];
+const ENUM_OPS: readonly [Op, ...Op[]] = ["is", "is_not", "in", "not_in"];
+const MULTI_OPS: readonly [Op, ...Op[]] = [
+  "includes_any",
+  "includes_all",
+  "excludes",
+];
 
 const SERIES_STATUS_VALUES = [
   "continuing",

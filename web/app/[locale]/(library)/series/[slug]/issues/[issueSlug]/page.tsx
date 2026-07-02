@@ -1032,8 +1032,8 @@ function extractProviderIssueIdFromUrl(
 
   if (host === "comicvine.gamespot.com") {
     for (const segment of segments) {
-      const match = /^4000-(\d+)$/i.exec(segment);
-      if (match) return { source: "comicvine", id: match[1] };
+      const id = /^4000-(\d+)$/i.exec(segment)?.[1];
+      if (id !== undefined) return { source: "comicvine", id };
     }
     return null;
   }

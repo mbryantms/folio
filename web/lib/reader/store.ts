@@ -247,7 +247,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
 
   cycleFitMode: () => {
     const idx = FIT_MODES.indexOf(get().fitMode);
-    const next = FIT_MODES[(idx + 1) % FIT_MODES.length];
+    const next = FIT_MODES[(idx + 1) % FIT_MODES.length]!;
     save("fitMode", get().seriesId, next);
     set({ fitMode: next });
   },
@@ -258,7 +258,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
 
   cycleViewMode: () => {
     const idx = VIEW_MODES.indexOf(get().viewMode);
-    const next = VIEW_MODES[(idx + 1) % VIEW_MODES.length];
+    const next = VIEW_MODES[(idx + 1) % VIEW_MODES.length]!;
     save("viewMode", get().seriesId, next);
     set({ viewMode: next });
   },
