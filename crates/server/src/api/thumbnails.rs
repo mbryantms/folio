@@ -35,6 +35,7 @@ use super::error;
 use crate::auth::CurrentUser;
 use crate::library::thumbnails::{self, ThumbFormat, ThumbnailQuality, Variant};
 use crate::state::AppState;
+use server_macros::handler;
 
 const INLINE_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -53,6 +54,7 @@ pub fn routes() -> Router<AppState> {
         .route("/issues/{id}/covers/{cover_id}", get(serve_issue_cover))
 }
 
+#[handler]
 pub async fn thumb(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -287,6 +289,7 @@ async fn serve_file(
 /// instead of hotlinking the provider CDN. 404 when the row has no
 /// local artifact (caller falls back to `source_url`) or the requesting
 /// user can't see the issue's library.
+#[handler]
 pub async fn serve_issue_cover(
     State(app): State<AppState>,
     user: CurrentUser,

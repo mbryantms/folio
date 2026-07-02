@@ -59,6 +59,20 @@ async fn metrics(State(state): State<AppState>, headers: HeaderMap) -> Response 
     // Sample process/runtime gauges (`folio_process_*`) fresh at scrape time.
     state.process_metrics.collect();
 
+    // OBS-5: sample DB connection-pool utilisation at scrape time so pool
+    // saturation (active connections approaching the 30-cap, with a 5s
+    // acquire_timeout behind it) has a leading indicator to alert on. sea-orm
+    // exposes the underlying sqlx pool.
+    {
+        let pool = state.db.get_postgres_connection_pool();
+        let total = pool.size() as f64;
+        let idle = pool.num_idle() as f64;
+        metrics::gauge!("folio_db_pool_connections", "state" => "total").set(total);
+        metrics::gauge!("folio_db_pool_connections", "state" => "idle").set(idle);
+        metrics::gauge!("folio_db_pool_connections", "state" => "active")
+            .set((total - idle).max(0.0));
+    }
+
     let body = state.prometheus.render();
     let mut resp = (StatusCode::OK, body).into_response();
     resp.headers_mut().insert(

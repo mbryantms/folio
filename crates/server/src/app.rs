@@ -9,6 +9,7 @@ use crate::middleware::security_headers::{self, CspTemplate};
 use crate::observability::ObservabilityHandles;
 use crate::state::AppState;
 use axum::Router;
+use axum::response::IntoResponse;
 use sea_orm::{ColumnTrait, ConnectOptions, Database, EntityTrait, PaginatorTrait, QueryFilter};
 use std::sync::Arc;
 use std::time::Duration;
@@ -152,7 +153,14 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         .min_connections(2)
         .acquire_timeout(Duration::from_secs(5))
         .idle_timeout(Duration::from_secs(60))
-        .sqlx_logging(false);
+        // OBS-4: keep normal per-statement logging off (far too noisy), but
+        // surface pathological queries — sea-orm/sqlx emit a WARN tracing event
+        // for any statement slower than the threshold, which lands in the JSON
+        // log stream + the /admin/logs ring buffer. No hard `statement_timeout`:
+        // that would abort long scanner/reconcile queries.
+        .sqlx_logging(true)
+        .sqlx_logging_level(log::LevelFilter::Off)
+        .sqlx_slow_statements_logging_settings(log::LevelFilter::Warn, Duration::from_millis(500));
     let db = Database::connect(db_opts).await?;
 
     if cfg.auto_migrate {
@@ -456,6 +464,13 @@ pub fn router(state: AppState) -> Router {
         // route, so security_headers / set_context / TraceLayer / CSRF
         // all run on proxied requests too.
         .fallback(crate::upstream::proxy)
+        // OBS-3: innermost layer, so a panic in any handler (or the proxy
+        // fallback) is caught here, logged via tracing, and converted to the
+        // canonical error envelope. The response then flows back out through
+        // security_headers / metrics like any other. Without this, a handler
+        // panic escapes to stderr and drops the connection — invisible to the
+        // JSON log stream, the /admin/logs ring buffer, and the client.
+        .layer(tower_http::catch_panic::CatchPanicLayer::custom(handle_panic))
         .layer(axum::middleware::from_fn(auth::csrf::require_csrf))
         // Order matters: outermost wraps innermost. `set_context` needs to run
         // before handlers so `Request::extensions::get::<RequestContext>()`
@@ -490,11 +505,22 @@ pub fn router(state: AppState) -> Router {
         // credentials in a query string doesn't also poison journald.
         .layer(
             TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
+                // OBS-1: fold the request id into the span so every child log
+                // event inherits it (the RingLayer walks span fields), making a
+                // client-reported `x-request-id` searchable in /admin/logs. The
+                // header is set by the outer `SetRequestIdLayer`, so it's
+                // already present by the time this span is built.
+                let request_id = req
+                    .headers()
+                    .get("x-request-id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default();
                 tracing::span!(
                     Level::INFO,
                     "http",
                     method = %req.method(),
                     path = %req.uri().path(),
+                    request_id = %request_id,
                 )
             }),
         )
@@ -505,6 +531,27 @@ pub fn router(state: AppState) -> Router {
             crate::middleware::http_metrics::track,
         ))
         .with_state(state)
+}
+
+/// Panic handler for `CatchPanicLayer` (OBS-3). Converts a handler/middleware
+/// panic into a structured `tracing::error!` (so it lands in the JSON log
+/// stream + `/admin/logs`) plus the canonical error envelope, instead of the
+/// default behaviour of unwinding to stderr and dropping the connection.
+fn handle_panic(err: Box<dyn std::any::Any + Send + 'static>) -> axum::response::Response {
+    let detail = err
+        .downcast_ref::<&'static str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| err.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic payload".to_owned());
+    tracing::error!(panic = %detail, "handler panicked");
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        axum::Json(shared::error::ApiError::new(
+            shared::error::ApiErrorCode::Internal,
+            "internal",
+        )),
+    )
+        .into_response()
 }
 
 async fn shutdown_signal() {
@@ -527,4 +574,24 @@ async fn shutdown_signal() {
         _ = terminate => {}
     }
     tracing::info!("shutdown signal received; draining");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OBS-3: the panic handler produces the canonical error envelope (so a
+    /// caught panic reaches the client as `{"error":{"code":"internal"}}`
+    /// rather than a dropped connection). The `tracing::error!` side-effect is
+    /// exercised in the same call.
+    #[tokio::test]
+    async fn handle_panic_returns_internal_envelope() {
+        let resp = handle_panic(Box::new("boom"));
+        assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["error"]["code"], "internal");
+    }
 }
