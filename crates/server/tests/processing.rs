@@ -1123,3 +1123,64 @@ async fn manifest_backfill_expr_matches_rust() {
     let manifest = IssueManifest::for_paths(&state.db, &paths).await.unwrap();
     assert!(!manifest.metadata_is_current(&path_str, size + 1, mtime));
 }
+
+/// PERF-2: the post-folder metadata rollup only runs when the folder
+/// actually ingested something. A no-change re-scan (folder mtime bumped,
+/// file fingerprints unchanged — the rsync case) must skip it; a real file
+/// change must run it. Observable via the `series_genres` junction the
+/// rollup rebuilds: a hand-deleted row stays gone across a no-change
+/// re-scan and reappears after a content change.
+#[tokio::test]
+async fn rollup_skipped_on_no_change_rescan() {
+    use entity::series_genre;
+
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Gate (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let p = folder.join("Gate 001.cbz");
+    let xml =
+        r#"<?xml version="1.0"?><ComicInfo><Series>Gate</Series><Genre>Action</Genre></ComicInfo>"#;
+    write_cbz_with_xml(&p, 1, 1, Some(xml), None);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let series = SeriesEntity::find().one(&state.db).await.unwrap().unwrap();
+    let genre_rows = || async {
+        entity::series_genre::Entity::find()
+            .filter(series_genre::Column::SeriesId.eq(series.id))
+            .all(&state.db)
+            .await
+            .unwrap()
+    };
+    assert!(!genre_rows().await.is_empty(), "rollup ran on first scan");
+
+    // Sabotage the rollup output, then re-scan with only the FOLDER mtime
+    // bumped (file fingerprints unchanged). The rollup must be skipped, so
+    // the sabotage survives.
+    series_genre::Entity::delete_many()
+        .filter(series_genre::Column::SeriesId.eq(series.id))
+        .exec(&state.db)
+        .await
+        .unwrap();
+    let touch = folder.join(".mtime-bump");
+    std::fs::File::create(&touch).unwrap();
+    std::fs::remove_file(&touch).unwrap();
+    let s = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(s.files_added, 0, "no ingest expected: {s:?}");
+    assert!(
+        genre_rows().await.is_empty(),
+        "no-change re-scan must skip the rollup (PERF-2)"
+    );
+
+    // A real content change re-ingests the file and the rollup repairs
+    // the junction.
+    write_cbz_with_xml(&p, 2, 1, Some(xml), None);
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    assert!(
+        !genre_rows().await.is_empty(),
+        "changed file must re-run the rollup"
+    );
+}
