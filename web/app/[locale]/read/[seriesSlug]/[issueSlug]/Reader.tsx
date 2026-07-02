@@ -1605,10 +1605,14 @@ function TapZones({
    *  tap (chrome toggle, debounced) from a double tap (zoom at point). */
   onCenterDoubleTap?: (clientX: number, clientY: number) => void;
 }) {
-  // Single/double-click arbitration for the center zone: a single tap
-  // fires `onChrome` after a short delay; a second tap inside the window
-  // cancels it and fires `onCenterDoubleTap` instead. Without the delay,
-  // a double-tap-to-zoom would also toggle the chrome on its first click.
+  // Single/double-click arbitration for the center zone (audit UX-7):
+  // the chrome toggle fires IMMEDIATELY on the first tap — waiting out
+  // the double-tap window made the single most common reader gesture
+  // feel ~300ms sluggish (and inconsistent with double/webtoon, which
+  // toggle instantly). A second tap inside the window means the user
+  // wanted double-tap-zoom instead: re-toggle the chrome back (the
+  // toggle is symmetric, so this undoes the optimistic flip — at worst
+  // a brief chrome flicker) and zoom at the tap point.
   const centerTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onCenterClick = (e: React.MouseEvent) => {
     if (!onCenterDoubleTap) {
@@ -1616,15 +1620,16 @@ function TapZones({
       return;
     }
     if (centerTapTimer.current) {
-      // Second click → double tap: cancel the pending chrome toggle, zoom.
+      // Second click → double tap: undo the optimistic chrome toggle, zoom.
       clearTimeout(centerTapTimer.current);
       centerTapTimer.current = null;
+      onChrome();
       onCenterDoubleTap(e.clientX, e.clientY);
       return;
     }
+    onChrome();
     centerTapTimer.current = setTimeout(() => {
       centerTapTimer.current = null;
-      onChrome();
     }, DOUBLE_TAP_MS);
   };
   return (
