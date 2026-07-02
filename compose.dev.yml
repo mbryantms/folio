@@ -7,7 +7,12 @@ services:
     # under PG17 and the 18-alpine image (bumped in #85) changes the
     # data-directory layout — recreating the container against the old
     # volume crash-loops. Moving to 18 needs a pg_upgrade pass first.
-    image: postgres:17-alpine
+    # Same major as CI + compose.test.yml (postgres:18) — dev must not run a
+    # different Postgres than the suite tests against. NOTE: bumping the major
+    # requires re-initializing the volume (postgres won't start an 18 binary
+    # on a 17-initialized data dir): `pg_dump` first if you care about local
+    # progress/settings, then `docker compose -f compose.dev.yml down -v`.
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: comic

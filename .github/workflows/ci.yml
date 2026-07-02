@@ -85,6 +85,24 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - '.github/workflows/ci.yml'
+            renovate:
+              - 'renovate.json'
+
+  # A malformed packageRule silently disables parts of the update pipeline —
+  # renovate logs the error server-side where nobody looks. Validate on the
+  # rare PRs that touch the config (dependency-pipeline audit 2026-07-02).
+  renovate-config:
+    name: Renovate — config validation
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.renovate == 'true'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npx --yes --package renovate -- renovate-config-validator --strict renovate.json
 
   rust-fmt:
     name: Rust — fmt
@@ -329,6 +347,17 @@ jobs:
           pnpm install --frozen-lockfile --prefer-offline
           elapsed=$(($(date +%s) - start))
           echo "| install | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
+      # Per-PR advisory gate (dependency-pipeline audit 2026-07-02): the
+      # weekly security.yml sweep left a Monday-sized window where a fresh
+      # high-severity npm advisory shipped silently. Prod deps only — dev
+      # tooling advisories stay a weekly concern.
+      - name: Audit (prod deps)
+        if: env.WEB == 'true'
+        run: |
+          start=$(date +%s)
+          pnpm audit --prod --audit-level=high
+          elapsed=$(($(date +%s) - start))
+          echo "| audit | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       - name: Lint
         if: env.WEB == 'true'
         run: |
