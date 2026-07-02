@@ -186,7 +186,11 @@ describe("pickNextIssue", () => {
       issue({ id: "one", number: "1", sort_number: 1 }),
     ];
     const map = indexProgress([
-      progress({ issue_id: "half", page: 4, updated_at: "2025-04-01T00:00:00Z" }),
+      progress({
+        issue_id: "half",
+        page: 4,
+        updated_at: "2025-04-01T00:00:00Z",
+      }),
     ]);
     const out = pickNextIssue(issues, map);
     expect(out.target?.id).toBe("half");

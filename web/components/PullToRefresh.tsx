@@ -7,10 +7,7 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { cn } from "@/lib/utils";
-import {
-  usePullToRefresh,
-  type PullState,
-} from "@/lib/use-pull-to-refresh";
+import { usePullToRefresh, type PullState } from "@/lib/use-pull-to-refresh";
 
 /**
  * Visual wrapper around the `usePullToRefresh` hook. Renders a
@@ -40,9 +37,7 @@ export function PullToRefresh({ enabled = true }: { enabled?: boolean }) {
 
   if (state === "idle") return null;
 
-  return (
-    <PullToRefreshIndicator state={state} distance={distance} />
-  );
+  return <PullToRefreshIndicator state={state} distance={distance} />;
 }
 
 function PullToRefreshIndicator({

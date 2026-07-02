@@ -64,7 +64,9 @@ describe("<SourcesFooter>", () => {
     expect(html).toContain("Data from");
     expect(html).toContain("ComicVine");
     expect(html).toContain("Metron");
-    expect(html).toContain('href="https://comicvine.gamespot.com/volume/4050-12345/"');
+    expect(html).toContain(
+      'href="https://comicvine.gamespot.com/volume/4050-12345/"',
+    );
     expect(html).toContain('href="https://metron.cloud/series/456/"');
     expect(html).toContain(", ");
   });

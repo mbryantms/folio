@@ -139,7 +139,10 @@ export function MarkerEditor({
     if (body.trim() !== (pendingMarker.body?.trim() ?? "")) return true;
     if (isFavorite !== pendingMarker.is_favorite) return true;
     if (tags.join(" ") !== pendingMarker.tags.join(" ")) return true;
-    if (detectedText !== null && detectedText !== (pendingMarker.selection?.text ?? null))
+    if (
+      detectedText !== null &&
+      detectedText !== (pendingMarker.selection?.text ?? null)
+    )
       return true;
     return false;
   }

@@ -33,7 +33,7 @@ export function SegmentedControl<T extends string>({
       // instead of widening the page. No-op when the options already fit.
       // `[&>*]:shrink-0` stops the pills squishing; scrollbar hidden to match
       // the TabsList pattern.
-      className="border-input bg-background inline-flex max-w-full overflow-x-auto rounded-md border p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0"
+      className="border-input bg-background inline-flex max-w-full [scrollbar-width:none] overflow-x-auto rounded-md border p-0.5 [&::-webkit-scrollbar]:hidden [&>*]:shrink-0"
     >
       {options.map((opt) => {
         const active = opt.value === value;

@@ -47,7 +47,10 @@ test.describe("Content Security Policy", () => {
     // bootstrap — theme class never applied before hydration).
     const unnonced = await page.evaluate(() =>
       Array.from(document.querySelectorAll("script:not([src])"))
-        .filter((s) => !(s as HTMLScriptElement).nonce && s.textContent!.trim().length > 0)
+        .filter(
+          (s) =>
+            !(s as HTMLScriptElement).nonce && s.textContent!.trim().length > 0,
+        )
         .map((s) => s.textContent!.slice(0, 120)),
     );
     expect(unnonced).toEqual([]);

@@ -111,7 +111,9 @@ function SettingsForm({
 }) {
   const [enabled, setEnabled] = React.useState(initial.enabled);
   const [cron, setCron] = React.useState(initial.cron);
-  const [windowDays, setWindowDays] = React.useState(String(initial.windowDays));
+  const [windowDays, setWindowDays] = React.useState(
+    String(initial.windowDays),
+  );
   const [staleAfterDays, setStaleAfterDays] = React.useState(
     String(initial.staleAfterDays),
   );
@@ -150,19 +152,19 @@ function SettingsForm({
     }
     const a = Number(autoApply);
     if (
-      Number.isFinite(a)
-      && a >= 0
-      && a <= 100
-      && a !== initial.autoApplyThreshold
+      Number.isFinite(a) &&
+      a >= 0 &&
+      a <= 100 &&
+      a !== initial.autoApplyThreshold
     ) {
       patch["metadata.auto_apply_threshold"] = a;
     }
     const m = Number(matchMedium);
     if (
-      Number.isFinite(m)
-      && m >= 0
-      && m <= 100
-      && m !== initial.matchMediumThreshold
+      Number.isFinite(m) &&
+      m >= 0 &&
+      m <= 100 &&
+      m !== initial.matchMediumThreshold
     ) {
       patch["metadata.match_medium_threshold"] = m;
     }
@@ -175,12 +177,11 @@ function SettingsForm({
         <header className="space-y-1">
           <h3 className="text-base font-semibold">Weekly refresh</h3>
           <p className="text-muted-foreground text-xs">
-            Off by default. When enabled, a background cron walks every
-            library on the schedule below and re-fetches metadata for
-            recently-published series (Mylar pattern) plus any series
-            that crosses the staleness threshold. Burns provider quota —
-            opt in only when you&rsquo;ve verified your CV / Metron
-            allowances will absorb the weekly load.
+            Off by default. When enabled, a background cron walks every library
+            on the schedule below and re-fetches metadata for recently-published
+            series (Mylar pattern) plus any series that crosses the staleness
+            threshold. Burns provider quota — opt in only when you&rsquo;ve
+            verified your CV / Metron allowances will absorb the weekly load.
           </p>
         </header>
 
@@ -237,18 +238,16 @@ function SettingsForm({
           />
           <p className="text-muted-foreground text-[11px]">
             Series whose latest issue was added within this window get
-            re-fetched on every weekly run regardless of staleness.
-            Default 14.
+            re-fetched on every weekly run regardless of staleness. Default 14.
           </p>
         </div>
       </section>
 
-      <section className="space-y-3 border-t border-border/40 pt-5">
+      <section className="border-border/40 space-y-3 border-t pt-5">
         <header className="space-y-1">
           <h3 className="text-base font-semibold">Staleness</h3>
           <p className="text-muted-foreground text-xs">
-            Drives both the weekly cron&rsquo;s older-than-window
-            branch and the
+            Drives both the weekly cron&rsquo;s older-than-window branch and the
             <code className="mx-1">scope=stale</code>
             option on
             <code className="mx-1">
@@ -275,16 +274,15 @@ function SettingsForm({
         </div>
       </section>
 
-      <section className="space-y-3 border-t border-border/40 pt-5">
+      <section className="border-border/40 space-y-3 border-t pt-5">
         <header className="space-y-1">
           <h3 className="text-base font-semibold">Match thresholds</h3>
           <p className="text-muted-foreground text-xs">
-            Score (0&ndash;100) cutoffs the matcher uses to bucket
-            candidates. The HIGH threshold defaults to 80 so legitimate
-            text-only matches reach &ldquo;Strong match&rdquo; status;
-            tighten it once you&rsquo;ve verified the matcher is
-            consistent on your library, or loosen if you&rsquo;re
-            getting too many candidates dumped to review.
+            Score (0&ndash;100) cutoffs the matcher uses to bucket candidates.
+            The HIGH threshold defaults to 80 so legitimate text-only matches
+            reach &ldquo;Strong match&rdquo; status; tighten it once
+            you&rsquo;ve verified the matcher is consistent on your library, or
+            loosen if you&rsquo;re getting too many candidates dumped to review.
           </p>
         </header>
         <div className="grid gap-1.5">
@@ -302,16 +300,13 @@ function SettingsForm({
           />
           <p className="text-muted-foreground text-[11px]">
             Candidates scoring at or above this land in the HIGH bucket
-            (one-click apply, surfaced as &ldquo;Strong match&rdquo;).
-            Default 80. ComicTagger&rsquo;s reference value is 90 — go
-            higher if you want stricter, lower if matches keep landing
-            in Medium.
+            (one-click apply, surfaced as &ldquo;Strong match&rdquo;). Default
+            80. ComicTagger&rsquo;s reference value is 90 — go higher if you
+            want stricter, lower if matches keep landing in Medium.
           </p>
         </div>
         <div className="grid gap-1.5">
-          <Label htmlFor="match-medium-threshold">
-            MEDIUM threshold
-          </Label>
+          <Label htmlFor="match-medium-threshold">MEDIUM threshold</Label>
           <Input
             id="match-medium-threshold"
             type="number"
@@ -322,14 +317,14 @@ function SettingsForm({
             className="w-32"
           />
           <p className="text-muted-foreground text-[11px]">
-            Candidates between this and the HIGH threshold land in the
-            MEDIUM bucket (visible in the review queue). Below this is
-            LOW (hidden by default). Default 60.
+            Candidates between this and the HIGH threshold land in the MEDIUM
+            bucket (visible in the review queue). Below this is LOW (hidden by
+            default). Default 60.
           </p>
         </div>
       </section>
 
-      <div className="flex items-center gap-2 border-t border-border/40 pt-4">
+      <div className="border-border/40 flex items-center gap-2 border-t pt-4">
         <Button type="submit" disabled={!dirty || isPending}>
           {isPending ? (
             <>

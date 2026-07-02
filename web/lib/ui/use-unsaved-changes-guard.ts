@@ -41,10 +41,14 @@ export function useUnsavedChangesGuard(isDirty: boolean) {
       ) {
         return;
       }
-      const anchor = (e.target as HTMLElement | null)?.closest?.("a[href]") as
-        | HTMLAnchorElement
-        | null;
-      if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) {
+      const anchor = (e.target as HTMLElement | null)?.closest?.(
+        "a[href]",
+      ) as HTMLAnchorElement | null;
+      if (
+        !anchor ||
+        anchor.target === "_blank" ||
+        anchor.hasAttribute("download")
+      ) {
         return;
       }
       const href = anchor.getAttribute("href");

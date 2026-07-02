@@ -200,8 +200,7 @@ export function useApiMutation<TData, TInput>(
       // 4xx errors are user-facing validation/auth/permission issues
       // that retrying without changing input won't fix.
       const transient = err instanceof ApiMutationError && err.transient;
-      const requestId =
-        err instanceof ApiMutationError ? err.requestId : null;
+      const requestId = err instanceof ApiMutationError ? err.requestId : null;
       toast.error(err.message, {
         ...(toastId ? { id: toastId } : {}),
         ...(requestId ? { description: `Reference: ${requestId}` } : {}),

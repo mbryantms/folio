@@ -12,7 +12,9 @@ import type { LogWidgetProps } from "./types";
 // out of the log-page bundle until this widget actually mounts.
 const TimeOfDayDonut = dynamic(
   () =>
-    import("@/components/activity/TimeOfDayDonut").then((m) => m.TimeOfDayDonut),
+    import("@/components/activity/TimeOfDayDonut").then(
+      (m) => m.TimeOfDayDonut,
+    ),
   { ssr: false, loading: () => <Skeleton className="h-44 w-full" /> },
 );
 

@@ -10,7 +10,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 
 let settingsState: {
-  data: undefined | { values: Array<{ key: string; value: unknown; is_secret: boolean }> };
+  data:
+    | undefined
+    | { values: Array<{ key: string; value: unknown; is_secret: boolean }> };
   isLoading: boolean;
 } = { data: undefined, isLoading: false };
 
@@ -26,13 +28,7 @@ vi.mock("@/lib/api/mutations", () => ({
 }));
 
 vi.mock("@/components/ui/switch", () => ({
-  Switch: ({
-    id,
-    checked,
-  }: {
-    id?: string;
-    checked?: boolean;
-  }) =>
+  Switch: ({ id, checked }: { id?: string; checked?: boolean }) =>
     createElement("input", {
       type: "checkbox",
       id,
@@ -57,7 +53,11 @@ describe("<ProviderConfigForm>", () => {
       isLoading: false,
       data: {
         values: [
-          { key: "metadata.comicvine.api_key", value: "<set>", is_secret: true },
+          {
+            key: "metadata.comicvine.api_key",
+            value: "<set>",
+            is_secret: true,
+          },
           {
             key: "metadata.comicvine.enabled",
             value: true,

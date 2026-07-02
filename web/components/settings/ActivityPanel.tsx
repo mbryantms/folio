@@ -34,7 +34,9 @@ const PaceChart = dynamic(
 // /settings/activity bundle so the page header/hero paint first.
 const TimeOfDayDonut = dynamic(
   () =>
-    import("@/components/activity/TimeOfDayDonut").then((m) => m.TimeOfDayDonut),
+    import("@/components/activity/TimeOfDayDonut").then(
+      (m) => m.TimeOfDayDonut,
+    ),
   { ssr: false, loading: () => <Skeleton className="h-48 w-full" /> },
 );
 

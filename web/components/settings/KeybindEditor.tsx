@@ -337,9 +337,7 @@ function CaptureBody({
 
   return (
     <div className="grid place-items-center py-6">
-      <Kbd size="lg">
-        {pending ? formatKey(pending) : "Listening…"}
-      </Kbd>
+      <Kbd size="lg">{pending ? formatKey(pending) : "Listening…"}</Kbd>
     </div>
   );
 }

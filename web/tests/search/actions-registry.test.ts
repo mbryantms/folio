@@ -71,7 +71,9 @@ describe("rankSearchActions", () => {
     // "audit" only matches the admin Audit log entry. Non-admin user
     // gets nothing back, not a 403.
     expect(rankSearchActions("audit", undefined)).toEqual([]);
-    expect(rankSearchActions("audit", "admin").some((a) => a.id === "admin-audit")).toBe(true);
+    expect(
+      rankSearchActions("audit", "admin").some((a) => a.id === "admin-audit"),
+    ).toBe(true);
   });
 
   it("case-insensitive", () => {

@@ -40,8 +40,8 @@ export default function ReaderError({
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
         <h1 className="text-lg font-semibold">The reader hit a snag</h1>
         <p className="text-sm text-neutral-400">
-          Your reading position is saved. You can retry right here or head
-          back to the issue page.
+          Your reading position is saved. You can retry right here or head back
+          to the issue page.
         </p>
         {error.digest ? (
           <p className="font-mono text-xs text-neutral-600">

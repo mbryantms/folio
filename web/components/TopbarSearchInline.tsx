@@ -239,13 +239,8 @@ export function TopbarSearchInline({ className }: { className?: string }) {
             <div className="text-muted-foreground space-y-2 px-4 py-6 text-center text-xs">
               <p>Type at least 2 characters to search.</p>
               <p>
-                <Kbd className="mx-1">
-                  ↵
-                </Kbd>
-                opens · type{" "}
-                <Kbd className="mx-1">
-                  &gt;
-                </Kbd>
+                <Kbd className="mx-1">↵</Kbd>
+                opens · type <Kbd className="mx-1">&gt;</Kbd>
                 for commands
               </p>
             </div>
@@ -396,13 +391,8 @@ export function TopbarSearchInline({ className }: { className?: string }) {
           {enabled && !commandMode ? (
             <div className="border-border text-muted-foreground flex items-center justify-between border-t px-3 py-2 text-xs">
               <span className="hidden sm:inline">
-                <Kbd className="mr-1">
-                  ⌘
-                </Kbd>
-                <Kbd>
-                  ↵
-                </Kbd>{" "}
-                for top results
+                <Kbd className="mr-1">⌘</Kbd>
+                <Kbd>↵</Kbd> for top results
               </span>
               <button
                 type="button"

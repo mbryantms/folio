@@ -10,10 +10,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/ui/filter-pill";
-import {
-  useAdminMetadataRun,
-  useAdminMetadataRuns,
-} from "@/lib/api/queries";
+import { useAdminMetadataRun, useAdminMetadataRuns } from "@/lib/api/queries";
 import type { RunRow } from "@/lib/api/types";
 
 export function RunsTab() {
@@ -34,10 +31,16 @@ export function RunsTab() {
           <FilterPill active={!scope} onClick={() => setScope("")}>
             All
           </FilterPill>
-          <FilterPill active={scope === "series"} onClick={() => setScope("series")}>
+          <FilterPill
+            active={scope === "series"}
+            onClick={() => setScope("series")}
+          >
             Series
           </FilterPill>
-          <FilterPill active={scope === "issue"} onClick={() => setScope("issue")}>
+          <FilterPill
+            active={scope === "issue"}
+            onClick={() => setScope("issue")}
+          >
             Issue
           </FilterPill>
           <span className="text-muted-foreground ml-3">Status:</span>
@@ -56,7 +59,10 @@ export function RunsTab() {
           >
             Awaiting
           </FilterPill>
-          <FilterPill active={status === "failed"} onClick={() => setStatus("failed")}>
+          <FilterPill
+            active={status === "failed"}
+            onClick={() => setStatus("failed")}
+          >
             Failed
           </FilterPill>
         </div>
@@ -153,7 +159,9 @@ function StatusBadge({ status }: { status: string }) {
           ? "secondary"
           : "outline";
   return (
-    <Badge variant={variant as "default" | "secondary" | "outline" | "destructive"}>
+    <Badge
+      variant={variant as "default" | "secondary" | "outline" | "destructive"}
+    >
       {status}
     </Badge>
   );
@@ -180,8 +188,7 @@ function RunDetailPanel({ id }: { id: string }) {
         <div className="flex items-center gap-2">
           <StatusBadge status={run.status} />
           <span className="text-muted-foreground text-xs">
-            {run.scope} · started{" "}
-            {new Date(run.started_at).toLocaleString()}
+            {run.scope} · started {new Date(run.started_at).toLocaleString()}
           </span>
         </div>
         {query !== undefined && query !== null && (

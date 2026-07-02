@@ -22,10 +22,7 @@ export const RECENT_SEARCHES_MIN_LEN = 2;
  *  manipulate the list without DOM access) can exercise the same
  *  logic the hook applies inside its `setState`. Case-insensitive
  *  match preserves the casing of the most recent occurrence. */
-export function appendRecent(
-  prev: readonly string[],
-  next: string,
-): string[] {
+export function appendRecent(prev: readonly string[], next: string): string[] {
   const trimmed = next.trim();
   if (trimmed.length < RECENT_SEARCHES_MIN_LEN) return prev.slice();
   const lower = trimmed.toLowerCase();
@@ -82,10 +79,7 @@ export function useRecentSearches(): {
       const next = appendRecent(prev, q);
       // Skip the write when nothing changed (short query, duplicate
       // at front). Avoids a redundant storage event.
-      if (
-        next.length === prev.length &&
-        next.every((v, i) => v === prev[i])
-      ) {
+      if (next.length === prev.length && next.every((v, i) => v === prev[i])) {
         return prev;
       }
       write(next);
@@ -133,7 +127,10 @@ function write(items: readonly string[]) {
       window.localStorage.removeItem(RECENT_SEARCHES_STORAGE_KEY);
       return;
     }
-    window.localStorage.setItem(RECENT_SEARCHES_STORAGE_KEY, JSON.stringify(items));
+    window.localStorage.setItem(
+      RECENT_SEARCHES_STORAGE_KEY,
+      JSON.stringify(items),
+    );
   } catch {
     // Same degrade rationale as `read`.
   }

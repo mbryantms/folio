@@ -197,9 +197,7 @@ function Row({ label, keys }: { label: string; keys: readonly string[] }) {
             {i > 0 ? (
               <span className="text-[10px] text-neutral-500">or</span>
             ) : null}
-            <Kbd size="md">
-              {k}
-            </Kbd>
+            <Kbd size="md">{k}</Kbd>
           </Fragment>
         ))}
       </span>
