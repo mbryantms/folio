@@ -39,7 +39,7 @@ describe("parseDescription", () => {
     expect(parsed.hasStructuredContent).toBe(true);
     expect(parsed.intro).toBe("ONE MORE DAY!");
     expect(parsed.tables).toHaveLength(1);
-    const table = parsed.tables[0];
+    const table = parsed.tables[0]!;
     expect(table.title).toBe("List of covers and their creators");
     expect(table.columns).toEqual([
       "Cover",
@@ -61,13 +61,13 @@ describe("parseDescription", () => {
     expect(parsed.hasStructuredContent).toBe(true);
     expect(parsed.intro).toBe("The Greatest Super Hero of All Time RETURNS!");
     expect(parsed.tables).toHaveLength(1);
-    expect(parsed.tables[0].rows).toEqual([
+    expect(parsed.tables[0]!.rows).toEqual([
       ["Reg", "Regular Cover", "Humberto Ramos", "1"],
       ["Var", "Variant Cover", "Pop Mhan", "40"],
     ]);
     expect(parsed.sections).toHaveLength(1);
-    expect(parsed.sections[0].title).toBe("Notes");
-    expect(parsed.sections[0].text).toContain(
+    expect(parsed.sections[0]!.title).toBe("Notes");
+    expect(parsed.sections[0]!.text).toContain(
       "J. Scott Campbell's variant cover",
     );
   });
@@ -77,8 +77,8 @@ describe("parseDescription", () => {
       "THE AMAZING SPIDER-MAN GETS CAUGHT UP IN CIVIL WAR II! *List of covers and their creators:* Cover | Name | Creator(s) | Sidebar Location | ------------------------------------------------------------------------------------- Reg | Regular Cover | Khary Randolph & Emilio Lopez | 1 | Var | Variant Cover | Greg Land & Morry Hollowell | 2 | Var | Variant Cover | Phil Noto | 3 | Var | Action Figure Variant Cover | John Tyler Christopher | 4 |";
     const parsed = parseDescription(text);
     expect(parsed.hasStructuredContent).toBe(true);
-    expect(parsed.tables[0].rows).toHaveLength(4);
-    expect(parsed.tables[0].rows[2]).toEqual([
+    expect(parsed.tables[0]!.rows).toHaveLength(4);
+    expect(parsed.tables[0]!.rows[2]).toEqual([
       "Var",
       "Variant Cover",
       "Phil Noto",
@@ -95,7 +95,7 @@ describe("parseDescription", () => {
     // The double-hyphen in the prose must not be confused with the table divider.
     expect(parsed.intro).toContain("--");
     expect(parsed.tables).toHaveLength(1);
-    expect(parsed.tables[0].rows).toHaveLength(2);
+    expect(parsed.tables[0]!.rows).toHaveLength(2);
   });
 
   it("captures the tail as a raw section when no clean divider exists", () => {
@@ -106,8 +106,8 @@ describe("parseDescription", () => {
     expect(parsed.intro).toBe("Intro.");
     expect(parsed.tables).toHaveLength(0);
     expect(parsed.sections).toHaveLength(1);
-    expect(parsed.sections[0].title).toBe("List of covers and their creators");
-    expect(parsed.sections[0].text).toContain("Regular Cover");
+    expect(parsed.sections[0]!.title).toBe("List of covers and their creators");
+    expect(parsed.sections[0]!.text).toContain("Regular Cover");
   });
 
   it("reconstructs the table for smushed cover lists (Saga #1)", () => {
@@ -122,7 +122,7 @@ describe("parseDescription", () => {
     expect(parsed.intro).not.toContain("CoverNameCreators");
 
     expect(parsed.tables).toHaveLength(1);
-    const table = parsed.tables[0];
+    const table = parsed.tables[0]!;
     expect(table.title).toBe("List of covers and their creators");
     expect(table.columns).toEqual(["Cover", "Name", "Creator(s)", "Sidebar"]);
     expect(table.rows).toEqual([
@@ -154,7 +154,7 @@ describe("parseDescription", () => {
       "Intro. *List of covers and their creators:* CoverNameCreatorsSidebar LocationRegRegular CoverArtist One1VarVariant CoverArtist Two2";
     const parsed = parseDescription(text);
     expect(parsed.hasStructuredContent).toBe(true);
-    const table = parsed.tables[0];
+    const table = parsed.tables[0]!;
     expect(table.columns).toEqual(["Cover", "Name & Creator(s)", "Sidebar"]);
     expect(table.rows).toEqual([
       ["Reg", "Regular CoverArtist One", "1"],

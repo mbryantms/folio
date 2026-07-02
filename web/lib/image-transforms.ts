@@ -38,10 +38,22 @@ function clone(img: RgbaImage): RgbaImage {
 function mapRgb(img: RgbaImage, lut: Uint8ClampedArray): RgbaImage {
   const out = new Uint8ClampedArray(img.data.length);
   for (let i = 0; i < img.data.length; i += 4) {
-    out[i] = lut[img.data[i]];
-    out[i + 1] = lut[img.data[i + 1]];
-    out[i + 2] = lut[img.data[i + 2]];
-    out[i + 3] = img.data[i + 3];
+    const r = img.data[i];
+    const g = img.data[i + 1];
+    const b = img.data[i + 2];
+    const a = img.data[i + 3];
+    if (
+      r === undefined ||
+      g === undefined ||
+      b === undefined ||
+      a === undefined
+    ) {
+      continue;
+    }
+    out[i] = lut[r] ?? 0;
+    out[i + 1] = lut[g] ?? 0;
+    out[i + 2] = lut[b] ?? 0;
+    out[i + 3] = a;
   }
   return { data: out, width: img.width, height: img.height };
 }
@@ -96,7 +108,10 @@ function gaussianBlur(img: RgbaImage, sigma: number): RgbaImage {
         let acc = 0;
         for (let k = -radius; k <= radius; k++) {
           const xx = Math.min(w - 1, Math.max(0, x + k));
-          acc += data[(y * w + xx) * 4 + ch] * kernel[k + radius];
+          const v = data[(y * w + xx) * 4 + ch];
+          const kv = kernel[k + radius];
+          if (v === undefined || kv === undefined) continue;
+          acc += v * kv;
         }
         tmp[(y * w + x) * 4 + ch] = acc;
       }
@@ -110,11 +125,14 @@ function gaussianBlur(img: RgbaImage, sigma: number): RgbaImage {
         let acc = 0;
         for (let k = -radius; k <= radius; k++) {
           const yy = Math.min(h - 1, Math.max(0, y + k));
-          acc += tmp[(yy * w + x) * 4 + ch] * kernel[k + radius];
+          const v = tmp[(yy * w + x) * 4 + ch];
+          const kv = kernel[k + radius];
+          if (v === undefined || kv === undefined) continue;
+          acc += v * kv;
         }
         out[(y * w + x) * 4 + ch] = clamp8(acc);
       }
-      out[(y * w + x) * 4 + 3] = data[(y * w + x) * 4 + 3];
+      out[(y * w + x) * 4 + 3] = data[(y * w + x) * 4 + 3] ?? 0;
     }
   }
   return { data: out, width: w, height: h };
@@ -131,9 +149,11 @@ export function sharpen(img: RgbaImage, amount: number): RgbaImage {
   for (let i = 0; i < img.data.length; i += 4) {
     for (let ch = 0; ch < 3; ch++) {
       const o = img.data[i + ch];
-      out[i + ch] = clamp8(o + (o - blurred.data[i + ch]));
+      const bl = blurred.data[i + ch];
+      if (o === undefined || bl === undefined) continue;
+      out[i + ch] = clamp8(o + (o - bl));
     }
-    out[i + 3] = img.data[i + 3];
+    out[i + 3] = img.data[i + 3] ?? 0;
   }
   return { data: out, width: img.width, height: img.height };
 }
@@ -153,13 +173,14 @@ export function despeckle(img: RgbaImage, radius: number): RgbaImage {
           for (let dx = -r; dx <= r; dx++) {
             const xx = Math.min(w - 1, Math.max(0, x + dx));
             const yy = Math.min(h - 1, Math.max(0, y + dy));
-            win.push(data[(yy * w + xx) * 4 + ch]);
+            const v = data[(yy * w + xx) * 4 + ch];
+            if (v !== undefined) win.push(v);
           }
         }
         win.sort((a, b) => a - b);
-        out[(y * w + x) * 4 + ch] = win[(win.length - 1) >> 1];
+        out[(y * w + x) * 4 + ch] = win[(win.length - 1) >> 1] ?? 0;
       }
-      out[(y * w + x) * 4 + 3] = data[(y * w + x) * 4 + 3];
+      out[(y * w + x) * 4 + 3] = data[(y * w + x) * 4 + 3] ?? 0;
     }
   }
   return { data: out, width: w, height: h };

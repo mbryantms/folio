@@ -236,6 +236,7 @@ function mostRecentActiveLibraryId(
   const terminated = new Set<string>();
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
+    if (event === undefined) continue;
     if (event.type === "scan.completed" || event.type === "scan.failed") {
       terminated.add(event.scan_id);
       continue;

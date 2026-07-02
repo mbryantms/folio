@@ -103,6 +103,7 @@ export function useMetadataApplyWait({
   if (waitingForRescan && isSeriesScope) {
     for (let i = scanEvents.events.length - 1; i >= 0; i--) {
       const e = scanEvents.events[i];
+      if (e === undefined) continue;
       if (e.type === "scan.progress" && e.series_total > 0) {
         seriesProgress = { done: e.series_scanned, total: e.series_total };
         break;

@@ -8,7 +8,7 @@
  *  between `1` and `DOUBLE_TAP_ZOOM` independently of this ladder. */
 export const ZOOM_STEPS = [1, 1.5, 2, 3] as const;
 export const MIN_ZOOM = ZOOM_STEPS[0];
-export const MAX_ZOOM = ZOOM_STEPS[ZOOM_STEPS.length - 1];
+export const MAX_ZOOM = ZOOM_STEPS[ZOOM_STEPS.length - 1]!;
 export const DOUBLE_TAP_ZOOM = 2;
 /** Double-tap recognition window + max travel between the two taps. */
 export const DOUBLE_TAP_MS = 300;

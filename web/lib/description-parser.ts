@@ -76,7 +76,14 @@ export function parseDescription(
   // labeled text when we can't.
   const tableHeadingRe = /\*([^*\n]+?):\*/;
   const firstTableMatch = trimmed.match(tableHeadingRe);
-  if (!firstTableMatch || firstTableMatch.index === undefined) return fallback;
+  const firstTitle = firstTableMatch?.[1];
+  if (
+    !firstTableMatch ||
+    firstTableMatch.index === undefined ||
+    firstTitle === undefined
+  ) {
+    return fallback;
+  }
 
   const intro = trimmed.slice(0, firstTableMatch.index).trim();
 
@@ -90,7 +97,7 @@ export function parseDescription(
     {
       index: firstTableMatch.index,
       length: firstTableMatch[0].length,
-      title: firstTableMatch[1].trim().replace(/:$/, "").trim(),
+      title: firstTitle.trim().replace(/:$/, "").trim(),
       isTableHeader: true,
     },
   ];
@@ -99,7 +106,7 @@ export function parseDescription(
   restRe.lastIndex = firstTableMatch.index + firstTableMatch[0].length;
   let m: RegExpExecArray | null;
   while ((m = restRe.exec(trimmed)) !== null) {
-    const inner = m[1].trim();
+    const inner = m[1]?.trim();
     if (!inner) continue;
     markers.push({
       index: m.index,
@@ -114,6 +121,7 @@ export function parseDescription(
 
   for (let i = 0; i < markers.length; i++) {
     const marker = markers[i];
+    if (marker === undefined) continue;
     const next = markers[i + 1];
     const start = marker.index + marker.length;
     const end = next ? next.index : trimmed.length;
@@ -178,7 +186,13 @@ function parseSmushedCoverList(
   const matches: { index: number; length: number; prefix: string }[] = [];
   let pm: RegExpExecArray | null;
   while ((pm = PREFIX_RE.exec(rest)) !== null) {
-    matches.push({ index: pm.index, length: pm[0].length, prefix: pm[1] });
+    // Group 1 spans the whole match (the lookahead is zero-width), so the
+    // full-match text is an equivalent stand-in for the capture.
+    matches.push({
+      index: pm.index,
+      length: pm[0].length,
+      prefix: pm[1] ?? pm[0],
+    });
   }
   if (matches.length === 0) return null;
 
@@ -193,9 +207,10 @@ function parseSmushedCoverList(
   // future refinement.
   for (let i = 1; i < matches.length; i++) {
     const c = matches[i];
-    const ord = c.prefix.match(/^(\d+)(st|nd|rd|th)/);
-    if (!ord || ord[1].length < 2) continue;
-    if (Number(ord[1]) <= 10) continue;
+    if (c === undefined) continue;
+    const ordDigits = c.prefix.match(/^(\d+)(st|nd|rd|th)/)?.[1];
+    if (ordDigits === undefined || ordDigits.length < 2) continue;
+    if (Number(ordDigits) <= 10) continue;
     c.index += 1;
     c.length -= 1;
     c.prefix = c.prefix.slice(1);
@@ -204,17 +219,23 @@ function parseSmushedCoverList(
   type RawRow = { prefix: string; middle: string; sidebar: string };
   const rawRows: RawRow[] = [];
   for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].index + matches[i].length;
-    const end = i + 1 < matches.length ? matches[i + 1].index : rest.length;
+    const cur = matches[i];
+    if (cur === undefined) continue;
+    const nextMatch = matches[i + 1];
+    const start = cur.index + cur.length;
+    const end = nextMatch !== undefined ? nextMatch.index : rest.length;
     const cellBody = rest.slice(start, end).trim();
     const sbMatch = cellBody.match(/(\d+)\s*$/);
-    if (!sbMatch || sbMatch.index === undefined) continue;
+    const sidebar = sbMatch?.[1];
+    if (!sbMatch || sbMatch.index === undefined || sidebar === undefined) {
+      continue;
+    }
     const middle = cellBody.slice(0, sbMatch.index).trim();
     if (!middle) continue;
     rawRows.push({
-      prefix: matches[i].prefix.replace(/\s+/g, " ").trim(),
+      prefix: cur.prefix.replace(/\s+/g, " ").trim(),
       middle,
-      sidebar: sbMatch[1],
+      sidebar,
     });
   }
   if (rawRows.length === 0) return null;
@@ -249,10 +270,11 @@ function parseSmushedCoverList(
  * back to the 3-column "Name & Creator(s)" layout.
  */
 function findCommonCreator(rows: string[]): string | null {
-  if (rows.length < 2) return null;
-  let commonReversed = [...rows[0]].reverse().join("");
-  for (let i = 1; i < rows.length; i++) {
-    const r = [...rows[i]].reverse().join("");
+  const [first, ...restRows] = rows;
+  if (first === undefined || restRows.length === 0) return null;
+  let commonReversed = [...first].reverse().join("");
+  for (const row of restRows) {
+    const r = [...row].reverse().join("");
     let j = 0;
     while (
       j < commonReversed.length &&
@@ -271,8 +293,10 @@ function findCommonCreator(rows: string[]): string | null {
   let i = 0;
   while (i < suffix.length) {
     const ch = suffix[i];
+    if (ch === undefined) break;
     const atStart = i === 0;
-    const prevIsSpace = !atStart && /\s/.test(suffix[i - 1]);
+    const prev = suffix[i - 1];
+    const prevIsSpace = !atStart && prev !== undefined && /\s/.test(prev);
     if (/[A-Z]/.test(ch) && (atStart || prevIsSpace)) break;
     i++;
   }
@@ -315,7 +339,7 @@ function parseHtmlDescription(html: string): ParsedDescription {
   const tableRe = /<table\b[^>]*>([\s\S]*?)<\/table>/gi;
   let match: RegExpExecArray | null;
   while ((match = tableRe.exec(html)) !== null) {
-    const t = parseHtmlTable(match[1]);
+    const t = parseHtmlTable(match[1] ?? "");
     if (t) tables.push(t);
   }
   remainder = remainder.replace(tableRe, "\n");
@@ -330,20 +354,23 @@ function parseHtmlDescription(html: string): ParsedDescription {
     headings.push({
       index: match.index,
       length: match[0].length,
-      title: stripInlineHtml(match[2]).trim(),
+      title: stripInlineHtml(match[2] ?? "").trim(),
     });
   }
 
   let intro: string;
-  if (headings.length === 0) {
+  const firstHeading = headings[0];
+  if (firstHeading === undefined) {
     intro = htmlToPlainText(remainder);
   } else {
-    intro = htmlToPlainText(remainder.slice(0, headings[0].index));
+    intro = htmlToPlainText(remainder.slice(0, firstHeading.index));
     for (let i = 0; i < headings.length; i++) {
       const h = headings[i];
+      if (h === undefined) continue;
+      const nextHeading = headings[i + 1];
       const bodyStart = h.index + h.length;
       const bodyEnd =
-        i + 1 < headings.length ? headings[i + 1].index : remainder.length;
+        nextHeading !== undefined ? nextHeading.index : remainder.length;
       const body = htmlToPlainText(remainder.slice(bodyStart, bodyEnd));
       if (h.title && body) sections.push({ title: h.title, text: body });
     }
@@ -363,7 +390,7 @@ function parseHtmlTable(inner: string): DescriptionTable | null {
   let header: string[] | null = null;
   let m: RegExpExecArray | null;
   while ((m = rowRe.exec(inner)) !== null) {
-    const rowHtml = m[1];
+    const rowHtml = m[1] ?? "";
     const isHeader = /<th\b/i.test(rowHtml);
     const cellRe = isHeader
       ? /<th\b[^>]*>([\s\S]*?)<\/th>/gi
@@ -371,7 +398,7 @@ function parseHtmlTable(inner: string): DescriptionTable | null {
     const cells: string[] = [];
     let cm: RegExpExecArray | null;
     while ((cm = cellRe.exec(rowHtml)) !== null) {
-      cells.push(stripInlineHtml(cm[1]).trim());
+      cells.push(stripInlineHtml(cm[1] ?? "").trim());
     }
     if (cells.length === 0) continue;
     if (isHeader && !header) {
